@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { collectTestResult } from "../src/test-tool.ts"
@@ -30,6 +30,31 @@ describe("collectTestResult", () => {
     const result = await collectTestResult("/tmp", { pattern: "--preload=evil.ts" })
     expect(result.ok).toBe(false)
     expect(result.error).toContain("not a CLI flag")
+  })
+
+  test("runs no test file outside the project, by relative, absolute or symlinked path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-test-tool-"))
+    try {
+      await mkdir(join(dir, "project"))
+      await writeFile(
+        join(dir, "outside.test.ts"),
+        'import { test } from "bun:test"\ntest("outside", () => console.log("RAN-OUTSIDE"))\n',
+      )
+      await symlink(dir, join(dir, "project/escape"))
+      for (const pattern of [
+        "../outside.test.ts",
+        "./../outside.test.ts",
+        join(dir, "outside.test.ts"),
+        "./escape/outside.test.ts",
+      ]) {
+        const result = await collectTestResult(join(dir, "project"), { pattern })
+        expect(result.ok).toBe(false)
+        expect(result.error).toContain("inside the selected project directory")
+        expect(result.stdout + result.stderr).not.toContain("RAN-OUTSIDE")
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   test("cancels an in-flight bun test process", async () => {

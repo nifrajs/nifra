@@ -1,3 +1,5 @@
+import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
+
 export interface TestToolArgs {
   readonly pattern?: unknown
   readonly timeoutMs?: unknown
@@ -28,7 +30,7 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_TIMEOUT_MS = 300_000
 const MAX_OUTPUT_CHARS = 12_000
 
-function normalizePattern(value: unknown): string | undefined {
+function normalizePattern(value: unknown, root: string): string | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value !== "string") throw new Error("pattern must be a string")
   const pattern = value.trim()
@@ -39,6 +41,9 @@ function normalizePattern(value: unknown): string | undefined {
   // `pattern` narrows test files; it is not a remote flag injection surface.
   if (pattern.startsWith("-"))
     throw new Error("pattern must be a file/path pattern, not a CLI flag")
+  // `bun test` runs any `./`, `../` or absolute path it is given, so a pattern stays inside the project.
+  if (resolveMcpProjectPath(root, pattern) === null)
+    throw new Error(mcpProjectPathError("pattern", pattern))
   return pattern
 }
 
@@ -89,7 +94,7 @@ export async function collectTestResult(
   let pattern: string | undefined
   let timeoutMs: number
   try {
-    pattern = normalizePattern(args.pattern)
+    pattern = normalizePattern(args.pattern, cwd)
     timeoutMs = normalizeTimeout(args.timeoutMs)
   } catch (err) {
     return {

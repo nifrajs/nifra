@@ -526,7 +526,8 @@ export function projectTools(
         properties: {
           pattern: {
             type: "string",
-            description: "Optional test file/path pattern passed as an argv item to `bun test`.",
+            description:
+              "Optional test file/path pattern inside the project, passed as an argv item to `bun test`.",
           },
           timeoutMs: {
             type: "number",
