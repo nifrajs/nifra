@@ -19,13 +19,15 @@ type LoadCb = (args: { path: string }) => Promise<{ contents: string }> | { cont
 
 const compile = async (path: string, generate: "dom" | "ssr"): Promise<string> => {
   let load: LoadCb | undefined
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a partial builder; setup calls only onLoad and onResolve.
   svelteBunPlugin(generate).setup({
     onLoad: (opts: { namespace?: string }, cb: LoadCb) => {
       if (opts.namespace === undefined) load = cb
     },
     onResolve: () => undefined,
   } as never)
-  return (await (load as LoadCb)({ path })).contents
+  if (load === undefined) throw new Error("the plugin registered no loader")
+  return (await load({ path })).contents
 }
 
 const dir = mkdtempSync(join(tmpdir(), "nifra-svelte-map-"))
