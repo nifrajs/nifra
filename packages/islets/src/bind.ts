@@ -10,7 +10,9 @@
  *   data-bind-text="count"                  textContent ← String(signal())
  *   data-bind-show="isOpen"                 hidden ← !signal()
  *   data-bind-class="active:isOpen,b:sigB"  classList.toggle per pair
- *   data-bind-attr="aria-expanded:isOpen"   setAttribute / removeAttribute (false/null remove)
+ *   data-bind-attr="aria-expanded:isOpen"   setAttribute / removeAttribute (false/null remove);
+ *                                           never an `on*` handler or `srcdoc`, and a URL attribute
+ *                                           takes only an http(s)/mailto/tel or relative URL
  *   data-bind-value="query"                 two-way <input>/<select>/<textarea> (input event)
  *   data-bind-on="click:inc,submit:save"    addEventListener per pair
  */
@@ -49,6 +51,29 @@ function pairs(spec: string): Array<[string, string]> {
     if (key.length > 0 && name.length > 0) out.push([key, name])
   }
   return out
+}
+
+// A bound value is data (often from island state the markup carries), so an attribute that would run
+// it as code, or navigate to it as a script URL, is refused.
+const CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
+const URL_ATTRIBUTES = new Set([
+  "href",
+  "src",
+  "action",
+  "formaction",
+  "xlink:href",
+  "poster",
+  "data",
+  "background",
+  "cite",
+  "ping",
+])
+const SAFE_URL = /^(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
+
+function bindableAttribute(attr: string): boolean {
+  if (!CODE_ATTRIBUTE.test(attr)) return true
+  warnOnce("attribute", attr)
+  return false
 }
 
 /** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
@@ -109,12 +134,15 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
 
   for (const el of root.querySelectorAll("[data-bind-attr]")) {
     for (const [attr, name] of pairs(el.getAttribute("data-bind-attr") ?? "")) {
+      if (!bindableAttribute(attr)) continue
       const s = signalOf(scope, name)
       if (s) {
+        const isUrl = URL_ATTRIBUTES.has(attr.toLowerCase())
         stops.push(
           effect(() => {
             const v = s()
             if (v === false || v === null || v === undefined) el.removeAttribute(attr)
+            else if (isUrl && !SAFE_URL.test(String(v).trim())) el.removeAttribute(attr)
             else el.setAttribute(attr, String(v))
           }),
         )

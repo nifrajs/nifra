@@ -49,6 +49,39 @@ describe("bindScope - the closed attribute set", () => {
     expect(el.getAttribute("aria-expanded")).toBeNull()
   })
 
+  test("attr: never binds an event handler or srcdoc, whatever the markup asks for", () => {
+    const query = signal<unknown>("document.title='PWNED'")
+    const el = new FakeElement({
+      "data-bind-attr": "ontoggle:query,ONCLICK:query,srcdoc:query,title:query",
+    })
+    bindScope(new FakeRoot([el]), scopeOf({ query }))
+    expect(el.getAttribute("ontoggle")).toBeNull()
+    expect(el.getAttribute("ONCLICK")).toBeNull()
+    expect(el.getAttribute("srcdoc")).toBeNull()
+    expect(el.getAttribute("title")).toBe("document.title='PWNED'")
+  })
+
+  test("attr: a URL attribute takes http(s), mailto, tel and relative URLs, never a script URL", () => {
+    const link = signal<unknown>("https://example.com/a")
+    const el = new FakeElement({ "data-bind-attr": "href:link" })
+    bindScope(new FakeRoot([el]), scopeOf({ link }))
+    expect(el.getAttribute("href")).toBe("https://example.com/a")
+    for (const safe of ["/docs?x=1", "#top", "page.html", "mailto:a@b.c", "./a:b"]) {
+      link.set(safe)
+      expect(el.getAttribute("href")).toBe(safe)
+    }
+    for (const unsafe of [
+      " javascript:alert(1)",
+      "JavaScript:alert(1)",
+      "java\tscript:x",
+      "data:text/html,x",
+      "vbscript:x",
+    ]) {
+      link.set(unsafe)
+      expect(el.getAttribute("href")).toBeNull()
+    }
+  })
+
   test("value: two-way - signal → input, input event → signal, no caret-jumping rewrite", () => {
     const q = signal("ada")
     const el = new FakeElement({ "data-bind-value": "q" })

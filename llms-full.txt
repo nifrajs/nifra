@@ -13060,7 +13060,7 @@ mountIslands() // idempotent - safe to call again after soft navigation
 | `data-bind-text="sig"` | `textContent ← String(sig())` |
 | `data-bind-show="sig"` | `hidden ← !sig()` |
 | `data-bind-class="active:isOpen,b:sigB"` | `classList.toggle` per pair |
-| `data-bind-attr="aria-expanded:isOpen"` | `setAttribute`; `false`/`null`/`undefined` removes |
+| `data-bind-attr="aria-expanded:isOpen"` | `setAttribute`; `false`/`null`/`undefined` removes. Never an `on*` handler or `srcdoc`; `href`/`src`/`action` and other URL attributes take only http(s), mailto, tel or relative URLs |
 | `data-bind-value="query"` | two-way `<input>`/`<select>`/`<textarea>` (`input` event) |
 | `data-bind-on="click:inc,submit:save"` | `addEventListener` per pair |
 
