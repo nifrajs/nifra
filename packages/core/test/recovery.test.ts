@@ -251,3 +251,30 @@ describe("app-level default onValidationError", () => {
     expect(kinds).toEqual(["body", "query"])
   })
 })
+
+describe("a throwing app-wide hook under listen()", () => {
+  test("answers a JSON 500 that carries none of the error, whatever NODE_ENV says", async () => {
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .onRequest((req) => {
+        if (new URL(req.url).pathname === "/boom") throw new Error("SECRET_IN_HOOK")
+      })
+      .onResponse((res, req) => {
+        if (new URL(req.url).pathname === "/rboom") throw new Error("SECRET_IN_RESPONSE_HOOK")
+        return res
+      })
+      .get("/boom", () => "ok")
+      .get("/rboom", () => "ok")
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      for (const path of ["/boom", "/rboom"]) {
+        const res = await fetch(`http://127.0.0.1:${running.port}${path}`)
+        const text = await res.text()
+        expect(res.status).toBe(500)
+        expect(res.headers.get("content-type")).toContain("application/json")
+        expect(text).not.toContain("SECRET")
+      }
+    } finally {
+      running.stop(true)
+    }
+  })
+})

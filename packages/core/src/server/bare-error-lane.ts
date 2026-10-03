@@ -63,11 +63,11 @@ export function emitRequestErrorLog(
   err: unknown,
   // Only the request line is read, so a lane with no context yet (a request no route matched) can
   // log through the same policy.
-  ctx: { readonly req: { readonly method: string; readonly url: string } },
+  // Absent for a failure the runtime reports without its request (Bun's serve `error` callback).
+  ctx: { readonly req: { readonly method: string; readonly url: string } } | undefined,
 ): void {
   logger.error("unhandled request error", {
-    method: ctx.req.method,
-    path: pathnameOf(ctx.req.url),
+    ...(ctx === undefined ? {} : { method: ctx.req.method, path: pathnameOf(ctx.req.url) }),
     name: err instanceof Error ? err.name : "Error",
     // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of
     // that name is silently overwritten and the thrown error's own text never reaches the sink. It

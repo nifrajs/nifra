@@ -6404,6 +6404,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ...(options?.hostname === undefined ? {} : { hostname: options.hostname }),
       ...(options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }),
       ...(options?.tls === undefined ? {} : { tls: options.tls }),
+      // A hook that throws rejects `fetch`; Bun's own answer to that is a development page carrying
+      // the message, stack and source whenever NODE_ENV is not "production".
+      error: (err: unknown) => {
+        emitRequestErrorLog(this.logger, this.errorLogDetail, err, undefined)
+        return jsonError(500, "internal_error")
+      },
     }
     const fallback: BunNativeHandler = (req, server) => {
       // Bun has already framed and bounded this request body in its HTTP parser. Mark the
