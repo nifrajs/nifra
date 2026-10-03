@@ -1,7 +1,8 @@
 /**
  * The server-enforced layers of `@nifrajs/mcp-db/postgres`: the read-only transaction with its
  * timeouts, the extended-protocol statement, the cursor, and the plan-level table scope. Nothing here
- * parses SQL - the refusals in this file come from the server.
+ * parses the caller's SQL - the refusals in this file come from the server, and the only text lexed
+ * is the expressions of the server's own verbose plan.
  *
  * Bun 1.4.2 sends `sql.unsafe(text)` and `sql.unsafe(text, [])` over the SIMPLE protocol, which runs
  * several `;`-separated statements. Only a tagged-template call (or `unsafe` with a non-empty value
@@ -10,6 +11,7 @@
  * {@link extended}; `unsafe` is used only for fixed text this file writes.
  */
 
+import { lexPostgres } from "./pg-lexer.ts"
 import { type DbRefusal, dbRefusal } from "./shared.ts"
 
 /** A pending query: awaitable for object rows, or `.values()` for array rows (checked by readers). */
@@ -133,21 +135,89 @@ export interface PlanRelation {
   readonly name: string
 }
 
+/** A column of a scanned relation that a plan expression names; `*` is a whole-row reference. */
+export interface PlanColumn {
+  readonly relation: PlanRelation
+  readonly column: string
+}
+
 /** What an `EXPLAIN (VERBOSE, FORMAT JSON)` plan reads, InitPlans and SubPlans included. */
 export interface PlanReads {
   readonly relations: readonly PlanRelation[]
   /** Functions in FROM (Function Scan nodes): a system view such as `pg_stat_activity` plans as one. */
   readonly functions: readonly PlanRelation[]
+  /**
+   * Every relation column an expression of the plan uses: output, filter, join, sort or index
+   * condition. A verbose plan qualifies each one with its scan's unique alias, so an alias or an
+   * expression in the query still names the column it reads.
+   */
+  readonly columns: readonly PlanColumn[]
+  /**
+   * Outputs left out of `columns` because they may be a physical target list: a node under an
+   * aggregate, join or result emitting plain columns of one relation. The planner emits every column
+   * there whether or not the parent uses it, and the parent's own expressions name what it does use.
+   * When the list is not the relation's full column list, it is exactly what was asked for and counts.
+   */
+  readonly outputs: readonly PlanOutput[]
 }
 
-/** Every relation and every FROM-clause function a verbose JSON plan scans. */
+/** Plain columns of one relation that a node outputs, as listed. */
+export interface PlanOutput {
+  readonly relation: PlanRelation
+  readonly columns: readonly string[]
+}
+
+// Nodes that pass their child's rows up unchanged: whether a child's output is used is decided above.
+const PASS_THROUGH_NODES = new Set([
+  "Limit",
+  "Sort",
+  "Incremental Sort",
+  "Material",
+  "Memoize",
+  "Hash",
+  "Gather",
+  "Gather Merge",
+  "Unique",
+  "LockRows",
+])
+
+// Nodes whose own expressions a verbose plan prints in terms of the base columns they use.
+const PROJECTING_NODES = new Set([
+  "Aggregate",
+  "Group",
+  "WindowAgg",
+  "Nested Loop",
+  "Hash Join",
+  "Merge Join",
+  "Result",
+  "ProjectSet",
+])
+
+// Fields that name a node or a relation rather than hold an expression.
+const PLAN_NAME_FIELDS = new Set([
+  "Node Type",
+  "Relation Name",
+  "Schema",
+  "Alias",
+  "Index Name",
+  "CTE Name",
+  "Function Name",
+  "Subplan Name",
+  "Parent Relationship",
+])
+
+/** Every relation and every FROM-clause function a verbose JSON plan scans, and the columns it uses. */
 export function planReads(plan: unknown): PlanReads {
   const relations = new Map<string, PlanRelation>()
   const functions = new Map<string, PlanRelation>()
-  const visit = (node: unknown, depth: number): void => {
+  const aliases = new Map<string, PlanRelation>()
+  const expressions: string[] = []
+  // Outputs under a projecting parent, resolved once every alias is known.
+  const underProjection: (readonly string[])[] = []
+  const visit = (node: unknown, depth: number, projected: boolean): void => {
     if (depth > 256 || typeof node !== "object" || node === null) return
     if (Array.isArray(node)) {
-      for (const item of node) visit(item, depth + 1)
+      for (const item of node) visit(item, depth + 1, projected)
       return
     }
     const field = (key: string): unknown => Reflect.get(node, key)
@@ -160,11 +230,82 @@ export function planReads(plan: unknown): PlanReads {
       const name = field(key)
       if (typeof name === "string") found.set(`${schema}.${name}`, { schema, name })
     }
-    visit(field("Plan"), depth + 1)
-    visit(field("Plans"), depth + 1)
+    const relation = field("Relation Name")
+    const alias = field("Alias")
+    if (typeof relation === "string") {
+      aliases.set(typeof alias === "string" ? alias : relation, { schema, name: relation })
+    }
+    // A SubPlan's or InitPlan's result reaches its parent as `(SubPlan n)`, not as base columns.
+    const role = field("Parent Relationship")
+    const own = projected && role !== "SubPlan" && role !== "InitPlan"
+    for (const [key, value] of Object.entries(node)) {
+      if (PLAN_NAME_FIELDS.has(key)) continue
+      if (typeof value === "string") expressions.push(value)
+      else if (Array.isArray(value)) {
+        const texts = value.filter((item): item is string => typeof item === "string")
+        if (key === "Output" && own) underProjection.push(texts)
+        else expressions.push(...texts)
+      }
+    }
+    const type = String(field("Node Type"))
+    visit(field("Plan"), depth + 1, false)
+    visit(
+      field("Plans"),
+      depth + 1,
+      PASS_THROUGH_NODES.has(type) ? own : PROJECTING_NODES.has(type),
+    )
   }
-  visit(plan, 0)
-  return { relations: [...relations.values()], functions: [...functions.values()] }
+  visit(plan, 0, false)
+
+  const outputs: PlanOutput[] = []
+  for (const list of underProjection) {
+    // Plain `alias.column` items of one relation (a dropped column shows as a NULL constant).
+    let relation: PlanRelation | undefined
+    const listed: string[] = []
+    for (const text of list) {
+      if (text.startsWith("NULL::")) continue
+      const tokens = lexPostgres(text).tokens
+      const [qualifier, dot, column] = tokens
+      const named = qualifier?.kind === "word" ? aliases.get(qualifier.value) : undefined
+      if (
+        tokens.length !== 3 ||
+        named === undefined ||
+        dot?.value !== "." ||
+        column?.kind !== "word" ||
+        (relation !== undefined && relation !== named)
+      ) {
+        relation = undefined
+        break
+      }
+      relation = named
+      listed.push(column.value)
+    }
+    if (relation !== undefined) outputs.push({ relation, columns: listed })
+    else expressions.push(...list)
+  }
+
+  const columns = new Map<string, PlanColumn>()
+  for (const text of expressions) {
+    const { tokens } = lexPostgres(text)
+    for (let i = 0; i + 2 < tokens.length; i++) {
+      const [qualifier, dot, column] = [tokens[i], tokens[i + 1], tokens[i + 2]]
+      if (qualifier?.kind !== "word" || dot?.kind !== "punct" || dot.value !== ".") continue
+      const relation = aliases.get(qualifier.value)
+      if (relation === undefined || column === undefined) continue
+      if (column.kind === "word" || (column.kind === "punct" && column.value === "*")) {
+        columns.set(`${relation.schema}.${relation.name}.${column.value}`, {
+          relation,
+          column: column.value,
+        })
+      }
+    }
+  }
+  return {
+    relations: [...relations.values()],
+    functions: [...functions.values()],
+    columns: [...columns.values()],
+    outputs,
+  }
 }
 
 /** The JSON document an `EXPLAIN (FORMAT JSON)` row carries, whatever the driver parsed it into. */

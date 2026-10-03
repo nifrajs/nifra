@@ -274,10 +274,11 @@ describe("query, explain, schema", () => {
     try {
       const rows = querySqlite(
         db,
-        "SELECT o.id, o.id, o.total, o.blob, u.password_hash FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.id",
+        "SELECT o.id, o.id, o.total, o.blob, u.email AS password_hash FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.id",
         { ...CAPS, redaction: { column: (name) => name === "password_hash" } },
       )
-      // The bounding subselect makes SQLite suffix a repeated name.
+      // The bounding subselect makes SQLite suffix a repeated name. A result column named like a
+      // masked one is masked even when what it holds is not.
       expect(rows).toEqual({
         columns: ["id", "id:1", "total", "blob", "password_hash"],
         rows: [
@@ -311,6 +312,71 @@ describe("query, explain, schema", () => {
       expect(isDbRefusal(virtual) && virtual.message).toContain("<virtual table>")
       const runtime = querySqlite(db, "SELECT json_extract('not json', '$')", CAPS)
       expect(isDbRefusal(runtime) ? runtime.code : runtime).toBe("NIFRA_DB_QUERY_FAILED")
+    } finally {
+      db.close()
+    }
+  })
+
+  test("a masked column is refused in every form the statement can read it", async () => {
+    const file = seededFile()
+    const writer = new Database(file)
+    writer.run("CREATE INDEX users_hash ON users (password_hash)")
+    writer.run("CREATE INDEX users_lower_hash ON users (lower(password_hash))")
+    writer.run("CREATE VIEW logins AS SELECT id, password_hash AS p FROM users")
+    writer.run(
+      "CREATE TABLE keys (k TEXT PRIMARY KEY, password_hash TEXT, note TEXT) WITHOUT ROWID",
+    )
+    writer.run(
+      "CREATE TABLE gen (id INTEGER PRIMARY KEY, password_hash TEXT, n INT GENERATED ALWAYS AS (length(password_hash)) VIRTUAL, note TEXT)",
+    )
+    writer.close()
+    const db = await openReadOnlySqlite(file)
+    const options = { ...CAPS, redaction: { column: (name: string) => name === "password_hash" } }
+    try {
+      for (const sql of [
+        "SELECT password_hash FROM users",
+        "SELECT password_hash AS p FROM users",
+        "SELECT upper(password_hash) FROM users",
+        "SELECT hex(password_hash) AS h FROM users",
+        "SELECT json_object('p', password_hash) FROM users",
+        "SELECT group_concat(password_hash) FROM users",
+        "SELECT id FROM users WHERE password_hash LIKE 'h%'",
+        "SELECT id FROM users WHERE password_hash = 'hash'",
+        "SELECT count(*) FROM users WHERE password_hash > 'a'",
+        "SELECT id FROM users WHERE lower(password_hash) = 'hash'",
+        "SELECT p FROM logins",
+        "SELECT * FROM users",
+        "SELECT (SELECT password_hash FROM users LIMIT 1)",
+        "WITH c AS (SELECT password_hash AS q FROM users) SELECT q FROM c",
+        "SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id AND u.password_hash = 'hash'",
+        "SELECT password_hash FROM keys",
+        "SELECT note FROM keys WHERE password_hash = 'x'",
+        "SELECT n FROM gen",
+      ]) {
+        const result = querySqlite(db, sql, options)
+        expect({ sql, code: isDbRefusal(result) ? result.code : "rows" }).toEqual({
+          sql,
+          code: "NIFRA_DB_COLUMN_REFUSED",
+        })
+      }
+      const refused = querySqlite(db, "SELECT password_hash AS p FROM users", options)
+      expect(isDbRefusal(refused) && refused.message).toContain("users.password_hash")
+      for (const sql of [
+        "SELECT id, email FROM users",
+        "SELECT count(*) FROM users",
+        "SELECT email FROM users WHERE email = 'a@example.com'",
+        "SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id",
+        "SELECT note FROM keys WHERE k = 'a'",
+        "SELECT note FROM gen",
+      ]) {
+        expect({ sql, refused: isDbRefusal(querySqlite(db, sql, options)) }).toEqual({
+          sql,
+          refused: false,
+        })
+      }
+      expect(querySqlite(db, "SELECT password_hash FROM users", CAPS)).toMatchObject({
+        rows: [["hash"]],
+      })
     } finally {
       db.close()
     }

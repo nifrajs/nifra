@@ -15,6 +15,7 @@ const CODES: Record<DbRefusalCode, true> = {
   NIFRA_DB_WRITE_REFUSED: true,
   NIFRA_DB_FUNCTION_REFUSED: true,
   NIFRA_DB_TABLE_EXCLUDED: true,
+  NIFRA_DB_COLUMN_REFUSED: true,
   NIFRA_DB_TIMEOUT: true,
   NIFRA_DB_QUERY_FAILED: true,
   NIFRA_DB_DRIVER: true,

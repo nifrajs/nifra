@@ -44,8 +44,12 @@ if ("code" in result) console.error(result.code, result.fix)
 - A query must be one SELECT (or WITH ... SELECT). Every table its compiled bytecode opens must be
   exposed (all tables and views minus `exclude`): views read as their base tables, an alias cannot hide
   a table, and `sqlite_master`, virtual tables and table-valued functions are never exposed.
+- With `redaction`, a query that reads a column `redaction.column` matches is refused
+  (`NIFRA_DB_COLUMN_REFUSED`) wherever the compiled statement reads it: selected under another name,
+  inside an expression, in a filter or an index seek, or through a view. Strings go through
+  `redaction.text`.
 - Results are capped by rows and bytes, bigints beyond 2^53 come back as strings, blobs as
-  `<n bytes>`, and `redaction` masks columns and scrubs strings.
+  `<n bytes>`.
 - Every refusal is a `DbRefusal`: a stable `NIFRA_DB_*` code, a message, a fix and a docs anchor.
 
 ## Postgres: `@nifrajs/mcp-db/postgres`
@@ -88,7 +92,9 @@ Each layer refuses on its own, in this order:
    of `maxRows + 1` rows.
 6. **Plan scope.** Every relation in the `EXPLAIN (VERBOSE)` plan, every table it inherits from, and
    every `pg_catalog` function scanned in FROM must sit in `schemas` (default `public`) and outside
-   `exclude`.
+   `exclude`. With `redaction`, a column `redaction.column` matches that any plan expression uses
+   (output, filter, join, sort or index condition), or a whole row holding one, is refused
+   (`NIFRA_DB_COLUMN_REFUSED`).
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`

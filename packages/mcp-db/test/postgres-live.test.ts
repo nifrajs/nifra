@@ -427,7 +427,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     const reader = engineClient(ROLE.reader)
     const rows = await queryPostgres(
       reader,
-      "SELECT o.id, o.id, o.total, o.blob, o.placed, u.password_hash, u.note FROM orders o CROSS JOIN users u ORDER BY o.id;",
+      "SELECT o.id, o.id, o.total, o.blob, o.placed, 'shown' AS password_hash, u.note FROM orders o CROSS JOIN users u ORDER BY o.id;",
       {
         ...OPTIONS,
         redaction: {
@@ -452,6 +452,42 @@ describe.skipIf(SKIP)(SUITE, () => {
     expect(capped).toMatchObject({ rowCount: 50, truncated: true })
     const view = await queryPostgres(reader, "SELECT * FROM order_summary ORDER BY status", OPTIONS)
     expect(view).toMatchObject({ columns: ["status", "n"], rowCount: 2 })
+  })
+
+  test("a masked column is refused wherever the plan uses it, and only then", async () => {
+    const reader = engineClient(ROLE.reader)
+    const masked = { ...OPTIONS, redaction: { column: (name: string) => name === "password_hash" } }
+    for (const sql of [
+      "SELECT password_hash FROM users",
+      "SELECT password_hash AS p FROM users",
+      "SELECT upper(u.password_hash) FROM users u",
+      "SELECT row_to_json(u) FROM users u",
+      "SELECT u::text FROM users u",
+      "SELECT id FROM users WHERE password_hash LIKE 'h%'",
+      "SELECT string_agg(password_hash, ',') FROM users",
+      "SELECT * FROM users",
+      "SELECT (SELECT password_hash FROM users LIMIT 1)",
+      "WITH c AS MATERIALIZED (SELECT password_hash AS q FROM users) SELECT q FROM c",
+      "SELECT o.id FROM orders o JOIN users u ON u.password_hash = 'x'",
+      "SELECT note FROM users UNION ALL SELECT password_hash FROM users",
+      "SELECT id FROM users ORDER BY password_hash LIMIT 1",
+    ]) {
+      expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_COLUMN_REFUSED",
+      })
+    }
+    for (const sql of [
+      "SELECT count(*) FROM users",
+      "SELECT note, count(*) FROM users GROUP BY note",
+      "SELECT o.id FROM orders o CROSS JOIN users u",
+      "SELECT note FROM users WHERE note IS NOT NULL",
+    ]) {
+      expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
+        sql,
+        code: undefined,
+      })
+    }
   })
 
   test("a role with no grants is refused by the server's privileges", async () => {

@@ -209,17 +209,24 @@ describe("one operation, in process", () => {
       "orders",
       "users",
     ])
-    const query = await runDbOperation(root, { op: "query", sql: "SELECT * FROM users" }, db)
+    const query = await runDbOperation(
+      root,
+      { op: "query", sql: "SELECT id, email, bio FROM users" },
+      db,
+    )
     if (!query.ok) throw new Error(query.refusal.message)
-    expect(query.rows?.columns).toEqual(["id", "email", "password_hash", "api_token", "bio"])
-    expect(query.rows?.rows[0]).toEqual([
-      1,
-      "a@example.com",
-      "[redacted]",
-      "[redacted]",
-      "jwt [redacted:JWT]",
-    ])
-    expect(query.rows?.redactedColumns).toEqual(["password_hash", "api_token"])
+    expect(query.rows?.columns).toEqual(["id", "email", "bio"])
+    expect(query.rows?.rows[0]).toEqual([1, "a@example.com", "jwt [redacted:JWT]"])
+    expect(query.rows?.redactedColumns).toEqual([])
+    // A credential name and a redactColumns entry are refused, even under another name.
+    for (const sql of [
+      "SELECT * FROM users",
+      "SELECT password_hash AS p, api_token AS t FROM users",
+    ]) {
+      const masked = await runDbOperation(root, { op: "query", sql }, db)
+      expect(masked).toMatchObject({ ok: false, refusal: { code: "NIFRA_DB_COLUMN_REFUSED" } })
+      expect(!masked.ok && masked.refusal.message).toContain("users.password_hash, users.api_token")
+    }
     const explain = await runDbOperation(root, { op: "explain", sql: "SELECT * FROM orders" }, db)
     expect(explain.ok && JSON.stringify(explain.plan?.plan)).toContain("SCAN orders")
     expect(await runDbOperation(root, { op: "role" }, db)).toMatchObject({
@@ -439,14 +446,14 @@ describe("a fresh subprocess per call", () => {
       { columns: ["user_id"], references: { table: "users", columns: ["id"] } },
     ])
     const rows = await dbQuerySpec.run(
-      { sql: `SELECT id, bio, api_token FROM users WHERE bio <> '${JWT}'` },
+      { sql: `SELECT id, bio FROM users WHERE bio <> '${JWT}'` },
       ctx(root),
     )
     expect(rows).toMatchObject({
       ok: true,
       tool: "query",
-      columns: ["id", "bio", "api_token"],
-      rows: [[1, "jwt [redacted:JWT]", "[redacted]"]],
+      columns: ["id", "bio"],
+      rows: [[1, "jwt [redacted:JWT]"]],
       untrusted: true,
       note: DB_ROWS_NOTE,
     })
@@ -467,7 +474,7 @@ describe("a fresh subprocess per call", () => {
     ])
     expect(readDbAudit(root, 10).find((item) => item.tool === "query" && item.ok)).toMatchObject({
       rowCount: 1,
-      sql: "SELECT id, bio, api_token FROM users WHERE bio <> '[redacted:JWT]'",
+      sql: "SELECT id, bio FROM users WHERE bio <> '[redacted:JWT]'",
     })
   })
 
@@ -805,7 +812,7 @@ describe.skipIf(PG_URL === "")(
       }
     })
 
-    test("a read-only role: schema, masked rows, plans, refusals and the server timeout", async () => {
+    test("a read-only role: schema, rows, a masked column refused, plans, refusals and the server timeout", async () => {
       const schema = await dbSchemaSpec.run({}, ctx(reader))
       expect(schema).toMatchObject({
         ok: true,
@@ -814,16 +821,16 @@ describe.skipIf(PG_URL === "")(
         untrusted: true,
       })
       expect(schema.tables?.map((table) => table.name)).toEqual(["accounts"])
-      const rows = await dbQuerySpec.run(
-        { sql: "SELECT email, password_hash, note FROM accounts" },
-        ctx(reader),
-      )
+      const rows = await dbQuerySpec.run({ sql: "SELECT email, note FROM accounts" }, ctx(reader))
       expect(rows).toMatchObject({
         ok: true,
-        rows: [["a@example.com", "[redacted]", "jwt [redacted:JWT]"]],
-        redactedColumns: ["password_hash"],
+        rows: [["a@example.com", "jwt [redacted:JWT]"]],
+        redactedColumns: [],
         untrusted: true,
       })
+      expect(
+        await dbQuerySpec.run({ sql: "SELECT upper(password_hash) FROM accounts" }, ctx(reader)),
+      ).toMatchObject({ refusal: { code: "NIFRA_DB_COLUMN_REFUSED" } })
       const plan = await dbQuerySpec.run(
         { sql: "SELECT count(*) FROM accounts", analyze: true, explain: true },
         ctx(reader),

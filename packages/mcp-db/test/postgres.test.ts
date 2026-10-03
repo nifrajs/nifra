@@ -319,6 +319,8 @@ describe("plans", () => {
         { schema: "", name: "nameless" },
       ],
       functions: [{ schema: "pg_catalog", name: "generate_series" }],
+      columns: [],
+      outputs: [],
     })
     let deep: unknown = { "Relation Name": "deep", Schema: "public" }
     for (let level = 0; level < 300; level++) deep = { Plan: deep }
@@ -326,6 +328,71 @@ describe("plans", () => {
     expect(planDocument([{ "QUERY PLAN": '[{"Plan":{}}]' }])).toEqual([{ Plan: {} }])
     expect(planDocument([{ "QUERY PLAN": [{ Plan: {} }] }])).toEqual([{ Plan: {} }])
     expect(planDocument([])).toBeUndefined()
+  })
+
+  test("planReads names the columns plan expressions use, by their scan's alias", () => {
+    const users = { schema: "public", name: "users" }
+    const scan = (alias: string, output: string[], extra: Record<string, unknown> = {}) => ({
+      "Node Type": "Seq Scan",
+      "Relation Name": "users",
+      Schema: "public",
+      Alias: alias,
+      Output: output,
+      ...extra,
+    })
+    const all = ["u.id", "u.email", "u.password"]
+    // An aggregate over a physical target list: the scan's output is deferred, the parent's counts.
+    const counted = planReads([
+      {
+        Plan: {
+          "Node Type": "Aggregate",
+          Output: ["string_agg(u.password, ','::text)"],
+          Plans: [{ "Node Type": "Gather", Output: all, Plans: [scan("u", all)] }],
+        },
+      },
+    ])
+    expect(counted.columns).toEqual([{ relation: users, column: "password" }])
+    expect(counted.outputs).toEqual([
+      { relation: users, columns: ["id", "email", "password"] },
+      { relation: users, columns: ["id", "email", "password"] },
+    ])
+    // A union child's output and a SubPlan's are what the query asked for: they count.
+    const union = planReads([
+      {
+        Plan: {
+          "Node Type": "Append",
+          Output: ["u.id", "u.email"],
+          Plans: [
+            scan("u", ["u.id", "u.email"]),
+            scan("u_1", ["u_1.id", "u_1.password"], { Filter: '("u_1"."email" ~~ \'a%\'::text)' }),
+          ],
+        },
+      },
+    ])
+    expect(union.outputs).toEqual([])
+    expect(union.columns.map((c) => c.column).sort()).toEqual(["email", "id", "password"])
+    const sub = planReads([
+      {
+        Plan: {
+          "Node Type": "Result",
+          Output: ["(SubPlan 1)"],
+          Plans: [scan("u", ["u.password"], { "Parent Relationship": "SubPlan" })],
+        },
+      },
+    ])
+    expect(sub.columns).toEqual([{ relation: users, column: "password" }])
+    // A whole-row reference, a string that merely spells a column, and an alias that is not a scan.
+    const whole = planReads([
+      {
+        Plan: {
+          "Node Type": "Subquery Scan",
+          Alias: "q",
+          Output: ["row_to_json(u.*)", "'u.password'::text", "q.password"],
+          Plans: [scan("u", all, { "Parent Relationship": "Subquery" })],
+        },
+      },
+    ])
+    expect(whole.columns.map((c) => c.column).sort()).toEqual(["*", "email", "id", "password"])
   })
 })
 

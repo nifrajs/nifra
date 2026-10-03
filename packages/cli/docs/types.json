@@ -2627,7 +2627,7 @@
     "name": "BuildDiagnosticOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildDiagnosticOptions {\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    };\n    /** Project root; frames outside it are treated as non-user. Defaults to `process.cwd()`. */\n    readonly root?: string;\n    /** Injectable source reader (tests pass a fake; production reads the filesystem). */\n    readonly read?: SourceReader;\n    /** Whether a file's source may appear in the codeframe. The overlay is served to a browser, so a dev\n     * server passes the zone check here and backend source never renders in it. */\n    readonly showSource?: (file: string) => boolean;\n    /** A frame's authored position when its file was compiled by a plugin whose map the runtime did not\n     * apply (Bun ignores a plugin's inline map), so a compiled line never lands in the codeframe. */\n    readonly remap?: (file: string, line: number, column: number) => {\n        readonly line: number;\n        readonly column: number;\n    } | undefined;\n}"
+    "signature": "export interface BuildDiagnosticOptions {\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    };\n    /** Project root; frames outside it are treated as non-user. Defaults to `process.cwd()`. */\n    readonly root?: string;\n    /** Injectable source reader (tests pass a fake; production reads the filesystem). */\n    readonly read?: SourceReader;\n    /** Whether a file's source may appear in the codeframe, given the path the codeframe would read. The\n     * overlay is served to a browser, so a dev server passes the zone check here and backend source never\n     * renders in it. */\n    readonly showSource?: (file: string) => boolean;\n    /** A frame's authored position when its file was compiled by a plugin whose map the runtime did not\n     * apply (Bun ignores a plugin's inline map), so a compiled line never lands in the codeframe. */\n    readonly remap?: (file: string, line: number, column: number) => {\n        readonly line: number;\n        readonly column: number;\n    } | undefined;\n}"
   },
   {
     "name": "buildFailureDetail",
@@ -5809,7 +5809,7 @@
     "name": "DbRefusalCode",
     "kind": "type",
     "package": "@nifrajs/mcp-db",
-    "signature": "export type DbRefusalCode = \"NIFRA_DB_NOT_DECLARED\" | \"NIFRA_DB_CONFIG\" | \"NIFRA_DB_OUTSIDE_ROOT\" | \"NIFRA_DB_REMOTE_HOST\" | \"NIFRA_DB_SUPERUSER\" | \"NIFRA_DB_EXTENSION\" | \"NIFRA_DB_QUERY_OFF\" | \"NIFRA_DB_WRITE_REFUSED\" | \"NIFRA_DB_FUNCTION_REFUSED\" | \"NIFRA_DB_TABLE_EXCLUDED\" | \"NIFRA_DB_TIMEOUT\" | \"NIFRA_DB_QUERY_FAILED\" | \"NIFRA_DB_DRIVER\";",
+    "signature": "export type DbRefusalCode = \"NIFRA_DB_NOT_DECLARED\" | \"NIFRA_DB_CONFIG\" | \"NIFRA_DB_OUTSIDE_ROOT\" | \"NIFRA_DB_REMOTE_HOST\" | \"NIFRA_DB_SUPERUSER\" | \"NIFRA_DB_EXTENSION\" | \"NIFRA_DB_QUERY_OFF\" | \"NIFRA_DB_WRITE_REFUSED\" | \"NIFRA_DB_FUNCTION_REFUSED\" | \"NIFRA_DB_TABLE_EXCLUDED\" | \"NIFRA_DB_COLUMN_REFUSED\" | \"NIFRA_DB_TIMEOUT\" | \"NIFRA_DB_QUERY_FAILED\" | \"NIFRA_DB_DRIVER\";",
     "doc": "/** Every reason a database call is refused or fails, as a stable code. */"
   },
   {
@@ -15060,14 +15060,14 @@
     "kind": "function",
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function queryPostgres(client: PostgresClient, sql: string, options: PostgresQueryOptions): Promise<DbRows | DbRefusal>;",
-    "doc": "/** Run one read-only query through every layer and return capped, masked rows. */"
+    "doc": "/**\n * Run one read-only query through every layer and return capped rows. A column `redaction.column`\n * masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a\n * filter, or within a whole row); a matching result name is masked as well.\n */"
   },
   {
     "name": "querySqlite",
     "kind": "function",
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function querySqlite(db: Pick<Database, \"prepare\">, sql: string, options: SqliteQueryOptions): DbRows | DbRefusal;",
-    "doc": "/**\n * Run one read-only query: the statement gates, the check that every table its bytecode opens is\n * exposed (every table and view minus `exclude`), then at most `maxRows + 1` rows through\n * {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each\n * call in its own subprocess, killed at the deadline).\n */"
+    "doc": "/**\n * Run one read-only query: the statement gates, the check that every table its bytecode opens is\n * exposed (every table and view minus `exclude`), the refusal of any column `redaction.column`\n * masks that the bytecode reads in any form, then at most `maxRows + 1` rows through\n * {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each\n * call in its own subprocess, killed at the deadline).\n */"
   },
   {
     "name": "QueryState",

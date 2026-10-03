@@ -227,6 +227,7 @@ function verifySqlite(
   db: Pick<Database, "prepare">,
   sql: string,
   exclude: readonly string[] | undefined,
+  masked?: (column: string) => boolean,
 ): Verified {
   const { all, exposed } = sqliteRelations(db, exclude)
   const unexposed = (relation: string): DbRefusal =>
@@ -242,17 +243,148 @@ function verifySqlite(
     if (gate.reason === "unexposed") return unexposed(gate.relation ?? "")
     return dbRefusal("NIFRA_DB_WRITE_REFUSED", GATE_MESSAGES[gate.reason])
   }
-  let reads: string[]
+  let reads: BytecodeReads
   try {
-    reads = bytecodeReads(db, gate.query)
+    reads = bytecodeReads(db, gate.query, masked)
   } catch (error) {
     return sqliteFailure(error, "query failed to plan")
   }
-  const relation = reads.find((name) => !exposed.has(name.toLowerCase()))
-  return relation === undefined ? { ok: true, query: gate.query } : unexposed(relation)
+  const relation = reads.tables.find((name) => !exposed.has(name.toLowerCase()))
+  if (relation !== undefined) return unexposed(relation)
+  if (reads.masked.length > 0) {
+    return dbRefusal(
+      "NIFRA_DB_COLUMN_REFUSED",
+      `the query reads ${reads.masked.join(", ")}, masked as ${reads.masked.length === 1 ? "a credential" : "credentials"}`,
+    )
+  }
+  return { ok: true, query: gate.query }
 }
 
 const READ_OPCODES = new Set(["OpenRead", "ReopenIdx", "OpenWrite", "VOpen"])
+
+// Each compares a cursor's leading key fields (P4 of them, all when P4 is not a count) with values.
+const KEY_COMPARE_OPCODES = new Set([
+  "SeekGE",
+  "SeekGT",
+  "SeekLE",
+  "SeekLT",
+  "IdxGE",
+  "IdxGT",
+  "IdxLE",
+  "IdxLT",
+  "Found",
+  "NotFound",
+  "NoConflict",
+  "IfNoHope",
+])
+const ROWID_OPCODES = new Set(["Rowid", "SeekRowid", "NotExists", "IdxRowid"])
+
+interface BytecodeReads {
+  readonly tables: readonly string[]
+  /** Masked columns the statement reads, filters on or compares, as `table.column`. */
+  readonly masked: readonly string[]
+}
+
+interface ProgramStep {
+  readonly opcode: string
+  readonly p1: number | bigint
+  readonly p2: number | bigint
+  readonly p3: number | bigint
+  readonly p4: unknown
+}
+
+interface CatalogEntry {
+  readonly type: string
+  readonly name: string
+  readonly table: string
+  readonly sql: string | null
+}
+
+/** What a cursor's record holds: the columns each field position reads, and how many lead as key. */
+interface CursorLayout {
+  readonly table: string
+  readonly fields: readonly (readonly string[])[]
+  readonly keyCount: number
+  /** The INTEGER PRIMARY KEY column the rowid is, if the table has one. */
+  readonly rowid: string | undefined
+}
+
+/**
+ * The record layout behind a cursor on `entry`, from SQLite's own catalog. A rowid table stores its
+ * non-virtual columns in order, then its virtual ones; a WITHOUT ROWID table and an index store the
+ * fields `pragma_index_xinfo` lists. An expression field reads every column its index SQL names.
+ */
+function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): CursorLayout {
+  const columns = db
+    .prepare<
+      { name: string; type: string; pk: number | bigint; hidden: number | bigint },
+      [string]
+    >("SELECT name, type, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid")
+    .all(entry.table)
+  let withoutRowid: boolean
+  try {
+    withoutRowid =
+      Number(
+        db
+          .prepare<{ wr: number | bigint }, [string]>(
+            "SELECT wr FROM pragma_table_list WHERE schema = 'main' AND name = ?",
+          )
+          .get(entry.table)?.wr ?? 0,
+      ) === 1
+  } catch {
+    // pragma_table_list is SQLite 3.37+; Bun on macOS links the system library, which can be older.
+    const created = db
+      .prepare<{ sql: string | null }, [string]>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
+      .get(entry.table)?.sql
+    withoutRowid = /\)\s*(?:STRICT\s*,\s*)?WITHOUT\s+ROWID\b/i.test(created ?? "")
+  }
+  const keys = columns.filter((column) => Number(column.pk) > 0)
+  const rowid =
+    !withoutRowid && keys.length === 1 && keys[0]?.type.toUpperCase() === "INTEGER"
+      ? keys[0].name
+      : undefined
+  let index = entry.type === "index" ? entry.name : undefined
+  if (entry.type === "table" && withoutRowid) {
+    index = db
+      .prepare<{ name: string }, [string]>(
+        "SELECT name FROM pragma_index_list(?) WHERE origin = 'pk'",
+      )
+      .get(entry.table)?.name
+  }
+  if (index === undefined) {
+    const stored = [
+      ...columns.filter((column) => Number(column.hidden) !== 2),
+      ...columns.filter((column) => Number(column.hidden) === 2),
+    ]
+    return { table: entry.table, fields: stored.map((column) => [column.name]), keyCount: 0, rowid }
+  }
+  // A substring match can only over-count: an expression field then reads one column too many.
+  const source = (entry.sql ?? "").toLowerCase()
+  const named = columns
+    .map((column) => column.name)
+    .filter((name) => source.includes(name.toLowerCase()))
+  const xinfo = db
+    .prepare<{ cid: number | bigint; name: string | null; key: number | bigint }, [string]>(
+      "SELECT cid, name, key FROM pragma_index_xinfo(?) ORDER BY seqno",
+    )
+    .all(index)
+  return {
+    table: entry.table,
+    fields: xinfo.map((field) =>
+      field.name !== null
+        ? [field.name]
+        : Number(field.cid) === -1
+          ? rowid === undefined
+            ? []
+            : [rowid]
+          : named,
+    ),
+    keyCount: xinfo.filter((field) => Number(field.key) === 1).length,
+    rowid,
+  }
+}
 
 /**
  * The tables a statement's bytecode opens, mapped from each cursor's root page through
@@ -260,36 +392,78 @@ const READ_OPCODES = new Set(["OpenRead", "ReopenIdx", "OpenWrite", "VOpen"])
  * would print `SCAN o` for `orders AS o`), and an index read counts as a read of its table. Root
  * page 1 is `sqlite_master` itself; a cursor on another schema (temp, attached) or a virtual table
  * (`pragma_*`, `dbstat`, `json_each`) is never exposed.
+ *
+ * With `masked`, also every masked column a cursor on a table or index yields (`Column`), compares
+ * (a seek or index range check, so a filter counts) or reads as the rowid. Values the statement
+ * derives from those reads live in other cursors and registers, so an alias or an expression
+ * cannot hide the column it started from.
  */
-function bytecodeReads(db: Pick<Database, "prepare">, query: string): string[] {
-  const pages = new Map<number, string>([[1, "sqlite_master"]])
+function bytecodeReads(
+  db: Pick<Database, "prepare">,
+  query: string,
+  masked?: (column: string) => boolean,
+): BytecodeReads {
+  const pages = new Map<number, CatalogEntry>([
+    [1, { type: "table", name: "sqlite_master", table: "sqlite_master", sql: null }],
+  ])
   const catalog = db
-    .prepare<{ name: string; rootpage: number | bigint }, []>(
-      "SELECT tbl_name AS name, rootpage FROM sqlite_master WHERE rootpage > 0",
+    .prepare<CatalogEntry & { rootpage: number | bigint }, []>(
+      'SELECT type, name, tbl_name AS "table", rootpage, sql FROM sqlite_master WHERE rootpage > 0',
     )
     .all()
-  for (const entry of catalog) pages.set(Number(entry.rootpage), entry.name)
-  const program = db
-    .prepare<{ opcode: string; p2: number | bigint; p3: number | bigint }, []>(`EXPLAIN ${query}`)
-    .all()
+  for (const entry of catalog) pages.set(Number(entry.rootpage), entry)
+  const program = db.prepare<ProgramStep, []>(`EXPLAIN ${query}`).all()
   const reads = new Set<string>()
+  const cursors = new Map<number, CatalogEntry>()
   for (const step of program) {
     if (!READ_OPCODES.has(step.opcode)) continue
     const page = Number(step.p2)
+    const entry = Number(step.p3) === 0 ? pages.get(page) : undefined
+    if (entry !== undefined && step.opcode !== "VOpen") cursors.set(Number(step.p1), entry)
     reads.add(
       step.opcode === "VOpen"
         ? "<virtual table>"
         : Number(step.p3) === 0
-          ? (pages.get(page) ?? `<root page ${page}>`)
+          ? (entry?.table ?? `<root page ${page}>`)
           : `<schema ${step.p3}>`,
     )
   }
-  return [...reads]
+  if (masked === undefined) return { tables: [...reads], masked: [] }
+
+  const layouts = new Map<number, CursorLayout>()
+  const layoutOf = (cursor: number): CursorLayout | undefined => {
+    const entry = cursors.get(cursor)
+    if (entry === undefined || entry.name === "sqlite_master") return undefined
+    let layout = layouts.get(cursor)
+    if (layout === undefined) {
+      layout = cursorLayout(db, entry)
+      layouts.set(cursor, layout)
+    }
+    return layout
+  }
+  const hits = new Set<string>()
+  const read = (layout: CursorLayout, names: readonly string[]): void => {
+    for (const name of names) if (masked(name)) hits.add(`${layout.table}.${name}`)
+  }
+  for (const step of program) {
+    const layout = layoutOf(Number(step.p1))
+    if (layout === undefined) continue
+    if (step.opcode === "Column") read(layout, layout.fields[Number(step.p2)] ?? [])
+    else if (KEY_COMPARE_OPCODES.has(step.opcode)) {
+      const count = Number(step.p4)
+      const compared = Number.isInteger(count) && count > 0 ? count : layout.keyCount
+      for (const field of layout.fields.slice(0, compared)) read(layout, field)
+    } else if (ROWID_OPCODES.has(step.opcode) && layout.rowid !== undefined) {
+      read(layout, [layout.rowid])
+    }
+  }
+  return { tables: [...reads], masked: [...hits] }
 }
 
 /**
  * Run one read-only query: the statement gates, the check that every table its bytecode opens is
- * exposed (every table and view minus `exclude`), then at most `maxRows + 1` rows through
+ * exposed (every table and view minus `exclude`), the refusal of any column `redaction.column`
+ * masks that the bytecode reads in any form, then at most `maxRows + 1` rows through
  * {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each
  * call in its own subprocess, killed at the deadline).
  */
@@ -298,7 +472,7 @@ export function querySqlite(
   sql: string,
   options: SqliteQueryOptions,
 ): DbRows | DbRefusal {
-  const verified = verifySqlite(db, sql, options.exclude)
+  const verified = verifySqlite(db, sql, options.exclude, options.redaction?.column)
   if (!("ok" in verified)) return verified
   try {
     const statement = db.prepare(boundedSqliteQuery(verified.query, options.maxRows))

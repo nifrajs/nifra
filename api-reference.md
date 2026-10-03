@@ -3787,7 +3787,7 @@ _No named exports (side-effect entrypoint)._
 - **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>`
   Open a SQLite file read-only: the `readonly` flag plus `PRAGMA query_only = ON`.
 - **querySqlite** _(function)_ - `querySqlite: (db: Pick<Database, "prepare">, sql: string, options: SqliteQueryOptions) => DbRows | DbRefusal`
-  Run one read-only query: the statement gates, the check that every table its bytecode opens is exposed (every table and view minus `exclude`), then at most `maxRows + 1` rows through {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each call in its own subp…
+  Run one read-only query: the statement gates, the check that every table its bytecode opens is exposed (every table and view minus `exclude`), the refusal of any column `redaction.column` masks that the bytecode reads in any form, then at most `maxRows + 1` rows through {@link shapeRows}. Synchrono…
 - **readSqliteSchema** _(function)_ - `readSqliteSchema: (db: Pick<Database, "prepare">, options?: SqliteSchemaOptions) => DbSchemaReport | DbRefusal`
   Describe the exposed tables and views from SQLite's own catalog (`sqlite_master` and the `pragma_*` table functions, each bound by parameter): columns, primary key, foreign keys, indexes, and a row count per table.
 - **resolveSqliteFile** _(function)_ - `resolveSqliteFile: (root: string, file: string, allowFiles?: readonly string[]) => string | DbRefusal`
@@ -3844,7 +3844,7 @@ _No named exports (side-effect entrypoint)._
 - **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
   Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data` on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would override a…
 - **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
-  Run one read-only query through every layer and return capped, masked rows.
+  Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name is masked as well.
 - **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`
   Describe the readable tables and views in the allowed schemas from `pg_catalog`, with queries this module writes (no caller SQL runs), so it works on any role: columns, primary keys, foreign keys, indexes and the planner's row estimate.
 

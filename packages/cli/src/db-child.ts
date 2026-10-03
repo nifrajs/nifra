@@ -72,8 +72,8 @@ export type DbChildMessage =
 const lower = (name: string): string => name.toLowerCase()
 
 /**
- * Column masking (the credential-name classifier, plus `redactColumns`, minus `revealColumns`) and
- * the dev feed's text redactor for every string value.
+ * The masked columns a query may not read (the credential-name classifier, plus `redactColumns`,
+ * minus `revealColumns`) and the dev feed's text redactor for every string value.
  */
 export function dbRedaction(
   root: string,

@@ -342,8 +342,9 @@ function scopeMatcher(scope: PostgresScope): (relation: PlanRelation) => string 
  * The plan-level table check: each relation, and every table it inherits from (partitions too). A
  * `pg_*` function in FROM reads server state the way a catalog does - a system view such as
  * `pg_stat_activity` plans as one once the planner drops its catalog joins - so it is out of scope too.
+ * With `masked`, a plan expression that uses a masked column, or a whole row holding one, is refused.
  */
-function checkScope(scope: PostgresScope) {
+function checkScope(scope: PostgresScope, masked?: (column: string) => boolean) {
   const outOfScope = scopeMatcher(scope)
   return async (connection: PgConnection, reads: PlanReads): Promise<DbRefusal | undefined> => {
     for (const fn of reads.functions) {
@@ -385,7 +386,47 @@ function checkScope(scope: PostgresScope) {
       const reason = outOfScope({ schema: String(row.schema), name: String(row.name) })
       if (reason !== undefined) return dbRefusal("NIFRA_DB_TABLE_EXCLUDED", reason)
     }
-    return undefined
+    if (masked === undefined) return undefined
+    const hits = new Set<string>()
+    const wholeRows: PlanRelation[] = []
+    for (const { relation, column } of reads.columns) {
+      if (column === "*") wholeRows.push(relation)
+      else if (masked(column)) hits.add(`${relation.name}.${column}`)
+    }
+    const listed = [...wholeRows, ...reads.outputs.map((output) => output.relation)]
+    if (listed.length > 0) {
+      const live = new Map<string, string[]>()
+      const rows = records(
+        await connection`
+        SELECT r.schema, r.name, a.attname::text AS column
+        FROM pg_catalog.json_to_recordset(${listed}::json) AS r(schema text, name text)
+        JOIN pg_catalog.pg_attribute a
+          ON a.attrelid = pg_catalog.to_regclass(pg_catalog.quote_ident(r.schema) || '.' || pg_catalog.quote_ident(r.name))
+        WHERE a.attnum > 0 AND NOT a.attisdropped`,
+      )
+      for (const row of rows) {
+        const key = `${String(row.schema)}.${String(row.name)}`
+        live.set(key, [...(live.get(key) ?? []), String(row.column)])
+      }
+      const columnsOf = (relation: PlanRelation): readonly string[] =>
+        live.get(`${relation.schema}.${relation.name}`) ?? []
+      for (const relation of wholeRows) {
+        for (const column of columnsOf(relation))
+          if (masked(column)) hits.add(`${relation.name}.${column}`)
+      }
+      for (const output of reads.outputs) {
+        const all = columnsOf(output.relation)
+        // Every column is the physical target list: the parent's expressions say what it uses.
+        if (all.length > 0 && all.every((column) => output.columns.includes(column))) continue
+        for (const column of output.columns)
+          if (masked(column)) hits.add(`${output.relation.name}.${column}`)
+      }
+    }
+    if (hits.size === 0) return undefined
+    return dbRefusal(
+      "NIFRA_DB_COLUMN_REFUSED",
+      `the query reads ${[...hits].join(", ")}, masked as ${hits.size === 1 ? "a credential" : "credentials"}`,
+    )
   }
 }
 
@@ -411,7 +452,11 @@ async function gated<T>(
   })
 }
 
-/** Run one read-only query through every layer and return capped, masked rows. */
+/**
+ * Run one read-only query through every layer and return capped rows. A column `redaction.column`
+ * masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a
+ * filter, or within a whole row); a matching result name is masked as well.
+ */
 export async function queryPostgres(
   client: PostgresClient,
   sql: string,
@@ -420,7 +465,7 @@ export async function queryPostgres(
   const fetched = await gated(client, sql, options, (connection, statement) =>
     fetchThroughCursor(connection, statement, {
       maxRows: options.maxRows,
-      scope: checkScope(options),
+      scope: checkScope(options, options.redaction?.column),
     }),
   )
   if (isDbRefusal(fetched)) return fetched

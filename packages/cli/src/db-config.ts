@@ -26,9 +26,9 @@ export interface DevDatabaseCommon {
   readonly maxRows: number
   readonly maxResultBytes: number
   readonly timeoutMs: number
-  /** Columns masked in results on top of the credential-name classifier. */
+  /** Columns a query may not read, on top of the credential-name classifier. */
   readonly redactColumns: readonly string[]
-  /** Columns the classifier would mask that results may show. */
+  /** Columns the classifier names that a query may read anyway. */
   readonly revealColumns: readonly string[]
   /** `nifra db query` is on for a declared database unless this is false. */
   readonly query: boolean

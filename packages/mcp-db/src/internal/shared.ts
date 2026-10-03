@@ -32,6 +32,7 @@ export type DbRefusalCode =
   | "NIFRA_DB_WRITE_REFUSED"
   | "NIFRA_DB_FUNCTION_REFUSED"
   | "NIFRA_DB_TABLE_EXCLUDED"
+  | "NIFRA_DB_COLUMN_REFUSED"
   | "NIFRA_DB_TIMEOUT"
   | "NIFRA_DB_QUERY_FAILED"
   | "NIFRA_DB_DRIVER"
@@ -65,6 +66,8 @@ const REFUSAL_FIXES: Readonly<Record<DbRefusalCode, string>> = {
     "Remove the named function: it reaches outside a read-only query (server files, other sessions, settings, locks, sequences, notifications or another database).",
   NIFRA_DB_TABLE_EXCLUDED:
     "The query reads a relation the declaration does not expose: a table in devDatabase.exclude, a system catalog, a schema outside the allowed ones, or a name that does not exist. Run `nifra db schema` for what is exposed.",
+  NIFRA_DB_COLUMN_REFUSED:
+    "The query reads a masked column (a credential name such as password or token, or one in devDatabase.redactColumns) in some form. A masked column cannot be read at all, not even aliased, filtered on or passed to a function: select the other columns by name, or list the column in devDatabase.revealColumns if it holds no secret.",
   NIFRA_DB_TIMEOUT:
     "Narrow the query (a WHERE clause, an index, a LIMIT) or raise devDatabase.timeoutMs.",
   NIFRA_DB_QUERY_FAILED: "The database rejected the statement. Correct the SQL and retry.",
