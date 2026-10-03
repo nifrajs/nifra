@@ -214,8 +214,9 @@ export interface BuildDiagnosticOptions {
   readonly root?: string
   /** Injectable source reader (tests pass a fake; production reads the filesystem). */
   readonly read?: SourceReader
-  /** Whether a file's source may appear in the codeframe. The overlay is served to a browser, so a dev
-   * server passes the zone check here and backend source never renders in it. */
+  /** Whether a file's source may appear in the codeframe, given the path the codeframe would read. The
+   * overlay is served to a browser, so a dev server passes the zone check here and backend source never
+   * renders in it. */
   readonly showSource?: (file: string) => boolean
   /** A frame's authored position when its file was compiled by a plugin whose map the runtime did not
    * apply (Bun ignores a plugin's inline map), so a compiled line never lands in the codeframe. */
@@ -257,14 +258,16 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
   const { message } = messageAndStack(error)
   const frames = remapFrames(parseFrames(error.stack ?? ""), options.remap)
   const top = topUserFrame(frames, root)
+  // The gate sees the path that will be read: a frame's text can come from a browser.
+  const source =
+    top?.file === undefined
+      ? undefined
+      : options.read === undefined
+        ? canonicalPath(top.file)
+        : top.file
   const codeframe =
-    top?.file !== undefined && top.line !== undefined && (options.showSource?.(top.file) ?? true)
-      ? buildCodeframe(
-          options.read === undefined ? canonicalPath(top.file) : top.file,
-          top.line,
-          top.column,
-          options.read,
-        )
+    source !== undefined && top?.line !== undefined && (options.showSource?.(source) ?? true)
+      ? buildCodeframe(source, top.line, top.column, options.read)
       : undefined
   const { code, cause, fix, docsAnchor, fixOptions } = classify(error.name || "Error", message)
   return {

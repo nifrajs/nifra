@@ -19,7 +19,7 @@ import {
   isInjectablePage,
   parseClientBatch,
 } from "./dev-client.ts"
-import { createDevDiagnostics, type DevDiagnostics } from "./dev-diagnostics.ts"
+import { createDevDiagnostics, createSourceGate, type DevDiagnostics } from "./dev-diagnostics.ts"
 import {
   captureInto,
   createDevFeed,
@@ -48,7 +48,6 @@ import { diagnosticHeadline } from "./diagnostic-prompt.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { ISR_STATUS_HEADER } from "./isr.ts"
 import { DATA_HEADER } from "./router.ts"
-import { browserDenial, createZoneClassifier } from "./zones.ts"
 
 export interface DevSessionOptions {
   readonly root: string
@@ -278,12 +277,10 @@ export function createDevSession(options: DevSessionOptions): DevSession {
   const { root, pipeline } = options
   const record = options.record !== false
   const indicator = options.indicator !== false
-  const zones = createZoneClassifier({ appRoot: root })
-  const showSource = (file: string): boolean => browserDenial(zones.classify(file)) === undefined
   const feed = createDevFeed({
     root,
     persist: record,
-    showSource,
+    showSource: createSourceGate(root),
     publicEnvPrefix: options.publicEnvPrefix,
   })
   const token = createDevToken()

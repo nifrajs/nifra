@@ -8,9 +8,26 @@
  *
  * Vite once shipped without the `/__nifra/last-error` endpoint at all - the drift this module prevents.
  */
+import { relative } from "node:path"
 import { renderDiagnosticOverlay } from "./dev-error.ts"
 import { buildDiagnostic, type Diagnostic, fixPrompts, LAST_ERROR_PATH } from "./diagnostic.ts"
 import { browserDenial, createZoneClassifier } from "./zones.ts"
+
+const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
+
+/**
+ * Whether a codeframe may show `file` (the canonical path it would read) to a browser: source in a
+ * browser zone. A page reports its own stack frames, so it can name any path: data files and the dev
+ * server's own `.nifra/` files (the discovery record holds the agent token) never qualify.
+ */
+export function createSourceGate(root: string): (file: string) => boolean {
+  const zones = createZoneClassifier({ appRoot: root })
+  return (file) => {
+    if (!CODEFRAME_SOURCE.test(file)) return false
+    if ((relative(zones.appRoot, file).split(/[\\/]/)[0] ?? "").startsWith(".nifra")) return false
+    return browserDenial(zones.classify(file)) === undefined
+  }
+}
 
 /** A failure as the dev feed recorded it: the entry and request let its agent prompt name a check. */
 export interface CapturedFailure {
@@ -45,8 +62,7 @@ export function createDevDiagnostics(
   ) => CapturedFailure,
 ): DevDiagnostics {
   let last: Diagnostic | undefined
-  const zones = createZoneClassifier({ appRoot: root })
-  const showSource = (file: string): boolean => browserDenial(zones.classify(file)) === undefined
+  const showSource = createSourceGate(root)
   const show = (captured: CapturedFailure): string => {
     last = captured.diagnostic
     return renderDiagnosticOverlay(

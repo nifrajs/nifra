@@ -371,3 +371,66 @@ test("the issues a page gets back, prompts included, carry env secrets redacted"
   expect(text).not.toContain(secret)
   expect(text).toContain("[redacted:NIFRA_TEST_INGEST_SECRET]")
 })
+
+test("a frame the page names reads no codeframe from .nifra/, data files, or backend source", async () => {
+  const app = start()
+  const record = join(app.root, ".nifra", "dev-server.json")
+  mkdirSync(join(app.root, ".nifra"))
+  writeFileSync(record, '{\n  "a": 1,\n  "token": "agent-token-from-the-record"\n}\n')
+  mkdirSync(join(app.root, "routes"))
+  writeFileSync(join(app.root, "routes", "notes.txt"), "line one\nprivate note\n")
+  writeFileSync(join(app.root, "routes", "page.backend.ts"), "export const key = 'backend'\n")
+  writeFileSync(join(app.root, "routes", "page.tsx"), "export default () => {\n  boom()\n}\n")
+  const { token } = await pageTokenOf(app)
+  const frames = [
+    `${record}:3:1`,
+    ".nifra/dev-server.json:3:1",
+    `${app.root}/routes/../.nifra/dev-server.json:3:1`,
+    `${app.root}/routes/notes.txt:2:1`,
+    `${app.root}/routes/page.backend.ts:1:1`,
+  ]
+  for (const frame of frames) {
+    const res = await post(app, {
+      token,
+      events: [
+        {
+          kind: "error",
+          name: "Error",
+          message: frame,
+          stack: `Error\n    at x (${frame})`,
+          page: "/",
+        },
+      ],
+    })
+    const text = await res.text()
+    expect({
+      frame,
+      leaked: text.includes("agent-token") || text.includes("private note"),
+    }).toEqual({
+      frame,
+      leaked: false,
+    })
+  }
+  for (const entry of app.session.feed.errors().errors)
+    expect({ message: entry.diagnostic.message, codeframe: entry.diagnostic.codeframe }).toEqual({
+      message: entry.diagnostic.message,
+      codeframe: undefined,
+    })
+
+  await post(app, {
+    token,
+    events: [
+      {
+        kind: "error",
+        name: "Error",
+        message: "route source still shows",
+        stack: `Error\n    at Page (${app.root}/routes/page.tsx:2:3)`,
+        page: "/",
+      },
+    ],
+  })
+  const shown = app.session.feed.errors().errors.find((e) => e.diagnostic.message.includes("still"))
+  expect(shown?.diagnostic.codeframe?.lines.some((l) => l.caret && l.text.includes("boom()"))).toBe(
+    true,
+  )
+})
