@@ -120,7 +120,12 @@ describe("otelBridge plugin", () => {
         return { ok: true }
       })
     await Promise.all([0, 1, 2, 3].map((n) => app.fetch(new Request(`http://nifra.test/q/${n}`))))
-    const parentOf = new Map(nifra.spans.map((span) => [span.name.split("/").at(-1), span.spanId]))
+    const parentOf = new Map(
+      nifra.spans.map((span) => [
+        String(span.attributes["url.path"]).split("/").at(-1),
+        span.spanId,
+      ]),
+    )
     expect(exporter.getFinishedSpans()).toHaveLength(4)
     for (const child of exporter.getFinishedSpans()) {
       expect(parentOf.get(child.name.split(" ")[1])).toBe(child.parentSpanContext?.spanId)
