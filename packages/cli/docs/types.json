@@ -635,6 +635,13 @@
     "signature": "export interface AgentRepairTask {\n    readonly id: string;\n    readonly verification: \"check\" | \"assure\" | \"test\";\n    readonly cwd: string;\n    readonly reason: string;\n    readonly capabilities: readonly string[];\n    readonly output?: string;\n    readonly report?: unknown;\n}"
   },
   {
+    "name": "AgentResumeMismatchError",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class AgentResumeMismatchError extends Error {\n    readonly name = \"AgentResumeMismatchError\";\n    constructor();\n}",
+    "doc": "/** A resume whose continuation is not the step the turn suspended on. */"
+  },
+  {
     "name": "AgentRouteContext",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -962,7 +969,7 @@
     "name": "AgentTurnState",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentTurnState {\n    readonly version: 1;\n    readonly turnId: string;\n    readonly step: number;\n    readonly status: \"ready\" | \"suspended\" | \"completed\";\n    readonly evidence: readonly AgentStepEvidence[];\n    readonly pending?: {\n        readonly kind: AgentPendingKind;\n        readonly tool?: string;\n        readonly effectId: string;\n    };\n}"
+    "signature": "export interface AgentTurnState {\n    readonly version: 1;\n    readonly turnId: string;\n    readonly step: number;\n    readonly status: \"ready\" | \"suspended\" | \"completed\";\n    readonly evidence: readonly AgentStepEvidence[];\n    readonly pending?: {\n        readonly kind: AgentPendingKind;\n        readonly tool?: string;\n        readonly effectId: string;\n        /** SHA-256 of the suspended tool input, so a resume must replay that input and no other. */\n        readonly inputDigest?: string;\n    };\n}"
   },
   {
     "name": "AgentVerificationCompletedEvent",

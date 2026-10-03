@@ -57,6 +57,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentPendingContinuation** _(interface)_ - `interface AgentPendingContinuation`
 - **AgentPendingKind** _(type)_ - `type AgentPendingKind = "approval" | "budget" | "model" | "cancelled"`
 - **AgentPorts** _(interface)_ - `interface AgentPorts`
+- **AgentResumeMismatchError** _(class)_ - `class AgentResumeMismatchError`
+  A resume whose continuation is not the step the turn suspended on.
 - **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended" readonly pending: AgentPendingContinuation readonly reason: "max_turns" })`
 - **AgentSharedState** _(interface)_ - `interface AgentSharedState<State = unknown>`
   A shared, observable state document for one run - the state a live UI mirrors while the agent works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI `STATE_SNAPSHOT`/`STA…

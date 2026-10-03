@@ -90,7 +90,7 @@ A suspended run finishes with `outcome: { "type": "interrupt", "interrupts": [in
 }
 ```
 
-Resume with the AG-UI `resume` array. The runtime keeps state token-only - it holds no interrupt registry - so the payload must echo `metadata.continuation`, with the suspended tool's input replayed in `continuation.input`:
+Resume with the AG-UI `resume` array. The runtime keeps state token-only - it holds no interrupt registry - so the payload must echo `metadata.continuation`, with the suspended tool's input replayed in `continuation.input`. The turn keeps a digest of that input: a continuation naming another tool, effect, kind or input is refused, and an `approval` answers only an `approval` interrupt:
 
 ```jsonc
 {

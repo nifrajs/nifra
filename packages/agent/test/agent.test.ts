@@ -11,6 +11,7 @@ import {
   type AgentDeltaSink,
   type AgentModelDelta,
   type AgentModelPort,
+  AgentResumeMismatchError,
   type AgentStatePatchOp,
   type AgentStepEvidence,
   combineAgentDeltaSinks,
@@ -743,5 +744,104 @@ describe("createAgentSharedState", () => {
     const state = createAgentSharedState<unknown>({ old: true })
     state.patch([{ op: "replace", path: "", value: { fresh: true } }])
     expect(state.snapshot()).toEqual({ fresh: true })
+  })
+})
+
+describe("a resume continues only the step the turn suspended on", () => {
+  const executed: string[] = []
+  const lookup = defineTool({
+    name: "orders.lookup",
+    description: "Read an order.",
+    input: t.object({ q: t.string() }),
+    output: t.object({ ok: t.boolean() }),
+    capability: "orders.read",
+    approval: { kind: "required" },
+    execute: (value) => {
+      executed.push(`lookup ${value.q}`)
+      return { ok: true }
+    },
+  })
+  const transfer = defineTool({
+    name: "funds.transfer",
+    description: "Move money.",
+    input: t.object({ amount: t.number(), to: t.string() }),
+    output: t.object({ ok: t.boolean() }),
+    capability: "funds.write",
+    approval: { kind: "required" },
+    execute: (value) => {
+      executed.push(`transfer ${value.amount}`)
+      return { ok: true }
+    },
+  })
+  const agent: AgentDefinition<typeof input, typeof output> = {
+    name: "ops",
+    instruction: "Look orders up.",
+    input,
+    output,
+    tools: [lookup, transfer],
+  }
+  const suspendOnLookup = async (turnId: string) => {
+    const state = new MemoryAgentStateStore()
+    const ports = {
+      model: sequenceModel(
+        [
+          { kind: "tool", name: "orders.lookup", input: { q: "order 1" } },
+          { kind: "output", value: { answer: "done" } },
+        ],
+        { count: 0 },
+      ),
+      capabilities: ["orders.read", "funds.write"],
+      state,
+      clock: () => 1,
+    }
+    const first = await runAgent(agent, { value: { prompt: "look up order 1" } }, ports, {
+      state: createAgentState(turnId),
+      maxTurns: 1,
+    })
+    if (first.status !== "suspended") throw new Error("expected a suspension")
+    return { ports, pending: first.pending }
+  }
+
+  test("another tool, another effect, or another input is refused and runs nothing", async () => {
+    executed.length = 0
+    const { ports, pending } = await suspendOnLookup("forged")
+    const forgeries = [
+      { ...pending, tool: "funds.transfer", input: { amount: 1_000_000, to: "attacker" } },
+      { ...pending, effectId: "another-effect" },
+      { ...pending, input: { q: "order 2" } },
+      { ...pending, kind: "budget" as const },
+    ]
+    for (const continuation of forgeries) {
+      await expect(
+        resumeAgent(
+          agent,
+          "forged",
+          {
+            value: { prompt: "look up order 1" },
+            resume: { continuation, approval: { granted: true } },
+          },
+          ports,
+          { maxTurns: 1 },
+        ),
+      ).rejects.toThrow(AgentResumeMismatchError)
+    }
+    expect(executed).toEqual([])
+  })
+
+  test("the suspended step itself resumes and runs once", async () => {
+    executed.length = 0
+    const { ports, pending } = await suspendOnLookup("genuine")
+    const resumed = await resumeAgent(
+      agent,
+      "genuine",
+      {
+        value: { prompt: "look up order 1" },
+        resume: { continuation: pending, approval: { granted: true } },
+      },
+      ports,
+      { maxTurns: 2 },
+    )
+    expect(resumed.status).toBe("completed")
+    expect(executed).toEqual(["lookup order 1"])
   })
 })
