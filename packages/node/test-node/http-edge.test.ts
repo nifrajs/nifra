@@ -275,6 +275,35 @@ test("HEAD to a streaming route cancels the body nothing will read", async () =>
   }
 })
 
+test("a client that leaves an idle streamed response cancels its body", async () => {
+  const cancelled = Promise.withResolvers<void>()
+  const app = server().get(
+    "/idle",
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: (controller) => controller.enqueue(new TextEncoder().encode("first\n")),
+          // Nothing more is ever produced: only a cancel can end this stream.
+          pull: () => new Promise<void>(() => {}),
+          cancel: () => cancelled.resolve(),
+        }),
+      ),
+  )
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const socket = connect(running.port, "127.0.0.1")
+    socket.write("GET /idle HTTP/1.1\r\nhost: x\r\n\r\n")
+    await new Promise((resolve) => socket.once("data", resolve))
+    socket.destroy()
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("the body was never cancelled")), 2000),
+    )
+    await Promise.race([cancelled.promise, timeout])
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("a 204 carries no body and does not wedge the connection", async () => {
   const transcript = await rawExchange(
     "GET /empty HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",

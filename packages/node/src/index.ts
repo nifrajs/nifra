@@ -2555,6 +2555,26 @@ async function writeNodeResponseBody(
   canDeclareLength: boolean,
 ): Promise<void> {
   const reader = response.body!.getReader()
+  // A client that leaves while the stream is idle never fails a write. Its departure cancels the
+  // stream, as on Bun and Deno, so a producer waiting to send learns the exchange is over.
+  const onClose = (): void => {
+    reader.cancel().catch(() => {})
+  }
+  nodeRes.once("close", onClose)
+  if (nodeRes.destroyed) onClose()
+  try {
+    await writeNodeResponseChunks(reader, response, nodeRes, canDeclareLength)
+  } finally {
+    nodeRes.removeListener("close", onClose)
+  }
+}
+
+async function writeNodeResponseChunks(
+  reader: BodyReader,
+  response: Response,
+  nodeRes: ServerResponse,
+  canDeclareLength: boolean,
+): Promise<void> {
   let first: BodyChunk
   try {
     first = await reader.read()
