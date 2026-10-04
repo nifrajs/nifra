@@ -4744,8 +4744,8 @@ _No named exports (side-effect entrypoint)._
 
 - **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]`
   Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and outside a `type/*` wildcard that covers one of them) can never match, so check a configured allow-list against it up front instead of rejecting every upload at request time.
-- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 12`
-  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 32`
+  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `av…
 - **FileType** _(interface)_ - `interface FileType`
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
 - **ImageReencoder** _(interface)_ - `interface ImageReencoder`
@@ -4770,8 +4770,8 @@ _No named exports (side-effect entrypoint)._
 
 - **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]`
   Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and outside a `type/*` wildcard that covers one of them) can never match, so check a configured allow-list against it up front instead of rejecting every upload at request time.
-- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 12`
-  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 32`
+  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `av…
 - **FileType** _(interface)_ - `interface FileType`
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
 - **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`

@@ -8257,8 +8257,8 @@
     "name": "FILE_TYPE_PREFIX_BYTES",
     "kind": "const",
     "package": "@nifrajs/uploads",
-    "signature": "export declare const FILE_TYPE_PREFIX_BYTES = 12;",
-    "doc": "/**\n * How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file\n * (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.\n */"
+    "signature": "export declare const FILE_TYPE_PREFIX_BYTES = 32;",
+    "doc": "/**\n * How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file\n * (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four\n * compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `avif`.\n */"
   },
   {
     "name": "FileEvidenceStore",

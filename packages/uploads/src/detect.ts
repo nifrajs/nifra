@@ -14,9 +14,10 @@ export interface FileType {
 
 /**
  * How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file
- * (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.
+ * (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four
+ * compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `avif`.
  */
-export const FILE_TYPE_PREFIX_BYTES = 12
+export const FILE_TYPE_PREFIX_BYTES = 32
 
 /**
  * Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and
@@ -42,6 +43,21 @@ export const DETECTABLE_MIME_TYPES: readonly string[] = [
   "application/gzip",
 ]
 
+/**
+ * An MPEG audio frame header: an 11-bit frame sync, then a version, layer, bitrate and sample rate that
+ * are not reserved values. An MP3 needs no ID3 tag, so this is how an untagged one starts. AAC's ADTS
+ * sync shares the first 12 bits, but its layer is always the reserved `00`.
+ */
+function mpegAudioFrame(bytes: Uint8Array): boolean {
+  const [b0 = 0, b1 = 0, b2 = 0] = bytes
+  if (bytes.length < 4 || b0 !== 0xff || (b1 & 0xe0) !== 0xe0) return false
+  const version = (b1 >> 3) & 0b11
+  const layer = (b1 >> 1) & 0b11
+  const bitrate = b2 >> 4
+  const sampleRate = (b2 >> 2) & 0b11
+  return version !== 0b01 && layer !== 0b00 && bitrate !== 0b1111 && sampleRate !== 0b11
+}
+
 /** Detect a file's type from its magic bytes, or `null` if unrecognized. */
 export function detectFileType(bytes: Uint8Array): FileType | null {
   const at = (offset: number, ...sig: number[]): boolean =>
@@ -62,9 +78,30 @@ export function detectFileType(bytes: Uint8Array): FileType | null {
 
   // ISO-BMFF (`ftyp` box at offset 4) - mp4 / avif / heic / m4a, disambiguated by the major brand.
   if (at(4, 0x66, 0x74, 0x79, 0x70)) {
-    const brand = String.fromCharCode(bytes[8] ?? 0, bytes[9] ?? 0, bytes[10] ?? 0, bytes[11] ?? 0)
-    if (brand === "avif" || brand === "avis") return { mime: "image/avif", ext: "avif" }
-    if (brand.startsWith("hei") || brand === "mif1") return { mime: "image/heic", ext: "heic" }
+    const brandAt = (offset: number): string =>
+      String.fromCharCode(
+        bytes[offset] ?? 0,
+        bytes[offset + 1] ?? 0,
+        bytes[offset + 2] ?? 0,
+        bytes[offset + 3] ?? 0,
+      )
+    const brand = brandAt(8)
+    // The compatible brands follow the minor version, to the end of the ftyp box.
+    const boxEnd = Math.min(
+      bytes.length,
+      ((bytes[0] ?? 0) << 24) | ((bytes[1] ?? 0) << 16) | ((bytes[2] ?? 0) << 8) | (bytes[3] ?? 0),
+    )
+    const compatible: string[] = []
+    for (let offset = 16; offset + 4 <= boxEnd; offset += 4) compatible.push(brandAt(offset))
+    // A HEIF-family file whose major brand is the generic `mif1`/`msf1`/`miaf` names its codec among
+    // the compatible brands: AVIF says `avif`/`avis`.
+    const avif = (name: string): boolean => name === "avif" || name === "avis"
+    const generic = brand === "mif1" || brand === "msf1" || brand === "miaf"
+    if (avif(brand) || (generic && compatible.some(avif)))
+      return { mime: "image/avif", ext: "avif" }
+    if (brand.startsWith("hei") || brand.startsWith("hev") || generic) {
+      return { mime: "image/heic", ext: "heic" }
+    }
     // Audio brands share the ISO-BMFF container but are NOT video - labeling them `video/mp4` would
     // both reject real audio under an `audio/*` allow-list and admit it under `video/*`. `M4A `/`M4B `
     // are AAC audio / audiobooks.
@@ -76,6 +113,7 @@ export function detectFileType(bytes: Uint8Array): FileType | null {
   if (at(0, 0x1a, 0x45, 0xdf, 0xa3)) return { mime: "video/webm", ext: "webm" } // Matroska/WebM
   if (at(0, 0x4f, 0x67, 0x67, 0x53)) return { mime: "audio/ogg", ext: "ogg" }
   if (at(0, 0x49, 0x44, 0x33)) return { mime: "audio/mpeg", ext: "mp3" } // ID3 tag
+  if (mpegAudioFrame(bytes)) return { mime: "audio/mpeg", ext: "mp3" } // an untagged MP3
   if (at(0, 0x25, 0x50, 0x44, 0x46)) return { mime: "application/pdf", ext: "pdf" } // "%PDF"
   if (at(0, 0x50, 0x4b, 0x03, 0x04) || at(0, 0x50, 0x4b, 0x05, 0x06)) {
     return { mime: "application/zip", ext: "zip" } // also docx/xlsx/odt containers
