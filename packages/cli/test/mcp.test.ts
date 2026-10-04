@@ -27,6 +27,7 @@ import {
   WarmWorker,
 } from "../src/mcp.ts"
 import { catalogProjectTools } from "../src/mcp-exec.ts"
+import { joinHeadTail, readHeadTail } from "../src/mcp-io.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -133,6 +134,21 @@ test("child output is cancelled at its byte budget", async () => {
   expect(result.text.length).toBe(10)
   expect(limited).toBe(true)
   expect(CHILD_OUTPUT_MAX_BYTES).toBeGreaterThan(0)
+})
+
+test("a drained stream keeps only its head and tail", async () => {
+  const chunks = (...parts: string[]): ReadableStream<Uint8Array> =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(new TextEncoder().encode(part))
+        controller.close()
+      },
+    })
+  const long = await readHeadTail(chunks("aaaa", "bbbb", "cccc", "dddd"), 5, 3)
+  expect(long).toEqual({ head: "aaaab", tail: "ddd", droppedBytes: 8 })
+  expect(joinHeadTail(long)).toBe("aaaab\n…(8 bytes omitted)…\nddd")
+  const short = await readHeadTail(chunks("ab", "c"), 2, 5)
+  expect(joinHeadTail(short)).toBe("abc")
 })
 
 describe("handleRpc (MCP protocol)", () => {

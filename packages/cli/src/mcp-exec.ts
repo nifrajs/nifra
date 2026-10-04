@@ -614,13 +614,17 @@ export function projectTools(
         },
         additionalProperties: false,
       },
-      handler: async (args) => {
+      handler: async (args, context) => {
         const opts = args as { dir?: string; interact?: boolean }
         const target = resolveProjectDir(cwd, opts.dir)
         if (target === null) return dirError(opts.dir)
         const { runHydrationAssurance } = await import("./assure-hydration.ts")
         return JSON.stringify(
-          await runHydrationAssurance(target, { interact: opts.interact === true }),
+          await runHydrationAssurance(
+            target,
+            { interact: opts.interact === true },
+            { signal: context.signal },
+          ),
           null,
           2,
         )

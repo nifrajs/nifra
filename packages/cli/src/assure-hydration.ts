@@ -11,6 +11,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { collectDoctorResult } from "./doctor.ts"
 import { loadApp, resolvePlugins } from "./load.ts"
+import { CHILD_OUTPUT_MAX_BYTES, joinHeadTail, readBoundedStream, readHeadTail } from "./mcp-io.ts"
 import { frameworkWebAppOptions } from "./web-app-options.ts"
 
 const HYDRATION_ASSURANCE = Symbol.for("nifra.hydration.assurance")
@@ -600,60 +601,104 @@ async function runHydrationProof(cwd: string, options: HydrationOptions): Promis
   }
 }
 
+/** How long one hydration run may take: it builds the client and renders every route. */
+const HYDRATION_RUN_TIMEOUT_MS = 300_000
+
+/** Bounds on a hydration run beyond its {@link HydrationOptions}. */
+export interface HydrationRunControl {
+  readonly signal?: AbortSignal
+  /** Default 300000 (five minutes). */
+  readonly timeoutMs?: number
+}
+
 /** Run hydration in a fresh process so the project's current client and framework modules are isolated. */
 export async function runHydrationAssurance(
   cwd: string,
   options: HydrationOptions = {},
+  control: HydrationRunControl = {},
 ): Promise<HydrationResult> {
+  const failed = (reason: string): HydrationResult => ({
+    diagnostics: [diagnostic("NF-H001", `hydration runner failed: ${reason}`)],
+  })
+  if (control.signal?.aborted) return failed("cancelled")
   const root = resolve(cwd)
   const entry = fileURLToPath(import.meta.url)
+  // The answer line carries this token, so whatever project code prints cannot be read as the result.
+  const token = crypto.randomUUID()
   const proc = Bun.spawn(
     [process.execPath, entry, root, "--nifra-hydration-child", JSON.stringify(options)],
     {
       cwd: root,
       // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
       env: process.env,
-      stdin: "ignore",
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     },
   )
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ])
-  await proc.exited
+  let stopped: string | undefined
+  const stop = (reason: string): void => {
+    stopped ??= reason
+    proc.kill()
+  }
+  const onAbort = (): void => stop("cancelled")
+  control.signal?.addEventListener("abort", onAbort, { once: true })
+  const timeoutMs = control.timeoutMs ?? HYDRATION_RUN_TIMEOUT_MS
+  const timer = setTimeout(() => stop(`timed out after ${timeoutMs} ms`), timeoutMs)
   try {
-    return JSON.parse(stdout) as HydrationResult
-  } catch {
-    return {
-      diagnostics: [
-        diagnostic(
-          "NF-H001",
-          `hydration runner failed: ${stderr.trim() || stdout.trim() || "no result"}`,
-        ),
-      ],
+    try {
+      proc.stdin.write(`${token}\n`)
+      await proc.stdin.end()
+    } catch {
+      // The child exited before reading its token; its stderr says why.
     }
+    const [stdout, stderr] = await Promise.all([
+      readBoundedStream(proc.stdout, CHILD_OUTPUT_MAX_BYTES, () =>
+        stop(`output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes`),
+      ),
+      readHeadTail(proc.stderr, 2048, 2048),
+      proc.exited,
+    ])
+    if (stopped !== undefined) return failed(stopped)
+    const prefix = `${token} `
+    const answer = stdout.text.split("\n").find((line) => line.startsWith(prefix))
+    if (answer !== undefined) {
+      try {
+        return JSON.parse(answer.slice(prefix.length)) as HydrationResult
+      } catch {
+        // A truncated answer line falls through to the stderr report.
+      }
+    }
+    return failed(joinHeadTail(stderr).trim() || "no result")
+  } finally {
+    clearTimeout(timer)
+    control.signal?.removeEventListener("abort", onAbort)
   }
 }
 
 if (import.meta.main && process.argv.includes("--nifra-hydration-child")) {
+  // Bound before project code loads, so a `console.log` in a config or loader goes to stderr and
+  // never reaches the answer channel.
+  const stdout = process.stdout.write.bind(process.stdout)
+  const toStderr = (...args: unknown[]): void => {
+    process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`)
+  }
+  console.log = toStderr
+  console.info = toStderr
+  console.debug = toStderr
+  const token = (await readBoundedStream(Bun.stdin.stream(), 256)).text.trim()
   const cwd = process.argv[2] ?? process.cwd()
   const rawOptions = process.argv[4]
+  let result: HydrationResult
   try {
     process.chdir(cwd)
     const options = rawOptions === undefined ? {} : (JSON.parse(rawOptions) as HydrationOptions)
-    const result = await runHydrationProof(cwd, options)
-    await Bun.write(Bun.stdout, JSON.stringify(result))
+    result = await runHydrationProof(cwd, options)
   } catch (error) {
-    await Bun.write(
-      Bun.stdout,
-      JSON.stringify({
-        diagnostics: [
-          diagnostic("NF-H001", error instanceof Error ? error.message : String(error)),
-        ],
-      }),
-    )
+    result = {
+      diagnostics: [diagnostic("NF-H001", error instanceof Error ? error.message : String(error))],
+    }
   }
+  await new Promise<void>((done) => stdout(`${token} ${JSON.stringify(result)}\n`, () => done()))
   process.exit(0)
 }
