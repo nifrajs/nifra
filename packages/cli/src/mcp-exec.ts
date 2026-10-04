@@ -16,8 +16,10 @@ import {
   type CommandCtx,
   type CommandSpec,
   commandCatalog,
+  commandMcpInputSchema,
   commandMcpName,
   findCommandSpec,
+  toCommandCatalogEntry,
 } from "./command-catalog.ts"
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
@@ -67,12 +69,21 @@ export function toMcpTool(
   const { cwd } = options
   const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
   const pathFields = ["config", "out", "lockfile", "before", "after", "baseline", "file"] as const
+  const catalogEntry = entry ?? toCommandCatalogEntry(spec)
   return {
-    name: commandMcpName(entry?.name ?? spec.name),
-    description: entry?.summary ?? spec.summary,
-    inputSchema: entry?.inputSchema ?? spec.input.jsonSchema,
+    name: commandMcpName(catalogEntry.name),
+    description: catalogEntry.summary,
+    inputSchema: commandMcpInputSchema(catalogEntry),
     handler: async (args: Record<string, unknown>, context: McpToolContext) => {
       const raw = { ...args }
+      for (const field of catalogEntry.cliOnlyFields) {
+        if (raw[field] !== undefined)
+          return JSON.stringify(
+            { ok: false, error: `${field} is available only from the nifra CLI` },
+            null,
+            2,
+          )
+      }
       const dir = raw.dir
       if (dir !== undefined && typeof dir !== "string") return dirError(undefined)
       const target = resolveProjectDir(cwd, dir as string | undefined)

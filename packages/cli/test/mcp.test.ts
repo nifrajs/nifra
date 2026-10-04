@@ -151,6 +151,20 @@ test("a drained stream keeps only its head and tail", async () => {
   expect(joinHeadTail(short)).toBe("abc")
 })
 
+test("nifra_manifest neither advertises nor accepts the operator signing key", async () => {
+  const tool = catalogProjectTools(process.cwd()).find((t) => t.name === "nifra_manifest")
+  expect(tool).toBeDefined()
+  expect(Object.keys(Object(tool?.inputSchema.properties))).not.toContain("sign")
+  const answer = await tool?.handler(
+    { action: "emit", sign: "release-key" },
+    { signal: new AbortController().signal, requestId: 1, reportProgress: () => {} },
+  )
+  expect(JSON.parse(String(answer))).toEqual({
+    ok: false,
+    error: "sign is available only from the nifra CLI",
+  })
+})
+
 describe("handleRpc (MCP protocol)", () => {
   test("initialize advertises protocol version, tools capability, server info", async () => {
     const res = await handleRpc({ id: 1, method: "initialize" }, tools, INFO)

@@ -86,6 +86,11 @@ export interface CommandSpec<Input, Output> {
   readonly transports: readonly CommandTransport[]
   readonly stability: CommandStability
   readonly argv?: CommandArgvBinding<Input>
+  /**
+   * Input fields only the CLI may set: MCP neither advertises nor accepts them. For a field that acts
+   * with the operator's own credentials, such as a signing key, which an agent must not invoke.
+   */
+  readonly cliOnlyFields?: readonly string[]
   readonly run: (input: Input, ctx: CommandCtx) => Promise<Output>
   readonly render: (out: Output, input?: Input) => readonly string[]
   readonly success?: (out: Output, input: Input) => boolean
@@ -102,6 +107,8 @@ export interface CommandCatalogEntry {
   readonly outputVersion: number
   readonly transports: readonly CommandTransport[]
   readonly stability: CommandStability
+  /** {@link CommandSpec.cliOnlyFields}: present in `inputSchema`, absent from the MCP tool's. */
+  readonly cliOnlyFields: readonly string[]
 }
 
 function freezeJson<T>(value: T): T {
@@ -123,6 +130,20 @@ export function toCommandCatalogEntry<Input, Output>(
     outputVersion: spec.output.version,
     transports: Object.freeze([...spec.transports]),
     stability: spec.stability,
+    cliOnlyFields: Object.freeze([...(spec.cliOnlyFields ?? [])]),
+  })
+}
+
+/** The input schema a command's MCP tool advertises: its catalog schema without CLI-only fields. */
+export function commandMcpInputSchema(entry: CommandCatalogEntry): CommandJsonSchema {
+  const properties = entry.inputSchema.properties
+  if (entry.cliOnlyFields.length === 0 || typeof properties !== "object" || properties === null)
+    return entry.inputSchema
+  return freezeJson({
+    ...entry.inputSchema,
+    properties: Object.fromEntries(
+      Object.entries(properties).filter(([key]) => !entry.cliOnlyFields.includes(key)),
+    ),
   })
 }
 
@@ -1118,6 +1139,8 @@ const manifestSpec: CommandSpec<ManifestInput, ManifestEmitCommandResult | DiffC
   output: output({ type: "object" }),
   transports: ["cli", "mcp"],
   stability: "stable",
+  // The signer is the operator's KMS/HSM callback; an agent signing its own manifest defeats it.
+  cliOnlyFields: ["sign"],
   argv: {
     positionals: ["action", "before", "after"],
     flags: [
