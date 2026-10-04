@@ -113,10 +113,10 @@ function countSkipped(): number {
   return skipped
 }
 
-function collectSamples(): Sample[] {
+function collectSamples(root: string): Sample[] {
   const samples: Sample[] = []
-  for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
-    const src = readFileSync(`${ROOT}/${file}`, "utf8")
+  for (const file of new Glob("site/routes/docs/*.tsx").scanSync(root)) {
+    const src = readFileSync(`${root}/${file}`, "utf8")
     for (const [name, code] of extractConsts(src)) {
       if (isCheckable(code)) samples.push({ page: basename(file), name, code })
     }
@@ -138,11 +138,14 @@ function loadRepoOptions(): ts.CompilerOptions {
   }
 }
 
-function main(): void {
-  const samples = collectSamples()
+export function main(root = ROOT): void {
+  const samples = collectSamples(root)
   if (samples.length === 0) {
-    console.log("doc samples: nothing checkable found")
-    return
+    // A moved docs directory or an extractor that stopped matching would otherwise pass this gate.
+    console.error(
+      `✗ doc samples: no checkable sample under ${root}/site/routes/docs - nothing was checked`,
+    )
+    process.exit(1)
   }
 
   rmSync(WORK, { recursive: true, force: true })
