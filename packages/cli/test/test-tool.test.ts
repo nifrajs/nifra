@@ -26,6 +26,27 @@ describe("collectTestResult", () => {
     }
   })
 
+  test("keeps only the head and tail of a test run that prints without limit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-test-tool-"))
+    try {
+      await mkdir(join(dir, "test"))
+      await writeFile(
+        join(dir, "test/loud.test.ts"),
+        'import { expect, test } from "bun:test"\ntest("loud", () => {\n  const line = "x".repeat(1023)\n  for (let i = 0; i < 2048; i++) console.log(line)\n  expect(1).toBe(1)\n})\n',
+      )
+      const result = await collectTestResult(dir, {
+        pattern: "test/loud.test.ts",
+        timeoutMs: 60_000,
+      })
+      expect(result.ok).toBe(true)
+      expect(result.summary.passed).toBe(1)
+      expect(result.stdout).toMatch(/…\(trimmed more than \d+ bytes\)…/)
+      expect(result.stdout.length).toBeLessThanOrEqual(12_100)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("rejects CLI flags in pattern", async () => {
     const result = await collectTestResult("/tmp", { pattern: "--preload=evil.ts" })
     expect(result.ok).toBe(false)
