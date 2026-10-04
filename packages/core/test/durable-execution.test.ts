@@ -505,6 +505,29 @@ describe("durable journal and saga reconciliation", () => {
     expect(compensationIds[0]).toBe(compensationIds[1])
   })
 
+  test("a saga store refuses a transition whose record names another saga", async () => {
+    const store = new MemorySagaStore()
+    const record = {
+      sagaId: "saga_a",
+      definition: "test",
+      state: "running" as const,
+      input: null,
+      steps: [],
+      createdAt: 1,
+      updatedAt: 1,
+      version: 1,
+    }
+    expect(store.create(record)).toBe(true)
+    expect(
+      store.compareAndSet({
+        sagaId: "saga_a",
+        version: 1,
+        record: { ...record, sagaId: "saga_b", updatedAt: 2, version: 2 },
+      }),
+    ).toBe(false)
+    expect(store.get("saga_a")).toEqual(record)
+  })
+
   test("an unknown step outcome is never repeated automatically and is reconciled", async () => {
     const definition = defineSaga<Record<never, never>, { charge: { paymentId: string } }>({
       name: "ambiguous-charge",

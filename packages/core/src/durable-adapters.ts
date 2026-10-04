@@ -384,6 +384,14 @@ export async function runDurableExecutionAdapterConformance(
   }
   requireConformance(await adapter.sagas.create(saga), "saga create rejected")
   requireConformance(
+    !(await adapter.sagas.compareAndSet({
+      sagaId,
+      version: 1,
+      record: { ...saga, sagaId: `${sagaId}-other`, state: "completed", updatedAt: 2, version: 2 },
+    })),
+    "saga CAS accepted a record for another saga",
+  )
+  requireConformance(
     await adapter.sagas.compareAndSet({
       sagaId,
       version: 1,
