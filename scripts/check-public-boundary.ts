@@ -58,7 +58,10 @@ interface AllowlistFile {
 function sourceFiles(directory: string, root = ROOT): string[] {
   if (!existsSync(resolve(root, directory))) return []
   const files: string[] = []
-  for (const rawFile of new Bun.Glob("src/**/*").scanSync({ cwd: resolve(root, directory) })) {
+  for (const rawFile of new Bun.Glob("src/**/*").scanSync({
+    cwd: resolve(root, directory),
+    dot: true,
+  })) {
     const file = normalizeRelativePath(rawFile)
     if (SKIP.test(file) || !/\.tsx?$/.test(file)) continue
     files.push(`${directory}/${file}`)
@@ -139,6 +142,31 @@ async function exportsOf(path: string): Promise<Record<string, unknown>> {
   return manifest.exports ?? {}
 }
 
+/**
+ * Every scanned file under `dirs` that holds one of `markers`. Dotfiles and dot-directories included:
+ * a package can publish them (`.claude-plugin/plugin.json`), so they are where a marker could hide.
+ */
+export async function privateMarkerFailures(
+  dirs: readonly string[],
+  markers: readonly string[],
+): Promise<string[]> {
+  const failures: string[] = []
+  for (const dir of dirs) {
+    for (const rawFile of new Bun.Glob("**/*").scanSync({ cwd: dir, dot: true })) {
+      const file = normalizeRelativePath(rawFile)
+      if (MARKER_SKIP.test(file) || !MARKER_SCANNED.test(file)) continue
+      const text = (await Bun.file(`${dir}/${file}`).text()).toLowerCase()
+      for (const marker of markers) {
+        if (text.includes(marker.toLowerCase())) {
+          failures.push(`${dir}/${file}: private marker present`)
+          break
+        }
+      }
+    }
+  }
+  return failures
+}
+
 export async function runPublicBoundary(
   options: { readonly release?: boolean } = {},
 ): Promise<readonly string[]> {
@@ -153,17 +181,7 @@ export async function runPublicBoundary(
   const release = options.release === true || process.env.RELEASE_MODE === "1"
   if (release && markers.length === 0)
     failures.push("PRIVATE_MARKERS must be non-empty in release mode")
-  for (const marker of markers) {
-    for (const dir of publicPackageDirs) {
-      for (const rawFile of new Bun.Glob("**/*").scanSync(dir)) {
-        const file = normalizeRelativePath(rawFile)
-        if (MARKER_SKIP.test(file) || !MARKER_SCANNED.test(file)) continue
-        const text = await Bun.file(`${dir}/${file}`).text()
-        if (text.toLowerCase().includes(marker.toLowerCase()))
-          failures.push(`${dir}/${file}: private marker present`)
-      }
-    }
-  }
+  failures.push(...(await privateMarkerFailures(publicPackageDirs, markers)))
   const coreExports = await exportsOf("packages/core/package.json")
   const imageExports = await exportsOf("packages/image/package.json")
   for (const [path, exportsMap, name] of [
