@@ -1,18 +1,15 @@
 /**
- * Make the workspace resolvable to NON-Bun tools.
+ * Make every workspace package resolvable from the repository root. Runs as the root `postinstall`.
  *
- * Bun resolves workspace packages through its own internal map and writes no `node_modules/@nifrajs/*`
- * entries to disk, so after `bun install` the tree is fully functional under Bun and completely
- * unresolvable under Node - `import "@nifrajs/core"` throws ERR_MODULE_NOT_FOUND. That is invisible
- * day to day and is exactly why the Node adapter had no Node-side coverage: the runtime it targets
- * could not even load it from this checkout.
+ * `bun install` links into the root `node_modules` only the packages the root declares, so a fresh
+ * checkout cannot resolve the rest from the root - not under Node, and not under Bun for root tooling
+ * or for the scaffold fixtures that borrow the root `node_modules`. A tree that had once run the Node
+ * tests had every link and passed; a fresh clone, CI's included, failed typecheck and test. Linking on
+ * install makes the two trees the same.
  *
  * This creates the symlink farm npm/pnpm would have, mapping every publishable workspace package to
  * its directory. Additive and idempotent: it only ever writes inside `node_modules/@nifrajs/` (plus
  * the two unscoped entry points), never rewrites Bun's own layout, and re-running it is a no-op.
- *
- * `bun install --linker=isolated` produces the same reachability, but it rewrites the whole tree -
- * a heavy, surprising side effect for a test step whose only requirement is "Node can find these".
  */
 
 import { mkdir, symlink, unlink } from "node:fs/promises"
@@ -44,9 +41,9 @@ for (const { name, dir } of linkables) {
   // Replace rather than skip: a stale link from a renamed or moved package would otherwise survive
   // and resolve to the wrong directory, which is worse than not being linked at all.
   await unlink(link).catch(() => {})
-  await symlink(dir, link, "dir")
+  // A junction on Windows, where a directory symlink needs a privilege a contributor may not have;
+  // other platforms ignore the type.
+  await symlink(dir, link, "junction")
 }
 
-console.log(
-  `linked ${linkables.length} workspace package(s) into node_modules for non-Bun runtimes`,
-)
+console.log(`linked ${linkables.length} workspace package(s) into node_modules`)

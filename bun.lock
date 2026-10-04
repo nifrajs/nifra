@@ -20,6 +20,7 @@
         "@nifrajs/island-trigger": "workspace:*",
         "@nifrajs/pi": "workspace:*",
         "@nifrajs/testing": "workspace:*",
+        "@nifrajs/web": "workspace:*",
         "@types/bun": "^1.4.2",
         "@types/express": "^5.0.6",
         "@upstash/context7-mcp": "4.0.2",
