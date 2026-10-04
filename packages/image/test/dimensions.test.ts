@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { jpegOrientation } from "../src/dimensions.ts"
 import { imageDimensions, readImageDimensions } from "../src/index.ts"
 
 // A 1×1 PNG (real bytes).
@@ -18,6 +19,27 @@ const jpeg = (w: number, h: number): Uint8Array => {
   dv.setUint16(7, h)
   dv.setUint16(9, w)
   return b
+}
+
+/** {@link jpeg} behind an APP1 EXIF block whose IFD0 declares `orientation`, in either byte order. */
+const exifJpeg = (w: number, h: number, orientation: number, little = false): Uint8Array => {
+  const u16 = (n: number): number[] => (little ? [n & 0xff, n >> 8] : [n >> 8, n & 0xff])
+  const u32 = (n: number): number[] => (little ? [n, 0, 0, 0] : [0, 0, 0, n])
+  const tiff = [
+    ...(little ? [0x49, 0x49] : [0x4d, 0x4d]),
+    ...u16(42),
+    ...u32(8),
+    ...u16(1),
+    ...u16(0x0112),
+    ...u16(3),
+    ...u32(1),
+    ...u16(orientation),
+    0,
+    0,
+  ]
+  const app1 = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff]
+  const frame = jpeg(w, h)
+  return new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, app1.length + 2, ...app1, ...frame.slice(2)])
 }
 
 const webpHeader = (chunk: string, body: Uint8Array): Uint8Array => {
@@ -50,6 +72,26 @@ describe("imageDimensions", () => {
     new DataView(withApp0.buffer).setUint16(15, 120) // height @ off+5 (off=10)
     new DataView(withApp0.buffer).setUint16(17, 240) // width @ off+7
     expect(imageDimensions(withApp0)).toEqual({ width: 240, height: 120, format: "jpeg" })
+  })
+
+  test("JPEG: the size it is displayed at, its EXIF orientation applied", () => {
+    expect(imageDimensions(exifJpeg(400, 300, 6))).toEqual({
+      width: 300,
+      height: 400,
+      format: "jpeg",
+    })
+    expect(imageDimensions(exifJpeg(400, 300, 8, true))).toEqual({
+      width: 300,
+      height: 400,
+      format: "jpeg",
+    })
+    expect(imageDimensions(exifJpeg(400, 300, 3))).toEqual({
+      width: 400,
+      height: 300,
+      format: "jpeg",
+    })
+    expect(jpegOrientation(exifJpeg(400, 300, 7, true))).toBe(7)
+    expect(jpegOrientation(jpeg(400, 300))).toBe(1)
   })
 
   test("WebP - VP8 (lossy), VP8L (lossless), VP8X (extended)", () => {

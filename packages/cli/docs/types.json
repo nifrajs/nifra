@@ -9533,7 +9533,7 @@
     "kind": "type",
     "package": "@nifrajs/image",
     "signature": "export type ImageFormat = \"png\" | \"jpeg\" | \"gif\" | \"webp\";",
-    "doc": "/**\n * Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no\n * dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe\n * `width`/`height` (build-time tooling can pre-read them into a manifest).\n */"
+    "doc": "/**\n * Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no\n * dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe\n * `width`/`height` (build-time tooling can pre-read them into a manifest). A JPEG's are the size it is\n * displayed at: its EXIF orientation applied, as a browser applies it.\n */"
   },
   {
     "name": "ImageHandlerOptions",

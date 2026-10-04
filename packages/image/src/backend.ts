@@ -11,7 +11,7 @@
  * - {@link wasmImageBackend} - pass WASM codecs (e.g. jSquash). Any runtime, including the edge.
  */
 
-import { imageDimensions } from "./dimensions.ts"
+import { imageDimensions, jpegOrientation } from "./dimensions.ts"
 
 /** Output formats nifra's endpoint can emit. AVIF is intentionally excluded - `Bun.Image` reports
  * `ERR_IMAGE_FORMAT_UNSUPPORTED` for AVIF encode on common platforms, so offering it would 500. */
@@ -144,7 +144,9 @@ function toBunError(err: unknown): ImageProcessingError {
  * structurally so `@nifrajs/image` has no dependency on sharp - pass your own `sharp` import. */
 export type SharpLike = (input: Uint8Array) => SharpInstance
 interface SharpInstance {
-  metadata(): Promise<{ width?: number; height?: number; format?: string }>
+  metadata(): Promise<{ width?: number; height?: number; format?: string; orientation?: number }>
+  /** With no angle: turn the pixels upright by the EXIF orientation, which the output then drops. */
+  rotate(): SharpInstance
   resize(options: { width: number; withoutEnlargement?: boolean }): SharpInstance
   webp(options: { quality: number }): SharpInstance
   jpeg(options: { quality: number }): SharpInstance
@@ -170,15 +172,22 @@ export function sharpImageBackend(sharp: SharpLike): ImageBackend {
         if (md.width === undefined || md.height === undefined) {
           throw new ImageProcessingError("decode", "sharp could not read image dimensions")
         }
-        return { width: md.width, height: md.height, format: String(md.format ?? "").toLowerCase() }
+        // sharp reports the stored size; orientations 5-8 display it a quarter turn round.
+        const turned = (md.orientation ?? 1) >= 5
+        return {
+          width: turned ? md.height : md.width,
+          height: turned ? md.width : md.height,
+          format: String(md.format ?? "").toLowerCase(),
+        }
       } catch (err) {
         throw toSharpError(err)
       }
     },
     async transform({ bytes, width, quality, format }) {
       try {
+        // Upright first: the encoder drops the EXIF orientation that told a viewer to turn it.
         // `withoutEnlargement` is belt-and-braces: the handler already clamps width ≤ intrinsic.
-        const pipeline = sharp(bytes).resize({ width, withoutEnlargement: true })
+        const pipeline = sharp(bytes).rotate().resize({ width, withoutEnlargement: true })
         const encoded =
           format === "webp"
             ? pipeline.webp({ quality })
@@ -207,6 +216,48 @@ function toSharpError(err: unknown): ImageProcessingError {
 }
 
 // --- WASM backend (edge-portable) --------------------------------------------------------------------
+
+/**
+ * For EXIF orientations 2-8, the stored pixel each displayed pixel `(x, y)` comes from, as
+ * `sx = a*x + b*y + c*(w-1)` and `sy = d*x + e*y + f*(h-1)`: `[a, b, c, d, e, f]`.
+ */
+const ORIENTATION_MAP: Readonly<Record<number, readonly number[]>> = {
+  2: [-1, 0, 1, 0, 1, 0],
+  3: [-1, 0, 1, 0, -1, 1],
+  4: [1, 0, 0, 0, -1, 1],
+  5: [0, 1, 0, 1, 0, 0],
+  6: [0, 1, 0, -1, 0, 1],
+  7: [0, -1, 1, -1, 0, 1],
+  8: [0, -1, 1, 1, 0, 0],
+}
+
+/**
+ * `image` turned upright by the EXIF orientation of the JPEG it was decoded from. The encoders write no
+ * EXIF, so pixels left as stored would display turned. A codec that already turned a quarter-turn image
+ * (it decoded to the displayed size) is left as it is.
+ */
+function upright(image: DecodedImage, source: Uint8Array): DecodedImage {
+  const map = ORIENTATION_MAP[jpegOrientation(source)]
+  if (map === undefined) return image
+  const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = map
+  const { width: w, height: h, data } = image
+  const quarter = a === 0
+  const shown = imageDimensions(source)
+  if (quarter && shown !== null && shown.width === w && shown.height === h) return image
+  const outWidth = quarter ? h : w
+  const outHeight = quarter ? w : h
+  const out = new Uint8Array(data.length)
+  for (let y = 0, o = 0; y < outHeight; y++) {
+    for (let x = 0; x < outWidth; x++, o += 4) {
+      const i = ((d * x + e * y + f * (h - 1)) * w + (a * x + b * y + c * (w - 1))) * 4
+      out[o] = data[i] ?? 0
+      out[o + 1] = data[i + 1] ?? 0
+      out[o + 2] = data[i + 2] ?? 0
+      out[o + 3] = data[i + 3] ?? 0
+    }
+  }
+  return { data: out, width: outWidth, height: outHeight }
+}
 
 /** A decoded image: RGBA pixels + dimensions - the lingua franca of WASM codecs (jSquash, Photon, …). */
 export interface DecodedImage {
@@ -257,7 +308,7 @@ export function wasmImageBackend(codecs: WasmImageCodecs): ImageBackend {
     },
     async transform({ bytes, width, quality, format }) {
       try {
-        const decoded = await codecs.decode(bytes)
+        const decoded = upright(await codecs.decode(bytes), bytes)
         // Aspect-preserving: the handler hands a width already clamped to the intrinsic width.
         const height = Math.max(1, Math.round((decoded.height * width) / decoded.width))
         const resized =

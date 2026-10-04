@@ -3357,7 +3357,7 @@ _No named exports (side-effect entrypoint)._
 - **HtmlImageAttrs** _(interface)_ - `interface HtmlImageAttrs`
   Plain lowercase HTML `<img>` attributes (`srcset`/`fetchpriority`, not React's camelCase).
 - **ImageFormat** _(type)_ - `type ImageFormat = "png" | "jpeg" | "gif" | "webp"`
-  Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe `width`/`height` (build-time tooling can pre-read them into a manifest).
+  Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe `width`/`height` (build-time tooling can pre-read them into a manifest). A JPEG's are the size it is dis…
 - **ImageInfo** _(interface)_ - `interface ImageInfo`
 - **ImageLoader** _(type)_ - `type ImageLoader = (args: { src: string; width: number; quality?: number }) => string`
   Builds a variant URL for `src` at a target pixel `width` (and optional `quality`).
