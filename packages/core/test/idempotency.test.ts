@@ -979,25 +979,25 @@ describe("server({ idempotency }) - request path", () => {
       .use(idempotency())
       .post(
         "/pay",
-        { idempotency: { scope: "request", namespace: "public:pay", store, pendingTtlMs: 90 } },
+        { idempotency: { scope: "request", namespace: "public:pay", store, pendingTtlMs: 300 } },
         async () => {
           runs++
           entered()
-          await new Promise((resolve) => setTimeout(resolve, 300))
+          await new Promise((resolve) => setTimeout(resolve, 700))
           return { ok: true }
         },
       )
     const first = app.fetch(post({ amount: 1 }, "slow"))
     await started
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    // Past the 90ms lease: only the renewals keep a duplicate from running the handler again.
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    // Past the 300ms lease: only the renewals keep a duplicate from running the handler again.
     expect((await app.fetch(post({ amount: 1 }, "slow"))).status).toBe(409)
     expect((await first).status).toBe(200)
     expect(runs).toBe(1)
     expect(renewals.length).toBeGreaterThanOrEqual(2)
-    expect(new Set(renewals)).toEqual(new Set([90]))
+    expect(new Set(renewals)).toEqual(new Set([300]))
     const settled = renewals.length
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await new Promise((resolve) => setTimeout(resolve, 250))
     expect(renewals.length).toBe(settled)
   })
 
