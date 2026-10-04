@@ -43,14 +43,27 @@ export function isDeployTarget(value: string): value is DeployTarget {
   return (DEPLOY_TARGETS as readonly string[]).includes(value)
 }
 
+/**
+ * The project name as a platform knows the app: a Docker image tag and a Cloudflare Pages or Deno Deploy
+ * project name take lowercase letters, digits, and "-", where the project itself may be `MyApp`,
+ * `my_app`, or `my.app`.
+ */
+export function deployName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+$/, "")
+}
+
 /** The `deploy` script for `target`, or `undefined` when there is none. */
 export function deployScript(
   target: DeployTarget,
   name: string,
   docker: boolean,
 ): string | undefined {
+  const image = deployName(name)
   return docker
-    ? `docker build -t ${name} . && docker run -p 3000:3000 ${name}`
+    ? `docker build -t ${image} . && docker run -p 3000:3000 ${image}`
     : TARGETS[target].deploy
 }
 
@@ -127,7 +140,8 @@ export function targetFiles(
 ): Map<string, string> {
   const files = new Map<string, string>()
   if (target === "deno") files.set("deno.json", DENO_JSON)
-  if (target === "cloudflare") files.set("wrangler.toml", WRANGLER_TOML.replace("NAME", name))
+  if (target === "cloudflare")
+    files.set("wrangler.toml", WRANGLER_TOML.replace("NAME", deployName(name)))
   if (docker && (target === "bun" || target === "node")) {
     files.set("Dockerfile", renderDockerfile(target))
     files.set(".dockerignore", DOCKERIGNORE)

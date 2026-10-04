@@ -29,7 +29,13 @@ import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "./db.ts"
 import { applyFeatures, type FeatureContribution } from "./scaffold/features.ts"
 import { starterRouteTypes } from "./scaffold/route-types.ts"
 import { materializeSite } from "./scaffold/site.ts"
-import { DEPLOY_TARGETS, type DeployTarget, isDeployTarget, TARGETS } from "./scaffold/targets.ts"
+import {
+  DEPLOY_TARGETS,
+  type DeployTarget,
+  deployName,
+  isDeployTarget,
+  TARGETS,
+} from "./scaffold/targets.ts"
 
 const TEMPLATES = {
   api: "../template",
@@ -161,7 +167,7 @@ jobs:
       # declared. Shipping that config without ever running it makes it decoration.
       - run: bun run check
       - run: bun run build
-${ci.step.replaceAll("NAME", appName)}
+${ci.step.replaceAll("NAME", deployName(appName))}
 `
 }
 

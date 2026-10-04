@@ -36,7 +36,7 @@ export interface FrameworkSpec {
  *
  * One constant, because it used to be a regex sweep over eight `package.json` files in the release
  * script with nothing checking the result - and the script's own comment warns that a missed bump
- * ships templates installing the PREVIOUS release. `scaffold-version.test.ts` now fails when this
+ * ships templates installing the PREVIOUS release. `scaffold-composition.test.ts` now fails when this
  * drifts from what core is publishing, so the footgun is a red test rather than a silent regression.
  */
 export const NIFRA_DEP_RANGE = "^3.5.0"

@@ -129,6 +129,22 @@ describe("scaffold - templates", () => {
     }
   })
 
+  test("a project name a platform would refuse is lowered to one it takes in deploy config", async () => {
+    const dir = await freshDir("My_Site.v2")
+    await scaffold({ target: dir, template: "site", deployTarget: "cloudflare" })
+    expect(await readFile(join(dir, "wrangler.toml"), "utf8")).toContain('name = "my-site-v2"')
+    expect(githubDeployWorkflow("cloudflare", "My_Site.v2")).toContain("--project-name=my-site-v2")
+    expect(githubDeployWorkflow("deno", "My_Site.v2")).toContain("project: my-site-v2")
+    const docked = await freshDir("Dock_App")
+    await scaffold({ target: docked, template: "site", deployTarget: "bun", docker: true })
+    const pkg = await readPkg(docked)
+    expect(pkg.scripts?.deploy).toBe(
+      "docker build -t dock-app . && docker run -p 3000:3000 dock-app",
+    )
+    // The package keeps the name it was given.
+    expect(pkg.name).toBe("Dock_App")
+  })
+
   test("a Cloudflare site gets wrangler.toml named for the project", async () => {
     const dir = await freshDir("my-site")
     await scaffold({ target: dir, template: "site", deployTarget: "cloudflare" })
