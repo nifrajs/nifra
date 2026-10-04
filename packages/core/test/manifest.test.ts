@@ -257,6 +257,44 @@ describe("signed versioned Nifra manifest", () => {
     expect(diff.hasBreaking).toBe(true)
   })
 
+  test("a new route's capabilities and sensitive data are expanded risk, like the same change to an old one", () => {
+    const empty = { manifestVersion: 1 as const, contentHash: "0".repeat(64), routes: [] }
+    const charge = {
+      method: "POST",
+      path: "/charge",
+      capabilities: {
+        declared: ["payments.charge"],
+        evidenced: ["payments.charge"],
+        unproven: [],
+        covered: true,
+      },
+      classification: { max: "secret" as const, fields: { "/token": "secret" as const } },
+    }
+    const added = diffNifraManifests(empty, { ...empty, routes: [charge] })
+    expect(added.hasBreaking).toBe(true)
+    expect(added.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ section: "route", severity: "compatible" }),
+        expect.objectContaining({
+          severity: "breaking",
+          message: "declared capability added payments.charge",
+        }),
+        expect.objectContaining({
+          severity: "breaking",
+          message: "response classification changed from unclassified to secret",
+        }),
+      ]),
+    )
+    // A new route that declares nothing and returns public data is only an added route.
+    const health = {
+      method: "GET",
+      path: "/health",
+      classification: { max: "public" as const, fields: {} },
+    }
+    const plain = diffNifraManifests(empty, { ...empty, routes: [health] })
+    expect(plain.hasBreaking).toBe(false)
+  })
+
   test("governance diff exposes assurance loss, capability expansion, and field sensitivity", () => {
     const before = {
       manifestVersion: 1 as const,

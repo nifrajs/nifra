@@ -11929,7 +11929,9 @@ Ed25519 sidecar, so the private key can stay inside KMS/HSM infrastructure.
 
 At promotion time, `nifra manifest diff previous.json candidate.json` hash-verifies both files and exits
 non-zero on a breaking API change, removed assurance, expanded effect, lost provenance coverage, or
-increased data sensitivity. This is separate from the frontend asset `dist/manifest.json`.
+increased data sensitivity. A new route counts as well: one that declares a capability or returns `pii`
+or `secret` data blocks promotion as the same change to an existing route would. This is separate from
+the frontend asset `dist/manifest.json`.
 
 ## `nifra verify` - verification tiers
 

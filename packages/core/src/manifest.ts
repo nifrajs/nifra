@@ -463,44 +463,48 @@ export function diffNifraManifests(before: NifraManifest, after: NifraManifest):
     before.routes.map((route) => [routeKey(route.method, route.path), route]),
   )
   for (const route of after.routes) {
-    const old = previous.get(routeKey(route.method, route.path))
-    if (old === undefined) continue
+    const existing = previous.get(routeKey(route.method, route.path))
     const base = { method: route.method, path: route.path } as const
 
-    const oldRule = old.assurance?.rule
-    const newRule = route.assurance?.rule
-    if (oldRule !== newRule) {
-      changes.push({
-        ...base,
-        section: "assurance",
-        severity: "breaking",
-        message: `assurance rule changed from ${oldRule ?? "unclassified"} to ${newRule ?? "unclassified"}`,
-      })
-    }
-    const oldEvidence = (old.assurance?.evidence ?? [])
-      .map((item) => `${item.id}@${item.source}`)
-      .sort()
-    const newEvidence = (route.assurance?.evidence ?? [])
-      .map((item) => `${item.id}@${item.source}`)
-      .sort()
-    const assuranceDelta = listChanges(oldEvidence, newEvidence)
-    for (const value of assuranceDelta.added) {
-      changes.push({
-        ...base,
-        section: "assurance",
-        severity: "compatible",
-        message: `assurance evidence added ${value}`,
-      })
-    }
-    for (const value of assuranceDelta.removed) {
-      changes.push({
-        ...base,
-        section: "assurance",
-        severity: "breaking",
-        message: `assurance evidence removed ${value}`,
-      })
+    if (existing !== undefined) {
+      const oldRule = existing.assurance?.rule
+      const newRule = route.assurance?.rule
+      if (oldRule !== newRule) {
+        changes.push({
+          ...base,
+          section: "assurance",
+          severity: "breaking",
+          message: `assurance rule changed from ${oldRule ?? "unclassified"} to ${newRule ?? "unclassified"}`,
+        })
+      }
+      const oldEvidence = (existing.assurance?.evidence ?? [])
+        .map((item) => `${item.id}@${item.source}`)
+        .sort()
+      const newEvidence = (route.assurance?.evidence ?? [])
+        .map((item) => `${item.id}@${item.source}`)
+        .sort()
+      const assuranceDelta = listChanges(oldEvidence, newEvidence)
+      for (const value of assuranceDelta.added) {
+        changes.push({
+          ...base,
+          section: "assurance",
+          severity: "compatible",
+          message: `assurance evidence added ${value}`,
+        })
+      }
+      for (const value of assuranceDelta.removed) {
+        changes.push({
+          ...base,
+          section: "assurance",
+          severity: "breaking",
+          message: `assurance evidence removed ${value}`,
+        })
+      }
     }
 
+    // A new route is diffed against an empty one: the capabilities it declares and the data it returns
+    // expand risk as surely as the same change to a route that already existed.
+    const old: Partial<NifraManifestRoute> = existing ?? {}
     for (const field of ["declared", "evidenced", "unproven"] as const) {
       const delta = listChanges(old.capabilities?.[field] ?? [], route.capabilities?.[field] ?? [])
       for (const value of delta.added) {
