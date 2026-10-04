@@ -203,6 +203,36 @@ describe("diffRouteSnapshots - request direction (body/query)", () => {
     ])
   })
 
+  test("a change around the fields breaks too: additionalProperties, a $ref's $defs", () => {
+    const body = (extra: Record<string, unknown>) =>
+      snap([
+        route("POST", "/users", {
+          body: carrier({
+            type: "object",
+            properties: { name: { $ref: "#/$defs/Name" } },
+            required: ["name"],
+            $defs: { Name: { type: "string" } },
+            ...extra,
+          }),
+        }),
+      ])
+    const base = body({})
+    expect(diffRouteSnapshots(base, body({})).changes).toEqual([])
+    expect(diffRouteSnapshots(base, body({ additionalProperties: false })).changes).toEqual([
+      expect.objectContaining({
+        severity: "breaking",
+        section: "body",
+        message: "body schema changed",
+      }),
+    ])
+    expect(
+      diffRouteSnapshots(base, body({ $defs: { Name: { type: "string", maxLength: 3 } } }))
+        .hasBreaking,
+    ).toBe(true)
+    // A required name no field declares is part of the contract as well.
+    expect(diffRouteSnapshots(base, body({ required: ["name", "token"] })).hasBreaking).toBe(true)
+  })
+
   test("cookies follow request rules and survive the evidence round trip", () => {
     const optional = [
       route("GET", "/me", { cookies: objectSchema({ session: { type: "string" } }, []) }),
