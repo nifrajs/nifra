@@ -141,7 +141,10 @@ export function scopeAgentEvidenceLog(log: AgentEvidenceLog, owner: string): Age
 }
 
 export interface MemoryAgentEvidenceLogOptions {
-  /** Maximum retained turns; the oldest turn is evicted when a new one opens. Default 256. */
+  /**
+   * Maximum retained turns. Opening one more evicts the oldest finished turn, or the oldest turn when
+   * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.
+   */
   readonly maxTurns?: number
 }
 
@@ -172,16 +175,33 @@ export function createMemoryAgentEvidenceLog(
       record.resolveResult = resolve
     })
   }
+  const settle = (turn: MemoryTurnRecord, result: unknown): void => {
+    turn.finished = true
+    turn.resolveResult(result)
+    for (const subscriber of turn.subscribers) subscriber.complete()
+    turn.subscribers.clear()
+  }
+  const evictOne = (): void => {
+    let victim: string | undefined
+    for (const [id, turn] of turns) {
+      if (turn.finished) {
+        victim = id
+        break
+      }
+    }
+    victim ??= turns.keys().next().value
+    if (victim === undefined) return
+    const turn = turns.get(victim)
+    turns.delete(victim)
+    // Its finish() can no longer find it by id, so a rejoined replay would wait forever.
+    if (turn !== undefined && !turn.finished) settle(turn, undefined)
+  }
 
   return {
     open(turnId) {
       let turn = turns.get(turnId)
       if (turn === undefined) {
-        while (turns.size >= maxTurns) {
-          const oldest = turns.keys().next().value
-          if (oldest === undefined) break
-          turns.delete(oldest)
-        }
+        while (turns.size >= maxTurns) evictOne()
         turn = {
           evidence: [],
           finished: false,
@@ -207,10 +227,7 @@ export function createMemoryAgentEvidenceLog(
     finish(turnId, result) {
       const turn = turns.get(turnId)
       if (turn === undefined || turn.finished) return
-      turn.finished = true
-      turn.resolveResult(result)
-      for (const subscriber of turn.subscribers) subscriber.complete()
-      turn.subscribers.clear()
+      settle(turn, result)
     },
     replay(turnId, afterSeq) {
       const turn = turns.get(turnId)

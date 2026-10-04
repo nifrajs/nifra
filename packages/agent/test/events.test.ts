@@ -112,4 +112,20 @@ describe("memory agent evidence log", () => {
     expect(await log.replay("c", 0)).toBeDefined()
     expect(() => createMemoryAgentEvidenceLog({ maxTurns: 0 })).toThrow(RangeError)
   })
+
+  test("eviction prefers a finished turn and ends a running turn's rejoined replays", async () => {
+    const log = createMemoryAgentEvidenceLog({ maxTurns: 2 })
+    log.open("running")
+    log.open("done")
+    await log.finish("done", "ok")
+    log.open("next")
+    expect(await log.replay("done", 0)).toBeUndefined()
+
+    const replay = await log.replay("running", 0)
+    if (replay === undefined || replay.live === undefined) throw new Error("expected live replay")
+    log.open("last")
+    expect(await log.replay("running", 0)).toBeUndefined()
+    expect(await replay.live.next()).toEqual({ done: true, value: undefined })
+    expect(await replay.result).toBeUndefined()
+  })
 })

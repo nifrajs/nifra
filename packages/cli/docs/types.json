@@ -11556,7 +11556,7 @@
     "name": "MemoryAgentEvidenceLogOptions",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /** Maximum retained turns; the oldest turn is evicted when a new one opens. Default 256. */\n    readonly maxTurns?: number;\n}"
+    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /**\n     * Maximum retained turns. Opening one more evicts the oldest finished turn, or the oldest turn when\n     * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.\n     */\n    readonly maxTurns?: number;\n}"
   },
   {
     "name": "MemoryAgentStateStore",
