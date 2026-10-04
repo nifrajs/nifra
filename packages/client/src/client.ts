@@ -672,8 +672,15 @@ async function execute(
   try {
     data = await parseBody(response, options)
   } catch (cause) {
-    if (!isPayloadTooLarge(cause)) throw cause
-    return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
+    if (isPayloadTooLarge(cause)) {
+      return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
+    }
+    // A codec refusing the payload stays a throw. Anything else is the read itself failing - the
+    // deadline or the caller's signal firing mid-body, or the connection dropping - which the fetch
+    // above already reports as a Result.
+    if (cause instanceof Error && cause.name === "TransportCodecError") throw cause
+    const code = timeout?.aborted === true ? "timeout" : "network_error"
+    return { ok: false, status: 0, data: null, error: { error: code } }
   }
   if (response.ok) {
     return { ok: true, status: response.status, data, error: null }
