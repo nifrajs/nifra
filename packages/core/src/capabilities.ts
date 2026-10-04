@@ -232,7 +232,9 @@ export interface CapabilitySnapshot {
   readonly routes: readonly CapabilitySnapshotRoute[]
 }
 
-const SAFE_METHODS = new Set(["GET", "HEAD"])
+// RFC 9110 safe methods nifra can route (it refuses TRACE). CSRF guards skip all three, so a write
+// behind any of them would run without that check.
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
 export { validCapabilityId }
 

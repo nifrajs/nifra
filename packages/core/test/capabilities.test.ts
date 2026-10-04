@@ -10,6 +10,7 @@ import {
 } from "../src/capabilities.ts"
 import { server } from "../src/index.ts"
 import { defineContract, implement } from "../src/server/contract.ts"
+import { method } from "../src/server/methods.ts"
 
 const policy = defineCapabilityPolicy({
   definitions: [
@@ -284,6 +285,28 @@ describe("capability assurance", () => {
       "missing-request-idempotency",
     ])
     expect(report.routes.find((route) => route.path === "/read")?.unproven).toEqual(["db.read"])
+  })
+
+  test("an OPTIONS route is held to the same rule as a GET, declared or reached", () => {
+    const app = server()
+      .use(method("OPTIONS", "/declares", { capabilities: ["db.write"] }, () => ({ ok: true })))
+      .use(method("OPTIONS", "/reaches", () => ({ ok: true })))
+    const report = evaluateCapabilityAssurance(app, policy, {
+      routes: [
+        { method: "OPTIONS", path: "/declares", covered: true, evidence: [] },
+        {
+          method: "OPTIONS",
+          path: "/reaches",
+          covered: true,
+          evidence: [{ id: "db.write", kind: "static", source: "app-db" }],
+        },
+      ],
+    })
+    const codes = (path: string) =>
+      report.findings.filter((finding) => finding.path === path).map((finding) => finding.code)
+    expect(codes("/declares")).toContain("safe-method-domain-write")
+    expect(codes("/reaches")).toContain("unconfined-write-reach")
+    expect(report.ok).toBe(false)
   })
 
   /**
