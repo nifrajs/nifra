@@ -11677,7 +11677,7 @@
     "name": "MemoryIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly now;\n    private readonly maxEntries;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    begin(input: IdempotencyBeginInput): IdempotencyBeginResult;\n    complete(input: IdempotencyCompletionInput): boolean;\n    abandon(input: IdempotencyAbandonInput): boolean;\n    /** Evict expired entries. Callers may run this on an interval; access-time eviction covers the rest. */\n    sweep(): void;\n    /** Live entry count (post-sweep semantics are the caller's; this is a raw size for tests/metrics). */\n    get size(): number;\n    private storageKey;\n}",
+    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly perNamespace;\n    private readonly now;\n    private readonly maxEntries;\n    private readonly maxPerNamespace;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    begin(input: IdempotencyBeginInput): IdempotencyBeginResult;\n    complete(input: IdempotencyCompletionInput): boolean;\n    abandon(input: IdempotencyAbandonInput): boolean;\n    /** Evict expired entries. Callers may run this on an interval; access-time eviction covers the rest. */\n    sweep(): void;\n    /** Live entry count (post-sweep semantics are the caller's; this is a raw size for tests/metrics). */\n    get size(): number;\n    private storageKey;\n    private full;\n    private drop;\n}",
     "doc": "/**\n * In-process idempotency store. Reservation is atomic by construction - `begin` never awaits, so the\n * single-threaded event loop serializes concurrent callers for one key. Expired entries are treated\n * as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.\n */"
   },
   {
@@ -11691,7 +11691,7 @@
     "name": "MemoryIdempotencyStoreOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface MemoryIdempotencyStoreOptions {\n    /** Injectable clock (epoch ms) for deterministic TTL tests. Default `Date.now`. */\n    readonly now?: () => number;\n    /** Hard memory bound. At capacity new keys fail closed; completed/pending entries are never evicted early. */\n    readonly maxEntries?: number;\n}"
+    "signature": "export interface MemoryIdempotencyStoreOptions {\n    /** Injectable clock (epoch ms) for deterministic TTL tests. Default `Date.now`. */\n    readonly now?: () => number;\n    /** Hard memory bound. At capacity new keys fail closed; completed/pending entries are never evicted early. */\n    readonly maxEntries?: number;\n    /**\n     * Bound for one namespace, so a single tenant or principal cannot use up `maxEntries` for the\n     * rest: past it, only that namespace's new keys fail closed. Default: no separate bound.\n     */\n    readonly maxEntriesPerNamespace?: number;\n}"
   },
   {
     "name": "MemoryIdempotencyStoreOptions",

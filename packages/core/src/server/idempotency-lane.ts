@@ -37,6 +37,10 @@ import type { AnyServer, IdentityPlugin } from "./server.ts"
  * began no execution, so its key is released rather than stored. */
 const HANDLER_ENTERED = new WeakSet<Request>()
 
+/** Statuses that say the request was not carried out (RFC 9110). A handler answering with one, with no
+ * owned effect begun, releases its key, so a refused caller cannot hold a store entry for the TTL. */
+const REFUSALS = new Set([401, 403, 408, 409, 425, 429])
+
 /** Registration-resolved idempotency for a route: the config with its store + defaults pinned. */
 export interface ResolvedIdempotency {
   readonly store: IdempotencyStore
@@ -256,12 +260,9 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
       const buffered = new Request(req.url, bufferedInit)
       beginRequestEffectTracking(buffered)
-      let response: Response
-      try {
-        response = await host.runLanes(buffered, platform, entry, params, search)
-      } catch (err) {
-        const evidence = requestEffectEvidence(buffered)
-        if (!evidence.began) {
+      // The handler threw, or its response body failed while being captured: no response to store.
+      const settleThrown = async (err: unknown): Promise<ReturnType<typeof wrapResponse>> => {
+        if (!requestEffectEvidence(buffered).began) {
           // The request-local boundary proves no owned effect started, so this is the one safe case
           // where releasing the key cannot duplicate an effect.
           await config.store.abandon({ namespace, key, reservation })
@@ -269,19 +270,25 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         }
         // A committed or ambiguous effect must never be repeated. Persist a payload-free terminal
         // response even though the normal handler lifecycle escaped without producing one.
-        response = new Response(null, { status: 500 })
+        const terminal = new Response(null, { status: 500 })
         const completed = await config.store.complete({
           namespace,
           key,
           reservation,
-          response: await serializeResponse(response, { maxBytes: config.maxResponseBytes }),
+          response: await serializeResponse(terminal, { maxBytes: config.maxResponseBytes }),
         })
         if (!completed) {
           return wrapResponse(
             jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
           )
         }
-        return wrapResponse(response)
+        return wrapResponse(terminal)
+      }
+      let response: Response
+      try {
+        response = await host.runLanes(buffered, platform, entry, params, search)
+      } catch (err) {
+        return settleThrown(err)
       }
       if (!HANDLER_ENTERED.has(buffered) && !requestEffectEvidence(buffered).began) {
         // Rejected before the handler ran: no execution began, so there is nothing a retry could
@@ -296,8 +303,8 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         return wrapResponse(response)
       }
       if (
-        response.status >= 500 &&
-        requestIsSafeToRetry(buffered) &&
+        (REFUSALS.has(response.status) ||
+          (response.status >= 500 && requestIsSafeToRetry(buffered))) &&
         !requestEffectEvidence(buffered).began
       ) {
         const abandoned = await config.store.abandon({ namespace, key, reservation })
@@ -308,13 +315,13 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         }
         return wrapResponse(response)
       }
-      // Once the handler ran, every concrete response is terminal for this key. A non-2xx may follow
-      // an already-committed external effect; abandoning it would let a retry duplicate that effect.
+      // Once the handler ran, every other concrete response is terminal for this key. A non-2xx may
+      // follow an already-committed external effect; abandoning it would let a retry duplicate it.
       let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
       try {
         storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
       } catch (error) {
-        if (!(error instanceof IdempotencyResponseTooLargeError)) throw error
+        if (!(error instanceof IdempotencyResponseTooLargeError)) return settleThrown(error)
         // The effect may already have happened, so never abandon and permit a duplicate execution.
         // Commit a small terminal response under the winning key and return that same response now.
         response = jsonError(507, "idempotency_response_too_large")

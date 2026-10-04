@@ -199,6 +199,30 @@ describe("MemoryIdempotencyStore", () => {
     expect(begin(store, "a", "fp", 1000).state).toBe("new")
     expect(begin(store, "b", "fp", 1000).state).toBe("capacity")
   })
+
+  test("a namespace bound keeps one namespace from using up the store", () => {
+    let now = 0
+    const store = new MemoryIdempotencyStore({
+      maxEntries: 10,
+      maxEntriesPerNamespace: 2,
+      now: () => now,
+    })
+    const first = begin(store, "1", "fp", 1000, "tenant-a")
+    expect(begin(store, "2", "fp", 1000, "tenant-a").state).toBe("new")
+    expect(begin(store, "3", "fp", 1000, "tenant-a").state).toBe("capacity")
+    expect(begin(store, "1", "fp", 1000, "tenant-b").state).toBe("new")
+    if (first.state !== "new") throw new Error("expected a reservation")
+    expect(store.abandon({ namespace: "tenant-a", key: "1", reservation: first.reservation })).toBe(
+      true,
+    )
+    expect(begin(store, "3", "fp", 1000, "tenant-a").state).toBe("new")
+    expect(begin(store, "4", "fp", 1000, "tenant-a").state).toBe("capacity")
+    now = 1000
+    expect(begin(store, "4", "fp", 1000, "tenant-a").state).toBe("new")
+    expect(() => new MemoryIdempotencyStore({ maxEntriesPerNamespace: 0 })).toThrow(
+      /maxEntriesPerNamespace/,
+    )
+  })
 })
 
 describe("effect-aware idempotency fallback", () => {
@@ -505,6 +529,72 @@ describe("server({ idempotency }) - request path", () => {
     expect(replay.status).toBe(500)
     expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(runs).toBe(1)
+  })
+
+  test("a handler's refusal with no owned effect releases its key", async () => {
+    const store = new MemoryIdempotencyStore()
+    let runs = 0
+    const app = server()
+      .use(idempotency({ store }))
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
+        runs += 1
+        if (c.req.headers.get("authorization") !== "Bearer good")
+          return c.json({ error: "unauthorized" }, 401)
+        if (c.req.headers.get("x-hold") === "1") {
+          markEffectExecuting(c)
+          return c.json({ error: "conflict" }, 409)
+        }
+        return { paid: true }
+      })
+    for (let i = 0; i < 3; i++)
+      expect((await app.fetch(post({ amount: 1 }, `anonymous-${i}`))).status).toBe(401)
+    expect(store.size).toBe(0)
+    expect((await app.fetch(post({ amount: 1 }, "k"))).status).toBe(401)
+    const paid = await app.fetch(post({ amount: 1 }, "k", { authorization: "Bearer good" }))
+    expect(paid.status).toBe(200)
+    expect(paid.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBeNull()
+    expect(store.size).toBe(1)
+    // Once an owned effect began, even a refusal is the key's answer.
+    const held = { authorization: "Bearer good", "x-hold": "1" }
+    expect((await app.fetch(post({ amount: 2 }, "held", held))).status).toBe(409)
+    const replay = await app.fetch(post({ amount: 2 }, "held", held))
+    expect(replay.status).toBe(409)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(6)
+  })
+
+  test("a response body that fails while being stored never leaves its key in progress", async () => {
+    let runs = 0
+    const broken = () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("upstream broke"))
+          },
+        }),
+      )
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
+        runs += 1
+        if (c.req.headers.get("x-effect") === "1") markEffectExecuting(c)
+        return broken()
+      })
+    const outcome = (request: Request) =>
+      Promise.resolve(app.fetch(request)).then(
+        (response) => response.status,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      )
+    // No owned effect began: the key is released, so the retry runs again.
+    expect(await outcome(post({ amount: 1 }, "free"))).toBe("upstream broke")
+    expect(await outcome(post({ amount: 1 }, "free"))).toBe("upstream broke")
+    expect(runs).toBe(2)
+    // An owned effect began: the key keeps a terminal 500 that the retry replays.
+    expect(await outcome(post({ amount: 1 }, "owned", { "x-effect": "1" }))).toBe(500)
+    const replay = await app.fetch(post({ amount: 1 }, "owned", { "x-effect": "1" }))
+    expect(replay.status).toBe(500)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(3)
   })
 
   test("an explicit no-effect outcome releases a resolved 5xx for a safe retry", async () => {
