@@ -69,6 +69,21 @@ describe("MemoryEvidenceStore", () => {
     expect(await one.digest()).not.toBe(await two.digest())
   })
 
+  test("retries count toward the digest instead of cancelling in pairs", async () => {
+    const digestOf = async (failures: number): Promise<string> => {
+      const store = new MemoryEvidenceStore()
+      let seq = 0
+      for (let attempt = 0; attempt < failures; attempt++) {
+        await store.append(rec("a", "started", seq++))
+        await store.append(rec("a", "failed", seq++))
+      }
+      for (const r of pairFor("a", seq)) await store.append(r)
+      return store.digest()
+    }
+    const digests = await Promise.all([0, 1, 2, 3].map(digestOf))
+    expect(new Set(digests).size).toBe(4)
+  })
+
   test("a forbidden content field is rejected", async () => {
     const store = new MemoryEvidenceStore()
     const poisoned = { ...rec("a", "completed", 0), prompt: "leak me" } as unknown as RunEvidence
