@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { copyPublicDir } from "../src/build.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
@@ -229,6 +230,30 @@ test("a scan that hit its limit fails the gate instead of passing as clean", asy
     await rm(root, { recursive: true, force: true })
   }
 }, { timeout: 30_000 })
+
+test("development parity lists public files by the URL the build records for them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-public-"))
+  try {
+    const routesDir = join(root, "routes")
+    const publicDir = join(root, "public")
+    await mkdir(routesDir, { recursive: true })
+    await mkdir(join(publicDir, "docs"), { recursive: true })
+    await writeFile(join(routesDir, "index.tsx"), "export default () => null\n")
+    for (const name of ["My Logo.png", "café.txt", "docs/report,2026 #1.csv"]) {
+      await writeFile(join(publicDir, name), "x")
+    }
+    const built = await copyPublicDir(publicDir, join(root, "dist"))
+    const input = collectDevelopmentParityInput(routesDir, publicDir)
+    expect(input.publicFiles).toEqual(built)
+    expect(input.publicFiles).toEqual([
+      "/My%20Logo.png",
+      "/caf%C3%A9.txt",
+      "/docs/report,2026%20%231.csv",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test("development parity counts a Svelte <style> block as css without a css import", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-"))

@@ -18,6 +18,7 @@ import {
 } from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
+import { publicUrlPath } from "./public-url.ts"
 
 const DEPENDENCY_FIELDS = [
   "dependencies",
@@ -1064,7 +1065,7 @@ const publicFilesUnder = (publicDir: string | false | undefined): readonly strin
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const path = join(current, entry.name)
       if (entry.isDirectory()) walk(path)
-      else if (entry.isFile()) files.push(`/${relative(root, path).split(sep).join("/")}`)
+      else if (entry.isFile()) files.push(publicUrlPath(relative(root, path)))
     }
   }
   walk(root)
