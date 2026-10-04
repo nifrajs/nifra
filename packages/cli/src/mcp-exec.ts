@@ -148,7 +148,7 @@ export function projectTools(
     {
       name: "nifra_verify",
       description:
-        "Run the shared repository verification plan. Set release=true for the full release plan; the response preserves the declarative gate order and each gate's remediation.",
+        "Run the shared repository verification plan. Set release=true for the full release plan; the response preserves the declarative gate order and each gate's remediation. A gate whose script the project's package.json does not declare is reported as undeclared and not run; the result passes when every gate that ran passed.",
       inputSchema: {
         type: "object",
         properties: {

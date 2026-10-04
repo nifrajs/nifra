@@ -16,7 +16,8 @@ import {
 } from "./verification-plan.ts"
 
 export type ReleaseVerificationMode = VerificationPlanMode
-export type ReleaseGateStatus = "pass" | "fail" | "skipped"
+/** `undeclared`: the project's package.json has no script for the gate, so it was not run. */
+export type ReleaseGateStatus = "pass" | "fail" | "skipped" | "undeclared"
 
 export interface ReleaseGateResult {
   readonly id: string
@@ -180,6 +181,23 @@ const skippedGate = (gate: VerificationGateSpec, failedId: string): ReleaseGateR
   remediation: `Fix the ${failedId} gate first, then rerun verification.`,
 })
 
+const undeclaredGate = (gate: VerificationGateSpec, script: string): ReleaseGateResult => ({
+  id: gate.id,
+  status: "undeclared",
+  commands: gate.commands.map(commandLabel),
+  message: `\`${script}\` is not a script in package.json`,
+  remediation: `Declare a \`${script}\` script to run this gate.`,
+})
+
+/** The first `bun run <script>` of a gate that the root package.json does not declare. */
+const undeclaredScript = (
+  gate: VerificationGateSpec,
+  scripts: ReadonlySet<string>,
+): string | undefined =>
+  gate.commands.find(
+    ([verb, script]) => verb === "run" && script !== undefined && !scripts.has(script),
+  )?.[1]
+
 /** Collect the same gate result rendered by the CLI and used by repository scripts. */
 export async function collectReleaseVerification(
   start: string,
@@ -189,12 +207,22 @@ export async function collectReleaseVerification(
   const root = await resolveVerificationRoot(start)
   const runCommand = options.runCommand ?? runBunCommand
   const fixtureRoot = mkdtempSync(join(realpathSync(tmpdir()), "nifra-verify-"))
+  const declared = parsePackage(join(root, "package.json"))?.scripts
+  const scripts = new Set(
+    declared !== null && typeof declared === "object" ? Object.keys(declared) : [],
+  )
   const gates: ReleaseGateResult[] = []
   try {
     let failedId: string | undefined
     for (const gate of gatePlan(mode)) {
       if (failedId !== undefined) {
         gates.push(skippedGate(gate, failedId))
+        continue
+      }
+      // The plan names the nifra repository's own scripts; a project without one has nothing to run.
+      const missing = undeclaredScript(gate, scripts)
+      if (missing !== undefined) {
+        gates.push(undeclaredGate(gate, missing))
         continue
       }
       const result = await runGate(root, gate, runCommand, fixtureRoot)
@@ -205,7 +233,9 @@ export async function collectReleaseVerification(
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
   return {
-    ok: gates.every((gate) => gate.status === "pass"),
+    ok:
+      gates.some((gate) => gate.status === "pass") &&
+      gates.every((gate) => gate.status === "pass" || gate.status === "undeclared"),
     mode,
     gates,
     omittedReleaseGateIds: omittedVerificationGateIds(mode),
@@ -218,7 +248,8 @@ export function renderReleaseVerification(result: ReleaseVerificationResult): st
     const marker = gate.status === "pass" ? "✓" : gate.status === "fail" ? "✗" : "-"
     lines.push(`${marker} ${gate.id}: ${gate.status}`)
     if (gate.message !== undefined) lines.push(`  ${gate.message}`)
-    if (gate.status !== "pass") lines.push(`  fix: ${gate.remediation}`)
+    if (gate.status === "fail" || gate.status === "skipped")
+      lines.push(`  fix: ${gate.remediation}`)
   }
   if (result.omittedReleaseGateIds.length > 0) {
     lines.push(

@@ -119,9 +119,12 @@ describe("release verification", () => {
   test("uses the workspace root when invoked from a subdirectory and runs the default plan", async () => {
     const root = createFixtureRoot("verify-root")
     try {
+      const scripts = Object.fromEntries(
+        verificationPlan().flatMap((gate) => gate.commands.map(([, script]) => [script, "true"])),
+      )
       await Bun.write(
         join(root, "package.json"),
-        JSON.stringify({ private: true, workspaces: ["*"] }),
+        JSON.stringify({ private: true, workspaces: ["*"], scripts }),
       )
       const project = createFixtureProject(root, "project-")
       await Bun.write(join(project, "package.json"), JSON.stringify({ name: "project" }))
@@ -151,6 +154,41 @@ describe("release verification", () => {
       ])
       expect(calls.every((call) => call.cwd === root)).toBe(true)
       expect(new Set(calls.map((call) => call.env.NIFRA_VERIFY_GATE)).size).toBe(calls.length)
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("a gate whose script the project does not declare is reported, not run or failed", async () => {
+    const root = createFixtureRoot("verify-undeclared")
+    try {
+      const manifest = (scripts: Record<string, string>): string =>
+        JSON.stringify({ private: true, workspaces: ["*"], scripts })
+      await Bun.write(
+        join(root, "package.json"),
+        manifest({ lint: "biome check", test: "bun test" }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }))
+      const calls: string[] = []
+      const result = await collectReleaseVerification(project, {
+        runCommand: async (spec) => {
+          calls.push(spec.args.join(" "))
+          return { exitCode: 0 }
+        },
+      })
+      expect(calls).toEqual(["run lint", "run test"])
+      expect(result.ok).toBe(true)
+      const docs = result.gates.find((gate) => gate.id === "docs")
+      expect(docs?.status).toBe("undeclared")
+      expect(docs?.message).toBe("`check:docs` is not a script in package.json")
+      expect(renderReleaseVerification(result)).not.toContain("fix: Run `bun run check:docs`")
+
+      await Bun.write(join(root, "package.json"), manifest({}))
+      const nothing = await collectReleaseVerification(project, {
+        runCommand: async () => ({ exitCode: 0 }),
+      })
+      expect(nothing.ok).toBe(false)
     } finally {
       removeFixtureRoot(root)
     }

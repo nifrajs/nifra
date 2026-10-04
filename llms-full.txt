@@ -11928,7 +11928,9 @@ increased data sensitivity. This is separate from the frontend asset `dist/manif
 It is not a release claim. `nifra verify` runs the ordered local verification plan; its default mode
 is the feedback plan and reports which release gates it omits. CI and release automation should run
 `nifra verify --release` (or `bun run check:release`), which includes build, coverage, corpus,
-consumer, publish, and cross-runtime gates. Run `nifra port --ci --target <target>` for an app's
+consumer, publish, and cross-runtime gates. Each gate runs a `package.json` script (`bun run lint`,
+`bun run check:docs`, ...); a gate whose script the project does not declare is reported as
+`undeclared` and does not fail the run. Run `nifra port --ci --target <target>` for an app's
 resolved deployment target; CI never guesses a target when none is configured.
 
 ## `nifra check` - the drift gate (run as "done")
