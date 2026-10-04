@@ -578,7 +578,8 @@ function jsonResponse(status: number, body: unknown): Response {
     serialized = JSON.stringify({ error: "response_serialization_failed" })
     status = 500
   }
-  if (new TextEncoder().encode(serialized).byteLength > DEFAULT_MAX_OUTPUT_BYTES) {
+  // The hard ceiling only: the mount's configured `maxOutputBytes` is applied by `boundJsonResponse`.
+  if (new TextEncoder().encode(serialized).byteLength > MAX_OUTPUT_BYTES) {
     serialized = JSON.stringify({ error: "response_too_large" })
     status = 500
   }

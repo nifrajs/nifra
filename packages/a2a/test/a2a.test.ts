@@ -337,4 +337,21 @@ describe("mountA2A", () => {
     expect(response.status).toBe(500)
     expect(await response.json()).toEqual({ error: "response_too_large" })
   })
+
+  test("a configured output limit above the default lets a larger result through", async () => {
+    const { app, callPost } = captureApp()
+    const answer = "x".repeat(5 * 1024 * 1024)
+    mountA2A(app, {
+      agent: definition(),
+      card: cardInfo,
+      maxOutputBytes: 8 * 1024 * 1024,
+      ports: ports({ model: outputModel({ answer }) }),
+    })
+
+    const response = await callPost(
+      rpc("SendMessage", message([], { metadata: { input: { prompt: "x" } } })),
+    )
+    expect(response.status).toBe(200)
+    expect(JSON.stringify(await response.json())).toContain(answer)
+  })
 })
