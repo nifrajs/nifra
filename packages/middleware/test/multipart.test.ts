@@ -74,6 +74,15 @@ describe("multipartResponse()", () => {
     expect(text).toContain("E")
   })
 
+  test("quotes a boundary that holds a parameter delimiter, so a parser reads all of it", async () => {
+    const response = multipartResponse(
+      [{ headers: { "content-disposition": 'form-data; name="a"' }, body: "1" }],
+      { boundary: "x, y=z", subtype: "form-data" },
+    )
+    expect(response.headers.get("content-type")).toBe('multipart/form-data; boundary="x, y=z"')
+    expect((await response.formData()).get("a")).toBe("1")
+  })
+
   test("rejects invalid boundaries, unsafe headers, and malformed parts", async () => {
     expect(() => multipartResponse([], { boundary: "bad\nvalue" })).toThrow(/boundary/)
     expect(() => multipartResponse([], { boundary: "trailing-space " })).toThrow(/boundary/)

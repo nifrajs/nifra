@@ -25,6 +25,15 @@ describe("language()", () => {
     expect(pickLanguage(null, supported, "en")).toEqual({ language: "en", matched: "default" })
   })
 
+  test("reads only the first 32 ranges of a client-controlled header", () => {
+    const filler = Array.from({ length: 31 }, (_, i) => `x${i}`)
+    expect(pickLanguage([...filler, "fr-FR"].join(","), supported, "en").language).toBe("fr-FR")
+    expect(pickLanguage([...filler, "x31", "fr-FR"].join(","), supported, "en")).toEqual({
+      language: "en",
+      matched: "default",
+    })
+  })
+
   test("derives c.language and emits Content-Language", async () => {
     const app = server()
       .use(language({ supported, defaultLanguage: "en" }))

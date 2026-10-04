@@ -72,6 +72,43 @@ describe("compression()", () => {
     expect(await gunzip(res)).toBe(big)
   })
 
+  test("a strong ETag is weakened on the compressed representation", async () => {
+    const big = "x".repeat(4096)
+    const app = server()
+      .use(compression())
+      .get("/strong", (c) => {
+        c.set.headers.etag = '"v1"'
+        return { big }
+      })
+      .get(
+        "/raw",
+        () => new Response(big, { headers: { "content-type": "text/plain", etag: '"v2"' } }),
+      )
+      .get(
+        "/weak",
+        () => new Response(big, { headers: { "content-type": "text/plain", etag: 'W/"v3"' } }),
+      )
+    const gzip = { headers: { "accept-encoding": "gzip" } }
+    for (const [path, expected] of [
+      ["/strong", 'W/"v1"'],
+      ["/raw", 'W/"v2"'],
+      ["/weak", 'W/"v3"'],
+    ] as const) {
+      const res = await app.fetch(new Request(`http://x${path}`, gzip))
+      expect({
+        path,
+        encoding: res.headers.get("content-encoding"),
+        etag: res.headers.get("etag"),
+      }).toEqual({
+        path,
+        encoding: "gzip",
+        etag: expected,
+      })
+    }
+    const identity = await app.fetch(new Request("http://x/raw"))
+    expect(identity.headers.get("etag")).toBe('"v2"')
+  })
+
   test("an event stream without no-transform still passes through uncompressed", async () => {
     const app = server()
       .use(compression({ threshold: 1 }))

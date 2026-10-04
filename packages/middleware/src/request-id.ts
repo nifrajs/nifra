@@ -4,9 +4,18 @@ import { setNodeHeader, withHeaders } from "./_utils.ts"
 export interface RequestIdOptions {
   /** Header read for an inbound id (trace propagation) + echoed on the response. Default `"x-request-id"`. */
   readonly header?: string
-  /** Generate an id when the inbound header is absent. Default `crypto.randomUUID()`. */
+  /** Generate an id when the inbound header is absent or not accepted. Default `crypto.randomUUID()`. */
   readonly generate?: () => string
+  /**
+   * Whether an inbound id is used. The id is client-supplied and lands in logs, traces, and the
+   * response, so the default accepts 1-200 visible ASCII characters - no spaces, no control
+   * characters (a terminal escape sequence), no unbounded length. A refused id is replaced by a
+   * generated one.
+   */
+  readonly accept?: (id: string) => boolean
 }
+
+const INBOUND_ID = /^[\x21-\x7e]{1,200}$/
 
 /**
  * A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound
@@ -29,6 +38,9 @@ export function requestId(options: RequestIdOptions = {}): ContextPlugin<{ reque
   // the response twin's "already echoed?" probe and the derive's write must agree on it.
   const wireHeader = header.toLowerCase()
   const generate = options.generate ?? (() => crypto.randomUUID())
+  const acceptable = options.accept ?? ((id: string) => INBOUND_ID.test(id))
+  const inboundOf = (id: string | null): string | null =>
+    id !== null && acceptable(id) ? id : null
   // Web-lane derive-to-response pairing for GENERATED ids (an inbound one is re-readable from the
   // request in onResponse). Entries are deleted in onResponse; a Node-lane derive also writes here
   // but its id travels via the `c.set` write into the outcome record, and the weakly-held entry is
@@ -52,7 +64,7 @@ export function requestId(options: RequestIdOptions = {}): ContextPlugin<{ reque
           if (res.headers.get(header) !== null) return res
           // The id the derive generated; else the inbound header, then a fresh id - so a response
           // no derive saw (a 404, an earlier middleware's short-circuit) is still covered.
-          const echo = id ?? req.headers.get(header) ?? generate()
+          const echo = id ?? inboundOf(req.headers.get(header)) ?? generate()
           return withHeaders(res, (headers) => {
             headers.set(header, echo)
           })
@@ -62,7 +74,7 @@ export function requestId(options: RequestIdOptions = {}): ContextPlugin<{ reque
           // exactly this one record-property check. Anything the derive never saw - a 404, a native
           // short-circuit - gets the inbound id or a fresh one here.
           if (res.headers?.[wireHeader] !== undefined) return
-          setNodeHeader(res, wireHeader, req.header(header) ?? generate())
+          setNodeHeader(res, wireHeader, inboundOf(req.header(header)) ?? generate())
         },
       })
       .derive((c) => {
@@ -72,7 +84,7 @@ export function requestId(options: RequestIdOptions = {}): ContextPlugin<{ reque
         // carries it into a framework-rendered result on every lane - on Node-direct, into the
         // outcome record, where the response twin sees it as already echoed. Header and
         // `c.requestId` are therefore the same value everywhere with a single generation.
-        const inbound = c.header(header)
+        const inbound = inboundOf(c.header(header))
         const id = inbound ?? generate()
         if (inbound === null) ids.set(c.req, id)
         c.set.headers[wireHeader] = id

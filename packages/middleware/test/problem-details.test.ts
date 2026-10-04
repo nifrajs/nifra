@@ -145,6 +145,48 @@ describe("problemDetails()", () => {
     expect(await res.text()).toBe('{"ok":false,"error":"not_found"}')
   })
 
+  test("never reads a non-JSON or declared-oversized error body, so a stream is not held back", async () => {
+    let pulls = 0
+    let cancelled = false
+    const endless = (contentType: string, length?: string): Response =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (controller) =>
+            new Promise<void>((resolve) =>
+              setTimeout(() => {
+                pulls += 1
+                if (!cancelled) controller.enqueue(new TextEncoder().encode("x"))
+                resolve()
+              }, 10),
+            ),
+          cancel: () => {
+            cancelled = true
+          },
+        }),
+        {
+          status: 503,
+          headers:
+            length === undefined
+              ? { "content-type": contentType }
+              : { "content-type": contentType, "content-length": length },
+        },
+      )
+    const app = server({ logger: silentLogger })
+      .use(problemDetails({ maxBytes: 1024 }))
+      .get("/page", () => endless("text/html"))
+      .get("/declared", () => endless("application/json", "4096"))
+
+    for (const path of ["/page", "/declared"]) {
+      const res = await Promise.race([
+        app.fetch(new Request(`http://x${path}`)),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 500)),
+      ])
+      expect({ path, status: res?.status }).toEqual({ path, status: 503 })
+      await res?.body?.cancel()
+    }
+    expect(pulls).toBeLessThan(10)
+  })
+
   test("leaves non-JSON, encoded, and already-readable errors untouched", async () => {
     const app = server({ logger: silentLogger })
       .use(problemDetails())

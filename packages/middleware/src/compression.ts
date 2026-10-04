@@ -57,7 +57,16 @@ const gzipHeaders = (source: Headers): Headers => {
   headers.set("content-encoding", "gzip")
   headers.delete("content-length")
   addGzipVary(headers)
+  weakenEtag(headers)
   return headers
+}
+
+/** A strong ETag names the identity bytes; the gzip bytes are another representation, so the tag is
+ * weakened (as nginx does) rather than shared by both - a cache or range request trusting it to
+ * mean byte-identical would otherwise splice one representation into the other. */
+function weakenEtag(headers: ResponseHeadersView): void {
+  const etag = headers.get("etag")
+  if (etag !== null && !etag.startsWith("W/")) headers.set("etag", `W/${etag}`)
 }
 
 function addGzipVary(headers: ResponseHeadersView): void {
@@ -251,6 +260,7 @@ export function compression(options: CompressionOptions = {}) {
             headers.set("content-encoding", "gzip")
             headers.delete("content-length")
             addGzipVary(headers)
+            weakenEtag(headers)
             return compressed
           })
         },
