@@ -333,6 +333,54 @@ describe("prediction store", () => {
     expect(failed.snapshot.activePredictionIds).toEqual([])
   })
 
+  test("concurrent calls under accept-server-state end on the latest server state", async () => {
+    let server = 0
+    interface Counter {
+      readonly count: number
+    }
+    const counter = (
+      reconciliation: "accept-server-state" | "manual",
+    ): AgentCapability<{ delay: number }, Counter, Counter> =>
+      defineAgentCapability({
+        name: "counter.increment",
+        description: "Increment the counter.",
+        input: t.object({ delay: t.number() }),
+        output: t.object({ count: t.number() }),
+        reconciliation,
+        execute: async ({ delay }) => {
+          await Bun.sleep(delay)
+          server += 1
+          return { count: server }
+        },
+        predict: ({ snapshot, version }) => ({
+          baseVersion: version,
+          patch: [{ op: "replace", path: "/count", value: snapshot.count + 1 }],
+        }),
+        reconcile: ({ output }) => ({
+          state: { count: output.count },
+          version: `v${output.count}`,
+        }),
+      })
+    const race = async (reconciliation: "accept-server-state" | "manual") => {
+      server = 0
+      const store = createPredictionStore<Counter>({ state: { count: 0 }, version: "v0" })
+      const capability = counter(reconciliation)
+      const outcomes = await Promise.all([
+        executePredicted(capability, { delay: 5 }, store),
+        executePredicted(capability, { delay: 25 }, store),
+      ])
+      return { outcomes: outcomes.map((result) => result.outcome), snapshot: store.snapshot() }
+    }
+
+    const accepted = await race("accept-server-state")
+    expect(accepted.outcomes).toEqual(["committed", "committed"])
+    expect(accepted.snapshot).toMatchObject({ state: { count: 2 }, version: "v2" })
+    // Manual reconciliation keeps reporting the conflict and leaves the base to the application.
+    const manual = await race("manual")
+    expect(manual.outcomes).toEqual(["committed", "conflicted"])
+    expect(manual.snapshot).toMatchObject({ state: { count: 1 }, version: "v1" })
+  })
+
   test("rolls back a prediction when execution is cancelled after it becomes visible", async () => {
     let release!: (value: { version: string }) => void
     let started = false

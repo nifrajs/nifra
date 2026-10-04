@@ -6648,6 +6648,7 @@ _No named exports (side-effect entrypoint)._
 - **DefineAgentCapabilityOptions** _(type)_ - `type DefineAgentCapabilityOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1, State>`
 - **ExecutePredictedOptions** _(interface)_ - `interface ExecutePredictedOptions`
 - **PredictedExecutionResult** _(interface)_ - `interface PredictedExecutionResult<Output, State>`
+- **PredictionCommitOptions** _(interface)_ - `interface PredictionCommitOptions`
 - **PredictionPatchOperation** _(type)_ - `type PredictionPatchOperation = | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown } | { readonly op: "remove"; readonly path: string }`
   The safe RFC 6902 subset accepted for speculative UI updates.
 - **PredictionStore** _(interface)_ - `interface PredictionStore<State>`

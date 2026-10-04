@@ -14459,6 +14459,12 @@
     "signature": "export declare const PREDICTION_LAB_SEED = 1347568964;"
   },
   {
+    "name": "PredictionCommitOptions",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface PredictionCommitOptions {\n    /**\n     * The capability's reconciliation policy. With `\"accept-server-state\"`, the server's state becomes\n     * the authoritative base even when the prediction conflicted with a newer commit: the server has\n     * applied the call, so the latest response wins and the outcome is `committed`.\n     */\n    readonly reconciliation?: ReconciliationMode;\n}"
+  },
+  {
     "name": "predictionLabCaseIds",
     "kind": "const",
     "package": "@nifrajs/testing",
@@ -14513,7 +14519,7 @@
     "name": "PredictionStore",
     "kind": "interface",
     "package": "@nifrajs/webmcp",
-    "signature": "export interface PredictionStore<State> {\n    readonly snapshot: () => PredictionStoreSnapshot<State>;\n    readonly predict: (predictionId: string, prediction: AgentSurfacePrediction, now?: number) => PredictionStoreResult<State>;\n    readonly commit: (predictionId: string, authoritative: AgentSurfaceAuthoritativeState<State>, now?: number) => PredictionStoreResult<State>;\n    readonly rollback: (predictionId: string) => PredictionStoreResult<State>;\n    readonly expire: (now?: number) => readonly string[];\n    readonly subscribe: (listener: (event: PredictionStoreEvent<State>) => void) => () => void;\n}"
+    "signature": "export interface PredictionStore<State> {\n    readonly snapshot: () => PredictionStoreSnapshot<State>;\n    readonly predict: (predictionId: string, prediction: AgentSurfacePrediction, now?: number) => PredictionStoreResult<State>;\n    readonly commit: (predictionId: string, authoritative: AgentSurfaceAuthoritativeState<State>, now?: number, options?: PredictionCommitOptions) => PredictionStoreResult<State>;\n    readonly rollback: (predictionId: string) => PredictionStoreResult<State>;\n    readonly expire: (now?: number) => readonly string[];\n    readonly subscribe: (listener: (event: PredictionStoreEvent<State>) => void) => () => void;\n}"
   },
   {
     "name": "PredictionStoreEvent",
