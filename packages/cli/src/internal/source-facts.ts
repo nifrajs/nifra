@@ -48,12 +48,12 @@ function nodeAt(ts: TypeScriptApi, source: TSApi.SourceFile, position: number): 
   return best
 }
 
-function ancestorAt(
+function ancestorAt<T extends TSApi.Node>(
   ts: TypeScriptApi,
   source: TSApi.SourceFile,
   position: number,
-  predicate: (node: TSApi.Node) => boolean,
-): TSApi.Node | undefined {
+  predicate: (node: TSApi.Node) => node is T,
+): T | undefined {
   let node: TSApi.Node = nodeAt(ts, source, Math.max(0, Math.min(position, source.end - 1)))
   for (;;) {
     if (predicate(node)) return node
@@ -102,9 +102,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     position: number,
     specifier: string,
   ): boolean | undefined => {
-    const reexport = ancestorAt(ts, source, position, ts.isExportDeclaration) as
-      | TSApi.ExportDeclaration
-      | undefined
+    const reexport = ancestorAt(ts, source, position, ts.isExportDeclaration)
     if (reexport !== undefined) {
       const from = reexport.moduleSpecifier
       if (from === undefined || !ts.isStringLiteral(from) || from.text !== specifier)
@@ -115,9 +113,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
         return named.elements.some((element) => !element.isTypeOnly)
       return true // `export *` and `export * as ns`
     }
-    const declaration = ancestorAt(ts, source, position, ts.isImportDeclaration) as
-      | TSApi.ImportDeclaration
-      | undefined
+    const declaration = ancestorAt(ts, source, position, ts.isImportDeclaration)
     if (declaration === undefined || !ts.isStringLiteral(declaration.moduleSpecifier))
       return undefined
     if (declaration.moduleSpecifier.text !== specifier) return undefined
@@ -136,9 +132,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     method: string,
     path: string,
   ): boolean | undefined => {
-    const call = ancestorAt(ts, source, position, ts.isCallExpression) as
-      | TSApi.CallExpression
-      | undefined
+    const call = ancestorAt(ts, source, position, ts.isCallExpression)
     if (call === undefined || !ts.isPropertyAccessExpression(call.expression)) return false
     const name = call.expression.name.text.toUpperCase()
     const first = call.arguments[0]
@@ -154,9 +148,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     pathIndex: number,
     path: string,
   ): boolean | undefined => {
-    const call = ancestorAt(ts, source, position, ts.isCallExpression) as
-      | TSApi.CallExpression
-      | undefined
+    const call = ancestorAt(ts, source, position, ts.isCallExpression)
     if (call === undefined || !ts.isIdentifier(call.expression)) return false
     const argument = call.arguments[pathIndex]
     return (
@@ -168,18 +160,14 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
   }
 
   const isResponseSyntaxAt = (source: TSApi.SourceFile, position: number): boolean | undefined => {
-    const returnStatement = ancestorAt(ts, source, position, ts.isReturnStatement) as
-      | TSApi.ReturnStatement
-      | undefined
+    const returnStatement = ancestorAt(ts, source, position, ts.isReturnStatement)
     if (returnStatement !== undefined) {
       return (
         returnStatement.expression !== undefined &&
         rawResponseExpression(ts, returnStatement.expression)
       )
     }
-    const arrow = ancestorAt(ts, source, position, ts.isArrowFunction) as
-      | TSApi.ArrowFunction
-      | undefined
+    const arrow = ancestorAt(ts, source, position, ts.isArrowFunction)
     if (arrow !== undefined && !ts.isBlock(arrow.body)) return rawResponseExpression(ts, arrow.body)
     return false
   }

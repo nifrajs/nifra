@@ -608,7 +608,7 @@
     "packages/cli/src/i18n-check.ts": 6,
     "packages/cli/src/init-agents.ts": 3,
     "packages/cli/src/internal/reserved-segment-codemod.ts": 4,
-    "packages/cli/src/internal/source-facts.ts": 6,
+    "packages/cli/src/internal/source-facts.ts": 1,
     "packages/cli/src/internal/typescript-import.ts": 15,
     "packages/cli/src/introspect.ts": 5,
     "packages/cli/src/levels-tool.ts": 3,
