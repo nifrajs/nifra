@@ -421,6 +421,20 @@ export interface EmittedFile {
 }
 
 /**
+ * Why a file may not ship as an asset - its bytes copied or inlined into the bundle - or `undefined`
+ * when it may. A server function reaches the browser only as the stub its import is replaced with, so
+ * as an asset it is the server source itself.
+ */
+export function assetDenial(classification: Classification): string | undefined {
+  return (
+    browserDenial(classification) ??
+    (classification.zone === "fn"
+      ? "it is a server function, and this asset is its source rather than the calls a browser makes"
+      : undefined)
+  )
+}
+
+/**
  * Trace every emitted file back to the graph. A code or CSS file must be a graph chunk; an asset must
  * name the module it was copied from; a source map (external or inline) may name browser-allowed
  * sources only.
@@ -443,9 +457,10 @@ export function accountEmittedFiles(
     const name = basename(source.file)
     moduleFiles.set(name, [...(moduleFiles.get(name) ?? []), source.file])
   }
-  const checkSources = (where: string, sources: readonly string[]): void => {
+  const checkSources = (where: string, sources: readonly string[], asset = false): void => {
     for (const file of sources) {
-      const reason = browserDenial(classifier.classify(file))
+      const classification = classifier.classify(file)
+      const reason = asset ? assetDenial(classification) : browserDenial(classification)
       if (reason !== undefined) problems.push(`${where} names ${file}: ${reason}`)
     }
   }
@@ -474,7 +489,7 @@ export function accountEmittedFiles(
       problems.push(`${file.name} was emitted, but no module in the graph accounts for it`)
       continue
     }
-    checkSources(file.name, sources)
+    checkSources(file.name, sources, true)
   }
   return problems
 }

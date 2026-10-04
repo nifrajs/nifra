@@ -49,6 +49,7 @@ import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
 import {
+  viteAssetUrlGuard,
   viteBareBuiltinExternal,
   viteLeakGuard,
   viteServerZoneGuard,
@@ -227,7 +228,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     ...guardOptions,
     secrets: { ...guardOptions.secrets, ...(publicDir !== undefined ? { publicDir } : {}) },
   })
-  const workerGuards: ReturnType<typeof viteLeakGuard>[] = []
+  const assetUrlGuard = viteAssetUrlGuard(guardOptions)
+  const workerGuards: { readonly leak?: string | undefined }[] = []
   try {
     await withSerializedNodeEnv(mode, () =>
       vite.build({
@@ -262,12 +264,14 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
           },
         },
         // First, so a bare built-in is named before Vite turns it into an anonymous stub.
-        plugins: [viteBareBuiltinExternal(), ...(options.vitePlugins ?? [])],
+        // The asset URL guard last, so it reads each module after any framework plugin made it JavaScript.
+        plugins: [viteBareBuiltinExternal(), ...(options.vitePlugins ?? []), assetUrlGuard],
         worker: {
           plugins: () => {
             const guard = viteLeakGuard(guardOptions)
-            workerGuards.push(guard)
-            return [viteBareBuiltinExternal(), viteServerFnStub(), guard]
+            const urlGuard = viteAssetUrlGuard(guardOptions)
+            workerGuards.push(guard, urlGuard)
+            return [viteBareBuiltinExternal(), viteServerFnStub(), guard, urlGuard]
           },
         },
         build: {
@@ -301,7 +305,10 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     // that construction fails, replacing a precise "node:crypto reached the client bundle" with an
     // internal complaint naming nothing. Raising it here puts the message beyond anything that can
     // rewrite it; the bundler's error is kept as `cause` for the rest of the context.
-    const leak = leakGuard.leak ?? workerGuards.find((guard) => guard.leak !== undefined)?.leak
+    const leak =
+      assetUrlGuard.leak ??
+      leakGuard.leak ??
+      workerGuards.find((guard) => guard.leak !== undefined)?.leak
     if (leak !== undefined) throw new Error(leak, { cause: error })
     throw error
   } finally {

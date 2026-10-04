@@ -264,6 +264,44 @@ const ROWS: readonly LeakPath[] = [
     expect: { "vite-build": "backend/job.ts: it is backend code" },
   },
   {
+    name: "a backend file a new URL() names, small enough to inline",
+    files: {
+      ...DB,
+      "routes/index.tsx": PAGE("", 'new URL("../backend/db.ts", import.meta.url).href'),
+    },
+    expect: {
+      "bun-build": null,
+      "vite-build":
+        'new URL("../backend/db.ts", import.meta.url) names backend/db.ts: it is backend code',
+    },
+  },
+  {
+    name: "a server function's source a new URL() names, forced inline",
+    files: {
+      "backend/todos.fn.ts": `export const list = () => "${FN_MARKER}"\n`,
+      "routes/index.tsx": PAGE(
+        "",
+        'new URL("../backend/todos.fn.ts?inline", import.meta.url).href',
+      ),
+    },
+    expect: {
+      "bun-build": null,
+      "vite-build": "names backend/todos.fn.ts: it is a server function",
+    },
+  },
+  {
+    name: "a backend file a stylesheet url() names",
+    files: {
+      ...DB,
+      "frontend/app.css": 'body { background: url("../backend/db.ts") }\n',
+      "routes/index.tsx": PAGE('import "../frontend/app.css"'),
+    },
+    expect: {
+      "bun-build": "backend/db.ts: it is backend code",
+      "vite-build": "backend/db.ts: it is backend code",
+    },
+  },
+  {
     name: "a loader left in the page file",
     files: {
       "routes/index.tsx": PAGE(`export const loader = () => "${BACKEND_MARKER}"`),

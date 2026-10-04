@@ -11,6 +11,7 @@
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
 
 export type Zone =
   /** A page or special file under `routes/` - the frontend half of a route. */
@@ -268,6 +269,14 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
         | "shared"
         | "fn"
         | undefined
+      // Only a script module is replaced by the calls a browser makes; any other ".fn" file would
+      // ship to the browser exactly as written.
+      if (suffix === "fn" && !SERVER_FN_MODULE.test(base)) {
+        return {
+          zone: "error",
+          reason: `"${rel}" is named as a server function, but only a script module (.ts, .js) can be one - the browser build would ship this file as it is. Rename it`,
+        }
+      }
       if (isInside(file, routesDir)) {
         if (ROUTE_BACKEND_FILE.test(base)) return { zone: "route-backend" }
         if (suffix === "fn") return { zone: "fn" }

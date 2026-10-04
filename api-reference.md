@@ -5840,6 +5840,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/plugins/vite-leak-guard`
 
+- **AssetUrlGuardPlugin** _(interface)_ - `interface AssetUrlGuardPlugin`
+  The minimal Vite plugin shape {@link viteAssetUrlGuard} returns.
 - **BareBuiltinPlugin** _(interface)_ - `interface BareBuiltinPlugin`
   The minimal Vite plugin shape {@link viteBareBuiltinExternal} returns.
 - **LeakGuardOptions** _(interface)_ - `interface LeakGuardOptions`
@@ -5848,6 +5850,8 @@ _No named exports (side-effect entrypoint)._
 - **LeakGuardSecretOptions** _(interface)_ - `interface LeakGuardSecretOptions`
 - **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" >`
   What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
+- **viteAssetUrlGuard** _(function)_ - `viteAssetUrlGuard: (options?: ServerZoneGuardOptions) => AssetUrlGuardPlugin`
+  Keep server files out of a Vite client build's assets. A `new URL("./x", import.meta.url)` makes Vite copy the file it names into the output, or inline it into the chunk as a `data:` URL when it is small - no module and no import edge, so {@link viteLeakGuard}'s graph never sees it. This refuses a …
 - **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
   Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the import builds, does nothing in the browser, and no longer names the module. This plugin externalizes i…
 - **viteLeakGuard** _(function)_ - `viteLeakGuard: (options?: LeakGuardOptions) => LeakGuardPlugin`

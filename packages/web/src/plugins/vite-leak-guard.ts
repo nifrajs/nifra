@@ -31,14 +31,14 @@
  *   // vite.config.ts (production client build)
  *   import { viteBareBuiltinExternal, viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
  *   export default {
- *     plugins: [viteBareBuiltinExternal()],
+ *     plugins: [viteBareBuiltinExternal(), viteAssetUrlGuard({ appRoot: import.meta.dirname })],
  *     build: {
  *       rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard({ appRoot: import.meta.dirname })] },
  *     },
  *   }
  */
-import { existsSync } from "node:fs"
-import { isAbsolute, resolve } from "node:path"
+import { existsSync, statSync } from "node:fs"
+import { dirname, isAbsolute, relative, resolve } from "node:path"
 import {
   detectNodeBuiltinsInClient,
   detectServerOnlyInClient,
@@ -60,6 +60,7 @@ import {
 } from "../internal/secret-scan.ts"
 import {
   accountEmittedFiles,
+  assetDenial,
   type EmittedFile,
   formatClientGraphVerdict,
   formatServerGraphVerdict,
@@ -74,7 +75,7 @@ import {
   type GraphModule,
   type RollupBundleLike,
 } from "../module-graph.ts"
-import { createZoneClassifier } from "../zones.ts"
+import { createZoneClassifier, type ZoneClassifier } from "../zones.ts"
 
 /**
  * The Rollup plugin-context slice this uses: `getModuleInfo` for a module's resolved imports, and `error`
@@ -177,11 +178,7 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
   const plugin: LeakGuardPlugin = {
     name: "nifra:leak-guard",
     generateBundle(_options, bundle) {
-      const classifier = createZoneClassifier({
-        appRoot,
-        ...(options.routesDir !== undefined ? { routesDir: options.routesDir } : {}),
-        ...(options.generatedFiles !== undefined ? { generatedFiles: options.generatedFiles } : {}),
-      })
+      const classifier = classifierFor(appRoot, options)
       // Resolved import edges per module, straight from Rollup's graph. Dynamic imports count too: a
       // `node:`/server-only module reached only via `import()` still ships to the browser.
       const importsOf = (id: string): readonly string[] => {
@@ -276,11 +273,7 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
   const plugin: LeakGuardPlugin = {
     name: "nifra:server-zone-guard",
     generateBundle(_options, bundle) {
-      const classifier = createZoneClassifier({
-        appRoot,
-        ...(options.routesDir !== undefined ? { routesDir: options.routesDir } : {}),
-        ...(options.generatedFiles !== undefined ? { generatedFiles: options.generatedFiles } : {}),
-      })
+      const classifier = classifierFor(appRoot, options)
       const importsOf = (id: string): readonly string[] => {
         const info = this.getModuleInfo(id)
         if (info === null) return []
@@ -300,6 +293,15 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
     },
   }
   return plugin
+}
+
+/** The zone classifier for the app `options` names. */
+function classifierFor(appRoot: string, options: ServerZoneGuardOptions): ZoneClassifier {
+  return createZoneClassifier({
+    appRoot,
+    ...(options.routesDir !== undefined ? { routesDir: options.routesDir } : {}),
+    ...(options.generatedFiles !== undefined ? { generatedFiles: options.generatedFiles } : {}),
+  })
 }
 
 /**
@@ -432,4 +434,190 @@ export function viteBareBuiltinExternal(): BareBuiltinPlugin {
       return { id: `node:${source}`, external: true }
     },
   }
+}
+
+/** The plugin-context slice {@link viteAssetUrlGuard} uses. */
+interface TransformContext extends ResolveContext {
+  parse(code: string): unknown
+  error(error: Error): never
+}
+
+type InlineLimit = number | ((file: string, content: Uint8Array) => boolean | undefined)
+
+/** The minimal Vite plugin shape {@link viteAssetUrlGuard} returns. */
+export interface AssetUrlGuardPlugin {
+  readonly name: string
+  readonly apply: "build"
+  /** The refusal that failed the build, recorded for the reason {@link LeakGuardPlugin.leak} gives. */
+  leak?: string
+  config(config: { readonly build?: { readonly assetsInlineLimit?: InlineLimit } }): {
+    readonly build: { readonly assetsInlineLimit: InlineLimit }
+  }
+  transform(
+    this: TransformContext,
+    code: string,
+    id: string,
+    options?: { readonly ssr?: boolean },
+  ): Promise<null>
+}
+
+const POSTFIX = /[?#].*$/s
+const URL_SCHEME = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
+
+/**
+ * Keep server files out of a Vite client build's assets. A `new URL("./x", import.meta.url)` makes
+ * Vite copy the file it names into the output, or inline it into the chunk as a `data:` URL when it is
+ * small - no module and no import edge, so {@link viteLeakGuard}'s graph never sees it. This refuses a
+ * reference whose file the zones keep off the browser (backend code, a route's backend half, a server
+ * function's source, a file in no zone), and stops Vite inlining such a file anywhere else (a
+ * stylesheet's `url()`), so it is emitted where the leak guard's output accounting names it.
+ *
+ * Add it to the top-level `plugins`, after any framework plugin: it reads each module once that
+ * module is JavaScript, before Vite resolves the references.
+ */
+export function viteAssetUrlGuard(options: ServerZoneGuardOptions = {}): AssetUrlGuardPlugin {
+  const appRoot = resolve(options.appRoot ?? process.cwd())
+  let classifier: ZoneClassifier | undefined
+  const denial = (file: string): string | undefined => {
+    classifier ??= classifierFor(appRoot, options)
+    return assetDenial(classifier.classify(file))
+  }
+  const shown = (file: string): string => relative(appRoot, file).replaceAll("\\", "/")
+  const plugin: AssetUrlGuardPlugin = {
+    name: "nifra:asset-url-guard",
+    apply: "build",
+    config(config) {
+      const own = config.build?.assetsInlineLimit
+      return {
+        build: {
+          assetsInlineLimit: (file, content) =>
+            denial(file) !== undefined
+              ? false
+              : typeof own === "function"
+                ? own(file, content)
+                : own === undefined
+                  ? undefined
+                  : content.length < own,
+        },
+      }
+    },
+    async transform(code, id, transformOptions) {
+      if (transformOptions?.ssr === true || !code.includes("import.meta.url")) return null
+      const importer = id.replace(POSTFIX, "")
+      if (!isAbsolute(importer) || importer.includes("/node_modules/") || CSS_FILE.test(importer))
+        return null
+      let program: unknown
+      try {
+        program = this.parse(code)
+      } catch {
+        return null
+      }
+      const problems: string[] = []
+      for (const url of newUrlLiterals(program)) {
+        if (URL_SCHEME.test(url)) continue
+        for (const file of await assetUrlFiles(this, url, importer)) {
+          const reason = denial(file)
+          if (reason !== undefined) {
+            problems.push(
+              `${shown(importer)}: new URL(${JSON.stringify(url)}, import.meta.url) names ${shown(file)}: ${reason}`,
+            )
+          }
+        }
+      }
+      if (problems.length === 0) return null
+      const leak =
+        `[nifra/web] the browser build references files that may not ship to a browser:\n${problems.map((line) => `  - ${line}`).join("\n")}\n` +
+        "The bundler copies or inlines the file such a URL names, so it would ship as it is. Reach " +
+        "backend code through a route's backend half (x.backend.ts) or a *.fn.ts server function; a " +
+        "file the browser loads belongs in frontend/ or public/."
+      plugin.leak = leak
+      return this.error(new Error(leak))
+    },
+  }
+  return plugin
+}
+
+/**
+ * The files a `new URL(url, import.meta.url)` can name, resolved the ways Vite tries: beside the
+ * module, then through the resolver (aliases, extensions, a root-relative path). Existing files only;
+ * a reference to nothing ships nothing.
+ */
+async function assetUrlFiles(
+  context: ResolveContext,
+  url: string,
+  importer: string,
+): Promise<string[]> {
+  const files = new Set<string>()
+  const add = (path: string | undefined): void => {
+    const file = path?.replace(POSTFIX, "")
+    if (file === undefined || !isAbsolute(file) || file.includes("\0")) return
+    if (statSync(file, { throwIfNoEntry: false })?.isFile() === true) files.add(file)
+  }
+  if (!url.startsWith("/")) add(resolve(dirname(importer), url.replace(POSTFIX, "")))
+  const sources = url.startsWith(".") || url.startsWith("/") ? [url] : [url, `./${url}`]
+  for (const source of sources) {
+    try {
+      add((await context.resolve(source, importer, { skipSelf: true }))?.id)
+    } catch {
+      // An unresolvable reference is one Vite leaves unchanged.
+    }
+  }
+  return [...files]
+}
+
+const field = (node: unknown, key: string): unknown =>
+  typeof node === "object" && node !== null ? Reflect.get(node, key) : undefined
+
+/** `import.meta.url`, and not `new.target.url`. */
+const isImportMetaUrl = (node: unknown): boolean =>
+  field(node, "type") === "MemberExpression" &&
+  field(node, "computed") === false &&
+  field(field(node, "property"), "name") === "url" &&
+  field(field(field(node, "object"), "meta"), "name") === "import"
+
+/** A string literal's text as written and as it evaluates; nothing for a template with holes. */
+function literalTexts(node: unknown): string[] {
+  const type = field(node, "type")
+  if (type === "Literal") {
+    const value = field(node, "value")
+    const raw = field(node, "raw")
+    if (typeof value !== "string") return []
+    return typeof raw === "string" ? [value, raw.slice(1, -1)] : [value]
+  }
+  if (type !== "TemplateLiteral") return []
+  const holes = field(node, "expressions")
+  const quasis = field(node, "quasis")
+  if (!Array.isArray(holes) || holes.length > 0 || !Array.isArray(quasis)) return []
+  const value = field(quasis[0], "value")
+  return [field(value, "cooked"), field(value, "raw")].filter(
+    (text): text is string => typeof text === "string",
+  )
+}
+
+/**
+ * The URL text of every `new URL("...", import.meta.url)` in a parsed module. Parsed rather than
+ * matched, so a comment inside the call cannot hide one; a template with holes is skipped, as Vite
+ * turns it into an `import.meta.glob` the module graph sees.
+ */
+function newUrlLiterals(program: unknown): string[] {
+  const found = new Set<string>()
+  const stack: unknown[] = [program]
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (typeof node !== "object" || node === null) continue
+    const args = field(node, "arguments")
+    if (
+      field(node, "type") === "NewExpression" &&
+      field(field(node, "callee"), "type") === "Identifier" &&
+      field(field(node, "callee"), "name") === "URL" &&
+      Array.isArray(args) &&
+      isImportMetaUrl(args[1])
+    ) {
+      for (const text of literalTexts(args[0])) found.add(text)
+    }
+    for (const child of Object.values(node)) {
+      if (typeof child === "object" && child !== null) stack.push(child)
+    }
+  }
+  return [...found]
 }

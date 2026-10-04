@@ -34,6 +34,9 @@ for (const file of [
   "app/backend/app.ts",
   "app/backend/db/client.ts",
   "app/backend/notes.fn.ts",
+  "app/backend/report.fn.vue",
+  "app/routes/chart.fn.svelte",
+  "app/lib/post.fn.mdx",
   "app/backend/view.frontend.tsx",
   "app/shared/format.ts",
   "app/lib/helpers.ts",
@@ -98,6 +101,14 @@ describe("createZoneClassifier", () => {
       const result = zoneOf(path)
       expect(result.zone).toBe("error")
       expect(result.zone === "error" && result.reason).toContain("says otherwise")
+    }
+  })
+
+  test("a .fn file the browser build cannot turn into calls is an error, not a server function", () => {
+    for (const path of ["backend/report.fn.vue", "routes/chart.fn.svelte", "lib/post.fn.mdx"]) {
+      const result = zoneOf(path)
+      expect({ path, zone: result.zone }).toEqual({ path, zone: "error" })
+      expect(result.zone === "error" && result.reason).toContain("only a script module")
     }
   })
 

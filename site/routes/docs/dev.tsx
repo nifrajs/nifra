@@ -89,11 +89,17 @@ export const cssLoading = "deferred"
 const VITE_PROD = `// vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
 // Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
 // production bundler stays Bun (buildClient), which is faster and Bun-native.
-import { viteBareBuiltinExternal, viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
+import {
+  viteAssetUrlGuard,
+  viteBareBuiltinExternal,
+  viteLeakGuard,
+} from "@nifrajs/web/plugins/vite-leak-guard"
 
 export default {
   // Keeps a bare built-in (\`fs/promises\`) named instead of an empty stub, so the guard sees it.
-  plugins: [viteBareBuiltinExternal()],
+  // viteAssetUrlGuard refuses a new URL("../backend/x.ts", import.meta.url) - a file Vite would copy or
+  // inline with no import for the graph guard to see. Last, after any framework plugin.
+  plugins: [viteBareBuiltinExternal(), viteAssetUrlGuard()],
   build: {
     // The SAME client-leak guards Nifra's Bun build runs - backend code (a route's .backend.ts half,
     // backend/) or a node: builtin reaching the browser fails the build, with the identical message. A second production

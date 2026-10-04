@@ -1481,6 +1481,13 @@
     "doc": "/**\n * Enforce the transport byte cap on already-read text - the same limit (and the same error) the\n * streaming reader applies during a bounded read. Exported for callers that read a body through a\n * native, non-streaming path (the typed client's in-process branch) and still owe the cap contract.\n */"
   },
   {
+    "name": "AssetUrlGuardPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface AssetUrlGuardPlugin {\n    readonly name: string;\n    readonly apply: \"build\";\n    /** The refusal that failed the build, recorded for the reason {@link LeakGuardPlugin.leak} gives. */\n    leak?: string;\n    config(config: {\n        readonly build?: {\n            readonly assetsInlineLimit?: InlineLimit;\n        };\n    }): {\n        readonly build: {\n            readonly assetsInlineLimit: InlineLimit;\n        };\n    };\n    transform(this: TransformContext, code: string, id: string, options?: {\n        readonly ssr?: boolean;\n    }): Promise<null>;\n}",
+    "doc": "/** The minimal Vite plugin shape {@link viteAssetUrlGuard} returns. */"
+  },
+  {
     "name": "AssistantChunkView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -22293,6 +22300,13 @@
     "package": "@nifrajs/agent-app",
     "signature": "export declare function virtualizeEvidenceRows<T>(rows: readonly T[], cursor: number, windowSize?: number): {\n    readonly offset: number;\n    readonly rows: readonly T[];\n};",
     "doc": "/** Keep browser work bounded when a run has more than 1,000 evidence rows. */"
+  },
+  {
+    "name": "viteAssetUrlGuard",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function viteAssetUrlGuard(options?: ServerZoneGuardOptions): AssetUrlGuardPlugin;",
+    "doc": "/**\n * Keep server files out of a Vite client build's assets. A `new URL(\"./x\", import.meta.url)` makes\n * Vite copy the file it names into the output, or inline it into the chunk as a `data:` URL when it is\n * small - no module and no import edge, so {@link viteLeakGuard}'s graph never sees it. This refuses a\n * reference whose file the zones keep off the browser (backend code, a route's backend half, a server\n * function's source, a file in no zone), and stops Vite inlining such a file anywhere else (a\n * stylesheet's `url()`), so it is emitted where the leak guard's output accounting names it.\n *\n * Add it to the top-level `plugins`, after any framework plugin: it reads each module once that\n * module is JavaScript, before Vite resolves the references.\n */"
   },
   {
     "name": "viteBareBuiltinExternal",
