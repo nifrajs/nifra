@@ -14,6 +14,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { basename, isAbsolute, join, relative } from "node:path"
 import type { ClientModuleGraph } from "../module-graph.ts"
 import type { ZoneClassifier } from "../zones.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import { isSensitiveFieldName } from "./output-guard.ts"
 import type { ModuleSource } from "./zone-graph.ts"
 
@@ -461,7 +462,7 @@ export function scanForSecrets(input: SecretScanInput): SecretFinding[] {
   for (const file of input.sources ?? []) scan(file, true)
   for (const file of input.artifacts ?? []) scan(file, false)
   return findings.sort(
-    (a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule),
+    (a, b) => codeUnitOrder(a.file, b.file) || a.line - b.line || codeUnitOrder(a.rule, b.rule),
   )
 }
 

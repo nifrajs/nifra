@@ -29,6 +29,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, join, relative } from "node:path"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import {
   buildManifest,
   isMiddlewareFile,
@@ -78,7 +79,7 @@ function routeFiles(manifest: Manifest): readonly RouteFile[] {
     for (const entry of Object.values(group ?? {})) add(entry, "page")
   }
   if (manifest.notFound !== undefined) add(manifest.notFound, "page")
-  return [...files.values()].sort((a, b) => a.file.localeCompare(b.file))
+  return [...files.values()].sort((a, b) => codeUnitOrder(a.file, b.file))
 }
 
 const PARAM = /^\[([A-Za-z_][A-Za-z0-9_]*)\]$/

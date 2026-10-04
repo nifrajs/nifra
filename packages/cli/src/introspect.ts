@@ -17,6 +17,7 @@ import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { normalizeMountPath } from "@nifrajs/web/route-manifest"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import type { LoadedApp } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
@@ -199,7 +200,7 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
     return "## API routes\n\nNo `backend/app.ts` server routes found (this app may be frontend-only)."
   }
   const lines = [...routes]
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
     .flatMap((r) => [
       `- \`${r.method} ${r.path}\``,
       ...schemaLines(r.schema),
@@ -219,7 +220,7 @@ export function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string
     return "## API routes (backend/app.ts)\n\nNo `backend/app.ts` server routes found (this app may be frontend-only)."
   }
   const lines = [...routes]
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
     .map((r) => `- \`${r.method} ${r.path}\``)
   return `## API routes (backend/app.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
 }
@@ -230,7 +231,7 @@ export function pageRoutesSection(manifest: Manifest | undefined): string {
     return "## Page routes\n\nNo file routes found under `routes/`."
   }
   const lines = [...manifest.routes]
-    .sort((a, b) => a.pattern.localeCompare(b.pattern))
+    .sort((a, b) => codeUnitOrder(a.pattern, b.pattern))
     .map((r) => `- \`${r.pattern}\` → \`${r.file}\``)
   return `## Page routes (routes/)\n\n${lines.join("\n")}`
 }
@@ -348,7 +349,7 @@ export function routesToJsonFromEvidence(
     routes = routes.filter((r) => r.path.startsWith(pathPrefix))
   }
   return [...routes]
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
     .map((r) => {
       const s = r.schema
       const body = shape(s?.body)
@@ -474,9 +475,9 @@ export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
   }
   return rows.sort(
     (a, b) =>
-      a.path.localeCompare(b.path) ||
-      a.kind.localeCompare(b.kind) ||
-      a.methods.join(",").localeCompare(b.methods.join(",")),
+      codeUnitOrder(a.path, b.path) ||
+      codeUnitOrder(a.kind, b.kind) ||
+      codeUnitOrder(a.methods.join(","), b.methods.join(",")),
   )
 }
 
@@ -600,7 +601,7 @@ function parentPath(path: string): string | undefined {
 /** Build a stable parent/child graph from the public route table. Pure and topology-neutral. */
 export function buildRouteGraph(rows: readonly RouteTableEntry[]): RouteGraph {
   const sorted = [...rows].sort(
-    (a, b) => a.path.localeCompare(b.path) || a.kind.localeCompare(b.kind),
+    (a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.kind, b.kind),
   )
   const nodes: RouteGraphNode[] = [
     { id: "root", kind: "root", path: "/" },

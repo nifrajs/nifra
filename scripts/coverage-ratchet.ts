@@ -37,6 +37,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 const DEFAULT_LCOV = "coverage/lcov.info"
 const DEFAULT_BASELINE = "coverage-baseline.json"
@@ -94,9 +95,6 @@ export function parseLcov(source: string): Record<string, FileCoverage> {
   return out
 }
 
-/** Code-unit order: the committed baseline must come out the same on every machine and locale. */
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
-
 interface Regression {
   readonly file: string
   readonly metric: "functions" | "lines"
@@ -122,13 +120,13 @@ export function findRegressions(
       }
     }
   }
-  return out.sort((a, b) => byCodeUnit(a.file, b.file) || byCodeUnit(a.metric, b.metric))
+  return out.sort((a, b) => codeUnitOrder(a.file, b.file) || codeUnitOrder(a.metric, b.metric))
 }
 
 const pct = (n: number): string => `${n.toFixed(2)}%`
 
 function sortKeys(record: Record<string, FileCoverage>): Record<string, FileCoverage> {
-  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => byCodeUnit(a, b)))
+  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => codeUnitOrder(a, b)))
 }
 
 /** What a run decided: the process exit code, and the lines to print. */

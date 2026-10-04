@@ -15,6 +15,7 @@ import {
 import { CONFIG_FILE } from "../app-files.ts"
 import { stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import type { CheckRule } from "./index.ts"
 import { zonedFiles } from "./zones.ts"
 
@@ -165,7 +166,7 @@ export const secretSourceRule: CheckRule = {
       }
     }
     return findings.sort(
-      (a, b) => (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
+      (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
   },
 }

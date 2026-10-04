@@ -24,6 +24,9 @@ import {
   type RunSnapshot,
 } from "@nifrajs/agent-protocol"
 
+/** Code-unit order, the same in every locale, so a view lists the same ids in the same order everywhere. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
 /** A session reduced to lifecycle and capability facts. The working directory is deliberately omitted. */
 export interface SessionView {
   readonly id: string
@@ -776,7 +779,7 @@ export function toRunStudioView(value: unknown): RunStudioView | undefined {
       }),
     )
   }
-  nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId))
+  nodes.sort((a, b) => byCodeUnit(a.nodeId, b.nodeId))
   return Object.freeze({
     runId: value.runId,
     planId: value.planId,
@@ -1418,8 +1421,8 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
       : "pass"
   if (value.blocking !== expectedBlocking || value.status !== expectedStatus) return undefined
 
-  checks.sort((left, right) => left.id.localeCompare(right.id))
-  findings.sort((left, right) => left.id.localeCompare(right.id))
+  checks.sort((left, right) => byCodeUnit(left.id, right.id))
+  findings.sort((left, right) => byCodeUnit(left.id, right.id))
   return Object.freeze({
     version: 1,
     status: value.status,

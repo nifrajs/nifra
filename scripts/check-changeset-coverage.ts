@@ -29,6 +29,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import {
   type PublishedPackage,
   publishedPackages as readPublishedPackages,
@@ -165,7 +166,7 @@ const run = (root: string): number => {
   console.error(
     `changeset-coverage: ${uncovered.size} package${plural ? "" : "s"} changed since the last release (${base.slice(0, 8)}) with no pending changeset naming ${plural ? "it" : "them"}:`,
   )
-  for (const [name, files] of [...uncovered].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, files] of [...uncovered].sort(([a], [b]) => codeUnitOrder(a, b))) {
     console.error(`\n  ${name}`)
     for (const file of files) console.error(`    ${file}`)
   }

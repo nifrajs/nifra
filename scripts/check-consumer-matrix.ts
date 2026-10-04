@@ -24,6 +24,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, relative, resolve, sep } from "node:path"
 import { $, Glob } from "bun"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PACKAGES = join(ROOT, "packages")
@@ -481,7 +482,7 @@ try {
   }
 
   console.log("\n=== publish-consumer matrix: pack frozen external dependency closure ===")
-  for (const [name, versions] of [...externalByName].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, versions] of [...externalByName].sort(([a], [b]) => codeUnitOrder(a, b))) {
     for (const [version, pkg] of versions) {
       try {
         pkg.filename = await packInstalledInto(pkg.dir, externalTarballs, npmCache)

@@ -17,6 +17,7 @@ import {
   type SingleCopyRegistration,
 } from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
 import { publicUrlPath } from "./public-url.ts"
 
@@ -652,7 +653,7 @@ const describeTopology = (
     const root = installRootOf(path)
     counts.set(root, (counts.get(root) ?? 0) + 1)
   }
-  const roots = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const roots = [...counts.entries()].sort(([a], [b]) => codeUnitOrder(a, b))
   const breakdown = roots
     .map(([root, count]) => `${count} under ${displayPath(base, root)}`)
     .join(", ")
@@ -822,11 +823,11 @@ export async function collectIdentityParity(
 
   const findings: IdentityParityFinding[] = []
   const deduplicated: IdentityParityFinding[] = []
-  for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => codeUnitOrder(a, b))) {
     if (copies.size < 2) continue
     const absolutePaths = [...copies.keys()].sort()
     const resolvedCopies = [...copies.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => codeUnitOrder(a, b))
       .map(
         ([path, copy]): IdentityParityCopy => ({
           version: copy.version,

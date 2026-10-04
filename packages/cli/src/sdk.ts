@@ -450,7 +450,7 @@ function pythonErrorAliases(
   entries.forEach((entry, index) => {
     const types: string[] = []
     for (const [status, response] of Object.entries(entry.operation.responses ?? {}).sort(
-      ([a], [b]) => a.localeCompare(b),
+      ([a], [b]) => codeUnitOrder(a, b),
     )) {
       if (!ERROR_STATUS.test(status)) continue
       const schema = responseSchema(response)
@@ -913,7 +913,7 @@ function goErrorInfo(
 ): GoErrorInfo | undefined {
   const errors = Object.entries(entry.operation.responses ?? {})
     .filter(([status]) => ERROR_STATUS.test(status))
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => codeUnitOrder(a, b))
   if (errors.length === 0) return undefined
   const operationNameValue = pascal(name, "Request")
   const interfaceName = `${operationNameValue}ErrorBody`

@@ -18,6 +18,7 @@ import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { digestRoute } from "./contracts.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 export type WorkGraphNodeKind =
   | "route"
@@ -338,9 +339,9 @@ export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGr
     for (const file of manifestFiles)
       addEdge({ from: `manifest:${file.path}`, to: routeId, relation: "describes" })
   }
-  const sortedNodes = [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id))
+  const sortedNodes = [...nodes.values()].sort((a, b) => codeUnitOrder(a.id, b.id))
   const sortedEdges = edges.sort((a, b) =>
-    `${a.from}\n${a.to}\n${a.relation}`.localeCompare(`${b.from}\n${b.to}\n${b.relation}`),
+    codeUnitOrder(`${a.from}\n${a.to}\n${a.relation}`, `${b.from}\n${b.to}\n${b.relation}`),
   )
   const digest = await digestJson({ nodes: sortedNodes, edges: sortedEdges })
   return Object.freeze({
@@ -457,7 +458,7 @@ export function createEvidenceBundle(
   plan: ProofPlan,
   proofs: readonly ProofEvidence[] = [],
 ): EvidenceBundle {
-  const evidence = [...proofs].sort((a, b) => a.id.localeCompare(b.id))
+  const evidence = [...proofs].sort((a, b) => codeUnitOrder(a.id, b.id))
   // Levels are not cumulative (assure does not typecheck), so every planned step needs its own
   // passing proof; a higher-level pass never subsumes a lower one.
   const done =

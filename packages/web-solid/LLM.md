@@ -16,12 +16,12 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => JSX.Element` · from `@nifrajs/web-solid/await`
 - **Content** _(function)_ - `Content: (props: ContentProps) => JSX.Element` · from `@nifrajs/web-solid/content`
+- **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element` · from `@nifrajs/web-solid/i18n`
+- **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
 - **createFetcher** _(function)_ - `createFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-solid/fetcher`
 - **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`
-- **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element` · from `@nifrajs/web-solid/i18n`
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-solid/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-solid/fetcher`

@@ -21,6 +21,7 @@ import {
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { importSites, stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 const ZONE_FOLDER = new Set(["routes", "frontend", "backend", "shared"])
@@ -135,7 +136,7 @@ export const zoneImportRule: CheckRule = {
       }
     }
     return findings.sort(
-      (a, b) => (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
+      (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
   },
 }

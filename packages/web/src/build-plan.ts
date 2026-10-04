@@ -1,5 +1,6 @@
 import { basename as pathBasename } from "node:path"
 import type { CssLoadingMode } from "./css-contract.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { isBareNodeBuiltin } from "./internal/node-builtins.ts"
 import type { SecretExemption } from "./internal/secret-scan.ts"
 import type { ClientModuleGraph } from "./module-graph.ts"
@@ -361,7 +362,7 @@ export function detectNodeBuiltinsInClient(
     }
   }
   return [...findings.values()].sort((a, b) =>
-    a.builtin === b.builtin ? a.chunk.localeCompare(b.chunk) : a.builtin.localeCompare(b.builtin),
+    a.builtin === b.builtin ? codeUnitOrder(a.chunk, b.chunk) : codeUnitOrder(a.builtin, b.builtin),
   )
 }
 
@@ -532,7 +533,7 @@ export function detectServerOnlyInClient(
   return [...findings.values()].sort((a, b) => {
     const am = a.chain[a.chain.length - 1] ?? ""
     const bm = b.chain[b.chain.length - 1] ?? ""
-    return am === bm ? a.chunk.localeCompare(b.chunk) : am.localeCompare(bm)
+    return am === bm ? codeUnitOrder(a.chunk, b.chunk) : codeUnitOrder(am, bm)
   })
 }
 
@@ -609,7 +610,7 @@ export interface SizeReport {
  */
 export function aggregateSizeReport(chunks: readonly ChunkSize[]): SizeReport {
   const sorted = [...chunks].sort(
-    (a, b) => b.gzip - a.gzip || b.bytes - a.bytes || a.name.localeCompare(b.name),
+    (a, b) => b.gzip - a.gzip || b.bytes - a.bytes || codeUnitOrder(a.name, b.name),
   )
   let totalBytes = 0
   let totalGzip = 0

@@ -12,6 +12,7 @@ import {
   serializeNifraManifestSignature,
   signNifraManifest,
 } from "@nifrajs/core/manifest"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { collectProjectVerification } from "./verification.ts"
 
 export const DEFAULT_MANIFEST_FILE = "nifra.manifest.json"
@@ -23,8 +24,8 @@ export function formatManifestDiff(diff: NifraManifestDiff): string {
     .sort(
       (a, b) =>
         weight[a.severity] - weight[b.severity] ||
-        a.path.localeCompare(b.path) ||
-        a.method.localeCompare(b.method),
+        codeUnitOrder(a.path, b.path) ||
+        codeUnitOrder(a.method, b.method),
     )
     .map(
       (change) =>

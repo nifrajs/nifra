@@ -20,6 +20,7 @@ import {
 } from "../packages/web/src/internal/parity.ts"
 import { cssModulesBunPlugin, transformCssModule } from "../packages/web/src/plugins/css-modules.ts"
 import { reproduciblePath } from "../packages/web/src/plugins/kit.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 export interface ParitySnapshot {
   readonly routeManifest: readonly string[]
@@ -150,7 +151,7 @@ const snapshot = (
   routeManifest: sorted(Object.keys(manifest.routes)),
   routeChunks: Object.fromEntries(
     Object.entries(manifest.routes)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => codeUnitOrder(a, b))
       .map(([route, chunks]) => [route, chunks.length]),
   ),
   staticAssets: [

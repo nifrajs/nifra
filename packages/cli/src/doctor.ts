@@ -30,6 +30,7 @@ import {
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
 import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
@@ -129,7 +130,7 @@ export function scanUndeclaredImports(
       out.push({ file, line, snippet: pkg })
     }
   }
-  return out.sort((a, b) => a.line - b.line || a.snippet.localeCompare(b.snippet))
+  return out.sort((a, b) => a.line - b.line || codeUnitOrder(a.snippet, b.snippet))
 }
 
 export interface DoctorFinding {
@@ -594,7 +595,7 @@ export async function collectStaleWorkspaceDists(
       if (worst !== undefined) findings.push(worst)
     }
   }
-  return findings.sort((a, b) => a.package.localeCompare(b.package))
+  return findings.sort((a, b) => codeUnitOrder(a.package, b.package))
 }
 
 interface ReadinessSource {
@@ -815,7 +816,7 @@ export async function collectDoctorResult(
     },
     { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
-  findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+  findings.sort((a, b) => codeUnitOrder(a.file, b.file) || a.line - b.line)
   const identity = await collectAllDuplicateInstalls(cwd, pkg)
   const duplicateInstalls = identity.duplicates
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
@@ -871,7 +872,7 @@ export async function applyDoctorAutoFix(
 
   const fixed: DoctorAppliedFix[] = []
   const skippedFixes: DoctorSkippedFix[] = []
-  for (const [root, names] of [...byRoot.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [root, names] of [...byRoot.entries()].sort(([a], [b]) => codeUnitOrder(a, b))) {
     const pkgPath = join(root, "package.json")
     const pkg = await readJson(pkgPath)
     if (pkg === undefined) continue

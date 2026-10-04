@@ -9,13 +9,14 @@
 import { isSensitiveFieldName } from "@nifrajs/web/zones"
 import { codePositionMask } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import type { CheckRule } from "./index.ts"
 import { zonedFiles } from "./zones.ts"
 
 const lineAt = (text: string, index: number): number => text.slice(0, index).split("\n").length
 
 const byPlace = (a: Diagnostic, b: Diagnostic): number =>
-  (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0)
+  codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0)
 
 const exported = (mask: string, name: string): RegExpExecArray | null =>
   new RegExp(

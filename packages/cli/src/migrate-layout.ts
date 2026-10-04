@@ -29,6 +29,7 @@ import {
 import { dirname, extname, join, posix, relative, resolve } from "node:path"
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import type * as TS from "typescript"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
 
@@ -1072,7 +1073,7 @@ export async function migrateLayout(
 
   const moves = [...moveMap]
     .map(([from, to]) => ({ from, to }))
-    .sort((a, b) => a.from.localeCompare(b.from))
+    .sort((a, b) => codeUnitOrder(a.from, b.from))
   if (options.write === true) {
     for (const [file, text] of final) {
       if (original.get(file) === text) continue
@@ -1093,7 +1094,7 @@ export async function migrateLayout(
   return {
     ok: issues.length === 0,
     write: options.write === true,
-    splits: splits.sort((a, b) => a.file.localeCompare(b.file)),
+    splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
     issues,

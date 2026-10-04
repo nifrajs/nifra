@@ -17,6 +17,7 @@ import {
   importRuleMessage,
   type ZoneClassifier,
 } from "../zones.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import { isBareNodeBuiltin } from "./node-builtins.ts"
 
 /** What a graph module id names. */
@@ -232,7 +233,7 @@ export function verifyClientGraph(
       reason,
       chain: (chains.get(id) ?? [id]).map((label, i) => (i === 0 ? labelOf(label) : label)),
     }))
-    .sort((a, b) => a.module.localeCompare(b.module))
+    .sort((a, b) => codeUnitOrder(a.module, b.module))
 
   const misplacedExports: string[] = []
   for (const [path, chunk] of Object.entries(graph.chunks)) {
@@ -395,7 +396,7 @@ export function verifyServerGraph(
       const chain = (chains.get(at) ?? [at]).map((label, i) => (i === 0 ? labelOf(label) : label))
       return { module, reason, chain: tail === undefined ? chain : [...chain, tail] }
     })
-    .sort((a, b) => a.module.localeCompare(b.module) || a.reason.localeCompare(b.reason))
+    .sort((a, b) => codeUnitOrder(a.module, b.module) || codeUnitOrder(a.reason, b.reason))
   return { violations }
 }
 

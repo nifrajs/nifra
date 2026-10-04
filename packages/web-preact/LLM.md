@@ -16,10 +16,10 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => VNode | ComponentChildren` · from `@nifrajs/web-preact/await`
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => VNode` · from `@nifrajs/web-preact/content`
-- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-preact/client`
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-preact/client`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode` · from `@nifrajs/web-preact/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-preact/client`
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-preact/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-preact/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-preact/fetcher`

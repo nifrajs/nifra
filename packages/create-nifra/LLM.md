@@ -17,8 +17,8 @@ Scaffold a new nifra app - `bun create nifra <dir>`.
 - **cursorRule** _(function)_ - `cursorRule: () => string`
 - **geminiMd** _(function)_ - `geminiMd: () => string`
 - **mcpJson** _(function)_ - `mcpJson: () => string`
-- **AGENT_POINTERS** _(const)_ - `AGENT_POINTERS: readonly { readonly path: string; readonly content: () => string; }[]`
 - **AGENTS_MD_PATH** _(const)_ - `AGENTS_MD_PATH: "AGENTS.md"`
+- **AGENT_POINTERS** _(const)_ - `AGENT_POINTERS: readonly { readonly path: string; readonly content: () => string; }[]`
 - **CLAUDE_MD_PATH** _(const)_ - `CLAUDE_MD_PATH: "CLAUDE.md"`
 - **COPILOT_INSTRUCTIONS_PATH** _(const)_ - `COPILOT_INSTRUCTIONS_PATH: ".github/copilot-instructions.md"`
 - **CURSOR_MCP_JSON_PATH** _(const)_ - `CURSOR_MCP_JSON_PATH: ".cursor/mcp.json"`

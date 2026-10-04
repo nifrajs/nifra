@@ -9,6 +9,7 @@
  * signature/doc body; no args → a per-package index of the available type names.
  */
 
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { countBodyHits, queryTermGroups, tokenize, tokenSetScore } from "./search-terms.ts"
 
 export interface TypeEntry {
@@ -75,7 +76,7 @@ export function searchTypes(
     score += nameTermMatches * 4
     if (score > 0) scored.push({ ...t, score })
   }
-  return scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, limit)
+  return scored.sort((a, b) => b.score - a.score || codeUnitOrder(a.name, b.name)).slice(0, limit)
 }
 
 function renderEntry(t: TypeEntry): string {
@@ -165,7 +166,7 @@ export function renderTypesResult(
     byPkg.set(t.package, list)
   }
   const index = [...byPkg.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => codeUnitOrder(a, b))
     .map(([pkg, names]) => `- **${pkg}**: ${names.sort().join(", ")}`)
     .join("\n")
   return `# nifra types - index (${types.length} exported symbols; pass \`name\` for the exact declaration, or \`query\` to search)\n\nSignatures are generated from the built \`.d.ts\` - authoritative + complete. Use this instead of reading any \`.d.ts\` file.\n\n${index}`

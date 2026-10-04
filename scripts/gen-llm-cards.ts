@@ -23,6 +23,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import ts from "typescript"
 import { renderCommandCatalogLines } from "../packages/cli/src/command-catalog.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import { publishedPackages, readPackageManifest } from "./public-package-manifest.ts"
 
 const ROOT = `${import.meta.dir}/..`
@@ -88,7 +89,7 @@ function publicPackages(): Pkg[] {
         ? -1
         : b.importPath === pkg.name
           ? 1
-          : a.importPath.localeCompare(b.importPath),
+          : codeUnitOrder(a.importPath, b.importPath),
     )
     pkgs.push({
       name: pkg.name,
@@ -97,7 +98,7 @@ function publicPackages(): Pkg[] {
       description: typeof json.description === "string" ? json.description : "",
     })
   }
-  return pkgs.sort((a, b) => a.name.localeCompare(b.name))
+  return pkgs.sort((a, b) => codeUnitOrder(a.name, b.name))
 }
 
 function repoOptions(): ts.CompilerOptions {
@@ -427,7 +428,7 @@ function extractExports(pkgs: readonly Pkg[]): Map<string, ExportRow[]> {
       (a, b) =>
         (KEY_EXPORT_RANK.get(a.name) ?? 99) - (KEY_EXPORT_RANK.get(b.name) ?? 99) ||
         (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) ||
-        a.name.localeCompare(b.name),
+        codeUnitOrder(a.name, b.name),
     )
     byPkg.set(pkg.name, rows)
   }

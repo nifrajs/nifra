@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import ts from "typescript"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import { publishedPackages, readPackageManifest } from "./public-package-manifest.ts"
 
 const ROOT = `${import.meta.dir}/..`
@@ -77,12 +78,12 @@ function publicPackages(): Pkg[] {
           ? -1
           : b.importPath === pkg.name
             ? 1
-            : a.importPath.localeCompare(b.importPath),
+            : codeUnitOrder(a.importPath, b.importPath),
       )
       pkgs.push({ name: pkg.name, entries })
     }
   }
-  return pkgs.sort((a, b) => a.name.localeCompare(b.name))
+  return pkgs.sort((a, b) => codeUnitOrder(a.name, b.name))
 }
 
 function kindOf(decl: ts.Declaration): string {

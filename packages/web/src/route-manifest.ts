@@ -16,6 +16,8 @@
  * target, and reports what the target cannot honour. Pure and fs-free: it takes an already-built
  * `Manifest` so it runs at build time, in `nifra routes`, and in a test with a hand-built manifest.
  */
+
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import type { Manifest, RouteModule } from "./manifest.ts"
 
 export {
@@ -179,7 +181,7 @@ export async function buildRouteManifest(
     const module = (await route.load()) as RouteModule
     entries.push(deriveRouteEntry(route.id, route.pattern, module, options.prerendered?.[route.id]))
   }
-  entries.sort((a, b) => a.pattern.localeCompare(b.pattern))
+  entries.sort((a, b) => codeUnitOrder(a.pattern, b.pattern))
 
   const conflicts: RouteManifestConflict[] = []
   const capabilities =

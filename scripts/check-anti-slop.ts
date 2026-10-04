@@ -24,6 +24,7 @@
 import { spawnSync } from "node:child_process"
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 const ROOT = join(import.meta.dir, "..")
 const PLUGIN_DIR = join(ROOT, "scripts/anti-slop")
@@ -121,17 +122,17 @@ export function compareCounts(
     }
   }
   const order = (a: Change, b: Change): number =>
-    a.file.localeCompare(b.file) || a.rule.localeCompare(b.rule)
+    codeUnitOrder(a.file, b.file) || codeUnitOrder(a.rule, b.rule)
   return { increased: increased.sort(order), decreased: decreased.sort(order) }
 }
 
 function sortCounts(counts: Counts): Counts {
   return Object.fromEntries(
     Object.entries(counts)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => codeUnitOrder(a, b))
       .map(([rule, files]) => [
         rule,
-        Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))),
+        Object.fromEntries(Object.entries(files).sort(([a], [b]) => codeUnitOrder(a, b))),
       ]),
   )
 }

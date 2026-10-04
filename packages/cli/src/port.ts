@@ -18,6 +18,7 @@ import { join } from "node:path"
 import { Glob } from "bun"
 import { stripComments } from "./check.ts"
 import { readConfigTarget } from "./config-target.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 /** The five deploy targets a nifra `site` app can build for (mirrors create-nifra's DEPLOY presets). */
 export const TARGETS = ["bun", "node", "deno", "cloudflare", "vercel"] as const
@@ -304,7 +305,7 @@ export function scanFileForFeatures(file: string, content: string, state: ScanSt
   pushHits(add("deno-runtime-api"), file, content, code, DENO_GLOBAL)
   pushHits(add("node-builtin"), file, content, code, NODE_BUILTIN)
   for (const evidence of state.evidence.values()) {
-    evidence.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+    evidence.sort((a, b) => codeUnitOrder(a.file, b.file) || a.line - b.line)
   }
 }
 
@@ -329,7 +330,7 @@ async function walkPortSource(
 }
 
 const byEvidence = (a: Evidence, b: Evidence): number =>
-  a.file.localeCompare(b.file) || a.line - b.line
+  codeUnitOrder(a.file, b.file) || a.line - b.line
 
 /** Run every detector over the project and return the detected features (sorted, stable). */
 export async function detectFeatures(cwd: string): Promise<DetectedFeature[]> {

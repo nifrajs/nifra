@@ -21,6 +21,7 @@ import {
   diagnosticWithCompatibility,
 } from "../diagnostics.ts"
 import type { DuplicateInstallFinding } from "../doctor.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
@@ -168,7 +169,7 @@ function legacyDiagnostic(rule: string, fields: LegacyFields): Diagnostic {
 }
 
 const bySite = (a: SourceFinding, b: SourceFinding): number =>
-  a.file.localeCompare(b.file) || a.line - b.line
+  codeUnitOrder(a.file, b.file) || a.line - b.line
 
 function oneLineDiff(file: string, line: number, before: string, after: string): string {
   return `--- ${file}:${line}\n+++ ${file}:${line}\n@@\n-${before}\n+${after}`
@@ -407,7 +408,7 @@ const typedClientRule: CheckRule = {
       }),
     )
     return [...fetchFindings, ...streamFindings].sort(
-      (a, b) => (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
+      (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
   },
 }

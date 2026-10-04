@@ -9,6 +9,7 @@ import { readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { scriptKindOf } from "./internal/script-kind.ts"
 import type { SourceFacts } from "./internal/source-facts.ts"
 import {
@@ -2071,7 +2072,7 @@ export async function walkSource(
 }
 
 const bySite = (a: SourceFinding, b: SourceFinding): number =>
-  a.file.localeCompare(b.file) || a.line - b.line
+  codeUnitOrder(a.file, b.file) || a.line - b.line
 
 /** Collect own-API `fetch()` findings across the project. */
 export async function scanProject(cwd: string): Promise<SourceFinding[]> {
@@ -2150,5 +2151,5 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
       findings.push({ file: rel, missing: drift.missing, extra: drift.extra })
     }
   }
-  return findings.sort((a, b) => a.file.localeCompare(b.file))
+  return findings.sort((a, b) => codeUnitOrder(a.file, b.file))
 }

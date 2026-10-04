@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 
@@ -87,7 +88,7 @@ export const PUBLIC_PACKAGE_SPECS: readonly PublicPackageSpec[] = Object.freeze(
       dir,
       publishValidation: "publint-only" as const,
     })),
-  ].sort((a, b) => a.dir.localeCompare(b.dir)),
+  ].sort((a, b) => codeUnitOrder(a.dir, b.dir)),
 )
 
 const SPEC_BY_DIR = new Map(PUBLIC_PACKAGE_SPECS.map((spec) => [spec.dir, spec]))
@@ -130,7 +131,7 @@ export function publishedPackages(root: string = ROOT): readonly PublishedPackag
       publishValidation: SPEC_BY_DIR.get(entry.name)?.publishValidation ?? "library",
     })
   }
-  return Object.freeze(out.sort((a, b) => a.dir.localeCompare(b.dir)))
+  return Object.freeze(out.sort((a, b) => codeUnitOrder(a.dir, b.dir)))
 }
 
 export function publishedPackageCount(root: string = ROOT): number {
