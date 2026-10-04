@@ -28,19 +28,58 @@ function recordOf(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-function canonical(value: unknown, key?: string): unknown {
-  if (["description", "title", "default", "example", "examples"].includes(key ?? ""))
-    return undefined
-  if (Array.isArray(value)) return value.map((item) => canonical(item))
-  const record = recordOf(value)
-  if (record === undefined) return value
+/** Annotation keywords: editing one is not a contract change. */
+const ANNOTATIONS: ReadonlySet<string> = new Set([
+  "description",
+  "title",
+  "default",
+  "example",
+  "examples",
+])
+/** Keywords whose value maps user-chosen names to schemas, so a key there is a name, never a keyword. */
+const NAME_MAPS: ReadonlySet<string> = new Set([
+  "properties",
+  "patternProperties",
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+  "dependentRequired",
+  "dependencies",
+])
+/** Keywords whose value is instance data, compared whole. */
+const DATA: ReadonlySet<string> = new Set(["const", "enum"])
+
+function sortedRecord(
+  record: Record<string, unknown>,
+  entry: (name: string, item: unknown) => unknown,
+): Record<string, unknown> {
   const entries: Array<[string, unknown]> = []
   for (const name of Object.keys(record).sort()) {
-    const item = canonical(record[name], name)
+    const item = entry(name, record[name])
     if (item !== undefined) entries.push([name, item])
   }
   // `fromEntries` defines each key, where an assignment would run the `__proto__` setter instead.
   return Object.fromEntries(entries)
+}
+
+function canonicalData(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => canonicalData(item))
+  const record = recordOf(value)
+  return record === undefined ? value : sortedRecord(record, (_name, item) => canonicalData(item))
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => canonical(item))
+  const record = recordOf(value)
+  if (record === undefined) return value
+  return sortedRecord(record, (name, item) => {
+    if (ANNOTATIONS.has(name)) return undefined
+    if (DATA.has(name)) return canonicalData(item)
+    const names = NAME_MAPS.has(name) ? recordOf(item) : undefined
+    return names === undefined
+      ? canonical(item)
+      : sortedRecord(names, (_key, schema) => canonical(schema))
+  })
 }
 
 async function sha256(value: string): Promise<string> {
