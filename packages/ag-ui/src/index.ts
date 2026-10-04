@@ -234,15 +234,21 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const start = (
     telemetry: AgentPorts["telemetry"],
     deltas: AgentDeltaSink,
+    disconnect: AbortSignal | undefined,
   ): Promise<AgentRunResult<unknown>> => {
     // Compose rather than replace: the SSE evidence stream must not displace a telemetry port or
     // delta sink the caller injected through `ports`.
     const combined = combineAgentTelemetry(basePorts.telemetry, log?.open(turnId), telemetry)
     const sinks = combineAgentDeltaSinks(basePorts.deltas, deltas)
+    const signal =
+      basePorts.signal === undefined || disconnect === undefined
+        ? (basePorts.signal ?? disconnect)
+        : AbortSignal.any([basePorts.signal, disconnect])
     const ports = {
       ...basePorts,
       ...(combined === undefined ? {} : { telemetry: combined }),
       ...(sinks === undefined ? {} : { deltas: sinks }),
+      ...(signal === undefined ? {} : { signal }),
     }
     if (resume !== undefined) {
       return resumeAgent(options.agent, turnId, { value: input, resume }, ports, runOptions)
@@ -277,6 +283,7 @@ function sseResponse(
   start: (
     telemetry: AgentPorts["telemetry"],
     deltas: AgentDeltaSink,
+    disconnect: AbortSignal | undefined,
   ) => Promise<AgentRunResult<unknown>>,
   log: AgentEvidenceLog | undefined,
   snapshotMessages: unknown,
@@ -286,11 +293,18 @@ function sseResponse(
   const stream = createAgentEvidenceStream()
   // `id:` frames are only meaningful when a log can serve the reconnect they invite.
   const withIds = log !== undefined
+  // A disconnect detaches the client. With a log the run keeps recording for a reconnect to replay;
+  // without one nothing can rejoin it, so the run is cancelled.
+  const disconnect = log === undefined ? new AbortController() : undefined
+  let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller, maxOutputBytes)
+      const deliver = sseSender(controller, maxOutputBytes)
+      const send: SseSend = (event, id) => {
+        if (!detached) deliver(event, id)
+      }
       const projector = createDeltaProjector(send, identity.turnId)
-      const run = start(stream, projector.sink)
+      const run = start(stream, projector.sink, disconnect?.signal)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
       // below would hang; the run result (or the error) is still reported in-band after it drains.
       run
@@ -354,8 +368,12 @@ function sseResponse(
         }
       } finally {
         unsubscribe()
-        controller.close()
+        if (!detached) controller.close()
       }
+    },
+    cancel() {
+      detached = true
+      disconnect?.abort()
     },
   })
   return sseHeaders(body)

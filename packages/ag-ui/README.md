@@ -114,7 +114,9 @@ The pre-interrupt form - the same `{ continuation, approval? }` object in `forwa
 Pass an `evidenceLog` to make a dropped SSE connection resumable. Evidence-derived frames then
 carry SSE `id: <seq>`; a client reconnects by re-POSTing the same body with a `Last-Event-ID`
 header and receives the missed events, rejoining a still-running turn live or replaying the stored
-terminal events - the run is never re-executed.
+terminal events - the run is never re-executed. A disconnected run keeps going and records its
+real terminal events for that reconnect. Without an `evidenceLog` nothing can rejoin a dropped
+stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 
 ```ts
 import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"

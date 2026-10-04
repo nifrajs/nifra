@@ -199,6 +199,66 @@ describe("mountAgent resumable streams", () => {
     expect(completions).toBe(1)
   })
 
+  test("a client that disconnects mid-run can still replay the run's real result", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const model: AgentModelPort = {
+      complete: async () => {
+        await gate
+        return { kind: "output", value: { answer: "late" } }
+      },
+    }
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(model),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const first = await call(
+      post({ input: { prompt: "hey" }, turnId: "run-gone" }, { accept: "text/event-stream" }),
+    )
+    const reader = first.body!.getReader()
+    await reader.read()
+    await reader.cancel()
+    release()
+    const replay = await call(
+      post(
+        { input: { prompt: "hey" }, turnId: "run-gone" },
+        { accept: "text/event-stream", "last-event-id": "0" },
+      ),
+    )
+    const text = await replay.text()
+    expect(text).toContain("event: result")
+    expect(text).toContain("late")
+  })
+
+  test("without an evidence log a client disconnect cancels the run", async () => {
+    const { app, call } = captureApp()
+    let reached!: (signal: AbortSignal) => void
+    const signalSeen = new Promise<AbortSignal>((resolve) => {
+      reached = resolve
+    })
+    const model: AgentModelPort = {
+      complete: ({ signal }) => {
+        reached(signal)
+        return new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+        })
+      },
+    }
+    mountAgent(app, { agent: definition, ports: ports(model) })
+
+    const res = await call(post({ input: { prompt: "hey" } }, { accept: "text/event-stream" }))
+    const reader = res.body!.getReader()
+    await reader.read()
+    const signal = await signalSeen
+    await reader.cancel()
+    expect(signal.aborted).toBe(true)
+  })
+
   test("rejects an unknown replay and a malformed Last-Event-ID", async () => {
     const { app, call } = captureApp()
     mountAgent(app, {

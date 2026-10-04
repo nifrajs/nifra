@@ -726,7 +726,8 @@ export default function Agents() {
         <code>@nifrajs/agent</code> runs bounded typed turns with tool contracts, budgets, approvals,
         resumable token-only evidence, model deltas, and a transient shared-state channel. Add an{" "}
         <code>evidenceLog</code> to the HTTP seams for SSE replay after a dropped connection; replay
-        resumes evidence and never re-executes the turn. Pair it with <code>evidenceOwner</code>,
+        resumes evidence and never re-executes the turn, and a disconnected run keeps recording its
+        real result for the reconnect. Without a log, a disconnect cancels the run. Pair it with <code>evidenceOwner</code>,
         the caller's user or tenant id, so one caller's turns never replay for another. The additive run-lifecycle contract supplies
         content-free snapshots, ordered evidence refs, feature negotiation, handoff state, and cursor
         resume. <code>@nifrajs/agent-telemetry</code> converts the same constrained evidence into

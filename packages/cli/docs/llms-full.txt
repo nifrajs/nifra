@@ -6421,7 +6421,8 @@ view. These are presentation-safe views: content stays in the host.
 `@nifrajs/agent` runs bounded typed turns with tool contracts, budgets, approvals,
 resumable token-only evidence, model deltas, and a transient shared-state channel. Add an
 `evidenceLog` to the HTTP seams for SSE replay after a dropped connection; replay
-resumes evidence and never re-executes the turn. Pair it with `evidenceOwner`,
+resumes evidence and never re-executes the turn, and a disconnected run keeps recording its
+real result for the reconnect. Without a log, a disconnect cancels the run. Pair it with `evidenceOwner`,
 the caller's user or tenant id, so one caller's turns never replay for another. The additive run-lifecycle contract supplies
 content-free snapshots, ordered evidence refs, feature negotiation, handoff state, and cursor
 resume. `@nifrajs/agent-telemetry` converts the same constrained evidence into
@@ -11232,7 +11233,9 @@ The pre-interrupt form - the same `{ continuation, approval? }` object in `forwa
 Pass an `evidenceLog` to make a dropped SSE connection resumable. Evidence-derived frames then
 carry SSE `id: <seq>`; a client reconnects by re-POSTing the same body with a `Last-Event-ID`
 header and receives the missed events, rejoining a still-running turn live or replaying the stored
-terminal events - the run is never re-executed.
+terminal events - the run is never re-executed. A disconnected run keeps going and records its
+real terminal events for that reconnect. Without an `evidenceLog` nothing can rejoin a dropped
+stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 
 ```ts
 import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
@@ -11326,7 +11329,9 @@ AG-UI `STATE_SNAPSHOT`/`STATE_DELTA` events.
 SSE streams are resumable: give `mountAgent` (or `@nifrajs/ag-ui`'s `mountAgUI`) an `evidenceLog`
 and `step` frames carry `id: <seq>`. A client that loses the connection re-POSTs the same `turnId`
 with a `Last-Event-ID` header and receives the missed evidence, rejoining a still-running turn live
-or replaying the stored terminal frame - the run is never re-executed.
+or replaying the stored terminal frame - the run is never re-executed. A disconnected run keeps
+going and records its real result for that reconnect. Without an `evidenceLog` nothing can rejoin a
+dropped stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.

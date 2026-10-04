@@ -67,7 +67,9 @@ AG-UI `STATE_SNAPSHOT`/`STATE_DELTA` events.
 SSE streams are resumable: give `mountAgent` (or `@nifrajs/ag-ui`'s `mountAgUI`) an `evidenceLog`
 and `step` frames carry `id: <seq>`. A client that loses the connection re-POSTs the same `turnId`
 with a `Last-Event-ID` header and receives the missed evidence, rejoining a still-running turn live
-or replaying the stored terminal frame - the run is never re-executed.
+or replaying the stored terminal frame - the run is never re-executed. A disconnected run keeps
+going and records its real result for that reconnect. Without an `evidenceLog` nothing can rejoin a
+dropped stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.
