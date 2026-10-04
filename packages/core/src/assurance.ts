@@ -10,6 +10,7 @@ import {
   type CapabilityPolicy,
   type CapabilityZone,
   defineCapabilityPolicy,
+  validCapabilityId,
 } from "./capabilities.ts"
 import {
   type DataClassification,
@@ -394,6 +395,16 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         `route assurance: rule ${JSON.stringify(name)} bodyLimit selector must be "bounded", "unlimited", or "unset"`,
       )
     }
+    // An empty list matches nothing, so the rule is inert and its routes fall through to whatever
+    // laxer rule comes next - the same hole as a dropped key, the other way round.
+    for (const key of ["methods", "paths"] as const) {
+      const list = rule.match[key]
+      if (list !== undefined && (!Array.isArray(list) || list.length === 0)) {
+        throw new Error(
+          `route assurance: rule ${JSON.stringify(name)} ${key} selector must be a non-empty array`,
+        )
+      }
+    }
     const methods = rule.match.methods?.map((method) => method.toUpperCase())
     for (const method of methods ?? []) {
       if (!validMethod(method)) {
@@ -409,6 +420,13 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
       throw new Error(
         `route assurance: rule ${JSON.stringify(name)} capabilities selector must be a non-empty array`,
       )
+    }
+    for (const token of capabilities ?? []) {
+      if (typeof token !== "string" || !validCapabilityId(token)) {
+        throw new Error(
+          `route assurance: rule ${JSON.stringify(name)} selects invalid capability ${JSON.stringify(token)}`,
+        )
+      }
     }
     const access = rule.match.access
     if (access !== undefined && access !== "read" && access !== "write") {
@@ -562,6 +580,19 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   // only ever match nothing, and a rule that matches nothing does not fail - the route falls past it
   // to whatever laxer rule comes next. Refuse the config here rather than ship a policy whose
   // strictest rule is inert.
+  // With definitions in hand, a selected token they do not define can never be declared by a route
+  // that passes capability assurance, so the rule would match nothing.
+  if (capabilities !== undefined) {
+    const defined = new Set(capabilities.definitions.map((definition) => definition.id))
+    for (const rule of policy.rules) {
+      const undefinedToken = rule.match.capabilities?.find((token) => !defined.has(token))
+      if (undefinedToken !== undefined) {
+        throw new Error(
+          `route assurance: rule ${JSON.stringify(rule.name)} selects capability ${JSON.stringify(undefinedToken)}, which the capability policy does not define`,
+        )
+      }
+    }
+  }
   const needDefinitions = rulesNeedingDefinitions(policy)
   if (needDefinitions.length > 0 && (capabilities?.definitions.length ?? 0) === 0) {
     throw new Error(

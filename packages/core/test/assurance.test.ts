@@ -826,6 +826,29 @@ describe("unknown selector keys", () => {
     ).toThrow(/unknown selector key/)
   })
 
+  test("a selector that can match nothing is an error, not an inert rule", () => {
+    const policy = (match: Record<string, unknown>) =>
+      defineAssurancePolicy({
+        rules: [{ name: "strict", match, require: ["nifra.authenticated"] }],
+      })
+    expect(() => policy({ methods: [] })).toThrow(/methods selector must be a non-empty array/)
+    expect(() => policy({ paths: [] })).toThrow(/paths selector must be a non-empty array/)
+    expect(() => policy({ capabilities: ["Not A Token"] })).toThrow(/invalid capability/)
+    const config = (token: string) =>
+      defineAssuranceConfig({
+        source: server(),
+        policy: {
+          rules: [{ name: "writes", match: { capabilities: [token] }, require: [] }],
+        },
+        capabilities: {
+          definitions: [{ id: "db.write", zone: "domain", access: "write" }],
+          provenance: { imports: [], forbiddenImports: [] },
+        },
+      })
+    expect(() => config("db.wirte")).toThrow(/does not define/)
+    expect(() => config("db.write")).not.toThrow()
+  })
+
   test("the known keys are all still accepted", () => {
     expect(() =>
       defineAssurancePolicy({
