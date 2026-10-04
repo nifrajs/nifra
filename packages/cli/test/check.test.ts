@@ -570,6 +570,34 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("the typed-client rewrite appends a reserved segment by a call", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(
+      join(dir, "backend.ts"),
+      [
+        'import { server } from "@nifrajs/core"',
+        "export const backend = server()",
+        '  .get("/blog/post", () => ({}))',
+        '  .get("/settings/options", () => [])',
+      ].join("\n"),
+    )
+    await writeFile(
+      join(dir, "src", "reader.ts"),
+      'const res = await fetch("/blog/post")\nconst opts = await fetch("/settings/options")\n',
+    )
+
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diffs = result.diagnostics
+      .filter((d) => d.rule === "typed-client")
+      .map((d) => d.suggestion?.diff ?? "")
+      .join("\n")
+    expect(diffs).toContain('+const res = await api.blog("post").get()')
+    expect(diffs).toContain('+const opts = await api.settings("options").get()')
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("keeps manual guidance for own-API fetches with ambiguous request options", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
     await mkdir(join(dir, "src"), { recursive: true })

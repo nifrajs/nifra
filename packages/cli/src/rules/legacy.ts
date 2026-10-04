@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
+import { reservedKeyFor } from "@nifrajs/client"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { SINGLE_COPY_REGISTER_SPECIFIER } from "@nifrajs/core/single-copy"
@@ -202,7 +203,10 @@ function typedClientCall(method: string, path: string): string {
   if (segs.length === 0) chain += ".index"
   else {
     for (const seg of segs) {
-      chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
+      // The proxy answers a reserved name (`post`, `index`, `then`...) itself, so that segment is
+      // appended by a call instead of a property read.
+      if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
+      else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
     }
   }
   return `${chain}.${method.toLowerCase()}()`
