@@ -7,6 +7,7 @@
  *   bun run scripts/check-publish.ts
  */
 import { $, Glob } from "bun"
+import { exportTargets, shipsTarget } from "./export-targets.ts"
 import {
   PUBLIC_PACKAGE_SPECS,
   type PublishedPackage,
@@ -184,7 +185,7 @@ for (const dir of ALL_DIRS) {
     dependencies?: Record<string, string>
     peerDependencies?: Record<string, string>
     optionalDependencies?: Record<string, string>
-    exports?: Record<string, Record<string, string> | string>
+    exports?: unknown
     sideEffects?: boolean | string[]
   }
   const packedEntries = new Set(
@@ -202,18 +203,10 @@ for (const dir of ALL_DIRS) {
   // publint does not catch it: it stats the file on disk, where it exists, and never models `files`.
   // Checked against the packed entries rather than the `files` strings so .npmignore and nested paths
   // are covered too. Under Bun the `bun` condition wins, so a missing one breaks precisely the runtime
-  // this framework targets.
-  const exportTargets = new Set<string>()
-  for (const entry of Object.values(manifest.exports ?? {})) {
-    if (typeof entry === "string") exportTargets.add(entry)
-    else
-      for (const target of Object.values(entry)) {
-        if (typeof target === "string") exportTargets.add(target)
-      }
-  }
-  const unreachable = [...exportTargets]
-    .map((target) => target.replace(/^\.\//, ""))
-    .filter((target) => !packedEntries.has(target))
+  // this framework targets. Conditions nest (`"import": { "types", "default" }`), so every depth counts.
+  const unreachable = [
+    ...new Set(exportTargets(manifest.exports).map(({ target }) => target.replace(/^\.\//, ""))),
+  ].filter((target) => !shipsTarget(target, packedEntries))
   if (unreachable.length > 0) {
     failures += 1
     console.error(
