@@ -2,8 +2,8 @@ import { spawn } from "node:child_process"
 import { readFile, unlink } from "node:fs/promises"
 import { resolve } from "node:path"
 
-export interface CoverageTotals {
-  readonly files: number
+export interface LcovRecord {
+  readonly file: string
   readonly functionsFound: number
   readonly functionsHit: number
   readonly linesFound: number
@@ -16,18 +16,26 @@ export interface TestRunSummary {
   readonly hasNonZeroCount: boolean
 }
 
+export interface FloorMiss {
+  readonly file: string
+  readonly metric: "functions" | "lines"
+  readonly percent: number
+}
+
 function counter(value: string): number | undefined {
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 
-/** Parse the stable LCOV counters without trusting malformed generated output. */
-export function parseLcovTotals(source: string): CoverageTotals | undefined {
-  let files = 0
-  let functionsFound = 0
-  let functionsHit = 0
-  let linesFound = 0
-  let linesHit = 0
+/** Parse one record per `SF:` block from LCOV, without trusting malformed generated output. */
+export function parseLcovRecords(source: string): readonly LcovRecord[] | undefined {
+  const records: {
+    file: string
+    functionsFound: number
+    functionsHit: number
+    linesFound: number
+    linesHit: number
+  }[] = []
   let sawFunctionRecord = false
   let sawLineRecord = false
 
@@ -35,35 +43,67 @@ export function parseLcovTotals(source: string): CoverageTotals | undefined {
     const line = raw.trim()
     if (line.startsWith("SF:")) {
       if (line.slice(3).length === 0) return undefined
-      files += 1
+      records.push({
+        file: line.slice(3),
+        functionsFound: 0,
+        functionsHit: 0,
+        linesFound: 0,
+        linesHit: 0,
+      })
       continue
     }
-    if (line.startsWith("FNF:")) {
+    const record = records.at(-1)
+    if (line.startsWith("FNF:") || line.startsWith("FNH:")) {
       const value = counter(line.slice(4))
-      if (value === undefined) return undefined
-      functionsFound += value
-      sawFunctionRecord = true
-      continue
-    }
-    if (line.startsWith("FNH:")) {
-      const value = counter(line.slice(4))
-      if (value === undefined) return undefined
-      functionsHit += value
+      if (value === undefined || record === undefined) return undefined
+      if (line.startsWith("FNF:")) record.functionsFound += value
+      else record.functionsHit += value
       sawFunctionRecord = true
       continue
     }
     if (line.startsWith("DA:")) {
       const hitCount = counter(line.slice(3).split(",")[1] ?? "")
-      if (hitCount === undefined) return undefined
-      linesFound += 1
-      if (hitCount > 0) linesHit += 1
+      if (hitCount === undefined || record === undefined) return undefined
+      record.linesFound += 1
+      if (hitCount > 0) record.linesHit += 1
       sawLineRecord = true
     }
   }
 
-  if (files === 0 || !sawFunctionRecord || !sawLineRecord) return undefined
-  if (functionsHit > functionsFound || linesHit > linesFound) return undefined
-  return { files, functionsFound, functionsHit, linesFound, linesHit }
+  if (records.length === 0 || !sawFunctionRecord || !sawLineRecord) return undefined
+  if (records.some((record) => record.functionsHit > record.functionsFound)) return undefined
+  if (records.some((record) => record.linesHit > record.linesFound)) return undefined
+  return records
+}
+
+/**
+ * Bun holds every file to `coverageThreshold` on its own, so one file short of the floor fails the run
+ * whatever the total. A miss the committed baseline already records below the floor is `held`: the
+ * ratchet (`check:coverage`) keeps that file from dropping further. Every other miss is `failing`.
+ */
+export function floorMisses(
+  records: readonly LcovRecord[],
+  threshold: number,
+  baseline: Readonly<Record<string, Partial<Record<FloorMiss["metric"], unknown>>>>,
+): { readonly failing: readonly FloorMiss[]; readonly held: readonly FloorMiss[] } {
+  const failing: FloorMiss[] = []
+  const held: FloorMiss[] = []
+  for (const record of records) {
+    for (const [metric, hit, found] of [
+      ["functions", record.functionsHit, record.functionsFound],
+      ["lines", record.linesHit, record.linesFound],
+    ] as const) {
+      const fraction = found === 0 ? 1 : hit / found
+      if (fraction >= threshold) continue
+      const recorded = Object.hasOwn(baseline, record.file)
+        ? baseline[record.file]?.[metric]
+        : undefined
+      const miss = { file: record.file, metric, percent: fraction * 100 }
+      if (typeof recorded === "number" && recorded / 100 < threshold) held.push(miss)
+      else failing.push(miss)
+    }
+  }
+  return { failing, held }
 }
 
 export function parseCoverageThreshold(source: string): number | undefined {
@@ -97,10 +137,6 @@ export function coverageReportPath(args: readonly string[], cwd: string): string
       : resolve(cwd, directory, "lcov.info")
   }
   return resolve(cwd, "coverage", "lcov.info")
-}
-
-function percentage(hit: number, total: number): number {
-  return total === 0 ? 100 : (hit / total) * 100
 }
 
 function exitStatus(status: number | null): number {
@@ -174,34 +210,55 @@ export async function runCoverage(argv: readonly string[] = process.argv): Promi
     return exitStatus(result.status)
   }
 
-  const [lcov, config] = await Promise.all([
+  const [lcov, config, baselineText] = await Promise.all([
     readText(reportPath),
     readText(resolve(cwd, "bunfig.toml")),
+    readText(resolve(cwd, process.env.COVERAGE_BASELINE ?? "coverage-baseline.json")),
   ])
-  const totals = lcov === undefined ? undefined : parseLcovTotals(lcov)
+  const records = lcov === undefined ? undefined : parseLcovRecords(lcov)
   const threshold = config === undefined ? undefined : parseCoverageThreshold(config)
-  if (totals === undefined || threshold === undefined) {
+  if (records === undefined || threshold === undefined) {
     console.error("[coverage-test] missing or malformed LCOV/config; refusing to classify the exit")
     return 2
   }
 
-  const functionCoverage = percentage(totals.functionsHit, totals.functionsFound) / 100
-  const lineCoverage = percentage(totals.linesHit, totals.linesFound) / 100
-  if (functionCoverage < threshold || lineCoverage < threshold) {
-    console.error(
-      `[coverage-test] coverage below ${threshold * 100}%: ` +
-        `functions ${(functionCoverage * 100).toFixed(2)}%, lines ${(lineCoverage * 100).toFixed(2)}%`,
-    )
+  const { failing, held } = floorMisses(records, threshold, baselineOf(baselineText))
+  if (failing.length > 0) {
+    console.error(`[coverage-test] below the ${threshold * 100}% per-file floor:`)
+    for (const miss of failing)
+      console.error(`  ${miss.file} ${miss.metric}: ${miss.percent.toFixed(2)}%`)
     return 1
   }
-
-  if (result.status !== 0) {
+  if (held.length > 0)
     console.error(
-      `[coverage-test] Bun exited ${result.status} after a complete zero-failure run; ` +
-        "the coverage report and configured floor are valid, so treating it as the known shutdown-status quirk.",
+      `[coverage-test] ${held.length} file metric(s) sit below the floor where the committed ` +
+        "baseline already records them; `check:coverage` keeps them from dropping further.",
+    )
+
+  if (result.status !== 0 && held.length === 0) {
+    console.error(
+      `[coverage-test] Bun exited ${result.status} after a complete zero-failure run with every file ` +
+        "at the floor, so treating it as the known shutdown-status quirk.",
     )
   }
   return 0
+}
+
+/** The committed ratchet baseline. A missing or unreadable one holds nothing, so every miss fails. */
+function baselineOf(text: string | undefined): Record<string, Record<string, unknown>> {
+  if (text === undefined) return {}
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? Object.fromEntries(
+          Object.entries(parsed).flatMap(([file, value]) =>
+            typeof value === "object" && value !== null ? [[file, { ...value }]] : [],
+          ),
+        )
+      : {}
+  } catch {
+    return {}
+  }
 }
 
 if (import.meta.main) process.exit(await runCoverage())

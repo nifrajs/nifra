@@ -1,27 +1,27 @@
 {
-  "data:text/javascript;base64,Ly8gR2VuZXJhdGVkIGJ5IEBuaWZyYWpzL3dlYjogc2VydmVyLW9ubHkgaW1wbGVtZW50YXRpb24gcmVtb3ZlZCBmcm9tIHRoZSBicm93c2VyLgpleHBvcnQgY29uc3QgU0VDUkVUX1RPS0VOID0gdW5kZWZpbmVkCmV4cG9ydCBkZWZhdWx0IHVuZGVmaW5lZAo=": {
+  "internal/test-utils/src/tls.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/a2a/src/index.ts": {
-    "functions": 80,
-    "lines": 87.0712401055409
+    "functions": 82.92682926829268,
+    "lines": 88.5204081632653
   },
   "packages/ag-ui/src/index.ts": {
-    "functions": 86.36363636363636,
-    "lines": 96.18874773139746
+    "functions": 91.30434782608695,
+    "lines": 96.65492957746478
   },
   "packages/agent-app/src/client.ts": {
     "functions": 84.375,
-    "lines": 81.49466192170819
+    "lines": 81.75438596491227
   },
   "packages/agent-app/src/transport.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/agent-app/src/view-models.ts": {
-    "functions": 77.77777777777779,
-    "lines": 91.51515151515152
+    "functions": 81.48148148148148,
+    "lines": 92.84994964753272
   },
   "packages/agent-protocol/src/index.ts": {
     "functions": 95.65217391304348,
@@ -72,28 +72,28 @@
     "lines": 100
   },
   "packages/agent/src/deployment.ts": {
-    "functions": 94.44444444444444,
-    "lines": 97.87798408488064
+    "functions": 100,
+    "lines": 100
   },
   "packages/agent/src/events.ts": {
-    "functions": 88.88888888888889,
-    "lines": 96
+    "functions": 91.66666666666666,
+    "lines": 96.66666666666667
   },
   "packages/agent/src/execution-policy.ts": {
-    "functions": 91.30434782608695,
-    "lines": 96.22641509433963
+    "functions": 90.32258064516128,
+    "lines": 98.5576923076923
   },
   "packages/agent/src/gateway.ts": {
     "functions": 77.77777777777779,
     "lines": 91.45077720207254
   },
   "packages/agent/src/index.ts": {
-    "functions": 98.24561403508771,
+    "functions": 98.48484848484848,
     "lines": 100
   },
   "packages/agent/src/mount.ts": {
-    "functions": 86.66666666666667,
-    "lines": 82.32323232323232
+    "functions": 90.9090909090909,
+    "lines": 83.40807174887892
   },
   "packages/agent/src/registry.ts": {
     "functions": 100,
@@ -123,6 +123,14 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/authjs/src/client.ts": {
+    "functions": 93.75,
+    "lines": 91.01123595505618
+  },
+  "packages/authjs/src/index.ts": {
+    "functions": 100,
+    "lines": 86.26373626373626
+  },
   "packages/aws-lambda/src/index.ts": {
     "functions": 95.23809523809523,
     "lines": 95.30201342281879
@@ -143,119 +151,19 @@
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/nifra.assurance.ts": {
+  "packages/cli/test/.db-tool-jADKhN/app-L3sIvW/nifra.config.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/read-adapter.ts": {
+  "packages/cli/test/.db-tool-jADKhN/broken-ZuQWik/nifra.config.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/repo.ts": {
+  "packages/cli/test/.db-tool-jADKhN/env-Z9zgyh/nifra.config.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/lock-gate/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/lock-gate/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/lock-gate/repo.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gap-RM8uks/backend.ts": {
-    "functions": 50,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gap-RM8uks/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gate-DNqdf0/backend.ts": {
-    "functions": 50,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gate-DNqdf0/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l1-ueyleK/backend.ts": {
-    "functions": 50,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l1-ueyleK/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l4-3am935/backend.ts": {
-    "functions": 50,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l4-3am935/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/shell-evidence-3Mw3Hc/backend.ts": {
-    "functions": 33.33333333333333,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/shell-evidence-3Mw3Hc/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-D9HmRz/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-D9HmRz/nifra.assurance.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-JeJKDp/backend.ts": {
-    "functions": 50,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-JeJKDp/nifra.assurance.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/nifra.assurance.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-pHMU3F/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-pHMU3F/nifra.assurance.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-vD24Ig/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-vD24Ig/nifra.assurance.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-znglQd/backend.ts": {
-    "functions": 50,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-znglQd/nifra.assurance.ts": {
+  "packages/cli/test/.db-tool-jADKhN/none-5BOod4/nifra.config.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -268,8 +176,8 @@
     "lines": 100
   },
   "packages/client/src/client.ts": {
-    "functions": 95.23809523809523,
-    "lines": 97.68518518518519
+    "functions": 96.55172413793103,
+    "lines": 97.75474956822107
   },
   "packages/client/src/index.ts": {
     "functions": 100,
@@ -279,13 +187,17 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/client/src/sendable-path.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/client/src/validate-responses.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/client/src/ws.ts": {
     "functions": 100,
-    "lines": 98.4126984126984
+    "lines": 98.64864864864865
   },
   "packages/coding-agent/src/approvals.ts": {
     "functions": 89.47368421052632,
@@ -297,7 +209,7 @@
   },
   "packages/coding-agent/src/cli.ts": {
     "functions": 57.14285714285714,
-    "lines": 31.28834355828221
+    "lines": 31.722054380664655
   },
   "packages/coding-agent/src/context.ts": {
     "functions": 0,
@@ -320,8 +232,8 @@
     "lines": 83.75
   },
   "packages/coding-agent/src/handoffs.ts": {
-    "functions": 88.23529411764706,
-    "lines": 98.62068965517241
+    "functions": 88.88888888888889,
+    "lines": 98.7012987012987
   },
   "packages/coding-agent/src/healing.ts": {
     "functions": 83.33333333333334,
@@ -340,8 +252,8 @@
     "lines": 97.10144927536231
   },
   "packages/coding-agent/src/native.ts": {
-    "functions": 82.22222222222221,
-    "lines": 88.83495145631069
+    "functions": 83.33333333333334,
+    "lines": 89.1679748822606
   },
   "packages/coding-agent/src/orchestration/artifact-port.ts": {
     "functions": 88.88888888888889,
@@ -369,7 +281,7 @@
   },
   "packages/coding-agent/src/orchestration/evidence-store.ts": {
     "functions": 84.375,
-    "lines": 93.51851851851852
+    "lines": 93.80530973451327
   },
   "packages/coding-agent/src/orchestration/hash.ts": {
     "functions": 100,
@@ -417,18 +329,18 @@
   },
   "packages/coding-agent/src/rpc.ts": {
     "functions": 91.8918918918919,
-    "lines": 98.83551673944687
+    "lines": 98.83381924198251
   },
   "packages/coding-agent/src/session-migration.ts": {
     "functions": 96.42857142857143,
     "lines": 100
   },
   "packages/coding-agent/src/sessions.ts": {
-    "functions": 94.54545454545455,
-    "lines": 98.32869080779945
+    "functions": 94.64285714285714,
+    "lines": 98.36065573770492
   },
   "packages/coding-agent/src/subagents.ts": {
-    "functions": 78.57142857142857,
+    "functions": 92.3076923076923,
     "lines": 100
   },
   "packages/coding-agent/src/tools.ts": {
@@ -445,7 +357,7 @@
   },
   "packages/coding-agent/src/workflows.ts": {
     "functions": 93.54838709677419,
-    "lines": 95.93023255813954
+    "lines": 96.045197740113
   },
   "packages/content/src/fs.ts": {
     "functions": 100,
@@ -461,14 +373,14 @@
   },
   "packages/core/src/assurance.ts": {
     "functions": 100,
-    "lines": 83.72591006423983
+    "lines": 84.95049504950495
   },
   "packages/core/src/budget.ts": {
     "functions": 94.44444444444444,
     "lines": 98.61111111111111
   },
   "packages/core/src/capabilities.ts": {
-    "functions": 98.30508474576271,
+    "functions": 100,
     "lines": 100
   },
   "packages/core/src/causality.ts": {
@@ -521,19 +433,19 @@
   },
   "packages/core/src/effect-lifecycle.ts": {
     "functions": 100,
-    "lines": 91.93548387096774
+    "lines": 92.3076923076923
   },
   "packages/core/src/effect-scope.ts": {
     "functions": 100,
-    "lines": 99.36708860759494
+    "lines": 99.37106918238993
   },
   "packages/core/src/errors.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/core/src/evidence.ts": {
-    "functions": 87.5,
-    "lines": 94.32314410480349
+    "functions": 94.73684210526315,
+    "lines": 98.29268292682927
   },
   "packages/core/src/execution-policy.ts": {
     "functions": 100,
@@ -544,7 +456,7 @@
     "lines": 100
   },
   "packages/core/src/idempotency.ts": {
-    "functions": 96.15384615384616,
+    "functions": 96.42857142857143,
     "lines": 100
   },
   "packages/core/src/index.ts": {
@@ -558,6 +470,10 @@
   "packages/core/src/internal/capability-runtime.ts": {
     "functions": 100,
     "lines": 92.85714285714286
+  },
+  "packages/core/src/internal/code-unit-order.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/internal/durable-approval-protocol.ts": {
     "functions": 100,
@@ -585,7 +501,7 @@
   },
   "packages/core/src/internal/route-assurance.ts": {
     "functions": 100,
-    "lines": 99.37888198757764
+    "lines": 100
   },
   "packages/core/src/internal/route-catalog.ts": {
     "functions": 88.88888888888889,
@@ -593,7 +509,7 @@
   },
   "packages/core/src/internal/route-compiler.ts": {
     "functions": 100,
-    "lines": 97.35099337748345
+    "lines": 100
   },
   "packages/core/src/internal/route-execution.ts": {
     "functions": 100,
@@ -625,7 +541,7 @@
   },
   "packages/core/src/manifest.ts": {
     "functions": 100,
-    "lines": 98.37587006960557
+    "lines": 98.38709677419355
   },
   "packages/core/src/mcp.ts": {
     "functions": 100,
@@ -649,7 +565,7 @@
   },
   "packages/core/src/reflection.ts": {
     "functions": 100,
-    "lines": 100
+    "lines": 99.46524064171123
   },
   "packages/core/src/replay.ts": {
     "functions": 100,
@@ -659,9 +575,13 @@
     "functions": 100,
     "lines": 92
   },
+  "packages/core/src/router/overlap.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/router/pattern.ts": {
-    "functions": 94.11764705882352,
-    "lines": 96.94323144104804
+    "functions": 96.55172413793103,
+    "lines": 98.97172236503856
   },
   "packages/core/src/router/router.ts": {
     "functions": 100,
@@ -683,17 +603,25 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/server/auth.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/server/bare-error-lane.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/core/src/server/body-lane.ts": {
-    "functions": 78.57142857142857,
-    "lines": 91.42857142857143
+    "functions": 80,
+    "lines": 90.96774193548387
+  },
+  "packages/core/src/server/body-parser.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/server/body.ts": {
-    "functions": 88.88888888888889,
-    "lines": 94.05940594059405
+    "functions": 90,
+    "lines": 94.57013574660633
   },
   "packages/core/src/server/bridge-markers.ts": {
     "functions": 100,
@@ -705,11 +633,15 @@
   },
   "packages/core/src/server/contract.ts": {
     "functions": 100,
-    "lines": 99.07407407407408
+    "lines": 100
   },
   "packages/core/src/server/cookies.ts": {
     "functions": 100,
     "lines": 99.48186528497409
+  },
+  "packages/core/src/server/core-copies.ts": {
+    "functions": 100,
+    "lines": 66.66666666666666
   },
   "packages/core/src/server/edge.ts": {
     "functions": 100,
@@ -729,7 +661,7 @@
   },
   "packages/core/src/server/idempotency-lane.ts": {
     "functions": 100,
-    "lines": 93.90862944162437
+    "lines": 94.36619718309859
   },
   "packages/core/src/server/install.ts": {
     "functions": 100,
@@ -743,6 +675,14 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/server/methods.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/multipart.ts": {
+    "functions": 100,
+    "lines": 99.62406015037594
+  },
   "packages/core/src/server/node-outcome-hook.ts": {
     "functions": 100,
     "lines": 100
@@ -750,6 +690,14 @@
   "packages/core/src/server/node-outcome.ts": {
     "functions": 100,
     "lines": 96.06299212598425
+  },
+  "packages/core/src/server/not-found-answer.ts": {
+    "functions": 100,
+    "lines": 98.0392156862745
+  },
+  "packages/core/src/server/not-found.ts": {
+    "functions": 87.5,
+    "lines": 96.55172413793103
   },
   "packages/core/src/server/platform-adapters.ts": {
     "functions": 100,
@@ -765,15 +713,23 @@
   },
   "packages/core/src/server/query.ts": {
     "functions": 100,
-    "lines": 91.8918918918919
+    "lines": 94.5945945945946
   },
   "packages/core/src/server/request-context.ts": {
-    "functions": 88.23529411764706,
-    "lines": 87.79342723004694
+    "functions": 88.57142857142857,
+    "lines": 88.39285714285714
+  },
+  "packages/core/src/server/request-lineage.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/request-target.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/server/respond.ts": {
     "functions": 96.15384615384616,
-    "lines": 88.70523415977961
+    "lines": 88.91891891891892
   },
   "packages/core/src/server/response-contract-lane.ts": {
     "functions": 100,
@@ -792,12 +748,12 @@
     "lines": 100
   },
   "packages/core/src/server/server.ts": {
-    "functions": 82.96296296296296,
-    "lines": 98.8508749020632
+    "functions": 86.19909502262443,
+    "lines": 98.8756148981026
   },
   "packages/core/src/server/sse.ts": {
-    "functions": 94.73684210526315,
-    "lines": 97.89473684210527
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/server/static-headers.ts": {
     "functions": 100,
@@ -805,7 +761,7 @@
   },
   "packages/core/src/server/transport-lane.ts": {
     "functions": 100,
-    "lines": 99.01960784313727
+    "lines": 99.02912621359224
   },
   "packages/core/src/server/validation.ts": {
     "functions": 100,
@@ -824,8 +780,8 @@
     "lines": 100
   },
   "packages/core/src/single-copy.ts": {
-    "functions": 78.78787878787878,
-    "lines": 87.5
+    "functions": 90.69767441860465,
+    "lines": 99.13793103448276
   },
   "packages/core/src/tool-catalog.ts": {
     "functions": 100,
@@ -855,6 +811,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/test/request-target-matrix.ts": {
+    "functions": 100,
+    "lines": 91.72932330827066
+  },
   "packages/create-nifra/src/agent-files.ts": {
     "functions": 100,
     "lines": 100
@@ -869,7 +829,7 @@
   },
   "packages/create-nifra/src/cli.ts": {
     "functions": 100,
-    "lines": 96.17486338797814
+    "lines": 96.46739130434783
   },
   "packages/create-nifra/src/db.ts": {
     "functions": 100,
@@ -881,9 +841,9 @@
   },
   "packages/create-nifra/src/scaffold/frameworks.ts": {
     "functions": 100,
-    "lines": 98.52941176470588
+    "lines": 98.11320754716981
   },
-  "packages/create-nifra/src/scaffold/site-build.ts": {
+  "packages/create-nifra/src/scaffold/route-types.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -892,6 +852,10 @@
     "lines": 100
   },
   "packages/create-nifra/src/scaffold/site.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/create-nifra/src/scaffold/targets.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -913,10 +877,10 @@
   },
   "packages/devtools/src/index.ts": {
     "functions": 100,
-    "lines": 95.97701149425288
+    "lines": 96.045197740113
   },
   "packages/edge/src/index.ts": {
-    "functions": 95,
+    "functions": 95.65217391304348,
     "lines": 100
   },
   "packages/env/src/define.ts": {
@@ -971,19 +935,43 @@
     "functions": 69.56521739130434,
     "lines": 70.76023391812866
   },
+  "packages/i18n/src/check.ts": {
+    "functions": 100,
+    "lines": 97.11340206185567
+  },
+  "packages/i18n/src/cookie.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/i18n/src/detector.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/i18n/src/format.ts": {
     "functions": 100,
-    "lines": 100
+    "lines": 99.69696969696969
   },
   "packages/i18n/src/index.ts": {
     "functions": 100,
     "lines": 100
   },
+  "packages/i18n/src/locales.ts": {
+    "functions": 100,
+    "lines": 98.19277108433735
+  },
   "packages/i18n/src/negotiate.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/i18n/src/rich.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/i18n/src/routing.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/i18n/src/tags.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -993,7 +981,7 @@
   },
   "packages/image/src/dimensions.ts": {
     "functions": 100,
-    "lines": 95.6043956043956
+    "lines": 96.66666666666667
   },
   "packages/image/src/html.ts": {
     "functions": 100,
@@ -1009,7 +997,7 @@
   },
   "packages/image/src/og.ts": {
     "functions": 100,
-    "lines": 90.19607843137256
+    "lines": 94.41340782122904
   },
   "packages/image/src/resolve.ts": {
     "functions": 100,
@@ -1060,20 +1048,48 @@
     "lines": 100
   },
   "packages/jobs/src/queue.ts": {
-    "functions": 93.75,
+    "functions": 95.74468085106383,
     "lines": 100
+  },
+  "packages/mcp-db/src/engine.ts": {
+    "functions": 100,
+    "lines": 97.10144927536231
   },
   "packages/mcp-db/src/index.ts": {
     "functions": 100,
-    "lines": 95.90834697217676
+    "lines": 97.96954314720813
+  },
+  "packages/mcp-db/src/internal/pg-exec.ts": {
+    "functions": 100,
+    "lines": 98.73417721518987
+  },
+  "packages/mcp-db/src/internal/pg-lexer.ts": {
+    "functions": 100,
+    "lines": 99.08675799086758
+  },
+  "packages/mcp-db/src/internal/shared.ts": {
+    "functions": 100,
+    "lines": 97.6798143851508
+  },
+  "packages/mcp-db/src/internal/sqlite-session.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp-db/src/postgres.ts": {
+    "functions": 95.38461538461539,
+    "lines": 92.1875
+  },
+  "packages/mcp-db/test/fixtures/hostile-corpus.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/mcp/src/bridge.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/mcp/src/http.ts": {
-    "functions": 91.8918918918919,
-    "lines": 97.42765273311898
+    "functions": 92.6829268292683,
+    "lines": 96.7654986522911
   },
   "packages/mcp/src/index.ts": {
     "functions": 100,
@@ -1081,7 +1097,7 @@
   },
   "packages/mcp/src/protocol.ts": {
     "functions": 93.75,
-    "lines": 98.50374064837905
+    "lines": 98.52216748768473
   },
   "packages/mcp/src/server.ts": {
     "functions": 100,
@@ -1103,9 +1119,13 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/middleware/src/_ip.ts": {
+    "functions": 100,
+    "lines": 98.36065573770492
+  },
   "packages/middleware/src/_utils.ts": {
     "functions": 100,
-    "lines": 99.23664122137404
+    "lines": 99.32432432432432
   },
   "packages/middleware/src/admission.ts": {
     "functions": 100,
@@ -1132,8 +1152,8 @@
     "lines": 100
   },
   "packages/middleware/src/compression.ts": {
-    "functions": 96.42857142857143,
-    "lines": 99.43820224719101
+    "functions": 96.55172413793103,
+    "lines": 99.4535519125683
   },
   "packages/middleware/src/conditional.ts": {
     "functions": 87.5,
@@ -1153,7 +1173,7 @@
   },
   "packages/middleware/src/csrf.ts": {
     "functions": 100,
-    "lines": 98.57142857142858
+    "lines": 97.72727272727273
   },
   "packages/middleware/src/durable-command.ts": {
     "functions": 100,
@@ -1177,7 +1197,7 @@
   },
   "packages/middleware/src/ip-restriction.ts": {
     "functions": 100,
-    "lines": 93.57142857142857
+    "lines": 98.11320754716981
   },
   "packages/middleware/src/jwt.ts": {
     "functions": 92.6829268292683,
@@ -1185,7 +1205,7 @@
   },
   "packages/middleware/src/language.ts": {
     "functions": 100,
-    "lines": 97.33333333333334
+    "lines": 97.36842105263158
   },
   "packages/middleware/src/logger.ts": {
     "functions": 100,
@@ -1208,16 +1228,16 @@
     "lines": 100
   },
   "packages/middleware/src/pretty-json.ts": {
-    "functions": 89.47368421052632,
-    "lines": 99.27536231884058
+    "functions": 90.9090909090909,
+    "lines": 99.42528735632183
   },
   "packages/middleware/src/problem-details.ts": {
     "functions": 93.33333333333333,
-    "lines": 91.61676646706587
+    "lines": 92.39766081871345
   },
   "packages/middleware/src/range.ts": {
     "functions": 100,
-    "lines": 94.26229508196722
+    "lines": 98.36065573770492
   },
   "packages/middleware/src/rate-limit.ts": {
     "functions": 100,
@@ -1244,7 +1264,7 @@
     "lines": 100
   },
   "packages/mock/src/index.ts": {
-    "functions": 92.85714285714286,
+    "functions": 95.45454545454545,
     "lines": 100
   },
   "packages/mock/src/reflect-auto.ts": {
@@ -1255,23 +1275,43 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/node/src/generated/request-target.ts": {
+    "functions": 100,
+    "lines": 77.77777777777779
+  },
   "packages/node/src/index.ts": {
-    "functions": 84.42211055276381,
-    "lines": 98.42829076620825
+    "functions": 83.33333333333334,
+    "lines": 98.13348416289593
   },
   "packages/node/src/node-stream.ts": {
     "functions": 85.71428571428571,
     "lines": 91.01123595505618
   },
+  "packages/otel/src/cache.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/otel/src/causality.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/context-trace.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/otel/src/effects.ts": {
     "functions": 100,
-    "lines": 91.17647058823529
+    "lines": 90.38461538461539
+  },
+  "packages/otel/src/events.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/otel/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/jobs.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -1280,10 +1320,18 @@
     "lines": 100
   },
   "packages/otel/src/metrics.ts": {
-    "functions": 93.75,
-    "lines": 99.48717948717949
+    "functions": 93.54838709677419,
+    "lines": 99.47368421052632
   },
   "packages/otel/src/otlp.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/route-template.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/sdk-bridge.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -1297,15 +1345,15 @@
   },
   "packages/otel/src/tracing.ts": {
     "functions": 92.3076923076923,
-    "lines": 98.21428571428571
+    "lines": 98.31932773109243
   },
   "packages/pi/extensions/nifra.ts": {
     "functions": 100,
-    "lines": 92.3076923076923
+    "lines": 93.33333333333333
   },
   "packages/pi/src/index.ts": {
     "functions": 85.41666666666666,
-    "lines": 94.23328964613368
+    "lines": 94.6078431372549
   },
   "packages/prompt/src/index.ts": {
     "functions": 100,
@@ -1321,15 +1369,23 @@
   },
   "packages/proxy/src/undici.ts": {
     "functions": 20,
-    "lines": 11.956521739130435
+    "lines": 11.458333333333332
   },
   "packages/runner/src/index.ts": {
     "functions": 100,
-    "lines": 99.24242424242425
+    "lines": 99.3006993006993
   },
   "packages/schema/src/adapter.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/schema/src/file-kind.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/schema/src/form.ts": {
+    "functions": 100,
+    "lines": 99.11894273127754
   },
   "packages/schema/src/formats.ts": {
     "functions": 100,
@@ -1344,7 +1400,7 @@
     "lines": 95
   },
   "packages/schema/src/openapi.ts": {
-    "functions": 91.30434782608695,
+    "functions": 92.85714285714286,
     "lines": 100
   },
   "packages/schema/src/pagination.ts": {
@@ -1388,8 +1444,8 @@
     "lines": 100
   },
   "packages/testing/src/adversarial.ts": {
-    "functions": 96.82539682539682,
-    "lines": 99.54545454545455
+    "functions": 98.55072463768117,
+    "lines": 100
   },
   "packages/testing/src/agent-certification.ts": {
     "functions": 100,
@@ -1400,7 +1456,7 @@
     "lines": 74.80719794344472
   },
   "packages/testing/src/certification.ts": {
-    "functions": 98.64864864864865,
+    "functions": 98.7012987012987,
     "lines": 100
   },
   "packages/testing/src/contract-lab.ts": {
@@ -1410,6 +1466,14 @@
   "packages/testing/src/cookies.ts": {
     "functions": 100,
     "lines": 95.34883720930233
+  },
+  "packages/testing/src/data-conformance.ts": {
+    "functions": 92.5925925925926,
+    "lines": 95.93023255813954
+  },
+  "packages/testing/src/e2e.ts": {
+    "functions": 100,
+    "lines": 85.1063829787234
   },
   "packages/testing/src/failure-lab.ts": {
     "functions": 100,
@@ -1455,13 +1519,17 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/ts-plugin/src/zones.ts": {
+    "functions": 100,
+    "lines": 90.71428571428571
+  },
   "packages/uploads/src/detect.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/uploads/src/sign.ts": {
     "functions": 100,
-    "lines": 98.71794871794873
+    "lines": 98.73417721518987
   },
   "packages/uploads/src/strip.ts": {
     "functions": 100,
@@ -1507,6 +1575,14 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web-preact/src/route-props.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/auth.ts": {
+    "functions": 81.81818181818183,
+    "lines": 71.21212121212122
+  },
   "packages/web-react/src/compose.ts": {
     "functions": 100,
     "lines": 100
@@ -1543,9 +1619,17 @@
     "functions": 100,
     "lines": 98.24561403508771
   },
+  "packages/web-react/src/render-error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/route-props.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web-react/src/router.ts": {
-    "functions": 91.66666666666666,
-    "lines": 96.66666666666667
+    "functions": 92.3076923076923,
+    "lines": 96.91358024691358
   },
   "packages/web-solid/src/compose.ts": {
     "functions": 100,
@@ -1583,12 +1667,20 @@
     "functions": 100,
     "lines": 91.66666666666666
   },
+  "packages/web-solid/src/plugin.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web-solid/src/refresh-babel.ts": {
     "functions": 100,
     "lines": 100
   },
+  "packages/web-solid/src/route-props.ts": {
+    "functions": 63.63636363636363,
+    "lines": 55.55555555555556
+  },
   "packages/web-solid/src/router.ts": {
-    "functions": 83.33333333333334,
+    "functions": 100,
     "lines": 100
   },
   "packages/web-solid/src/svg.ts": {
@@ -1608,8 +1700,8 @@
     "lines": 100
   },
   "packages/web-svelte/src/router.ts": {
-    "functions": 71.42857142857143,
-    "lines": 82.6086956521739
+    "functions": 100,
+    "lines": 100
   },
   "packages/web-svelte/src/svg.ts": {
     "functions": 100,
@@ -1661,7 +1753,11 @@
   },
   "packages/web-vue/src/plugin.ts": {
     "functions": 100,
-    "lines": 96.49122807017544
+    "lines": 98
+  },
+  "packages/web-vue/src/route-props.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/web-vue/src/router.ts": {
     "functions": 100,
@@ -1675,23 +1771,31 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/backend-only.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/src/boundary.ts": {
-    "functions": 88,
-    "lines": 98.97435897435898
+    "functions": 88.88888888888889,
+    "lines": 99.00497512437812
   },
   "packages/web/src/build-plan.ts": {
-    "functions": 94.23076923076923,
-    "lines": 94.41176470588235
+    "functions": 98.14814814814815,
+    "lines": 96.24664879356568
   },
   "packages/web/src/build-vite.ts": {
     "functions": 100,
-    "lines": 95.45454545454545
+    "lines": 96.05263157894737
   },
   "packages/web/src/build.ts": {
-    "functions": 92.5,
-    "lines": 95.23809523809523
+    "functions": 96.03960396039604,
+    "lines": 95.77187807276303
   },
   "packages/web/src/bun-dev-entry.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/cdn.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -1700,12 +1804,16 @@
     "lines": 100
   },
   "packages/web/src/client.ts": {
-    "functions": 96.29629629629629,
-    "lines": 99.15014164305948
+    "functions": 98.36065573770492,
+    "lines": 99.52153110047847
   },
   "packages/web/src/conformance.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/web/src/csp.ts": {
+    "functions": 88.23529411764706,
+    "lines": 98.75
   },
   "packages/web/src/css-contract.ts": {
     "functions": 100,
@@ -1715,6 +1823,10 @@
     "functions": 100,
     "lines": 98.98477157360406
   },
+  "packages/web/src/dev-client.ts": {
+    "functions": 100,
+    "lines": 99.36305732484077
+  },
   "packages/web/src/dev-diagnostics.ts": {
     "functions": 100,
     "lines": 100
@@ -1723,21 +1835,45 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/dev-feed.ts": {
+    "functions": 97.22222222222221,
+    "lines": 99.19743178170144
+  },
+  "packages/web/src/dev-indicator.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/src/dev-port.ts": {
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/dev-session.ts": {
+    "functions": 100,
+    "lines": 97.16446124763705
+  },
+  "packages/web/src/dev-sourcemap.ts": {
+    "functions": 95,
+    "lines": 95.29411764705881
+  },
   "packages/web/src/dev-ssr-graph.ts": {
     "functions": 100,
-    "lines": 98.73417721518987
+    "lines": 98.75776397515527
   },
   "packages/web/src/dev.ts": {
-    "functions": 96.7741935483871,
-    "lines": 93.25396825396825
+    "functions": 97.14285714285714,
+    "lines": 92.64705882352942
+  },
+  "packages/web/src/diagnostic-catalog.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/diagnostic-prompt.ts": {
+    "functions": 100,
+    "lines": 99.609375
   },
   "packages/web/src/diagnostic.ts": {
-    "functions": 94.44444444444444,
-    "lines": 96.7741935483871
+    "functions": 100,
+    "lines": 97.94520547945206
   },
   "packages/web/src/draft.ts": {
     "functions": 100,
@@ -1771,8 +1907,32 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/cdn/cloudflare.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/cdn/core.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/cdn/fastly.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/cdn/vercel.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/src/internal/codegen.ts": {
-    "functions": 94.44444444444444,
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/dev-csp.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/dev-reserved.ts": {
+    "functions": 100,
     "lines": 100
   },
   "packages/web/src/internal/fetcher-runtime.ts": {
@@ -1795,13 +1955,41 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/loading-runtime.ts": {
+    "functions": 91.30434782608695,
+    "lines": 100
+  },
+  "packages/web/src/internal/matches-runtime.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/mount-shadow.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/node-builtins.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/output-guard.ts": {
+    "functions": 90.32258064516128,
+    "lines": 96.34615384615385
+  },
   "packages/web/src/internal/page-execution.ts": {
     "functions": 100,
-    "lines": 95.22998296422487
+    "lines": 100
   },
   "packages/web/src/internal/parity.ts": {
-    "functions": 97.77777777777777,
-    "lines": 97.054698457223
+    "functions": 97.97979797979798,
+    "lines": 97.1576227390181
+  },
+  "packages/web/src/internal/private-env.ts": {
+    "functions": 100,
+    "lines": 95.703125
+  },
+  "packages/web/src/internal/public-url.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/web/src/internal/query-runtime.ts": {
     "functions": 100,
@@ -1815,6 +2003,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/response-controls.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/src/internal/runtime-contract.ts": {
     "functions": 100,
     "lines": 100
@@ -1823,11 +2015,27 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/secret-scan.ts": {
+    "functions": 100,
+    "lines": 98.78345498783455
+  },
   "packages/web/src/internal/server-boundary.ts": {
     "functions": 100,
-    "lines": 94.73684210526315
+    "lines": 100
+  },
+  "packages/web/src/internal/source-map.ts": {
+    "functions": 100,
+    "lines": 99.5
+  },
+  "packages/web/src/internal/target-compat.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/web/src/internal/timing-safe-equal.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/vitals-runtime.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -1836,24 +2044,28 @@
     "lines": 100
   },
   "packages/web/src/internal/web-app.ts": {
-    "functions": 81.81818181818183,
-    "lines": 89.8876404494382
+    "functions": 94.11764705882352,
+    "lines": 99.08256880733946
+  },
+  "packages/web/src/internal/zone-graph.ts": {
+    "functions": 98,
+    "lines": 97.10144927536231
   },
   "packages/web/src/islands.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/web/src/isr.ts": {
-    "functions": 98.30508474576271,
+    "functions": 98.63013698630137,
     "lines": 100
   },
   "packages/web/src/llms-txt.ts": {
     "functions": 100,
-    "lines": 96.03174603174604
+    "lines": 97.16312056737588
   },
   "packages/web/src/manifest.ts": {
     "functions": 100,
-    "lines": 97.26027397260275
+    "lines": 98.67330016583747
   },
   "packages/web/src/module-graph.ts": {
     "functions": 100,
@@ -1867,9 +2079,13 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/nonce.ts": {
+    "functions": 77.77777777777779,
+    "lines": 97.5609756097561
+  },
   "packages/web/src/plugins/css-modules.ts": {
     "functions": 100,
-    "lines": 98.28178694158075
+    "lines": 98.97260273972603
   },
   "packages/web/src/plugins/kit.ts": {
     "functions": 100,
@@ -1893,23 +2109,31 @@
   },
   "packages/web/src/plugins/vite-leak-guard.ts": {
     "functions": 100,
-    "lines": 100
+    "lines": 99.6875
   },
   "packages/web/src/plugins/vite-server-fn.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/web/src/plugins/vite-server-only.ts": {
+  "packages/web/src/plugins/vite-zone-guard.ts": {
+    "functions": 94.11764705882352,
+    "lines": 79.73856209150327
+  },
+  "packages/web/src/plugins/zone-guard.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/web/src/prerender.ts": {
     "functions": 100,
-    "lines": 98
+    "lines": 98.44961240310077
   },
   "packages/web/src/public-dir.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/web/src/pwa-manifest.ts": {
+    "functions": 100,
+    "lines": 89.28571428571429
   },
   "packages/web/src/query.ts": {
     "functions": 92.7536231884058,
@@ -1923,15 +2147,15 @@
     "functions": 100,
     "lines": 100
   },
-  "packages/web/src/router.ts": {
-    "functions": 97.2972972972973,
-    "lines": 97.96875
-  },
-  "packages/web/src/search.ts": {
-    "functions": 100,
+  "packages/web/src/route-types.ts": {
+    "functions": 95.23809523809523,
     "lines": 100
   },
-  "packages/web/src/server-only.ts": {
+  "packages/web/src/router.ts": {
+    "functions": 96.3855421686747,
+    "lines": 98.84892086330936
+  },
+  "packages/web/src/search.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -1943,6 +2167,18 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/vitals.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/zones.ts": {
+    "functions": 100,
+    "lines": 99.6415770609319
+  },
+  "packages/web/test/_route-halves.ts": {
+    "functions": 100,
+    "lines": 92.3076923076923
+  },
   "packages/web/test/fixtures/throws-on-load.ts": {
     "functions": 100,
     "lines": 100
@@ -1952,8 +2188,8 @@
     "lines": 100
   },
   "packages/webmcp/src/index.ts": {
-    "functions": 96.07843137254902,
-    "lines": 88.47402597402598
+    "functions": 96.15384615384616,
+    "lines": 88.99521531100478
   },
   "packages/workers/src/index.ts": {
     "functions": 100,
