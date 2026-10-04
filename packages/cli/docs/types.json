@@ -15148,7 +15148,7 @@
     "name": "R2BucketLike",
     "kind": "interface",
     "package": "@nifrajs/storage",
-    "signature": "export interface R2BucketLike {\n    put(key: string, value: ArrayBuffer | ArrayBufferView, options?: {\n        httpMetadata?: {\n            contentType?: string;\n        };\n        customMetadata?: Record<string, string>;\n    }): Promise<unknown>;\n    get(key: string): Promise<(R2ObjectLike & {\n        arrayBuffer(): Promise<ArrayBuffer>;\n    }) | null>;\n    head(key: string): Promise<R2ObjectLike | null>;\n    delete(key: string): Promise<void>;\n    list(options?: {\n        prefix?: string;\n        limit?: number;\n    }): Promise<{\n        objects: ReadonlyArray<{\n            key: string;\n        }>;\n    }>;\n}",
+    "signature": "export interface R2BucketLike {\n    put(key: string, value: ArrayBuffer | ArrayBufferView, options?: {\n        httpMetadata?: {\n            contentType?: string;\n        };\n        customMetadata?: Record<string, string>;\n    }): Promise<unknown>;\n    get(key: string): Promise<(R2ObjectLike & {\n        arrayBuffer(): Promise<ArrayBuffer>;\n    }) | null>;\n    head(key: string): Promise<R2ObjectLike | null>;\n    delete(key: string): Promise<void>;\n    list(options?: {\n        prefix?: string;\n        limit?: number;\n        cursor?: string;\n    }): Promise<{\n        objects: ReadonlyArray<{\n            key: string;\n        }>;\n        truncated?: boolean;\n        cursor?: string;\n    }>;\n}",
     "doc": "/** The slice of the R2 bucket binding this adapter calls. `env.<BUCKET>` satisfies it. */"
   },
   {
@@ -15162,7 +15162,7 @@
     "name": "R2Storage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class R2Storage implements StorageAdapter {\n    private readonly bucket;\n    constructor(bucket: R2BucketLike);\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n}"
+    "signature": "export declare class R2Storage implements StorageAdapter {\n    private readonly bucket;\n    constructor(bucket: R2BucketLike);\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    /** Every key (up to `limit`), following R2's cursor past the 1000 keys one call returns. */\n    list(options?: ListOptions): Promise<string[]>;\n    /** One page of at most 1000 keys, and the cursor for the next while there are more. */\n    listPage(options?: StorageListPageOptions): Promise<StorageListPage>;\n}"
   },
   {
     "name": "randomEffectDigestKey",

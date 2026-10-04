@@ -10,6 +10,8 @@ import {
   type PutOptions,
   type StorageAdapter,
   type StorageData,
+  type StorageListPage,
+  type StorageListPageOptions,
   type StorageObject,
   toBytes,
 } from "./types.ts"
@@ -34,8 +36,12 @@ export interface R2BucketLike {
   list(options?: {
     prefix?: string
     limit?: number
-  }): Promise<{ objects: ReadonlyArray<{ key: string }> }>
+    cursor?: string
+  }): Promise<{ objects: ReadonlyArray<{ key: string }>; truncated?: boolean; cursor?: string }>
 }
+
+/** The most keys one R2 `list()` call returns; the rest arrive behind its cursor. */
+const R2_PAGE = 1000
 
 export class R2Storage implements StorageAdapter {
   constructor(private readonly bucket: R2BucketLike) {}
@@ -77,11 +83,32 @@ export class R2Storage implements StorageAdapter {
     return (await this.bucket.head(key)) !== null
   }
 
+  /** Every key (up to `limit`), following R2's cursor past the 1000 keys one call returns. */
   async list(options: ListOptions = {}): Promise<string[]> {
-    const listOpts: { prefix?: string; limit?: number } = {}
+    const keys: string[] = []
+    let cursor: string | undefined
+    do {
+      const pageOptions: { prefix?: string; limit?: number; cursor?: string } = {}
+      if (options.prefix !== undefined) pageOptions.prefix = options.prefix
+      if (options.limit !== undefined) pageOptions.limit = options.limit - keys.length
+      if (cursor !== undefined) pageOptions.cursor = cursor
+      const page = await this.listPage(pageOptions)
+      keys.push(...page.keys)
+      cursor = page.cursor
+    } while (cursor !== undefined && (options.limit === undefined || keys.length < options.limit))
+    return keys
+  }
+
+  /** One page of at most 1000 keys, and the cursor for the next while there are more. */
+  async listPage(options: StorageListPageOptions = {}): Promise<StorageListPage> {
+    const listOpts: { prefix?: string; limit?: number; cursor?: string } = {}
     if (options.prefix !== undefined) listOpts.prefix = options.prefix
-    if (options.limit !== undefined) listOpts.limit = options.limit
+    if (options.limit !== undefined) listOpts.limit = Math.min(options.limit, R2_PAGE)
+    if (options.cursor !== undefined) listOpts.cursor = options.cursor
     const result = await this.bucket.list(listOpts)
-    return result.objects.map((o) => o.key)
+    const keys = result.objects.map((o) => o.key)
+    return result.truncated === true && result.cursor !== undefined
+      ? { keys, cursor: result.cursor }
+      : { keys }
   }
 }

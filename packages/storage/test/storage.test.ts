@@ -69,14 +69,22 @@ class FakeR2 implements R2BucketLike {
     return Promise.resolve()
   }
 
+  /** Pages like R2: at most 1000 keys a call, `truncated` + an opaque `cursor` for the rest. */
   list(options?: {
     prefix?: string
     limit?: number
-  }): Promise<{ objects: ReadonlyArray<{ key: string }> }> {
-    let keys = [...this.m.keys()]
-    if (options?.prefix !== undefined) keys = keys.filter((k) => k.startsWith(options.prefix ?? ""))
-    if (options?.limit !== undefined) keys = keys.slice(0, options.limit)
-    return Promise.resolve({ objects: keys.map((key) => ({ key })) })
+    cursor?: string
+  }): Promise<{ objects: ReadonlyArray<{ key: string }>; truncated?: boolean; cursor?: string }> {
+    const limit = options?.limit ?? 1000
+    if (limit > 1000) return Promise.reject(new Error("list limit must be 1-1000"))
+    const keys = [...this.m.keys()].filter((k) => k.startsWith(options?.prefix ?? "")).sort()
+    const start = options?.cursor === undefined ? 0 : Number(options.cursor.slice(1))
+    const objects = keys.slice(start, start + limit).map((key) => ({ key }))
+    return Promise.resolve(
+      start + limit < keys.length
+        ? { objects, truncated: true, cursor: `c${start + limit}` }
+        : { objects, truncated: false },
+    )
   }
 }
 
@@ -252,6 +260,18 @@ describe("FileStorage filesystem containment", () => {
       expect(await readFile(join(root, "object.txt"), "utf8")).toBe("secret")
     },
   )
+})
+
+describe("R2Storage listing", () => {
+  test("list() follows the cursor past the 1000 keys one R2 call returns", async () => {
+    const storage = new R2Storage(new FakeR2())
+    for (let i = 0; i < 2500; i++) await storage.put(`tmp/${String(i).padStart(4, "0")}`, "x")
+    expect(await storage.list({ prefix: "tmp/" })).toHaveLength(2500)
+    expect(await storage.list({ prefix: "tmp/", limit: 1500 })).toHaveLength(1500)
+    const first = await storage.listPage({ prefix: "tmp/", limit: 5000 })
+    expect(first.keys).toHaveLength(1000)
+    expect(first.cursor).toBeDefined()
+  })
 })
 
 describe("FileStorage on an ordinary host", () => {
