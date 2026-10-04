@@ -6,6 +6,7 @@ import { effectLedger } from "../src/effect-ledger.ts"
 import { idempotency } from "../src/idempotency-plugin.ts"
 import {
   authenticated,
+  defineContextPlugin,
   FrameworkError,
   RouteConfigError,
   rejected,
@@ -648,20 +649,70 @@ describe("group() - fail closed", () => {
     ).not.toThrow()
   })
 
-  test("a group's use() of a plugin its parent applied is skipped, and development says so", async () => {
-    const warnings: string[] = []
-    const logger = { ...silentLogger, warn: (message: string) => void warnings.push(message) }
+  test("a group's use() of another instance of a plugin its parent applied is refused", () => {
     const tag = (value: string) => ({ name: "tag", responseHeaders: { "x-tag": value } })
-    const app = server({ logger })
-      .use(tag("parent"))
-      .group("/admin", (admin) => admin.use(tag("admin")).get("/panel", () => "ok"))
+    const refusal = (build: () => unknown): RouteConfigError => {
+      try {
+        build()
+      } catch (error) {
+        if (error instanceof RouteConfigError) return error
+        throw error
+      }
+      throw new Error("the group was not refused")
+    }
+    const bundle = refusal(() =>
+      server()
+        .use(tag("parent"))
+        .group("/admin", (admin) => admin.use(tag("admin")).get("/panel", () => "ok")),
+    )
+    expect(bundle.code).toBe("PLUGIN_RECONFIGURED")
+    expect(bundle.message).toContain('use() of "tag" in a group')
+
+    const counted = () => defineContextPlugin("counted", (app) => app.derive(() => ({ n: 1 })))
+    expect(
+      refusal(() =>
+        server()
+          .use(counted())
+          .group("/g", (g) => g.use(counted()).get("/x", () => "x")),
+      ).code,
+    ).toBe("PLUGIN_RECONFIGURED")
+
+    // A nested group cannot reconfigure what an enclosing group applied either.
+    expect(
+      refusal(() =>
+        server().group("/a", (a) =>
+          a.use(tag("a")).group("/b", (b) => b.use(tag("b")).get("/x", () => "x")),
+        ),
+      ).code,
+    ).toBe("PLUGIN_RECONFIGURED")
+  })
+
+  test("a plugin a group applies shares the parent's copy of a dependency it uses itself", async () => {
+    let applied = 0
+    const session = () =>
+      defineContextPlugin<{ copy: number }>("session", (app) => {
+        applied++
+        const copy = applied
+        return app.derive(() => ({ copy }))
+      })
+    const admin = defineContextPlugin<{ copy: number }>("admin", (app) => app.use(session()))
+    const app = server()
+      .use(session())
+      .group("/admin", (g) => g.use(admin).get("/", (c) => ({ copy: c.copy })))
+    expect(applied).toBe(1)
+    expect(await (await get(app, "/admin")).json()).toEqual({ copy: 1 })
+  })
+
+  test("a group's own plugins, and the parent's own instance again, still apply", async () => {
+    const parentTag = { name: "tag", responseHeaders: { "x-tag": "parent" } }
+    const app = server()
+      .use(parentTag)
+      .group("/admin", (admin) => admin.use(parentTag).get("/panel", () => "ok"))
       .group("/own", (own) =>
         own.use({ name: "own", responseHeaders: { "x-own": "1" } }).get("/", () => "ok"),
       )
     expect((await get(app, "/admin/panel")).headers.get("x-tag")).toBe("parent")
     expect((await get(app, "/own")).headers.get("x-own")).toBe("1")
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain('group("/admin"): use() skipped "tag"')
   })
 })
 

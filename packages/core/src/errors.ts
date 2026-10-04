@@ -30,6 +30,7 @@ export type RouteConfigErrorCode =
   | "INVALID_WIRE"
   | "INVALID_VALIDATION_ORDER"
   | "INVALID_BODY_LIMIT"
+  | "PLUGIN_RECONFIGURED"
 
 /**
  * Thrown at route registration when a route is misconfigured. This is the

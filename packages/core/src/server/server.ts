@@ -843,35 +843,6 @@ const sealHookAudit = (
   else console.warn(message)
 }
 
-/** The plugin names a group scope inherited from its parent, and those its own `use()` calls then
- * skipped by name - a dev-time report, folded away with the hook audit in production. */
-const groupUses = /* @__PURE__ */ new WeakMap<
-  object,
-  { readonly inherited: ReadonlySet<string>; readonly skipped: string[] }
->()
-
-const recordSkippedUse = (key: object, name: string): void => {
-  const uses = groupUses.get(key)
-  if (uses?.inherited.has(name) === true) uses.skipped.push(name)
-}
-
-/** A group's `use()` of a plugin its parent applied is skipped, configuration and all; say so. */
-const reportSkippedUses = (
-  key: object,
-  label: string,
-  logger: { warn(message: string): void },
-): void => {
-  const skipped = groupUses.get(key)?.skipped
-  if (skipped === undefined || skipped.length === 0) return
-  const message =
-    `[nifra] ${label}: use() skipped ${[...new Set(skipped)].map((name) => JSON.stringify(name)).join(", ")} - ` +
-    `the parent server already applied it, so the call does nothing under the group: a differently ` +
-    `configured instance is ignored, not applied. A group cannot reconfigure a plugin its parent ` +
-    `applied; apply each configuration only on the server or group it should cover.`
-  if (hookAudit.get(key)?.hasCustomLogger === true) logger.warn(message)
-  else console.warn(message)
-}
-
 /**
  * The inline server. Routes are chainable and fully type-inferred. `derive`/
  * `decorate` extend the handler context (`Ctx`) for routes defined *after* them,
@@ -999,6 +970,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private staticResponseHeaders: StaticResponseHeaders | undefined
   /** A group's view of the static headers its enclosing scopes declared before it was created. */
   private declare inheritedStatics: Readonly<Record<string, string>> | undefined
+  /** A group's view of the plugins its enclosing scopes applied before it was created; unset while
+   * a plugin applies, so its own dependency `use()` shares the parent's copy. */
+  private declare inheritedPlugins: ReadonlyMap<string, unknown> | undefined
   /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
    * framework's own error/404/timeout renders, which are built outside the header init. */
   private wrapWebResponse: (response: Response | ResponseResult) => Response
@@ -1013,8 +987,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly responseSources: WeakMap<object, Request>
   /** Memoized NodeRequestContext per plain-`Request` source - see {@link nodeRequestContextOf}. */
   private readonly nodeContexts: WeakMap<object, NodeRequestContext>
-  /** Names of plugins/middleware already applied via `use` - for idempotent dedupe. */
-  private readonly appliedPlugins: Set<string>
+  /** Plugins/middleware already applied via `use`, by name - for idempotent dedupe. */
+  private readonly appliedPlugins: Map<string, unknown>
   /** Order-scoped evidence captured by routes registered after an assured plugin. */
   private readonly activeAssurance: AssuranceDeclaration[]
   /** App-wide evidence from global hooks; applies retroactively to every route. */
@@ -1111,7 +1085,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.responseRequests = new WeakMap()
     this.responseSources = new WeakMap()
     this.nodeContexts = new WeakMap()
-    this.appliedPlugins = new Set()
+    this.appliedPlugins = new Map()
     this.activeAssurance = []
     this.globalAssurance = []
     this.mcpResourceList = []
@@ -1572,24 +1546,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // A method-routes plugin is an ordinary plugin function; only its type is opaque.
     const arg = input as Middleware | ((app: this) => AnyServer)
     this.assertConfigurable("use()")
-    if (typeof arg === "function") {
-      const name = (arg as { pluginName?: string }).pluginName
-      if (name !== undefined) {
-        if (this.appliedPlugins.has(name)) {
-          if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-            recordSkippedUse(this, name)
-          return this // idempotent: already applied
+    const name = typeof arg === "function" ? (arg as { pluginName?: string }).pluginName : arg.name
+    if (name !== undefined) {
+      if (this.appliedPlugins.has(name)) {
+        const parent = this.inheritedPlugins?.get(name)
+        // A group's builder passing another instance of a plugin its parent applied would have it
+        // dropped, configuration and all. A plugin's own dependency use() shares the parent's copy.
+        if (parent !== undefined && parent !== arg) {
+          throw new RouteConfigError(
+            "PLUGIN_RECONFIGURED",
+            `use() of ${JSON.stringify(name)} in a group: its parent applied another instance`,
+          )
         }
-        this.appliedPlugins.add(name)
+        return this // idempotent: already applied
       }
+      this.appliedPlugins.set(name, arg)
+    }
+    if (typeof arg === "function") {
       const evidence = assuranceDeclarationsOf(arg)
       const pluginOnly = evidence.filter((item) => item.scope === "plugin")
       this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
       this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
       this.activeAssurance.push(...pluginOnly)
+      const inherited = this.inheritedPlugins
+      this.inheritedPlugins = undefined
       try {
         return arg(this)
       } finally {
+        this.inheritedPlugins = inherited
         // Remove only this plugin's temporary evidence. Nested assured plugins may deliberately leave
         // subsequent evidence active, so truncating the whole array would lose real ordering semantics.
         for (const item of pluginOnly) {
@@ -1597,14 +1581,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           if (index !== -1) this.activeAssurance.splice(index, 1)
         }
       }
-    }
-    if (arg.name !== undefined) {
-      if (this.appliedPlugins.has(arg.name)) {
-        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-          recordSkippedUse(this, arg.name)
-        return this
-      }
-      this.appliedPlugins.add(arg.name)
     }
     const evidence = assuranceDeclarationsOf(arg)
     if (evidence.some((item) => item.scope === "plugin")) {
@@ -2481,13 +2457,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * The builder receives a scope that INHERITS this server's route chain as it stands at the call
    * (`derive`/`decorate`/`authenticate`/`beforeHandle`/`afterHandle`/`onError`/`around`, assurance,
    * capability interceptors, installed runtimes, applied plugins), exactly as a route declared here
-   * would. A plugin this server already applied is in effect for the group, so the group's own `use()`
-   * of the same name is skipped - a differently configured instance does not replace the parent's, and
-   * development builds warn when that happens. What it adds stays in the group: its chain additions apply only to its own routes, and
-   * its request/response hooks (`onRequest`, `onResponse`, `responseHeaders`,
-   * `onResponseFinalized`, and middleware bundles that use them) run only for requests whose path
-   * is the prefix or below it. Per-route authorization belongs in `authenticate`/`beforeHandle`,
-   * which are compiled into each route; request hooks are path prefilters.
+   * would. A plugin this server already applied is in effect for the group: the group's `use()` of
+   * that same instance does nothing, and its `use()` of another instance under the same name throws a
+   * `RouteConfigError` (`PLUGIN_RECONFIGURED`), because that instance could never replace the parent's.
+   * A plugin the group applies still shares the parent's copy of a dependency it `use()`s itself.
+   * What it adds stays in the group: its chain additions apply only to its own routes, and its
+   * request/response hooks (`onRequest`, `onResponse`, `responseHeaders`, `onResponseFinalized`, and
+   * middleware bundles that use them) run only for requests whose path is the prefix or below it.
+   * Per-route authorization belongs in `authenticate`/`beforeHandle`, which are compiled into each
+   * route; request hooks are path prefilters.
    *
    * The prefix is static text - `"/api"`, `"/api/v1"` - validated when declared: no params,
    * wildcards, empty or dot segments, percent-escapes, or trailing slash. A group's `"/"` route
@@ -2523,11 +2501,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // plugin must still apply it to the parent's routes. The response observer is the exception: it
     // installs methods bound to the server it is applied to, so the scope must be free to install its
     // own (re-applying it registers no hook, so nothing can run twice).
-    for (const name of this.appliedPlugins) {
-      if (name !== "nifra:response-observer") scope.appliedPlugins.add(name)
+    for (const [name, plugin] of this.appliedPlugins) {
+      if (name !== "nifra:response-observer") scope.appliedPlugins.set(name, plugin)
     }
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      groupUses.set(scope, { inherited: new Set(scope.appliedPlugins), skipped: [] })
+    scope.inheritedPlugins = new Map(scope.appliedPlugins)
     let built: unknown
     try {
       built = build(scope as never)
@@ -2553,10 +2530,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         `${label} cannot hold ws(), mount, or MCP tool routes - add them to the parent`,
       )
     }
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       sealHookAudit(scope, scope.catalog.size, this.logger)
-      reportSkippedUses(scope, label, this.logger)
-    }
     this.adopt(scope, fullPrefix, this.globalAssurance.length)
     return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
   }
