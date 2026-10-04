@@ -81,64 +81,67 @@ export interface GraphqlDocumentMetrics {
   readonly complexity: number
 }
 
+type SelectionMetrics = Omit<GraphqlDocumentMetrics, "operations">
+
+const NO_SELECTIONS: SelectionMetrics = { depth: 0, aliases: 0, complexity: 0 }
+
+/** `depth` counts from the selection set's own level, so one fragment measure holds at every spread. */
 function selectionsMetrics(
   selections: readonly SelectionNode[],
-  fragments: ReadonlyMap<string, readonly SelectionNode[]>,
-  depth: number,
-  activeFragments: ReadonlySet<string>,
-): Omit<GraphqlDocumentMetrics, "operations"> {
-  let maxDepth = depth
+  fragment: (name: string) => SelectionMetrics,
+): SelectionMetrics {
+  let depth = 0
   let aliases = 0
   let complexity = 0
   for (const selection of selections) {
+    let nested: SelectionMetrics
     if (selection.kind === Kind.FIELD) {
       complexity += 1
       if (selection.alias !== undefined) aliases += 1
-      if (selection.selectionSet !== undefined) {
-        const nested = selectionsMetrics(
-          selection.selectionSet.selections,
-          fragments,
-          depth + 1,
-          activeFragments,
-        )
-        maxDepth = Math.max(maxDepth, nested.depth)
-        aliases += nested.aliases
-        complexity += nested.complexity
-      } else {
-        maxDepth = Math.max(maxDepth, depth + 1)
-      }
-      continue
+      nested =
+        selection.selectionSet === undefined
+          ? NO_SELECTIONS
+          : selectionsMetrics(selection.selectionSet.selections, fragment)
+      depth = Math.max(depth, nested.depth + 1)
+    } else {
+      nested =
+        selection.kind === Kind.INLINE_FRAGMENT
+          ? selectionsMetrics(selection.selectionSet.selections, fragment)
+          : fragment(selection.name.value)
+      depth = Math.max(depth, nested.depth)
     }
-    if (selection.kind === Kind.INLINE_FRAGMENT) {
-      const nested = selectionsMetrics(
-        selection.selectionSet.selections,
-        fragments,
-        depth,
-        activeFragments,
-      )
-      maxDepth = Math.max(maxDepth, nested.depth)
-      aliases += nested.aliases
-      complexity += nested.complexity
-      continue
-    }
-    const nestedSelections = fragments.get(selection.name.value)
-    if (nestedSelections === undefined || activeFragments.has(selection.name.value)) continue
-    const nextActive = new Set(activeFragments)
-    nextActive.add(selection.name.value)
-    const nested = selectionsMetrics(nestedSelections, fragments, depth, nextActive)
-    maxDepth = Math.max(maxDepth, nested.depth)
     aliases += nested.aliases
     complexity += nested.complexity
   }
-  return { depth: maxDepth, aliases, complexity }
+  return { depth, aliases, complexity }
 }
 
+/**
+ * Each fragment is measured once and reused at every spread. Expanding spreads in place costs a visit
+ * per expanded field, and a document whose fragments each spread the one before twice turns n short
+ * lines into 2^n visits, all of it synchronous before any limit can refuse the document.
+ */
 export function documentMetrics(document: DocumentNode): GraphqlDocumentMetrics {
-  const fragments = new Map<string, readonly SelectionNode[]>()
+  const definitions = new Map<string, readonly SelectionNode[]>()
   for (const definition of document.definitions) {
     if (definition.kind === Kind.FRAGMENT_DEFINITION) {
-      fragments.set(definition.name.value, definition.selectionSet.selections)
+      definitions.set(definition.name.value, definition.selectionSet.selections)
     }
+  }
+  const measured = new Map<string, SelectionMetrics>()
+  const measuring = new Set<string>()
+  const fragment = (name: string): SelectionMetrics => {
+    const known = measured.get(name)
+    if (known !== undefined) return known
+    const selections = definitions.get(name)
+    // An unknown fragment and a cycle back into one being measured, both refused by validation,
+    // add nothing.
+    if (selections === undefined || measuring.has(name)) return NO_SELECTIONS
+    measuring.add(name)
+    const metrics = selectionsMetrics(selections, fragment)
+    measuring.delete(name)
+    measured.set(name, metrics)
+    return metrics
   }
   let operations = 0
   let depth = 0
@@ -147,7 +150,7 @@ export function documentMetrics(document: DocumentNode): GraphqlDocumentMetrics 
   for (const definition of document.definitions) {
     if (definition.kind !== Kind.OPERATION_DEFINITION) continue
     operations += 1
-    const metrics = selectionsMetrics(definition.selectionSet.selections, fragments, 0, new Set())
+    const metrics = selectionsMetrics(definition.selectionSet.selections, fragment)
     depth = Math.max(depth, metrics.depth)
     aliases += metrics.aliases
     complexity += metrics.complexity
