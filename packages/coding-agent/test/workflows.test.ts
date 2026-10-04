@@ -127,4 +127,31 @@ describe("bounded workflows", () => {
     const result = await new WorkflowRunner().run({ type: "parallel", steps: [] })
     expect(result).toMatchObject({ ok: true })
   })
+
+  test("a failed parallel step starts no further step and waits for the running ones", async () => {
+    const ran: string[] = []
+    const task = (id: string, ms: number, fail = false) => ({
+      type: "task" as const,
+      id,
+      run: async () => {
+        await Bun.sleep(ms)
+        if (fail) throw new Error("boom")
+        ran.push(id)
+      },
+    })
+    const result = await new WorkflowRunner().run({
+      type: "parallel",
+      maxConcurrency: 2,
+      steps: [
+        task("fails", 5, true),
+        task("running", 30),
+        task("queued-a", 1),
+        task("queued-b", 1),
+      ],
+    })
+    expect(result).toMatchObject({ ok: false, error: "boom" })
+    expect(ran).toEqual(["running"])
+    await Bun.sleep(50)
+    expect(ran).toEqual(["running"])
+  })
 })

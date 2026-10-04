@@ -235,16 +235,24 @@ export class WorkflowRunner {
       throw new RangeError("workflow: maxConcurrency must be positive")
     const outputs: unknown[] = new Array(steps.length)
     let next = 0
+    // The first failure starts no further step, and the group settles only once the steps already
+    // running have, so nothing runs on after the workflow reports its failure.
+    let failure: { readonly error: unknown } | undefined
     const worker = async (): Promise<void> => {
-      for (;;) {
+      while (failure === undefined) {
         const index = next++
         if (index >= steps.length) return
-        outputs[index] = await this.execute(steps[index]!, depth + 1)
+        try {
+          outputs[index] = await this.execute(steps[index]!, depth + 1)
+        } catch (error) {
+          failure ??= { error }
+        }
       }
     }
     await Promise.all(
       Array.from({ length: Math.min(maxConcurrency, steps.length) }, () => worker()),
     )
+    if (failure !== undefined) throw failure.error
     return outputs
   }
 
