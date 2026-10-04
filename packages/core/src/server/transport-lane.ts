@@ -36,6 +36,13 @@ export interface TransportCodecsOptions {
    * a poisoned payload answers the same flat 400 as an undecodable one.
    */
   readonly protoPoisoning?: ProtoPoisoning
+  /**
+   * Whether a decoded request body may hold a `RegExp` (the rich wire codec carries them). Default
+   * `false`: a client-supplied pattern is code, and one with catastrophic backtracking stalls the
+   * event loop the moment anything runs it. A refused body answers the same flat 400 as an
+   * undecodable one.
+   */
+  readonly acceptRegExp?: boolean
 }
 
 export function transportCodecs(
@@ -47,6 +54,7 @@ export function transportCodecs(
     throw new RangeError("transport maxBytes must be a non-negative safe integer")
   }
   const protoPoisoning = options.protoPoisoning ?? "reject"
+  const acceptRegExp = options.acceptRegExp === true
   const runtime: TransportRuntime = Object.freeze({
     responseCodec(accept: string | null): TransportCodec {
       try {
@@ -84,7 +92,7 @@ export function transportCodecs(
         // payload answers exactly like an undecodable one.
         return {
           matched: true,
-          value: guardDecodedValue(codec.decode(text), protoPoisoning),
+          value: guardDecodedValue(codec.decode(text), protoPoisoning, acceptRegExp),
           byteLength: read.bytes.byteLength,
         }
       } catch {

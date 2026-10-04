@@ -121,7 +121,8 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
 /** How many nodes shared references may add to a decoded value, counted as a tree walk visits it. */
 const MAX_SHARED_EXPANSION = 100_000
 
-/** Thrown (reused singleton, mapped like {@link POISONED}) for a decoded value no tree walk can finish. */
+/** Thrown (reused singleton, mapped like {@link POISONED}) for a decoded value no tree walk can finish,
+ * or one holding a pattern the caller did not allow. */
 const NOT_A_TREE = /* @__PURE__ */ new Error("decoded_value_not_a_tree")
 
 /** Marks a node whose subtree is still being walked: meeting it again then is a cycle. */
@@ -141,18 +142,25 @@ interface DecodedFrame {
  * refused, and shared nodes may add at most {@link MAX_SHARED_EXPANSION} nodes to the tree they expand
  * to: forty levels of doubled references fit in 2KB and expand to 2^40 paths. Map and Set members are
  * walked like properties. These shape rules hold under every policy, `"ignore"` included.
+ *
+ * A `RegExp` is refused unless `patterns` allows it: a pattern from the client is code, and one with
+ * catastrophic backtracking stalls the event loop the moment anything runs it.
  */
-export function guardDecodedValue(value: unknown, policy: ProtoPoisoning): unknown {
+export function guardDecodedValue(
+  value: unknown,
+  policy: ProtoPoisoning,
+  patterns = false,
+): unknown {
   if (value === null || typeof value !== "object") return value
   const sizes = new Map<object, number>()
-  const frames: DecodedFrame[] = [openDecoded(value, policy, sizes)]
+  const frames: DecodedFrame[] = [openDecoded(value, policy, patterns, sizes)]
   let expanded = 0
   for (let frame = frames.at(-1); frame !== undefined; frame = frames.at(-1)) {
     const child = frame.children[frame.next]
     if (child !== undefined) {
       frame.next++
       const known = sizes.get(child)
-      if (known === undefined) frames.push(openDecoded(child, policy, sizes))
+      if (known === undefined) frames.push(openDecoded(child, policy, patterns, sizes))
       else if (known === ON_PATH) throw NOT_A_TREE
       else frame.size += known
       continue
@@ -170,8 +178,10 @@ export function guardDecodedValue(value: unknown, policy: ProtoPoisoning): unkno
 function openDecoded(
   node: object,
   policy: ProtoPoisoning,
+  patterns: boolean,
   sizes: Map<object, number>,
 ): DecodedFrame {
+  if (!patterns && node instanceof RegExp) throw NOT_A_TREE
   sizes.set(node, ON_PATH)
   return { node, children: decodedChildren(node, policy), next: 0, size: 1 }
 }

@@ -358,6 +358,33 @@ describe("transport lane edges", () => {
     expect(reached).toBe(false)
   })
 
+  test("a decoded RegExp is a 400 unless the lane accepts patterns", async () => {
+    const anyBody = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },
+    } as const
+    const seen: unknown[] = []
+    const post = (accept: boolean) =>
+      server()
+        .use(transportCodecs(registry(), { acceptRegExp: accept }))
+        .post("/echo", { body: anyBody }, (c) => {
+          seen.push(c.body)
+          return { ok: true }
+        })
+        .fetch(
+          new Request("http://test/echo", {
+            method: "POST",
+            headers: { "content-type": rich.mediaType, accept: "application/json" },
+            body: rich.encode({ filter: [/^(a+)+$/] }),
+          }),
+        )
+    const refused = await post(false)
+    expect(refused.status).toBe(400)
+    expect(await refused.json()).toMatchObject({ error: "invalid_transport_payload" })
+    expect(seen).toEqual([])
+    expect((await post(true)).status).toBe(200)
+    expect(seen).toEqual([{ filter: [/^(a+)+$/] }])
+  })
+
   test("a shared reference within the bound still decodes", async () => {
     const anyBody = {
       "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },

@@ -181,6 +181,10 @@ export interface WebSocketHandler<
   transport?: {
     readonly registry: TransportCodecRegistry
     readonly maxBytes?: number
+    /** Whether an inbound frame may decode to a value holding a `RegExp`. Default `false`: a
+     * client-supplied pattern is code (catastrophic backtracking stalls the event loop), so such a
+     * frame is treated as invalid. */
+    readonly acceptRegExp?: boolean
   }
   open?(ws: NifraWebSocket<Data>): MaybePromise<void>
   message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>
@@ -466,6 +470,7 @@ export function wrapWebSocketMessageValidation(
                   : { maxBytes: handler.transport.maxBytes }),
               }),
               protoPoisoning,
+              handler.transport.acceptRegExp === true,
             )
     } catch {
       return onInvalid?.(ws, [{ message: "invalid JSON" }], raw)

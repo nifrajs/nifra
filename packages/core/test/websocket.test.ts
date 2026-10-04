@@ -1359,6 +1359,53 @@ describe("WS messageSchema (contract-validated messages)", () => {
     expect(invalid).toEqual(["invalid JSON"])
   })
 
+  test("a frame decoding to a RegExp is invalid unless the route accepts patterns", async () => {
+    const { richWireCodec } = await import("../src/transport-codec-rich.ts")
+    const { createTransportCodecRegistry, plainJsonCodec } = await import(
+      "../src/transport-codec.ts"
+    )
+    const passthrough: StandardSchemaV1<unknown, object> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof v === "object" && v !== null
+            ? { value: v }
+            : { issues: [{ message: "expected an object" }] },
+      },
+    }
+    const frame = JSON.stringify({
+      codec: "wire",
+      version: 1,
+      payload: richWireCodec().encode([/^(a+)+$/]),
+    })
+    for (const acceptRegExp of [false, true]) {
+      const seen: unknown[] = []
+      const invalid: string[] = []
+      const app = server()
+        .use(websocket())
+        .ws("/p", {
+          transport: {
+            registry: createTransportCodecRegistry([plainJsonCodec, richWireCodec()]),
+            acceptRegExp,
+          },
+          messageSchema: passthrough,
+          message: (_ws, msg) => void seen.push(msg),
+          onInvalidMessage: (_ws, issues) => void invalid.push(issues[0]?.message ?? ""),
+        })
+      const out = await app.resolveWebSocketUpgrade(
+        new Request("http://t/p", { headers: { upgrade: "websocket" } }),
+      )
+      if (out.kind !== "upgrade") throw new Error("expected upgrade")
+      await out.handler.message?.(fakeWs(), frame)
+      expect({ acceptRegExp, seen, invalid }).toEqual(
+        acceptRegExp
+          ? { acceptRegExp, seen: [[/^(a+)+$/]], invalid: [] }
+          : { acceptRegExp, seen: [], invalid: ["invalid JSON"] },
+      )
+    }
+  })
+
   test("an async schema is awaited before dispatch", async () => {
     const asyncSchema: StandardSchemaV1<unknown, number> = {
       "~standard": {
