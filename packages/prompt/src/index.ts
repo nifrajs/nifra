@@ -72,7 +72,7 @@ export interface RunOptions {
     readonly issues: ReadonlyArray<StandardIssue>
     readonly request: PromptRequest
   }) => string | Promise<string>
-  /** Max heal retries after the first failed validation (default 1). */
+  /** Max heal retries after the first failed validation (default 1). An integer; a non-integer throws. */
   readonly healAttempts?: number
   /** Extra messages appended after the instruction (few-shot examples, prior turns). */
   readonly messages?: readonly PromptMessage[]
@@ -173,6 +173,9 @@ function build<Input, Output>(state: PromptState): Prompt<Input, Output> {
     },
     request: buildRequest,
     async run(input, options) {
+      // NaN or Infinity (an unset env var, say) would never reach the bound and heal forever.
+      if (options.healAttempts !== undefined && !Number.isSafeInteger(options.healAttempts))
+        throw new RangeError("prompt: healAttempts must be an integer")
       const request = await buildRequest(input, options.messages ?? [])
       let raw = await options.complete(request)
 
