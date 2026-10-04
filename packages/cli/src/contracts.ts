@@ -34,12 +34,13 @@ function canonical(value: unknown, key?: string): unknown {
   if (Array.isArray(value)) return value.map((item) => canonical(item))
   const record = recordOf(value)
   if (record === undefined) return value
-  const out: Record<string, unknown> = {}
+  const entries: Array<[string, unknown]> = []
   for (const name of Object.keys(record).sort()) {
     const item = canonical(record[name], name)
-    if (item !== undefined) out[name] = item
+    if (item !== undefined) entries.push([name, item])
   }
-  return out
+  // `fromEntries` defines each key, where an assignment would run the `__proto__` setter instead.
+  return Object.fromEntries(entries)
 }
 
 async function sha256(value: string): Promise<string> {
