@@ -8296,7 +8296,7 @@
     "name": "MemoryToolIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class MemoryToolIdempotencyStore implements ToolIdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly ttlMs;\n    private readonly now;\n    constructor(options?: MemoryToolIdempotencyStoreOptions);\n    begin(input: ToolIdempotencyBeginInput): ToolIdempotencyBeginResult;\n    complete(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean;\n    abandon(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean;\n    sweep(): void;\n}"
+    "signature": "export declare class MemoryToolIdempotencyStore implements ToolIdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly ttlMs;\n    private readonly now;\n    constructor(options?: MemoryToolIdempotencyStoreOptions);\n    begin(input: ToolIdempotencyBeginInput): ToolIdempotencyBeginResult;\n    complete(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean;\n    renew(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n        readonly ttlMs: number;\n    }): boolean;\n    abandon(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean;\n    sweep(): void;\n}"
   },
   {
     "name": "MemoryToolIdempotencyStoreOptions",
@@ -14592,7 +14592,7 @@
     "name": "ToolIdempotencyBeginInput",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ToolIdempotencyBeginInput {\n    readonly namespace: string;\n    readonly key: string;\n}"
+    "signature": "export interface ToolIdempotencyBeginInput {\n    readonly namespace: string;\n    readonly key: string;\n    /** Lease on a `new` reservation, passed only to a store with `renew()`: it lapses unless renewed. */\n    readonly pendingTtlMs?: number | undefined;\n}"
   },
   {
     "name": "ToolIdempotencyBeginResult",
@@ -14604,13 +14604,13 @@
     "name": "ToolIdempotencyPolicy",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ToolIdempotencyPolicy<Input = unknown> {\n    readonly scope: Exclude<IdempotencyScope, \"none\">;\n    /** Return an opaque bounded key. The key must not contain a request body or secret. */\n    readonly key: (input: Input) => string | PromiseLike<string>;\n}"
+    "signature": "export interface ToolIdempotencyPolicy<Input = unknown> {\n    readonly scope: Exclude<IdempotencyScope, \"none\">;\n    /** Return an opaque bounded key. The key must not contain a request body or secret. */\n    readonly key: (input: Input) => string | PromiseLike<string>;\n    /**\n     * With a store that implements `renew()`, how long a running call holds its key without a\n     * renewal. The call renews it every third of this until it settles. Default 60s.\n     */\n    readonly pendingTtlMs?: number;\n}"
   },
   {
     "name": "ToolIdempotencyStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ToolIdempotencyStore {\n    readonly durability?: \"memory\" | \"durable\";\n    begin(input: ToolIdempotencyBeginInput): ToolIdempotencyBeginResult | PromiseLike<ToolIdempotencyBeginResult>;\n    complete(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean | PromiseLike<boolean>;\n    abandon(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean | PromiseLike<boolean>;\n}"
+    "signature": "export interface ToolIdempotencyStore {\n    readonly durability?: \"memory\" | \"durable\";\n    begin(input: ToolIdempotencyBeginInput): ToolIdempotencyBeginResult | PromiseLike<ToolIdempotencyBeginResult>;\n    complete(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean | PromiseLike<boolean>;\n    abandon(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean | PromiseLike<boolean>;\n    /**\n     * Extend the pending reservation owned by `reservation` to `ttlMs` from now. Returns false when it\n     * is gone, lapsed, or completed. With it, a key whose process died frees after the lease.\n     */\n    renew?(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n        readonly ttlMs: number;\n    }): boolean | PromiseLike<boolean>;\n}"
   },
   {
     "name": "ToolSensitivity",

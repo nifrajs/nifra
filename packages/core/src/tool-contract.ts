@@ -16,6 +16,7 @@ import {
   type ExecutionPolicyAdapter,
 } from "./execution-policy.ts"
 import {
+  DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
   type IdempotencyScope,
   validIdempotencyKey,
   validIdempotencyNamespace,
@@ -66,6 +67,11 @@ export interface ToolIdempotencyPolicy<Input = unknown> {
   readonly scope: Exclude<IdempotencyScope, "none">
   /** Return an opaque bounded key. The key must not contain a request body or secret. */
   readonly key: (input: Input) => string | PromiseLike<string>
+  /**
+   * With a store that implements `renew()`, how long a running call holds its key without a
+   * renewal. The call renews it every third of this until it settles. Default 60s.
+   */
+  readonly pendingTtlMs?: number
 }
 
 export interface ToolContractOptions<
@@ -149,6 +155,8 @@ export function createToolBudget(options: CreateToolBudgetOptions): ToolBudget {
 export interface ToolIdempotencyBeginInput {
   readonly namespace: string
   readonly key: string
+  /** Lease on a `new` reservation, passed only to a store with `renew()`: it lapses unless renewed. */
+  readonly pendingTtlMs?: number | undefined
 }
 
 export type ToolIdempotencyBeginResult =
@@ -172,11 +180,21 @@ export interface ToolIdempotencyStore {
     readonly key: string
     readonly reservation: string
   }): boolean | PromiseLike<boolean>
+  /**
+   * Extend the pending reservation owned by `reservation` to `ttlMs` from now. Returns false when it
+   * is gone, lapsed, or completed. With it, a key whose process died frees after the lease.
+   */
+  renew?(input: {
+    readonly namespace: string
+    readonly key: string
+    readonly reservation: string
+    readonly ttlMs: number
+  }): boolean | PromiseLike<boolean>
 }
 
 interface ToolIdempotencyEntry {
   readonly reservation: string
-  readonly expiresAt: number
+  expiresAt: number
   completed: boolean
 }
 
@@ -218,7 +236,7 @@ export class MemoryToolIdempotencyStore implements ToolIdempotencyStore {
     if (this.entries.size >= this.maxEntries) return { state: "capacity" }
     this.entries.set(key, {
       reservation: crypto.randomUUID(),
-      expiresAt: now + this.ttlMs,
+      expiresAt: now + (input.pendingTtlMs ?? this.ttlMs),
       completed: false,
     })
     return { state: "new", reservation: this.entries.get(key)!.reservation }
@@ -238,6 +256,25 @@ export class MemoryToolIdempotencyStore implements ToolIdempotencyStore {
     )
       return false
     entry.completed = true
+    entry.expiresAt = this.now() + this.ttlMs
+    return true
+  }
+
+  renew(input: {
+    readonly namespace: string
+    readonly key: string
+    readonly reservation: string
+    readonly ttlMs: number
+  }): boolean {
+    validateIdempotencyInput(input)
+    const entry = this.entries.get(`${input.namespace.length}:${input.namespace}${input.key}`)
+    if (
+      entry?.reservation !== input.reservation ||
+      entry.completed ||
+      entry.expiresAt <= this.now()
+    )
+      return false
+    entry.expiresAt = this.now() + input.ttlMs
     return true
   }
 
@@ -410,6 +447,7 @@ export async function executeTool<Input, Output>(
   let reservation:
     | { readonly namespace: string; readonly key: string; readonly value: string }
     | undefined
+  let heartbeat: ReturnType<typeof setInterval> | undefined
   const record = (stage: ToolEvidenceStage, outcome: ToolEvidenceOutcome, code?: string): void => {
     if (evidence.length >= MAX_EVIDENCE) return
     evidence.push({ seq: evidence.length, stage, outcome, ...(code === undefined ? {} : { code }) })
@@ -553,7 +591,12 @@ export async function executeTool<Input, Output>(
           error: { code: "idempotency_store_missing", stage: "idempotency" },
         })
       }
-      const began = await options.idempotency.begin({ namespace, key })
+      const store = options.idempotency
+      const pendingTtlMs =
+        store.renew === undefined
+          ? undefined
+          : (tool.idempotency.pendingTtlMs ?? DEFAULT_IDEMPOTENCY_PENDING_TTL_MS)
+      const began = await store.begin({ namespace, key, pendingTtlMs })
       if (began.state !== "new") {
         const code =
           began.state === "duplicate"
@@ -565,6 +608,19 @@ export async function executeTool<Input, Output>(
         return finish({ ok: false, dryRun, error: { code, stage: "idempotency" } })
       }
       reservation = { namespace, key, value: began.reservation }
+      if (pendingTtlMs !== undefined) {
+        const renewal = { ...reservationInput(reservation), ttlMs: pendingTtlMs }
+        // Renew the lease while the call runs: only a process that died stops renewing, so its key
+        // frees after the lease rather than the store's TTL.
+        heartbeat = setInterval(() => {
+          // A failed renewal only lets the lease lapse, which completion then reports.
+          Promise.resolve()
+            .then(() => store.renew?.(renewal))
+            .catch(() => undefined)
+        }, pendingTtlMs / 3)
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a Node or Bun timer has unref(); on other runtimes the optional call does nothing.
+        ;(heartbeat as { unref?: () => void }).unref?.()
+      }
     }
     record("idempotency", tool.idempotency === undefined ? "skipped" : "passed")
 
@@ -636,6 +692,8 @@ export async function executeTool<Input, Output>(
     const code = signal.aborted || isAbortError(error) ? "cancelled" : "execution_failed"
     record("execution", "failed", code)
     return finish({ ok: false, dryRun, error: { code, stage: "execution" } })
+  } finally {
+    clearInterval(heartbeat)
   }
 }
 
@@ -842,6 +900,11 @@ function validateIdempotencyPolicy<Input>(policy: ToolIdempotencyPolicy<Input>):
     throw new TypeError("tool contract: idempotency scope is invalid")
   if (typeof policy.key !== "function")
     throw new TypeError("tool contract: idempotency key must be a function")
+  if (
+    policy.pendingTtlMs !== undefined &&
+    (!Number.isSafeInteger(policy.pendingTtlMs) || policy.pendingTtlMs <= 0)
+  )
+    throw new TypeError("tool contract: idempotency pendingTtlMs must be a positive integer")
 }
 
 function validateIdempotencyInput(input: {
