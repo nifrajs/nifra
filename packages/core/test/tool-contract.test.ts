@@ -312,6 +312,39 @@ describe("typed tool contracts", () => {
     ).toThrow(/pendingTtlMs must be a positive integer/)
   })
 
+  test("a tool call whose renewals fail lets its lease lapse, which completion reports", async () => {
+    const memory = new MemoryToolIdempotencyStore()
+    let attempts = 0
+    const store: ToolIdempotencyStore = {
+      begin: (value) => memory.begin(value),
+      complete: (value) => memory.complete(value),
+      abandon: (value) => memory.abandon(value),
+      renew: () => {
+        attempts += 1
+        throw new Error("store unreachable")
+      },
+    }
+    const tool = defineTool({
+      name: "orders.flaky",
+      description: "An order operation on a flaky store.",
+      input,
+      output,
+      capability: "orders.flaky",
+      idempotency: { scope: "request", key: (value) => value.name, pendingTtlMs: 30 },
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        return { ok: true }
+      },
+    })
+    const result = await executeTool(
+      tool,
+      { name: "a" },
+      { capabilities: ["orders.flaky"], idempotency: store },
+    )
+    expect(attempts).toBeGreaterThanOrEqual(1)
+    expect(result).toMatchObject({ ok: false, error: { code: "idempotency_capacity" } })
+  })
+
   test("fails closed when a required execution policy has no satisfying adapter", async () => {
     let executions = 0
     const tool = defineTool({

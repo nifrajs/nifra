@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { cspHeaderValue, prepareCspPolicy } from "../src/csp.ts"
 import {
   createCspPolicy,
   createNonceResolver,
@@ -179,4 +180,36 @@ test("withISR caches a CSP page and replays its header; it warns when every page
   }
   expect(warnings).toHaveLength(1)
   expect(String(warnings[0])).toContain("never store a page")
+})
+
+test("a policy hashes once per adapter, retries a failed digest, and refuses use before it is ready", async () => {
+  const policy = createCspPolicy({ header: ({ sources }) => `script-src 'self' ${sources}` })
+  let heads = 0
+  const flaky: RenderAdapter = {
+    renderToStream: adapter.renderToStream,
+    hydrationHead: () => {
+      heads++
+      if (heads === 2) throw new Error("head unavailable")
+      return "<script>globalThis.boot = 2</script>"
+    },
+  }
+  expect(() => cspHeaderValue(policy, flaky, undefined)).toThrow(/before prepareCspPolicy resolved/)
+  await expect(prepareCspPolicy(policy, flaky)).rejects.toThrow("head unavailable")
+  // The failure pinned nothing: the next document prepares again, and a concurrent one waits on it.
+  const first = prepareCspPolicy(policy, flaky)
+  const second = prepareCspPolicy(policy, flaky)
+  await Promise.all([first, second])
+  expect(prepareCspPolicy(policy, flaky)).toBeUndefined()
+  expect(cspHeaderValue(policy, flaky, undefined)).toContain("'sha256-")
+})
+
+test("a nonce resolver refuses an empty generated nonce, and the request can ask again", async () => {
+  let calls = 0
+  const resolver = createNonceResolver({ generate: () => (++calls === 1 ? "  " : "abc123") })
+  const request = new Request("http://localhost/")
+  await expect(Promise.resolve(resolver({ request, env: undefined }))).rejects.toThrow(
+    /empty CSP nonce/,
+  )
+  expect(await resolver({ request, env: undefined })).toBe("abc123")
+  expect(resolver.get?.(request)).toBe("abc123")
 })

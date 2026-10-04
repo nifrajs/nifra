@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { FrameworkError, server, status } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { INSTALL_NOT_FOUND } from "../src/server/install.ts"
 import type { LogFields, Logger } from "../src/server/logger.ts"
 import { type NotFoundHandler, type NotFoundInput, notFound } from "../src/server/not-found.ts"
-import { notFoundInput } from "../src/server/not-found-answer.ts"
+import { type NotFoundLane, notFoundInput } from "../src/server/not-found-answer.ts"
 
 const DEFAULT_404 = { ok: false, error: "not_found" }
 const PLAIN_500 = { ok: false, error: "internal_error" }
@@ -507,6 +508,33 @@ describe("notFound(): bounded by requestTimeoutMs", () => {
     release()
     await Bun.sleep(1)
     expect(abortedAfter).toBe(true)
+  })
+
+  test("a fault while settling the answer rejects at once instead of waiting out the deadline", async () => {
+    let lane: NotFoundLane | undefined
+    const host = {
+      routePrefix: "",
+      [INSTALL_NOT_FOUND]: (installed: NotFoundLane) => {
+        lane = installed
+      },
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the plugin reads only routePrefix, notFoundLane and the install seam, which this host has.
+    notFound(async () => new Response("gone", { status: 410 }))(host as never)
+    if (lane === undefined) throw new Error("notFound() installed no lane")
+    const fault = new Error("wrap failed")
+    const started = performance.now()
+    const answer = lane(
+      { requestTimeoutMs: 10_000, logger: capture().logger, errorLogDetail: "message" },
+      miss(),
+      "/absent",
+      undefined,
+      () => {
+        throw fault
+      },
+      () => "timeout",
+    )
+    await expect(Promise.resolve(answer)).rejects.toBe(fault)
+    expect(performance.now() - started).toBeLessThan(5_000)
   })
 
   test("a handler that rejects after the deadline is observed, not unhandled", async () => {

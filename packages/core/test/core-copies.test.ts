@@ -2,7 +2,7 @@ import { afterAll, expect, spyOn, test } from "bun:test"
 import { cp, mkdtemp, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { server } from "../src/index.ts"
 
 /**
@@ -71,4 +71,21 @@ test("a second copy warns once when it loads, and merge() refuses its servers by
   const response = await mounted.fetch(new Request("http://h/m/x"))
   expect(response.status).toBe(200)
   expect(response.headers.get("set-cookie")).toContain("k=v")
+})
+
+test("whichever copy loads second is the one that warns", async () => {
+  const here = loadedBefore.find((url) => url.endsWith("/src/server/core-copies.ts"))
+  if (here === undefined) throw new Error("this copy did not register")
+  const saved = [...registry]
+  // Another install got here first, so this file, evaluated again, is the second copy.
+  registry.splice(0, registry.length, "file:///elsewhere/@nifrajs/core/src/server/core-copies.ts")
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    await import(`${fileURLToPath(here)}?loaded-second`)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0]?.[0])).toContain("@nifrajs/core is loaded 2 times")
+  } finally {
+    warn.mockRestore()
+    registry.splice(0, registry.length, ...saved)
+  }
 })

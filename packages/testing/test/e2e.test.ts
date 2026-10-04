@@ -96,4 +96,10 @@ describe("e2eWebSocket", () => {
       /same-origin/,
     )
   })
+
+  test("rejects a base URL no WebSocket can dial", () => {
+    expect(() => e2eWebSocket<typeof app>("ftp://127.0.0.1:1", "/me")).toThrow(
+      /unsupported WebSocket base URL protocol/,
+    )
+  })
 })

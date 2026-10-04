@@ -267,3 +267,70 @@ describe("the client against the mount", () => {
     expect(navigated[0]).toStartWith("https://github.com/login/oauth/authorize?")
   })
 })
+
+describe("origin, proxy, and guard configuration", () => {
+  test("an authUrl that is not a bare http(s) origin is refused when the mount is built", () => {
+    for (const authUrl of [
+      "not a url",
+      "ftp://app.example.com",
+      "https://app.example.com/base",
+      "https://user@app.example.com",
+    ]) {
+      expect(() => authjs(config, { authUrl })).toThrow(
+        /authUrl must be an absolute http\(s\) origin/,
+      )
+    }
+  })
+
+  test("an AUTH_URL that is not an absolute http(s) URL fails getSession loud and the mount closed", async () => {
+    for (const AUTH_URL of ["::not a url", "ftp://app.example.com"]) {
+      await expect(getSession(req("/me"), config, { env: { AUTH_URL } })).rejects.toThrow(
+        /AUTH_URL must be an absolute http\(s\) URL/,
+      )
+    }
+    const saved = process.env.AUTH_URL
+    process.env.AUTH_URL = "ftp://app.example.com"
+    try {
+      const response = await server().use(authjs(config)).fetch(req("/api/auth/session"))
+      expect(response.status).toBe(500)
+      expect(await response.json()).toEqual({ ok: false, error: "auth_misconfigured" })
+    } finally {
+      if (saved === undefined) delete process.env.AUTH_URL
+      else process.env.AUTH_URL = saved
+    }
+  })
+
+  test("trustProxy takes the public URL from forwarded headers, but never a non-http protocol", async () => {
+    const proxied = server().use(
+      authjs(
+        {
+          ...config,
+          providers: [GitHub({ clientId: "client", clientSecret: "client-secret" })],
+        },
+        { trustProxy: true },
+      ),
+    )
+    const signIn = (headers: Record<string, string>) =>
+      proxied.fetch(new Request("http://internal.test/api/auth/signin/github", { headers }))
+    const forwarded = await signIn({
+      "x-forwarded-proto": "https",
+      "x-forwarded-host": "app.example.com",
+    })
+    expect(forwarded.headers.get("location") ?? "").toMatch(
+      /^https:\/\/app\.example\.com\/api\/auth\//,
+    )
+    const bogus = await signIn({
+      "x-forwarded-proto": "javascript",
+      "x-forwarded-host": "app.example.com",
+    })
+    expect(bogus.headers.get("location") ?? "").toMatch(/^http:\/\/internal\.test\/api\/auth\//)
+    const plain = await signIn({})
+    expect(plain.headers.get("location") ?? "").toMatch(/^http:\/\/internal\.test\/api\/auth\//)
+  })
+
+  test("a guard refuses a redirect that would leave this origin", async () => {
+    await expect(
+      requireAuthUser(req("/guarded"), config, { redirectTo: "https://evil.example/login" }),
+    ).rejects.toThrow(/guard redirectTo must be a same-origin path/)
+  })
+})

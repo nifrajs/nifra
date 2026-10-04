@@ -74,6 +74,41 @@ describe("a browser request for server code gets a 403, whatever the URL form", 
     expect(response.status).toBe(403)
     expect(await response.text()).not.toContain(SECRET)
   })
+
+  test("/@id/ with the absolute path", async () => {
+    const response = await fetch(`${origin}/@id/${join(root, "backend/db.ts")}`)
+    expect(response.status).toBe(403)
+    expect(await response.text()).not.toContain(SECRET)
+  })
+
+  test("a pre-bundled dependency is judged by the source Vite built it from", async () => {
+    write(
+      "node_modules/.vite/nifra-test/_metadata.json",
+      JSON.stringify({ optimized: { db: { src: "../../../backend/db.ts", file: "db.js" } } }),
+    )
+    write("node_modules/.vite/nifra-test/db.js", `export const url = "${SECRET}"\n`)
+    const response = await fetch(`${origin}/node_modules/.vite/nifra-test/db.js`)
+    const body = await response.text()
+    expect(response.status).toBe(403)
+    expect(body).toContain("backend/db.ts may not reach the browser")
+    expect(body).not.toContain(SECRET)
+  })
+})
+
+describe("a request that names no app file is left to Vite", () => {
+  test.each([
+    ["an /@id/ that is not a path", "/@id/virtual-module"],
+    ["a malformed escape", "/%E0%A4%A"],
+    ["a cache file whose metadata does not parse", "/node_modules/.vite/broken/x.js"],
+    ["a cache file with no metadata", "/node_modules/.vite/nometa/y.js"],
+  ])("%s", async (_name, path) => {
+    write("node_modules/.vite/broken/_metadata.json", "{ not json")
+    write("node_modules/.vite/broken/x.js", "export const x = 1\n")
+    write("node_modules/.vite/nometa/y.js", "export const y = 1\n")
+    const response = await fetch(`${origin}${path}`)
+    expect(response.status).not.toBe(403)
+    expect(await response.text()).not.toContain("may not reach the browser")
+  })
 })
 
 describe("browser code is served", () => {

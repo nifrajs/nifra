@@ -83,6 +83,30 @@ describe("pwaManifest", () => {
     ])
   })
 
+  test("screenshots carry their sizes and type; bad sizes and shortcut icons fail loud", () => {
+    expect(
+      pwaManifest({
+        name: "N",
+        screenshots: [
+          { src: "/wide.png", sizes: "1280x720", type: "image/png" },
+          { src: "/any.png" },
+        ],
+      }).screenshots,
+    ).toEqual([{ src: "/wide.png", sizes: "1280x720", type: "image/png" }, { src: "/any.png" }])
+    expect(() =>
+      pwaManifest({ name: "N", screenshots: [{ src: "/x.png", sizes: "large" }] }),
+    ).toThrow(/screenshots\[0\]\.sizes "large"/)
+    expect(() =>
+      pwaManifest({ name: "N", shortcuts: [{ name: "Go", url: "/go", icons: [{ src: "" }] }] }),
+    ).toThrow(/shortcuts\[0\]\.icons\[0\]\.src/)
+    expect(() =>
+      pwaManifest({
+        name: "N",
+        shortcuts: [{ name: "Go", url: "/go", icons: [{ src: "/go.png", sizes: "huge" }] }],
+      }),
+    ).toThrow(/shortcuts\[0\]\.icons\[0\]\.sizes/)
+  })
+
   test("manifestLink emits the head tag with quote escaping", () => {
     expect(manifestLink()).toBe('<link rel="manifest" href="/manifest.webmanifest">')
     expect(manifestLink('/m?a="b"')).toBe('<link rel="manifest" href="/m?a=&quot;b&quot;">')
