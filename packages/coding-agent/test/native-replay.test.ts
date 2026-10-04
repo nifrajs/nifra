@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentEvent } from "@nifrajs/agent-protocol"
-import { NifraBackend, ReplayBackend } from "../src/index.ts"
+import { type NativeMessage, NifraBackend, ReplayBackend } from "../src/index.ts"
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -228,6 +228,42 @@ describe("optional native and replay backends", () => {
     expect(events.some((event) => event.type === "assistant.message")).toBe(false)
     expect((await backend.snapshot("replay-cancel")).status).toBe("stopped")
     await backend.close("replay-cancel")
+  })
+
+  test("native history drops whole earlier turns past the history budget", async () => {
+    const requests: (readonly NativeMessage[])[] = []
+    const backend = new NifraBackend({
+      maxHistoryChars: 1_000,
+      model: {
+        complete: ({ messages }) => {
+          requests.push(messages)
+          return { type: "text", text: "a".repeat(100) }
+        },
+      },
+    })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "native-history" })
+    for (let turn = 0; turn < 6; turn += 1)
+      await collect(
+        backend.send({ sessionId: "native-history", message: `${turn}`.padEnd(300, ".") }),
+      )
+    await collect(backend.send({ sessionId: "native-history", message: "6".padEnd(2_000, ".") }))
+
+    const chars = (messages: readonly NativeMessage[]) =>
+      messages.reduce((total, item) => total + item.text.length, 0)
+    expect(requests.map((messages) => messages.length)).toEqual([1, 3, 3, 3, 3, 3, 1])
+    expect(requests.slice(0, -1).every((messages) => chars(messages) <= 1_000)).toBe(true)
+    expect(requests[5]?.map((item) => item.text[0])).toEqual(["4", "a", "5"])
+    expect(requests[6]?.[0]?.text).toHaveLength(2_000)
+    expect(requests.every((messages) => Object.isFrozen(messages))).toBe(true)
+    expect(requests.every((messages) => messages.every((item) => Object.isFrozen(item)))).toBe(true)
+    expect(
+      () =>
+        new NifraBackend({
+          model: { complete: () => ({ type: "text", text: "ok" }) },
+          maxHistoryChars: 255,
+        }),
+    ).toThrow(RangeError)
+    await backend.close("native-history")
   })
 
   test("cancelling idle native and replay sessions is a no-op", async () => {

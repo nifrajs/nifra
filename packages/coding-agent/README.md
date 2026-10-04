@@ -45,7 +45,9 @@ loading code you do not trust.
 
 `NifraBackend` is a small provider port for a future native backend. It accepts
 an injected model implementation and bounded tools without importing a provider
-SDK. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+SDK. The conversation it sends the model is capped by `maxHistoryChars` (default
+1 MiB): past it, whole earlier turns are dropped, oldest first, and the current
+turn is always sent in full. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
 ## At-least-once run dispatch
