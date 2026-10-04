@@ -134,6 +134,8 @@ describe("run", () => {
     const text = outcome.report.join("\n")
     expect(text).toContain("packages/a/src/one.ts")
     expect(text).toContain("functions: 100.00% -> 75.00%")
+    // `--update` alone refuses this drop, so the way out it names has to be the one that works.
+    expect(text).toContain("check:coverage --update --accept-drop")
   })
 
   test("counts files the baseline has never seen, without failing on them", async () => {
@@ -163,6 +165,16 @@ describe("run", () => {
     expect(outcome.code).toBe(0)
     const written = await readFile(baseline, "utf8")
     expect(Object.keys(JSON.parse(written))).toEqual(["a.ts", "z.ts"])
+  })
+
+  test("--update writes the baseline in code-unit order, the same in every locale", async () => {
+    const entry = (file: string) => [`SF:${file}`, "FNF:1", "FNH:1", "DA:1,1", "end_of_record"]
+    const dir = await mkdtemp(join(tmpdir(), "ratchet-"))
+    const lcovPath = join(dir, "lcov.info")
+    await writeFile(lcovPath, lcov([...entry("a.ts"), ...entry("B.ts")]))
+    const baseline = join(dir, "written.json")
+    expect((await run(["--update"], { lcov: lcovPath, baseline })).code).toBe(0)
+    expect(Object.keys(JSON.parse(await readFile(baseline, "utf8")))).toEqual(["B.ts", "a.ts"])
   })
 
   // The escape hatch is the thing most likely to be reached for at exactly the wrong moment: a red

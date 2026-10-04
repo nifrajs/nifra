@@ -227,6 +227,14 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/backend.ts": {
+    "functions": 0,
+    "lines": 100
+  },
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/nifra.assurance.ts": {
+    "functions": 0,
+    "lines": 100
+  },
   "packages/cli/test/.nifra-verification-golden-D1x95h/full-pHMU3F/backend.ts": {
     "functions": 0,
     "lines": 100
@@ -249,14 +257,6 @@
   },
   "packages/cli/test/.nifra-verification-golden-D1x95h/full-znglQd/nifra.assurance.ts": {
     "functions": 100,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/nifra.assurance.ts": {
-    "functions": 0,
     "lines": 100
   },
   "packages/cli/test/fixture-root.ts": {
