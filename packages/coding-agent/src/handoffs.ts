@@ -27,6 +27,8 @@ import type { ApprovalManager } from "./approvals.ts"
 import { ChildVectorTracker } from "./orchestration/policy.ts"
 
 const ID_TOKEN = /^[A-Za-z0-9._:-]{1,128}$/
+/** The agent protocol's token alphabet, which the approval broker accepts for session ids. */
+const SESSION_TOKEN = /^[A-Za-z0-9._:/-]{1,128}$/
 
 /** Stable, content-free reasons the coordinator refuses a handoff request or decision. */
 export type HandoffRejection =
@@ -136,7 +138,8 @@ export class HandoffCoordinator {
       !input.capability ||
       input.capability.length > 128 ||
       !input.from ||
-      input.from.length > 128
+      input.from.length > 128 ||
+      (input.sessionId !== undefined && !SESSION_TOKEN.test(input.sessionId))
     )
       throw new HandoffError("invalid_handoff")
     if (this.records.has(input.requestId)) throw new HandoffError("duplicate")
@@ -162,13 +165,18 @@ export class HandoffCoordinator {
     }
     this.records.set(input.requestId, record)
 
+    // The mirror carries the boundary's coordinate, so only a matched decision approves it. It is a
+    // notification: a broker that is full or fails to broadcast leaves the handoff itself intact.
     if (record.requireApproval && this.approvals !== undefined)
-      void this.approvals.offer({
-        id: input.requestId,
-        sessionId: input.sessionId ?? input.runId,
-        action: "handoff",
-        capability: input.capability,
-      })
+      this.approvals
+        .offer({
+          id: input.requestId,
+          sessionId: input.sessionId ?? input.runId,
+          action: "handoff",
+          capability: input.capability,
+          coordinate,
+        })
+        .catch(() => {})
     return this.view(record)
   }
 
@@ -264,7 +272,11 @@ export class HandoffCoordinator {
 
   private settleApproval(record: HandoffRecord, op: string): void {
     if (!record.requireApproval || this.approvals === undefined) return
-    this.approvals.resolve(record.coordinate.requestId, op === "accept" || op === "resolve")
+    this.approvals.resolveMatched(
+      record.coordinate,
+      op === "accept" || op === "resolve",
+      this.now(),
+    )
   }
 
   private isTerminal(state: HandoffLifecycleState): boolean {

@@ -52,9 +52,15 @@ export interface ApprovalManagerOptions {
 
 interface PendingApproval {
   readonly request: ApprovalRequest
-  readonly resolve: (approved: boolean) => void
+  /** Settles with the decision; it exists before `onRequired` runs, so no decision can miss it. */
+  readonly decided: Promise<boolean>
+  readonly settle: (approved: boolean) => void
   readonly timer: ReturnType<typeof setTimeout>
 }
+
+/** The agent protocol's token alphabet, so every protocol-valid id is accepted here too. */
+const ID_TOKEN = /^[A-Za-z0-9._:/-]{1,128}$/
+const MAX_ACTION_LENGTH = 512
 
 /**
  * Small approval broker shared by RPC, Workbench, and workflow extensions.
@@ -89,38 +95,37 @@ export class ApprovalManager {
 
   /** Convert a streamed backend approval event into a resolvable pending request. */
   async observe(event: AgentApprovalRequiredEvent): Promise<ApprovalRequest | undefined> {
-    if (this.pendingApprovals.has(event.approvalId))
-      return this.pendingApprovals.get(event.approvalId)?.request
-    return this.create({
+    const existing = this.pendingApprovals.get(event.approvalId)
+    if (existing !== undefined) return existing.request
+    const pending = await this.create({
       id: event.approvalId,
       sessionId: event.sessionId,
       turnId: event.turnId,
-      action: event.action,
+      // The protocol bounds text more loosely; a long label must not fail the backend's turn.
+      action: event.action.slice(0, MAX_ACTION_LENGTH),
       capability: event.capability,
       ...(event.reason === undefined ? {} : { reason: event.reason }),
     })
+    return pending?.request
   }
 
-  /** Publish a pending approval without waiting for its decision (useful for transports). */
+  /**
+   * Publish a pending approval without waiting for its decision (useful for transports). Returns
+   * `undefined` when the broker is full or an approval with the same id is still pending.
+   */
   async offer(
     input: Omit<ApprovalRequest, "createdAt" | "expiresAt">,
   ): Promise<ApprovalRequest | undefined> {
-    return this.create(input)
+    return (await this.create(input))?.request
   }
 
-  /** Create a host-owned approval that can be awaited by a workflow or extension. */
+  /**
+   * Create a host-owned approval that can be awaited by a workflow or extension. Resolves `false`
+   * when the broker is full or an approval with the same id is still pending.
+   */
   async request(input: Omit<ApprovalRequest, "createdAt" | "expiresAt">): Promise<boolean> {
-    const request = await this.offer(input)
-    if (request === undefined) return false
-    const pending = this.pendingApprovals.get(request.id)
-    if (pending === undefined) return false
-    return new Promise<boolean>((resolve) => {
-      // Replace the resolver only for this host-owned request; observed backend requests are
-      // intentionally notification-only and are resolved through `resolve`.
-      const current = this.pendingApprovals.get(request.id)
-      if (current === undefined) return resolve(false)
-      this.pendingApprovals.set(request.id, { ...current, resolve })
-    })
+    const pending = await this.create(input)
+    return pending === undefined ? false : pending.decided
   }
 
   /**
@@ -145,49 +150,68 @@ export class ApprovalManager {
         code: bound.vector !== coordinate.vector ? "stale_vector" : "identity_mismatch",
       }
     if (!coordinateIsFresh(bound, now)) {
-      this.resolve(coordinate.requestId, false, "approval expired")
+      this.settle(coordinate.requestId, false, "approval expired")
       return { ok: false, code: "expired" }
     }
     if (nextApprovalState("pending", approved ? "approve" : "deny") === undefined)
       return { ok: false, code: "illegal_transition" }
-    const decision = this.resolve(coordinate.requestId, approved)
+    const decision = this.settle(coordinate.requestId, approved)
     if (decision === undefined) return { ok: false, code: "unknown_boundary" }
     return { ok: true, decision }
   }
 
+  /**
+   * Settle a pending approval by id. An approval opened with a coordinate is approved only through
+   * {@link resolveMatched}; this untyped path can still deny it, and returns `undefined` for an
+   * approve.
+   */
   resolve(approvalId: string, approved: boolean, reason?: string): ApprovalDecision | undefined {
+    if (
+      approved === true &&
+      this.pendingApprovals.get(approvalId)?.request.coordinate !== undefined
+    )
+      return undefined
+    return this.settle(approvalId, approved, reason)
+  }
+
+  close(): void {
+    for (const approvalId of this.pendingApprovals.keys())
+      this.settle(approvalId, false, "approval manager closed")
+  }
+
+  private settle(
+    approvalId: string,
+    approved: boolean,
+    reason?: string,
+  ): ApprovalDecision | undefined {
     const pending = this.pendingApprovals.get(approvalId)
     if (pending === undefined) return undefined
     clearTimeout(pending.timer)
     this.pendingApprovals.delete(approvalId)
-    pending.resolve(approved === true)
+    pending.settle(approved === true)
     const decision: ApprovalDecision = {
       approvalId,
       approved: approved === true,
       ...(reason === undefined ? {} : { reason: reason.slice(0, 512) }),
       at: Date.now(),
     }
-    void this.options.onResolved?.(decision)
+    // A failing broadcast must not become an unhandled rejection in the host.
+    Promise.resolve(this.options.onResolved?.(decision)).catch(() => {})
     return decision
-  }
-
-  close(): void {
-    for (const approvalId of this.pendingApprovals.keys())
-      this.resolve(approvalId, false, "approval manager closed")
   }
 
   private async create(
     input: Omit<ApprovalRequest, "createdAt" | "expiresAt">,
-  ): Promise<ApprovalRequest | undefined> {
+  ): Promise<PendingApproval | undefined> {
     if (this.pendingApprovals.size >= this.options.maxPending) return undefined
-    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(input.id))
-      throw new TypeError("approvals: approval id is invalid")
-    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(input.sessionId))
-      throw new TypeError("approvals: session id is invalid")
-    if (!input.action || input.action.length > 512)
+    if (!ID_TOKEN.test(input.id)) throw new TypeError("approvals: approval id is invalid")
+    if (!ID_TOKEN.test(input.sessionId)) throw new TypeError("approvals: session id is invalid")
+    if (!input.action || input.action.length > MAX_ACTION_LENGTH)
       throw new TypeError("approvals: action is empty or too long")
     if (!input.capability || input.capability.length > 128)
       throw new TypeError("approvals: capability is empty or too long")
+    // Replacing a pending id would orphan the waiter of the request already holding it.
+    if (this.pendingApprovals.has(input.id)) return undefined
     const createdAt = Date.now()
     const request: ApprovalRequest = Object.freeze({
       ...input,
@@ -197,22 +221,18 @@ export class ApprovalManager {
       createdAt,
       expiresAt: createdAt + this.options.timeoutMs,
     })
-    let resolveApproval = (_approved: boolean): void => {}
+    let settle = (_approved: boolean): void => {}
+    const decided = new Promise<boolean>((resolve) => {
+      settle = resolve
+    })
     const timer = setTimeout(() => {
-      this.resolve(request.id, false, "approval timed out")
+      this.settle(request.id, false, "approval timed out")
     }, this.options.timeoutMs)
     ;(timer as unknown as { unref?: () => void }).unref?.()
-    const pending: PendingApproval = {
-      request,
-      resolve: (approved) => resolveApproval(approved),
-      timer,
-    }
+    const pending: PendingApproval = { request, decided, settle, timer }
     this.pendingApprovals.set(request.id, pending)
     await this.options.onRequired?.(request)
-    // A backend-observed request is resolved through `resolve`; a host request swaps this closure
-    // from the promise below before returning to the workflow.
-    resolveApproval = (_approved: boolean): void => {}
-    return request
+    return pending
   }
 }
 

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import type { DecisionCoordinate } from "@nifrajs/agent-protocol"
+import {
+  AGENT_PROTOCOL_VERSION,
+  type AgentApprovalRequiredEvent,
+  type DecisionCoordinate,
+} from "@nifrajs/agent-protocol"
 import { ApprovalManager } from "../src/approvals.ts"
 
 function coordinate(overrides: Partial<DecisionCoordinate> = {}): DecisionCoordinate {
@@ -40,6 +44,72 @@ describe("bounded approvals", () => {
     })
     await expect(result).resolves.toBe(false)
     manager.close()
+  })
+
+  test("a decision made while the broadcast is still in flight reaches the waiter", async () => {
+    const manager: ApprovalManager = new ApprovalManager({
+      onRequired: async (request) => {
+        manager.resolve(request.id, true)
+        await Bun.sleep(1)
+      },
+    })
+    const approved = manager.request({
+      id: "fast",
+      sessionId: "session",
+      action: "deploy",
+      capability: "deploy",
+    })
+    await expect(approved).resolves.toBe(true)
+    manager.close()
+  })
+
+  test("a second approval for a pending id is refused and leaves the first one waiting", async () => {
+    const manager = new ApprovalManager({ timeoutMs: 60_000 })
+    const input = { id: "dup", sessionId: "session", capability: "deploy" }
+    const first = manager.request({ ...input, action: "deploy prod" })
+    await expect(manager.request({ ...input, action: "deploy staging" })).resolves.toBe(false)
+    expect(await manager.offer({ ...input, action: "deploy staging" })).toBeUndefined()
+    expect(manager.pending.map((request) => request.action)).toEqual(["deploy prod"])
+    manager.resolve("dup", true)
+    await expect(first).resolves.toBe(true)
+  })
+
+  test("observes any protocol-valid approval, including a slash id and a long action", async () => {
+    const manager = new ApprovalManager()
+    const event: AgentApprovalRequiredEvent = {
+      version: AGENT_PROTOCOL_VERSION,
+      sessionId: "workspace/session-1",
+      seq: 1,
+      at: 0,
+      type: "approval.required",
+      turnId: "turn-1",
+      approvalId: "tool/bash-1",
+      action: "x".repeat(600),
+      capability: "shell",
+    }
+    const observed = await manager.observe(event)
+    expect(observed?.id).toBe("tool/bash-1")
+    expect(observed?.action).toHaveLength(512)
+    manager.close()
+  })
+
+  test("a failing onResolved broadcast does not surface as an unhandled rejection", async () => {
+    const unhandled: unknown[] = []
+    const record = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on("unhandledRejection", record)
+    try {
+      const manager = new ApprovalManager({
+        onResolved: () => Promise.reject(new Error("broadcast down")),
+      })
+      await manager.offer({ id: "a", sessionId: "session", action: "deploy", capability: "deploy" })
+      expect(manager.resolve("a", true)?.approved).toBe(true)
+      await Bun.sleep(5)
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", record)
+    }
   })
 })
 
@@ -106,6 +176,15 @@ describe("coordinate-matched approvals", () => {
       ok: false,
       code: "stale_vector",
     })
+    manager.close()
+  })
+
+  test("the untyped path can deny a coordinate-bound approval but never approve it", async () => {
+    const manager = await withBound()
+    expect(manager.resolve("bound-1", true)).toBeUndefined()
+    expect(manager.pending).toHaveLength(1)
+    expect(manager.resolve("bound-1", false)?.approved).toBe(false)
+    expect(manager.pending).toHaveLength(0)
     manager.close()
   })
 
