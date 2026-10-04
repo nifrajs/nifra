@@ -2432,7 +2432,7 @@
     "kind": "function",
     "package": "@nifrajs/agent-app",
     "signature": "export declare function boundaryIsStale(item: BoundaryStateView, now: number): boolean;",
-    "doc": "/** True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed. */"
+    "doc": "/**\n * True once `now` reaches or passes the boundary's expiry, or when either is not a number. A stale\n * boundary fails every command closed.\n */"
   },
   {
     "name": "BoundaryItemView",

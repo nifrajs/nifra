@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test"
 import {
+  type BoundaryStateView,
+  boundaryCommands,
+  boundaryIsStale,
   toEvalComparisonView,
   toEventView,
   toEvidenceTimelineView,
@@ -57,6 +60,36 @@ test("run studio projections reconstruct branches, retries, and recovery from ev
     }),
   ).toBeUndefined()
 })
+
+test("a run graph that lists one node twice is refused, not counted twice", () => {
+  const node = {
+    nodeId: "node-1",
+    dependsOn: [],
+    state: "running",
+    attempt: 1,
+    retryCount: 0,
+    checkpointed: false,
+    cancelled: false,
+    recovered: false,
+  }
+  const run = { runId: "run", planId: "plan", planDigest: digest, cursor: 0, state: "running" }
+  expect(toRunStudioView({ ...run, nodes: [node] })?.activeNodes).toBe(1)
+  expect(toRunStudioView({ ...run, nodes: [node, node] })).toBeUndefined()
+})
+
+test("a boundary whose expiry or clock is not a number is stale and offers no command", () => {
+  const unreadable: BoundaryStateView = {
+    kind: "approval",
+    state: "pending",
+    expiresAt: Number.NaN,
+  }
+  expect(boundaryIsStale(unreadable, 0)).toBe(true)
+  expect(boundaryCommands(unreadable, { inbox: true, now: 0 })).toEqual([])
+  const live: BoundaryStateView = { kind: "handoff", state: "pending", expiresAt: 10 }
+  expect(boundaryCommands(live, { inbox: true, now: Number.NaN })).toEqual([])
+  expect(boundaryCommands(live, { inbox: true, now: 0 }).length).toBeGreaterThan(0)
+})
+
 test("timeline and eval views drop content and retain opaque references", () => {
   const timeline = toEvidenceTimelineView([
     {

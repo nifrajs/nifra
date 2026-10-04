@@ -363,7 +363,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **boundaryCommands** _(function)_ - `boundaryCommands: (item: BoundaryStateView, options: { readonly inbox: boolean; readonly now: number; }) => readonly BoundaryCommand[]`
   The boundary commands a UI may currently offer for one item. A command appears only when the host has negotiated the `inbox` feature, the boundary has not expired, and the op is a legal transition from the boundary's live state. An unknown or terminal state yields no commands, so a stale, unsupport…
 - **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
-  True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed.
+  True once `now` reaches or passes the boundary's expiry, or when either is not a number. A stale boundary fails every command closed.
 - **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string, maxFrameBytes?: number) => AsyncIterable<AgentEvent>`
   Parse an SSE body into protocol events, skipping any frame whose data is not a valid event.
 - **toEvalComparisonView** _(function)_ - `toEvalComparisonView: (value: unknown) => EvalComparisonView | undefined`
