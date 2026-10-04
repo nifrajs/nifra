@@ -1,7 +1,7 @@
 /**
  * Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that
  * could escape a `FileStorage` root or otherwise misbehave - absolute paths, `..` traversal, NUL bytes,
- * and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key is
+ * backslashes (Windows traversal), and empty or `.` segments (aliases on a file system). Enforced by EVERY adapter (not just `FileStorage`) so a key is
  * portable across them, and so the check can't be forgotten on the one adapter where it's a vulnerability.
  */
 
@@ -25,6 +25,13 @@ export function assertSafeKey(key: string): void {
   for (const segment of key.split("/")) {
     if (segment === "..") {
       throw new StorageKeyError(`unsafe storage key ${JSON.stringify(key)} (".." path traversal)`)
+    }
+    // A file system reads `a/./b`, `a//b` and `a/b/` as `a/b`, and an object store does not - so one
+    // backend would alias two keys another keeps apart.
+    if (segment === "" || segment === ".") {
+      throw new StorageKeyError(
+        `unsafe storage key ${JSON.stringify(key)} (an empty or "." segment aliases another key)`,
+      )
     }
   }
 }

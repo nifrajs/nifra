@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -252,6 +252,49 @@ describe("FileStorage filesystem containment", () => {
       expect(await readFile(join(root, "object.txt"), "utf8")).toBe("secret")
     },
   )
+})
+
+describe("FileStorage on an ordinary host", () => {
+  test.skipIf(process.platform === "win32")(
+    "works under umask 002: the directories it creates are never group-writable",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "nifra-storage-umask-"))
+      const root = join(parent, "objects")
+      tmpDirs.push(parent, `${root}.nifra-metadata`)
+      const previous = process.umask(0o002)
+      try {
+        const storage = new FileStorage(root)
+        await storage.put("avatars/u1.png", "x", { contentType: "image/png" })
+        expect(new TextDecoder().decode((await storage.get("avatars/u1.png"))?.body)).toBe("x")
+        expect((await stat(join(root, "avatars"))).mode & 0o777).toBe(0o755)
+      } finally {
+        process.umask(previous)
+      }
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "a group-writable directory it refuses is named, with the fix",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+      tmpDirs.push(root, `${root}.nifra-metadata`)
+      await chmod(root, 0o775)
+      await expect(new FileStorage(root).get("a.txt")).rejects.toThrow(
+        `${root} is group- or world-writable (chmod go-w removes that)`,
+      )
+    },
+  )
+
+  test("a directory under the root is a key prefix, not an object", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+    tmpDirs.push(root, `${root}.nifra-metadata`)
+    const storage = new FileStorage(root)
+    await storage.put("private/secret.txt", "s")
+    expect(await storage.exists("private")).toBe(false)
+    expect(await storage.get("private")).toBeNull()
+    await storage.delete("private")
+    expect(await storage.exists("private/secret.txt")).toBe(true)
+  })
 })
 
 describe("toBytes", () => {

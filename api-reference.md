@@ -4388,7 +4388,7 @@ _No named exports (side-effect entrypoint)._
 - **StorageData** _(type)_ - `type StorageData = Uint8Array | ArrayBuffer | string`
   Accepted `put` payloads - normalized to bytes by each adapter.
 - **StorageKeyError** _(class)_ - `class StorageKeyError`
-  Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave - absolute paths, `..` traversal, NUL bytes, and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key i…
+  Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave - absolute paths, `..` traversal, NUL bytes, backslashes (Windows traversal), and empty or `.` segments (aliases on a file system). Enforced by…
 - **StorageListPage** _(interface)_ - `interface StorageListPage`
   One page of keys from stores that expose cursor-based listing.
 - **StorageListPageOptions** _(interface)_ - `interface StorageListPageOptions`

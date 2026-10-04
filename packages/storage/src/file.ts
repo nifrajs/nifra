@@ -81,7 +81,11 @@ export class FileStorage implements StorageAdapter {
     )
   }
 
-  private assertTrustedDirectory(info: Awaited<ReturnType<typeof lstat>>, key: string): void {
+  private assertTrustedDirectory(
+    info: Awaited<ReturnType<typeof lstat>>,
+    key: string,
+    dir: string,
+  ): void {
     // Node exposes POSIX mode bits on Bun/Node/Deno Unix runtimes. A group/world-writable ancestor lets
     // another local principal swap path components between otherwise-correct checks; fail closed so
     // descriptor validation only has to defend against ordinary filesystem races within one principal.
@@ -90,7 +94,11 @@ export class FileStorage implements StorageAdapter {
     const untrustedOwner = uid !== undefined && info.uid !== uid && info.uid !== 0
     if (untrustedOwner || (Number(info.mode) & 0o022) !== 0) {
       throw new StorageKeyError(
-        `storage key ${JSON.stringify(key)} crosses an untrusted writable directory`,
+        `storage key ${JSON.stringify(key)} crosses an untrusted writable directory: ${dir} ${
+          untrustedOwner
+            ? "belongs to another user"
+            : "is group- or world-writable (chmod go-w removes that)"
+        }`,
       )
     }
   }
@@ -128,7 +136,7 @@ export class FileStorage implements StorageAdapter {
     try {
       const info = await lstat(base)
       if (info.isSymbolicLink()) throw this.symlinkError(key)
-      this.assertTrustedDirectory(info, key)
+      this.assertTrustedDirectory(info, key, base)
     } catch (error) {
       if (error instanceof StorageKeyError) throw error
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return
@@ -141,13 +149,21 @@ export class FileStorage implements StorageAdapter {
       try {
         const info = await lstat(current)
         if (info.isSymbolicLink()) throw this.symlinkError(key)
-        this.assertTrustedDirectory(info, key)
+        this.assertTrustedDirectory(info, key, current)
       } catch (error) {
         if (error instanceof StorageKeyError) throw error
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return
         throw error
       }
     }
+  }
+
+  /** {@link openContained} for an object: a directory under the root is a key prefix, not an object. */
+  private async openObject(base: string, path: string, key: string): Promise<FileHandle | null> {
+    const handle = await this.openContained(base, path, key)
+    if (handle === null || (await handle.stat()).isFile()) return handle
+    await handle.close()
+    return null
   }
 
   /**
@@ -222,7 +238,8 @@ export class FileStorage implements StorageAdapter {
     data: Uint8Array | string,
   ): Promise<void> {
     await this.assertNoSymlinkPath(base, path, key)
-    await mkdir(dirname(path), { recursive: true })
+    // 0o755 whatever the umask: a group-writable directory (umask 002) would fail the trust check above.
+    await mkdir(dirname(path), { recursive: true, mode: 0o755 })
     await this.assertNoSymlinkPath(base, path, key)
     try {
       const baseBefore = await lstat(base)
@@ -281,7 +298,7 @@ export class FileStorage implements StorageAdapter {
 
   async get(key: string): Promise<StorageObject | null> {
     const path = this.pathFor(key)
-    const bodyHandle = await this.openContained(this.root, path, key)
+    const bodyHandle = await this.openObject(this.root, path, key)
     if (bodyHandle === null) return null
     let body: Uint8Array
     try {
@@ -292,7 +309,7 @@ export class FileStorage implements StorageAdapter {
     let stored: { contentType?: string; metadata?: Readonly<Record<string, string>> } = {}
     try {
       const metadataPath = this.metadataPathFor(key)
-      const metadataHandle = await this.openContained(this.metadataRoot, metadataPath, key)
+      const metadataHandle = await this.openObject(this.metadataRoot, metadataPath, key)
       if (metadataHandle !== null) {
         try {
           stored = JSON.parse(await metadataHandle.readFile({ encoding: "utf8" })) as typeof stored
@@ -327,7 +344,7 @@ export class FileStorage implements StorageAdapter {
 
   async exists(key: string): Promise<boolean> {
     const path = this.pathFor(key)
-    const handle = await this.openContained(this.root, path, key)
+    const handle = await this.openObject(this.root, path, key)
     if (handle === null) return false
     try {
       return true
@@ -338,7 +355,7 @@ export class FileStorage implements StorageAdapter {
 
   /** Revalidate an opened inode immediately before unlinking its pathname. */
   private async removeContained(base: string, path: string, key: string): Promise<void> {
-    const handle = await this.openContained(base, path, key)
+    const handle = await this.openObject(base, path, key)
     if (handle === null) return
     try {
       await this.assertTrustedAncestorChain(base, key)
