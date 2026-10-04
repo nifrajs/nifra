@@ -9,6 +9,7 @@ import { readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
+import { scriptKindOf } from "./internal/script-kind.ts"
 import type { SourceFacts } from "./internal/source-facts.ts"
 import {
   loadProjectTypeScript,
@@ -807,7 +808,7 @@ function parseSqlSource(
   file: string,
   content: string,
 ): TSApi.SourceFile | undefined {
-  const kind = /\.[cm]?tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
+  const kind = scriptKindOf(ts, file)
   let source: TSApi.SourceFile
   try {
     source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)

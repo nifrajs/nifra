@@ -1520,6 +1520,15 @@ describe("scanInterpolatedSql", () => {
     expect(scan("conn.prepare(`UPDATE t SET body = ${body} WHERE id = ${id}`)")).toBe(1)
   })
 
+  test("a .ts file with a generic arrow is scanned, not dropped as unparsable", () => {
+    // As TSX, `<T>(rows: T[])` opens a JSX element, the file fails to parse, and the scan saw none of it.
+    const src = [
+      "const first = <T>(rows: T[]): T | undefined => rows[0]",
+      "db.query(`SELECT * FROM users WHERE id = ${id}`)",
+    ].join("\n")
+    expect(scan(src)).toBe(1)
+  })
+
   test("reports the line the call is on", () => {
     // `let`, not `const`: a module `const` now resolves to static text and stays quiet.
     const src = ["let x = 1", "", "db.query(`SELECT * FROM t WHERE id = ${x}`)"].join("\n")

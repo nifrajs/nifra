@@ -32,6 +32,19 @@ describe("built-in security rules", () => {
     )
   })
 
+  test("a generic arrow in a .ts file does not hide the code after it", async () => {
+    // Parsed as TSX, `<T>(items: T[])` opens a JSX element and recovery drops the rest of the file.
+    const findings = await scan(
+      "routes/generic.ts",
+      [
+        "const first = <T>(items: T[]): T | undefined => items[0]",
+        "const token = input.token",
+        "if (token === expected) load(first([token]))",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => finding.code)).toContain("NF-S002")
+  })
+
   test("skips presence and typeof checks on secret-like names", async () => {
     const findings = await scan(
       "routes/presence.ts",

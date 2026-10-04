@@ -1,4 +1,5 @@
 import type * as TSApi from "typescript"
+import { scriptKindOf } from "./script-kind.ts"
 import type { TypeScriptApi } from "./typescript-import.ts"
 
 /**
@@ -80,7 +81,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
   const parse = (file: string, content: string): TSApi.SourceFile | undefined => {
     const cached = cache.get(file)
     if (cached?.content === content) return cached.source
-    const kind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
+    const kind = scriptKindOf(ts, file)
     let parsed: TSApi.SourceFile | undefined
     try {
       const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)

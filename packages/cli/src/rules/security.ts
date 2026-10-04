@@ -1,6 +1,7 @@
 import type * as TSApi from "typescript"
 import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { scriptKindOf } from "../internal/script-kind.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
@@ -118,8 +119,7 @@ function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): b
 }
 
 function parse(ts: typeof TSApi, file: string, source: string): TSApi.SourceFile {
-  const kind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
+  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindOf(ts, file))
 }
 
 function parsedFile(

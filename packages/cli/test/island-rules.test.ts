@@ -29,6 +29,20 @@ describe("NF-C020 island enhancer cleanup", () => {
     expect(findings[0]?.severity).toBe("warn")
   })
 
+  test("a generic arrow earlier in a .ts file does not hide the enhancer", async () => {
+    const findings = await scan(
+      "app/islands.client.ts",
+      [
+        'import { defineIsland } from "@nifrajs/web/islands"',
+        "const first = <T>(items: T[]): T | undefined => items[0]",
+        "const counter = defineIsland((el) => {",
+        '  el.addEventListener("click", () => first([el]))',
+        "})",
+      ].join("\n"),
+    )
+    expect(codes(findings)).toEqual(["NF-C020"])
+  })
+
   test("does NOT flag when the block returns a cleanup", async () => {
     const findings = await scan(
       "app/islands.client.ts",
