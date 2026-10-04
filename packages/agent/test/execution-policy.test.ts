@@ -3,7 +3,11 @@ import { getEventListeners } from "node:events"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createLocalProcessAdapter, LOCAL_PROCESS_LIMITATION } from "../src/execution-policy.ts"
+import {
+  createLocalProcessAdapter,
+  LOCAL_PROCESS_LIMITATION,
+  windowsTreeKill,
+} from "../src/execution-policy.ts"
 
 describe("local execution policy adapter", () => {
   test("filters env and reports its non-boundary limitation", async () => {
@@ -147,6 +151,30 @@ describe("local execution policy adapter", () => {
     },
     10_000,
   )
+
+  test.skipIf(process.platform === "win32")(
+    "a background process the command leaves behind ends with the run",
+    async () => {
+      const result = await createLocalProcessAdapter().run({
+        command: "sh",
+        args: ["-c", "sleep 30 > /dev/null 2>&1 & echo $!"],
+        policy: policy(5_000),
+      })
+      expect(result.ok).toBe(true)
+      expect(await gone(Number(result.stdout.trim()))).toBe(true)
+    },
+  )
+
+  test("a Windows run's process tree is ended with taskkill", () => {
+    const calls: unknown[] = []
+    windowsTreeKill(4242, (command, args, options) => {
+      calls.push([command, args, options])
+      return { on: () => undefined }
+    })
+    expect(calls).toEqual([
+      ["taskkill", ["/pid", "4242", "/T", "/F"], { stdio: "ignore", windowsHide: true }],
+    ])
+  })
 
   test("a command that cannot start rejects as an invalid request", async () => {
     await expect(

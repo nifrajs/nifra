@@ -11344,8 +11344,10 @@ function runs before any replay; throwing from it refuses the request.
 
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. On POSIX each run leads its
-own process group, so a timeout or cancel ends every process the command started, and runs still
-in flight end when the host exits. Windows signals only the direct child. The local adapter is NOT a
+own process group: a timeout, a cancel, or the run's own end stops every process the command
+started, background ones included, and runs still in flight end when the host exits. On Windows a
+timeout or cancel ends the command's whole process tree (`taskkill /T /F`), but a background process
+still running after the command exits normally is not tracked. The local adapter is NOT a
 security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
 
 For the compact agent contract, see [`LLM.md`](./LLM.md). The full machine-readable corpus is

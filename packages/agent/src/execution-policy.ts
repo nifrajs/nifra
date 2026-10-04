@@ -14,9 +14,10 @@ const SIGKILL_GRACE_MS = 2000
 const PIPE_RELEASE_MS = 200
 /** The longest delay setTimeout honors; past it the callback fires at once. */
 const MAX_TIMER_MS = 2_147_483_647
-// On POSIX each run leads its own process group, so a timeout, a cancel, or the host's exit ends
-// every process the command started, not only the direct child.
-const PROCESS_GROUPS = process.platform !== "win32"
+// On POSIX each run leads its own process group, so a timeout, a cancel, the run's own end, or the
+// host's exit ends every process the command started, not only the direct child.
+const WINDOWS = process.platform === "win32"
+const PROCESS_GROUPS = !WINDOWS
 const liveGroups = new Set<number>()
 let exitHookInstalled = false
 
@@ -178,7 +179,8 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
     if (group !== undefined) trackGroup(group)
     const signalAll = (signal: NodeJS.Signals): void => {
       if (group !== undefined && signalGroup(group, signal)) return
-      child.kill(signal)
+      if (WINDOWS && child.pid !== undefined && child.exitCode === null) windowsTreeKill(child.pid)
+      else child.kill(signal)
     }
     const stdout: Uint8Array[] = []
     const stderr: Uint8Array[] = []
@@ -246,6 +248,8 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
     const settle = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
       if (settled) return
       settled = true
+      // A background process the command left behind ends with the run.
+      if (group !== undefined) signalGroup(group, "SIGKILL")
       cleanup()
       child.stdout?.destroy()
       child.stderr?.destroy()
@@ -264,6 +268,26 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
     input.signal?.addEventListener("abort", cancel, { once: true })
     if (input.signal?.aborted === true) cancel() // close the precheck/listener-registration race
   })
+}
+
+/**
+ * End a Windows process and its descendants. Windows has no process groups, and a console child
+ * cannot be asked to stop, so the tree is terminated outright.
+ */
+export function windowsTreeKill(
+  pid: number,
+  run: (
+    command: string,
+    args: readonly string[],
+    options: { stdio: "ignore"; windowsHide: boolean },
+  ) => { on(event: "error", listener: () => void): unknown } = spawn,
+): void {
+  try {
+    run("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on(
+      "error",
+      () => {},
+    )
+  } catch {}
 }
 
 /** Signal a run's whole process group; false when the group is already gone. */
