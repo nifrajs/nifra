@@ -46,8 +46,9 @@
  *
  * So the version is applied one level earlier, in the importer's own source: on load, each app-owned
  * module has its relative specifiers rewritten to absolute paths carrying the current version of the
- * file they point at. `onResolve` stays as well, because it is the only hook that sees modules loaded by
- * a third-party plugin this one does not wrap.
+ * file they point at - an alias such as `@/components/Button` too, resolved the way Bun resolves it.
+ * `onResolve` stays as well, because it is the only hook that sees modules loaded by a third-party plugin
+ * this one does not wrap.
  *
  * Old versions stay in Bun's registry - a bounded dev-only leak, one entry per edit, which is what the
  * route-level query already did.
@@ -103,6 +104,14 @@ const appSourceFilter = (root: string): RegExp => {
  * transpiler's own scan reported the same specifier, which is what keeps a lookalike string literal out.
  */
 const SPECIFIER = /\b(from|import|require)((?:\s*\()?\s*)(["'])([^"'\n]+)\3/g
+
+/**
+ * A specifier that can name an app file: relative, absolute, or an alias an npm package name cannot be
+ * (`@/x`, `~/x`, `#x`, `$lib/x`). A bare package name is left alone - resolving one here would pin it
+ * for the life of the dev server, and a package is never app source anyway. An alias shaped like a
+ * package (`@app/x`, `src/x`) is not recognized.
+ */
+const APP_SPECIFIER = /^(?:[^a-z0-9@]|@[^a-z0-9])/i
 
 export interface SsrGraphOptions {
   /** The app root. Only files under it (and outside `node_modules`) are tracked. */
@@ -262,7 +271,9 @@ export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
       // through untouched rather than adding a second, worse one.
       return contents
     }
-    const candidates = new Set(scanned.map((entry) => entry.path).filter((p) => p.startsWith(".")))
+    const candidates = new Set(
+      scanned.map((entry) => entry.path).filter((path) => APP_SPECIFIER.test(path)),
+    )
     if (candidates.size === 0) return contents
     const keys = new Map<string, string>()
     for (const specifier of candidates) {
@@ -289,7 +300,7 @@ export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
       })
       // The resolver half covers what the loader half cannot see: a module compiled by a plugin that
       // does not call `rewriteSsrImports`. Extension-bearing specifiers only, which is all Bun offers.
-      build.onResolve({ filter: /^[./]/ }, (args) => {
+      build.onResolve({ filter: APP_SPECIFIER }, (args) => {
         if (resolving) return undefined
         // A specifier that already carries a query is either this module's own rewrite or a plugin's
         // virtual sub-request (`?vue-css` and friends) - both are already keyed.
