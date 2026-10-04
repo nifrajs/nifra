@@ -13,17 +13,21 @@ interface Pkg {
   private?: boolean
 }
 
+/** Runs one `npm` command; the publish flow passes the real CLI, tests a recorder. */
+export type NpmRunner = (args: readonly string[]) => Promise<{ exitCode: number; stdout: string }>
+
 /** Whether `latest` should move to the local version: never sideways or back to an older release. */
 export function shouldPointLatest(local: string, currentLatest: string | undefined): boolean {
   return currentLatest === undefined || Bun.semver.order(local, currentLatest) > 0
 }
 
-async function main(): Promise<void> {
-  if (!process.env.NPM_TOKEN) {
-    console.log("point-latest: no NPM_TOKEN - skipping (local run)")
-    return
-  }
-  const pkgsDir = join(resolve(import.meta.dir, ".."), "packages")
+/** Point `latest` at each public package's local version where that moves it forward. Returns the
+ * `name@version` specs that could not be read or re-pointed. */
+export async function pointLatest(
+  pkgsDir: string,
+  npm: NpmRunner,
+  log: (line: string) => void = console.log,
+): Promise<string[]> {
   const failed: string[] = []
   for (const entry of readdirSync(pkgsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
@@ -35,24 +39,38 @@ async function main(): Promise<void> {
     }
     if (!pkg.name || !pkg.version || pkg.private) continue
     const spec = `${pkg.name}@${pkg.version}`
-    const view = await $`npm view ${pkg.name} dist-tags.latest`.nothrow().quiet()
+    const view = await npm(["view", pkg.name, "dist-tags.latest"])
     if (view.exitCode !== 0) {
-      console.error(`✗ could not read the latest tag: ${pkg.name}`)
+      log(`✗ could not read the latest tag: ${pkg.name}`)
       failed.push(spec)
       continue
     }
-    const current = view.stdout.toString().trim() || undefined
+    const current = view.stdout.trim() || undefined
     if (!shouldPointLatest(pkg.version, current)) {
-      console.log(`- latest stays ${pkg.name}@${current}`)
+      log(`- latest stays ${pkg.name}@${current}`)
       continue
     }
-    const result = await $`npm dist-tag add ${spec} latest`.nothrow()
-    if (result.exitCode === 0) console.log(`✓ latest → ${spec}`)
+    const result = await npm(["dist-tag", "add", spec, "latest"])
+    if (result.exitCode === 0) log(`✓ latest → ${spec}`)
     else {
-      console.error(`✗ failed: ${spec}`)
+      log(`✗ failed: ${spec}`)
       failed.push(spec)
     }
   }
+  return failed
+}
+
+const realNpm: NpmRunner = async (args) => {
+  const result = await $`npm ${args}`.nothrow().quiet()
+  return { exitCode: result.exitCode, stdout: result.stdout.toString() }
+}
+
+async function main(): Promise<void> {
+  if (!process.env.NPM_TOKEN) {
+    console.log("point-latest: no NPM_TOKEN - skipping (local run)")
+    return
+  }
+  const failed = await pointLatest(join(resolve(import.meta.dir, ".."), "packages"), realNpm)
   if (failed.length > 0) {
     console.error(`point-latest: ${failed.length} package(s) not re-pointed: ${failed.join(", ")}`)
     process.exit(1)
