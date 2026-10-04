@@ -10,6 +10,15 @@ import {
 export const LOCAL_PROCESS_LIMITATION = "The local adapter is NOT a security boundary."
 
 const SIGKILL_GRACE_MS = 2000
+/** How long the pipes may stay open after the escalation kill before the run stops reading them. */
+const PIPE_RELEASE_MS = 200
+/** The longest delay setTimeout honors; past it the callback fires at once. */
+const MAX_TIMER_MS = 2_147_483_647
+// On POSIX each run leads its own process group, so a timeout, a cancel, or the host's exit ends
+// every process the command started, not only the direct child.
+const PROCESS_GROUPS = process.platform !== "win32"
+const liveGroups = new Set<number>()
+let exitHookInstalled = false
 
 export interface LocalProcessAdapterOptions {
   readonly cwd?: string
@@ -159,10 +168,17 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
         env: input.env,
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
+        detached: PROCESS_GROUPS,
       })
     } catch {
       reject(new LocalProcessPolicyError("invalid_request"))
       return
+    }
+    const group = PROCESS_GROUPS ? child.pid : undefined
+    if (group !== undefined) trackGroup(group)
+    const signalAll = (signal: NodeJS.Signals): void => {
+      if (group !== undefined && signalGroup(group, signal)) return
+      child.kill(signal)
     }
     const stdout: Uint8Array[] = []
     const stderr: Uint8Array[] = []
@@ -178,23 +194,38 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
       outputUsed.value += selected.byteLength
     }
     if (child.stdout === null || child.stderr === null) {
-      child.kill()
+      signalAll("SIGKILL")
+      if (group !== undefined) liveGroups.delete(group)
       reject(new LocalProcessPolicyError("invalid_request"))
       return
     }
     child.stdout.on("data", (chunk: Uint8Array) => append(stdout, chunk))
     child.stderr.on("data", (chunk: Uint8Array) => append(stderr, chunk))
     let killTimer: ReturnType<typeof setTimeout> | undefined
+    let releaseTimer: ReturnType<typeof setTimeout> | undefined
     const terminate = (): void => {
-      child.kill("SIGTERM")
-      // A child that ignores SIGTERM would otherwise leave this promise pending forever,
+      signalAll("SIGTERM")
+      // A process that ignores SIGTERM would otherwise leave this promise pending forever,
       // making policy.timeMs advisory instead of a bound.
-      killTimer ??= setTimeout(() => child.kill("SIGKILL"), SIGKILL_GRACE_MS)
+      killTimer ??= setTimeout(() => {
+        signalAll("SIGKILL")
+        // A process that left the group (setsid) can still hold the pipes open; stop waiting.
+        releaseTimer = setTimeout(() => settle(child.exitCode, child.signalCode), PIPE_RELEASE_MS)
+      }, SIGKILL_GRACE_MS)
     }
-    const timer = setTimeout(() => {
-      timedOut = true
-      terminate()
-    }, input.policy.timeMs)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = performance.now() + input.policy.timeMs
+    const arm = (): void => {
+      const remaining = deadline - performance.now()
+      timer =
+        remaining > MAX_TIMER_MS
+          ? setTimeout(arm, MAX_TIMER_MS)
+          : setTimeout(() => {
+              timedOut = true
+              terminate()
+            }, remaining)
+    }
+    arm()
     const cancel = (): void => {
       cancelled = true
       terminate()
@@ -202,6 +233,8 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
     const cleanup = (): void => {
       clearTimeout(timer)
       if (killTimer !== undefined) clearTimeout(killTimer)
+      if (releaseTimer !== undefined) clearTimeout(releaseTimer)
+      if (group !== undefined) liveGroups.delete(group)
       input.signal?.removeEventListener("abort", cancel)
     }
     child.once("error", () => {
@@ -210,10 +243,12 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
       cleanup()
       reject(new LocalProcessPolicyError("invalid_request"))
     })
-    child.once("close", (exitCode, signal) => {
+    const settle = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
       if (settled) return
       settled = true
       cleanup()
+      child.stdout?.destroy()
+      child.stderr?.destroy()
       resolve({
         ok: !timedOut && !cancelled && exitCode === 0,
         exitCode,
@@ -224,9 +259,30 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
         cancelled,
         limitations: input.limitations,
       })
-    })
+    }
+    child.once("close", settle)
     input.signal?.addEventListener("abort", cancel, { once: true })
     if (input.signal?.aborted === true) cancel() // close the precheck/listener-registration race
+  })
+}
+
+/** Signal a run's whole process group; false when the group is already gone. */
+function signalGroup(group: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(-group, signal)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function trackGroup(group: number): void {
+  liveGroups.add(group)
+  if (exitHookInstalled) return
+  exitHookInstalled = true
+  // A detached group outlives the host unless something ends it; runs still in flight end with it.
+  process.on("exit", () => {
+    for (const live of liveGroups) signalGroup(live, "SIGKILL")
   })
 }
 

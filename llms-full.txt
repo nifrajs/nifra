@@ -11336,7 +11336,9 @@ reused `turnId` finds none of them. Without it a turn id works as a bearer capab
 function runs before any replay; throwing from it refuses the request.
 
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
-environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
+environment filtering, timeouts, and cancellation to child processes. On POSIX each run leads its
+own process group, so a timeout or cancel ends every process the command started, and runs still
+in flight end when the host exits. Windows signals only the direct child. The local adapter is NOT a
 security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
 
 For the compact agent contract, see [`LLM.md`](./LLM.md). The full machine-readable corpus is
