@@ -47,8 +47,10 @@ const BUILTINS: ReadonlySet<string> = new Set<string>([
 // import, and CJS require. Anchored with `(?<![.\w$])` so `myimport`/`.import`/`foorequire` never match.
 // Comments are stripped before these run (see stripComments) - else a doc-comment usage example would be
 // flagged as a real import.
+// The clause before `from` is spelled out rather than scanned lazily: a lazy scan restarts at every
+// `export const` line and is quadratic on a long module with no string literal.
 const IMPORT_PATTERNS: readonly RegExp[] = [
-  /(?<![.\w$])(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
+  /(?<![.\w$])(?:import|export)\b\s*(?:type\b\s*)?(?:[\w$]+\s*,?\s*)?(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)?from\s*['"]([^'"]+)['"]/g,
   /(?<![.\w$])import\s+['"]([^'"]+)['"]/g,
   /(?<![.\w$])import\s*\(\s*['"]([^'"]+)['"]/g,
   /(?<![.\w$])require\s*\(\s*['"]([^'"]+)['"]/g,

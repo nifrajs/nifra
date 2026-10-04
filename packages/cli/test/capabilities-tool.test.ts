@@ -51,6 +51,27 @@ describe("effect import scanner", () => {
       `),
     ).toEqual(["app-db/read", "postgres", "app-db/write", "./helper", "app-db/read"])
   })
+
+  test("reads every value clause shape, and a long module in linear time", () => {
+    expect(
+      scanEffectImports(
+        [
+          'import Mixed, { named } from "mixed"',
+          'import Both, * as ns from "both"',
+          'import {\n  a,\n} from "multiline"',
+          'import{min}from"minified"',
+          'export * as all from "star-as"',
+          'export type * from "type-star"',
+        ].join("\n"),
+      ),
+    ).toEqual(["mixed", "both", "multiline", "minified", "star-as"])
+    const long = Array.from({ length: 20_000 }, (_, i) => `export const value${i} = f(${i})`).join(
+      "\n",
+    )
+    const started = performance.now()
+    expect(scanEffectImports(long)).toEqual([])
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe("project provenance firewall", () => {

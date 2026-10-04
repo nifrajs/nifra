@@ -61,6 +61,17 @@ describe("check-scan", () => {
     ])
   })
 
+  test("import edges scan a long module in linear time", () => {
+    const long = Array.from({ length: 20_000 }, (_, i) => `export const value${i} = ${i}`).join(
+      "\n",
+    )
+    const started = performance.now()
+    expect(importSites(`${long}\nexport { last } from "./last.ts"`, "routes/x.tsx")).toEqual([
+      { specifier: "./last.ts", line: 20_001 },
+    ])
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   test("a barrel's re-export carries the transitive server-only chain", () => {
     const files: Record<string, string> = {
       "lib/index.ts": 'export * from "./db-helpers.ts"\n',

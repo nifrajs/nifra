@@ -89,8 +89,11 @@ const SERVER_ONLY =
 // pulls its module into the bundle the same way. `import type …` and `export type …` are erased at
 // build, so they're safe and skipped. Dynamic `import(…)` has `(` right after `import`, so `import\s+`
 // never matches it; it is read by DYNAMIC_IMPORT below.
+// The clause between the keyword and `from` is spelled out (a default binding, then `* as ns` or a
+// `{ … }` list) rather than scanned lazily: a lazy scan restarts at every `export const` line and is
+// quadratic on a long semicolon-free module.
 const STATIC_IMPORT =
-  /\b(?:import\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?|export\s+(?!type\b)[^'"();]*?\bfrom\s+)['"]([^'"]+)['"]/g
+  /\b(?:import\s*(?!type\b)(?:(?:[\w$]+\s*,?\s*)?(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)?from\s*)?|export\s*(?!type\b)(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)from\s*)['"]([^'"]+)['"]/g
 // A dynamic `import("x")` whose specifier is one string literal. The client build bundles its target
 // as a lazy chunk, so it reaches the browser bundle like a static import does - also from inside a
 // loader, which ships with the route module. A computed specifier cannot be followed and is skipped.

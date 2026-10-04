@@ -20,8 +20,10 @@ import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
+// Import and re-export clauses are spelled out (a default binding, then `* as ns` or a `{ … }` list)
+// rather than scanned lazily, which is quadratic on a long semicolon-free module.
 const EFFECT_IMPORT =
-  /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\bexport\s+(?!type\b)[^'";]*?\bfrom\s*["']([^"']+)["']/g
+  /\bimport\s*(?!type\b)(?:(?:[\w$]+\s*,?\s*)?(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)?from\s*)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\bexport\s*(?!type\b)(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)from\s*["']([^"']+)["']/g
 // `\\` is excluded from both inner classes: letting the class also match a lone backslash makes the
 // `(A*(\\.A*)*)` shape ambiguous, which is exponential on a run of backslashes.
 const TEMPLATE_EFFECT_IMPORT = /\b(?:import|require)\s*\(\s*`([^`$\\]*(?:\\.[^`$\\]*)*)`\s*\)/g

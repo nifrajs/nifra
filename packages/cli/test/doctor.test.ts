@@ -78,6 +78,43 @@ describe("scanUndeclaredImports - undeclared bare imports, all import forms", ()
     ])
   })
 
+  test("reads every import clause shape, and a long module in linear time", () => {
+    const src = [
+      'import Default from "pkg-default"',
+      'import Mixed, { named } from "pkg-mixed"',
+      'import * as ns from "pkg-namespace"',
+      'import Both, * as ns2 from "pkg-default-namespace"',
+      'import type { T } from "pkg-type"',
+      'import {\n  a,\n  b as c,\n} from "pkg-multiline"',
+      'import{min}from"pkg-minified"',
+      'export * from "pkg-star"',
+      'export * as all from "pkg-star-as"',
+      'export type { U } from "pkg-export-type"',
+    ].join("\n")
+    expect(
+      scanUndeclaredImports("a.ts", src, declared, noAlias)
+        .map((f) => f.snippet)
+        .sort(),
+    ).toEqual([
+      "pkg-default",
+      "pkg-default-namespace",
+      "pkg-export-type",
+      "pkg-minified",
+      "pkg-mixed",
+      "pkg-multiline",
+      "pkg-namespace",
+      "pkg-star",
+      "pkg-star-as",
+      "pkg-type",
+    ])
+    const long = Array.from({ length: 20_000 }, (_, i) => `export const value${i} = ${i}`).join(
+      "\n",
+    )
+    const started = performance.now()
+    expect(scanUndeclaredImports("constants.ts", long, declared, noAlias)).toEqual([])
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   test("does not match identifiers that merely contain import/require", () => {
     const src = ["const myimport = 1", 'obj.import("x")', 'foorequire("y")'].join("\n")
     expect(scanUndeclaredImports("a.ts", src, declared, noAlias)).toHaveLength(0)
