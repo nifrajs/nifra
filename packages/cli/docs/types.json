@@ -21821,7 +21821,7 @@
     "name": "useMDXComponents",
     "kind": "function",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare function useMDXComponents(): Record<string, (props: Record<string, unknown>) => unknown>;",
+    "signature": "export declare function useMDXComponents(): Record<string, (props: Record<string, unknown>) => JSX.Element>;",
     "doc": "/** Returns the intrinsic-element → Solid-component map MDX content uses. Merge in your own overrides by\n * passing `components` to the MDX content component (they take precedence). */"
   },
   {

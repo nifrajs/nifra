@@ -4,7 +4,7 @@
  * component references, but Solid can't `createComponent("h1")` - its JSX is compile-time. So we map
  * each Markdown-output tag to a Solid component that renders it via `<Dynamic component={tag}>`.
  */
-import { createComponent } from "solid-js"
+import { createComponent, type JSX, mergeProps } from "solid-js"
 import { Dynamic } from "solid-js/web"
 
 // The HTML element set CommonMark + GFM produce. An explicit map (not a Proxy): `@mdx-js` *spreads* the
@@ -42,13 +42,18 @@ const MARKDOWN_TAGS = [
   "ul",
 ] as const
 
-const components: Record<string, (props: Record<string, unknown>) => unknown> = {}
+const components: Record<string, (props: Record<string, unknown>) => JSX.Element> = {}
 for (const tag of MARKDOWN_TAGS) {
-  components[tag] = (props) => createComponent(Dynamic, Object.assign({ component: tag }, props))
+  // The tag merges last, so a `component` prop in the content cannot swap the element, and
+  // `mergeProps` keeps Solid's prop getters live where a plain copy would read them once.
+  components[tag] = (props) => createComponent(Dynamic, mergeProps(props, { component: tag }))
 }
 
 /** Returns the intrinsic-element → Solid-component map MDX content uses. Merge in your own overrides by
  * passing `components` to the MDX content component (they take precedence). */
-export function useMDXComponents(): Record<string, (props: Record<string, unknown>) => unknown> {
+export function useMDXComponents(): Record<
+  string,
+  (props: Record<string, unknown>) => JSX.Element
+> {
   return components
 }

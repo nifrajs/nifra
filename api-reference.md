@@ -6350,7 +6350,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-solid/mdx-runtime`
 
-- **useMDXComponents** _(function)_ - `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => unknown>`
+- **useMDXComponents** _(function)_ - `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => JSX.Element>`
   Returns the intrinsic-element → Solid-component map MDX content uses. Merge in your own overrides by passing `components` to the MDX content component (they take precedence).
 
 ### `@nifrajs/web-solid/plugin`
