@@ -51,9 +51,11 @@ function scopedKeyframeName(filePath: string, name: string): string {
 
 /** Matches `@keyframes name` / `@-webkit-keyframes name` (etc.); captures the leading keyword and name. */
 const KEYFRAMES_PRELUDE = /(@(?:-\w+-)?keyframes\s+)([A-Za-z_][\w-]*)/i
-/** An `animation` / `animation-name` declaration: capture the `prop:` head + the value (which holds the
- * keyframe-name token(s) to remap). */
-const ANIMATION_DECL = /^(\s*animation(?:-name)?\s*:\s*)([\s\S]*)$/i
+/** An `animation` / `animation-name` declaration, vendor-prefixed or after a comment: capture the
+ * `prop:` head + the value (which holds the keyframe-name token(s) to remap). A comment cannot hold its
+ * own closing delimiter, so each one matches one way - no backtracking across them. */
+const ANIMATION_DECL =
+  /^((?:\s|\/\*(?:[^*]|\*(?!\/))*\*\/)*(?:-[a-z]+-)?animation(?:-name)?\s*:\s*)([\s\S]*)$/i
 const isKeyframesAt = (at: string): boolean => at === "keyframes" || at.endsWith("-keyframes")
 
 /** `s[i]` is a quote: return the index just past the matching close quote (honoring `\` escapes). */
