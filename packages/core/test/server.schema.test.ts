@@ -456,6 +456,57 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     expect(read).toBeUndefined()
   })
 
+  test("an auth-first body schema still parses a body its hooks read through c.req", async () => {
+    const seen: unknown[] = []
+    const app = server()
+      .derive(async (c) => {
+        seen.push(c.req.headers.get("x-read") === "json" ? await c.req.json() : await c.req.text())
+        return {}
+      })
+      .post(
+        "/hook",
+        {
+          body: t.object({ a: t.string() }),
+          validationOrder: "auth-before-validation",
+          bodyLimit: 1024,
+        },
+        (c) => ({ a: c.body.a }),
+      )
+    const json = jsonRequest("POST", "/hook", { a: "framed" })
+    json.headers.set("x-read", "json")
+    const framed = await app.fetch(json)
+    expect(framed.status).toBe(200)
+    expect(await framed.json()).toEqual({ a: "framed" })
+    // A chunked body, with no Content-Length, takes the streaming path of the same lane.
+    const streamed: RequestInit & { duplex: "half" } = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"a":"chunked"}'))
+          controller.close()
+        },
+      }),
+      duplex: "half",
+    }
+    const chunked = await app.fetch(new Request("http://localhost/hook", streamed))
+    expect(chunked.status).toBe(200)
+    expect(await chunked.json()).toEqual({ a: "chunked" })
+    expect(seen).toEqual([{ a: "framed" }, '{"a":"chunked"}'])
+  })
+
+  test("c.boundedJson() reads a body a hook already read through c.req", async () => {
+    const app = server()
+      .derive(async (c) => ({ peek: await c.req.text() }))
+      .post("/raw", { bodyLimit: 1024 }, async (c) => ({
+        peek: c.peek,
+        bounded: await c.boundedJson(),
+      }))
+    const res = await app.fetch(jsonRequest("POST", "/raw", { a: 1 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ peek: '{"a":1}', bounded: { a: 1 } })
+  })
+
   test("a capped clone read over the cap answers, though the original is never read", async () => {
     const app = server({ maxBodyBytes: 1024 }).post("/raw-clone", async (c) => ({
       len: (await c.req.clone().text()).length,
