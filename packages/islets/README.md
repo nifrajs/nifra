@@ -1,11 +1,11 @@
 # @nifrajs/islets
 
-Fine-grained signals + declarative DOM bindings for islands - **interactivity in ~1.4 KB gz**, no
+Fine-grained signals + declarative DOM bindings for islands - **interactivity in ~2 KB gz**, no
 framework runtime. The client companion to `@nifrajs/web-vanilla`: the server renders real HTML
 (zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
-The full island bundle is about 1.4 KB gzipped and has a size test that keeps it under 2 KB. Use
+The full island bundle is just under 2 KB gzipped, and a size test keeps it there. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
 ## Server side (any adapter - `@nifrajs/web-vanilla` shown)
@@ -62,6 +62,10 @@ reach the island's handlers or signals, or mount an island of its own.
   <div data-island-ignore>${sanitizedCommentHtml}</div>
 </section>
 ```
+
+Islands may nest. A binding belongs to its nearest island, so an outer island never binds inside a
+nested island. The nested host element itself is the outer island's markup: the outer island may
+bind it, for example to show or hide the nested island.
 
 ## Signals
 

@@ -18,6 +18,9 @@
  *
  * Nothing inside a `data-island-ignore` element binds or mounts: render user HTML there, so its
  * markup cannot reach the island's handlers or signals.
+ *
+ * A binding belongs to its nearest island: an island never binds inside a nested island's host. The
+ * nested host element itself is still the outer island's markup, so the outer island may bind it.
  */
 
 import { effect, type Signal } from "./signals.ts"
@@ -59,18 +62,8 @@ function pairs(spec: string): Array<[string, string]> {
 // A bound value is data (often from island state the markup carries), so an attribute that would run
 // it as code, or navigate to it as a script URL, is refused.
 const CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
-const URL_ATTRIBUTES = new Set([
-  "href",
-  "src",
-  "action",
-  "formaction",
-  "xlink:href",
-  "poster",
-  "data",
-  "background",
-  "cite",
-  "ping",
-])
+const URL_ATTRIBUTE =
+  /^(?:href|src|action|formaction|xlink:href|poster|data|background|cite|ping)$/i
 const SAFE_URL = /^(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
 
 function bindableAttribute(attr: string): boolean {
@@ -99,11 +92,12 @@ export interface BindableRoot {
  * the created effects (an island unmount can stop them; page-lifetime islands just drop them). */
 export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void> {
   const stops: Array<() => void> = []
-  // Each element carrying `data-bind-<kind>` outside any ignored subtree, with that attribute's value.
+  // Each element carrying `data-bind-<kind>` outside any ignored subtree and any nested island, with
+  // that attribute's value.
   const each = (kind: string): Array<[BindableElement, string]> =>
     [
       ...root.querySelectorAll(
-        `[data-bind-${kind}]:not([data-island-ignore],[data-island-ignore] *)`,
+        `[data-bind-${kind}]:not([data-island-ignore],[data-island-ignore] *,:scope [data-island] *)`,
       ),
     ].map((el) => [el, el.getAttribute(`data-bind-${kind}`) ?? ""])
 
@@ -147,7 +141,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       if (!bindableAttribute(attr)) continue
       const s = signalOf(scope, name)
       if (s) {
-        const isUrl = URL_ATTRIBUTES.has(attr.toLowerCase())
+        const isUrl = URL_ATTRIBUTE.test(attr)
         stops.push(
           effect(() => {
             const v = s()

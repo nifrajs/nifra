@@ -49,18 +49,30 @@ export class FakeElement {
   }
 }
 
-// `[attr]`, optionally followed by `:not([x],[x] *)` - "not inside an element carrying x".
-const SELECTOR = /^\[([a-z-]+)\](?::not\(\[([a-z-]+)\],\[\2\] \*\))?$/
+// `[attr]`, optionally followed by `:not([x],[x] *)` - "not inside an element carrying x" - which may
+// end with `,:scope [y] *`: "nor inside an element carrying y below the queried root".
+const SELECTOR = /^\[([a-z-]+)\](?::not\(\[([a-z-]+)\],\[\2\] \*(?:,:scope \[([a-z-]+)\] \*)?\))?$/
 
 /** A root whose querySelectorAll supports exactly the selectors the walker uses. */
 export class FakeRoot {
-  constructor(readonly elements: FakeElement[]) {}
+  constructor(
+    readonly elements: FakeElement[],
+    readonly scope?: FakeElement,
+  ) {}
   querySelectorAll(selector: string): FakeElement[] {
     const m = SELECTOR.exec(selector)
     if (m === null) throw new Error(`fake DOM: unsupported selector ${selector}`)
-    const [, attr = "", outside] = m
+    const [, attr = "", outside, nested] = m
+    const belowScope = (el: FakeElement, name: string): boolean => {
+      for (let up = el.parent; up !== undefined && up !== this.scope; up = up.parent)
+        if (up.getAttribute(name) !== null) return true
+      return false
+    }
     return this.elements.filter(
-      (el) => el.getAttribute(attr) !== null && (outside === undefined || !el.within(outside)),
+      (el) =>
+        el.getAttribute(attr) !== null &&
+        (outside === undefined || !el.within(outside)) &&
+        (nested === undefined || !belowScope(el, nested)),
     )
   }
 }
@@ -81,6 +93,6 @@ export class FakeHost extends FakeElement {
     ])
   }
   querySelectorAll(selector: string): FakeElement[] {
-    return new FakeRoot(this.descendants()).querySelectorAll(selector)
+    return new FakeRoot(this.descendants(), this).querySelectorAll(selector)
   }
 }

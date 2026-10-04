@@ -38,6 +38,40 @@ describe("islands", () => {
     expect(host.getAttribute("data-island-mounted")).toBeNull()
   })
 
+  test("a binding belongs to its nearest island; a nested host is still its parent's markup", () => {
+    const outerName = uniqueName()
+    const innerName = uniqueName()
+    const innerText = new FakeElement({ "data-bind-text": "count" })
+    const inner = new FakeHost(
+      {
+        "data-island": innerName,
+        "data-island-state": islandState({ count: 1 }),
+        "data-bind-show": "open",
+      },
+      [innerText],
+    )
+    const outerText = new FakeElement({ "data-bind-text": "count" })
+    const bump = new FakeElement({ "data-bind-on": "click:bump" })
+    const outer = new FakeHost(
+      { "data-island": outerName, "data-island-state": islandState({ count: 100, open: false }) },
+      [outerText, bump, inner],
+    )
+    island(outerName, ({ state }) => {
+      const count = state("count", 0)
+      state("open", true)
+      return { bump: () => count.set(200) }
+    })
+    island(innerName, ({ state }) => {
+      state("count", 0)
+      return undefined
+    })
+    mountIslands(new FakeRoot([outer, inner]))
+    bump.dispatch("click")
+    expect(outerText.textContent).toBe("200")
+    expect(innerText.textContent).toBe("1")
+    expect(inner.hidden).toBe(true)
+  })
+
   test("state(): fallback when the key is absent; same signal identity per key", () => {
     const name = uniqueName()
     const host = new FakeHost({ "data-island": name }, [])
