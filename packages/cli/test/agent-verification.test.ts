@@ -55,6 +55,17 @@ describe("agent verification surfaces", () => {
     expect((await checkContractsLock(dir)).diagnostics).toHaveLength(0)
   })
 
+  test("the contracts lock lists routes in code-unit order, the same in every locale", async () => {
+    const lock = await buildContractsLock(
+      server()
+        .get("/a_y", () => 1)
+        .get("/B", () => 1)
+        .get("/a-x", () => 1)
+        .get("/a", () => 1),
+    )
+    expect(Object.keys(lock.routes)).toEqual(["GET /B", "GET /a", "GET /a-x", "GET /a_y"])
+  })
+
   test("a lock whose every route has no schema is vacuous; declaring one clears it", async () => {
     const noSchema = await buildContractsLock(
       server()

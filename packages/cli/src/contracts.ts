@@ -7,6 +7,7 @@ import {
 } from "@nifrajs/core/evidence"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import { BACKEND_APP_FILE } from "./app-files.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 export interface ContractDigest {
   readonly request: string
@@ -105,7 +106,7 @@ export async function buildContractsLock(
   )
   return {
     version: 1,
-    routes: Object.fromEntries(Object.entries(routes).sort(([a], [b]) => a.localeCompare(b))),
+    routes: Object.fromEntries(Object.entries(routes).sort(([a], [b]) => codeUnitOrder(a, b))),
   }
 }
 

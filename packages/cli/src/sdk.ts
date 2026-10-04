@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path"
 import type { JsonSchema } from "@nifrajs/core/reflection"
 import { type OpenAPIDocument, toOpenAPI } from "@nifrajs/schema/openapi"
 import { BACKEND_APP_FILE } from "./app-files.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 export type SdkLanguage = "python" | "go"
 
@@ -85,7 +86,7 @@ const recordOf = (value: unknown): SchemaRecord | undefined =>
 function operations(document: OpenAPIDocument): readonly OperationEntry[] {
   const result: OperationEntry[] = []
   for (const [path, item] of Object.entries(document.paths).sort(([a], [b]) =>
-    a.localeCompare(b),
+    codeUnitOrder(a, b),
   )) {
     for (const method of HTTP_METHODS) {
       const operation = (item as Record<string, unknown>)[method]

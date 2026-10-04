@@ -24,6 +24,19 @@ describe("SDK generation", () => {
     expect(source).toContain("http.DefaultClient")
   })
 
+  test("emits operations in code-unit order, the same in every locale", () => {
+    const app = server()
+      .get("/a_y", () => 1)
+      .get("/B", () => 1)
+      .get("/a-x", () => 1)
+      .get("/a", () => 1)
+    const ordered: OpenAPIDocument = toOpenAPI(app)
+    const names = renderSdk(ordered, "python")
+      .split("\n")
+      .flatMap((line) => /def (get_\w+)\(/.exec(line)?.slice(1) ?? [])
+    expect(names).toEqual(["get_B", "get_a", "get_a_x", "get_a_y"])
+  })
+
   test("renders typed models, query structs, and typed error bodies", () => {
     const typed = {
       openapi: "3.1.0",
