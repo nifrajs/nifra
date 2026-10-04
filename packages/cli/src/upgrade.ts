@@ -291,12 +291,12 @@ function rewriteDependencyEntry(
     let start = match.index
     let end = match.index + match[0].length
     let after = end
-    while (/\\s/.test(body[after] ?? "")) after++
+    while (/\s/.test(body[after] ?? "")) after++
     if (body[after] === ",") {
       end = after + 1
     } else {
       let before = start - 1
-      while (before >= 0 && /\\s/.test(body[before] ?? "")) before--
+      while (before >= 0 && /\s/.test(body[before] ?? "")) before--
       if (body[before] === ",") start = before
     }
     nextBody = body.slice(0, start) + body.slice(end)
@@ -351,6 +351,12 @@ export function moveDependenciesText(
       })
     }
   }
+  // The edit is textual; a result that no longer parses is never written.
+  try {
+    JSON.parse(out)
+  } catch {
+    return { text, changes: [] }
+  }
   return { text: out, changes }
 }
 
@@ -380,10 +386,14 @@ export function applyImportMoves(
 }
 
 const SOURCE_GLOB = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
-const IGNORE_SEGMENTS = ["node_modules/", "/dist/", "/build/", "/.git/", "/coverage/", "/.next/"]
+const IGNORED_DIRECTORIES = new Set(["node_modules", "dist", "build", ".git", "coverage", ".next"])
 
+// Any directory on the path counts, the top-level one included (`dist/index.js`).
 const isIgnored = (path: string): boolean =>
-  path.startsWith("node_modules/") || IGNORE_SEGMENTS.some((seg) => path.includes(seg))
+  path
+    .split("/")
+    .slice(0, -1)
+    .some((segment) => IGNORED_DIRECTORIES.has(segment))
 
 function scan(cwd: string, pattern: string): string[] {
   const glob = new Glob(pattern)

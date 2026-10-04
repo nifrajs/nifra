@@ -203,6 +203,27 @@ describe("moveDependenciesText", () => {
     expect(moved.devDependencies["@nifrajs/core"]).toBe("^1.13.0")
     expect(result.changes[0]?.action).toBe("renamed")
   })
+
+  test("removing the last entry, or one between others, leaves valid JSON", () => {
+    for (const order of [
+      ["@nifrajs/core", "@nifrajs/web", "@nifrajs/web-legacy"],
+      ["@nifrajs/web-legacy", "@nifrajs/core", "@nifrajs/web"],
+      ["@nifrajs/core", "@nifrajs/web-legacy", "@nifrajs/web"],
+    ]) {
+      const manifest = `${JSON.stringify(
+        { name: "app", dependencies: Object.fromEntries(order.map((name) => [name, "^3.0.0"])) },
+        null,
+        2,
+      )}\n`
+      const result = moveDependenciesText(manifest, [
+        { from: "@nifrajs/web-legacy", to: "@nifrajs/web", toVersion: "4.0.0" },
+      ])
+      expect(result.changes[0]?.action).toBe("removed")
+      expect(Object.keys(JSON.parse(result.text).dependencies)).toEqual(
+        order.filter((name) => name !== "@nifrajs/web-legacy"),
+      )
+    }
+  })
 })
 
 // ── applyImportMoves (pure) ───────────────────────────────────────────────────
@@ -281,6 +302,23 @@ describe("computeUpgrade / runUpgrade", () => {
     const second = computeUpgrade(root, RECIPE, true)
     expect(second.pins).toHaveLength(0)
     expect(second.importMoves).toHaveLength(0)
+  })
+
+  test("build output and coverage at the workspace root are left alone", async () => {
+    const root = await scaffold()
+    for (const dir of ["dist", "build", "coverage"]) {
+      await mkdir(join(root, dir), { recursive: true })
+      await writeFile(join(root, dir, "app.js"), `import { cache } from "old-lib"\n`)
+      await writeFile(
+        join(root, dir, "package.json"),
+        JSON.stringify({ dependencies: { "@nifrajs/core": "^1.7.0" } }),
+      )
+    }
+    const plan = computeUpgrade(root, RECIPE, true)
+    expect(plan.pins).toHaveLength(2)
+    expect(plan.importMoves).toHaveLength(1)
+    for (const dir of ["dist", "build", "coverage"])
+      expect(await readFile(join(root, dir, "app.js"), "utf8")).toContain('"old-lib"')
   })
 
   test("runUpgrade fails closed on an unknown version", async () => {
