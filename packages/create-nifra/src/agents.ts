@@ -43,14 +43,16 @@ export type Backend = typeof backend
 
 Rules an agent must follow:
 
-- **Validate every input at the boundary.** The route schema slots are \`{ body, query }\` (plus
-  \`response\`, below) - use \`t\` from \`@nifrajs/schema\` (installed) or any Standard Schema (zod, valibot).
-  Read the typed, already-validated \`c.body\` / \`c.query\` (invalid input was rejected with a 422 before the
-  handler ran). **Never** hand-parse \`await c.req.json()\` and poke at properties - that's the bug class the
-  schema exists to remove.
-- **Path params are NOT a schema slot.** \`:id\` etc. are inferred from the path literal as \`string\` and
-  read via \`c.params.id\`; there is no \`params\` (or \`headers\`) key in the route schema. Validate a param's
-  shape inside the handler (a length/format check), not via \`{ params: ... }\` - that's a type error.
+- **Validate every input at the boundary.** The route schema slots are \`{ body, query, params, headers,
+  cookies }\` (plus \`response\`, below) - use \`t\` from \`@nifrajs/schema\` (installed) or any Standard Schema
+  (zod, valibot). Read the typed, already-validated \`c.body\` / \`c.query\` / \`c.params\` / \`c.headers\` /
+  \`c.cookies\` (invalid input was rejected with a 422 before the handler ran). **Never** hand-parse
+  \`await c.req.json()\` and poke at properties - that's the bug class the schema exists to remove.
+- **Path params are strings until a \`params\` schema says otherwise.** \`:id\` is inferred from the path
+  literal as a \`string\` on \`c.params.id\`. Declare \`{ params: t.object({ id: t.string({ format: "uuid" }) }) }\`
+  to reject a malformed id with a 422 before the handler runs, or \`t.query({ id: t.integer() })\` to coerce a
+  numeric one, instead of a format check inside the handler. The schema covers every path param. Header
+  names in a \`headers\` schema are lower-case.
 - **Lock the output shape with \`response\` (no drift).** Add \`{ response: t.object({...}) }\` to a route:
   the handler's return is type-checked against it, and the typed client sees exactly that shape. One
   contract, both sides - the frontend physically can't drift from the backend's output.

@@ -150,6 +150,10 @@ describe("scaffold - templates", () => {
     expect(apiMd).toContain("# AGENTS.md - my-api")
     expect(apiMd).toContain("server()") // backend rules
     expect(apiMd).toContain("Validate every input at the boundary")
+    // Every slot a route schema takes is named, so an agent validates a path param with `params`.
+    expect(apiMd).toContain("{ body, query, params, headers,")
+    expect(apiMd).toContain("{ params: t.object(")
+    expect(apiMd).not.toContain("NOT a schema slot")
     expect(apiMd).toContain("never throws") // the typed client
     expect(apiMd).toContain("llms-full.txt") // pointer to the full reference
     expect(apiMd).toContain("install current, never pin from memory") // anti-stale-training rule
