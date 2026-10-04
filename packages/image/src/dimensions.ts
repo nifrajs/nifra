@@ -18,10 +18,39 @@ const png = (b: Uint8Array, dv: DataView): ImageInfo | null => {
   return { width: dv.getUint32(16), height: dv.getUint32(20), format: "png" }
 }
 
+/** The first image descriptor's width/height, past the global color table and any extensions. */
+const gifFirstFrame = (
+  b: Uint8Array,
+  dv: DataView,
+): { width: number; height: number } | undefined => {
+  const packed = b[10] ?? 0
+  let offset = 13 + (packed & 0x80 ? 3 * 2 ** ((packed & 0x07) + 1) : 0)
+  while (offset < b.length) {
+    const block = b[offset]
+    if (block === 0x2c) {
+      if (offset + 9 > b.length) return undefined
+      return { width: dv.getUint16(offset + 5, true), height: dv.getUint16(offset + 7, true) }
+    }
+    if (block !== 0x21) return undefined
+    // An extension: label, then data sub-blocks (a length byte each) to a zero-length terminator.
+    offset += 2
+    while (offset < b.length && b[offset] !== 0) offset += (b[offset] ?? 0) + 1
+    offset += 1
+  }
+  return undefined
+}
+
 const gif = (b: Uint8Array, dv: DataView): ImageInfo | null => {
   // 'GIF', then the logical-screen width/height as little-endian uint16 @6/@8.
   if (b.length < 10 || b[0] !== 0x47 || b[1] !== 0x49 || b[2] !== 0x46) return null
-  return { width: dv.getUint16(6, true), height: dv.getUint16(8, true), format: "gif" }
+  // A browser draws a GIF at the larger of its logical screen and its first frame, per side - a
+  // 1x1 (or 0x0) screen holding a 10x20 frame displays 10x20.
+  const frame = gifFirstFrame(b, dv)
+  return {
+    width: Math.max(dv.getUint16(6, true), frame?.width ?? 0),
+    height: Math.max(dv.getUint16(8, true), frame?.height ?? 0),
+    format: "gif",
+  }
 }
 
 /** The EXIF orientation (1-8) an APP1 segment's TIFF block declares, read within `[start, end)`. */

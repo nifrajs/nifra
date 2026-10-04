@@ -11,6 +11,18 @@ const PNG_1x1 = Uint8Array.fromBase64(
 const gif = (w: number, h: number): Uint8Array =>
   new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, w & 0xff, w >> 8, h & 0xff, h >> 8, 0, 0, 0])
 
+/** A GIF whose first frame differs from its logical screen, behind a color table and two extensions. */
+const framedGif = (screen: [number, number], frame: [number, number]): Uint8Array => {
+  const u16 = (n: number): number[] => [n & 0xff, n >> 8]
+  return new Uint8Array([
+    ...[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, ...u16(screen[0]), ...u16(screen[1]), 0x81, 0, 0],
+    ...new Array<number>(12).fill(0),
+    ...[0x21, 0xf9, 0x04, 0, 0, 0, 0, 0x00],
+    ...[0x21, 0xfe, 0x03, 0x61, 0x62, 0x63, 0x02, 0x64, 0x65, 0x00],
+    ...[0x2c, 0, 0, 0, 0, ...u16(frame[0]), ...u16(frame[1]), 0],
+  ])
+}
+
 const jpeg = (w: number, h: number): Uint8Array => {
   // SOI + a SOF0 marker (@2): length @4, precision @6, height @7, width @9 (marker+5 / marker+7).
   const b = new Uint8Array(12)
@@ -62,6 +74,21 @@ describe("imageDimensions", () => {
 
   test("GIF", () => {
     expect(imageDimensions(gif(640, 480))).toEqual({ width: 640, height: 480, format: "gif" })
+  })
+
+  test("GIF: each side is the larger of the logical screen and the first frame, as browsers draw it", () => {
+    const sized = (bytes: Uint8Array) => imageDimensions(bytes)
+    expect(sized(framedGif([1, 1], [10, 20]))).toEqual({ width: 10, height: 20, format: "gif" })
+    expect(sized(framedGif([0, 0], [10, 20]))).toEqual({ width: 10, height: 20, format: "gif" })
+    expect(sized(framedGif([30, 5], [10, 20]))).toEqual({ width: 30, height: 20, format: "gif" })
+    // A first frame past the bytes read (mid-extension, mid-descriptor) leaves the logical screen.
+    for (const end of [30, 50]) {
+      expect(sized(framedGif([30, 5], [10, 20]).subarray(0, end))).toEqual({
+        width: 30,
+        height: 5,
+        format: "gif",
+      })
+    }
   })
 
   test("JPEG (SOF0; skips an earlier segment)", () => {
