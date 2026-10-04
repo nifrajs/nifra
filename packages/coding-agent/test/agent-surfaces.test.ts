@@ -45,6 +45,70 @@ describe("optional agent safety surfaces", () => {
     ).resolves.toEqual({ id: "stuck", role: "reviewer", ok: false, error: "subagent timed out" })
   })
 
+  test("a timed-out run releases its workspace only once the executor settles", async () => {
+    const events: string[] = []
+    let finish = (): void => {}
+    const runner = new BoundedSubagentRunner(
+      {
+        run: () =>
+          new Promise<void>((resolve) => {
+            finish = () => {
+              events.push("executor done")
+              resolve()
+            }
+          }),
+      },
+      {
+        workspace: {
+          root: process.cwd(),
+          isolatedWorktree: () => ({
+            cwd: process.cwd(),
+            cleanup: () => {
+              events.push("cleanup")
+            },
+          }),
+        },
+      },
+    )
+    await expect(
+      runner.run({ id: "stuck", role: "worker", prompt: "edit", timeoutMs: 20 }),
+    ).resolves.toMatchObject({ ok: false, error: "subagent timed out" })
+    expect(events).toEqual([])
+    finish()
+    await Bun.sleep(0)
+    expect(events).toEqual(["executor done", "cleanup"])
+  })
+
+  test("a finished run is released before it returns, and a cancelled one never leases", async () => {
+    const events: string[] = []
+    const workspace = {
+      root: process.cwd(),
+      isolatedWorktree: () => {
+        events.push("lease")
+        return {
+          cwd: process.cwd(),
+          cleanup: () => {
+            events.push("cleanup")
+          },
+        }
+      },
+    }
+    const spec = { id: "child", role: "worker", prompt: "edit" }
+    await expect(
+      new BoundedSubagentRunner({ run: () => "ran" }, { workspace }).run(spec),
+    ).resolves.toMatchObject({ ok: true, output: "ran" })
+    expect(events).toEqual(["lease", "cleanup"])
+    events.length = 0
+    const parent = new AbortController()
+    parent.abort()
+    await expect(
+      new BoundedSubagentRunner({ run: () => "ran" }, { workspace, signal: parent.signal }).run(
+        spec,
+      ),
+    ).resolves.toMatchObject({ ok: false, error: "subagent cancelled" })
+    expect(events).toEqual([])
+  })
+
   test("an already-aborted parent signal cancels before the executor starts", async () => {
     let runs = 0
     const parent = new AbortController()

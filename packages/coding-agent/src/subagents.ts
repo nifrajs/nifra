@@ -29,6 +29,10 @@ export interface SubagentExecutor {
 
 export interface SubagentWorkspaceLease {
   readonly cwd: string
+  /**
+   * Runs once the executor has settled. A run that times out or is cancelled returns at once, but
+   * its workspace stays until the executor finishes, so a child never loses its cwd mid-run.
+   */
   readonly cleanup?: () => void | PromiseLike<void>
 }
 
@@ -52,19 +56,12 @@ export interface SubagentRunnerOptions {
 }
 
 /** `work`'s outcome, or `stopped()` as soon as `signal` aborts, even when `work` ignores it. */
-function untilAborted<T>(
-  work: () => T | PromiseLike<T>,
-  signal: AbortSignal,
-  stopped: () => Error,
-): Promise<T> {
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal, stopped: () => Error): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const stop = (): void => reject(stopped())
     if (signal.aborted) return stop()
     signal.addEventListener("abort", stop, { once: true })
-    Promise.resolve()
-      .then(work)
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", stop))
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop))
   })
 }
 
@@ -138,8 +135,12 @@ export class BoundedSubagentRunner {
             timedOut = true
             controller.abort("timeout")
           }, spec.timeoutMs)
+    const stopped = (): Error => new Error(timedOut ? "subagent timed out" : "subagent cancelled")
     let workspace: SubagentWorkspaceLease | undefined
+    let executorDone: Promise<void> | undefined
+    let executorSettled = false
     try {
+      if (controller.signal.aborted) throw stopped()
       const requestedCwd =
         spec.cwd === undefined
           ? this.options.workspace?.root
@@ -182,16 +183,20 @@ export class BoundedSubagentRunner {
           }
       }
       const lease = workspace
-      const output = await untilAborted(
-        () =>
-          this.executor.run({
-            spec,
-            signal: controller.signal,
-            ...(lease === undefined ? {} : { cwd: lease.cwd }),
-          }),
-        controller.signal,
-        () => new Error(timedOut ? "subagent timed out" : "subagent cancelled"),
+      if (controller.signal.aborted) throw stopped()
+      const work = Promise.resolve().then(() =>
+        this.executor.run({
+          spec,
+          signal: controller.signal,
+          ...(lease === undefined ? {} : { cwd: lease.cwd }),
+        }),
       )
+      // Registered before untilAborted's reaction, so a settled executor is seen as settled below.
+      const settle = (): void => {
+        executorSettled = true
+      }
+      executorDone = work.then(settle, settle)
+      const output = await untilAborted(work, controller.signal, stopped)
       return { id: spec.id, role: spec.role, ok: true, output }
     } catch (error) {
       return {
@@ -201,9 +206,15 @@ export class BoundedSubagentRunner {
         error: error instanceof Error ? error.message : String(error),
       }
     } finally {
-      await workspace?.cleanup?.()
       if (timeout !== undefined) clearTimeout(timeout)
       this.options.signal?.removeEventListener("abort", onAbort)
+      const cleanup = workspace?.cleanup
+      if (cleanup !== undefined) {
+        // An abandoned executor may still be writing there; the release waits for it to settle.
+        if (executorDone !== undefined && !executorSettled)
+          executorDone.then(() => cleanup()).catch(() => {})
+        else await cleanup()
+      }
     }
   }
 
