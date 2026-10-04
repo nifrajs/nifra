@@ -52,6 +52,7 @@ const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
  */
 export function buildStaticResponseHeaders(
   record: Readonly<Record<string, string>>,
+  inherited?: Readonly<Record<string, string>>,
 ): StaticResponseHeaders {
   const frozen = Object.freeze({ ...record })
   const jsonHeaders = new Headers({ ...frozen, "content-type": JSON_CONTENT_TYPE })
@@ -61,6 +62,7 @@ export function buildStaticResponseHeaders(
     entries: Object.freeze(Object.entries(frozen)),
     jsonHeaders,
     jsonInit200: { status: 200, headers: jsonHeaders },
+    inherited,
     responseJsonInit200: () => {
       responseJson ??= {
         status: 200,
@@ -138,7 +140,9 @@ function applyStaticDefaults(headers: Headers, statics: StaticResponseHeaders): 
   const entries = statics.entries
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]!
-    if (!headers.has(entry[0])) headers.set(entry[0], entry[1])
+    // Absent, or still an enclosing scope's value rather than one the request set: this one applies.
+    if (headers.get(entry[0]) === (statics.inherited?.[entry[0]] ?? null))
+      headers.set(entry[0], entry[1])
   }
 }
 

@@ -233,8 +233,8 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 32.8,
   "nifra-idempotency": 36.2,
-  "nifra-effect-ledger": 34.7,
-  "nifra-mcp": 33.0,
+  "nifra-effect-ledger": 34.8,
+  "nifra-mcp": 33.1,
   "nifra-sse": 33.5,
   "nifra-valibot": 33.8,
   "nifra-typebox-t": 62.5,

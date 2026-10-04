@@ -121,4 +121,30 @@ describe("securityHeaders", () => {
     expect(out.headers.get("x-content-type-options")).toBe("nosniff")
     expect(out.headers.get("x-up")).toBe("1") // original headers carried over
   })
+
+  test("a group's own configuration applies over the app's, on the group's routes only", async () => {
+    const warnings: string[] = []
+    const app = server({ logger: { ...silentLogger, warn: (line: string) => warnings.push(line) } })
+      .use(securityHeaders())
+      .use(securityHeaders())
+      .group("/admin", (admin) =>
+        admin
+          .use(
+            securityHeaders({
+              contentSecurityPolicy: "default-src 'none'",
+              frameOptions: "SAMEORIGIN",
+            }),
+          )
+          .get("/panel", () => ({ ok: true })),
+      )
+      .get("/public", () => ({ ok: true }))
+    const admin = await app.fetch(new Request("http://x/admin/panel"))
+    expect(admin.headers.get("content-security-policy")).toBe("default-src 'none'")
+    expect(admin.headers.get("x-frame-options")).toBe("SAMEORIGIN")
+    expect(admin.headers.get("x-content-type-options")).toBe("nosniff")
+    const open = await app.fetch(new Request("http://x/public"))
+    expect(open.headers.get("content-security-policy")).toBeNull()
+    expect(open.headers.get("x-frame-options")).toBe("DENY")
+    expect(warnings).toEqual([])
+  })
 })

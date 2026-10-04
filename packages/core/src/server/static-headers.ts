@@ -39,6 +39,9 @@ export interface StaticResponseHeaders {
   readonly jsonHeaders: Headers
   /** `{ status: 200, headers: jsonHeaders }` - a static app's whole per-response header cost. */
   readonly jsonInit200: ResponseInit
+  /** For a group: the values its enclosing scopes declared. On the group's routes its own value of
+   * the same name replaces one of these, so the more specific scope wins. */
+  readonly inherited?: Readonly<Record<string, string>> | undefined
   /**
    * The same shape, but carrying the content-type THIS runtime's `Response.json` emits - which is not
    * always the framework init's (Deno omits the charset). Used by the lane that would otherwise call

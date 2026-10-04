@@ -3781,7 +3781,10 @@ const app = server().use(securityHeaders({
 
 Every value is fixed at construction, so the headers are declared statically rather than
 written by a response hook - an app whose response middleware is only this keeps the fused
-native response lanes. A route that sets one of these names itself keeps its own value.
+native response lanes. A route that sets one of these names itself keeps its own value. A
+group can apply its own configuration over the app&apos;s - `admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`
+inside `app.group("/admin", ...)` - and each header it sets replaces the app&apos;s
+value on the group&apos;s routes only.
 
 ### Route assurance - prove every route is guarded
 
@@ -7587,11 +7590,13 @@ list))` serves `/admin/users`, and the prefix is part of the typed client,
 `routes()`, OpenAPI, capability events and the effect ledger. The builder
 inherits this server's middleware chain as it stands at the call; what it adds stays in the
 group, and its `onRequest`/`onResponse` hooks run only for requests at
-or under the prefix. A plugin the parent already applied stays the parent's: the group's own
-`use()` of the same name is skipped, so a differently configured instance (a
-stricter `securityHeaders()`, another `cors()` policy) does not replace
-it, and development builds warn when that happens. The prefix is plain text (no params or
-wildcards), and a collision throws before any group route is added.
+or under the prefix. A static header the group declares replaces the parent&apos;s value
+of that name on the group&apos;s routes, so `securityHeaders()` with the group&apos;s
+own configuration applies over the app&apos;s there. Any other plugin the parent already
+applied stays the parent&apos;s: the group&apos;s own `use()` of the same name is
+skipped, so a differently configured instance (another `cors()` policy) does not
+replace it, and development builds warn when that happens. The prefix is plain text (no
+params or wildcards), and a collision throws before any group route is added.
 
 -
 **the `/api/*` auto-mount** - a path _guard_, not a rewrite.

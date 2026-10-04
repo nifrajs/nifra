@@ -724,7 +724,10 @@ export default function Security() {
       <p>
         Every value is fixed at construction, so the headers are declared statically rather than
         written by a response hook - an app whose response middleware is only this keeps the fused
-        native response lanes. A route that sets one of these names itself keeps its own value.
+        native response lanes. A route that sets one of these names itself keeps its own value. A
+        group can apply its own configuration over the app&apos;s - <code>{`admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`}</code>{" "}
+        inside <code>app.group("/admin", ...)</code> - and each header it sets replaces the app&apos;s
+        value on the group&apos;s routes only.
       </p>
 
       <h2>Route assurance - prove every route is guarded</h2>

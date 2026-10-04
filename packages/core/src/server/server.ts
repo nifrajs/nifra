@@ -997,6 +997,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `onResponse` hook would have disabled.
    */
   private staticResponseHeaders: StaticResponseHeaders | undefined
+  /** A group's view of the static headers its enclosing scopes declared before it was created. */
+  private declare inheritedStatics: Readonly<Record<string, string>> | undefined
   /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
    * framework's own error/404/timeout renders, which are built outside the header init. */
   private wrapWebResponse: (response: Response | ResponseResult) => Response
@@ -1421,7 +1423,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *   app.responseHeaders({ "x-frame-options": "DENY", "referrer-policy": "no-referrer" })
    *
    * They are DEFAULTS: a value the request itself produced (`c.set.headers`, or a response hook)
-   * wins, whatever casing it used. Names are lowercased once here; a non-string value, an invalid
+   * wins, whatever casing it used. In a group, a name the group declares replaces the value its
+   * enclosing scopes declared before the group, on the group's routes. Names are lowercased once here; a non-string value, an invalid
    * name, `__proto__`, or a name the render owns (`content-type`, `content-length`,
    * `transfer-encoding`, `set-cookie`) throws a `TypeError` at wire-up.
    *
@@ -1455,7 +1458,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // serialized-body marker survives for later `onResponseBody`/`onResponseRaw` observers and the
       // Node writer; reconstructing a `Response` here would strip that marker and reclassify the Node
       // outcome from `json` to a generic `response`. A guarded foreign response takes its clone path.
-      const statics = buildStaticResponseHeaders(record)
+      const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
       this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
       this.onNodeResponseHooks.push(undefined)
       this.nodeResponseHooksComplete = false
@@ -1465,7 +1468,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.staticResponseHeaders === undefined
         ? record
         : { ...this.staticResponseHeaders.record, ...record }
-    this.staticResponseHeaders = buildStaticResponseHeaders(merged)
+    this.staticResponseHeaders = buildStaticResponseHeaders(merged, this.inheritedStatics)
     const statics = this.staticResponseHeaders
     this.wrapWebResponse = (response) =>
       applyStaticResponseHeaders(webResponseOf(response), statics)
@@ -2509,6 +2512,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const fullPrefix = this.routePrefix + prefix
     const scope = new Server<Registry, EmptyContext>(this.options)
     scope.routePrefix = fullPrefix
+    scope.inheritedStatics = { ...this.inheritedStatics, ...this.staticResponseHeaders?.record }
     for (const key of GROUP_CHAIN) (scope[key] as unknown[]).push(...this[key])
     for (const key of SERVER_RUNTIMES)
       (scope as unknown as Record<string, unknown>)[key] = this[key]

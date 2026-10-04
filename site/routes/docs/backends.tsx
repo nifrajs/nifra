@@ -236,11 +236,13 @@ export default function Backends() {
           <code>routes()</code>, OpenAPI, capability events and the effect ledger. The builder
           inherits this server's middleware chain as it stands at the call; what it adds stays in the
           group, and its <code>onRequest</code>/<code>onResponse</code> hooks run only for requests at
-          or under the prefix. A plugin the parent already applied stays the parent's: the group's own{" "}
-          <code>use()</code> of the same name is skipped, so a differently configured instance (a
-          stricter <code>securityHeaders()</code>, another <code>cors()</code> policy) does not replace
-          it, and development builds warn when that happens. The prefix is plain text (no params or
-          wildcards), and a collision throws before any group route is added.
+          or under the prefix. A static header the group declares replaces the parent&apos;s value
+          of that name on the group&apos;s routes, so <code>securityHeaders()</code> with the group&apos;s
+          own configuration applies over the app&apos;s there. Any other plugin the parent already
+          applied stays the parent&apos;s: the group&apos;s own <code>use()</code> of the same name is
+          skipped, so a differently configured instance (another <code>cors()</code> policy) does not
+          replace it, and development builds warn when that happens. The prefix is plain text (no
+          params or wildcards), and a collision throws before any group route is added.
         </li>
         <li>
           <strong>the <code>/api/*</code> auto-mount</strong> - a path <em>guard</em>, not a rewrite.{" "}

@@ -354,6 +354,36 @@ describe("group() - request/response hooks are scoped to the prefix", () => {
     expect(finalized).toEqual(["/api/x", "/api/cached", "/api/nope"])
   })
 
+  test("a group's static header replaces the value its parent declared, on its routes only", async () => {
+    const app = server()
+      .responseHeaders({ "x-frame-options": "DENY", "x-app": "1" })
+      .group("/admin", (admin) =>
+        admin
+          .responseHeaders({ "x-frame-options": "SAMEORIGIN" })
+          .get("/panel", () => ({ ok: true }))
+          .get("/own", (c) => {
+            c.set.headers["x-frame-options"] = "route-value"
+            return { ok: true }
+          })
+          .group("/deep", (deep) =>
+            deep
+              .responseHeaders({ "x-frame-options": "deep-value", "x-app": "2" })
+              .get("/x", () => "x"),
+          ),
+      )
+      .get("/public", () => ({ ok: true }))
+    const header = async (path: string, name: string) => (await get(app, path)).headers.get(name)
+    expect(await header("/admin/panel", "x-frame-options")).toBe("SAMEORIGIN")
+    expect(await header("/admin/panel", "x-app")).toBe("1")
+    expect(await header("/admin/missing", "x-frame-options")).toBe("SAMEORIGIN")
+    // A value the route set itself still wins over every static declaration.
+    expect(await header("/admin/own", "x-frame-options")).toBe("route-value")
+    expect(await header("/admin/deep/x", "x-frame-options")).toBe("deep-value")
+    expect(await header("/admin/deep/x", "x-app")).toBe("2")
+    expect(await header("/public", "x-frame-options")).toBe("DENY")
+    expect(await header("/public", "x-app")).toBe("1")
+  })
+
   test("a nested group's hooks run only under the nested prefix; the outer's cover both", async () => {
     const seen: string[] = []
     const app = server().group("/api", (api) =>
