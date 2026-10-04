@@ -818,6 +818,11 @@ const GO_KEYWORDS = new Set([
   "var",
 ])
 
+// encoding/json reads a tag name made only of letters, decimal digits and this punctuation. A key
+// with a quote, backslash, backtick, comma or control character has no struct-tag spelling, and
+// writing it raw would end the tag (or the struct) early.
+const GO_JSON_TAG_NAME = /^[\p{L}\p{Nd}!#$%&()*+\-./:;<=>?@[\]^_{|}~ ]+$/u
+
 function goFieldName(value: string): string {
   const result = pascal(value, "Field")
   return GO_KEYWORDS.has(result.toLowerCase()) ? `${result}Value` : result
@@ -836,6 +841,14 @@ function goModelFields(
   const tag = String.fromCharCode(96)
   const fields: string[] = []
   for (const [jsonName, property] of Object.entries(properties)) {
+    if (!GO_JSON_TAG_NAME.test(jsonName)) {
+      tracker.add(
+        "schema",
+        `model ${name}.${JSON.stringify(jsonName)}`,
+        "property name cannot be spelled as a Go struct tag",
+      )
+      continue
+    }
     let fieldName = goFieldName(jsonName)
     while (used.has(fieldName)) fieldName += "Value"
     used.add(fieldName)
@@ -858,7 +871,8 @@ function goModelFields(
         tag +
         'json:"' +
         jsonName +
-        (required.has(jsonName) ? "" : ",omitempty") +
+        // A bare "-" tag omits the field; "-," names a property that is literally "-".
+        (required.has(jsonName) ? (jsonName === "-" ? "," : "") : ",omitempty") +
         '"' +
         tag,
     )

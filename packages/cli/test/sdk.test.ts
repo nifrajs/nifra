@@ -79,6 +79,35 @@ describe("SDK generation", () => {
     expect(go).toContain("type GetUserError struct")
   })
 
+  test("a property name with no Go struct-tag spelling is reported, never written raw", () => {
+    const evil =
+      'id"`\n}\n\nfunc init() { panic("injected") }\n\ntype Pad struct {\n\tX string `json:"x'
+    const object = {
+      type: "object",
+      properties: { [evil]: { type: "string" }, "-": { type: "string" }, name: { type: "string" } },
+      required: [evil, "-", "name"],
+    }
+    const withKeys = {
+      openapi: "3.1.0",
+      info: { title: "keys", version: "1.0.0" },
+      paths: {
+        "/item": {
+          get: {
+            operationId: "getItem",
+            responses: {
+              "200": { description: "ok", content: { "application/json": { schema: object } } },
+            },
+          },
+        },
+      },
+    } satisfies OpenAPIDocument
+    const go = renderSdk(withKeys, "go")
+    expect(go).not.toContain("injected")
+    expect(go).toContain('`json:"-,"`')
+    expect(go).toContain('`json:"name"`')
+    expect(() => renderSdk(withKeys, "go", { strict: true })).toThrow(/Go struct tag/)
+  })
+
   test("strict generation fails closed on an opaque response", () => {
     expect(() => renderSdk(document, "python", { strict: true })).toThrow(SdkGenerationError)
     expect(() => renderSdk(document, "go", { strict: true })).toThrow(/response 200/)
