@@ -12,6 +12,7 @@ import {
   canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   DEFAULT_IDEMPOTENCY_HEADER,
+  DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
   DEFAULT_IDEMPOTENCY_TTL_MS,
   IdempotencyResponseTooLargeError,
   type IdempotencyStore,
@@ -45,6 +46,8 @@ const REFUSALS = new Set([401, 403, 408, 409, 425, 429])
 export interface ResolvedIdempotency {
   readonly store: IdempotencyStore
   readonly ttlMs: number
+  /** The lease renewed while a handler runs; unset when the store cannot renew. */
+  readonly pendingTtlMs: number | undefined
   readonly headerName: string
   readonly namespace: NonNullable<RouteSchema["idempotency"]>["namespace"]
   readonly maxResponseBytes: number
@@ -163,6 +166,16 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
           "idempotency ttlMs must be a finite positive number",
         )
       }
+      const pendingTtlMs = config.pendingTtlMs
+      if (
+        pendingTtlMs !== undefined &&
+        (store.renew === undefined || !Number.isSafeInteger(pendingTtlMs) || pendingTtlMs <= 0)
+      ) {
+        throw new RouteConfigError(
+          "INVALID_IDEMPOTENCY",
+          "idempotency pendingTtlMs must be a positive integer, on a store that implements renew()",
+        )
+      }
       const headerName = (config.headerName ?? DEFAULT_IDEMPOTENCY_HEADER).toLowerCase()
       try {
         new Headers().set(headerName, "probe")
@@ -201,6 +214,10 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       return Object.freeze({
         store,
         ttlMs,
+        pendingTtlMs:
+          store.renew === undefined
+            ? undefined
+            : (pendingTtlMs ?? DEFAULT_IDEMPOTENCY_PENDING_TTL_MS),
         headerName,
         namespace,
         maxResponseBytes,
@@ -234,7 +251,14 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         req.headers.get("content-type") ?? "",
       )
 
-      const begin = await config.store.begin({ namespace, key, fingerprint, ttlMs: config.ttlMs })
+      const pendingTtlMs = config.pendingTtlMs
+      const begin = await config.store.begin({
+        namespace,
+        key,
+        fingerprint,
+        ttlMs: config.ttlMs,
+        pendingTtlMs,
+      })
       if (begin.state === "replay") {
         return wrapResponse(
           responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }),
@@ -248,107 +272,125 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         return wrapResponse(jsonError(503, "idempotency_store_capacity", { "Retry-After": "1" }))
       }
       const reservation = begin.reservation
-
-      // Fresh key: re-expose the buffered body as a Request so the normal lanes can read + validate it,
-      // then run those lanes to a concrete Response.
-      const bufferedInit: RequestInit = {
-        method: req.method,
-        headers: req.headers,
-        signal: req.signal,
+      let heartbeat: ReturnType<typeof setInterval> | undefined
+      if (pendingTtlMs !== undefined) {
+        // Renew the lease while the handler runs: only a process that died stops renewing, so its
+        // key frees after the lease rather than the replay TTL.
+        heartbeat = setInterval(() => {
+          // A failed renewal only lets the lease lapse, which completion then reports.
+          Promise.resolve()
+            .then(() => config.store.renew?.({ namespace, key, reservation, ttlMs: pendingTtlMs }))
+            .catch(() => undefined)
+        }, pendingTtlMs / 3)
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a Node or Bun timer has unref(); on other runtimes the optional call does nothing.
+        ;(heartbeat as { unref?: () => void }).unref?.()
       }
-      if (read.bytes.byteLength > 0)
-        bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
-      const buffered = new Request(req.url, bufferedInit)
-      beginRequestEffectTracking(buffered)
-      // The handler threw, or its response body failed while being captured: no response to store.
-      const settleThrown = async (err: unknown): Promise<ReturnType<typeof wrapResponse>> => {
-        if (!requestEffectEvidence(buffered).began) {
-          // The request-local boundary proves no owned effect started, so this is the one safe case
-          // where releasing the key cannot duplicate an effect.
-          await config.store.abandon({ namespace, key, reservation })
-          throw err
+      try {
+        // Fresh key: re-expose the buffered body as a Request so the normal lanes can read + validate it,
+        // then run those lanes to a concrete Response.
+        const bufferedInit: RequestInit = {
+          method: req.method,
+          headers: req.headers,
+          signal: req.signal,
         }
-        // A committed or ambiguous effect must never be repeated. Persist a payload-free terminal
-        // response even though the normal handler lifecycle escaped without producing one.
-        const terminal = new Response(null, { status: 500 })
+        if (read.bytes.byteLength > 0)
+          bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
+        const buffered = new Request(req.url, bufferedInit)
+        beginRequestEffectTracking(buffered)
+        // The handler threw, or its response body failed while being captured: no response to store.
+        const settleThrown = async (err: unknown): Promise<ReturnType<typeof wrapResponse>> => {
+          if (!requestEffectEvidence(buffered).began) {
+            // The request-local boundary proves no owned effect started, so this is the one safe case
+            // where releasing the key cannot duplicate an effect.
+            await config.store.abandon({ namespace, key, reservation })
+            throw err
+          }
+          // A committed or ambiguous effect must never be repeated. Persist a payload-free terminal
+          // response even though the normal handler lifecycle escaped without producing one.
+          const terminal = new Response(null, { status: 500 })
+          const completed = await config.store.complete({
+            namespace,
+            key,
+            reservation,
+            response: await serializeResponse(terminal, { maxBytes: config.maxResponseBytes }),
+          })
+          if (!completed) {
+            return wrapResponse(
+              jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
+            )
+          }
+          return wrapResponse(terminal)
+        }
+        let response: Response
+        try {
+          response = await host.runLanes(buffered, platform, entry, params, search)
+        } catch (err) {
+          return await settleThrown(err)
+        }
+        if (!HANDLER_ENTERED.has(buffered) && !requestEffectEvidence(buffered).began) {
+          // Rejected before the handler ran: no execution began, so there is nothing a retry could
+          // duplicate and no result is saved - storing every rejection would let callers who never
+          // pass auth fill the store and lock everyone else out.
+          const abandoned = await config.store.abandon({ namespace, key, reservation })
+          if (!abandoned) {
+            return wrapResponse(
+              jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
+            )
+          }
+          return wrapResponse(response)
+        }
+        if (
+          (REFUSALS.has(response.status) ||
+            (response.status >= 500 && requestIsSafeToRetry(buffered))) &&
+          !requestEffectEvidence(buffered).began
+        ) {
+          const abandoned = await config.store.abandon({ namespace, key, reservation })
+          if (!abandoned) {
+            return wrapResponse(
+              jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
+            )
+          }
+          return wrapResponse(response)
+        }
+        // Once the handler ran, every other concrete response is terminal for this key. A non-2xx may
+        // follow an already-committed external effect; abandoning it would let a retry duplicate it.
+        let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
+        try {
+          storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
+        } catch (error) {
+          if (!(error instanceof IdempotencyResponseTooLargeError)) return await settleThrown(error)
+          // The effect may already have happened, so never abandon and permit a duplicate execution.
+          // Commit a small terminal response under the winning key and return that same response now.
+          response = jsonError(507, "idempotency_response_too_large")
+          try {
+            storedResponse = await serializeResponse(response, {
+              maxBytes: config.maxResponseBytes,
+            })
+          } catch (terminalError) {
+            if (!(terminalError instanceof IdempotencyResponseTooLargeError)) throw terminalError
+            // Even an intentionally tiny bound must remain truthful. An empty 507 preserves terminal
+            // status + replay safety without silently storing more bytes than the route permits.
+            response = new Response(null, { status: 507 })
+            storedResponse = await serializeResponse(response, {
+              maxBytes: config.maxResponseBytes,
+            })
+          }
+        }
         const completed = await config.store.complete({
           namespace,
           key,
           reservation,
-          response: await serializeResponse(terminal, { maxBytes: config.maxResponseBytes }),
+          response: storedResponse,
         })
         if (!completed) {
           return wrapResponse(
             jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
           )
         }
-        return wrapResponse(terminal)
-      }
-      let response: Response
-      try {
-        response = await host.runLanes(buffered, platform, entry, params, search)
-      } catch (err) {
-        return settleThrown(err)
-      }
-      if (!HANDLER_ENTERED.has(buffered) && !requestEffectEvidence(buffered).began) {
-        // Rejected before the handler ran: no execution began, so there is nothing a retry could
-        // duplicate and no result is saved - storing every rejection would let callers who never
-        // pass auth fill the store and lock everyone else out.
-        const abandoned = await config.store.abandon({ namespace, key, reservation })
-        if (!abandoned) {
-          return wrapResponse(
-            jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
-          )
-        }
         return wrapResponse(response)
+      } finally {
+        clearInterval(heartbeat)
       }
-      if (
-        (REFUSALS.has(response.status) ||
-          (response.status >= 500 && requestIsSafeToRetry(buffered))) &&
-        !requestEffectEvidence(buffered).began
-      ) {
-        const abandoned = await config.store.abandon({ namespace, key, reservation })
-        if (!abandoned) {
-          return wrapResponse(
-            jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
-          )
-        }
-        return wrapResponse(response)
-      }
-      // Once the handler ran, every other concrete response is terminal for this key. A non-2xx may
-      // follow an already-committed external effect; abandoning it would let a retry duplicate it.
-      let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
-      try {
-        storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
-      } catch (error) {
-        if (!(error instanceof IdempotencyResponseTooLargeError)) return settleThrown(error)
-        // The effect may already have happened, so never abandon and permit a duplicate execution.
-        // Commit a small terminal response under the winning key and return that same response now.
-        response = jsonError(507, "idempotency_response_too_large")
-        try {
-          storedResponse = await serializeResponse(response, {
-            maxBytes: config.maxResponseBytes,
-          })
-        } catch (terminalError) {
-          if (!(terminalError instanceof IdempotencyResponseTooLargeError)) throw terminalError
-          // Even an intentionally tiny bound must remain truthful. An empty 507 preserves terminal
-          // status + replay safety without silently storing more bytes than the route permits.
-          response = new Response(null, { status: 507 })
-          storedResponse = await serializeResponse(response, {
-            maxBytes: config.maxResponseBytes,
-          })
-        }
-      }
-      const completed = await config.store.complete({
-        namespace,
-        key,
-        reservation,
-        response: storedResponse,
-      })
-      if (!completed) {
-        return wrapResponse(jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }))
-      }
-      return wrapResponse(response)
     },
   }
 }

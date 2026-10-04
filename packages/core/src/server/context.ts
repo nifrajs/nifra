@@ -15,6 +15,12 @@ export interface IdempotencyConfig {
   readonly scope: IdempotencyScope
   /** Retention for the stored response. Default 24h. */
   readonly ttlMs?: number
+  /**
+   * How long a key whose handler is still running stays reserved without a renewal. The server
+   * renews it every third of this while the handler runs, so only a dead process lets it lapse and a
+   * retry waits this long rather than `ttlMs`. Needs a store with `renew()`; default 60s with one.
+   */
+  readonly pendingTtlMs?: number
   /** Store override. Defaults to the server's shared in-memory store; inject a durable store here. */
   readonly store?: IdempotencyStore
   /** Header carrying the key. Default `idempotency-key`. */

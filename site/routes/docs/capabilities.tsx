@@ -258,6 +258,15 @@ export default function Capabilities() {
         like the auth plugins - routes registered before <code>.use(...)</code> are not covered, and{" "}
         <code>nifra check</code> says so rather than assuming.
       </p>
+      <p>
+        A process that dies while its handler runs also leaves the key reserved, and retries get{" "}
+        <code>409</code>. A store that implements <code>renew()</code>, as{" "}
+        <code>MemoryIdempotencyStore</code> does, holds that reservation as a lease of{" "}
+        <code>pendingTtlMs</code> (60 seconds by default) that the server renews every third of it while
+        the handler runs, so the key frees once the lease lapses rather than after <code>ttlMs</code>.
+        A store without <code>renew()</code> keeps the key reserved for <code>ttlMs</code>, and
+        declaring <code>pendingTtlMs</code> on it is a registration error.
+      </p>
 
       <h2>Mounts nifra cannot read</h2>
       <p>

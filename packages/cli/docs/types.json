@@ -3932,6 +3932,13 @@
     "doc": "/** Canonical request header carrying the client-chosen idempotency key. */"
   },
   {
+    "name": "DEFAULT_IDEMPOTENCY_PENDING_TTL_MS",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 60000;",
+    "doc": "/** Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds. */"
+  },
+  {
     "name": "DEFAULT_IDEMPOTENCY_TTL_MS",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -6389,7 +6396,7 @@
     "name": "IdempotencyBeginInput",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface IdempotencyBeginInput extends IdempotencyEntryKey {\n    readonly fingerprint: string;\n    readonly ttlMs: number;\n}"
+    "signature": "export interface IdempotencyBeginInput extends IdempotencyEntryKey {\n    readonly fingerprint: string;\n    /** Retention for the completed response. */\n    readonly ttlMs: number;\n    /**\n     * Lease on a `new` reservation: it lapses after this long unless {@link IdempotencyStore.renew}\n     * extends it, and `complete` then keeps the response for `ttlMs`. Passed only to a store with\n     * `renew`; when absent, the pending reservation holds the key for `ttlMs`.\n     */\n    readonly pendingTtlMs?: number | undefined;\n}"
   },
   {
     "name": "IdempotencyBeginResult",
@@ -6463,6 +6470,12 @@
     "doc": "/** A captured response, replayed verbatim on a retry. Body is base64 (binary-safe + JSON-serializable). */"
   },
   {
+    "name": "IdempotencyRenewInput",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface IdempotencyRenewInput extends IdempotencyEntryKey {\n    /** Opaque ownership token returned by `begin(state:\"new\")`. */\n    readonly reservation: string;\n    /** The new lease, from now. */\n    readonly ttlMs: number;\n}"
+  },
+  {
     "name": "IdempotencyResponseTooLargeError",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -6479,7 +6492,7 @@
     "name": "IdempotencyStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface IdempotencyStore {\n    /**\n     * An honest durability marker. Omit/`memory` for process-local stores; a route declaring\n     * `scope: \"durable\"` rejects anything other than `durable` at registration.\n     */\n    readonly durability?: \"memory\" | \"durable\";\n    /** Reserve one namespaced key. Exactly one concurrent caller may receive `new`. */\n    begin(input: IdempotencyBeginInput): IdempotencyBeginResult | Promise<IdempotencyBeginResult>;\n    /**\n     * Persist the final response only when `reservation` still owns the key. Returns false for a stale\n     * completion (for example after expiry + re-reservation), which prevents an older request from\n     * overwriting a newer result.\n     */\n    complete(input: IdempotencyCompletionInput): boolean | Promise<boolean>;\n    /** Release only the pending reservation owned by `reservation`. */\n    abandon(input: IdempotencyAbandonInput): boolean | Promise<boolean>;\n}",
+    "signature": "export interface IdempotencyStore {\n    /**\n     * An honest durability marker. Omit/`memory` for process-local stores; a route declaring\n     * `scope: \"durable\"` rejects anything other than `durable` at registration.\n     */\n    readonly durability?: \"memory\" | \"durable\";\n    /** Reserve one namespaced key. Exactly one concurrent caller may receive `new`. */\n    begin(input: IdempotencyBeginInput): IdempotencyBeginResult | Promise<IdempotencyBeginResult>;\n    /**\n     * Persist the final response only when `reservation` still owns the key. Returns false for a stale\n     * completion (for example after expiry + re-reservation), which prevents an older request from\n     * overwriting a newer result.\n     */\n    complete(input: IdempotencyCompletionInput): boolean | Promise<boolean>;\n    /** Release only the pending reservation owned by `reservation`. */\n    abandon(input: IdempotencyAbandonInput): boolean | Promise<boolean>;\n    /**\n     * Extend the pending reservation owned by `reservation` to `ttlMs` from now. Returns false when it\n     * is gone, lapsed, or completed. The server calls it while the handler runs, so with it a key\n     * whose process died frees after `pendingTtlMs` instead of `ttlMs`.\n     */\n    renew?(input: IdempotencyRenewInput): boolean | Promise<boolean>;\n}",
     "doc": "/**\n * Storage seam for idempotent responses. `begin` MUST be atomic: for one key, exactly one concurrent\n * caller sees `new`; the rest see `in-flight` (or `replay` once completed). The in-memory store gets\n * this free from the single-threaded event loop; a durable store uses an atomic insert.\n */"
   },
   {
@@ -8176,7 +8189,7 @@
     "name": "MemoryIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly perNamespace;\n    private readonly now;\n    private readonly maxEntries;\n    private readonly maxPerNamespace;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    begin(input: IdempotencyBeginInput): IdempotencyBeginResult;\n    complete(input: IdempotencyCompletionInput): boolean;\n    abandon(input: IdempotencyAbandonInput): boolean;\n    /** Evict expired entries. Callers may run this on an interval; access-time eviction covers the rest. */\n    sweep(): void;\n    /** Live entry count (post-sweep semantics are the caller's; this is a raw size for tests/metrics). */\n    get size(): number;\n    private storageKey;\n    private full;\n    private drop;\n}",
+    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly perNamespace;\n    private readonly now;\n    private readonly maxEntries;\n    private readonly maxPerNamespace;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    begin(input: IdempotencyBeginInput): IdempotencyBeginResult;\n    complete(input: IdempotencyCompletionInput): boolean;\n    abandon(input: IdempotencyAbandonInput): boolean;\n    renew(input: IdempotencyRenewInput): boolean;\n    /** Evict expired entries. Callers may run this on an interval; access-time eviction covers the rest. */\n    sweep(): void;\n    /** Live entry count (post-sweep semantics are the caller's; this is a raw size for tests/metrics). */\n    get size(): number;\n    private storageKey;\n    private full;\n    private drop;\n}",
     "doc": "/**\n * In-process idempotency store. Reservation is atomic by construction - `begin` never awaits, so the\n * single-threaded event loop serializes concurrent callers for one key. Expired entries are treated\n * as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.\n */"
   },
   {

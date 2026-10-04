@@ -2282,6 +2282,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ - `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
   Canonical request header carrying the client-chosen idempotency key.
+- **DEFAULT_IDEMPOTENCY_PENDING_TTL_MS** _(const)_ - `DEFAULT_IDEMPOTENCY_PENDING_TTL_MS: 60000`
+  Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds.
 - **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ - `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
   Default retention for a stored idempotent response: 24 hours.
 - **IDEMPOTENT_REPLAY_HEADER** _(const)_ - `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
@@ -2293,6 +2295,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **IdempotencyCompletionInput** _(interface)_ - `interface IdempotencyCompletionInput`
 - **IdempotencyEntryKey** _(interface)_ - `interface IdempotencyEntryKey`
   Namespaces isolate the same client key across tenants/subjects without putting identity in a header.
+- **IdempotencyRenewInput** _(interface)_ - `interface IdempotencyRenewInput`
 - **IdempotencyResponseTooLargeError** _(class)_ - `class IdempotencyResponseTooLargeError`
 - **IdempotencyScope** _(type)_ - `type IdempotencyScope = "request" | "durable"`
   Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one.

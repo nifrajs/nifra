@@ -5,7 +5,10 @@ import {
   canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   createMemoryIdempotencyStore,
+  DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
   IDEMPOTENT_REPLAY_HEADER,
+  type IdempotencyBeginInput,
+  type IdempotencyStore,
   MemoryIdempotencyStore,
   responseFromStored,
   serializeResponse,
@@ -222,6 +225,31 @@ describe("MemoryIdempotencyStore", () => {
     expect(() => new MemoryIdempotencyStore({ maxEntriesPerNamespace: 0 })).toThrow(
       /maxEntriesPerNamespace/,
     )
+  })
+
+  test("a pending reservation lapses after its lease unless renewed, and completes for ttlMs", () => {
+    let now = 0
+    const store = new MemoryIdempotencyStore({ now: () => now })
+    const input = { namespace: "global", key: "k1", fingerprint: "fp", ttlMs: 1000 }
+    const first = store.begin({ ...input, pendingTtlMs: 100 })
+    if (first.state !== "new") throw new Error("expected a reservation")
+    const owner = { namespace: "global", key: "k1", reservation: first.reservation }
+    now = 80
+    expect(store.renew({ ...owner, ttlMs: 100 })).toBe(true)
+    now = 150
+    expect(store.begin(input).state).toBe("in-flight")
+    now = 181
+    expect(store.renew({ ...owner, ttlMs: 100 })).toBe(false)
+    const second = store.begin({ ...input, pendingTtlMs: 100 })
+    if (second.state !== "new") throw new Error("expected the lapsed key to be reserved again")
+    const response = { status: 200, headers: [], body: "" }
+    expect(store.complete({ ...owner, response })).toBe(false)
+    expect(
+      store.complete({ namespace: "global", key: "k1", reservation: second.reservation, response }),
+    ).toBe(true)
+    expect(store.renew({ ...owner, reservation: second.reservation, ttlMs: 100 })).toBe(false)
+    now = 1100
+    expect(store.begin(input).state).toBe("replay")
   })
 })
 
@@ -887,6 +915,124 @@ describe("server({ idempotency }) - request path", () => {
     expect(replay.status).toBe(507)
     expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(runs).toBe(1)
+  })
+
+  test("a key whose process stopped renewing frees after the pending lease, not the replay TTL", async () => {
+    let now = 1_000_000
+    const store = new MemoryIdempotencyStore({ now: () => now })
+    let runs = 0
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const route = (block: boolean) =>
+      server()
+        .use(idempotency())
+        .post(
+          "/pay",
+          { idempotency: { scope: "request", namespace: "public:pay", store } },
+          async () => {
+            runs++
+            if (block) {
+              entered()
+              await gate
+            }
+            return { ok: true }
+          },
+        )
+    // The first process reserves the key and never gets to renew it, as if it died mid-handler.
+    const stalled = route(true).fetch(post({ amount: 1 }, "crash"))
+    await started
+    const survivor = route(false)
+    expect((await survivor.fetch(post({ amount: 1 }, "crash"))).status).toBe(409)
+    now += DEFAULT_IDEMPOTENCY_PENDING_TTL_MS + 1
+    expect((await survivor.fetch(post({ amount: 1 }, "crash"))).status).toBe(200)
+    expect(runs).toBe(2)
+    release()
+    const late = await stalled
+    expect(late.status).toBe(503)
+    expect(await late.json()).toMatchObject({ error: "idempotency_reservation_lost" })
+  })
+
+  test("the lease is renewed while the handler runs and stops once it settles", async () => {
+    const memory = new MemoryIdempotencyStore()
+    const renewals: number[] = []
+    const store: IdempotencyStore = {
+      begin: (input) => memory.begin(input),
+      complete: (input) => memory.complete(input),
+      abandon: (input) => memory.abandon(input),
+      renew: (input) => {
+        renewals.push(input.ttlMs)
+        return memory.renew(input)
+      },
+    }
+    let runs = 0
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        { idempotency: { scope: "request", namespace: "public:pay", store, pendingTtlMs: 90 } },
+        async () => {
+          runs++
+          entered()
+          await new Promise((resolve) => setTimeout(resolve, 300))
+          return { ok: true }
+        },
+      )
+    const first = app.fetch(post({ amount: 1 }, "slow"))
+    await started
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    // Past the 90ms lease: only the renewals keep a duplicate from running the handler again.
+    expect((await app.fetch(post({ amount: 1 }, "slow"))).status).toBe(409)
+    expect((await first).status).toBe(200)
+    expect(runs).toBe(1)
+    expect(renewals.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(renewals)).toEqual(new Set([90]))
+    const settled = renewals.length
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(renewals.length).toBe(settled)
+  })
+
+  test("a store without renew() holds a pending key for ttlMs, and pendingTtlMs on it is refused", async () => {
+    const memory = new MemoryIdempotencyStore()
+    const begun: IdempotencyBeginInput[] = []
+    const store: IdempotencyStore = {
+      begin: (input) => {
+        begun.push(input)
+        return memory.begin(input)
+      },
+      complete: (input) => memory.complete(input),
+      abandon: (input) => memory.abandon(input),
+    }
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay", store } }, () => ({
+        ok: true,
+      }))
+    expect((await app.fetch(post({ amount: 1 }, "plain"))).status).toBe(200)
+    expect(begun[0]?.pendingTtlMs).toBeUndefined()
+    const declare = (pendingTtlMs: number, target: IdempotencyStore) => () =>
+      server()
+        .use(idempotency())
+        .post(
+          "/pay",
+          {
+            idempotency: { scope: "request", namespace: "public:pay", store: target, pendingTtlMs },
+          },
+          () => ({ ok: true }),
+        )
+    expect(declare(30_000, store)).toThrow(/pendingTtlMs .* on a store that implements renew\(\)/)
+    expect(declare(0, memory)).toThrow(/pendingTtlMs must be a positive integer/)
+    expect(declare(1.5, memory)).toThrow(/pendingTtlMs must be a positive integer/)
+    expect(declare(30_000, memory)).not.toThrow()
   })
 
   test("an injected store receives the completed response", async () => {

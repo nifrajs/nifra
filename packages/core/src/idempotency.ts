@@ -16,6 +16,9 @@ export type IdempotencyScope = "request" | "durable"
 /** Default retention for a stored idempotent response: 24 hours. */
 export const DEFAULT_IDEMPOTENCY_TTL_MS = 86_400_000
 
+/** Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds. */
+export const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 60_000
+
 /** Canonical request header carrying the client-chosen idempotency key. */
 export const DEFAULT_IDEMPOTENCY_HEADER = "idempotency-key"
 
@@ -80,7 +83,14 @@ export interface IdempotencyEntryKey {
 
 export interface IdempotencyBeginInput extends IdempotencyEntryKey {
   readonly fingerprint: string
+  /** Retention for the completed response. */
   readonly ttlMs: number
+  /**
+   * Lease on a `new` reservation: it lapses after this long unless {@link IdempotencyStore.renew}
+   * extends it, and `complete` then keeps the response for `ttlMs`. Passed only to a store with
+   * `renew`; when absent, the pending reservation holds the key for `ttlMs`.
+   */
+  readonly pendingTtlMs?: number | undefined
 }
 
 export interface IdempotencyCompletionInput extends IdempotencyEntryKey {
@@ -92,6 +102,13 @@ export interface IdempotencyCompletionInput extends IdempotencyEntryKey {
 export interface IdempotencyAbandonInput extends IdempotencyEntryKey {
   /** Opaque ownership token returned by `begin(state:"new")`. */
   readonly reservation: string
+}
+
+export interface IdempotencyRenewInput extends IdempotencyEntryKey {
+  /** Opaque ownership token returned by `begin(state:"new")`. */
+  readonly reservation: string
+  /** The new lease, from now. */
+  readonly ttlMs: number
 }
 
 /**
@@ -115,6 +132,12 @@ export interface IdempotencyStore {
   complete(input: IdempotencyCompletionInput): boolean | Promise<boolean>
   /** Release only the pending reservation owned by `reservation`. */
   abandon(input: IdempotencyAbandonInput): boolean | Promise<boolean>
+  /**
+   * Extend the pending reservation owned by `reservation` to `ttlMs` from now. Returns false when it
+   * is gone, lapsed, or completed. The server calls it while the handler runs, so with it a key
+   * whose process died frees after `pendingTtlMs` instead of `ttlMs`.
+   */
+  renew?(input: IdempotencyRenewInput): boolean | Promise<boolean>
 }
 
 /** A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else. */
@@ -377,7 +400,7 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
       fingerprint: input.fingerprint,
       reservation,
       ttlMs: input.ttlMs,
-      expiresAt: this.now() + input.ttlMs,
+      expiresAt: this.now() + (input.pendingTtlMs ?? input.ttlMs),
       response: undefined,
     })
     return { state: "new", reservation }
@@ -413,6 +436,19 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
       return true
     }
     return false
+  }
+
+  renew(input: IdempotencyRenewInput): boolean {
+    const entry = this.entries.get(this.storageKey(input))
+    if (
+      entry?.reservation !== input.reservation ||
+      entry.response !== undefined ||
+      entry.expiresAt <= this.now()
+    ) {
+      return false
+    }
+    entry.expiresAt = this.now() + input.ttlMs
+    return true
   }
 
   /** Evict expired entries. Callers may run this on an interval; access-time eviction covers the rest. */

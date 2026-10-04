@@ -4179,6 +4179,14 @@ survives that, so it is what clears the `durable` tier. The adapter is order-sco
 like the auth plugins - routes registered before `.use(...)` are not covered, and
 `nifra check` says so rather than assuming.
 
+A process that dies while its handler runs also leaves the key reserved, and retries get
+`409`. A store that implements `renew()`, as
+`MemoryIdempotencyStore` does, holds that reservation as a lease of
+`pendingTtlMs` (60 seconds by default) that the server renews every third of it while
+the handler runs, so the key frees once the lease lapses rather than after `ttlMs`.
+A store without `renew()` keeps the key reserved for `ttlMs`, and
+declaring `pendingTtlMs` on it is a registration error.
+
 ### Mounts nifra cannot read
 
 `mount()` and `mountFetch()` hand requests to code that route reflection
