@@ -37,7 +37,8 @@ class MemoryDurableObjectStorage implements DurableObjectStorage {
     const entries = [...this.values.entries()]
       .filter(([key]) => options.prefix === undefined || key.startsWith(options.prefix))
       .filter(([key]) => options.startAfter === undefined || key > options.startAfter)
-      .sort(([a], [b]) => a.localeCompare(b))
+      // Durable Object storage lists keys in byte order.
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .slice(0, options.limit)
     return new Map(entries) as Map<string, T>
   }
@@ -349,6 +350,45 @@ describe("durable execution adapter conformance", () => {
     ).toBe(true)
     expect(await backend.releaseLease({ name: "worker", owner: "a", token })).toBe(true)
   }
+
+  // Following the cursor page by page must return every matching record exactly once, across page
+  // boundaries and mixed-case ids alike.
+  async function walksEveryRecordOnce(backend: DurableRecordBackend): Promise<void> {
+    const ids = ["a", "B", "c", "D", "e", "F", "g"]
+    for (const id of ids) {
+      const record = { effectId: id, version: 1, state: id === "D" ? "admission" : "executing" }
+      expect(await backend.create("effect", id, { ...record, updatedAt: 1 })).toBe(true)
+    }
+    for (const limit of [1, 2, 3]) {
+      const seen: string[] = []
+      let cursor: string | undefined
+      type Row = { readonly effectId: string; readonly state: string; readonly updatedAt: number }
+      for (let pages = 0; pages < 20; pages++) {
+        const states = ["executing"]
+        const page =
+          cursor === undefined
+            ? await backend.scan<Row>("effect", { states, limit })
+            : await backend.scan<Row>("effect", { states, limit, cursor })
+        seen.push(...page.records.map((record) => record.effectId))
+        cursor = page.cursor
+        if (cursor === undefined) break
+      }
+      expect(seen.sort()).toEqual(["B", "F", "a", "c", "e", "g"])
+    }
+  }
+
+  test("every record backend's scan cursor walks each matching record once", async () => {
+    await walksEveryRecordOnce(new MemoryDurableRecordBackend())
+    await walksEveryRecordOnce(new DurableObjectRecordBackend(new MemoryDurableObjectStorage()))
+    const db = new Database(":memory:")
+    try {
+      const backend = new SQLiteDurableRecordBackend(db)
+      backend.migrate()
+      await walksEveryRecordOnce(backend)
+    } finally {
+      db.close()
+    }
+  })
 
   test("SQLite record backend covers scan pagination and the lease lifecycle", async () => {
     const db = new Database(":memory:")

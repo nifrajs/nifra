@@ -222,7 +222,8 @@ export class MemoryDurableRecordBackend implements DurableRecordBackend {
         if (!key.startsWith(prefix) || !input.states.includes(value.state ?? "")) return false
         return input.updatedBefore === undefined || (value.updatedAt ?? 0) <= input.updatedBefore
       })
-      .sort(([a], [b]) => a.localeCompare(b))
+      // Code-unit order, the order the cursor comparison below uses (and SQLite's BINARY collation).
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .filter(([key]) => input.cursor === undefined || key > prefix + input.cursor)
     const page = records.slice(0, input.limit)
     return Object.freeze({
@@ -914,11 +915,19 @@ export class DurableObjectRecordBackend implements DurableRecordBackend {
       }
       if (selected.length > input.limit) break
     }
-    const hasMore = selected.length > input.limit || listed.size > input.limit
     const page = selected.slice(0, input.limit)
+    // A full page resumes after its own last record: the matching record that overflowed it was
+    // visited but not returned, so the cursor must not pass it. Otherwise every listed key was
+    // returned or filtered out, and the next page starts after the last one visited.
+    const cursor =
+      selected.length > input.limit
+        ? page.at(-1)?.id
+        : listed.size > input.limit
+          ? lastVisited
+          : undefined
     return Object.freeze({
       records: Object.freeze(page.map(({ record }) => clone(record))),
-      ...(hasMore && lastVisited !== undefined ? { cursor: lastVisited } : {}),
+      ...(cursor === undefined ? {} : { cursor }),
     })
   }
   async acquireLease(
