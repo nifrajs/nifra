@@ -364,6 +364,49 @@ describe("run (argv → code + message)", () => {
     expect(message).toMatch(/already exists/)
   })
 
+  test.each([
+    ["api"],
+    ["site"],
+  ])("%s into a directory with files of its own → refused, and none of its files replaced", async (template) => {
+    const dir = await freshDir(`occupied-${template}`)
+    await mkdir(join(dir, ".github"), { recursive: true })
+    const mine: Record<string, string> = {
+      ".gitignore": "mine\n",
+      "AGENTS.md": "mine\n",
+      "CLAUDE.md": "mine\n",
+      ".mcp.json": "{}\n",
+      ".github/copilot-instructions.md": "mine\n",
+    }
+    for (const [file, contents] of Object.entries(mine)) await writeFile(join(dir, file), contents)
+    const { code, message } = await run([dir, "--template", template])
+    expect(code).toBe(1)
+    expect(message).toMatch(/already exists/)
+    for (const [file, contents] of Object.entries(mine)) {
+      expect(await readFile(join(dir, file), "utf8")).toBe(contents)
+    }
+    expect(await exists(join(dir, "package.json"))).toBe(false)
+  })
+
+  test("an existing empty directory is scaffolded without --force", async () => {
+    const dir = await freshDir("empty")
+    await mkdir(dir, { recursive: true })
+    await scaffold({ target: dir, template: "api" })
+    expect(await exists(join(dir, "package.json"))).toBe(true)
+  })
+
+  test('"." names the project after the directory it is run in', async () => {
+    const dir = await freshDir("here-app")
+    await mkdir(dir, { recursive: true })
+    const previous = process.cwd()
+    process.chdir(dir)
+    try {
+      expect((await run([".", "--force"])).code).toBe(0)
+    } finally {
+      process.chdir(previous)
+    }
+    expect(JSON.parse(await readFile(join(dir, "package.json"), "utf8")).name).toBe("here-app")
+  })
+
   test("unknown deploy target → error, code 1", async () => {
     const dir = await freshDir("run-bad")
     const { code, message } = await run([dir, "--target", "heroku"])

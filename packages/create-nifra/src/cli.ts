@@ -13,7 +13,7 @@
  * only that target's config and scripts. Refuses to overwrite.
  */
 import { realpathSync } from "node:fs"
-import { cp, mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { cp, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { AGENT_POINTERS, CURSOR_MCP_JSON_PATH, MCP_JSON_PATH, mcpJson } from "./agent-files.ts"
@@ -224,7 +224,8 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // them aborts a scaffold npm would have accepted. Still narrow, because the name is substituted into
   // deploy scripts (`--name NAME`) that a shell runs - hence no metacharacters, no whitespace, and no
   // leading `-` to be read as a flag.
-  const name = basename(opts.target)
+  // Resolved first, so `bun create nifra . --force` names the project after the directory it is in.
+  const name = basename(resolve(opts.target))
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.length > 214) {
     throw new Error(
       `invalid project name ${JSON.stringify(name)}: use letters, digits, "-", "_", and "." ` +
@@ -306,6 +307,13 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     auth = opts.auth as AuthChoice
   }
 
+  // An occupied destination is refused before the first write. The template copy alone would refuse
+  // only a colliding template file, and every file written after it (.gitignore, AGENTS.md, the agent
+  // and MCP configs) would still replace one of the user's.
+  if (opts.force !== true && (await readdir(opts.target).catch(() => [])).length > 0) {
+    throw new Error(`"${opts.target}" already exists and is not empty`)
+  }
+
   // The site scaffold is COMPOSED rather than copied: thirteen of its files are identical whatever you
   // render with, eight are emitted from the framework model, and five are the framework's own. The
   // other templates are still a plain copy - they have no framework axis to collapse.
@@ -320,10 +328,9 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     })
   } else {
     const templateDir = fileURLToPath(new URL(TEMPLATES[template], import.meta.url))
-    await cp(templateDir, opts.target, {
-      recursive: true,
-      ...(opts.force ? { force: true } : { errorOnExist: true, force: false }),
-    })
+    // The destination is empty or --force was given (checked above), so nothing here replaces a file of
+    // the user's; Bun's errorOnExist would also refuse an existing empty directory.
+    await cp(templateDir, opts.target, { recursive: true, force: true })
     if (template === "isr") {
       for (const [file, contents] of starterRouteTypes("tsx")) {
         await mkdir(dirname(join(opts.target, file)), { recursive: true })
