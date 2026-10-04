@@ -1,0 +1,9 @@
+# Read by the CI osv job, which scans ./bun.lock and loads the config beside it.
+
+# braces is reached only through @changesets/cli, the monorepo's release tooling, which expands this
+# repository's own glob patterns. No published package depends on it, and no braces release outside
+# the affected range exists yet. The entry lapses so the advisory is looked at again.
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2027-01-04T00:00:00Z
+reason = "Dev-only, via @changesets/cli on repository-controlled globs; no fixed braces release exists."
