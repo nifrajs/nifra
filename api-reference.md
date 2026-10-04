@@ -6120,7 +6120,7 @@ _No named exports (side-effect entrypoint)._
 
 - **AuthSession** _(interface)_ - `interface AuthSession`
 - **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode`
-  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads.
+  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new `initialSession` (a loader re-run on navigation) replaces the session, as a remount would.
 - **AuthSessionProviderProps** _(interface)_ - `interface AuthSessionProviderProps`
 - **AuthStatus** _(type)_ - `type AuthStatus = "loading" | "authenticated" | "unauthenticated"`
 - **Session** _(interface)_ - `interface Session`

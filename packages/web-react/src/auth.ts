@@ -44,17 +44,23 @@ export interface AuthSessionProviderProps {
   readonly children?: ReactNode
 }
 
-/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. */
+function seededStatus(seed: Session | null | undefined): AuthStatus {
+  return seed === undefined ? "loading" : seed === null ? "unauthenticated" : "authenticated"
+}
+
+/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new
+ * `initialSession` (a loader re-run on navigation) replaces the session, as a remount would. */
 export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode {
   const client = useMemo(() => props.client ?? createAuthClient(), [props.client])
-  const [status, setStatus] = useState<AuthStatus>(
-    props.initialSession === undefined
-      ? "loading"
-      : props.initialSession === null
-        ? "unauthenticated"
-        : "authenticated",
-  )
+  const [seed, setSeed] = useState(props.initialSession)
+  const [status, setStatus] = useState<AuthStatus>(seededStatus(props.initialSession))
   const [session, setSession] = useState<Session | null>(props.initialSession ?? null)
+  if (seed !== props.initialSession) {
+    // A render-phase update: React re-runs this component before any child sees the old session.
+    setSeed(props.initialSession)
+    setStatus(seededStatus(props.initialSession))
+    setSession(props.initialSession ?? null)
+  }
   const refresh = useMemo(() => {
     return async (): Promise<void> => {
       try {

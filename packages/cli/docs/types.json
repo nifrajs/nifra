@@ -1848,7 +1848,7 @@
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode;",
-    "doc": "/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. */"
+    "doc": "/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new\n * `initialSession` (a loader re-run on navigation) replaces the session, as a remount would. */"
   },
   {
     "name": "AuthSessionProviderProps",
