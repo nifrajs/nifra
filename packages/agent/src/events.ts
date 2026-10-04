@@ -123,6 +123,23 @@ export interface AgentEvidenceLog {
   ): AgentEvidenceReplay | undefined | Promise<AgentEvidenceReplay | undefined>
 }
 
+/**
+ * A view of `log` holding one owner's turns: every turn id is recorded and replayed under `owner`
+ * (the caller's user or tenant id), so another owner's reconnect or reused turn id finds none of
+ * them. The HTTP seams apply it per request through their `evidenceOwner` option.
+ */
+export function scopeAgentEvidenceLog(log: AgentEvidenceLog, owner: string): AgentEvidenceLog {
+  if (typeof owner !== "string" || owner === "")
+    throw new TypeError("agent evidence log: owner must be a non-empty string")
+  // Turn ids never contain "/", and the encoded owner never does either, so keys cannot collide.
+  const prefix = `${encodeURIComponent(owner)}/`
+  return {
+    open: (turnId) => log.open(prefix + turnId),
+    finish: (turnId, result) => log.finish(prefix + turnId, result),
+    replay: (turnId, afterSeq) => log.replay(prefix + turnId, afterSeq),
+  }
+}
+
 export interface MemoryAgentEvidenceLogOptions {
   /** Maximum retained turns; the oldest turn is evicted when a new one opens. Default 256. */
   readonly maxTurns?: number

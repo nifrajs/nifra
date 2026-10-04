@@ -125,6 +125,11 @@ mountAgUI(app, { agent, ports, evidenceLog: createMemoryAgentEvidenceLog() })
 The in-memory log is the single-process dev/test reference; a durable, multi-process log is an
 adapter implementing the same `AgentEvidenceLog` interface.
 
+When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
+tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
+reused `runId` finds none of them. Without it a turn id (by default the client's `runId`) works as a
+bearer capability. The owner function runs before any replay; throwing from it refuses the request.
+
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 
 ## Docs

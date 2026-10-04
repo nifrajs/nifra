@@ -19,7 +19,9 @@
  *   evidence and rejoin the still-running turn (or receive the stored terminal frame) - the run is
  *   never re-executed. Without the log the header is ignored and every POST starts a run.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards, and
- *   scope the store/model returned by `ports` to the caller (RLS born in at the data layer).
+ *   scope the store/model returned by `ports` to the caller (RLS born in at the data layer). With an
+ *   `evidenceLog`, set `evidenceOwner` too: without it a turn id is a bearer capability, and any
+ *   caller who reaches the route with it replays that turn's evidence.
  */
 
 import {
@@ -35,6 +37,7 @@ import {
   type AgentEvidenceLog,
   type AgentEvidenceReplay,
   createAgentEvidenceStream,
+  scopeAgentEvidenceLog,
 } from "./events.ts"
 import {
   type AgentDefinition,
@@ -52,6 +55,7 @@ const DEFAULT_PATH = "/agent"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const LAST_EVENT_ID_PATTERN = /^\d{1,15}$/
+const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 
 /** The structural slice of a route context the seam needs. Kept loose so core stays a peer dependency. */
 export interface AgentRouteContext {
@@ -86,6 +90,12 @@ export interface MountAgentOptions<
    * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.
    */
   readonly evidenceLog?: AgentEvidenceLog
+  /**
+   * Who a turn's recorded evidence belongs to - the caller's user or tenant id. Turns are recorded and
+   * replayed under it, so a reconnect or a reused `turnId` from another caller finds nothing of this
+   * caller's turns. It runs before a replay is served; throw to refuse the request.
+   */
+  readonly evidenceOwner?: (c: AgentRouteContext) => string | Promise<string>
 }
 
 /** Mount a single agent as `POST {path}`, negotiating an SSE evidence stream on `Accept`. */
@@ -120,10 +130,15 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   if (body === undefined) return jsonResponse(400, { error: "body_must_be_object" })
 
   const turnIdRaw = typeof body.turnId === "string" ? body.turnId : undefined
+  if (turnIdRaw !== undefined && !TURN_ID_PATTERN.test(turnIdRaw))
+    return jsonResponse(400, { error: "invalid_turn_id" })
   const turnId = turnIdRaw ?? crypto.randomUUID()
 
   const resume = parseResume(body.resume)
-  const log = options.evidenceLog
+  const log =
+    options.evidenceLog === undefined || options.evidenceOwner === undefined
+      ? options.evidenceLog
+      : scopeAgentEvidenceLog(options.evidenceLog, await options.evidenceOwner(c))
   const wantsSse = (c.req.headers.get("accept") ?? "").includes("text/event-stream")
 
   // A reconnect replays recorded evidence and rejoins the turn; it never starts a second run.

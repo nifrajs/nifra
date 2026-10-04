@@ -248,6 +248,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Create an async iterable that yields the exact evidence values received by `step`.
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog`
   In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by construction: replay only sees runs recorded by this instance. Retention is bounded by `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports replay-unavailable rather than grow…
+- **scopeAgentEvidenceLog** _(function)_ - `scopeAgentEvidenceLog: (log: AgentEvidenceLog, owner: string) => AgentEvidenceLog`
+  A view of `log` holding one owner's turns: every turn id is recorded and replayed under `owner` (the caller's user or tenant id), so another owner's reconnect or reused turn id finds none of them. The HTTP seams apply it per request through their `evidenceOwner` option.
 
 ### `@nifrajs/agent/mount`
 

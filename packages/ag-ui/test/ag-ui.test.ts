@@ -514,6 +514,37 @@ describe("mountAgUI resumable streams", () => {
     const malformed = await call(replayInput({ "last-event-id": "nope" }))
     expect(malformed.status).toBe(400)
   })
+
+  test("evidenceOwner keeps one caller's recorded turns out of another caller's replay and rerun", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: (c) =>
+        ports({ model: outputModel({ answer: `for ${c.req.headers.get("x-user")}` }) })(c),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      evidenceOwner: (c) => {
+        const user = c.req.headers.get("x-user")
+        if (user === null) throw new Error("unauthenticated")
+        return user
+      },
+    })
+    const results = async (res: Response): Promise<unknown[]> =>
+      (await events(res)).filter((e) => e.type === "RUN_FINISHED").map((e) => e.result)
+
+    expect(await results(await call(replayInput({ "x-user": "alice" })))).toEqual([
+      { answer: "for alice" },
+    ])
+    // Another caller's reconnect finds no turn; a refused owner stops the request before any replay.
+    expect((await call(replayInput({ "x-user": "bob", "last-event-id": "0" }))).status).toBe(409)
+    expect((await call(replayInput({ "last-event-id": "0" }))).status).toBe(400)
+    // Another caller reusing the run id records a turn of its own; the owner's replay is unchanged.
+    expect(await results(await call(replayInput({ "x-user": "bob" })))).toEqual([
+      { answer: "for bob" },
+    ])
+    expect(
+      await results(await call(replayInput({ "x-user": "alice", "last-event-id": "0" }))),
+    ).toEqual([{ answer: "for alice" }])
+  })
 })
 
 describe("mountAgUI model deltas", () => {

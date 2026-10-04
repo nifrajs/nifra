@@ -54,7 +54,9 @@
  *   missed events and rejoin the still-running turn - the run is never re-executed. Without the
  *   log the header is ignored and every POST starts a run.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards,
- *   and scope the store/model returned by `ports` to the caller.
+ *   and scope the store/model returned by `ports` to the caller. With an `evidenceLog`, set
+ *   `evidenceOwner` too: without it a turn id (by default the client's `runId`) is a bearer
+ *   capability, and any caller who reaches the route with it replays that turn's events.
  */
 
 import {
@@ -78,6 +80,7 @@ import {
   type AgentEvidenceLog,
   type AgentEvidenceReplay,
   createAgentEvidenceStream,
+  scopeAgentEvidenceLog,
 } from "@nifrajs/agent/events"
 import {
   EMPTY_RESPONSE_CONTROLS,
@@ -145,6 +148,12 @@ export interface MountAgUIOptions<
    */
   readonly evidenceLog?: AgentEvidenceLog
   /**
+   * Who a turn's recorded events belong to - the caller's user or tenant id. Turns are recorded and
+   * replayed under it, so a reconnect or a reused run id from another caller finds nothing of this
+   * caller's turns. It runs before a replay is served; throw to refuse the request.
+   */
+  readonly evidenceOwner?: (c: AgUIRouteContext) => string | Promise<string>
+  /**
    * Emit a `MESSAGES_SNAPSHOT` (the request's `messages` plus the assistant output message)
    * before `RUN_FINISHED` on a successful completion. Default `false`: the snapshot echoes
    * client-sent message payloads, and terminal events are persisted to the evidence log when one
@@ -202,7 +211,10 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
   const resume = parseResume(forwarded.resume) ?? entry?.resume
-  const log = options.evidenceLog
+  const log =
+    options.evidenceLog === undefined || options.evidenceOwner === undefined
+      ? options.evidenceLog
+      : scopeAgentEvidenceLog(options.evidenceLog, await options.evidenceOwner(c))
   const identity: RunIdentity = { threadId, runId, turnId }
 
   // A reconnect replays recorded evidence and rejoins the turn; it never starts a second run.
@@ -513,7 +525,7 @@ function createDeltaProjector(send: SseSend, turnId: string): DeltaProjector {
       // across model decisions without disturbing whichever stream is open.
       if (delta.kind === "usage") {
         usage = usage ?? new Map()
-        const key = `${delta.provider ?? ""} ${delta.model ?? ""}`
+        const key = `${delta.provider ?? ""}\u0000${delta.model ?? ""}`
         let entry = usage.get(key)
         if (entry === undefined) {
           entry = {

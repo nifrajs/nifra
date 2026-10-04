@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { createAgentEvidenceStream, createMemoryAgentEvidenceLog } from "../src/events.ts"
+import {
+  createAgentEvidenceStream,
+  createMemoryAgentEvidenceLog,
+  scopeAgentEvidenceLog,
+} from "../src/events.ts"
 import type { AgentStepEvidence } from "../src/index.ts"
 
 const evidence = (seq: number): AgentStepEvidence => ({
@@ -39,6 +43,19 @@ describe("agent evidence stream", () => {
 })
 
 describe("memory agent evidence log", () => {
+  test("a scoped view keeps each owner's turns apart, whatever the owner spells", async () => {
+    const log = createMemoryAgentEvidenceLog()
+    const alice = scopeAgentEvidenceLog(log, "alice")
+    await alice.open("turn-1").step(evidence(1))
+    await alice.finish("turn-1", "alice's")
+
+    expect(await scopeAgentEvidenceLog(log, "bob").replay("turn-1", 0)).toBeUndefined()
+    expect(await scopeAgentEvidenceLog(log, "alice/turn-1").replay("turn-1", 0)).toBeUndefined()
+    expect(await log.replay("turn-1", 0)).toBeUndefined()
+    expect(await (await alice.replay("turn-1", 0))?.result).toBe("alice's")
+    expect(() => scopeAgentEvidenceLog(log, "")).toThrow(TypeError)
+  })
+
   test("replays evidence after a seq cursor and resolves the stored result", async () => {
     const log = createMemoryAgentEvidenceLog()
     const port = log.open("turn-1")

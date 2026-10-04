@@ -71,6 +71,10 @@ or replaying the stored terminal frame - the run is never re-executed.
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.
+When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
+tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
+reused `turnId` finds none of them. Without it a turn id works as a bearer capability. The owner
+function runs before any replay; throwing from it refuses the request.
 
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
