@@ -108,7 +108,8 @@ function codeFor(
     typeof configured === "function"
       ? configured(error, began)
       : (configured ?? (began ? "execution_failed" : "admission_failed"))
-  if (!ERROR_CODE.test(code)) throw new TypeError("effect errorCode is invalid")
+  if (typeof code !== "string" || !ERROR_CODE.test(code))
+    throw new TypeError("effect errorCode is invalid")
   return code
 }
 

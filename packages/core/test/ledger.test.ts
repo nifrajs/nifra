@@ -65,6 +65,29 @@ describe("createRequestLedger - mechanics", () => {
     ).toThrow(/clock/)
   })
 
+  test("a token field holding a row, a number, or an array is rejected, not stored", () => {
+    const ledger = createRequestLedger(ledgerOptions)
+    // Input as an `any`-typed source (a driver row, parsed JSON) hands it over: no compile-time check.
+    const untyped = (value: unknown): Parameters<typeof ledger.append>[0] =>
+      JSON.parse(JSON.stringify(value))
+    const row = { id: 7, email: "user@example.com" }
+    expect(() => ledger.append(untyped({ capability: "db.write", target: row }))).toThrow(/target/)
+    expect(() => ledger.append(untyped({ capability: "db.write", effectId: 42 }))).toThrow(
+      /effectId/,
+    )
+    expect(() =>
+      ledger.append(untyped({ capability: "db.write", digest: ["a".repeat(64)] })),
+    ).toThrow(/digest/)
+    expect(() => ledger.append(untyped({ capability: ["db.write"] }))).toThrow(/capability/)
+    expect(() => ledger.append(untyped({ capability: "db.write", error: {} }))).toThrow(
+      /error code/,
+    )
+    expect(() =>
+      ledger.append(untyped({ capability: "db.write", error: "card declined" })),
+    ).toThrow(/error code/)
+    expect(ledger.size).toBe(0)
+  })
+
   test("validates cost axes: bounded count, token keys, finite non-negative values", () => {
     const ledger = createRequestLedger(ledgerOptions)
     const entry = ledger.append({ capability: "db.write", cost: { ms: 12.5, calls: 1 } })
@@ -209,6 +232,30 @@ describe("memory sink + digest", () => {
 
 describe("server({ effectLedger }) - request path", () => {
   const post = (path: string): Request => new Request(`http://test${path}`, { method: "POST" })
+
+  test("a row passed as a target fails the effect and never reaches the sink or an interceptor", async () => {
+    const memory = createMemoryLedgerSink()
+    let intercepted = false
+    const row = JSON.parse('{"id":7,"email":"user@example.com"}')
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async (_event, next) => {
+        intercepted = true
+        await next()
+      })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/write", { capabilities: ["db.write"] }, (c) => {
+        useCapability(c, "db.write", { target: row })
+        return { ok: true }
+      })
+      .post("/pay", { capabilities: ["db.write"] }, (c) =>
+        executeCapability(c, "db.write", { target: row }, async () => ({ ok: true })),
+      )
+
+    expect((await app.fetch(post("/write"))).status).toBe(500)
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(intercepted).toBe(false)
+    expect(JSON.stringify(memory.ledgers)).not.toContain("user@example.com")
+  })
 
   test("executeCapability correlates one intent with its automatic terminal outcome", async () => {
     const memory = createMemoryLedgerSink()
