@@ -231,6 +231,15 @@ describe("@nifrajs/node WebSockets", () => {
     // (this real-socket pub/sub test occasionally exceeded the default 5s under parallel load).
   }, 15000)
 
+  test("an upgrade naming a host outside allowedHosts is refused before any route runs", async () => {
+    running = await serve(makeApp(), {
+      hostname: "127.0.0.1",
+      port: 0,
+      allowedHosts: ["app.example.test"],
+    })
+    expect(await rawUpgradeStatus(running.port, "/echo")).toBe(400)
+  })
+
   test("an upgrade to a path with no WS route is rejected (404, never opens)", async () => {
     running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     const outcome = await new Promise<string>((resolve) => {
