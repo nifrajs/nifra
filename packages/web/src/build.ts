@@ -500,10 +500,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
         // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
         // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
         // the build mode (React's prod/dev branch); each PUBLIC_* var resolves to its baked VALUE; every
-        // other `process.env.X` becomes undefined (the bare `process.env` → `({})` fallback - so secrets
-        // never leak). Callers can override any of these via `options.define` (layered last).
+        // other `process.env.X` becomes undefined (the bare `process.env` → `{}` fallback - so secrets
+        // never leak). Callers can override any of these via `options.define` (layered last). The value
+        // must be JSON: Bun inlines anything else (`({})`) as a string literal.
         define: {
-          "process.env": "({})",
+          "process.env": "{}",
           "process.env.NODE_ENV": JSON.stringify(mode),
           ...publicDefines,
           ...options.define,

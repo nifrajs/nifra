@@ -117,7 +117,11 @@ test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a se
     join(lib, "package.json"),
     '{ "name": "env-reader", "type": "module", "main": "index.js" }',
   )
-  writeFileSync(join(lib, "index.js"), "export const secret = process.env.SECRET_E2E_KEY\n")
+  writeFileSync(
+    join(lib, "index.js"),
+    "export const secret = process.env.SECRET_E2E_KEY\n" +
+      'export const declared = "SECRET_E2E_KEY" in process.env\n',
+  )
   writeFileSync(
     join(routesDir, "index.tsx"),
     "export default function Index() { return null }\n" +
@@ -139,4 +143,6 @@ test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a se
   }
   expect(bundle).toContain("https://e2e.example.com/api") // PUBLIC_ value baked into the client
   expect(bundle).not.toContain("sk_live_e2e_must_not_leak") // secret never reaches the bundle
+  // The bare `process.env` is an empty object, not a string `"X" in` would throw on.
+  expect(bundle).toContain('"SECRET_E2E_KEY" in {}')
 })
