@@ -803,7 +803,14 @@ function parseSqlSource(
   content: string,
 ): TSApi.SourceFile | undefined {
   const kind = /\.[cm]?tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+  let source: TSApi.SourceFile
+  try {
+    source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+  } catch {
+    // TypeScript 7 parses only the files its session preloaded; an imported module outside that set
+    // proves no constant, like one that does not parse.
+    return undefined
+  }
   const parseDiagnostics = (
     source as TSApi.SourceFile & { readonly parseDiagnostics?: readonly TSApi.Diagnostic[] }
   ).parseDiagnostics

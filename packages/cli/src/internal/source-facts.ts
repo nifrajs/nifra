@@ -81,11 +81,18 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     const cached = cache.get(file)
     if (cached?.content === content) return cached.source
     const kind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-    const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
-    const diagnostics = (
-      source as TSApi.SourceFile & { parseDiagnostics?: readonly TSApi.Diagnostic[] }
-    ).parseDiagnostics
-    const parsed = diagnostics !== undefined && diagnostics.length > 0 ? undefined : source
+    let parsed: TSApi.SourceFile | undefined
+    try {
+      const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+      const diagnostics = (
+        source as TSApi.SourceFile & { parseDiagnostics?: readonly TSApi.Diagnostic[] }
+      ).parseDiagnostics
+      parsed = diagnostics !== undefined && diagnostics.length > 0 ? undefined : source
+    } catch {
+      // TypeScript 7 parses only the files its session preloaded; a module reached by following an
+      // import may not be one. Callers fall back to the lexical rule for a file with no tree.
+      parsed = undefined
+    }
     cache.set(file, { content, source: parsed })
     return parsed
   }

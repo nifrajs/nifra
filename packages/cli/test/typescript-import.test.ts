@@ -279,3 +279,35 @@ test("runs the project TypeScript 7 typecheck instead of the CLI compiler", asyn
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("the TypeScript 7 check follows imports into modules outside its scanned set", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-ts7-imports-"))
+  try {
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "app" }))
+    await installTypeScriptPackage(root, "typescript7")
+    await mkdir(join(root, "frontend"), { recursive: true })
+    await mkdir(join(root, "backend"), { recursive: true })
+    const files: Record<string, string> = {
+      "frontend/widget.ts": 'import { help } from "./helper.js"\nexport const w = help()\n',
+      "frontend/helper.js":
+        'import { readFileSync } from "node:fs"\nexport const help = () => readFileSync\n',
+      "backend/tables.js":
+        'import { prefix } from "./prefix.js"\nexport const TABLE = `${prefix}users`\n',
+      "backend/prefix.js": 'export const prefix = "app_"\n',
+      "backend/db.ts":
+        'import { TABLE } from "./tables.js"\nexport const all = (db: { query(sql: string): unknown }) => db.query(`SELECT * FROM ${TABLE}`)\n',
+    }
+    for (const [file, content] of Object.entries(files)) await writeFile(join(root, file), content)
+
+    const result = await collectCheckResult(root, { lintsOnly: true })
+    // The scanned set holds only the .ts files; the .js modules they import are read from disk.
+    expect(
+      result.diagnostics.some(
+        (finding) => finding.rule === "server-only-import" && finding.file === "frontend/widget.ts",
+      ),
+    ).toBe(true)
+    expect(result.diagnostics.some((finding) => finding.rule === "interpolated-sql")).toBe(true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
