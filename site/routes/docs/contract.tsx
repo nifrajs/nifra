@@ -564,7 +564,9 @@ export default function Contract() {
       </p>
       <p>
         Executable inline code goes through <code>unsafeInlineScript()</code>, which is named after
-        what it is and requires a CSP nonce. Pass the same nonce to <code>renderPage</code> and it
+        what it is and requires a CSP nonce. The code is emitted as written; one that contains{" "}
+        <code>&lt;/script</code> or <code>&lt;!--</code> is refused, since either would end or
+        escape the element. Pass the same nonce to <code>renderPage</code> and it
         reaches every framework-owned script in the document, so a strict{" "}
         <code>script-src 'nonce-…'</code> policy is achievable rather than aspirational:
       </p>

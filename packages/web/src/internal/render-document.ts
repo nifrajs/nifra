@@ -1013,6 +1013,19 @@ function tagAttrs(tag: "meta" | "link", attrs: Readonly<object>): string | null 
 // so a route module that's GC'd takes its entry with it.
 const headTagsCache = new WeakMap<Meta, string>()
 
+// An executable script runs as written, so it is checked rather than escaped: `\u003c` is valid only
+// inside a JS string, and escaping turned `if (a < b)` into a syntax error. What the HTML tokenizer
+// reads as the element's end, or as the start of an escaped section, is refused instead.
+const SCRIPT_BREAKOUT = /<\/script|<!--/i
+
+function assertExecutableScriptContent(content: string): void {
+  if (SCRIPT_BREAKOUT.test(content)) {
+    throw new TypeError(
+      '[nifra/web] an executable inline script cannot contain "</script" or "<!--"; write "<\\/script" or split the string',
+    )
+  }
+}
+
 function assertExecutableScriptType(type: string): void {
   if (!EXECUTABLE_SCRIPT_TYPES.has(type)) {
     throw new TypeError(
@@ -1082,7 +1095,8 @@ function headTags(head: Meta | undefined, documentNonce?: string): string {
           "[nifra/web] executable head scripts must use the same CSP nonce as the document",
         )
       }
-      out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${escapeScriptContent(s.content)}</script>`
+      assertExecutableScriptContent(s.content)
+      out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${s.content}</script>`
     }
   if (cacheable) headTagsCache.set(head, out)
   return out
@@ -1166,6 +1180,7 @@ export function unsafeInlineScript(
   // place a caller is told what it may pass. Failing at the call site names the argument; failing at
   // render names a document.
   assertExecutableScriptType(type)
+  assertExecutableScriptContent(content)
   return {
     unsafe: true,
     type,

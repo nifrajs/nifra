@@ -397,6 +397,32 @@ test("unsafeInlineScript makes executable code explicit and nonce-bound", async 
   )
 })
 
+test("an executable inline script is emitted as written and refuses an element breakout", async () => {
+  const code = "if (innerWidth < 600 && a <b) globalThis.narrow = true"
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { unsafeScript: [unsafeInlineScript(code, { nonce: "n0" })] },
+    })
+  ).text()
+  expect(html).toContain(`<script type="module" nonce="n0" data-nifra>${code}</script>`)
+  expect(() => unsafeInlineScript('document.write("</SCRIPT>")', { nonce: "n0" })).toThrow(
+    /cannot contain/,
+  )
+  expect(() =>
+    renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { unsafeScript: [{ unsafe: true, type: "module", nonce: "n0", content: "x <!-- y" }] },
+    }),
+  ).toThrow(/cannot contain/)
+})
+
 test("request-bound document nonces reject stale executable head descriptors", () => {
   expect(() =>
     renderPage({

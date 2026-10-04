@@ -8276,7 +8276,9 @@ actually make safe. A wrong `type` is a compile error; it also throws at render,
 callers the types do not reach.
 
 Executable inline code goes through `unsafeInlineScript()`, which is named after
-what it is and requires a CSP nonce. Pass the same nonce to `renderPage` and it
+what it is and requires a CSP nonce. The code is emitted as written; one that contains
+`</script` or `<!--` is refused, since either would end or
+escape the element. Pass the same nonce to `renderPage` and it
 reaches every framework-owned script in the document, so a strict
 `script-src 'nonce-…'` policy is achievable rather than aspirational:
 
