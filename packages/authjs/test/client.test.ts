@@ -74,11 +74,48 @@ describe("createAuthClient", () => {
     await expect(createAuthClient({ fetch: stub }).signOut()).rejects.toThrow(/CSRF/)
   })
 
-  test("signIn needs a browser page", () => {
-    expect(() =>
+  test("signIn needs a browser page", async () => {
+    await expect(
       createAuthClient({
         fetch: (async () => json({})) as unknown as typeof fetch,
-      }).signIn("github", { callbackUrl: "https://app.example.com/" }),
-    ).toThrow(/browser/)
+      }).signIn("github"),
+    ).rejects.toThrow(/browser/)
+  })
+
+  test("signIn posts the CSRF token, then navigates where Auth.js answers - never to a script", async () => {
+    const seen: Array<{ url: string; init: RequestInit | undefined }> = []
+    let answer = "https://github.com/login/oauth/authorize?client_id=cid"
+    const stub = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = String(input)
+        seen.push({ url, init })
+        return url.endsWith("/csrf") ? json({ csrfToken: "tok" }) : json({ url: answer })
+      },
+      { preconnect: fetch.preconnect },
+    )
+    const navigated: string[] = []
+    const previous = Reflect.get(globalThis, "window")
+    Reflect.set(globalThis, "window", {
+      location: {
+        href: "https://app.example.com/page",
+        origin: "https://app.example.com",
+        assign: (url: string) => navigated.push(url),
+      },
+    })
+    try {
+      await createAuthClient({ fetch: stub }).signIn("git hub", { callbackUrl: "/dashboard" })
+      expect(seen[1]?.url).toBe("/api/auth/signin/git%20hub")
+      expect(seen[1]?.init?.method).toBe("POST")
+      expect(new Headers(seen[1]?.init?.headers).get("x-auth-return-redirect")).toBe("1")
+      expect(seen[1]?.init?.body?.toString()).toBe("csrfToken=tok&callbackUrl=%2Fdashboard")
+      expect(navigated).toEqual(["https://github.com/login/oauth/authorize?client_id=cid"])
+
+      answer = "javascript:alert(1)"
+      await createAuthClient({ fetch: stub }).signIn("github", { callbackUrl: "/" })
+      expect(navigated.at(-1)).toBe("/")
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(globalThis, "window")
+      else Reflect.set(globalThis, "window", previous)
+    }
   })
 })

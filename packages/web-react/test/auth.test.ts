@@ -35,7 +35,7 @@ describe("@nifrajs/web-react/auth", () => {
       getSession: async () => {
         throw new Error("session endpoint unavailable")
       },
-      signIn: () => {},
+      signIn: async () => {},
       signOut: async () => {},
     }
     let refresh: (() => Promise<void>) | undefined

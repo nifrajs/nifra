@@ -1638,7 +1638,7 @@
     "name": "AuthClient",
     "kind": "interface",
     "package": "@nifrajs/authjs",
-    "signature": "export interface AuthClient {\n    /** The Auth.js session, or `null` when unauthenticated. Usable anywhere `fetch` runs. */\n    getSession(init?: RequestInit): Promise<Session | null>;\n    /** Start an OAuth/OIDC sign-in (browser only): navigates to the provider via Auth.js. */\n    signIn(providerId: string, options?: SignInOptions): void;\n    /** Sign out via the CSRF-protected endpoint, then navigate (unless `redirect: false`). */\n    signOut(options?: SignOutOptions): Promise<void>;\n}"
+    "signature": "export interface AuthClient {\n    /** The Auth.js session, or `null` when unauthenticated. Usable anywhere `fetch` runs. */\n    getSession(init?: RequestInit): Promise<Session | null>;\n    /** Start an OAuth/OIDC sign-in (browser only): posts the CSRF-protected sign-in to Auth.js, then\n     * navigates to the provider page it answers with. */\n    signIn(providerId: string, options?: SignInOptions): Promise<void>;\n    /** Sign out via the CSRF-protected endpoint, then navigate (unless `redirect: false`). */\n    signOut(options?: SignOutOptions): Promise<void>;\n}"
   },
   {
     "name": "AuthClientOptions",
@@ -1834,7 +1834,7 @@
     "name": "AuthSession",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface AuthSession {\n    readonly status: AuthStatus;\n    readonly session: Session | null;\n    /** Re-read the session from the server (after an out-of-band change, for example). */\n    readonly refresh: () => Promise<void>;\n    readonly signIn: (providerId: string, options?: SignInOptions) => void;\n    readonly signOut: (options?: SignOutOptions) => Promise<void>;\n}"
+    "signature": "export interface AuthSession {\n    readonly status: AuthStatus;\n    readonly session: Session | null;\n    /** Re-read the session from the server (after an out-of-band change, for example). */\n    readonly refresh: () => Promise<void>;\n    readonly signIn: (providerId: string, options?: SignInOptions) => Promise<void>;\n    readonly signOut: (options?: SignOutOptions) => Promise<void>;\n}"
   },
   {
     "name": "AuthSessionProvider",
@@ -19402,7 +19402,7 @@
     "kind": "function",
     "package": "@nifrajs/authjs",
     "signature": "export declare function signInUrl(providerId: string, options: {\n    readonly basePath?: string;\n    readonly callbackUrl: string;\n}): string;",
-    "doc": "/** Build `/api/auth/signin/:provider?callbackUrl=…` without touching `window` (testable). */"
+    "doc": "/**\n * Build `/api/auth/signin/:provider?callbackUrl=…` without touching `window` (testable).\n *\n * @deprecated Auth.js v5 accepts only a CSRF-carrying POST at this path and answers a GET - a link\n * or a navigation here - with an error. Call `signIn()`, which submits that POST.\n */"
   },
   {
     "name": "signNifraManifest",

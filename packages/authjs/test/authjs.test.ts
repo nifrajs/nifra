@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import Credentials from "@auth/core/providers/credentials"
 import GitHub from "@auth/core/providers/github"
 import { server } from "@nifrajs/core"
+import { createAuthClient } from "../src/client.ts"
 import { type AuthJSConfig, authjs, getSession, requireAuthUser } from "../src/index.ts"
 
 const testAuthSecret = ["test", "only", "not", "secret"].join("-")
@@ -218,5 +219,51 @@ describe("@nifrajs/authjs", () => {
       env: { AUTH_SECRET: secret },
     })
     expect(session?.user?.name).toBe("Ada")
+  })
+})
+
+describe("the client against the mount", () => {
+  test("signIn() completes Auth.js v5's POST sign-in and lands on the provider", async () => {
+    const mounted = server().use(
+      authjs({
+        providers: [GitHub({ clientId: "client", clientSecret: "client-secret" })],
+        secret: testAuthSecret,
+        trustHost: true,
+        logger: { error() {}, warn() {}, debug() {} },
+      }),
+    )
+    const jar = new Map<string, string>()
+    const viaApp = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const headers = new Headers(init?.headers)
+      if (jar.size > 0) headers.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "))
+      const response = await mounted.fetch(
+        new Request(new URL(String(input), "http://localhost"), { ...init, headers }),
+      )
+      for (const cookie of response.headers.getSetCookie()) {
+        const [pair = ""] = cookie.split(";")
+        const eq = pair.indexOf("=")
+        jar.set(pair.slice(0, eq), pair.slice(eq + 1))
+      }
+      return response
+    }
+    const navigated: string[] = []
+    const previous = Reflect.get(globalThis, "window")
+    Reflect.set(globalThis, "window", {
+      location: {
+        href: "http://localhost/page",
+        origin: "http://localhost",
+        assign: (url: string) => navigated.push(url),
+      },
+    })
+    try {
+      await createAuthClient({
+        fetch: Object.assign(viaApp, { preconnect: fetch.preconnect }),
+      }).signIn("github", { callbackUrl: "/dashboard" })
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(globalThis, "window")
+      else Reflect.set(globalThis, "window", previous)
+    }
+    expect(navigated).toHaveLength(1)
+    expect(navigated[0]).toStartWith("https://github.com/login/oauth/authorize?")
   })
 })

@@ -29,7 +29,7 @@ export interface AuthSession {
   readonly session: Session | null
   /** Re-read the session from the server (after an out-of-band change, for example). */
   readonly refresh: () => Promise<void>
-  readonly signIn: (providerId: string, options?: SignInOptions) => void
+  readonly signIn: (providerId: string, options?: SignInOptions) => Promise<void>
   readonly signOut: (options?: SignOutOptions) => Promise<void>
 }
 
