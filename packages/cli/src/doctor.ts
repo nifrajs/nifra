@@ -19,7 +19,7 @@
 import type { Dirent } from "node:fs"
 import { readdir, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
-import { dirname, join, relative, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   collectIdentityParity,
   displayPath,
@@ -722,11 +722,25 @@ async function ancestorDependencySpec(cwd: string, name: string): Promise<string
     const pkg = await readJson(join(dir, "package.json"))
     if (pkg !== undefined) {
       const spec = dependencySpec(pkg, name)
-      if (spec !== undefined) return spec
+      if (spec !== undefined) return rebaseDependencySpec(spec, dir, cwd)
     }
     const parent = dirname(dir)
     if (parent === dir) return undefined
   }
+}
+
+/**
+ * A path spec (`file:packages/x`, `link:../x`, `./vendor/x.tgz`) resolves against the package.json
+ * that declares it, so a spec copied from an ancestor is re-pointed to the same target from `cwd`.
+ */
+function rebaseDependencySpec(spec: string, declaredIn: string, cwd: string): string {
+  const protocol = /^(?:file|link|portal):/.exec(spec)?.[0] ?? ""
+  const path = spec.slice(protocol.length)
+  const relativePath =
+    protocol === "" ? /^\.\.?(?:[\\/]|$)/.test(path) : !isAbsolute(path) && !path.startsWith("~")
+  if (!relativePath) return spec
+  const rebased = relative(cwd, resolve(declaredIn, path)).replaceAll("\\", "/")
+  return protocol + (rebased === ".." || rebased.startsWith("../") ? rebased : `./${rebased}`)
 }
 
 async function installedPackageSpec(cwd: string, name: string): Promise<string | undefined> {

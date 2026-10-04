@@ -493,6 +493,43 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("auto-fix re-points a path spec copied from an ancestor", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
+    const app = join(dir, "apps", "web")
+    await mkdir(join(app, "src"), { recursive: true })
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        private: true,
+        dependencies: {
+          "local-lib": "file:packages/local-lib",
+          linked: "link:../outside",
+          vendored: "./vendor/vendored.tgz",
+          zod: "^4.1.0",
+          shared: "workspace:*",
+        },
+      }),
+    )
+    await writeFile(join(app, "package.json"), JSON.stringify({ name: "web" }))
+    await writeFile(
+      join(app, "src", "x.ts"),
+      ["local-lib", "linked", "vendored", "zod", "shared"].map((n) => `import "${n}"`).join("\n"),
+    )
+
+    await applyDoctorAutoFix(app)
+    expect(JSON.parse(await readFile(join(app, "package.json"), "utf8"))).toEqual({
+      name: "web",
+      dependencies: {
+        "local-lib": "file:../../packages/local-lib",
+        linked: "link:../../../outside",
+        vendored: "../../vendor/vendored.tgz",
+        zod: "^4.1.0",
+        shared: "workspace:*",
+      },
+    })
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("auto-fix infers a version from local node_modules metadata", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
     await mkdir(join(dir, "src"), { recursive: true })
