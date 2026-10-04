@@ -110,6 +110,9 @@ export interface RenderPageOptions {
   /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches
    * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */
   readonly prerenderedPaths?: readonly string[]
+  /** SSG: the URL of a JSON array of the prerendered paths, handed over in place of
+   * {@link prerenderedPaths} so a large set is fetched once instead of riding in every page. */
+  readonly prerenderedListUrl?: string
   /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`
    * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */
   readonly revalidate?: number
@@ -244,6 +247,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     styles = [],
     cssLoading: requestedCssLoading,
     prerenderedPaths = [],
+    prerenderedListUrl,
     revalidate,
     revalidateTags = [],
     routeId,
@@ -267,9 +271,11 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
   // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
   const prerendered =
-    prerenderedPaths.length === 0
-      ? ""
-      : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
+    prerenderedListUrl !== undefined
+      ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
+      : prerenderedPaths.length === 0
+        ? ""
+        : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
   // Split deferred values: the component sees markers (id + promise) to `<Await>`; the serialized
   // data carries `{__nifra_deferred: id}` placeholders (promises don't serialize). `actionData` may
   // also `defer()` - split it too, continuing the id space so a single registry settles both. The

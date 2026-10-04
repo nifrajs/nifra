@@ -370,6 +370,27 @@ test("createWebApp hands over __NIFRA_PRERENDERED__ when prerenderedPaths given 
   )
 })
 
+test("createWebApp serves a large prerendered set from one versioned URL instead of every page", async () => {
+  const paths = Array.from({ length: 400 }, (_, i) => `/users/${i}`)
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    prerenderedPaths: paths,
+  })
+  const html = await (await app.fetch(new Request("http://x/"))).text()
+  const url = /"__NIFRA_PRERENDERED__":"(\/__nifra\/prerendered\.json\?v=[0-9a-f]{8})"/.exec(
+    html,
+  )?.[1]
+  expect(url).toBeDefined()
+  expect(html).not.toContain('"/users/399"')
+  const listed = await app.fetch(new Request(`http://x${url}`))
+  expect(listed.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+  expect(await listed.json()).toEqual(paths)
+  const bare = await app.fetch(new Request("http://x/__nifra/prerendered.json"))
+  expect(bare.headers.get("cache-control")).toBe("no-cache")
+})
+
 test("createWebApp honors a route module's hydrate=false on document responses", async () => {
   const manifest: Manifest = {
     routes: [

@@ -16,6 +16,7 @@ import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
+import { PRERENDERED_LIST_PATH } from "../router.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
 
@@ -180,8 +181,10 @@ export interface CreateWebAppOptions<Env = unknown> {
    */
   readonly cssLoading?: CssLoadingMode
   /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's
-   * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
-   * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */
+   * `prerendered.json`). Handed over as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
+   * into a prerendered route fetches its static `_data.json` instead of hitting the worker. A set over
+   * 4 KB of JSON is served once from `/__nifra/prerendered.json?v=<version>`, cacheable for good, and
+   * pages hand over only that URL; `prerenderRoutes` writes the file into a static output. */
   readonly prerenderedPaths?: readonly string[]
   /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:
    * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the
@@ -353,6 +356,10 @@ export function createWebApp<Env = unknown>(
   // pre-route mount is unreachable, and serving it as a silent 404 hides that.
   const shadowed = shadowedPages(manifest, preRouteMountPaths(app))
   if (shadowed.length > 0) throw new Error(`[nifra/web] ${formatShadowedPages(shadowed)}`)
+  const ownPatterns = new Set(manifest.routes.map((route) => route.pattern))
+  const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
+    ? undefined
+    : servedPrerenderedList(options.prerenderedPaths)
   const pageExecutor = createPageRequestExecutor<Env>({
     adapter,
     manifest,
@@ -367,6 +374,7 @@ export function createWebApp<Env = unknown>(
     ...(options.prerenderedPaths === undefined
       ? {}
       : { prerenderedPaths: options.prerenderedPaths }),
+    ...(prerenderedList === undefined ? {} : { prerenderedListUrl: prerenderedList.url }),
     ...(options.staticFallbacks === undefined ? {} : { staticFallbacks: options.staticFallbacks }),
     ...(options.staticBoundaryCache === undefined
       ? {}
@@ -389,7 +397,6 @@ export function createWebApp<Env = unknown>(
   if (options.llmsTxt !== false) {
     const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
     const publicApi = mountedApi !== undefined && apiPrefix !== "" ? api : undefined
-    const ownPatterns = new Set(manifest.routes.map((route) => route.pattern))
     for (const [path, full] of [
       ["/llms.txt", false],
       ["/llms-full.txt", true],
@@ -406,6 +413,26 @@ export function createWebApp<Env = unknown>(
         })
       })
     }
+  }
+
+  if (prerenderedList !== undefined) {
+    const { body, version } = prerenderedList
+    app.register(
+      "GET",
+      PRERENDERED_LIST_PATH,
+      undefined,
+      (c: { readonly req: Request }) =>
+        new Response(body, {
+          headers: {
+            "content-type": "application/json",
+            // Only the versioned URL pages hand over is immutable; a bare request gets today's list.
+            "cache-control":
+              new URL(c.req.url).searchParams.get("v") === version
+                ? "public, max-age=31536000, immutable"
+                : "no-cache",
+          },
+        }),
+    )
   }
 
   // Wildcard catch-all: unmatched paths render the nearest `_404` (404), or a plain text 404 if
@@ -477,4 +504,22 @@ export async function webProjectEvidence(
     throw new TypeError("webProjectEvidence(): expected an app created by createWebApp")
   }
   return provider.call(source)
+}
+
+// Up to this many characters of JSON, the prerendered set rides inline in each page's handover.
+const INLINE_PRERENDERED_CHARS = 4096
+
+/** The prerendered set as a served, content-versioned list, when it is too large to inline. */
+function servedPrerenderedList(
+  paths: readonly string[] | undefined,
+): { readonly body: string; readonly version: string; readonly url: string } | undefined {
+  if (paths === undefined || paths.length === 0) return undefined
+  const body = JSON.stringify(paths)
+  if (body.length <= INLINE_PRERENDERED_CHARS) return undefined
+  // FNV-1a: a version that changes with the list is all the URL needs; a stale cached list only
+  // costs a fallback to the dynamic data request.
+  let hash = 0x811c9dc5
+  for (let i = 0; i < body.length; i++) hash = Math.imul(hash ^ body.charCodeAt(i), 0x01000193)
+  const version = (hash >>> 0).toString(16).padStart(8, "0")
+  return { body, version, url: `${PRERENDERED_LIST_PATH}?v=${version}` }
 }

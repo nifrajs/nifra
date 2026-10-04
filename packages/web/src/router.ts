@@ -26,6 +26,10 @@ export const DATA_HEADER = "x-nifra-data"
  */
 export const PRERENDERED_GLOBAL = "__NIFRA_PRERENDERED__"
 
+/** Where `createWebApp` serves a prerendered set too large to inline; the global then holds this URL
+ * plus a `?v=` content version, so the browser may cache it for good. */
+export const PRERENDERED_LIST_PATH = "/__nifra/prerendered.json"
+
 /**
  * Response header a data-mode action POST uses to convey a redirect (`redirect(...)`) to the
  * client - fetch would otherwise silently follow a 3xx to its HTML, losing the target. The
@@ -369,6 +373,18 @@ const prerenderedSetOf = (paths: object): ReadonlySet<unknown> => {
   return set
 }
 
+// A handed-over URL is fetched once: the global then holds the pending list every navigation shares.
+// A failed fetch leaves navigations on the dynamic path, which is always correct.
+const prerenderedOf = (): unknown => {
+  const handed = Reflect.get(globalThis, PRERENDERED_GLOBAL)
+  if (typeof handed !== "string") return handed
+  const list = fetch(handed)
+    .then((res) => (res.ok ? res.json() : undefined))
+    .catch(() => undefined)
+  Reflect.set(globalThis, PRERENDERED_GLOBAL, list)
+  return list
+}
+
 /**
  * The page to load as a document, when that is why a navigation or submit rejected. Only an `http:` or
  * `https:` target: the caller hands it to `location`, which runs a `javascript:` URL in this page,
@@ -395,7 +411,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
-  const prerendered = (globalThis as { [PRERENDERED_GLOBAL]?: unknown })[PRERENDERED_GLOBAL]
+  const prerendered = await prerenderedOf()
   if (Array.isArray(prerendered)) {
     const query = path.indexOf("?")
     const hash = path.indexOf("#")
@@ -448,6 +464,8 @@ const isClientActionResult = (value: unknown): value is ClientActionResult =>
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
   const fetchData = options.fetchData ?? defaultFetchData
+  // Start a handed-over list's fetch now, so the first navigation rarely waits for it.
+  if (fetchData === defaultFetchData) prerenderedOf()
   // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
   // to it as routes load), so a same-route nav always sees the current route's keys.
   const searchClientKeys = options.searchClientKeys ?? {}

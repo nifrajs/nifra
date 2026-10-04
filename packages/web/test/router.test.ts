@@ -1,4 +1,4 @@
-import { describe, expect, setSystemTime, test } from "bun:test"
+import { describe, expect, setSystemTime, spyOn, test } from "bun:test"
 import {
   createClientRouter,
   createMatcher,
@@ -608,6 +608,64 @@ describe("createClientRouter", () => {
     } finally {
       globalThis.fetch = realFetch
       g.__NIFRA_PRERENDERED__ = undefined
+    }
+  })
+
+  test("default fetchData reads a handed-over list URL once and uses it like the inline list", async () => {
+    const calls: string[] = []
+    Reflect.set(globalThis, "__NIFRA_PRERENDERED__", "/__nifra/prerendered.json?v=list")
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: string | URL | Request) => {
+          const url = String(input)
+          calls.push(url)
+          if (url.startsWith("/__nifra/prerendered.json")) return Response.json(["/users/9"])
+          return Response.json({ id: url.endsWith("/_data.json") ? "static" : "dynamic" })
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.navigate("/users/9")
+      expect(r.snapshot().data).toEqual({ id: "static" })
+      await r.navigate("/users/10")
+      expect(r.snapshot().data).toEqual({ id: "dynamic" })
+      expect(calls).toEqual([
+        "/__nifra/prerendered.json?v=list",
+        "/users/9/_data.json",
+        "/users/10",
+      ])
+    } finally {
+      fetchSpy.mockRestore()
+      Reflect.deleteProperty(globalThis, "__NIFRA_PRERENDERED__")
+    }
+  })
+
+  test("default fetchData stays on the dynamic path when the handed-over list fails", async () => {
+    const calls: string[] = []
+    Reflect.set(globalThis, "__NIFRA_PRERENDERED__", "/__nifra/prerendered.json?v=broken")
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: string | URL | Request) => {
+          const url = String(input)
+          calls.push(url)
+          if (url.startsWith("/__nifra/prerendered.json")) {
+            return new Response("down", { status: 500 })
+          }
+          return Response.json({ id: "dynamic" })
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.navigate("/users/9")
+      expect(r.snapshot().data).toEqual({ id: "dynamic" })
+      expect(calls).toEqual(["/__nifra/prerendered.json?v=broken", "/users/9"])
+    } finally {
+      fetchSpy.mockRestore()
+      Reflect.deleteProperty(globalThis, "__NIFRA_PRERENDERED__")
     }
   })
 

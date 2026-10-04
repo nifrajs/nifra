@@ -183,6 +183,8 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
   readonly cssLoading?: CssLoadingMode
   readonly prerenderedPaths?: readonly string[]
+  /** Where pages fetch {@link prerenderedPaths} from when the list is too large to inline. */
+  readonly prerenderedListUrl?: string
   readonly staticFallbacks?: Readonly<Record<string, "ssr" | "404">>
   readonly staticBoundaryCache?: StaticBoundaryCache
   /** Per-request CSP nonce for framework-owned executable document scripts. */
@@ -259,6 +261,10 @@ export function createPageRequestExecutor<Env = unknown>(
   const titleOption = options.title === undefined ? {} : { title: options.title }
   const cspOption = options.csp === undefined ? {} : { csp: options.csp }
   const prerenderedSet = new Set(options.prerenderedPaths ?? [])
+  const prerenderedHandover =
+    options.prerenderedListUrl === undefined
+      ? { prerenderedPaths: options.prerenderedPaths ?? [] }
+      : { prerenderedListUrl: options.prerenderedListUrl }
   const matchManifestRoute = createMatcher(
     manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
   )
@@ -721,7 +727,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ...cspOption,
       ...preloadOf(routeId),
       ...stylesOf(routeId),
-      prerenderedPaths: options.prerenderedPaths ?? [],
+      ...prerenderedHandover,
       ...titleOption,
     })
   }
@@ -852,7 +858,7 @@ export function createPageRequestExecutor<Env = unknown>(
         ...(boundaryStates !== undefined ? { boundaries: boundaryStates } : {}),
         ...preloadOf(route.id),
         ...stylesOf(route.id),
-        prerenderedPaths: options.prerenderedPaths ?? [],
+        ...prerenderedHandover,
         ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
         // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
         ...(mod.revalidate !== undefined && !personalized && options.cacheChannel?.enabled === true
@@ -1306,7 +1312,7 @@ export function createPageRequestExecutor<Env = unknown>(
           hydrate: mod.hydrate !== false,
           ...preloadOf(route.id),
           ...stylesOf(route.id),
-          prerenderedPaths: options.prerenderedPaths ?? [],
+          ...prerenderedHandover,
           ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
           ...(nonce === undefined ? {} : { nonce }),
           ...cspOption,
