@@ -189,10 +189,14 @@ export function mountA2A<
       c.req,
       maxBytes,
       proto,
-      (parsed) =>
-        dispatch(c, parsed, options, runOptions, maxOutputBytes).then((response) =>
-          boundJsonResponse(response, maxOutputBytes),
-        ),
+      (parsed) => {
+        // A reply the mount cannot complete still answers the request it belongs to.
+        const record = asRecord(parsed)
+        const id = (record === undefined ? undefined : asRpcId(record.id)) ?? null
+        return dispatch(c, parsed, options, runOptions, maxOutputBytes)
+          .then((response) => boundJsonResponse(response, maxOutputBytes, id))
+          .catch(() => rpcErrorResponse(id, A2A_ERROR_CODES.internalError, "internal_error"))
+      },
       (rejection) => render(rejection),
       () => rpcErrorResponse(null, A2A_ERROR_CODES.parseError, "parse_error"),
     ).catch(() => rpcErrorResponse(null, A2A_ERROR_CODES.internalError, "internal_error")),
@@ -536,11 +540,11 @@ function rpcError(id: RpcId | null, code: number, message: string): Record<strin
 }
 
 function rpcResultResponse(id: RpcId, result: unknown): Response {
-  return jsonResponse(200, rpcResult(id, result))
+  return jsonResponse(200, rpcResult(id, result), id)
 }
 
 function rpcErrorResponse(id: RpcId | null, code: number, message: string): Response {
-  return jsonResponse(200, rpcError(id, code, message))
+  return jsonResponse(200, rpcError(id, code, message), id)
 }
 
 function asRpcId(value: unknown): RpcId | undefined {
@@ -568,20 +572,27 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>
 }
 
-function jsonResponse(status: number, body: unknown): Response {
-  let serialized: string
+/** With `rpcId`, the body is a JSON-RPC reply, and one that cannot be sent becomes an error for it. */
+function jsonResponse(status: number, body: unknown, rpcId?: RpcId | null): Response {
+  let serialized: string | undefined
+  let failure: string | undefined
   try {
-    const candidate = JSON.stringify(body)
-    if (candidate === undefined) throw new TypeError("undefined response")
-    serialized = candidate
+    serialized = JSON.stringify(body)
+    if (serialized === undefined) failure = "response_serialization_failed"
   } catch {
-    serialized = JSON.stringify({ error: "response_serialization_failed" })
-    status = 500
+    failure = "response_serialization_failed"
   }
   // The hard ceiling only: the mount's configured `maxOutputBytes` is applied by `boundJsonResponse`.
-  if (new TextEncoder().encode(serialized).byteLength > MAX_OUTPUT_BYTES) {
-    serialized = JSON.stringify({ error: "response_too_large" })
-    status = 500
+  if (
+    serialized !== undefined &&
+    new TextEncoder().encode(serialized).byteLength > MAX_OUTPUT_BYTES
+  )
+    failure = rpcId === undefined ? "response_too_large" : "output_limit"
+  if (failure !== undefined) {
+    if (rpcId === undefined) {
+      serialized = JSON.stringify({ error: failure })
+      status = 500
+    } else serialized = JSON.stringify(rpcError(rpcId, A2A_ERROR_CODES.internalError, failure))
   }
   return new Response(serialized, {
     status,
@@ -589,10 +600,15 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
-async function boundJsonResponse(response: Response, maxOutputBytes: number): Promise<Response> {
+async function boundJsonResponse(
+  response: Response,
+  maxOutputBytes: number,
+  rpcId: RpcId | null,
+): Promise<Response> {
   if (!response.headers.get("content-type")?.startsWith("application/json")) return response
   const bytes = await response.arrayBuffer()
-  if (bytes.byteLength > maxOutputBytes) return jsonResponse(500, { error: "response_too_large" })
+  if (bytes.byteLength > maxOutputBytes)
+    return rpcErrorResponse(rpcId, A2A_ERROR_CODES.internalError, "output_limit")
   return new Response(bytes, { status: response.status, headers: response.headers })
 }
 

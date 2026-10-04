@@ -69,6 +69,8 @@ A suspended task's status message carries the pending continuation in `metadata`
 
 Cross-request registries (cancellation, subscription fan-out, push notifications) are deliberately out of scope for the stateless seam; those spec methods answer `UnsupportedOperationError` (-32004).
 
+A reply larger than `maxOutputBytes` answers the request with a JSON-RPC internal error (-32603, `output_limit`), the same error a stream sends when it runs out of budget. A request whose ports or store fail answers with -32603 `internal_error`, keeping the request's `id`.
+
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 
 ## Docs

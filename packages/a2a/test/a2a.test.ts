@@ -332,10 +332,57 @@ describe("mountA2A", () => {
     })
 
     const response = await callPost(
-      rpc("SendMessage", message([], { metadata: { input: { prompt: "x" } } })),
+      rpc("SendMessage", message([], { metadata: { input: { prompt: "x" } } }), "big"),
     )
-    expect(response.status).toBe(500)
-    expect(await response.json()).toEqual({ error: "response_too_large" })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      id: "big",
+      error: { code: A2A_ERROR_CODES.internalError, message: "output_limit" },
+    })
+  })
+
+  test("a request the mount cannot complete gets a JSON-RPC error carrying its id", async () => {
+    const failingPorts = captureApp()
+    mountA2A(failingPorts.app, {
+      agent: definition(),
+      card: cardInfo,
+      ports: () => {
+        throw new Error("ports unavailable")
+      },
+    })
+    expect(
+      await (
+        await failingPorts.callPost(
+          rpc("SendMessage", message([], { metadata: { input: { prompt: "x" } } }), 41),
+        )
+      ).json(),
+    ).toEqual({
+      jsonrpc: "2.0",
+      id: 41,
+      error: { code: A2A_ERROR_CODES.internalError, message: "internal_error" },
+    })
+
+    const failingStore = captureApp()
+    mountA2A(failingStore.app, {
+      agent: definition(),
+      card: cardInfo,
+      ports: ports({
+        state: {
+          load: () => {
+            throw new Error("store offline")
+          },
+          save: () => {},
+        },
+      }),
+    })
+    expect(
+      await (await failingStore.callPost(rpc("GetTask", { id: "task-1" }, "lookup"))).json(),
+    ).toEqual({
+      jsonrpc: "2.0",
+      id: "lookup",
+      error: { code: A2A_ERROR_CODES.internalError, message: "internal_error" },
+    })
   })
 
   test("a configured output limit above the default lets a larger result through", async () => {
