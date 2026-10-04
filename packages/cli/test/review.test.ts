@@ -150,6 +150,34 @@ describe("nifra review command contract", () => {
     }
   })
 
+  test("a type error in an unchanged file keeps a diff review inconclusive", async () => {
+    const root = await reviewProject("export const count: number = 1\n")
+    try {
+      await writeFile(
+        join(root, "node_modules", "typescript", "bin", "tsc"),
+        "console.log(\"src/users.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.\")\nprocess.exit(2)\n",
+      )
+      await git(root, ["init", "-q"])
+      await git(root, ["config", "user.email", "test@example.invalid"])
+      await git(root, ["config", "user.name", "Nifra Test"])
+      await git(root, ["add", "."])
+      await git(root, ["commit", "-qm", "baseline"])
+      await writeFile(join(root, "src", "caller.ts"), 'export const label = "changed"\n')
+      const report = await runReview({ diff: "HEAD" }, { cwd: root })
+      const typecheck = report.checks.find((check) => check.id === "typecheck")
+      expect(typecheck?.status).toBe("unavailable")
+      expect(typecheck?.reasonCode).toBe("filtered-out-of-scope")
+      expect(typecheck?.counts.outOfScope).toBe(1)
+      expect(report.status).toBe("inconclusive")
+      expect(report.ok).toBe(false)
+      expect(renderReviewReport(report)).toContain(
+        "  unavailable typecheck (filtered-out-of-scope)",
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   test("writes SARIF only for a completed review and uses static messages", async () => {
     const root = await reviewProject('const result = await fetch("/users")\n')
     try {
