@@ -9,7 +9,7 @@ The preview is local-first and fail-closed:
   transactionally reloaded.
 - Session evidence is bounded, redacted for secret-shaped keys, and written as append-only JSONL.
 - Tool approvals are host-owned and auditable. A workflow or subagent cannot raise its own limits.
-- Subagents can be restricted to project roots or a caller-provided isolated-worktree lease. A lease is released only after its executor settles, even when the run itself timed out.
+- Subagents can be restricted to project roots or a caller-provided isolated-worktree lease. The executor receives the cwd that was checked, with its symlinks resolved. A lease is released only after its executor settles, even when the run itself timed out.
 - The isolated extension worker contains crashes but is not a hostile-code sandbox. Use OS-level
   isolation before loading code that is not trusted.
 - No telemetry, hosted state, remote credentials, or model-provider SDK is required by the

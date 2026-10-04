@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -158,6 +158,23 @@ describe("optional agent safety surfaces", () => {
       // A link that stays inside the root, and a directory not created yet, still run.
       await expect(runner.run({ ...spec, cwd: "alias" })).resolves.toMatchObject({ ok: true })
       await expect(runner.run({ ...spec, cwd: "inside/new" })).resolves.toMatchObject({ ok: true })
+
+      // The executor gets the checked path with its links resolved: swapping the link it came
+      // through, after the check, cannot move the executor outside the root.
+      const swapped = new BoundedSubagentRunner(
+        {
+          run: ({ cwd }) => {
+            rmSync(join(root, "alias"))
+            symlinkSync(join(base, "outside"), join(root, "alias"))
+            return cwd === undefined ? undefined : realpathSync(cwd)
+          },
+        },
+        { workspace: { root } },
+      )
+      await expect(swapped.run({ ...spec, cwd: "alias" })).resolves.toMatchObject({
+        ok: true,
+        output: realpathSync(join(root, "inside")),
+      })
 
       const leased = new BoundedSubagentRunner(
         { run: () => "ran" },

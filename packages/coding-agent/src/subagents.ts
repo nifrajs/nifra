@@ -148,7 +148,8 @@ export class BoundedSubagentRunner {
             ? resolve(spec.cwd)
             : resolve(this.options.workspace.root, spec.cwd)
       if (requestedCwd !== undefined && this.options.workspace !== undefined) {
-        if (!(await within(this.options.workspace.root, requestedCwd)))
+        const requested = await physicalPath(requestedCwd)
+        if (!(await within(this.options.workspace.root, requested)))
           return {
             id: spec.id,
             role: spec.role,
@@ -156,7 +157,7 @@ export class BoundedSubagentRunner {
             error: "subagent workspace escapes policy root",
           }
         const allowedRoots = this.options.workspace.allowedRoots ?? [this.options.workspace.root]
-        if (!(await withinAny(allowedRoots, requestedCwd)))
+        if (!(await withinAny(allowedRoots, requested)))
           return {
             id: spec.id,
             role: spec.role,
@@ -169,11 +170,15 @@ export class BoundedSubagentRunner {
       } else if (requestedCwd !== undefined) {
         workspace = { cwd: requestedCwd }
       }
+      let cwd = workspace?.cwd
       if (workspace !== undefined && this.options.workspace !== undefined) {
+        // The executor gets the path that was checked, with its links already resolved, so a link
+        // swapped after the check cannot move it out of the policy root.
+        cwd = await physicalPath(workspace.cwd)
         const allowedRoots = this.options.workspace.allowedRoots ?? [this.options.workspace.root]
         if (
-          !(await within(this.options.workspace.root, workspace.cwd)) ||
-          !(await withinAny(allowedRoots, workspace.cwd))
+          !(await within(this.options.workspace.root, cwd)) ||
+          !(await withinAny(allowedRoots, cwd))
         )
           return {
             id: spec.id,
@@ -182,13 +187,12 @@ export class BoundedSubagentRunner {
             error: "isolated worktree escapes workspace policy",
           }
       }
-      const lease = workspace
       if (controller.signal.aborted) throw stopped()
       const work = Promise.resolve().then(() =>
         this.executor.run({
           spec,
           signal: controller.signal,
-          ...(lease === undefined ? {} : { cwd: lease.cwd }),
+          ...(cwd === undefined ? {} : { cwd }),
         }),
       )
       // Registered before untilAborted's reaction, so a settled executor is seen as settled below.
@@ -241,17 +245,18 @@ export class BoundedSubagentRunner {
   }
 }
 
-/** Containment of the physical paths, so a symlink inside the root cannot lead out of it. */
-async function within(root: string, candidate: string): Promise<boolean> {
-  const relativePath = relative(await physicalPath(root), await physicalPath(candidate))
+/** Whether `physical`, a path whose links are already resolved, lies inside the physical root, so a
+ * symlink inside the root cannot lead out of it. */
+async function within(root: string, physical: string): Promise<boolean> {
+  const relativePath = relative(await physicalPath(root), physical)
   return (
     relativePath === "" ||
     (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
   )
 }
 
-async function withinAny(roots: readonly string[], candidate: string): Promise<boolean> {
-  for (const root of roots) if (await within(root, candidate)) return true
+async function withinAny(roots: readonly string[], physical: string): Promise<boolean> {
+  for (const root of roots) if (await within(root, physical)) return true
   return false
 }
 
