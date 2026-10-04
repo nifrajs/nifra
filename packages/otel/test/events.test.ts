@@ -142,6 +142,30 @@ describe("traceEventConsumer", () => {
     expect(JSON.stringify(spans)).not.toContain("evt_1")
   })
 
+  test("an envelope id too long to name a causal node never reaches the handler or a span", async () => {
+    const { spans, exporter } = collect()
+    let called = false
+    const consume = traceEventConsumer(
+      orderPaid,
+      () => {
+        called = true
+      },
+      { exporter },
+    )
+    const id = `evt_${"x".repeat(10_000)}`
+    const result = await consume({
+      id,
+      type: "order.paid",
+      version: 1,
+      occurredAt: new Date().toISOString(),
+      payload: { orderId: "o_1", card: "4111111111111111" },
+    })
+    expect(result).toEqual({ success: false, issueCount: 1 })
+    expect(called).toBe(false)
+    expect(spans[0]?.attributes["messaging.message.id"]).toBeUndefined()
+    expect(JSON.stringify(spans)).not.toContain("xxxx")
+  })
+
   test("a registry failure names no attacker-chosen type and keeps only a bounded reason", async () => {
     const { spans, exporter } = collect()
     const registry = createEventRegistry([orderPaid])

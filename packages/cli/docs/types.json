@@ -7685,7 +7685,7 @@
     "name": "EventEnvelope",
     "kind": "interface",
     "package": "@nifrajs/events",
-    "signature": "export interface EventEnvelope<Payload = unknown> {\n    /** Unique event id (`evt_<uuid>`), stable across redeliveries. */\n    readonly id: string;\n    /** Event type name, e.g. `order.paid`. */\n    readonly type: string;\n    /** Contract version. Bump on a breaking payload change; old + new versions coexist in a registry. */\n    readonly version: number;\n    /** ISO-8601 instant the event occurred. */\n    readonly occurredAt: string;\n    /** Optional durable lineage. Its current node must be this exact event id. */\n    readonly causality?: CausalityContext;\n    readonly payload: Payload;\n}",
+    "signature": "export interface EventEnvelope<Payload = unknown> {\n    /** Unique event id (`evt_<uuid>`), stable across redeliveries. 1 to 128 characters. */\n    readonly id: string;\n    /** Event type name, e.g. `order.paid`. */\n    readonly type: string;\n    /** Contract version. Bump on a breaking payload change; old + new versions coexist in a registry. */\n    readonly version: number;\n    /** ISO-8601 instant the event occurred. */\n    readonly occurredAt: string;\n    /** Optional durable lineage. Its current node must be this exact event id. */\n    readonly causality?: CausalityContext;\n    readonly payload: Payload;\n}",
     "doc": "/** The portable wire shape: identity + versioned type + timestamp + validated payload. */"
   },
   {

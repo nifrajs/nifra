@@ -105,6 +105,23 @@ describe("@nifrajs/events - parse (untrusted input)", () => {
     expect(OrderPaid.parse({ ...valid, id: "" }).success).toBe(false)
   })
 
+  test("an id longer than a causal node id is an issue at parse and a throw at create", () => {
+    const longest = `evt_${"x".repeat(124)}`
+    expect(OrderPaid.parse({ ...valid, id: longest }).success).toBe(true)
+    const result = OrderPaid.parse({ ...valid, id: `${longest}x` })
+    expect(result.success).toBe(false)
+    if (!result.success)
+      expect(result.issues).toEqual([
+        { message: "id must be at most 128 characters", path: ["id"] },
+      ])
+    expect(() => OrderPaid.create({ orderId: "o_1", cents: 1 }, { id: `${longest}x` })).toThrow(
+      "id must be 1 to 128 characters",
+    )
+    expect(() => OrderPaid.create({ orderId: "o_1", cents: 1 }, { id: "" })).toThrow(
+      "id must be 1 to 128 characters",
+    )
+  })
+
   test("rejects an invalid payload and roots issues under `payload`", () => {
     const result = OrderPaid.parse({ ...valid, payload: { orderId: "o_1", cents: "bad" } })
     expect(result.success).toBe(false)
