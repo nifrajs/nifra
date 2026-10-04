@@ -5,6 +5,7 @@ import {
   exampleTypecheckConfigs,
   TYPECHECK_PROJECTS,
   uncheckedExampleSources,
+  uncheckedScriptSources,
   uncoveredTypecheckConfigs,
 } from "./typecheck.ts"
 
@@ -33,6 +34,12 @@ test("the root corpus is checked first", () => {
 // with no tsconfig of its own, or one whose `include` misses a file.
 test("every tracked example source is in some typecheck project", () => {
   expect(uncheckedExampleSources()).toEqual([])
+})
+
+// `scripts/` is outside the root program's `include`; without its own project a gate script's type
+// errors reach no checker at all.
+test("every tracked script is in some typecheck project", () => {
+  expect(uncheckedScriptSources()).toEqual([])
 })
 
 test("every web example with routes has its own project", () => {

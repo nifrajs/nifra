@@ -73,13 +73,13 @@ function publicPackages(): Pkg[] {
     }
     if (entries.length > 0) {
       entries.sort((a, b) =>
-        a.importPath === json.name
+        a.importPath === pkg.name
           ? -1
-          : b.importPath === json.name
+          : b.importPath === pkg.name
             ? 1
             : a.importPath.localeCompare(b.importPath),
       )
-      pkgs.push({ name: json.name, entries })
+      pkgs.push({ name: pkg.name, entries })
     }
   }
   return pkgs.sort((a, b) => a.name.localeCompare(b.name))

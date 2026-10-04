@@ -61,6 +61,7 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "packages/islets/tsconfig.json",
   "packages/island-trigger/tsconfig.json",
   "apps/workbench/tsconfig.json",
+  "scripts/tsconfig.json",
   ...exampleTypecheckConfigs(),
 ]
 
@@ -108,12 +109,11 @@ function programFiles(project: string): readonly string[] {
   return (parsed?.fileNames ?? []).map(posix)
 }
 
-/**
- * Tracked sources under `examples/` that no project's program includes - an example excluded from the
- * root program without a tsconfig of its own, or one whose `include` misses a file.
- */
-export function uncheckedExampleSources(): readonly string[] {
-  const patterns = ["ts", "tsx", "svelte", "vue"].map((ext) => `examples/*.${ext}`)
+/** Tracked files matching `patterns` that no project's program includes, less those `skip` names. */
+function uncheckedTrackedSources(
+  patterns: readonly string[],
+  skip: (file: string) => boolean,
+): readonly string[] {
   const listed = Bun.spawnSync(["git", "ls-files", "-z", "--", ...patterns], { cwd: ROOT })
   if (!listed.success) throw new Error(`git ls-files failed: ${listed.stderr.toString()}`)
   const covered = new Set(TYPECHECK_PROJECTS.flatMap(programFiles))
@@ -121,8 +121,24 @@ export function uncheckedExampleSources(): readonly string[] {
   return listed.stdout
     .toString()
     .split("\0")
-    .filter((file) => file !== "" && !STANDALONE_EXAMPLES.some((dir) => file.startsWith(`${dir}/`)))
+    .filter((file) => file !== "" && !skip(file))
     .filter((file) => !covered.has(`${root}/${file}`))
+}
+
+/**
+ * Tracked sources under `examples/` that no project's program includes - an example excluded from the
+ * root program without a tsconfig of its own, or one whose `include` misses a file.
+ */
+export function uncheckedExampleSources(): readonly string[] {
+  return uncheckedTrackedSources(
+    ["ts", "tsx", "svelte", "vue"].map((ext) => `examples/*.${ext}`),
+    (file) => STANDALONE_EXAMPLES.some((dir) => file.startsWith(`${dir}/`)),
+  )
+}
+
+/** Tracked tooling under `scripts/` that no project's program includes. The fixture app is not tooling. */
+export function uncheckedScriptSources(): readonly string[] {
+  return uncheckedTrackedSources(["scripts/*.ts"], (file) => file.startsWith("scripts/fixtures/"))
 }
 
 /** Bring each example app's generated route types up to date, so its `./+types` imports resolve. */
@@ -188,6 +204,14 @@ if (import.meta.main) {
     console.error(
       `✗ example source(s) no typecheck project includes: ${unchecked.join(", ")}\n` +
         "  give the example a tsconfig.json extending examples/tsconfig.<framework>.json (or list it in STANDALONE_EXAMPLES if it has its own toolchain).",
+    )
+    process.exit(1)
+  }
+  const uncheckedScripts = uncheckedScriptSources()
+  if (uncheckedScripts.length > 0) {
+    console.error(
+      `✗ script(s) no typecheck project includes: ${uncheckedScripts.join(", ")}\n` +
+        "  widen the `include` of scripts/tsconfig.json.",
     )
     process.exit(1)
   }

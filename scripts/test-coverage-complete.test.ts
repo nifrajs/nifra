@@ -59,7 +59,7 @@ async function testDirs(): Promise<string[]> {
 
 test("every package with tests is listed in the `test` script", async () => {
   const missing = (await testDirs()).filter(
-    (dir) => !scripts.test.includes(dir) && EXEMPT[dir]?.test === undefined,
+    (dir) => !(scripts.test ?? "").includes(dir) && EXEMPT[dir]?.test === undefined,
   )
   expect(missing).toEqual([])
 })
@@ -67,7 +67,7 @@ test("every package with tests is listed in the `test` script", async () => {
 test("every package with tests is listed in the `test:coverage` script", async () => {
   // Coverage is what the ratchet grades. A suite absent here can regress to zero unnoticed.
   const missing = (await testDirs()).filter(
-    (dir) => !scripts["test:coverage"].includes(dir) && EXEMPT[dir]?.coverage === undefined,
+    (dir) => !(scripts["test:coverage"] ?? "").includes(dir) && EXEMPT[dir]?.coverage === undefined,
   )
   expect(missing).toEqual([])
 })

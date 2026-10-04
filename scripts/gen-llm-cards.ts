@@ -81,12 +81,12 @@ function publicPackages(): Pkg[] {
     }
     const fallback = `${dir}/src/index.ts`
     if (entries.length === 0 && existsSync(fallback)) {
-      entries.push({ importPath: json.name, entry: fallback })
+      entries.push({ importPath: pkg.name, entry: fallback })
     }
     entries.sort((a, b) =>
-      a.importPath === json.name
+      a.importPath === pkg.name
         ? -1
-        : b.importPath === json.name
+        : b.importPath === pkg.name
           ? 1
           : a.importPath.localeCompare(b.importPath),
     )

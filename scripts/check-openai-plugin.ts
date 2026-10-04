@@ -110,7 +110,7 @@ const mcpServers = mcp.mcpServers as Record<string, unknown> | undefined
 if (mcpServers === undefined || Object.keys(mcpServers).length !== 1) {
   failures.push("mcp.json mcpServers: expected exactly one server")
 } else {
-  const [name] = Object.keys(mcpServers)
+  const [name = ""] = Object.keys(mcpServers)
   const server = mcpServers[name] as Record<string, unknown> | undefined
   if (name !== "nifra") failures.push('mcp.json server name must be "nifra"')
   if (server?.type !== "streamable-http")
@@ -184,3 +184,5 @@ for (const warning of warnings) console.warn(`⚠ ${warning}`)
 console.log(
   `✓ OpenAI plugin package is structurally valid (${String(manifest.version)}; ${strict ? "strict" : "local"} mode)`,
 )
+
+export {}

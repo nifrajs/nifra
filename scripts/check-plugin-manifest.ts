@@ -101,3 +101,5 @@ if (failures.length > 0) {
 console.log(
   `✓ plugin manifest: ${skillCount} skills at v${String(pkg.version)}, MCP server wired, marketplace entry resolves`,
 )
+
+export {}

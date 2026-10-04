@@ -143,7 +143,9 @@ function buildRss(): string {
   ).join("\n")
   // `lastBuildDate` is the newest post rather than the build clock: a feed whose timestamp moves on
   // every deploy tells aggregators to re-poll for content that did not change.
-  const newest = POSTS.reduce((max, post) => (post.date > max ? post.date : max), POSTS[0].date)
+  const first = POSTS[0]
+  if (first === undefined) throw new Error("gen-sitemap: the feed has no posts")
+  const newest = POSTS.reduce((max, post) => (post.date > max ? post.date : max), first.date)
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
@@ -160,7 +162,7 @@ ${items}
 }
 
 function urlsOf(xml: string): string[] {
-  return [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]).sort()
+  return [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1] ?? "").sort()
 }
 
 const routes: Route[] = []

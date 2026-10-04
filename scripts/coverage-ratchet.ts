@@ -142,8 +142,8 @@ export interface RatchetOutcome {
  * instead of the repo - a gate nothing can exercise is not a gate, and this one had grown a hardcoded
  * baseline path while the lcov path was already overridable. */
 export interface RatchetPaths {
-  readonly lcov?: string
-  readonly baseline?: string
+  readonly lcov?: string | undefined
+  readonly baseline?: string | undefined
 }
 
 /**
