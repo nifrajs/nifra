@@ -15,6 +15,9 @@
  *                                           takes only an http(s)/mailto/tel or relative URL
  *   data-bind-value="query"                 two-way <input>/<select>/<textarea> (input event)
  *   data-bind-on="click:inc,submit:save"    addEventListener per pair
+ *
+ * Nothing inside a `data-island-ignore` element binds or mounts: render user HTML there, so its
+ * markup cannot reach the island's handlers or signals.
  */
 
 import { effect, type Signal } from "./signals.ts"
@@ -96,9 +99,16 @@ export interface BindableRoot {
  * the created effects (an island unmount can stop them; page-lifetime islands just drop them). */
 export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void> {
   const stops: Array<() => void> = []
+  // Each element carrying `data-bind-<kind>` outside any ignored subtree, with that attribute's value.
+  const each = (kind: string): Array<[BindableElement, string]> =>
+    [
+      ...root.querySelectorAll(
+        `[data-bind-${kind}]:not([data-island-ignore],[data-island-ignore] *)`,
+      ),
+    ].map((el) => [el, el.getAttribute(`data-bind-${kind}`) ?? ""])
 
-  for (const el of root.querySelectorAll("[data-bind-text]")) {
-    const s = signalOf(scope, el.getAttribute("data-bind-text") ?? "")
+  for (const [el, name] of each("text")) {
+    const s = signalOf(scope, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -108,8 +118,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-show]")) {
-    const s = signalOf(scope, el.getAttribute("data-bind-show") ?? "")
+  for (const [el, name] of each("show")) {
+    const s = signalOf(scope, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -119,8 +129,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-class]")) {
-    for (const [className, name] of pairs(el.getAttribute("data-bind-class") ?? "")) {
+  for (const [el, spec] of each("class")) {
+    for (const [className, name] of pairs(spec)) {
       const s = signalOf(scope, name)
       if (s) {
         stops.push(
@@ -132,8 +142,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-attr]")) {
-    for (const [attr, name] of pairs(el.getAttribute("data-bind-attr") ?? "")) {
+  for (const [el, spec] of each("attr")) {
+    for (const [attr, name] of pairs(spec)) {
       if (!bindableAttribute(attr)) continue
       const s = signalOf(scope, name)
       if (s) {
@@ -141,8 +151,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
         stops.push(
           effect(() => {
             const v = s()
-            if (v === false || v === null || v === undefined) el.removeAttribute(attr)
-            else if (isUrl && !SAFE_URL.test(String(v).trim())) el.removeAttribute(attr)
+            if (v === false || v == null || (isUrl && !SAFE_URL.test(String(v).trim())))
+              el.removeAttribute(attr)
             else el.setAttribute(attr, String(v))
           }),
         )
@@ -150,8 +160,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-value]")) {
-    const s = signalOf(scope, el.getAttribute("data-bind-value") ?? "")
+  for (const [el, name] of each("value")) {
+    const s = signalOf(scope, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -164,8 +174,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-on]")) {
-    for (const [event, name] of pairs(el.getAttribute("data-bind-on") ?? "")) {
+  for (const [el, spec] of each("on")) {
+    for (const [event, name] of pairs(spec)) {
       const handler = scope.handlers[name]
       if (handler === undefined) {
         warnOnce("handler", name)

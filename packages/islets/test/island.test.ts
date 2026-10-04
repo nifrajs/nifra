@@ -24,6 +24,20 @@ describe("islands", () => {
     expect(text.textContent).toBe("8")
   })
 
+  test("an island inside data-island-ignore is never mounted", () => {
+    const name = uniqueName()
+    let mounted = 0
+    const host = new FakeHost({ "data-island": name }, [])
+    const userContent = new FakeHost({ "data-island-ignore": "" }, [host])
+    island(name, () => {
+      mounted += 1
+      return undefined
+    })
+    mountIslands(new FakeRoot([userContent, host]))
+    expect(mounted).toBe(0)
+    expect(host.getAttribute("data-island-mounted")).toBeNull()
+  })
+
   test("state(): fallback when the key is absent; same signal identity per key", () => {
     const name = uniqueName()
     const host = new FakeHost({ "data-island": name }, [])

@@ -13117,6 +13117,17 @@ Values are signal/handler **names** resolved in the island's scope - never evalu
 markup cannot inject behavior. Unknown names warn once and skip; the server-rendered content
 stays as-is (progressive enhancement never throws).
 
+Render user-supplied HTML (comments, rich text) inside an element marked `data-island-ignore`.
+Nothing in it binds or mounts: a sanitizer that keeps `data-*` attributes cannot let that markup
+reach the island's handlers or signals, or mount an island of its own.
+
+```html
+<section data-island="comments">
+  <button data-bind-on="click:save">Save</button>
+  <div data-island-ignore>${sanitizedCommentHtml}</div>
+</section>
+```
+
 ## Signals
 
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { bindScope, type IslandScope } from "../src/bind.ts"
 import { type Signal, signal } from "../src/signals.ts"
-import { FakeElement, FakeRoot } from "./_fake-dom.ts"
+import { FakeElement, FakeHost, FakeRoot } from "./_fake-dom.ts"
 
 const scopeOf = (
   signals: Record<string, Signal<unknown>>,
@@ -130,5 +130,28 @@ describe("bindScope - the closed attribute set", () => {
     const el = new FakeElement({ "data-bind-class": ":broken,noColon,is-ok:ok" })
     bindScope(new FakeRoot([el]), scopeOf({ ok: ok as Signal<unknown> }))
     expect([...el.classes]).toEqual(["is-ok"])
+  })
+})
+
+describe("bindScope - ignored subtrees", () => {
+  test("nothing inside data-island-ignore binds a handler or a signal", () => {
+    let saves = 0
+    const label = signal<unknown>("secret")
+    const own = new FakeElement({ "data-bind-on": "click:save" })
+    const userButton = new FakeElement({ "data-bind-on": "click:save" })
+    const userText = new FakeElement({ "data-bind-text": "label" })
+    const ignoredItself = new FakeElement({
+      "data-bind-on": "click:save",
+      "data-island-ignore": "",
+    })
+    const host = new FakeHost({ "data-island": "comments" }, [
+      own,
+      new FakeHost({ "data-island-ignore": "" }, [userButton, userText]),
+      ignoredItself,
+    ])
+    bindScope(host, scopeOf({ label }, { save: () => saves++ }))
+    for (const el of [own, userButton, ignoredItself]) el.dispatch("click")
+    expect(saves).toBe(1)
+    expect(userText.textContent).toBeNull()
   })
 })
