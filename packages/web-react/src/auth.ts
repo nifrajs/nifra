@@ -97,7 +97,13 @@ export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode 
       session,
       refresh,
       signIn: (providerId, options) => client.signIn(providerId, options),
-      signOut: (options) => client.signOut(options),
+      signOut: async (options) => {
+        await client.signOut(options)
+        // The server ended the session: the subtree must not go on showing it, whether a redirect is
+        // pending or `redirect: false` keeps the page.
+        setSession(null)
+        setStatus("unauthenticated")
+      },
     }),
     [status, session, refresh, client],
   )
