@@ -118,6 +118,17 @@ describe("scaffold - templates", () => {
     })
   })
 
+  test("every template keeps .env files out of git", async () => {
+    for (const template of ["api", "batteries", "site", "isr"] as const) {
+      const dir = await freshDir(`env-${template}`)
+      await scaffold({ target: dir, template })
+      const ignored = (await readFile(join(dir, ".gitignore"), "utf8")).split("\n")
+      expect(ignored).toContain(".env")
+      expect(ignored).toContain(".env.*")
+      expect(ignored).toContain("!.env.example")
+    }
+  })
+
   test("a Cloudflare site gets wrangler.toml named for the project", async () => {
     const dir = await freshDir("my-site")
     await scaffold({ target: dir, template: "site", deployTarget: "cloudflare" })

@@ -8,3 +8,7 @@ dist
 .nifra-vite-entry.tsx
 .nifra-bun/
 .nifra/
+# local secrets; commit .env.example instead
+.env
+.env.*
+!.env.example
