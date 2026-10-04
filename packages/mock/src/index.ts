@@ -45,20 +45,69 @@ export class UnsupportedMockSchemaError extends Error {
   }
 }
 
-function numericBounds(schema: Record<string, unknown>): { min: number; max: number } {
-  const minimum = typeof schema.minimum === "number" ? schema.minimum : 0
-  const maximum = typeof schema.maximum === "number" ? schema.maximum : 100
-  const exclusiveMinimum =
-    typeof schema.exclusiveMinimum === "number" ? schema.exclusiveMinimum : undefined
-  const exclusiveMaximum =
-    typeof schema.exclusiveMaximum === "number" ? schema.exclusiveMaximum : undefined
-  const min =
-    exclusiveMinimum === undefined ? minimum : Math.max(minimum, exclusiveMinimum + Number.EPSILON)
-  const max =
-    exclusiveMaximum === undefined ? maximum : Math.min(maximum, exclusiveMaximum - Number.EPSILON)
-  if (min > max)
+interface NumericBounds {
+  readonly min: number
+  readonly max: number
+  readonly minExclusive: boolean
+  readonly maxExclusive: boolean
+}
+
+/** The binding bound of an inclusive/exclusive pair; on a tie the exclusive one binds. */
+function bindingBound(
+  inclusive: unknown,
+  exclusive: unknown,
+  tighter: (a: number, b: number) => boolean,
+): { value: number; exclusive: boolean } | undefined {
+  const i = typeof inclusive === "number" && Number.isFinite(inclusive) ? inclusive : undefined
+  const e = typeof exclusive === "number" && Number.isFinite(exclusive) ? exclusive : undefined
+  if (e !== undefined && (i === undefined || !tighter(i, e))) return { value: e, exclusive: true }
+  return i === undefined ? undefined : { value: i, exclusive: false }
+}
+
+// A side the schema leaves open sits 100 from the given one, so `minimum: 1900` alone is satisfiable.
+function numericBounds(schema: Record<string, unknown>): NumericBounds {
+  const lower = bindingBound(schema.minimum, schema.exclusiveMinimum, (a, b) => a > b)
+  const upper = bindingBound(schema.maximum, schema.exclusiveMaximum, (a, b) => a < b)
+  const min = lower?.value ?? (upper === undefined ? 0 : upper.value - 100)
+  const max = upper?.value ?? min + 100
+  const bounds = {
+    min,
+    max,
+    minExclusive: lower?.exclusive === true,
+    maxExclusive: upper?.exclusive === true,
+  }
+  if (min > max || (min === max && (bounds.minExclusive || bounds.maxExclusive)))
     throw new UnsupportedMockSchemaError("minimum", "Numeric schema has no satisfiable range")
-  return { min, max }
+  return bounds
+}
+
+const aboveMin = (value: number, b: NumericBounds): boolean =>
+  b.minExclusive ? value > b.min : value >= b.min
+const belowMax = (value: number, b: NumericBounds): boolean =>
+  b.maxExclusive ? value < b.max : value <= b.max
+
+/** A random multiple of `step` inside the bounds, or `undefined` when none is representable. */
+function multipleInBounds(b: NumericBounds, step: number, rand: () => number): number | undefined {
+  if (!(step > 0)) throw new UnsupportedMockSchemaError("multipleOf", "multipleOf must be positive")
+  let first = Math.ceil(b.min / step) * step
+  if (!aboveMin(first, b)) first += step
+  let last = Math.floor(b.max / step) * step
+  if (!belowMax(last, b)) last -= step
+  if (first > last || !aboveMin(first, b) || !belowMax(last, b)) return undefined
+  return first + randomIndex(rand, Math.floor((last - first) / step) + 1) * step
+}
+
+/** A random number inside the bounds, rounded to cents when the rounding stays inside them. */
+function numberInBounds(b: NumericBounds, rand: () => number): number {
+  // At least one ulp of `x`, so an exclusive bound moves even where `x + Number.EPSILON === x`.
+  const ulp = (x: number): number => Math.max(Math.abs(x) * Number.EPSILON, Number.MIN_VALUE)
+  const lo = b.minExclusive ? b.min + ulp(b.min) : b.min
+  const hi = b.maxExclusive ? b.max - ulp(b.max) : b.max
+  if (lo > hi)
+    throw new UnsupportedMockSchemaError("minimum", "Numeric schema has no satisfiable range")
+  const value = lo + rand() * (hi - lo)
+  const rounded = Math.round(value * 100) / 100
+  return rounded >= lo && rounded <= hi ? rounded : Math.min(hi, Math.max(lo, value))
 }
 
 function constrainedString(
@@ -200,31 +249,20 @@ export function generateMockValue(
     }
 
     case "number": {
-      const { min, max } = numericBounds(raw)
-      const multipleOf = typeof raw.multipleOf === "number" ? raw.multipleOf : undefined
-      if (multipleOf !== undefined && multipleOf <= 0) {
-        throw new UnsupportedMockSchemaError("multipleOf", "multipleOf must be positive")
-      }
-      if (multipleOf !== undefined) {
-        const first = Math.ceil(min / multipleOf) * multipleOf
-        const last = Math.floor(max / multipleOf) * multipleOf
-        if (first > last)
-          throw new UnsupportedMockSchemaError("multipleOf", "No multiple exists in range")
-        const steps = Math.floor((last - first) / multipleOf)
-        return first + Math.floor(rand() * (steps + 1)) * multipleOf
-      }
-      return Math.round((min + rand() * (max - min)) * 100) / 100
+      const bounds = numericBounds(raw)
+      if (typeof raw.multipleOf !== "number") return numberInBounds(bounds, rand)
+      const value = multipleInBounds(bounds, raw.multipleOf, rand)
+      if (value === undefined)
+        throw new UnsupportedMockSchemaError("multipleOf", "No multiple exists in range")
+      return value
     }
 
     case "integer": {
-      const { min, max } = numericBounds(raw)
-      const multipleOf = typeof raw.multipleOf === "number" ? raw.multipleOf : 1
-      const first = Math.ceil(min / multipleOf) * multipleOf
-      const last = Math.floor(max / multipleOf) * multipleOf
-      if (first > last)
+      const step = typeof raw.multipleOf === "number" ? raw.multipleOf : 1
+      const value = multipleInBounds(numericBounds(raw), step, rand)
+      if (value === undefined)
         throw new UnsupportedMockSchemaError("integer", "No integer exists in range")
-      const steps = Math.floor((last - first) / multipleOf)
-      return first + Math.floor(rand() * (steps + 1)) * multipleOf
+      return value
     }
 
     case "boolean":
