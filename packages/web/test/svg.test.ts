@@ -5,6 +5,7 @@ import {
   stripSvgPreamble,
   svgComponentBunPlugin,
   svgComponentSource,
+  svgTemplateMarkup,
   svgToJsx,
 } from "../src/plugins/svg.ts"
 
@@ -95,6 +96,58 @@ describe("svgComponentSource", () => {
     const js = new Bun.Transpiler({ loader: "jsx" }).transformSync(src)
     expect(js).toContain("SvgComponent")
     expect(js.length).toBeGreaterThan(0) // no throw ⇒ valid JSX
+  })
+})
+
+describe("an SVG file never reaches a template as code", () => {
+  test("JSX text holds braces, > and = as character references: a stylesheet compiles, an expression stays text", () => {
+    const src = svgComponentSource(
+      "<svg><style>.st0{fill:#FFF;} a > b {}</style><title>{(globalThis.svgRan = 1)}</title><text><![CDATA[x{y}<z]]></text></svg>",
+    )
+    expect(src).toContain("<style>.st0&#123;fill:#FFF;&#125; a &#62; b &#123;&#125;</style>")
+    expect(src).toContain("<title>&#123;(globalThis.svgRan &#61; 1)&#125;</title>")
+    expect(src).toContain("<text>x&#123;y&#125;&lt;z</text>")
+    expect(() => new Bun.Transpiler({ loader: "jsx" }).transformSync(src)).not.toThrow()
+  })
+
+  test.each([
+    [
+      "content after the root",
+      "<svg/>)} globalThis.x=1; function f(){return (<g/>",
+      "content after the root </svg>",
+    ],
+    [
+      "a spread in a tag",
+      "<svg><path {...evil}/></svg>",
+      '<path> holds "{" where an attribute belongs',
+    ],
+    [
+      "an element JSX reads as a value",
+      "<svg><globalThis.process.exit/></svg>",
+      "the element <globalThis.process.exit>",
+    ],
+    ["a capitalized element", "<svg><Function/></svg>", "the element <Function>"],
+    [
+      "a valueless attribute",
+      "<svg><g use:alert/></svg>",
+      "the attribute use:alert on <g> has no value",
+    ],
+    [
+      "an unquoted value",
+      "<svg><path d=M0/></svg>",
+      "the value of d on <path> is not a quoted string",
+    ],
+    ["markup with no svg root", "<g/>", "it does not start with an <svg> element"],
+    ["an unclosed root", "<svg><g>", "the root <svg> element is not closed"],
+  ])("JSX refuses %s", (_name, svg, message) => {
+    expect(() => svgToJsx(svg)).toThrow(message)
+  })
+
+  test("raw-text elements are copied as written until their closing tag, in any case", () => {
+    const rules = { text: (text: string) => text.toUpperCase(), rawText: new Set(["style"]) }
+    expect(svgTemplateMarkup("<svg><style>a{}</STYLE>b</svg>", rules)).toBe(
+      "<svg><style>a{}</STYLE>B</svg>",
+    )
   })
 })
 

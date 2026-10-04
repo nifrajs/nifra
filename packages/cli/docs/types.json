@@ -20521,6 +20521,13 @@
     "doc": "/** Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic). */"
   },
   {
+    "name": "SvgMarkupRules",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface SvgMarkupRules {\n    /** Text content as the template must spell it; `cdata` text arrives as a CDATA section held it. */\n    readonly text: (text: string, cdata: boolean) => string;\n    /** An attribute value (without its quotes) as the template must spell it. Default as written. */\n    readonly attributeValue?: (value: string) => string;\n    /** Why the template would read an element or attribute name as more than markup, or `undefined`. */\n    readonly refuse?: (name: string, kind: \"element\" | \"attribute\") => string | undefined;\n    /** Elements whose content the template reads as raw text, copied as it is. */\n    readonly rawText?: ReadonlySet<string>;\n}",
+    "doc": "/** How a framework's template must spell an SVG file's text and names, for {@link svgTemplateMarkup}. */"
+  },
+  {
     "name": "SvgOptimizer",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -20532,6 +20539,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface SvgPluginOptions {\n    /** Optimize each SVG first. `true` loads the `svgo` peer; pass an optimizer to inject one (or a stub). */\n    readonly svgo?: boolean | SvgOptimizer;\n}"
+  },
+  {
+    "name": "svgTemplateMarkup",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function svgTemplateMarkup(xml: string, rules: SvgMarkupRules): string;",
+    "doc": "/**\n * An SVG file's markup rewritten for a framework template: one `<svg>` root, its text and attribute\n * values put through `rules` so none of it reads as template syntax. Markup a well-formed SVG cannot\n * hold is refused rather than passed on - a brace, a bare name or an unquoted value in a tag, content\n * after the root - since each is a way for the file to reach the template as code.\n */"
   },
   {
     "name": "svgToJsx",

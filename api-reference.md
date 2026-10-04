@@ -5825,6 +5825,8 @@ _No named exports (side-effect entrypoint)._
 
 - **SVG_COMPONENT_FILTER** _(const)_ - `SVG_COMPONENT_FILTER: RegExp`
   The Bun `onLoad` filter every adapter's SVG-component plugin matches: `*.svg?component`.
+- **SvgMarkupRules** _(interface)_ - `interface SvgMarkupRules`
+  How a framework's template must spell an SVG file's text and names, for {@link svgTemplateMarkup}.
 - **SvgOptimizer** _(interface)_ - `interface SvgOptimizer`
   The subset of the `svgo` API this plugin uses (structural, so no hard dependency on its types).
 - **SvgPluginOptions** _(interface)_ - `interface SvgPluginOptions`
@@ -5835,6 +5837,8 @@ _No named exports (side-effect entrypoint)._
   The SVG-as-component Bun plugin (React/Preact). `generate` is accepted for parity with the other plugin pairs; the emitted component is the same on `"dom"` and `"ssr"`.
 - **svgComponentSource** _(function)_ - `svgComponentSource: (xml: string, options?: SvgToJsxOptions) => string`
   Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic).
+- **svgTemplateMarkup** _(function)_ - `svgTemplateMarkup: (xml: string, rules: SvgMarkupRules) => string`
+  An SVG file's markup rewritten for a framework template: one `<svg>` root, its text and attribute values put through `rules` so none of it reads as template syntax. Markup a well-formed SVG cannot hold is refused rather than passed on - a brace, a bare name or an unquoted value in a tag, content af…
 - **svgToJsx** _(function)_ - `svgToJsx: (xml: string, options?: SvgToJsxOptions) => string`
   Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root.
 

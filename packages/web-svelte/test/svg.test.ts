@@ -29,6 +29,29 @@ describe("svgToSvelte (transform)", () => {
   })
 })
 
+describe("svgToSvelte keeps the SVG out of Svelte syntax", () => {
+  test("braces in text and attribute values stay text; a nested <style> stays raw", () => {
+    const src = svgToSvelte(
+      '<svg><style>.a{fill:red}</style><title>{(globalThis.svgRan = 1)}</title><path data-x="{1}"/></svg>',
+    )
+    expect(src).toContain("<style>.a{fill:red}</style>")
+    expect(src).toContain("<title>&#123;(globalThis.svgRan = 1)&#125;</title>")
+    expect(src).toContain('data-x="&#123;1&#125;"')
+  })
+
+  test.each([
+    [
+      "a directive",
+      '<svg><path use:alert=""/></svg>',
+      "the attribute use:alert is a Svelte directive",
+    ],
+    ["a special element", "<svg><svelte:head></svelte:head></svg>", "the element <svelte:head>"],
+    ["a script after the root", "<svg></svg><script module>x()</script>", "content after the root"],
+  ])("refuses %s", (_name, svg, message) => {
+    expect(() => svgToSvelte(svg)).toThrow(message)
+  })
+})
+
 describe("svelteSvgComponentBunPlugin", () => {
   test("compiles a *.svg?component into a Svelte component module (real compiler)", async () => {
     const out = await setup("dom")({ path: fixture })
