@@ -85,10 +85,12 @@ function isBackendModule(file: string): boolean {
 const SERVER_ONLY =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b|^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
 
-// A static, non-type import with a string specifier. `import type …` is erased at build, so it's safe
-// and skipped. Dynamic `import(…)` has `(` right after `import`, so `import\s+` never matches it; it
-// is read by DYNAMIC_IMPORT below.
-const STATIC_IMPORT = /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?['"]([^'"]+)['"]/g
+// A static, non-type import with a string specifier, or a re-export (`export … from "x"`), which
+// pulls its module into the bundle the same way. `import type …` and `export type …` are erased at
+// build, so they're safe and skipped. Dynamic `import(…)` has `(` right after `import`, so `import\s+`
+// never matches it; it is read by DYNAMIC_IMPORT below.
+const STATIC_IMPORT =
+  /\b(?:import\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?|export\s+(?!type\b)[^'"();]*?\bfrom\s+)['"]([^'"]+)['"]/g
 // A dynamic `import("x")` whose specifier is one string literal. The client build bundles its target
 // as a lazy chunk, so it reaches the browser bundle like a static import does - also from inside a
 // loader, which ships with the route module. A computed specifier cannot be followed and is skipped.

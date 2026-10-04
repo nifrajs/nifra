@@ -102,6 +102,19 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     position: number,
     specifier: string,
   ): boolean | undefined => {
+    const reexport = ancestorAt(ts, source, position, ts.isExportDeclaration) as
+      | TSApi.ExportDeclaration
+      | undefined
+    if (reexport !== undefined) {
+      const from = reexport.moduleSpecifier
+      if (from === undefined || !ts.isStringLiteral(from) || from.text !== specifier)
+        return undefined
+      if (reexport.isTypeOnly) return false
+      const named = reexport.exportClause
+      if (named !== undefined && ts.isNamedExports(named))
+        return named.elements.some((element) => !element.isTypeOnly)
+      return true // `export *` and `export * as ns`
+    }
     const declaration = ancestorAt(ts, source, position, ts.isImportDeclaration) as
       | TSApi.ImportDeclaration
       | undefined
