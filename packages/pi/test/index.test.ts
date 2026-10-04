@@ -71,6 +71,37 @@ process.stdin.on("data", (chunk) => {
     }
   })
 
+  test("model-provider credentials reach Pi and other parent variables do not", async () => {
+    const saved = { key: process.env.ANTHROPIC_API_KEY, other: process.env.NIFRA_PI_UNRELATED }
+    process.env.ANTHROPIC_API_KEY = "sk-forwarded"
+    process.env.NIFRA_PI_UNRELATED = "must-not-leak"
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const text = (process.env.ANTHROPIC_API_KEY || "absent") + "|" + (process.env.NIFRA_PI_UNRELATED || "absent")
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end" }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "env-provider" })
+      const events = await collect(backend.send({ sessionId: "env-provider", message: "hello" }))
+      expect(events.find((event) => event.type === "assistant.message")).toMatchObject({
+        text: "sk-forwarded|absent",
+      })
+    } finally {
+      await backend.close("env-provider")
+      for (const [name, value] of [
+        ["ANTHROPIC_API_KEY", saved.key],
+        ["NIFRA_PI_UNRELATED", saved.other],
+      ] as const) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
   test("rejects malformed and oversized Pi JSONL records without throwing from the reader", async () => {
     const fakeMalformed = `
 process.stdin.on("data", (chunk) => {
