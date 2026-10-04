@@ -7,7 +7,11 @@ import {
   deniedCapabilities,
   parseCapabilityManifest,
 } from "../src/capabilities.ts"
-import { BoundedSubagentRunner } from "../src/subagents.ts"
+import {
+  BoundedSubagentRunner,
+  type SubagentAbandonment,
+  type SubagentAbandonmentLedger,
+} from "../src/subagents.ts"
 
 describe("optional agent safety surfaces", () => {
   test("parses capability manifests and fails closed on denied capabilities", () => {
@@ -77,6 +81,83 @@ describe("optional agent safety surfaces", () => {
     finish()
     await Bun.sleep(0)
     expect(events).toEqual(["executor done", "cleanup"])
+  })
+
+  test("an executor that ignores its abort is reported abandoned and counted until it settles", async () => {
+    let finish = (): void => {}
+    const seen: SubagentAbandonment[] = []
+    const runner = new BoundedSubagentRunner(
+      {
+        run: () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      },
+      { workspace: { root: process.cwd() }, onAbandoned: (abandonment) => seen.push(abandonment) },
+    )
+    await expect(
+      runner.run({ id: "stuck", role: "worker", prompt: "edit", timeoutMs: 20 }),
+    ).resolves.toMatchObject({ ok: false, error: "subagent timed out" })
+    expect(runner.abandoned).toBe(1)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({
+      spec: { id: "stuck" },
+      reason: "timeout",
+      cwd: realpathSync(process.cwd()),
+    })
+    finish()
+    await seen[0]?.settled
+    expect(runner.abandoned).toBe(0)
+  })
+
+  test("an executor that honours its abort is not abandoned", async () => {
+    const seen: SubagentAbandonment[] = []
+    const parent = new AbortController()
+    const runner = new BoundedSubagentRunner(
+      {
+        run: ({ signal }) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("stopped")), { once: true })
+          }),
+      },
+      { signal: parent.signal, onAbandoned: (abandonment) => seen.push(abandonment) },
+    )
+    const running = runner.run({ id: "polite", role: "worker", prompt: "edit" })
+    await Bun.sleep(5)
+    parent.abort()
+    await expect(running).resolves.toMatchObject({ ok: false, error: "subagent cancelled" })
+    expect(seen).toEqual([])
+    expect(runner.abandoned).toBe(0)
+  })
+
+  test("maxAbandoned refuses new children while that many abandoned executors run, across a shared ledger", async () => {
+    let finish = (): void => {}
+    const stuck = {
+      run: () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        }),
+    }
+    const ledger: SubagentAbandonmentLedger = { abandoned: 0 }
+    const first = new BoundedSubagentRunner(stuck, { maxAbandoned: 1, abandonment: ledger })
+    const second = new BoundedSubagentRunner(
+      { run: () => "ran" },
+      { maxAbandoned: 1, abandonment: ledger },
+    )
+    await expect(
+      first.run({ id: "stuck", role: "worker", prompt: "edit", timeoutMs: 20 }),
+    ).resolves.toMatchObject({ ok: false, error: "subagent timed out" })
+    expect(ledger.abandoned).toBe(1)
+    const next = { id: "next", role: "worker", prompt: "edit" }
+    await expect(second.run(next)).resolves.toMatchObject({
+      ok: false,
+      error: "subagent abandoned-executor limit reached",
+    })
+    finish()
+    await Bun.sleep(0)
+    expect(second.abandoned).toBe(0)
+    await expect(second.run(next)).resolves.toMatchObject({ ok: true, output: "ran" })
+    expect(() => new BoundedSubagentRunner(stuck, { maxAbandoned: -1 })).toThrow(RangeError)
   })
 
   test("a finished run is released before it returns, and a cancelled one never leases", async () => {

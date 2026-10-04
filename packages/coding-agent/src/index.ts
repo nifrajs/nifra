@@ -133,6 +133,8 @@ export {
 } from "./sessions.ts"
 export {
   BoundedSubagentRunner,
+  type SubagentAbandonment,
+  type SubagentAbandonmentLedger,
   type SubagentExecutor,
   type SubagentResult,
   type SubagentRunnerOptions,

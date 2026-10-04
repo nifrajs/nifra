@@ -1080,6 +1080,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionMigrationReport** _(interface)_ - `interface SessionMigrationReport`
   Counts and integrity metadata emitted after a target has been fully validated.
 - **SessionStore** _(interface)_ - `interface SessionStore`
+- **SubagentAbandonment** _(interface)_ - `interface SubagentAbandonment`
+  A run that returned while its executor kept running, having ignored its abort signal.
+- **SubagentAbandonmentLedger** _(interface)_ - `interface SubagentAbandonmentLedger`
+  Abandoned executors still running. Runners sharing one ledger are counted, and bounded by `maxAbandoned`, together.
 - **SubagentExecutor** _(interface)_ - `interface SubagentExecutor`
 - **SubagentResult** _(interface)_ - `interface SubagentResult`
 - **SubagentRunnerOptions** _(interface)_ - `interface SubagentRunnerOptions`

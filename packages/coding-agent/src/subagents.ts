@@ -46,6 +46,22 @@ export interface SubagentWorkspacePolicy {
   ) => SubagentWorkspaceLease | PromiseLike<SubagentWorkspaceLease>
 }
 
+/** A run that returned while its executor kept running, having ignored its abort signal. */
+export interface SubagentAbandonment {
+  readonly spec: SubagentSpec
+  readonly reason: "timeout" | "cancelled"
+  /** The workspace the executor was given; undefined when it had none. */
+  readonly cwd: string | undefined
+  /** Settles once the executor does; its workspace lease is cleaned up after that. */
+  readonly settled: Promise<void>
+}
+
+/** Abandoned executors still running. Runners sharing one ledger are counted, and bounded by
+ * `maxAbandoned`, together. */
+export interface SubagentAbandonmentLedger {
+  abandoned: number
+}
+
 export interface SubagentRunnerOptions {
   readonly maxChildren?: number
   readonly maxDepth?: number
@@ -53,6 +69,15 @@ export interface SubagentRunnerOptions {
   readonly signal?: AbortSignal
   readonly allowedCapabilities?: readonly string[]
   readonly workspace?: SubagentWorkspacePolicy
+  /**
+   * Called when a run returns while its executor keeps running: it timed out or was cancelled and
+   * ignored its abort signal. Use it to stop the executor another way, such as ending its process.
+   */
+  readonly onAbandoned?: (abandonment: SubagentAbandonment) => void
+  /** Refuse new children while this many abandoned executors are still running. Default: no bound. */
+  readonly maxAbandoned?: number
+  /** Where abandoned executors are counted. Default: a ledger of this runner's own. */
+  readonly abandonment?: SubagentAbandonmentLedger
 }
 
 /** `work`'s outcome, or `stopped()` as soon as `signal` aborts, even when `work` ignores it. */
@@ -73,6 +98,7 @@ export class BoundedSubagentRunner {
   > &
     SubagentRunnerOptions
   private children = 0
+  private readonly ledger: SubagentAbandonmentLedger
 
   constructor(executor: SubagentExecutor, options: SubagentRunnerOptions = {}) {
     this.executor = executor
@@ -82,15 +108,37 @@ export class BoundedSubagentRunner {
       maxDepth: options.maxDepth ?? 2,
       depth: options.depth ?? 0,
     }
-    if (this.options.maxChildren < 1 || this.options.maxDepth < 0 || this.options.depth < 0)
+    this.ledger = options.abandonment ?? { abandoned: 0 }
+    if (
+      this.options.maxChildren < 1 ||
+      this.options.maxDepth < 0 ||
+      this.options.depth < 0 ||
+      (options.maxAbandoned !== undefined &&
+        (!Number.isSafeInteger(options.maxAbandoned) || options.maxAbandoned < 0))
+    )
       throw new RangeError(
         "subagents: limits must be non-negative and maxChildren must be positive",
       )
   }
 
+  /** Executors this runner's ledger holds as abandoned and still running. */
+  get abandoned(): number {
+    return this.ledger.abandoned
+  }
+
   async run(spec: SubagentSpec): Promise<SubagentResult> {
     if (!/^[a-z][a-z0-9._:-]{0,63}$/.test(spec.id))
       return { id: spec.id, role: spec.role, ok: false, error: "invalid subagent id" }
+    if (
+      this.options.maxAbandoned !== undefined &&
+      this.ledger.abandoned >= this.options.maxAbandoned
+    )
+      return {
+        id: spec.id,
+        role: spec.role,
+        ok: false,
+        error: "subagent abandoned-executor limit reached",
+      }
     if (++this.children > this.options.maxChildren)
       return { id: spec.id, role: spec.role, ok: false, error: "subagent child limit exceeded" }
     if (this.options.depth > this.options.maxDepth)
@@ -137,6 +185,7 @@ export class BoundedSubagentRunner {
           }, spec.timeoutMs)
     const stopped = (): Error => new Error(timedOut ? "subagent timed out" : "subagent cancelled")
     let workspace: SubagentWorkspaceLease | undefined
+    let cwd: string | undefined
     let executorDone: Promise<void> | undefined
     let executorSettled = false
     try {
@@ -170,7 +219,7 @@ export class BoundedSubagentRunner {
       } else if (requestedCwd !== undefined) {
         workspace = { cwd: requestedCwd }
       }
-      let cwd = workspace?.cwd
+      cwd = workspace?.cwd
       if (workspace !== undefined && this.options.workspace !== undefined) {
         // The executor gets the path that was checked, with its links already resolved, so a link
         // swapped after the check cannot move it out of the policy root.
@@ -213,12 +262,26 @@ export class BoundedSubagentRunner {
       if (timeout !== undefined) clearTimeout(timeout)
       this.options.signal?.removeEventListener("abort", onAbort)
       const cleanup = workspace?.cleanup
-      if (cleanup !== undefined) {
-        // An abandoned executor may still be writing there; the release waits for it to settle.
-        if (executorDone !== undefined && !executorSettled)
-          executorDone.then(() => cleanup()).catch(() => {})
-        else await cleanup()
-      }
+      // An executor that honours the abort settles within a few ticks; give it one turn before
+      // calling it abandoned.
+      if (executorDone !== undefined && !executorSettled)
+        await Promise.race([executorDone, new Promise((resolve) => setTimeout(resolve, 0))])
+      if (executorDone !== undefined && !executorSettled) {
+        // The executor is counted until it settles, and may still be writing to its workspace, so
+        // the release waits for it too.
+        const ledger = this.ledger
+        ledger.abandoned++
+        const settled = executorDone.then(() => {
+          ledger.abandoned--
+        })
+        if (cleanup !== undefined) settled.then(() => cleanup()).catch(() => {})
+        this.options.onAbandoned?.({
+          spec,
+          reason: timedOut ? "timeout" : "cancelled",
+          cwd,
+          settled,
+        })
+      } else if (cleanup !== undefined) await cleanup()
     }
   }
 

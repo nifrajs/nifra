@@ -184,3 +184,53 @@ describe("OrchestrationHost lifecycle", () => {
     )
   })
 })
+
+describe("OrchestrationHost subagent abandonment", () => {
+  test("an executor that outlives its timed-out node is reported, and bounds later subagent nodes", async () => {
+    const gate = deferred()
+    let calls = 0
+    const abandoned: Array<readonly [string, string, string]> = []
+    const catalog = createStepCatalog({
+      stuck: {
+        kind: "subagent",
+        executor: {
+          run: () => {
+            calls++
+            return gate.promise
+          },
+        },
+        spec: () => ({ id: "kid", role: "impl", prompt: "do", timeoutMs: 20 }),
+      },
+    })
+    const host = new OrchestrationHost({
+      catalog,
+      limits: { maxAbandonedSubagents: 1 },
+      onSubagentAbandoned: (runId, nodeId, abandonment) =>
+        abandoned.push([runId, nodeId, abandonment.reason]),
+    })
+    const plan: RunPlan = {
+      version: 1,
+      id: "p",
+      nodes: [{ id: "sa", kind: "subagent", step: "stuck" }],
+    }
+    const first = await host.submit(plan)
+    host.start(first)
+    expect((await host.settled(first)).status).toBe("failed")
+    expect(abandoned).toEqual([[first, "sa", "timeout"]])
+    expect(host.abandonedSubagents).toBe(1)
+
+    // Another run's subagent node is refused before its executor starts.
+    const second = await host.submit(plan)
+    host.start(second)
+    expect((await host.settled(second)).status).toBe("failed")
+    expect(calls).toBe(1)
+
+    gate.resolve()
+    await tick()
+    expect(host.abandonedSubagents).toBe(0)
+    const third = await host.submit(plan)
+    host.start(third)
+    expect((await host.settled(third)).status).toBe("succeeded")
+    expect(calls).toBe(2)
+  })
+})
