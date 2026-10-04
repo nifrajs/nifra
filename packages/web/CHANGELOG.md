@@ -1,5 +1,850 @@
 # @nifrajs/web
 
+## 4.0.0
+
+### Major Changes
+
+- 22e2af8: feat(web)!: client builds fail on what looks like a credential
+
+  Every client build (Bun and Vite), every `public/` copy and every prerendered page and `_data.json`
+  is scanned before it is written. The build fails, naming the file and line, on:
+
+  - a PEM private key, a URL with a password, or a known secret token format (AWS access keys, Stripe
+    secret and webhook keys, GitHub, Slack, OpenAI, Anthropic, SendGrid, Twilio, Mailgun and npm tokens,
+    service-role JWTs); publishable keys are not flagged;
+  - a random-looking string assigned to a secret-like name (`apiKey`, `clientSecret`, ...) in the app's
+    own browser code;
+  - the value of a build environment variable that is not public, raw or URL, JSON, HTML or base64
+    encoded, when its name says it is a secret or the value looks random.
+
+  A finding in a bundle names the module it came from. The report never prints the value. A reviewed
+  false positive is exempted with `secretExemptions` on the build options (`nifra.config.ts` for
+  `nifra build`): `{ rule, file, reason }`, or `{ rule: "private-env-value", env, reason }`. There is no
+  exemption by value. `prerenderRoutes` takes the same exemptions as `secrets`. `@nifrajs/web/zones`
+  exports the scanner as `scanForSecrets`.
+
+- 214d674: feat(web)!: an app is split into zones, and the browser build admits only browser code
+
+  An app's files live in `routes/`, `frontend/`, `backend/`, `shared/` and `public/`. A route is two
+  files: `x.tsx` (or `.svelte`/`.vue`) is the page the browser receives, and `x.backend.ts` holds what
+  only the server runs - `loader`, `action`, `middleware`, `getStaticPaths`, `revalidate` and the other
+  server exports, a layout's `gate` and `shouldRevalidate` included. `_layout.backend.ts` exports a
+  directory's `middleware`; `_middleware.ts` is retired. `@nifrajs/web/route-manifest` exports the
+  placement table as `FRONTEND_ROUTE_EXPORTS` and `BACKEND_ROUTE_EXPORTS`.
+
+  Every browser build and dev server - Bun and Vite - refuses `backend/`, a route's backend half, server
+  packages, and first-party code that belongs to no zone, naming the import chain that reached it.
+  After bundling, the build checks the finished module graph and every emitted file (code, CSS, assets
+  and source maps) and writes nothing it cannot trace to browser code. A workspace package declares its
+  side with `"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }`.
+
+  Server builds hold the same rules from the other side: every first-party file belongs to a zone,
+  backend code never imports frontend code, and shared code imports only shared code and third-party
+  packages, never a server built-in. A server bundle also refuses a built-in its target cannot load: a
+  `node:` or `bun:` import kept in an edge worker, or a `bun:` import kept in a Node server. The Vite
+  server build runs the zone rules through `viteServerZoneGuard` from
+  `@nifrajs/web/plugins/vite-leak-guard`.
+
+  Browser code - a route's frontend half, `frontend/` and `shared/` - may read only `NODE_ENV`, the
+  bundler's `import.meta.env` flags (`MODE`, `DEV`, `PROD`, `SSR`, `BASE_URL`) and variables named with
+  the public prefix (`PUBLIC_` unless `publicEnvPrefix` says otherwise). Any other `process.env`,
+  `import.meta.env`, `Bun.env` or `Deno.env` read fails the build and the dev request, naming the
+  variable. Strings, comments, JSX text and Markdown code samples that mention a variable are not reads.
+
+  `@nifrajs/web/zones` exports the classifier and the rules every build, dev server and `nifra check`
+  share: `createZoneClassifier`, `browserDenial`, `importAllowed`, `importRuleMessage`,
+  `privateEnvReads` and `privateEnvReason`.
+
+  Removed: the `*.server` file convention, the `@nifrajs/web/plugins/vite-server-only` export and
+  `SERVER_ONLY_MODULE`. The opt-in marker import is `@nifrajs/web/backend-only`, its brand type is
+  `BackendOnly<T>`, and the dev diagnostics are `NIFRA_BACKEND_ONLY_IN_CLIENT` and
+  `NIFRA_BACKEND_IN_CLIENT`.
+
+- 4b8d8de: feat(web)!: everything a route sends to the browser passes a declared output schema
+
+  A route's backend half declares what its loader and action send to the browser:
+  `export const loaderOutput = t.object({ ... })` and `export const actionOutput = ...`. A boundary
+  loader declares `boundaryLoaders[name].output`, and a server function `serverFn({ output }, fn)`.
+  Before the page renders and before anything is serialized, the data is projected through its schema:
+  keys the schema does not declare are dropped, at every depth, even when the schema itself would accept
+  them, so the component and the browser see the same value. A declared field of the wrong shape fails
+  the request with a 500 whose message names the field's path, never its value. A loader that returns
+  data without an output schema fails the request; one that returns nothing, redirects or answers with
+  an error status needs none. A loader, action, boundary loader or server function that returns a 2xx
+  `Response` is refused, since its body would bypass the schema.
+
+  A deferred value is declared with `t.deferred(schema)`, and what it resolves to is projected and
+  validated by `schema` before it streams. A deferred value the schema does not declare as one is
+  refused.
+
+  An output schema that names a field such as `password`, `passwordHash`, `secret`, `token`, `apiKey`,
+  `privateKey` or `ssn` fails the route when it loads, unless the field is wrapped in
+  `t.declassified("why it may reach the browser", schema)`. `@nifrajs/web/zones` exports the name test
+  as `isSensitiveFieldName`.
+
+  Projection reads a nifra schema's JSON Schema, or a Standard JSON Schema such as zod's. A schema that
+  exposes neither keeps whatever its own `validate` returns.
+
+  The scaffolded site and ISR routes declare their loader and action output schemas.
+
+- 6c978a1: feat(web)!: the Cloudflare Pages build target is `cloudflare`
+
+  `BUILD_TARGETS` and `buildTarget` / `buildTargetVite` name it `"cloudflare"` (it emits the same
+  `_worker.js` + `_routes.json` deploy directory). `"cf-pages"` is refused with the new name.
+  `parseBuildTarget(value)` returns a string as a `BuildTarget`, or throws with the same message.
+
+- 38cf032: feat(web)!: Vercel builds use the Build Output API, and generated entries pass the client address
+
+  - The `vercel` target emits the Build Output API v3 layout: `config.json`, `static/` (assets and
+    public files) and an edge function at `functions/index.func/`, ready for `vercel deploy --prebuilt`.
+    `planBuildTarget` reports the new `outputFile` and a `staticDir` for every target.
+  - The generated Bun, Node and Deno server entries pass the socket peer to `app.fetch`, so
+    `c.clientIp` and `rateLimit`'s default key work in a built app.
+  - Edge bundles (`cloudflare`, `vercel`) accept `node:async_hooks`, `node:buffer`, `node:events`,
+    `node:util` and `node:assert`, which those runtimes provide.
+
+### Minor Changes
+
+- 963694f: `@nifrajs/web/cdn` puts a CDN in front of nifra pages and purges it by tag.
+
+  - `withCdn(app, { provider })` wraps an app or a `withISR` handler. Every page a shared cache may hold gets the CDN's tag header (the route's `revalidateTags` plus a tag for the page's path) and the CDN's TTL from the route's `revalidate`; browsers get `public, max-age=0, must-revalidate`. Every other HTML response, drafts included, is marked no-store for the CDN. Over `withISR`, the CDN is given only the freshness the page has left.
+  - Providers: `cloudflareZone`, `cloudflareWorkersCache` (refuses a host-routed app, since Workers Cache keys by path), `vercel` (`invalidateByTag` from `@vercel/functions`, or the REST API; invalidate by default) and `fastly` (soft purge by default). `defineCdnProvider` builds any other.
+  - Purges are coalesced for 250 ms, chunked to each provider's per-call limit, sent one call at a time, and retried on 429 or 5xx with capped backoff that honors `Retry-After`.
+  - `revalidateEndpoint({ cdn })` purges the origin store, then the CDN, and answers `200` when the CDN accepted, `202` when the purge is queued, and `502` with `retryable` when the CDN refused. It also takes a batch `{ "paths": [...], "tags": [...] }` of at most 100 paths and 32 tags. `createInvalidator` does the same from app code.
+  - `revalidateTags` may be a function of the route's params and URL, for tags per page. Invalid tags it returns are dropped with one `NIFRA_CDN_TAG_INVALID` warning per route.
+  - `isCacheablePage` is exported: the one rule ISR and the CDN cache by.
+  - New error codes: `NIFRA_CDN_HOST_ROUTED`, `NIFRA_CDN_TAG_INVALID`, `NIFRA_CDN_RATE_LIMITED`, `NIFRA_CDN_PURGE_FAILED`.
+
+- a0cfffa: `export const clientIp = "platform"` in `nifra.config.ts` makes a `cloudflare` or `vercel` build read `c.clientIp` from the header that platform's edge overwrites (`cf-connecting-ip`, `x-real-ip`), so per-caller middleware such as `rateLimit` works there. Without it an edge build still has no caller address; Bun, Node and Deno builds use the socket peer either way. `buildTarget` and `generateServerEntry` take the same `clientIp` option. Site scaffolds declare it.
+- 93e5e7f: Errors come with a prompt to paste into a coding agent: the error, where it is, the recognised cause, one fix, and steps that end in a check the agent runs itself (`nifra_errors` with a `since` cursor, then `nifra check`). App-supplied text is fenced and labeled as data, paths are project-relative, the home directory never appears, and the prompt is capped at 8000 characters.
+
+  - Codes with more than one right fix (`NIFRA_BACKEND_IN_CLIENT`, `NIFRA_BACKEND_ONLY_IN_CLIENT`, `NIFRA_OUTPUT_SENSITIVE_FIELD`, `NIFRA_OUTPUT_UNDECLARED_DEFERRED`, `NIFRA_OUTPUT_RAW_RESPONSE`, `NIFRA_OUTPUT_SCHEMA_MISMATCH`) list each as a labeled `fixOptions` entry on the `Diagnostic`, with one prompt per option.
+  - The dev overlay has a Copy prompt button per fix. A page load whose render throws gets the overlay on both dev pipelines; data requests and API calls keep the app's JSON 500.
+  - A dev page that reports a browser error shows a badge listing that page's errors with their code, message, codeframe, fix and Copy prompt buttons. It renders in a closed shadow root, loads under the page's CSP (nonce, exact URL, or `'strict-dynamic'`), is only fetched once a page errors, and turns off with `nifra dev --no-indicator`, `export const dev = { indicator: false }` in `nifra.config.ts`, or `indicator: false` on `createDevServer`/`createViteDevServer`.
+  - `nifra errors --prompt` (and `nifra_errors` with `prompt: true`) prints the prompt for the newest entry; `--id` picks an entry and `--option` picks a fix by its label.
+  - `@nifrajs/web/diagnostic-prompt` exports `buildFixPrompt`, `fixPrompts` and `catalogFixPrompts` without Node APIs, for use in a browser bundle.
+
+- 4936309: feat(i18n): one locale registry and locale-prefixed routing; feat(web): PWA manifest builder
+
+  `defineLocales()` declares each locale once - URL segment, BCP-47 tag for `Intl`, `hreflang` value,
+  writing direction and native name, each defaulted from the segment - and marks unfinished
+  translations `draft`. It validates tags, segments and `hreflang` uniqueness at definition and gives
+  `served`, `get()`, a catalog fallback `chain()` (`fr-CA` → `fr` → default) and `documentMeta()` for a
+  route's `<html lang>`/`<html dir>`. `localeDirection()` derives the direction from an explicit
+  script, a right-to-left language, or the runtime's likely script.
+
+  `@nifrajs/i18n/routing` adds `defineI18nRouting(locales)` - the URL half of i18n next to
+  `negotiateLocale`'s detection half. Pure and dependency-free: prefix, strip and read locale prefixes
+  (served locales only, case-insensitive, so `/frank` never reads as French and a draft's prefix is an
+  ordinary segment); `alternates(path, { origin?, locales? })` returns the page's canonical URL and its
+  `hreflang` links - absolute or root-relative, limited to the locales the page exists in, listed in
+  registry order so every page of a cluster agrees, with `x-default` when the default is listed; and
+  `matchSegment()` checks a `[lang]` route segment for a route `middleware` guard, answering not-found for
+  an unknown or draft value and a redirect for the default's prefix or a wrong case. No path it builds
+  can start with `//` or `/\`. No regex runs on request input.
+
+  `@nifrajs/web/pwa-manifest` adds `pwaManifest()` - the declarative PWA half next to the
+  service-worker generator. Pure builder for `manifest.json` bytes (names, scope defaulted
+  from `start_url`, icons/screenshots/shortcuts, colors) with fail-loud validation of spec
+  shapes, plus `serializeManifest()` and the `<link rel="manifest">` tag helper.
+
+- e8270d9: feat(web): SSR loader, action and boundary calls through `ctx.api` now carry the page request's
+  platform identity. A backend reached from a loader sees the visitor's `c.clientIp` (derived under the
+  page app's `server.clientIp` trust declaration), `c.env` and `c.waitUntil`, so per-visitor rate limits,
+  audit logs and bindings work during SSR. Headers are never copied: a loader call stays anonymous unless
+  the loader passes `cookie` or `authorization` itself. `inProcessClient()` / `testClient()` used outside a
+  render keep dispatching with no platform.
+
+  New seams in `@nifrajs/core/mount`: `NIFRA_BACKEND_BIND_PLATFORM` (returns a platform-bound view of an
+  in-process client) and `NIFRA_PLATFORM_CLIENT_IP_DERIVED` (marks a platform whose `clientIp` an enclosing
+  server already derived, so a backend with its own `clientIp` trust keeps it instead of re-reading
+  forwarding headers a synthesized request does not carry).
+
+- d942c33: feat(web): a loader or action sets response headers and cookies through `ctx.set`. It has `headers`,
+  `cookie()`, and `deleteCookie()`, the page counterpart of a route handler's `c.set`.
+  `LoaderResponseControls` is exported from `@nifrajs/web` and `@nifrajs/client`.
+
+  - `ctx.set.headers` applies to the rendered document. It is not applied to a redirect, a status page,
+    an error page, or a navigation data response.
+  - Each loader has its own header record. They merge layouts root to leaf, then the page loader, then
+    the action, so the most specific writer wins a name whichever loader settles first.
+  - `content-type`, `set-cookie`, `location`, the transport headers, and the `x-nifra-` prefix are
+    refused. So is a name that is not an HTTP token, and a value with a line break, a control
+    character, or a character outside Latin-1. The error names the header, never its value.
+  - `ctx.set.cookie()` uses the same secure defaults as `c.set.cookie` and rides every outcome,
+    including a thrown `Response`. A queued cookie makes the response `cache-control: private, no-store`
+    - the document, a redirect, a status or error page, a hand-built `Response` - and keeps the page out
+      of `withISR`.
+  - The controls close when the loader or action settles. A later write throws.
+  - `enableDraft(ctx, secret)` works from a loader or action.
+
+  Behavior changes:
+
+  - A navigation data response, from a loader or an action, is now always
+    `cache-control: private, no-store` with `vary: x-nifra-data`. It shares its URL with the document,
+    so a cache keyed on the URL must not store it.
+  - A document that carries loader headers has `x-nifra-data` added to its `vary`.
+  - `withISR` stores a page whose only `vary` token is `x-nifra-data`, and replays `x-robots-tag`.
+  - `LoaderContext` and `LoaderArgs` have a required `set`. A test that builds one by hand needs to
+    supply it.
+
+- 8e30090: feat: a mount nifra cannot analyze is a declared known gap, not a silent hole. Routes behind
+  `mount()` and `mountFetch()` are invisible to route reflection, so capability assurance could not
+  see them and said nothing. Both now take `opaque: "<reason>"`, and so does a `createWebApp`
+  `mounts` entry. Capability assurance lists a mount with a reason as a known gap
+  (`report.gaps`, `{ kind: "opaque-mount", path, reason }`): `nifra check` and
+  `nifra capabilities check` print it on every run, and it fails nothing and lowers no level. A mount
+  on the analyzed app without a reason fails with the new `opaque-mount-undeclared` finding, which
+  suggests `merge()` for a nifra `server()` and `opaque` for anything else. A mount whose app publishes
+  composed evidence (the API `createWebApp` mounts) is not reported. `webProjectEvidence` accepts a
+  `mounts` entry without an evidence provider when it declares `opaque`. New exports:
+  `reflectMounts` and `ReflectedMount` from `@nifrajs/core/reflection`, `CapabilityGap` from
+  `@nifrajs/core/capabilities`; project evidence snapshots gain an optional `mounts` list, absent for
+  an app with no mounts.
+- 6d20355: feat(core): a path param can say which values it accepts, written in braces after the name. A
+  request whose value does not fit is not served by that route:
+
+  ```ts
+  app
+    // /users/me is its own route; /users/42 is this one; /users/ada is a 404
+    .get("/users/me", () => ({ me: true }))
+    .get("/users/:id{[0-9]+}", (c) => ({ id: Number(c.params.id) }))
+    // a list of values, and a count
+    .get("/img/:size{thumb|full}/:file", (c) => ({
+      size: c.params.size,
+      file: c.params.file,
+    }))
+    .get("/countries/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+    // inside a segment, and optional at the end of a path
+    .get("/files/:name.:ext{png|jpg}", (c) => ({
+      name: c.params.name,
+      ext: c.params.ext,
+    }))
+    .get("/posts/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "1" }));
+  ```
+
+  - A constraint is one character class with an optional count (`[0-9]`, `[a-z0-9_-]+`, `\d{4}`,
+    `\w{2,8}`), or a list of two or more values (`png|jpg|webp`). A class holds letters, digits, ranges
+    of them, `\d`, `\w` and `. _ ~ ! $ & ' ( ) + , ; = @ -`; there is no negated class and a count
+    starts at one. Anything else in braces (`:id{int}`, `:id{.+}`, `:id{[0-9]+|[a-z]+}`) is literal
+    text, as before.
+  - The param stays a `string`, keyed by its bare name: `Params<"/users/:id{[0-9]+}">` is
+    `{ id: string }`.
+  - The value is checked as it was sent, before percent-decoding. `/users/4%32` does not fit
+    `:id{[0-9]+}`; a broader route beside it serves that request.
+  - The narrowest route answers, whatever the order of registration: literal text, then a list, then a
+    class, then a bare `:param`, then a wildcard. Between two constraints of a kind, the one that
+    accepts fewer values is tried first. A method the narrowest matching route does not have answers
+    `405`, as it does for a literal route beside a param route.
+  - Two spellings of one constraint (`[0-9]+`, `\d+`, `[0-9]{1,}`) are one route: the same method
+    registered on both throws `DUPLICATE_ROUTE`.
+  - Inside a segment the text around the params is placed first and each value is then checked; the
+    router does not look for another split.
+  - `routePatternOverlap` takes constraints into account: `/users/me` and `/users/:id{[0-9]+}` do not
+    overlap.
+  - `@nifrajs/core/pattern` exports `paramConstraint(text)`, which reads a constraint at the start of
+    `text`, and the `ParamConstraint` type. A param part of a compiled mixed segment carries its
+    constraint as `c`.
+
+  feat(edge): the compact server accepts the same constraints.
+
+  feat(schema): `toOpenAPI` writes a constrained param into the path template by its bare name
+  (`/users/{id}`). Its schema is `{ type: "string", pattern }` for a character class and
+  `{ type: "string", enum }` for a list of values; a declared `params` schema still takes precedence.
+
+  feat(client): a constrained param is passed by its bare name, `api.users({ id: "42" }).get()`. Two
+  param routes at one position (`/users/:id{[0-9]+}` beside `/users/:slug`, or a param beside a
+  wildcard) are each callable, picked by the name of the key. The client does not check a value
+  against its constraint.
+
+  feat(cli): `nifra check` accepts a supported constraint and keeps reporting other text in braces
+  (`NF-C026`); `NF-C024` and `NF-C025` follow the router's reading of a constraint. `nifra routes` and
+  the generated client calls print the bare name. `nifra scaffold` refuses a page path that carries a
+  constraint.
+
+  feat(testing): `runAdversarialContract` builds a request path whose values satisfy each param's
+  constraint, and fills a part-literal segment (`/files/:name.json`) param by param.
+
+  feat(web): a route file name that would read as a param constraint (`[id]{a|b}.tsx`) is refused at
+  build time with a message that names the file. `llms.txt` prints client calls with the bare name.
+
+- ba5dd1c: feat(web): a directory's route middleware runs before every page in it and below.
+
+  ```ts
+  // routes/account/_layout.backend.ts
+  import { type RouteMiddleware, redirect } from "@nifrajs/web";
+
+  export const middleware: RouteMiddleware = ({ request }) => {
+    const signedIn =
+      request.headers.get("cookie")?.includes("session=") ?? false;
+    return signedIn ? undefined : redirect("/login");
+  };
+  ```
+
+  Route middleware runs on the server, outermost first, before the layouts' loaders (gates included)
+  and the page's loader or action, for document requests, client navigations and form posts alike, and
+  before a nested `_404` in its directory. It returns nothing to let the request through, or returns or
+  throws a `redirect()`, a status such as `notFound()`, or a `Response` to answer with it. `ctx.set` adds
+  headers and cookies, and `ctx.params` holds the params of its directory's URL prefix. It never reaches
+  the client bundle, and a directory may export it from `_layout.backend.ts` without a frontend layout.
+
+- d50f73e: feat: generated route types
+
+  Every route file gets a generated `Route` namespace, imported from `./+types/<name>` by both halves
+  of the route:
+
+  ```ts
+  // routes/blog/[slug].backend.ts
+  import type { Route } from "./+types/[slug]"
+  export const loaderOutput = t.object({ title: t.string() })
+  export async function loader({ api, params }: Route.LoaderArgs) { ... }
+
+  // routes/blog/[slug].tsx
+  import type { Route } from "./+types/[slug]"
+  export default function Post({ data, params }: Route.ComponentProps) { ... }
+  ```
+
+  `Route.Params` comes from the path (`[id]`, optional `[[lang]]`, catch-all `[...path]`).
+  `Route.LoaderData` and `Route.ActionData` are the output types of `loaderOutput` and `actionOutput`,
+  so a component is typed with exactly what reaches it. `Route.LoaderArgs` types `api` from the app's
+  `backend/app.ts`, which `.nifra/types/register.d.ts` registers once with `@nifrajs/client`'s new
+  `Register` interface; no route imports the backend for its types.
+
+  `nifra types` writes the files to `.nifra/types` (and `--check` fails when one is stale); `nifra dev`,
+  `nifra build` and `nifra check` refresh them, and `nifra dev` keeps them current as routes are added
+  or removed. A route resolves `./+types/<name>` through `"rootDirs": [".", "./.nifra/types"]` in
+  tsconfig, which the scaffolded site and ISR apps now carry; `nifra types` says so when it is missing.
+  `@nifrajs/web/route-types` exports the generator.
+
+- 085e852: On the Bun dev pipeline, an error thrown from a `.vue` or `.svelte` file names the line written in that file, in the browser and on the server: the overlay, the in-page badge, `nifra errors` and the fix prompts all point there.
+
+  - `vueBunPlugin` and `svelteBunPlugin` attach their compile map while a dev server runs; `nifra build` output is unchanged.
+  - `@nifrajs/web/plugins/kit` exports `withDevSourceMap` and `concatSourceMaps` for other compiler plugins to do the same.
+  - Svelte's `hydration_html_changed` and `hydration_attribute_changed` warnings count as hydration mismatches. Vue's feature-flag warning, which names `__VUE_PROD_HYDRATION_MISMATCH_DETAILS__`, does not.
+
+- ae815ab: The zone rules now cover files a client build copies or inlines without importing them:
+
+  - New `viteAssetUrlGuard()` in `@nifrajs/web/plugins/vite-leak-guard`, which the Vite client build installs. It fails the build when a `new URL("...", import.meta.url)` in browser code names backend code, a route's backend half, a server function's source, or a file in no zone. It applies whatever the file's size, a `?inline` query, or a comment inside the call. Such a file is also never inlined from a stylesheet `url()`, so the output accounting names it.
+  - An asset emitted from a `*.fn.*` file is refused: a server function reaches the browser only as its call stub.
+  - A `.fn` file that is not a script module (`report.fn.vue`, `post.fn.mdx`) is a zone error that asks for a rename. Previously it was treated as a server function whose source the browser build would ship unchanged.
+
+- 3442e1c: feat(web): `export const ssr = false` keeps a page's component off the server. The route is still
+  matched, its layouts still render, its gates and loader still run and the data is still embedded;
+  the server puts the page's `HydrateFallback` export in the page slot - or nothing - and the browser
+  hydrates that before it renders the component with the data it already has. A client navigation to
+  the page renders the component directly. `HydrateFallback` receives the component's props. The
+  module is still imported on the server for its loader and options, so an import that needs a
+  browser at load time belongs inside the component. `ssr = false` together with `hydrate = false`
+  is refused when the page is rendered: nothing would render it. On Solid the layouts mount again
+  when the component takes over from the fallback, as they do on any Solid route change.
+
+  `assertRenderAdapterConformance` now also renders a chain whose leaf is a function returning
+  `null` and requires the layouts around an empty page slot (check `"empty leaf"`). An adapter that
+  cannot render such a leaf fails conformance.
+
+  fix(web-react): the mounted router hydrates against the state it was mounted with. A router that
+  changed before React reached the component - a client loader that answered first - no longer
+  hydrates a tree the server markup never had; React renders the newer state right after.
+
+- 8b99424: feat: the dev server keeps a feed of errors, logs and requests for coding agents
+
+  `nifra dev` (Bun and Vite pipelines alike) records what happened while it ran and serves it to local
+  tools:
+
+  - Errors from every layer, each a structured diagnostic: SSR renders, loaders and actions, backend
+    handlers, builds, the browser, hydration mismatches, and a crash of the server itself. Repeats of
+    one failure collapse into one entry with a count; an entry recorded before the last file change is
+    flagged `stale`, and a build error clears when the next build passes.
+  - Console output from the server and from the browser.
+  - One trace per request (method, path, status, duration, bytes, ISR status, its errors and log
+    count). Every dev response carries `x-nifra-request-id`, and every entry from that request, server
+    or browser, carries the same id.
+
+  Each dev page carries a small inline script, first in `<head>`, that reports uncaught errors,
+  unhandled rejections, failed script and stylesheet loads, console output and errors passed to
+  `console.error`. Browser stacks are mapped to source through the dev server's own source maps, in
+  Chrome, Firefox and Safari formats. The script is admitted by hash in a page's CSP (by the page nonce
+  under Vite) along with its endpoint in `connect-src`; a page whose CSP allows no script gets none.
+
+  The server writes `.nifra/dev-server.json` (owner-only) with its port and a per-run token, and a log
+  under `.nifra/dev-server.log` that outlives a crash. The feed endpoints under `/__nifra/` answer only
+  a loopback `Host` presenting that token; browser reports need a separate page token and a same-origin
+  `Origin`, are size-capped and rate-limited. Values of non-public environment variables, keys, tokens,
+  JWTs and credential headers are redacted before anything is stored. `record: false` on
+  `createDevServer` / `createViteDevServer` turns the record and the log off. The feed's types, the
+  discovery record reader and the redacting store are exported from `@nifrajs/web/dev-feed`.
+
+  The dev overlay links each recognised error code to its section of the new error codes page. Dev only;
+  production builds and responses are unchanged.
+
+- 0e14068: fix(web): the client build fails on a Node built-in the bundler left as an external import
+
+  Bun keeps a dynamic `import("node:fs")`, and a bare built-in such as `import("fs/promises")`, as an
+  import in a browser chunk instead of bundling a polyfill. The import shipped and failed in the
+  browser, and the Node built-in guard passed it because the module was in no output. The guard now
+  reports such an import in the chunk its importer landed in, with the import chain, and names a bare
+  built-in with its `node:` prefix.
+
+  The Vite pipeline gives the same result: `viteBareBuiltinExternal()` from
+  `@nifrajs/web/plugins/vite-leak-guard` keeps a bare built-in named instead of letting Vite replace it
+  with an empty stub, so the guard fails the build there too. A package of the same name the app
+  installed (`events`, `buffer`) still resolves to that package. `buildClientVite` adds the plugin.
+
+- 5a63dd4: feat(web): pages can carry a strict Content-Security-Policy and still be cached.
+  A per-request nonce makes every document unique, so nifra marks a nonce-bearing page
+  `private, no-store` and no shared cache (`withISR`, a CDN) may store it. `createCspPolicy({ header })`
+  is the cacheable alternative: pass it to `createWebApp({ csp })` (or `renderPage({ csp })`) instead of
+  `nonce`. A document then carries a nonce only when it has a script specific to this request (a
+  deferred value, or `meta` naming the nonce in `unsafeInlineScript`). Every other document is
+  nonce-free, its constant inline scripts are allowed by sha256 hash, and its CSP header is the same on
+  every request. `header` receives `sources`, the `script-src` list the document needs.
+  `nifraScriptHashes(adapter)` returns the hashes for a policy set at a proxy or CDN. Passing both `csp`
+  and `nonce` throws.
+
+  The page-state handover is now one inert `<script type="application/json" id="__nifra-handover">`
+  instead of an executable script that assigned `window.__NIFRA_DATA__` and its siblings, so page data
+  needs no nonce or hash under any policy. The client entry assigns the same globals before anything
+  reads them. Code that read those globals from an inline script running before the client entry must
+  run after it, or read the handover element (`HANDOVER_ID`). `nifra assure --hydration` reads the new
+  format. `RenderAssemblyCache` loses its `tailMid` and `tailData` slots.
+
+  `withISR` warns once when it wraps an app created with `nonce`, since it can never store one of its
+  pages. It also remembers, for its revalidate window, keys whose page answered `private` or
+  `no-store` and skips the store lookup for them. A remembered key that turns cacheable is stored again.
+
+- dfd19d8: feat(web)!: `withISR` no longer caches a page per query string by default.
+  The default key was `origin + pathname + search`, so `?a=1`, `?a=2`, ... each stored a full page and
+  anyone could grow the cache without bound. The new `query` option decides how a query string reaches
+  the default key:
+
+  - `"bypass"` (default): a request carrying any query parameter skips the cache. It is rendered fresh
+    and never stored. A request without one is keyed on `origin + pathname`.
+  - `["page", "sort"]`: those parameters join the key in any order (`?sort=new&page=2` and
+    `?page=2&sort=new` share an entry). A request carrying any other parameter skips the cache, so a
+    loader that reads it is never handed another request's page.
+  - `"all"`: the previous behavior, one entry per distinct query string.
+
+  `revalidateEndpoint` takes the same `query` option so a purged path's query is keyed the way it was
+  stored. A purge of a query string the policy never caches returns `400` with `uncached_query`. A
+  custom `key` on either still overrides the policy.
+
+  Migration: pass `query: "all"` to both `withISR` and `revalidateEndpoint` to keep the old keys.
+
+- 6393b1e: feat(web): `_loading.tsx` is what the page slot shows while a client navigation loads. A navigation
+  still waiting on its data after about 120 ms swaps the page for the target route's nearest
+  `_loading` - the innermost one above it whose layouts are already on screen, which are the layouts
+  the two pages share; they stay mounted with their data. A `_loading` never renders outside a layout
+  above it. A navigation that settles sooner goes straight to the new page, as does one with no
+  eligible `_loading`; a change of search on the same path and a form submit keep the page. A newer
+  navigation, a form submit, or a refresh of the page on screen takes over from a pending loading
+  page, and a superseded navigation that fails later changes nothing. The
+  component receives `pending` and no `data`. It is browser-only: the server never renders one, and an
+  app without a `_loading` file ships no code for it. Where the browser runs view transitions, a
+  navigation's transition ends on the loading page instead of holding the old page until the data
+  arrives. `Manifest.loadings` lists the pages (`LoadingEntry`, each with the layouts it sits under)
+  and `RouteEntry.loadingIds` the ones above each route. In a `buildClient` build every page links the
+  loading pages' stylesheets.
+
+  A file named `_loading` was an ignored underscore file before; one kept in a routes directory for
+  another purpose is now a loading page.
+
+  fix(web-solid): the mounted router renders the chain the router names while a navigation is pending,
+  which is how a `_loading` page reaches the screen. A pending navigation on the same chain is still
+  skipped until it settles.
+
+- a158b74: feat(web): a page file under a mount fails at startup, at build and in `nifra check`, instead of
+  answering with the mount's 404. A mount in front of the page router - the backend at `apiPrefix`, a
+  `mounts` entry, or an `app.mount()` inside `use` - answers every request under its path, and its 404
+  is final (`fallbackOn: 404` only tries the next mount), so a page there could never render.
+  `createWebApp` now throws at startup, naming each file, the URL it serves and the mount; `nifra build`
+  refuses to build; and `nifra check` reports `NF-C027` for a page under the backend's prefix, reading
+  `apiPrefix` when `backend/framework.ts` exports it as a string literal (an `info` finding says so when it does
+  not).
+
+  `backend/framework.ts` can export `apiPrefix`, `apiStrip`, `mounts`, `csp` and `nonce`. `nifra dev`,
+  `nifra build` (the generated server entry and the static prerender), `nifra mcp`'s render tool and the
+  hydration gate pass the same set to `createWebApp`, and the render tool and the hydration gate now
+  apply `use` as well. A field of the wrong type fails at load, naming it, and a value
+  `nifra.config.ts` exports must be the one `backend/framework.ts` exports, or the build stops. `nifra routes`
+  lists the backend under the configured prefix, at the served path when `apiStrip` is set.
+
+  New exports: `preRouteMountPaths` from `@nifrajs/core/mount`; `shadowedPages`,
+  `formatShadowedPages`, `normalizeMountPath` and `ShadowedPage` from `@nifrajs/web/route-manifest`;
+  `SERVER_ENTRY_OPTIONS` and the `optionImports` option of `generateServerEntry` and `buildTarget` from
+  `@nifrajs/web/build`.
+
+  Upgrading: an app with a page file under its backend prefix (`routes/api/*` with a backend)
+  started before and answered that page with a 404; it now fails to start until the file moves out of
+  the prefix or the prefix changes.
+
+- ee19d29: feat(web): a `_404.tsx` in a directory answers for that part of the app. `routes/admin/_404.tsx`
+  renders for the unmatched URLs under `/admin` and for `notFound()` from the routes beneath it - the
+  nearest one wins - inside the layouts at or above it, with their loader data. The layouts run as
+  they do for a page, so a `gate` decides before anything renders. The page is served non-hydrated,
+  and with `cache-control: private, no-store` once a layout loaded data for it. `Manifest.notFounds`
+  lists these pages (`NotFoundEntry`, each with the `NotFoundScope` patterns it answers) and
+  `RouteEntry.notFoundIds` the ones above each route.
+
+  fix(web): a `_404.tsx` below the routes root no longer takes the place of the root one. Two route
+  groups that each hold a `_404` for the same URL prefix are refused at boot, unless a directory that
+  contains both holds one as well.
+
+- 7e1e1c3: feat(web): `data-nifra-prefetch` picks when a link warms its route: `intent`, `viewport`, `render` or `none`.
+
+  ```html
+  <nav data-nifra-prefetch="viewport">
+    <a href="/docs/routing">Routing</a>
+    <a href="/reports/annual" data-nifra-prefetch="none">Annual report</a>
+  </nav>
+  ```
+
+  The attribute goes on a link or on any element around it; the nearest one wins. `intent` (the
+  default, as before) warms the route's code and loader data on hover or keyboard focus, `viewport`
+  once the link scrolls into view, `render` as soon as a page shows it, and `none` never. An unknown
+  value is `intent`. `viewport` and `render` links are found when the page loads and whenever the
+  router settles (a navigation, a submit); a link the page adds in between warms on intent until
+  then. It works under every adapter, and React's `<Link>` and `<NavLink>` take a `prefetch` prop
+  that renders it.
+
+  Prefetched data is now used by a click within 30 seconds of arriving; after that the click loads
+  the route again. The page already on screen is no longer prefetched. `PrefetchMode` is exported
+  from `@nifrajs/web`.
+
+- bd11269: feat(web): a layout's `shouldRevalidate` decides whether its loader runs again on a client navigation.
+
+  ```ts
+  // routes/orgs/[org]/_layout.backend.ts
+  export const shouldRevalidate: ShouldRevalidate = ({
+    currentParams,
+    nextParams,
+  }) => currentParams.org !== nextParams.org;
+  ```
+
+  It receives the URL and params being left (`currentUrl`, `currentParams`), the ones being loaded
+  (`nextUrl`, `nextParams`, every route param rather than only the layout's own), and
+  `defaultShouldRevalidate`: `true` when a param the layout owns or the query changed. Returning
+  `false` keeps the data the browser already holds; any other value, a returned promise included, runs
+  the loader. A throw fails the navigation the way the loader's own error would.
+
+  It runs on the server, on a client navigation that keeps the layout on screen while the browser
+  holds its data. A document request, the revalidation after an action, and `router.invalidate()` run
+  every loader without asking. A `gate` layout is never asked: it runs on every request. A page's
+  `shouldRevalidate` is not read, because a page's loader runs on every navigation; query keys a page
+  never reads belong in its `searchClientKeys`.
+
+  `ShouldRevalidate` and `ShouldRevalidateArgs` are exported from `@nifrajs/web`.
+
+- 64e7a42: fix(web): pages that `defer()` keep working under a nonce Content-Security-Policy.
+  React, Solid and Preact stream inline scripts to reveal a Suspense boundary that resolves after the
+  shell, and none of them carried the document's nonce, so a nonce CSP blocked them and the boundary
+  stayed on its fallback. `RenderAdapter.renderToStream` now receives `{ nonce }` as an optional third
+  argument (`RenderStreamOptions`), and every adapter that streams scripts applies it: React and Solid
+  through their own `nonce` option, Preact on the one island-runtime script it streams. A script the
+  app renders itself never inherits the nonce. Vue, Svelte and the vanilla adapter stream no scripts.
+- d6f806f: An `*.svg?component` import compiles its file as markup only, for every framework:
+
+  - JSX (React, Preact, Solid) spells braces, `>` and `=` in text and CDATA as character references. An exported stylesheet (`.st0{fill:#FFF}`, `a > b`) now compiles, and text such as `{...}` in a `<title>` renders as written.
+  - Svelte spells braces in text and attribute values as character references, keeps a nested `<style>` or `<script>` as raw text, and refuses a directive attribute (`use:`, `on:`, `bind:`...) or a `svelte:` element.
+  - Vue marks the root `v-pre`, so `{{ }}`, `:bound` and `v-` attributes are not compiled. A `<template>` tag is refused.
+  - The file must be one well-formed `<svg>` element, with every attribute value quoted and nothing after the root. Anything else fails the build with a message naming the problem. The check is exported as `svgTemplateMarkup()`.
+
+- 0f6babe: feat(web): a route can export a `handle`, and `useMatches()` reports the rendered chain on every adapter.
+
+  ```tsx
+  // routes/orgs/[org]/_layout.tsx
+  import { useMatches } from "@nifrajs/web-react/router";
+
+  export const handle = { crumb: "Organization" };
+
+  export default function OrgLayout({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) {
+    const crumbs = useMatches().flatMap(
+      (m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? []
+    );
+    // ...
+  }
+  ```
+
+  `useMatches()` lists the layouts being rendered, outermost first, then the page, each as
+  `{ id, pathname, params, data, handle }`: the route file without its extension, the part of the URL
+  it covers (never the query), the params it declares, its loader data (`null` without a loader), and
+  its `handle` export. The server render and the browser report the same list, so a breadcrumb trail
+  hydrates with no mismatch. `handle` is read from the module on each side and never serialized.
+
+  While a `_loading` page is up it takes the page's place; a nested `_404` reports the layouts it
+  renders inside; an `_error` page the server renders reports an empty list. The hook ships from each
+  adapter's `/router` entry: an array on React and Preact, a `Ref` on Vue, an accessor on Solid and
+  Svelte. An app that never calls it does not bundle it.
+
+  The Preact, Solid, Vue and Svelte client mounts now pass `params` and `path` to the rendered chain,
+  as the server render already did. `UIMatch` and `MatchChain` are exported from `@nifrajs/web`.
+
+- 00f18bf: feat(web): `@nifrajs/web/vitals` reports Core Web Vitals from real users, each tagged with its route.
+
+  ```ts
+  import { reportWebVitals } from "@nifrajs/web/vitals";
+
+  reportWebVitals((metric) => {
+    const { name, value, rating, id, route } = metric;
+    const body = JSON.stringify({ name, value, rating, id, route });
+    void fetch("/api/vitals", { method: "POST", body, keepalive: true });
+  });
+  ```
+
+  `reportWebVitals` measures LCP, INP, CLS, FCP and TTFB with Google's `web-vitals`, an optional
+  peer dependency (`bun add web-vitals`), and reports each metric once its value is final, with the
+  id of the route it belongs to (the id `useMatches` reports). `softNavigations: true` measures each
+  client-side navigation as a page view of its own where the browser can (Chromium 151 and later),
+  and `reportAllChanges: true` reports every change instead of the final value. It returns a
+  function that stops reporting, and does nothing on the server.
+
+### Patch Changes
+
+- 0e9b167: fix(web): a route's ISR freshness and tags stay between the app and its cache wrapper
+
+  `x-nifra-isr-revalidate` and `x-nifra-isr-tags` carry a route's `revalidate` and `revalidateTags`
+  to `withISR`. An app with no wrapper sent both to every visitor, and `withISR` passed them through
+  on responses it did not store (a query string under the default policy, a keyless request, a page
+  it refused to cache). `createWebApp` now emits them only once a wrapper attaches, and `withISR`
+  removes them from every response it returns.
+
+- bbdc5a1: fix(core, web): JSON request bodies are matched by media type
+
+  A body is parsed as JSON when its `Content-Type` media type is `application/json` or an
+  `application/*+json` type. A header that only mentions `application/json` in a parameter, such as
+  `text/plain; x=application/json`, is no longer parsed as JSON; browsers send that type cross-origin
+  without a preflight. Server functions apply the same comparison and answer such requests with 415.
+
+- ef28ef9: The route manifest, generated route types, build plan, parity report, secret scan and zone graph list their entries in code-unit order, the same on every machine and in every locale.
+- 216fe27: fix(web): a redirect during a client navigation or form post lands on its target without a reload.
+
+  A loader, gate or middleware that answered a client navigation with `redirect()` had the redirect
+  followed by `fetch`, so the router rendered the target's data under the route it was navigating to, at
+  that route's URL. A data request now answers a redirect with a `204` carrying `x-nifra-redirect` and the
+  redirect's own headers, `Set-Cookie` included, and a same-origin target travels as a path. The client
+  router loads that target in place: the address bar shows it, replacing the entry a navigation added or
+  adding one after a form post, and `pendingPath` moves to it while it loads. A redirect to another origin
+  or to a `#fragment` loads as a document and replaces the entry it answered; a target whose scheme is not
+  `http:` or `https:` is never loaded, and the page navigated to loads as a document. A form whose action has run
+  is never posted a second time: when loading the page that shows the result fails, that page loads as a
+  document instead.
+
+- 08250bf: `nifra build` no longer fails its development/production css parity check when a tool such as `wrangler pages dev`, Vercel or SvelteKit has left bundles in a dot-directory (`.wrangler`, `.vercel`, `.svelte-kit`) inside the app.
+- b64c3ee: fix(web): the identity preflight behind `nifra check`, `nifra doctor` and the build now scans every
+  package declared in `"nifra": { "singleCopy": [...] }`, not only the built-in identity-sensitive set.
+  A declared package installed at two versions is a fatal `version-skew` finding with the same
+  remediation as a framework skew (align the ranges; nifra never redirects across versions), and one
+  version at two paths is reported as deduplicated.
+
+  feat(core): `@nifrajs/core/single-copy/register` no longer skips silently. Each declared package it
+  cannot collapse - a version skew, or a linked file with no counterpart in the app's copy - prints one
+  warning per process naming both copies, both versions and the reason. Strict mode turns that into a
+  startup failure: declare `"singleCopy": { "packages": [...], "strict": true }` or set
+  `NIFRA_SINGLE_COPY_STRICT=1`. `SingleCopySkip` gains optional `to`, `fromVersion` and `toVersion`;
+  `SingleCopyOptions` gains `strict` and `onSkip`; new exports `readSingleCopyStrict` and
+  `SINGLE_COPY_STRICT_ENV`.
+
+- dc2d4d3: fix(cli): duplicate-install findings name a copy reached through a symlink out of its install
+
+  When an importer reaches a copy of an identity-sensitive package through a symlink that points
+  outside its own install (another project's `node_modules` linked into a shared package, or a
+  `bun link`), `nifra doctor` prints a `links:` line with each link and its target, and the
+  `nifra check` duplicate-install diagnostic names the link on that copy and lists it ahead of both
+  fixes. The identity preflight carries it as `copies[].links` and `provenance`. Package-manager store
+  links inside an install are not reported.
+
+- 81c720e: fix(client): a segment that is part literal, part param is callable through the typed client
+
+  A route such as `/files/:name.json`, `/post-:id` or `/v:major.:minor` could not be reached through
+  the typed client: `:name.json` was typed as a param named `name.json` whose call sent the value
+  without `.json`, and `post-:id` was typed as a property that sent the pattern text itself. Such a
+  segment is now a call with the segment as the request carries it:
+
+  ```ts
+  await api.files("report.json").get(); // GET /files/:name.json, c.params.name === "report"
+  await api("post-42").get(); // GET /post-:id
+  await api("v1.2").get(); // GET /v:major.:minor
+  ```
+
+  - The argument is typed as the segment's literal text around any string (`` `${string}.json` ``), so
+    `api.files("report.txt")` does not compile. A constraint is not part of the text:
+    `/img/:id{[0-9]+}.png` takes `` `${string}.png` ``, and the server decides whether the value fits.
+  - The value is sent as one encoded segment, as a param value is: a `/` in it never adds a path level.
+  - A static segment at the same position keeps its exact text (`api.files("index.json")` is
+    `/files/index.json` when that route exists, which is the route the server picks), and a
+    whole-segment param keeps its call by name (`api.files({ id })`).
+  - Two such segments at one position that accept the same text resolve to the types of the one
+    registered first.
+  - `@nifrajs/core` exports `RequestPath<Path>`, the same reading for a whole path:
+    `RequestPath<"/files/:name.json">` is `` `/files/${string}.json` ``, a constraint reads as
+    `${string}`, and a path ending in optional params is one template per form.
+  - The cli's route listings and the generated `llms.txt` print the call the same way
+    (`` api.files(`${name}.json`) ``), and print an unnamed wildcard as `({ "*": rest })`.
+
+- 0150ed4: fix: Vite dev keeps a page's response headers, and a CSP page still boots
+
+  Under `nifra dev --vite` an HTML page reached the browser with only a `content-type`: the cookies a
+  loader set, the Content-Security-Policy, `cache-control`, `vary` and the `x-nifra-*` headers were
+  dropped, where the Bun dev pipeline kept them. They are kept now. On a page with a CSP, the tags
+  Vite adds (its HMR client, a framework's refresh preamble, the `<style>` it injects for each imported
+  stylesheet) carry the page's nonce - or a fresh one on a hash-based page - and each directive that
+  governs them names it, unless that directive already allows inline. Dev only; production responses
+  are unchanged.
+
+- ea2ee87: The Bun dev server refuses a backend file of any type that browser code imports, such as a `.sql` or `.pem` file imported `with { type: "text" }`, as the production build does.
+- 85d636b: In a client build, a bare `process.env` (one not followed by a baked `PUBLIC_*` name or `NODE_ENV`) is now an empty object. It was the string `"({})"`, so `"X" in process.env` threw a `TypeError` in the browser and `Object.keys(process.env)` listed characters. Reading any other variable still yields `undefined`.
+- bfe29b6: The CSS Modules transform scopes the keyframe name in a vendor-prefixed `-webkit-animation` / `-webkit-animation-name` declaration and in a declaration that follows a comment (`/* slow */ animation: spin 3s`). Before, both kept the unscoped name and the animation silently did not run.
+- 87783f0: On the Bun pipeline's dev server, an edit to a module imported through a path alias (`@/components/Button`, `~/lib/x`, `#internal/x`) is picked up by server rendering. Before, only relative imports were re-evaluated, so SSR kept rendering the aliased module as it was when the server started. An alias shaped like a package name (`@app/x`, `src/x`) is still not recognized.
+- 135aba4: A page, action or data request rendered in draft mode answers `cache-control: private, no-store` and advertises no ISR freshness, whatever `cache-control` its loader set, so neither `withISR` (with or without its own `draftSecret`) nor a URL-keyed CDN stores unpublished content for the next visitor.
+- 47b0d65: fix(web): a hydrating page with an empty `clientEntry` throws instead of rendering `<script type="module" src="">`.
+  An empty `src` resolves to the page's own URL, so the browser would load the document as a module.
+  Rendering a hydrating page with an empty or missing entry now throws a `TypeError` naming the fix,
+  from `renderPage` and from `createWebApp` pages alike. A `hydrate: false` page never references the
+  entry and still renders without one.
+- e32268d: fix(web): portable public-directory serving and required endpoint secrets
+
+  `publicDir()` now serves files on Node and Deno as well as Bun, sets `content-type` from the file
+  extension, sends `x-content-type-options: nosniff`, and never serves dot-prefixed paths other than
+  `/.well-known/`.
+
+  `revalidateEndpoint()` and `previewEndpoint()` throw at construction when `secret` is empty or
+  missing. The ISR starter answers 404 on its revalidate route until `REVALIDATE_SECRET` is set.
+
+- 432fec3: In production a server-rendered `_error` page receives `{ name: "Error", message: "Internal Server Error" }` instead of the thrown error's own name and text, which can carry a connection string or a query. Development still shows the real error.
+- 8f1b780: A generated `server-manifest.ts` counts as framework output wherever the build writes it, so `nifra check` and editor diagnostics no longer report its route imports when it sits under `backend/`.
+- dcc9ff6: The generated client entry reads page state only from the server's own `<script type="application/json">` handover (the last one in the document), and sets only the page-state globals it names. Page content that carries an element with the same `id` - sanitized user HTML, say - no longer reaches `window`.
+- c49882f: `unsafeInlineScript()` code is emitted exactly as written, so a script with a comparison (`if (innerWidth < 600)`) runs instead of failing to parse, and server rendering matches what a soft navigation applies. Code containing `</script` or `<!--` (any case) is refused with a `TypeError`, both when the descriptor is built and when the head renders. Write `<\/script` inside a string literal instead. Inert `head.script` content (JSON-LD) is escaped as before.
+- 28e091f: perf(web): a page with no layouts, and a layout loader that returns a plain value, render without
+  extra promise turns. A layout loader may still return a promise, a thenable, or a promise from
+  another realm; each is awaited exactly as before, and a loader that throws synchronously fails the
+  page the same way a rejected one does.
+- 046e79d: `/llms.txt` and `/llms-full.txt` list backend routes only when the backend is served over HTTP at `apiPrefix`; a backend the loaders call in-process (`apiPrefix: ""`) is not described. An app route at either path takes precedence instead of failing to boot, each text is built once per app, and the new `llmsTxt: false` option registers neither path.
+- 293d3c8: A `Date` a loader, action or server function returns passes its output schema as the ISO string the browser receives, so a timestamp column is declared `t.string()`. The page also renders on the server with that string, the same value it hydrates with.
+- 0cd5f6e: A large `prerenderedPaths` set no longer rides in every page. Over 4 KB of JSON, `createWebApp` serves the set once from `/__nifra/prerendered.json?v=<version>` (cached for good at that versioned URL) and pages hand over only the URL; the client router fetches it once, on load, and uses it as before. `prerenderRoutes` writes the file into a static output whenever its pages reference it. Smaller sets are still inlined, unchanged.
+- 2245bee: The development/production parity check lists a public file by the same percent-encoded URL the build records for it. A build with a public file whose name holds a space or a non-ASCII character (`My Logo.png`, `café.txt`) no longer fails parity.
+- feeec4a: fix(web): a client navigation that changes the query re-runs the layout loaders. A layout loader was
+  kept whenever the params its layout owns were unchanged, so one that reads `ctx.search` or the request
+  URL went on showing the previous query's data. Keys that no loader should see belong in the route's
+  `searchClientKeys`, which still skips the request entirely.
+
+  After an action that redirects, every layout loader of the target runs, the same as the revalidation
+  after an action that does not redirect. `submit(action, body, { revalidate: false })` keeps the layout
+  data an ordinary navigation would.
+
+- 3eb6339: The build's credential scan stays fast on a long unbroken run of letters and digits, such as an inlined base64 asset, instead of slowing the build to minutes.
+- f784c32: fix(web): a field named `apiToken` counts as sensitive
+
+  `isSensitiveFieldName` matches `apiToken` in any casing or separator (`api_token`, `API-TOKEN`) and
+  any name ending in it (`githubApiToken`), like `apiKey` and `accessToken`. An output schema that
+  declares one fails the route when it loads unless the field is wrapped in `t.declassified`,
+  `nifra check` reports it, and the build's secret scan treats a literal assigned to one as a
+  credential.
+
+- e3b2b97: fix(web): the server build fails when `clientEntry` is missing.
+  `buildServer`, `buildServerVite`, and `generateServerManifest` throw a `TypeError` when `clientEntry`
+  is not a string - for example an option spelled `client` - instead of baking `clientEntry = undefined`
+  into the server manifest and leaving every hydrating page to fail at request time. An empty string
+  is still accepted for an app with no client script.
+- 5934b5d: A generated Bun, Node or Deno server serves `public/` files and the client bundle with their content type, `x-content-type-options: nosniff` and a cache policy: immutable for the hashed `/assets/`, one day for the rest. A `robots.txt` or an `.svg` no longer arrives as a download, and the bundle no longer downloads again on every visit.
+- 03a3729: fix: a generated `server-manifest.ts` type-checks under a strict tsconfig
+
+  The manifest `generateServerManifest` and `nifra sync-manifest` write for a hand-written server entry
+  now compiles under `strict` with `noUncheckedIndexedAccess`, including routes with a backend half or
+  a typed `meta`. Its route table is typed as plain modules and handed to `buildManifest` as route
+  modules, the same way `discoverRoutes` loads them.
+
+- 579d9a9: A static boundary's `load` receives no `origin` when it runs during a request: its value is cached for every visitor, so it no longer takes the first request's `Host` header. A static load that fails is loaded again on the next request instead of serving the error until restart. `StaticBoundaryCache` gains an optional `delete`, which `MemoryStaticBoundaryCache` implements.
+- 3554ad8: fix(web): a page the server rendered as a status page (`_404`, `_410`, ...) hydrates as that page,
+  even when the URL also matches a route pattern, so a loader's `notFound()` stays a 404 in the browser.
+  Routable `_`-prefixed directories such as `routes/_admin/` still hydrate as themselves.
+
+  fix(web): build-vs-dev manifest parity passes for apps with `_`-prefixed routes. Both sides order
+  route ids with the exported `compareRouteIds`, and a module-graph mismatch names what differs: the
+  routes on one side only, each route's chunk counts, or the route order.
+
+- ee19d29: fix(web): a Svelte app built with `buildClient` hydrates. `svelteDedupePlugin` pinned the bare
+  `svelte` import to the entry the build process itself runs - Svelte's server runtime - so the
+  browser bundle's `hydrate` threw and the server-rendered page never became interactive. For a
+  browser bundle it now pins the app's one copy and reads that copy's export map with the bundle's own
+  conditions, which selects the client runtime. A server bundle resolves as before.
+- b94e5cb: A loader, action or boundary loader that throws a 2xx `Response` is refused exactly as returning one is: its body would reach the browser without passing the output schema. A thrown redirect or error status still answers the request.
+- a84f546: fix(web): every pipeline names backend code that reaches the browser, however it is imported
+
+  - A side-effect import of backend code (`import "../backend/x.ts"`) fails the Bun client build with
+    the module and the import chain that reached it, even when the bundler drops the import.
+  - A module marked backend-only fails the Vite client build even when it was inlined into no chunk.
+  - The server build sees imports of modules the bundler later dropped.
+  - The Vite dev server classifies what an alias, a tsconfig path or a package export resolves to, and
+    names the importing file in the error.
+  - `createViteDevServer(...).stop()` no longer hangs when it is called while Vite is still
+    pre-bundling dependencies for the first time.
+
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [a158b74]
+- Updated dependencies [ff25d68]
+  - @nifrajs/core@4.0.0
+  - @nifrajs/island-trigger@4.0.0
+
 ## 3.5.0
 
 ### Minor Changes

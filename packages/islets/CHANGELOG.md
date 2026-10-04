@@ -1,5 +1,17 @@
 # @nifrajs/islets
 
+## 4.0.0
+
+### Minor Changes
+
+- cf58c07: `data-island-ignore` marks a subtree the island runtime leaves alone: no `data-bind-*` attribute inside it binds, and no `data-island` inside it mounts. Render user-supplied HTML there, so markup that kept its `data-*` attributes through a sanitizer cannot reach the island's handlers or signals. The full-feature island bundle stays under 2 KB gzipped.
+
+### Patch Changes
+
+- e1fd199: `data-bind-attr` never binds an `on*` event-handler attribute or `srcdoc`, and a URL attribute (`href`, `src`, `action`, `formaction` and the like) is set only to an http(s), mailto, tel or relative URL; any other value removes it. Markup that names one of those is skipped with a one-time warning.
+- af93edf: Islands may nest: a binding belongs to its nearest island, so an outer island no longer binds the markup inside a nested island (which then followed the outer island's signals and handlers). The nested host element itself stays the outer island's markup and can still be bound by it.
+  - @nifrajs/island-trigger@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

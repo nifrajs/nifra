@@ -1,5 +1,13 @@
 # @nifrajs/pi
 
+## 4.0.0
+
+### Patch Changes
+
+- 0e41410: `PiBackend` passes the model-provider credential variables Pi reads (such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and the AWS and Google Cloud credentials) through to Pi, so a key set in the environment works without listing it in `env`. Other parent variables still stay out, and `env: { NAME: undefined }` withholds any of them.
+- 3090e51: The `test` verification gate runs the project's suite with `bun test`. `--verify-after-turn test` in `nifra-agent` and the Pi extension's `nifra_test` tool used to run a `nifra test` command that does not exist, so the gate failed on every project.
+  - @nifrajs/agent-protocol@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

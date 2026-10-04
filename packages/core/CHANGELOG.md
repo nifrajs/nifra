@@ -1,5 +1,679 @@
 # @nifrajs/core
 
+## 4.0.0
+
+### Minor Changes
+
+- dde125b: feat(core): `bodyParser(schema, { types, parse })` from `@nifrajs/core/body-parser` lets one route
+  read a request body in a media type other than JSON, urlencoded, or multipart. `parse` is handed the
+  body's bytes and what it returns is validated by `schema`, so the handler sees the same typed body
+  whatever format it arrived in. JSON and urlencoded bodies still reach the schema through their own
+  lanes, and a route that does not opt in still answers `415`.
+
+  ```ts
+  import { bodyParser } from "@nifrajs/core/body-parser";
+  import { parse } from "yaml";
+
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+
+  app.post(
+    "/pipelines",
+    {
+      body: bodyParser(Pipeline, {
+        types: ["application/yaml"],
+        parse: (bytes) => parse(utf8.decode(bytes), { maxAliasCount: 0 }),
+      }),
+    },
+    (c) => c.body.name
+  );
+  ```
+
+  - The request's media type is matched in full against `types`: case folded, parameters set aside.
+    `parse` also receives `{ mediaType, contentType }`.
+  - The body is read under the route's `bodyLimit` before `parse` runs: `413 payload_too_large` over
+    it, `400 invalid_content_length` for a length that is not one.
+  - A `parse` that throws or rejects answers `400 invalid_body`.
+  - The decoded value must be a tree. An object, array, `Map` or `Set` reached twice, which is what an
+    alias or a cycle decodes to, answers `400 invalid_body` under every `protoPoisoning` setting.
+  - `protoPoisoning` applies to the decoded value: a `__proto__` key, a `constructor` that carries a
+    `prototype`, and a plain object whose prototype the decoder replaced are rejected or stripped.
+    Instances of a class, such as a `Date` or a `Uint8Array`, pass through as they are.
+  - `types` takes full `type/subtype` names and throws a `TypeError` for JSON, urlencoded, multipart,
+    and `text/plain`. The first three already have readers; `text/plain` is sent by a browser from any
+    site without a preflight.
+  - A decoder's own limits (nesting depth, alias expansion) are not covered: configure the decoder you
+    pass for untrusted input.
+
+  `bodyParser` and `multipartBody` compose in either order, and two `bodyParser` wraps each read their
+  own types; the outer one wins a type both name. `multipartBody` now hands a body that is not
+  multipart to a reader the schema already carried instead of answering `415` itself.
+
+  feat(schema): `toOpenAPI` and `toOpenAPIFromEvidence` list each media type a `bodyParser` schema
+  reads as its own entry under the operation's `requestBody.content`, in a fixed order, next to the
+  JSON or multipart entry. `reflectSchema` reports them as `mediaTypes`, and a project evidence
+  snapshot carries them, so a document built from a stored snapshot matches the live one.
+
+- 3b090de: feat(core): a route schema takes `cookies`, validated before the handler like `headers` and `query`.
+
+  ```ts
+  import { server } from "@nifrajs/core/server";
+  import { t } from "@nifrajs/schema";
+
+  export const app = server().get(
+    "/dashboard",
+    {
+      cookies: t.cookies({
+        session: t.string(),
+        page: t.optional(t.integer()),
+      }),
+    },
+    (c) => ({ session: c.cookies.session, page: c.cookies.page ?? 1 })
+  );
+  ```
+
+  The schema checks the cookies parsed from the `Cookie` header (URL-decoded values, the first of a
+  repeated name) and its output types `c.cookies`. A request that fails it is a `422`, and
+  `onValidationError` receives the kind `"cookies"`; code that lists that parameter's kinds by hand
+  needs the new member. `defineContract` operations take `cookies` too. Route reflection, contract
+  snapshots and diffs, project evidence and the OpenAPI document carry the schema, and OpenAPI lists
+  each declared field as an `in: cookie` parameter.
+
+  `t.cookies` builds the schema for this slot. Like `t.query` it coerces declared number and boolean
+  fields from text and lets undeclared cookies through, since a browser sends every cookie the site
+  has set.
+
+- 612a296: feat(core): a second copy of `@nifrajs/core` in one process is named when it loads. Two installed
+  copies (a linked sibling checkout, a nested install) keep separate request state, so a route from
+  one copy's `server()` merged into the other failed per request with an internal TypeError. The
+  second copy now prints `[nifra] @nifrajs/core is loaded 2 times` with the path of each copy, and
+  `.merge()` throws `merge() requires a server() from this copy of @nifrajs/core` at configuration
+  time for a server from another copy or any value that is not a `server()`. `mount()` crosses only
+  the fetch boundary and keeps working across copies. A dev server re-evaluating the same file is
+  one copy. `nifra check` remains the gate that fails the build on a duplicate install.
+- 4af6f39: A group's `use()` of a plugin its parent server already applied throws a `RouteConfigError` with code `PLUGIN_RECONFIGURED` when it passes another instance under the same name - another `cors()` policy, a second `bearer()` verifier - where it used to skip it, so a group no longer appears to apply a configuration that never runs. Passing the parent's own instance is still a no-op, and a plugin the group applies still shares the parent's copy of a plugin it `use()`s itself. Plugins that name each instance, such as `rateLimit()`, `bodyLimit()`, `csrf()` and `securityHeaders()` with its own configuration, already apply inside a group and are unaffected.
+- b53d64f: `schema.idempotency` takes `pendingTtlMs`, and `IdempotencyStore` an optional `renew()`. With a store that implements it, as `MemoryIdempotencyStore` does, a key whose handler is still running is held by a lease of `pendingTtlMs` (default 60 seconds, `DEFAULT_IDEMPOTENCY_PENDING_TTL_MS`) that the server renews every third of it until the response is stored, so a key reserved by a process that died frees after the lease instead of after `ttlMs`. `begin()` receives the lease as `pendingTtlMs`. A store without `renew()` keeps a running key reserved for `ttlMs` as before, and declaring `pendingTtlMs` on one is a registration error.
+- 9c3d524: Route idempotency (`schema.idempotency`) releases a key when the handler answers 401, 403, 408, 409, 425, or 429 without an owned effect having begun, as it already did for a request refused before the handler. Each of those statuses says the request was not carried out, so a retry under the same key runs again, and callers who are refused no longer keep store entries for the full TTL.
+
+  A response whose body fails while it is being stored no longer leaves its key in progress until the TTL ends. With no owned effect begun the key is released; once one began, the key keeps a terminal 500 that a retry replays.
+
+  `MemoryIdempotencyStore` takes `maxEntriesPerNamespace`. Past it, only that namespace's new keys are refused, so one tenant or principal cannot use up `maxEntries` for the rest.
+
+- 1b2d53a: `replacedRequestOf(request)` returns the request an `onRequest` hook replaced with this one. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw can walk back to it. `idempotency()` uses this to keep its claim when a later hook such as `methodOverride()` rewrites the request: a retry replays the stored response instead of answering 409 and then running the handler a second time. `metrics()` uses it to count such requests and to decrement its in-flight gauge for them.
+- 2e2d8c0: Tool idempotency gets the same lease as route idempotency. `ToolIdempotencyStore` takes an optional `renew()`, and `MemoryToolIdempotencyStore` implements it. With such a store, `executeTool` reserves the key with a lease of `pendingTtlMs` (default 60 seconds, or the tool's `idempotency.pendingTtlMs`) and renews it every third of that while the tool runs, so a key reserved by a process that died frees after the lease instead of after the store's `ttlMs`. A completed key is kept for `ttlMs` from completion. Stores without `renew()` keep a running key for their own TTL as before.
+- 18aa5aa: A request body decoded by `transportCodecs()`, or a WebSocket frame decoded by a route's `transport`, may no longer hold a `RegExp` unless the lane opts in with `acceptRegExp: true`. A pattern from the client is code: one with catastrophic backtracking stalls the event loop the moment anything runs it. A refused body answers the same 400 as an undecodable one, and a refused frame goes to `onInvalidMessage`. Values the server sends are unaffected.
+- ff5a779: A static response header a group declares replaces the value its enclosing scopes declared for that name, on the group's routes. A value the route sets itself still wins. `securityHeaders()` takes its configuration into its plugin name, so a group's `use(securityHeaders({ ... }))` with a different configuration applies over the app's on the group's routes, where it was skipped as a repeat; the same configuration applied twice is still a no-op.
+- 10bc446: feat(core): `tls` serves HTTPS straight from the process, on Bun, Node and Deno.
+
+  ```ts
+  import { readFileSync } from "node:fs";
+
+  const tls = { cert: readFileSync("cert.pem"), key: readFileSync("key.pem") };
+
+  app.listen(443, { tls }); // Bun
+  await serve(app, { port: 443, tls }); // @nifrajs/node or @nifrajs/deno
+  ```
+
+  `cert` and `key` are PEM, as text or the files' bytes. Requests then arrive with `https:` URLs, and
+  WebSocket upgrades use the same port. Bun also takes `passphrase` for an encrypted key. On Node,
+  `tls` accepts any `node:tls` server option (`ca` and `requestCert` for client certificates,
+  `minVersion`, `SNICallback`), and the request protocol defaults to `https` when it is set. Without
+  `tls`, each runtime serves plain HTTP, which is what a proxy or platform that ends TLS expects.
+
+- e8270d9: feat(web): SSR loader, action and boundary calls through `ctx.api` now carry the page request's
+  platform identity. A backend reached from a loader sees the visitor's `c.clientIp` (derived under the
+  page app's `server.clientIp` trust declaration), `c.env` and `c.waitUntil`, so per-visitor rate limits,
+  audit logs and bindings work during SSR. Headers are never copied: a loader call stays anonymous unless
+  the loader passes `cookie` or `authorization` itself. `inProcessClient()` / `testClient()` used outside a
+  render keep dispatching with no platform.
+
+  New seams in `@nifrajs/core/mount`: `NIFRA_BACKEND_BIND_PLATFORM` (returns a platform-bound view of an
+  in-process client) and `NIFRA_PLATFORM_CLIENT_IP_DERIVED` (marks a platform whose `clientIp` an enclosing
+  server already derived, so a backend with its own `clientIp` trust keeps it instead of re-reading
+  forwarding headers a synthesized request does not carry).
+
+- ff4a062: feat(core): one handler can be registered under several methods, and under a method outside the
+  standard seven, with `all()` and `method()` from `@nifrajs/core/methods`:
+
+  ```ts
+  import { server } from "@nifrajs/core/server";
+  import { all, method } from "@nifrajs/core/methods";
+
+  const app = server()
+    // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo
+    .use(all("/echo", (c) => ({ method: c.req.method })))
+    .use(method("PURGE", "/cache/:key", (c) => ({ purged: c.params.key })))
+    .use(method(["GET", "POST"], "/search", (c) => ({ q: c.query.get("q") })));
+  ```
+
+  - Each method is an ordinary route: it is listed by `app.routes()`, takes a schema and hooks, works
+    inside `group()`, and throws `DUPLICATE_ROUTE` against a route already registered for the same
+    method and path. One call is one registration: if any of its routes is refused, none is added.
+  - `all()` is the seven standard methods, not a catch-all. A request with any other method is still a
+    `405` with an `Allow` header. `mount()` remains the way to pass every method through.
+  - A method name is case-insensitive and registered uppercase. It is a token of letters, digits and
+    hyphens that starts with a letter, at most 32 characters. `TRACE`, `CONNECT` and `TRACK` cannot be
+    registered; those and any other value throw `INVALID_METHOD`.
+  - The standard methods in a call join the typed registry and the typed client. A custom method has
+    no typed-client call.
+  - An assurance policy's `methods` selector takes standard methods only, so it never matches a
+    custom-method route. Classify such a route with a path rule; unmatched, it is reported as
+    `unclassified-route`.
+  - Whether a custom method reaches the app is up to the runtime's HTTP parser: `PROPFIND`, `REPORT`,
+    `PURGE` and `QUERY` arrive on Bun, Node, Deno and workerd, and a token the parser does not know
+    can be answered by the runtime itself.
+  - `Router.add` from `@nifrajs/core/router` accepts the same method tokens, and
+    `isRegistrableMethod(name)` from that subpath reports whether a name is one.
+    `RouteDescriptor.method` is typed `RouteMethod`: a standard `Method` or another such token.
+
+  feat(schema): `toOpenAPI` leaves a custom-method route out of the document. A path item has a field
+  for each standard method and none for any other.
+
+  feat(cli): `nifra check` reads the routes `all()` and `method()` register, so the duplicate,
+  overlap, reserved-segment and param-modifier rules cover them, reported once per call. The route
+  brief and `--json` output list a custom-method route with a `fetch` call. The capability report
+  attributes a module to every path an optional-param route serves, and to `all()` and `method()`
+  routes.
+
+- 7bfa25e: feat(schema): a route body can be a `multipart/form-data` form with file fields. `@nifrajs/schema/form`
+  exports a `t` that is the `@nifrajs/schema` builder plus `t.file` and `t.form`; text fields and files
+  are validated before the handler runs and typed in `c.body`.
+
+  ```ts
+  import { t } from "@nifrajs/schema/form";
+
+  app.post(
+    "/avatars",
+    {
+      body: t.form({
+        avatar: t.file({
+          maxBytes: 5_000_000,
+          accept: ["image/png", "image/jpeg"],
+        }),
+        caption: t.optional(t.string({ maxLength: 200 })),
+      }),
+      bodyLimit: 6_000_000,
+    },
+    (c) => ({ bytes: c.body.avatar.size })
+  );
+  ```
+
+  `@nifrajs/schema`
+
+  - `t.file({ maxBytes?, accept? })` validates a `File`. The size is checked before a byte is read.
+    `accept` takes exact types and `type/*` wildcards and is matched against the file's leading bytes,
+    never the type the client claimed; the validated file then carries the detected type. An `accept`
+    entry no signature can prove (`text/csv`, `image/svg+xml`, `*/*`) throws when the schema is built.
+  - `t.form(fields, options?)` is a route `body` as is. Text fields are coerced from their string form,
+    a repeated field is a list, and an undeclared field fails validation unless `additionalProperties`
+    is set. `options` also takes the body limits below.
+  - `t.array(file)` and `t.optional(file)` work with either `t`. `t.object`, `t.looseObject`, `t.query`,
+    `t.union`, `t.record`, and `t.paginated` throw when handed a file field.
+  - A zero-byte file part, or an empty text part in a file field, counts as no file. A required list
+    field with no entries is `[]`.
+  - A form with no required file also accepts `application/json` and
+    `application/x-www-form-urlencoded` bodies.
+  - `toOpenAPI` emits a body with a file field as `multipart/form-data` unless `requestContentType`
+    says otherwise.
+  - `@nifrajs/schema` now depends on `@nifrajs/uploads`.
+
+  `@nifrajs/core`
+
+  - `@nifrajs/core/multipart` exports `multipartBody(schema, limits?)`, which marks any Standard Schema
+    as a form body, and the `MultipartLimits` and `MultipartValue` types. The route reads the form under
+    its `bodyLimit` and hands the schema a record of strings and `File`s; a repeated name is an array.
+  - Limits: `maxFields` (default 100), `maxFiles` (10), `maxFieldBytes` (65536), `maxFileBytes`
+    (unbounded below `bodyLimit`).
+  - Responses: `415 unsupported_media_type` for another content type, `400 invalid_multipart` for a
+    body that is not a well-formed form or ends before its closing delimiter, and `413` with
+    `payload_too_large`, `too_many_parts`, `too_many_fields`, `too_many_files`, `field_too_large`, or
+    `file_too_large`.
+  - File names have path separators and control characters removed. Field names follow the server's
+    `protoPoisoning` policy.
+
+  `@nifrajs/uploads`
+
+  - `DETECTABLE_MIME_TYPES` and `FILE_TYPE_PREFIX_BYTES` are exported, and `@nifrajs/uploads/detect`
+    exports them with `detectFileType` and `FileType` on their own.
+
+  `@nifrajs/client`
+
+  - A body that holds a `File` or `Blob` is sent as `multipart/form-data`. An array value is sent as a
+    repeated field, `null` and `undefined` values are left out, and a caller-set `content-type` is
+    dropped so the generated boundary is used. A `FormData` body is sent as is. A nested object or list
+    cannot be a form field.
+  - `inProcessClient` and `testClient` send a `FormData` body with its `content-length`.
+
+  `@nifrajs/edge`
+
+  - A route whose body is a `t.form` or a `multipartBody` schema reads the form, with the same limits
+    and responses as the full server.
+
+- 4a03d30: feat(core): `notFound(handler)` from `@nifrajs/core/not-found` answers a request no route matched,
+  in place of the default `404` body. Apply it with `use()`:
+
+  ```ts
+  import { notFound } from "@nifrajs/core/not-found";
+
+  app.use(
+    notFound(({ pathname, header }) => {
+      if (header("accept")?.includes("text/html")) {
+        return new Response("<h1>Nothing here</h1>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      return undefined; // the default { ok: false, error: "not_found" }
+    })
+  );
+  ```
+
+  - It answers a `404` only. A path that exists under another method is still a `405` with `Allow`, a
+    malformed path parameter is still a `400`, and a `404` a route or a mounted app returned is left
+    alone.
+  - A `2xx` answer is sent as a `404`, keeping its body and headers. A `3xx`, `4xx` or `5xx` answer is
+    sent unchanged. `undefined` keeps the default body. A thrown `Response` is an answer.
+  - The handler is given `method`, `url`, `pathname` (as sent, not percent-decoded), `headers`,
+    `header(name)`, `signal` and `platform`. It is never given the request body.
+  - A throw, a rejection, or a returned value that is not a `Response` is logged once, honouring
+    `errorLogDetail`, and answered with the plain `500` `internal_error` body.
+  - With `requestTimeoutMs` set, an async handler that outlives it has `signal` aborted and the request
+    answered `503`. A deadline header on the request is not consulted for a request no route matched.
+  - The answer takes the normal response path: fixed response headers and `onResponse` hooks apply.
+  - One handler per server. A second `notFound()` throws, as does one applied inside a `group()` or
+    after `listen()`. `merge()` does not carry a merged server's handler across.
+
+  To serve unmatched paths - a single-page app's shell, another app behind this one - register a
+  wildcard route or a mount: those are matches, with their own status, the request body, and the full
+  route lifecycle.
+
+  feat(edge): `notFound(handler)` from `@nifrajs/edge` builds the same handler for the compact server,
+  passed as an option: `server({ notFound: notFound(handler) })`. The rules are the ones above, shared
+  with the full server. There is no logger and no request timeout on the compact server, so a fault is
+  the plain `500` and the handler bounds its own I/O. An app that does not import `notFound` ships
+  none of it.
+
+- 8e30090: feat: a mount nifra cannot analyze is a declared known gap, not a silent hole. Routes behind
+  `mount()` and `mountFetch()` are invisible to route reflection, so capability assurance could not
+  see them and said nothing. Both now take `opaque: "<reason>"`, and so does a `createWebApp`
+  `mounts` entry. Capability assurance lists a mount with a reason as a known gap
+  (`report.gaps`, `{ kind: "opaque-mount", path, reason }`): `nifra check` and
+  `nifra capabilities check` print it on every run, and it fails nothing and lowers no level. A mount
+  on the analyzed app without a reason fails with the new `opaque-mount-undeclared` finding, which
+  suggests `merge()` for a nifra `server()` and `opaque` for anything else. A mount whose app publishes
+  composed evidence (the API `createWebApp` mounts) is not reported. `webProjectEvidence` accepts a
+  `mounts` entry without an evidence provider when it declares `opaque`. New exports:
+  `reflectMounts` and `ReflectedMount` from `@nifrajs/core/reflection`, `CapabilityGap` from
+  `@nifrajs/core/capabilities`; project evidence snapshots gain an optional `mounts` list, absent for
+  an app with no mounts.
+- 28f3aaf: feat(core): a path can end in optional params, written `:name?`. The route serves the path with the
+  param and without it:
+
+  ```ts
+  app
+    // GET /users and GET /users/42
+    .get("/users/:id?", (c) =>
+      c.params.id === undefined ? { all: true } : { id: c.params.id }
+    )
+    // GET /archive, GET /archive/2026 and GET /archive/2026/09
+    .get("/archive/:year?/:month?", (c) => ({
+      year: c.params.year,
+      month: c.params.month,
+    }));
+  ```
+
+  - Optional params are whole segments at the end of the path. Several in a row are filled left to
+    right: a later one is present only when every earlier one is. A `?` anywhere else (`/a/:id?/b`,
+    `/v-:id?`) is literal text, as before.
+  - An optional param is typed `string | undefined`. When the path omits it, it is absent from
+    `c.params`, not an empty string. A `params` schema that requires it answers `422` on the shorter
+    path.
+  - The route is registered once per path it serves, with the same handler, schema and hooks.
+    `app.routes()`, `group()`, `merge()`, `implement()`, `ws()` and the typed registry all see those
+    paths, so `GET /users` registered next to `GET /users/:id?` throws `DUPLICATE_ROUTE`. A route that
+    is rejected leaves none of its HTTP paths registered.
+  - The typed client calls each path: `api.users.get()` and `api.users({ id }).get()`.
+  - `defineContract` accepts the same paths; two operations that serve the same method and path are
+    refused.
+  - `expandOptionalParams(pattern)` from `@nifrajs/core/pattern` returns the paths a pattern serves,
+    shortest first. `Router.add` from `@nifrajs/core/router` registers exactly the pattern it is given;
+    a caller that wants the optional form adds each expanded pattern.
+  - `routePatternOverlap` compares every path each side serves, under one work budget for the call.
+
+  feat(edge): the compact server accepts the same optional params.
+
+  feat(schema): `toOpenAPI` emits one operation per path an optional-param route serves. A shorter
+  path declares only the parameters it has. For a contract, the operation name is the `operationId` of
+  the full path, and the shorter paths carry none.
+
+  feat(cli): `nifra check` reports `NF-C026` (warning) for a param followed by `?`, `*`, `+`, `{`, `(`
+  or `<` that the path grammar reads as literal text, and names a `?` route that no request can reach.
+  `// nifra-expect param-modifier` above the registration marks a deliberate literal. Overlap and
+  duplicate checks read an optional-param route as every path it serves.
+
+- 6d20355: feat(core): a path param can say which values it accepts, written in braces after the name. A
+  request whose value does not fit is not served by that route:
+
+  ```ts
+  app
+    // /users/me is its own route; /users/42 is this one; /users/ada is a 404
+    .get("/users/me", () => ({ me: true }))
+    .get("/users/:id{[0-9]+}", (c) => ({ id: Number(c.params.id) }))
+    // a list of values, and a count
+    .get("/img/:size{thumb|full}/:file", (c) => ({
+      size: c.params.size,
+      file: c.params.file,
+    }))
+    .get("/countries/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+    // inside a segment, and optional at the end of a path
+    .get("/files/:name.:ext{png|jpg}", (c) => ({
+      name: c.params.name,
+      ext: c.params.ext,
+    }))
+    .get("/posts/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "1" }));
+  ```
+
+  - A constraint is one character class with an optional count (`[0-9]`, `[a-z0-9_-]+`, `\d{4}`,
+    `\w{2,8}`), or a list of two or more values (`png|jpg|webp`). A class holds letters, digits, ranges
+    of them, `\d`, `\w` and `. _ ~ ! $ & ' ( ) + , ; = @ -`; there is no negated class and a count
+    starts at one. Anything else in braces (`:id{int}`, `:id{.+}`, `:id{[0-9]+|[a-z]+}`) is literal
+    text, as before.
+  - The param stays a `string`, keyed by its bare name: `Params<"/users/:id{[0-9]+}">` is
+    `{ id: string }`.
+  - The value is checked as it was sent, before percent-decoding. `/users/4%32` does not fit
+    `:id{[0-9]+}`; a broader route beside it serves that request.
+  - The narrowest route answers, whatever the order of registration: literal text, then a list, then a
+    class, then a bare `:param`, then a wildcard. Between two constraints of a kind, the one that
+    accepts fewer values is tried first. A method the narrowest matching route does not have answers
+    `405`, as it does for a literal route beside a param route.
+  - Two spellings of one constraint (`[0-9]+`, `\d+`, `[0-9]{1,}`) are one route: the same method
+    registered on both throws `DUPLICATE_ROUTE`.
+  - Inside a segment the text around the params is placed first and each value is then checked; the
+    router does not look for another split.
+  - `routePatternOverlap` takes constraints into account: `/users/me` and `/users/:id{[0-9]+}` do not
+    overlap.
+  - `@nifrajs/core/pattern` exports `paramConstraint(text)`, which reads a constraint at the start of
+    `text`, and the `ParamConstraint` type. A param part of a compiled mixed segment carries its
+    constraint as `c`.
+
+  feat(edge): the compact server accepts the same constraints.
+
+  feat(schema): `toOpenAPI` writes a constrained param into the path template by its bare name
+  (`/users/{id}`). Its schema is `{ type: "string", pattern }` for a character class and
+  `{ type: "string", enum }` for a list of values; a declared `params` schema still takes precedence.
+
+  feat(client): a constrained param is passed by its bare name, `api.users({ id: "42" }).get()`. Two
+  param routes at one position (`/users/:id{[0-9]+}` beside `/users/:slug`, or a param beside a
+  wildcard) are each callable, picked by the name of the key. The client does not check a value
+  against its constraint.
+
+  feat(cli): `nifra check` accepts a supported constraint and keeps reporting other text in braces
+  (`NF-C026`); `NF-C024` and `NF-C025` follow the router's reading of a constraint. `nifra routes` and
+  the generated client calls print the bare name. `nifra scaffold` refuses a page path that carries a
+  constraint.
+
+  feat(testing): `runAdversarialContract` builds a request path whose values satisfy each param's
+  constraint, and fills a part-literal segment (`/files/:name.json`) param by param.
+
+  feat(web): a route file name that would read as a param constraint (`[id]{a|b}.tsx`) is refused at
+  build time with a message that names the file. `llms.txt` prints client calls with the bare name.
+
+- b64c3ee: fix(web): the identity preflight behind `nifra check`, `nifra doctor` and the build now scans every
+  package declared in `"nifra": { "singleCopy": [...] }`, not only the built-in identity-sensitive set.
+  A declared package installed at two versions is a fatal `version-skew` finding with the same
+  remediation as a framework skew (align the ranges; nifra never redirects across versions), and one
+  version at two paths is reported as deduplicated.
+
+  feat(core): `@nifrajs/core/single-copy/register` no longer skips silently. Each declared package it
+  cannot collapse - a version skew, or a linked file with no counterpart in the app's copy - prints one
+  warning per process naming both copies, both versions and the reason. Strict mode turns that into a
+  startup failure: declare `"singleCopy": { "packages": [...], "strict": true }` or set
+  `NIFRA_SINGLE_COPY_STRICT=1`. `SingleCopySkip` gains optional `to`, `fromVersion` and `toVersion`;
+  `SingleCopyOptions` gains `strict` and `onSkip`; new exports `readSingleCopyStrict` and
+  `SINGLE_COPY_STRICT_ENV`.
+
+- 81c720e: fix(client): a segment that is part literal, part param is callable through the typed client
+
+  A route such as `/files/:name.json`, `/post-:id` or `/v:major.:minor` could not be reached through
+  the typed client: `:name.json` was typed as a param named `name.json` whose call sent the value
+  without `.json`, and `post-:id` was typed as a property that sent the pattern text itself. Such a
+  segment is now a call with the segment as the request carries it:
+
+  ```ts
+  await api.files("report.json").get(); // GET /files/:name.json, c.params.name === "report"
+  await api("post-42").get(); // GET /post-:id
+  await api("v1.2").get(); // GET /v:major.:minor
+  ```
+
+  - The argument is typed as the segment's literal text around any string (`` `${string}.json` ``), so
+    `api.files("report.txt")` does not compile. A constraint is not part of the text:
+    `/img/:id{[0-9]+}.png` takes `` `${string}.png` ``, and the server decides whether the value fits.
+  - The value is sent as one encoded segment, as a param value is: a `/` in it never adds a path level.
+  - A static segment at the same position keeps its exact text (`api.files("index.json")` is
+    `/files/index.json` when that route exists, which is the route the server picks), and a
+    whole-segment param keeps its call by name (`api.files({ id })`).
+  - Two such segments at one position that accept the same text resolve to the types of the one
+    registered first.
+  - `@nifrajs/core` exports `RequestPath<Path>`, the same reading for a whole path:
+    `RequestPath<"/files/:name.json">` is `` `/files/${string}.json` ``, a constraint reads as
+    `${string}`, and a path ending in optional params is one template per form.
+  - The cli's route listings and the generated `llms.txt` print the call the same way
+    (`` api.files(`${name}.json`) ``), and print an unnamed wildcard as `({ "*": rest })`.
+
+- ed60b23: feat(core): `app.group(prefix, build)` declares routes under a static path prefix. The prefix is part
+  of every route's served path, so the typed client (`api.admin.users.get()`), `routes()`, OpenAPI,
+  capability events, the effect ledger, and idempotency keys all see `/admin/users`. `JoinRoutePath`
+  and `PrefixRegistry` are exported for the registry types.
+
+  - The builder inherits the parent's chain as it stands at the call (`derive`, `decorate`,
+    `authenticate`, `beforeHandle`, `afterHandle`, `onError`, `around`, assurance, installed runtimes).
+    Middleware the builder adds covers only the group's routes.
+  - The group's `onRequest`, `onResponse`, `responseHeaders`, and `onResponseFinalized` hooks run only
+    for requests whose path is the prefix or under it. That includes that path's 404 and 405 responses.
+  - Groups nest, and a group's `"/"` route serves the prefix itself.
+  - A prefix must be static text. Params, wildcards, percent-escapes, empty or dot segments, and a
+    trailing slash are refused at registration.
+  - The builder must synchronously return the group it was given. The group is closed once the builder
+    returns or throws.
+  - A collision with an existing route throws `RouteConfigError`, and none of the group's routes are
+    added.
+  - `.ws()`, mounts, MCP tools, and `merge()` are refused inside a group.
+
+  `merge()` now also carries the merged server's `onStop` hooks.
+
+- a158b74: feat(web): a page file under a mount fails at startup, at build and in `nifra check`, instead of
+  answering with the mount's 404. A mount in front of the page router - the backend at `apiPrefix`, a
+  `mounts` entry, or an `app.mount()` inside `use` - answers every request under its path, and its 404
+  is final (`fallbackOn: 404` only tries the next mount), so a page there could never render.
+  `createWebApp` now throws at startup, naming each file, the URL it serves and the mount; `nifra build`
+  refuses to build; and `nifra check` reports `NF-C027` for a page under the backend's prefix, reading
+  `apiPrefix` when `backend/framework.ts` exports it as a string literal (an `info` finding says so when it does
+  not).
+
+  `backend/framework.ts` can export `apiPrefix`, `apiStrip`, `mounts`, `csp` and `nonce`. `nifra dev`,
+  `nifra build` (the generated server entry and the static prerender), `nifra mcp`'s render tool and the
+  hydration gate pass the same set to `createWebApp`, and the render tool and the hydration gate now
+  apply `use` as well. A field of the wrong type fails at load, naming it, and a value
+  `nifra.config.ts` exports must be the one `backend/framework.ts` exports, or the build stops. `nifra routes`
+  lists the backend under the configured prefix, at the served path when `apiStrip` is set.
+
+  New exports: `preRouteMountPaths` from `@nifrajs/core/mount`; `shadowedPages`,
+  `formatShadowedPages`, `normalizeMountPath` and `ShadowedPage` from `@nifrajs/web/route-manifest`;
+  `SERVER_ENTRY_OPTIONS` and the `optionImports` option of `generateServerEntry` and `buildTarget` from
+  `@nifrajs/web/build`.
+
+  Upgrading: an app with a page file under its backend prefix (`routes/api/*` with a backend)
+  started before and answered that page with a 404; it now fails to start until the file moves out of
+  the prefix or the prefix changes.
+
+### Patch Changes
+
+- 72b62fa: fix(core): on Bun, `listen()` picks the same route for a request as `app.fetch()` does, and as every
+  other runtime does. Three cases:
+
+  - A path segment that mixes literal text and a parameter matches only what it is written to match.
+    `/files/:name.json` serves `/files/a.json` with `params.name` of `"a"`, and answers `/files/a` with
+    `404`.
+  - When the most specific route for a path has no handler for the request's method, the answer is
+    `405` with an `Allow` header. With `POST /users/me` and `GET /users/:id`, `GET /users/me` is `405`.
+  - A route that is more specific early in the path takes its requests ahead of a broader one. With
+    `GET /admin/*rest` and `GET /:section/:page`, `GET /admin/users` is served by `/admin/*rest`.
+
+  A route none of these touch is still served from Bun's own route table.
+
+- aa44e93: fix(core): on Bun, `listen()` starts a server that mounts another nifra app with no WebSocket routes.
+  Every mounted nifra app counted as a WebSocket mount, so `listen()` required the `websocket()` runtime
+  and threw `INVALID_WS_RUNTIME`. `createWebApp({ api })` mounts its backend this way, so a full-stack
+  app with an `api` backend could not start on Bun.
+
+  A mounted app now takes part in Bun's WebSocket wiring only when it has a WebSocket route, directly or
+  in an app it mounts. `listen()` asks when it runs, so a runtime or route added to the child after it
+  was mounted is served, and an app mounted under itself to alias a prefix still starts. A mounted
+  object that exposes `resolveWebSocketUpgrade` without naming a runtime still needs `websocket()` on
+  the parent.
+
+- 4a3ee60: fix(core): on Bun, `c.clientIp` is the socket peer on every route `listen()` serves
+
+  A static or `:param` route answered `undefined` for `c.clientIp` under `listen()` on Bun, while a
+  wildcard route, and any route of an app with a request hook, answered the socket peer. Every route
+  now answers the peer, as the docs describe. The address is looked up when a handler reads it, so a
+  request whose handler never reads it costs no lookup, and a second read returns the first answer.
+
+- aad6297: An assurance rule whose selector can match no route is refused when the policy is defined: an empty `methods` or `paths` list, a `capabilities` entry that is not a valid capability id, and, in `defineAssuranceConfig` with a capability policy, a selected capability that policy does not define. Each made the rule inert, so its routes fell through to the next, laxer rule.
+- dad0d41: On a route with a body schema that runs auth before validation, direct `c.req` body reads made by its derive and `beforeHandle` hooks are capped by the route's `bodyLimit`, as they are on a route without a body schema.
+- 538adc2: Capability assurance treats `OPTIONS` as a safe method, as it already treated `GET` and `HEAD`: an `OPTIONS` route that declares a domain write is reported as `safe-method-domain-write`, and one that only reaches it as `unconfined-write-reach`.
+- f47edd1: `aroundCapability`: a `next()` called after its interceptor returned or timed out no longer runs the interceptors after it. It returns a promise rejected with `CapabilityInterceptorProtocolError`, the error a second `next()` call already raises.
+- df9530a: A length-less request body over its cap is answered with 413 promptly when the body was cloned first: through the transport codec lane, an idempotency `namespace` resolver, or a `c.req.clone()` read on a capped route.
+- 3e6973f: The route manifest, project evidence snapshot, capability lockfile, and single-copy report sort by code unit instead of `localeCompare`, so their bytes and the manifest's `contentHash` no longer depend on the runtime's locale or ICU data. A manifest whose routes include paths that the two orders rank differently (mixed case, `-` beside `_`, non-ASCII) gets a new route order and `contentHash` once when it is rebuilt.
+- 25e8edf: A request body decoded by `transportCodecs()` before routing is still held to the matched route's `bodyLimit` (and the server's body cap): one larger than the limit answers 413 like a JSON body would.
+- 2b5e5fc: `responseContract()` holds a `c.json(...)` reply to the route's declared schema, as it does a returned value: `"enforce"` re-serializes the validated value with the reply's status and headers, and `"warn"` reports undeclared fields. In `"warn"` mode a `status(...)` result is now served with its own status and headers.
+- da7d792: `diffRouteSnapshots`, and the `nifra diff`, contract proof, and manifest diffs built on it, compare the object schema around a section's fields as well as the fields. A change to `additionalProperties`, to the `$defs` a field's `$ref` points into, or to a required name that no field declares is reported as breaking, so a diff against an existing baseline may list changes it did not list before.
+- fb14dfa: `DurableObjectRecordBackend.scan` returns every matching record when a reconciliation walk follows its cursor. A page that filled up now resumes after its own last record, where the cursor skipped the next matching record at each page boundary. `MemoryDurableRecordBackend.scan` sorts ids in the same code-unit order its cursor compares with, so mixed-case ids are no longer skipped either.
+- 8ae97f6: The effect ledger, `useCapability`, `executeCapability`, effect lifecycle events, and the durable effect journal take a token field (`target`, `effectId`, `digest`, a capability id, an error code) only when it is a string of the token's shape. A row, a number, `null`, or an array in one of those fields is refused instead of stored, and a durable store record that holds one is refused when it is read.
+- ca8b50d: On the Node direct lane, the header view a response hook receives answers only for real headers: `has("constructor")` is `false` and `get("constructor")` is `null`, as on a Web `Headers`, where it previously reported an inherited property or threw.
+- b00a889: A body that a `derive` or `beforeHandle` hook reads through `c.req` stays readable for the framework readers that come after it. An auth-first route's body schema (`validationOrder: "auth-before-validation"`) and `c.boundedBody()` / `c.boundedJson()` now parse the bytes the hook read, for framed and chunked bodies on every adapter, where they answered 500.
+- 66fd712: On an idempotent route, a request rejected before its handler runs (by an auth stage, validation, or a guard) no longer stores a result under its `Idempotency-Key`: the key is released and can be retried. Rejected requests therefore no longer fill the idempotency store.
+- 738e7a1: `listen()` answers a request whose app-wide `onRequest`/`onResponse` hook throws with the same JSON `500 internal_error` a throwing route gets, and logs it through the app's logger. Bun's development error page, which shows the message, stack and source whenever `NODE_ENV` is not `production`, is no longer served.
+- 4801cac: `diffNifraManifests` and `nifra manifest diff` diff a route that is new in the candidate manifest against an empty route. The capabilities it declares are reported as added and breaking, and a `pii` or `secret` response classification as an increase that is breaking, the same as when an existing route makes that change. A new route that declares no capability and returns public data is still only an added route.
+- 25fe13d: A saga store refuses a `compareAndSet` whose `record.sagaId` differs from the `sagaId` it is written under, on `MemorySagaStore` and every durable execution adapter. `runDurableExecutionAdapterConformance` now checks that an adapter refuses it.
+- 0852290: `sse()`'s `stream.signal` aborts when the runtime cancels the response body as well as when the request signal fires, so a producer looping on `stream.signal.aborted` stops once the client is gone on every runtime.
+- 0589dbe: In development, when a hook reads the request body as a stream through `c.req.body`, the body readers after it - a body schema, `c.boundedJson()`, the handler's `c.req.json()` - fail with an error that says the body was read as a stream and to read it with `c.req.bytes()` in the hook, which later readers replay. Before, they failed on a locked stream or reported the body as invalid JSON. A production `NODE_ENV` build carries none of this check.
+- 856f5ce: A request body or WebSocket frame decoded by a transport codec must be a tree. A value containing a cycle is answered as an invalid payload, and shared references may add at most 100,000 nodes to the tree they expand to. The `protoPoisoning` policy also applies to the members of a decoded `Map` or `Set`.
+- cfd86b3: A 422 validation response lists at most the first 100 issues, and `t` schemas stop collecting issues at 100, so a large invalid body cannot produce a response many times its own size.
+- 8ff96c9: `toFetchHandler` on Workers enforces `wsMaxPayloadBytes` on inbound WebSocket frames, as the Bun, Node, Deno and hub lanes do: a larger frame closes the socket with 1009.
+- 4c46199: A WebSocket handshake resolves the `clientIp` trust declaration the way an HTTP request does, so `onRequest` hooks such as `ipRestriction()` and a route's `upgrade()` see the derived caller rather than the proxy's socket address.
+- eef4932: A WebSocket route with a `messageSchema` parses each frame under the app's `protoPoisoning` policy, as a JSON body is parsed. Under the default `"reject"`, a frame with a `__proto__` key goes to `onInvalidMessage` as invalid JSON. `wrapWebSocketMessageValidation` takes the policy as an optional second argument.
+- 6de8686: Only a GET request is treated as a WebSocket handshake. A POST or PUT that carries `Upgrade: websocket` reaches its HTTP route instead of the socket's `upgrade()` guard and a 426.
+- d7892ea: fix(core): a request method is matched exactly. Method tokens are case-sensitive, so a request sent
+  as `post` or `Patch` does not reach a `POST` or `PATCH` route: it answers `405` with `Allow` when the
+  path has routes and `404` when it has none. `Router.find` from `@nifrajs/core/router` follows the
+  same rule.
+
+  A token no route can be registered under - anything other than uppercase letters, digits and
+  hyphens, a letter first, at most 32 characters - is answered by the route table alone. `onRequest`
+  hooks, handlers mounted with `mount` or `mountFetch`, and the WebSocket upgrade lane do not run for
+  it, so code that tests `request.method` never reads a token it would not recognise.
+
+  This is visible on a runtime that hands the token over as sent, such as Deno. Bun and Node refuse
+  such a request before it reaches the app.
+
+- 4936309: perf(core,node): close the realistic-route Node gap to Fastify
+
+  The fused derive-before(-after) lifecycle lanes only had Web (`Response`-building)
+  renderers, so on the Node-direct lane a derive+before route fell back to the generic
+  route program while Bun rode the single closure. The same lanes now build a generic
+  (finalize/wrapResponse-parameterized) fused runner that the Node dispatcher prefers
+  exactly as it prefers the body-only runner - validate → derive → before → handler →
+  (after) in one frame, finalizing through the caller's own outcome renderer. Semantics
+  are stage-for-stage identical to the generic program (pinned by a Web-vs-Node-direct
+  parity suite); Bun's fused Web lanes are untouched.
+
+  `@nifrajs/node`'s JSON writer now emits lowercase `content-type`/`content-length`,
+  matching the other Node writer paths and the Web runtimes. Proven lowercase,
+  mutable records stay in place and receive framing headers without the old
+  rename-and-delete dictionary-mode transition; mixed-case, frozen, and explicitly
+  framed records keep the isolated normalization fallback.
+
+  Realistic-shape bench (oha, auth + security headers + CORS + request-id + cookie,
+  Node): GET 89% → 96% of Fastify, POST 94% → ~98%, body-hash 92% → 96% (each now at
+  or above the raw-`node:http` ceiling).
+  The Node adapter's parser-error drain guard keeps the same close-after-active-responses contract with a per-socket active counter and shared response-finish/close release listener, removing the per-request response Set while retaining close-only abort cleanup.
+
+- bbdc5a1: fix(core, web): JSON request bodies are matched by media type
+
+  A body is parsed as JSON when its `Content-Type` media type is `application/json` or an
+  `application/*+json` type. A header that only mentions `application/json` in a parameter, such as
+  `text/plain; x=application/json`, is no longer parsed as JSON; browsers send that type cross-origin
+  without a preflight. Server functions apply the same comparison and answer such requests with 415.
+
+- 43ba944: fix(core): `c.params` is typed by the names the router captures for a segment that mixes literal
+  text and parameters. `/files/:name.json` types `c.params.name`, `/v:major.:minor` types `major` and
+  `minor`, and `/b/:bucket.s3/*key` types `bucket` and `key`; each was previously typed as one
+  parameter named after the rest of the segment (`"name.json"`), so reading the real name did not
+  compile. A colon that is literal text, as in `/v1/things:batchGet`, no longer types a parameter.
+  Paths whose parameters are whole segments are typed as before.
+- 46c741a: fix(core): a path segment that mixes literal text and parameters - `/:name.json`, `/v:major.:minor`,
+  `/:a-:b-:c.json` - is matched in one pass over the segment. The time a lookup takes grows with the
+  length of the segment and no longer with the number of parameters in it, for a hit and for a miss
+  alike. This holds for the server's router, `Router.find` from `@nifrajs/core/router`, and
+  `matchRoutePattern` from `@nifrajs/core/pattern`.
+
+  Which paths match and what each parameter captures are unchanged: a literal between two parameters
+  is taken at its first occurrence, a trailing literal ends the segment, and every parameter is at
+  least one character.
+
+  `@nifrajs/core/pattern` also exports the matcher itself: `mixedSegmentShape(parts)` lays a mixed
+  segment out once, and `matchMixedSegment(shape, segment, out)` appends the captures to `out` and
+  answers whether the segment matched.
+
+- 4936309: perf(core): add opt-in Node-direct twin for `onResponseBody` hooks
+
+  `onResponseBody(fn)` took the portable hook everywhere: on the Node-direct lane it
+  ran through the shared native wrapper, allocating a header view per request even for
+  twins that only read the bytes and set a header. `onResponseBody(fn, node)` accepts
+  an optional `NodeResponseBodyHook` twin receiving the same serialized bytes plus the
+  outcome record, returning through the same replacement channel (`undefined` keeps the
+  body; bytes or `{ body, status }` are applied by the shared `applyBodyReplacement`).
+  The null-body skip, async continuations, and throw propagation are unchanged - the
+  twin only skips the view allocation - and Bun/Deno keep the portable hook untouched.
+
+  A `Middleware` may declare the twin as `onNodeResponseBody` next to `onResponseBody`
+  (a lone twin throws at registration, mirroring `onNodeResponseHeaders`).
+
+- 6e257a6: On `@nifrajs/node`, a request under both a `mount()` prefix and a longer native `mountFetch()` prefix (a proxy) reaches the `mount()` first, as `app.fetch` does, so the composed app's own guards run.
+- 6907cbe: fix(core): a request path is routed the same way on every runtime. A path with `.` or `..`
+  segments, written as-is or percent-encoded (`%2e`, in either case), or with a backslash, is
+  resolved the way a WHATWG URL parser resolves it before a route is chosen: `/users/../posts` and
+  `/users/%2e%2e/posts` are `/posts`, and `/users/..\posts` is `/posts` too.
+
+  Bun and workerd already hand an app the resolved URL. Now Deno, Bun's `listen()` route table and
+  `@nifrajs/node` route the same path, and `c.req.url` shows it. The same holds for a WebSocket
+  handshake. The query string is never touched, and neither is a dot inside a longer segment
+  (`/.well-known`, `/a..b`) or an encoded slash or backslash (`%2f`, `%5c`), which stay part of the
+  segment.
+
+  fix(node): the adapter resolves the request target before anything reads it, so static files,
+  mounts, the app and `c.req.url` all see the same path.
+
+- bda9637: fix(core): a `Response` thrown after `c.set.cookie(...)` or `c.set.deleteCookie(...)` ships those
+  cookies, as the same `Response` returned does. A login handler or a guard that sets or clears a
+  session and then throws a redirect now sends the `Set-Cookie` on every runtime and lane, whether the
+  throw comes from the handler, `derive`, or `beforeHandle`. `c.set.headers` and `c.set.status` still
+  do not apply to a `Response`, thrown or returned, and a thrown `Response` still skips `onError`.
+
+  fix(core): queued cookies reach a `Response` whose headers are immutable, such as
+  `Response.redirect(...)` or a `fetch()` result on Node, Deno, and Workers, whether it is returned or
+  thrown.
+
+- ff25d68: perf(core): an app that mounts nifra apps without WebSocket routes answers the WebSocket upgrade
+  check without reading the request's headers. `@nifrajs/deno` and `toFetchHandler` on Workers run that
+  check on every request, and Deno builds a request's headers only when they are read, so a plain
+  request to such an app no longer pays for them. A WebSocket route or a mount added later, at any
+  depth, is still seen.
+
+  On Bun, an app whose own WebSocket routes sit beside mounted apps without any keeps native pub/sub:
+  `ws.subscribe` and `app.publish` stay on Bun's own topic broadcast. While it does, a WebSocket route a
+  mounted app gains after `listen()` is not upgraded, since its sockets would share the server's
+  topics; the next `listen()` serves it.
+
 ## 3.5.0
 
 ### Patch Changes

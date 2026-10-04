@@ -1,5 +1,392 @@
 # @nifrajs/schema
 
+## 4.0.0
+
+### Minor Changes
+
+- dde125b: feat(core): `bodyParser(schema, { types, parse })` from `@nifrajs/core/body-parser` lets one route
+  read a request body in a media type other than JSON, urlencoded, or multipart. `parse` is handed the
+  body's bytes and what it returns is validated by `schema`, so the handler sees the same typed body
+  whatever format it arrived in. JSON and urlencoded bodies still reach the schema through their own
+  lanes, and a route that does not opt in still answers `415`.
+
+  ```ts
+  import { bodyParser } from "@nifrajs/core/body-parser";
+  import { parse } from "yaml";
+
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+
+  app.post(
+    "/pipelines",
+    {
+      body: bodyParser(Pipeline, {
+        types: ["application/yaml"],
+        parse: (bytes) => parse(utf8.decode(bytes), { maxAliasCount: 0 }),
+      }),
+    },
+    (c) => c.body.name
+  );
+  ```
+
+  - The request's media type is matched in full against `types`: case folded, parameters set aside.
+    `parse` also receives `{ mediaType, contentType }`.
+  - The body is read under the route's `bodyLimit` before `parse` runs: `413 payload_too_large` over
+    it, `400 invalid_content_length` for a length that is not one.
+  - A `parse` that throws or rejects answers `400 invalid_body`.
+  - The decoded value must be a tree. An object, array, `Map` or `Set` reached twice, which is what an
+    alias or a cycle decodes to, answers `400 invalid_body` under every `protoPoisoning` setting.
+  - `protoPoisoning` applies to the decoded value: a `__proto__` key, a `constructor` that carries a
+    `prototype`, and a plain object whose prototype the decoder replaced are rejected or stripped.
+    Instances of a class, such as a `Date` or a `Uint8Array`, pass through as they are.
+  - `types` takes full `type/subtype` names and throws a `TypeError` for JSON, urlencoded, multipart,
+    and `text/plain`. The first three already have readers; `text/plain` is sent by a browser from any
+    site without a preflight.
+  - A decoder's own limits (nesting depth, alias expansion) are not covered: configure the decoder you
+    pass for untrusted input.
+
+  `bodyParser` and `multipartBody` compose in either order, and two `bodyParser` wraps each read their
+  own types; the outer one wins a type both name. `multipartBody` now hands a body that is not
+  multipart to a reader the schema already carried instead of answering `415` itself.
+
+  feat(schema): `toOpenAPI` and `toOpenAPIFromEvidence` list each media type a `bodyParser` schema
+  reads as its own entry under the operation's `requestBody.content`, in a fixed order, next to the
+  JSON or multipart entry. `reflectSchema` reports them as `mediaTypes`, and a project evidence
+  snapshot carries them, so a document built from a stored snapshot matches the live one.
+
+- 3b090de: feat(core): a route schema takes `cookies`, validated before the handler like `headers` and `query`.
+
+  ```ts
+  import { server } from "@nifrajs/core/server";
+  import { t } from "@nifrajs/schema";
+
+  export const app = server().get(
+    "/dashboard",
+    {
+      cookies: t.cookies({
+        session: t.string(),
+        page: t.optional(t.integer()),
+      }),
+    },
+    (c) => ({ session: c.cookies.session, page: c.cookies.page ?? 1 })
+  );
+  ```
+
+  The schema checks the cookies parsed from the `Cookie` header (URL-decoded values, the first of a
+  repeated name) and its output types `c.cookies`. A request that fails it is a `422`, and
+  `onValidationError` receives the kind `"cookies"`; code that lists that parameter's kinds by hand
+  needs the new member. `defineContract` operations take `cookies` too. Route reflection, contract
+  snapshots and diffs, project evidence and the OpenAPI document carry the schema, and OpenAPI lists
+  each declared field as an `in: cookie` parameter.
+
+  `t.cookies` builds the schema for this slot. Like `t.query` it coerces declared number and boolean
+  fields from text and lets undeclared cookies through, since a browser sends every cookie the site
+  has set.
+
+- ff4a062: feat(core): one handler can be registered under several methods, and under a method outside the
+  standard seven, with `all()` and `method()` from `@nifrajs/core/methods`:
+
+  ```ts
+  import { server } from "@nifrajs/core/server";
+  import { all, method } from "@nifrajs/core/methods";
+
+  const app = server()
+    // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo
+    .use(all("/echo", (c) => ({ method: c.req.method })))
+    .use(method("PURGE", "/cache/:key", (c) => ({ purged: c.params.key })))
+    .use(method(["GET", "POST"], "/search", (c) => ({ q: c.query.get("q") })));
+  ```
+
+  - Each method is an ordinary route: it is listed by `app.routes()`, takes a schema and hooks, works
+    inside `group()`, and throws `DUPLICATE_ROUTE` against a route already registered for the same
+    method and path. One call is one registration: if any of its routes is refused, none is added.
+  - `all()` is the seven standard methods, not a catch-all. A request with any other method is still a
+    `405` with an `Allow` header. `mount()` remains the way to pass every method through.
+  - A method name is case-insensitive and registered uppercase. It is a token of letters, digits and
+    hyphens that starts with a letter, at most 32 characters. `TRACE`, `CONNECT` and `TRACK` cannot be
+    registered; those and any other value throw `INVALID_METHOD`.
+  - The standard methods in a call join the typed registry and the typed client. A custom method has
+    no typed-client call.
+  - An assurance policy's `methods` selector takes standard methods only, so it never matches a
+    custom-method route. Classify such a route with a path rule; unmatched, it is reported as
+    `unclassified-route`.
+  - Whether a custom method reaches the app is up to the runtime's HTTP parser: `PROPFIND`, `REPORT`,
+    `PURGE` and `QUERY` arrive on Bun, Node, Deno and workerd, and a token the parser does not know
+    can be answered by the runtime itself.
+  - `Router.add` from `@nifrajs/core/router` accepts the same method tokens, and
+    `isRegistrableMethod(name)` from that subpath reports whether a name is one.
+    `RouteDescriptor.method` is typed `RouteMethod`: a standard `Method` or another such token.
+
+  feat(schema): `toOpenAPI` leaves a custom-method route out of the document. A path item has a field
+  for each standard method and none for any other.
+
+  feat(cli): `nifra check` reads the routes `all()` and `method()` register, so the duplicate,
+  overlap, reserved-segment and param-modifier rules cover them, reported once per call. The route
+  brief and `--json` output list a custom-method route with a `fetch` call. The capability report
+  attributes a module to every path an optional-param route serves, and to `all()` and `method()`
+  routes.
+
+- 7bfa25e: feat(schema): a route body can be a `multipart/form-data` form with file fields. `@nifrajs/schema/form`
+  exports a `t` that is the `@nifrajs/schema` builder plus `t.file` and `t.form`; text fields and files
+  are validated before the handler runs and typed in `c.body`.
+
+  ```ts
+  import { t } from "@nifrajs/schema/form";
+
+  app.post(
+    "/avatars",
+    {
+      body: t.form({
+        avatar: t.file({
+          maxBytes: 5_000_000,
+          accept: ["image/png", "image/jpeg"],
+        }),
+        caption: t.optional(t.string({ maxLength: 200 })),
+      }),
+      bodyLimit: 6_000_000,
+    },
+    (c) => ({ bytes: c.body.avatar.size })
+  );
+  ```
+
+  `@nifrajs/schema`
+
+  - `t.file({ maxBytes?, accept? })` validates a `File`. The size is checked before a byte is read.
+    `accept` takes exact types and `type/*` wildcards and is matched against the file's leading bytes,
+    never the type the client claimed; the validated file then carries the detected type. An `accept`
+    entry no signature can prove (`text/csv`, `image/svg+xml`, `*/*`) throws when the schema is built.
+  - `t.form(fields, options?)` is a route `body` as is. Text fields are coerced from their string form,
+    a repeated field is a list, and an undeclared field fails validation unless `additionalProperties`
+    is set. `options` also takes the body limits below.
+  - `t.array(file)` and `t.optional(file)` work with either `t`. `t.object`, `t.looseObject`, `t.query`,
+    `t.union`, `t.record`, and `t.paginated` throw when handed a file field.
+  - A zero-byte file part, or an empty text part in a file field, counts as no file. A required list
+    field with no entries is `[]`.
+  - A form with no required file also accepts `application/json` and
+    `application/x-www-form-urlencoded` bodies.
+  - `toOpenAPI` emits a body with a file field as `multipart/form-data` unless `requestContentType`
+    says otherwise.
+  - `@nifrajs/schema` now depends on `@nifrajs/uploads`.
+
+  `@nifrajs/core`
+
+  - `@nifrajs/core/multipart` exports `multipartBody(schema, limits?)`, which marks any Standard Schema
+    as a form body, and the `MultipartLimits` and `MultipartValue` types. The route reads the form under
+    its `bodyLimit` and hands the schema a record of strings and `File`s; a repeated name is an array.
+  - Limits: `maxFields` (default 100), `maxFiles` (10), `maxFieldBytes` (65536), `maxFileBytes`
+    (unbounded below `bodyLimit`).
+  - Responses: `415 unsupported_media_type` for another content type, `400 invalid_multipart` for a
+    body that is not a well-formed form or ends before its closing delimiter, and `413` with
+    `payload_too_large`, `too_many_parts`, `too_many_fields`, `too_many_files`, `field_too_large`, or
+    `file_too_large`.
+  - File names have path separators and control characters removed. Field names follow the server's
+    `protoPoisoning` policy.
+
+  `@nifrajs/uploads`
+
+  - `DETECTABLE_MIME_TYPES` and `FILE_TYPE_PREFIX_BYTES` are exported, and `@nifrajs/uploads/detect`
+    exports them with `detectFileType` and `FileType` on their own.
+
+  `@nifrajs/client`
+
+  - A body that holds a `File` or `Blob` is sent as `multipart/form-data`. An array value is sent as a
+    repeated field, `null` and `undefined` values are left out, and a caller-set `content-type` is
+    dropped so the generated boundary is used. A `FormData` body is sent as is. A nested object or list
+    cannot be a form field.
+  - `inProcessClient` and `testClient` send a `FormData` body with its `content-length`.
+
+  `@nifrajs/edge`
+
+  - A route whose body is a `t.form` or a `multipartBody` schema reads the form, with the same limits
+    and responses as the full server.
+
+- 28f3aaf: feat(core): a path can end in optional params, written `:name?`. The route serves the path with the
+  param and without it:
+
+  ```ts
+  app
+    // GET /users and GET /users/42
+    .get("/users/:id?", (c) =>
+      c.params.id === undefined ? { all: true } : { id: c.params.id }
+    )
+    // GET /archive, GET /archive/2026 and GET /archive/2026/09
+    .get("/archive/:year?/:month?", (c) => ({
+      year: c.params.year,
+      month: c.params.month,
+    }));
+  ```
+
+  - Optional params are whole segments at the end of the path. Several in a row are filled left to
+    right: a later one is present only when every earlier one is. A `?` anywhere else (`/a/:id?/b`,
+    `/v-:id?`) is literal text, as before.
+  - An optional param is typed `string | undefined`. When the path omits it, it is absent from
+    `c.params`, not an empty string. A `params` schema that requires it answers `422` on the shorter
+    path.
+  - The route is registered once per path it serves, with the same handler, schema and hooks.
+    `app.routes()`, `group()`, `merge()`, `implement()`, `ws()` and the typed registry all see those
+    paths, so `GET /users` registered next to `GET /users/:id?` throws `DUPLICATE_ROUTE`. A route that
+    is rejected leaves none of its HTTP paths registered.
+  - The typed client calls each path: `api.users.get()` and `api.users({ id }).get()`.
+  - `defineContract` accepts the same paths; two operations that serve the same method and path are
+    refused.
+  - `expandOptionalParams(pattern)` from `@nifrajs/core/pattern` returns the paths a pattern serves,
+    shortest first. `Router.add` from `@nifrajs/core/router` registers exactly the pattern it is given;
+    a caller that wants the optional form adds each expanded pattern.
+  - `routePatternOverlap` compares every path each side serves, under one work budget for the call.
+
+  feat(edge): the compact server accepts the same optional params.
+
+  feat(schema): `toOpenAPI` emits one operation per path an optional-param route serves. A shorter
+  path declares only the parameters it has. For a contract, the operation name is the `operationId` of
+  the full path, and the shorter paths carry none.
+
+  feat(cli): `nifra check` reports `NF-C026` (warning) for a param followed by `?`, `*`, `+`, `{`, `(`
+  or `<` that the path grammar reads as literal text, and names a `?` route that no request can reach.
+  `// nifra-expect param-modifier` above the registration marks a deliberate literal. Overlap and
+  duplicate checks read an optional-param route as every path it serves.
+
+- 6d20355: feat(core): a path param can say which values it accepts, written in braces after the name. A
+  request whose value does not fit is not served by that route:
+
+  ```ts
+  app
+    // /users/me is its own route; /users/42 is this one; /users/ada is a 404
+    .get("/users/me", () => ({ me: true }))
+    .get("/users/:id{[0-9]+}", (c) => ({ id: Number(c.params.id) }))
+    // a list of values, and a count
+    .get("/img/:size{thumb|full}/:file", (c) => ({
+      size: c.params.size,
+      file: c.params.file,
+    }))
+    .get("/countries/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+    // inside a segment, and optional at the end of a path
+    .get("/files/:name.:ext{png|jpg}", (c) => ({
+      name: c.params.name,
+      ext: c.params.ext,
+    }))
+    .get("/posts/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "1" }));
+  ```
+
+  - A constraint is one character class with an optional count (`[0-9]`, `[a-z0-9_-]+`, `\d{4}`,
+    `\w{2,8}`), or a list of two or more values (`png|jpg|webp`). A class holds letters, digits, ranges
+    of them, `\d`, `\w` and `. _ ~ ! $ & ' ( ) + , ; = @ -`; there is no negated class and a count
+    starts at one. Anything else in braces (`:id{int}`, `:id{.+}`, `:id{[0-9]+|[a-z]+}`) is literal
+    text, as before.
+  - The param stays a `string`, keyed by its bare name: `Params<"/users/:id{[0-9]+}">` is
+    `{ id: string }`.
+  - The value is checked as it was sent, before percent-decoding. `/users/4%32` does not fit
+    `:id{[0-9]+}`; a broader route beside it serves that request.
+  - The narrowest route answers, whatever the order of registration: literal text, then a list, then a
+    class, then a bare `:param`, then a wildcard. Between two constraints of a kind, the one that
+    accepts fewer values is tried first. A method the narrowest matching route does not have answers
+    `405`, as it does for a literal route beside a param route.
+  - Two spellings of one constraint (`[0-9]+`, `\d+`, `[0-9]{1,}`) are one route: the same method
+    registered on both throws `DUPLICATE_ROUTE`.
+  - Inside a segment the text around the params is placed first and each value is then checked; the
+    router does not look for another split.
+  - `routePatternOverlap` takes constraints into account: `/users/me` and `/users/:id{[0-9]+}` do not
+    overlap.
+  - `@nifrajs/core/pattern` exports `paramConstraint(text)`, which reads a constraint at the start of
+    `text`, and the `ParamConstraint` type. A param part of a compiled mixed segment carries its
+    constraint as `c`.
+
+  feat(edge): the compact server accepts the same constraints.
+
+  feat(schema): `toOpenAPI` writes a constrained param into the path template by its bare name
+  (`/users/{id}`). Its schema is `{ type: "string", pattern }` for a character class and
+  `{ type: "string", enum }` for a list of values; a declared `params` schema still takes precedence.
+
+  feat(client): a constrained param is passed by its bare name, `api.users({ id: "42" }).get()`. Two
+  param routes at one position (`/users/:id{[0-9]+}` beside `/users/:slug`, or a param beside a
+  wildcard) are each callable, picked by the name of the key. The client does not check a value
+  against its constraint.
+
+  feat(cli): `nifra check` accepts a supported constraint and keeps reporting other text in braces
+  (`NF-C026`); `NF-C024` and `NF-C025` follow the router's reading of a constraint. `nifra routes` and
+  the generated client calls print the bare name. `nifra scaffold` refuses a page path that carries a
+  constraint.
+
+  feat(testing): `runAdversarialContract` builds a request path whose values satisfy each param's
+  constraint, and fills a part-literal segment (`/files/:name.json`) param by param.
+
+  feat(web): a route file name that would read as a param constraint (`[id]{a|b}.tsx`) is refused at
+  build time with a message that names the file. `llms.txt` prints client calls with the bare name.
+
+- 4b8d8de: feat(schema): `t.deferred` and `t.declassified`
+
+  `t.deferred(schema)` describes a loader value marked with `defer()`: `@nifrajs/web` projects and
+  validates what it resolves to by `schema` before it streams. `t.declassified(reason, schema)` allows a
+  field with a sensitive name (`token`, `password`, `apiKey`, ...) in an output schema and records why
+  it may reach the browser. `DeferredValue<T>` is the type of a deferred value.
+
+### Patch Changes
+
+- cfd86b3: A 422 validation response lists at most the first 100 issues, and `t` schemas stop collecting issues at 100, so a large invalid body cannot produce a response many times its own size.
+- f56b6a8: The built-in `email` format checks in linear time on any input, and rejects a domain with an empty label (`ada@example..com`, `ada@.example.com`).
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [3bb014f]
+- Updated dependencies [3f8fa2b]
+- Updated dependencies [a158b74]
+- Updated dependencies [ff25d68]
+  - @nifrajs/core@4.0.0
+  - @nifrajs/uploads@4.0.0
+
 ## 3.5.0
 
 ### Minor Changes

@@ -1,11 +1,30 @@
-# @nifrajs/graphql
+# @nifrajs/authjs
 
 ## 4.0.0
 
+### Minor Changes
+
+- 65f2d4b: `createAuthClient().signIn()` works with Auth.js v5, which refuses a `GET` to `/signin/:provider`. It now fetches a CSRF token, submits the sign-in as a `POST`, and navigates to the provider page Auth.js answers with (any `http(s)` address; anything else lands on `/`). `signIn()` therefore returns a `Promise<void>`, and so does `useAuthSession().signIn`. `signInUrl()` is deprecated: it names a URL Auth.js v5 only accepts as a CSRF-carrying `POST`.
+- d8c2a35: Auth.js now reads its documented variables (`AUTH_URL`, `AUTH_TRUST_HOST`, `NODE_ENV`, `AUTH_<PROVIDER>_ID`, ...) from the platform bindings and the process environment. In production it trusts the request's `Host` header only when `trustHost` or `AUTH_TRUST_HOST` says so. A configured origin (`authUrl`, or `AUTH_URL`) is trusted, and every request is rewritten onto it. `getSession` and `requireAuthUser` take the mount's `basePath`, `authUrl` and `trustProxy`, and read the session on that origin and path.
+- af7648c: feat(authjs): official Auth.js integration (backend + client + React bindings)
+
+  New `@nifrajs/authjs` package driving `@auth/core` itself - never a reimplementation of
+  the security-critical work:
+
+  - `authjs(config, options?)` mounts `/api/auth/*` (GET + POST) as a type-identity plugin:
+    sign-in, OAuth callbacks, session, sign-out, CSRF. Secrets resolve per request
+    (explicit → platform binding → `process.env`) and fail loud when missing; `authUrl`
+    covers proxy deployments.
+  - `getSession(req, config)` (`Session | null`, handlers + loaders) and
+    `requireAuthUser(req, config)` (401/redirect guard) mirror the `@nifrajs/better-auth`
+    shapes.
+  - `@nifrajs/authjs/client` - framework-agnostic `createAuthClient()` (session, sign-in,
+    sign-out over the mounted endpoints).
+  - `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()` (other adapters
+    wrap the agnostic client the same way `web-react/i18n` wraps `@nifrajs/i18n`).
+
 ### Patch Changes
 
-- dab0f1f: Document limits measure each fragment once and reuse the result at every spread, so measuring a document takes time linear in its length however often it spreads its fragments.
-- 99e6687: `graphqlWebSocket` frees an operation's `maxSubscriptions` slot when the server completes it or ends it with an error, not only when the client sends `complete`. An `onConnect` that throws refuses the connection with 4403, as returning `false` does. An operation that runs past `executionTimeoutMs` ends with an error result and leaves the connection open, and any other failure in a frame closes that one socket with 4500.
 - Updated dependencies [dde125b]
 - Updated dependencies [72b62fa]
 - Updated dependencies [aa44e93]
@@ -67,25 +86,3 @@
 - Updated dependencies [a158b74]
 - Updated dependencies [ff25d68]
   - @nifrajs/core@4.0.0
-
-## 3.5.0
-
-### Patch Changes
-
-- d5b7c22: Harden request boundaries, error handling, resource limits, signing, and cross-runtime adapters for safer production releases.
-
-## 3.4.0
-
-## 3.3.0
-
-## 3.2.0
-
-### Minor Changes
-
-- 36fe66b: Add `@nifrajs/graphql`: mount a GraphQL endpoint on a nifra app. A spec-compliant GraphQL-over-HTTP
-  handler (`respondGraphql`) you mount at `POST /graphql`, `graphql-transport-ws` subscriptions over
-  nifra's native WebSocket lane (`graphqlWebSocket`), an in-memory subscription source (`createPubSub`)
-  you can swap for a durable bus, and a `mountGraphql` one-call helper that wires POST/GET (and,
-  optionally, subscriptions) while injecting the nifra route context into resolvers. Executes with the
-  `graphql` package's own `parse`/`validate`/`execute`/`subscribe`; the request body reuses core's single
-  bounded, prototype-guarded trust boundary. `graphql` is a required peer, `graphql-ws` an optional one.

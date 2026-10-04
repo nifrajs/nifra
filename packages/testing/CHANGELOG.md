@@ -1,5 +1,179 @@
 # @nifrajs/testing
 
+## 4.0.0
+
+### Minor Changes
+
+- 6d20355: feat(core): a path param can say which values it accepts, written in braces after the name. A
+  request whose value does not fit is not served by that route:
+
+  ```ts
+  app
+    // /users/me is its own route; /users/42 is this one; /users/ada is a 404
+    .get("/users/me", () => ({ me: true }))
+    .get("/users/:id{[0-9]+}", (c) => ({ id: Number(c.params.id) }))
+    // a list of values, and a count
+    .get("/img/:size{thumb|full}/:file", (c) => ({
+      size: c.params.size,
+      file: c.params.file,
+    }))
+    .get("/countries/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+    // inside a segment, and optional at the end of a path
+    .get("/files/:name.:ext{png|jpg}", (c) => ({
+      name: c.params.name,
+      ext: c.params.ext,
+    }))
+    .get("/posts/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "1" }));
+  ```
+
+  - A constraint is one character class with an optional count (`[0-9]`, `[a-z0-9_-]+`, `\d{4}`,
+    `\w{2,8}`), or a list of two or more values (`png|jpg|webp`). A class holds letters, digits, ranges
+    of them, `\d`, `\w` and `. _ ~ ! $ & ' ( ) + , ; = @ -`; there is no negated class and a count
+    starts at one. Anything else in braces (`:id{int}`, `:id{.+}`, `:id{[0-9]+|[a-z]+}`) is literal
+    text, as before.
+  - The param stays a `string`, keyed by its bare name: `Params<"/users/:id{[0-9]+}">` is
+    `{ id: string }`.
+  - The value is checked as it was sent, before percent-decoding. `/users/4%32` does not fit
+    `:id{[0-9]+}`; a broader route beside it serves that request.
+  - The narrowest route answers, whatever the order of registration: literal text, then a list, then a
+    class, then a bare `:param`, then a wildcard. Between two constraints of a kind, the one that
+    accepts fewer values is tried first. A method the narrowest matching route does not have answers
+    `405`, as it does for a literal route beside a param route.
+  - Two spellings of one constraint (`[0-9]+`, `\d+`, `[0-9]{1,}`) are one route: the same method
+    registered on both throws `DUPLICATE_ROUTE`.
+  - Inside a segment the text around the params is placed first and each value is then checked; the
+    router does not look for another split.
+  - `routePatternOverlap` takes constraints into account: `/users/me` and `/users/:id{[0-9]+}` do not
+    overlap.
+  - `@nifrajs/core/pattern` exports `paramConstraint(text)`, which reads a constraint at the start of
+    `text`, and the `ParamConstraint` type. A param part of a compiled mixed segment carries its
+    constraint as `c`.
+
+  feat(edge): the compact server accepts the same constraints.
+
+  feat(schema): `toOpenAPI` writes a constrained param into the path template by its bare name
+  (`/users/{id}`). Its schema is `{ type: "string", pattern }` for a character class and
+  `{ type: "string", enum }` for a list of values; a declared `params` schema still takes precedence.
+
+  feat(client): a constrained param is passed by its bare name, `api.users({ id: "42" }).get()`. Two
+  param routes at one position (`/users/:id{[0-9]+}` beside `/users/:slug`, or a param beside a
+  wildcard) are each callable, picked by the name of the key. The client does not check a value
+  against its constraint.
+
+  feat(cli): `nifra check` accepts a supported constraint and keeps reporting other text in braces
+  (`NF-C026`); `NF-C024` and `NF-C025` follow the router's reading of a constraint. `nifra routes` and
+  the generated client calls print the bare name. `nifra scaffold` refuses a page path that carries a
+  constraint.
+
+  feat(testing): `runAdversarialContract` builds a request path whose values satisfy each param's
+  constraint, and fills a part-literal segment (`/files/:name.json`) param by param.
+
+  feat(web): a route file name that would read as a param constraint (`[id]{a|b}.tsx`) is refused at
+  build time with a message that names the file. `llms.txt` prints client calls with the bare name.
+
+- af7648c: feat(testing): browser-test glue (`serveTestApp`, `e2eUrl`)
+
+  `@nifrajs/testing/e2e` covers what in-process testing cannot: a real socket, real
+  navigation, real rendering. `serveTestApp(app)` binds the app to an ephemeral port
+  (via the optional `@nifrajs/node` peer) and stops cleanly; `e2eUrl<typeof app>(base,
+path)` typechecks the visited path against the route registry, so a typo'd URL fails
+  typecheck instead of 404ing mid-suite. Login stays in-process through `testSession` -
+  the session jar crosses into the browser as a `Cookie` header. Bring your own
+  Playwright/Vitest runner; this is the glue, documented with recipes on `/docs/testing`.
+
+- 1afbe9f: `jobStoreCertificationProfile({ traceparent: true })` adds the optional `traceparent-roundtrip` capability: a store hands the `traceparent` given to `enqueue` back on every lease, including after a retry, and leaves it absent when none was given.
+
+### Patch Changes
+
+- ef28ef9: An agent eval case orders its rubric verdicts by code unit, so the case digest is the same on every machine and in every locale. A case whose rubric ids sort differently around `.`, `_`, `:` or `-` can digest differently from an earlier release.
+- fab1d24: `e2eUrl` and `e2eWebSocket` refuse a path that does not stay on the test app's origin with one error, "must be a same-origin absolute path", whichever check catches it.
+- Updated dependencies [6695a23]
+- Updated dependencies [7b2ff47]
+- Updated dependencies [422248c]
+- Updated dependencies [62115dd]
+- Updated dependencies [dbc91b6]
+- Updated dependencies [d2329f5]
+- Updated dependencies [1eb77df]
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [57356c0]
+- Updated dependencies [682d8bf]
+- Updated dependencies [4ab5c6a]
+- Updated dependencies [bd6786e]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [d942c33]
+- Updated dependencies [d4d40a5]
+- Updated dependencies [9ccf198]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [84e0744]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [52bb49e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [d50f73e]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [784d772]
+- Updated dependencies [bda9637]
+- Updated dependencies [562b4af]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [a158b74]
+- Updated dependencies [6323d38]
+- Updated dependencies [ff25d68]
+  - @nifrajs/agent@4.0.0
+  - @nifrajs/core@4.0.0
+  - @nifrajs/client@4.0.0
+  - @nifrajs/mcp@4.0.0
+  - @nifrajs/mock@4.0.0
+  - @nifrajs/webmcp@4.0.0
+
 ## 3.5.0
 
 ### Minor Changes

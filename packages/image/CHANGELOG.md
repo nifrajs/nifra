@@ -1,5 +1,24 @@
 # @nifrajs/image
 
+## 4.0.0
+
+### Minor Changes
+
+- def0172: Images are sized and served the way a viewer displays them, with a JPEG's EXIF orientation applied:
+
+  - `imageDimensions()` and `readImageDimensions()` report a JPEG's displayed size. An `<Image>` of a phone photo stored landscape with orientation 6 now gets portrait `width`/`height`.
+  - `sharpImageBackend()` turns the pixels upright before resizing (sharp's `rotate()`), and its probe reports the displayed size. Before, every resized or metadata-stripped photo with an orientation tag came out turned. `SharpLike` now includes `rotate()`.
+  - `wasmImageBackend()` turns the decoded pixels upright before resizing and encoding. A codec that already turned a quarter-turn image is left as it is.
+
+### Patch Changes
+
+- fc2f019: `imageDimensions()` sizes a GIF the way browsers draw it: each side is the larger of the logical screen and the first frame. A GIF whose header declares a 1x1 (or 0x0) screen around a 10x20 frame now reports 10x20. When the first frame lies past the bytes read, the logical screen size is returned as before.
+- a734fba: `renderOgImage()` and `ogImageResponse()` take CMS-shaped text. Line breaks and tabs are drawn as spaces, an empty optional `description` or `eyebrow` is treated as absent, and text past its limit ends with an ellipsis. Before, each of these threw. A missing title and a control character an SVG cannot hold are still errors.
+
+  A revalidation of an unchanged card is answered `304` from the tag this process last sent for the same SVG and rasterizer, without rasterizing again, as documented.
+
+- 031c33d: fix(runtime): preserve typed-array compatibility across Fetch runtimes and reject invalid request bodies at the runner boundary.
+
 ## 3.5.0
 
 ### Patch Changes

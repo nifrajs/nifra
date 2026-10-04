@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/authjs",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Official Auth.js integration for nifra - mount Auth.js (OAuth, OIDC, credentials, WebAuthn-ready) into a nifra app, read sessions in handlers and loaders, guard routes, and drive it all from any frontend.",
   "keywords": [
     "bun",

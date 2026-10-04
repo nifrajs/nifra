@@ -1,5 +1,89 @@
 # @nifrajs/ag-ui
 
+## 4.0.0
+
+### Minor Changes
+
+- 7b2ff47: Resumable agent streams can be scoped to the caller:
+
+  - New `evidenceOwner` option on `mountAgent` and `mountAgUI`. It returns the caller's user or tenant id, and turns are recorded and replayed under it. Another caller's `Last-Event-ID` reconnect or reused turn id finds none of that caller's turns. It runs before any replay is served, and throwing from it refuses the request.
+  - New `scopeAgentEvidenceLog(log, owner)` in `@nifrajs/agent/events` returns the per-owner view of an `AgentEvidenceLog` that the seams use.
+  - `mountAgent` answers `400 { error: "invalid_turn_id" }` for a `turnId` that is not a bounded token before it reads the evidence log, matching `mountAgUI`.
+
+### Patch Changes
+
+- d2329f5: A resume continues only the step the turn suspended on. The saved state keeps a SHA-256 digest of the suspended tool input, and a continuation that names another tool, effect id or kind, or replays different input, is refused with `AgentResumeMismatchError` before anything runs (`mountAgent` answers 409). A caller's `approval` answers only a step that suspended for approval; a step suspended for budget or cancellation asks the approval port again.
+- 1eb77df: An SSE client that disconnects mid-run no longer ends the turn as failed. With an `evidenceLog`, the run keeps going and records its real result, so a `Last-Event-ID` reconnect replays that result instead of `run_failed`/`RUN_ERROR`. Without an `evidenceLog`, the disconnect aborts `ports.signal` (combined with any signal the caller's ports carry), so the model and tool loop stop and the turn suspends as `cancelled`.
+- Updated dependencies [6695a23]
+- Updated dependencies [7b2ff47]
+- Updated dependencies [422248c]
+- Updated dependencies [62115dd]
+- Updated dependencies [dbc91b6]
+- Updated dependencies [d2329f5]
+- Updated dependencies [1eb77df]
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [a158b74]
+- Updated dependencies [ff25d68]
+  - @nifrajs/agent@4.0.0
+  - @nifrajs/core@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

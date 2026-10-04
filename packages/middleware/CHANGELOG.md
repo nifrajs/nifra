@@ -1,5 +1,152 @@
 # @nifrajs/middleware
 
+## 4.0.0
+
+### Minor Changes
+
+- ff5a779: A static response header a group declares replaces the value its enclosing scopes declared for that name, on the group's routes. A value the route sets itself still wins. `securityHeaders()` takes its configuration into its plugin name, so a group's `use(securityHeaders({ ... }))` with a different configuration applies over the app's on the group's routes, where it was skipped as a repeat; the same configuration applied twice is still a no-op.
+- 29c6c94: feat(middleware): client-IP default keys and a CSRF form field
+
+  `rateLimit()` without `key`, `header`, or `trustedProxies` keys each bucket on the caller IP the
+  server resolved: the socket peer, or the app's `server({ clientIp })` trust declaration behind a
+  proxy. It no longer throws at construction, so the scaffolded backend templates, which pass only
+  `store`, `max`, and `windowMs`, start. A request with no resolvable caller IP gets 500
+  `rate_limit_key_unavailable`. A custom `key` receives the platform as its second argument.
+
+  `ipRestriction()` without `clientIp`, `header`, or `trustedProxies` judges the same resolved caller
+  IP, and denies a request that has none. A custom `clientIp` receives the platform as its second
+  argument.
+
+  Both read an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, how Bun and Node report an IPv4 peer on
+  their default listener) as the IPv4 address it carries, so IPv4 `allow`/`deny` rules match it; a rule
+  may also be written in that form (`::ffff:10.0.0.0/104`). `rateLimit()` counts an IPv6 caller by its
+  `/64`, however the key was derived.
+
+  `csrf({ field })` also accepts the token from a form field in an
+  `application/x-www-form-urlencoded` or `multipart/form-data` body, for plain HTML forms that cannot
+  set a header. Bodies over `fieldMaxBytes` (default 64 KiB) are not read for the field, file parts
+  never count as the token, and the body stays readable by the route. Keep the Origin check on when
+  using a field.
+
+- d60b262: Several response middlewares are stricter about what they read and write:
+
+  - `problemDetails()` inspects a raw error response only when it is JSON and not declared larger than `maxBytes`, so a streamed HTML error page or an endless stream is no longer read before the response is sent.
+  - `prettyJson()` re-indents JSON without re-serializing it, so an integer past 2^53, `1e400`, `-0`, and string escapes reach the client exactly as written.
+  - `multipartResponse()` quotes a boundary that holds a parameter delimiter (`( ) , / : = ?` or a space), so a parser reads the whole boundary.
+  - `requestId()` uses an inbound id only when it is 1-200 visible ASCII characters, replacing anything else with a generated id. A new `accept` option replaces that rule.
+  - `language()` reads at most the first 32 ranges of `Accept-Language`.
+  - `compression()` weakens a strong `ETag` on the gzip representation, which is a different byte sequence from the one the tag named.
+
+### Patch Changes
+
+- 1b2d53a: `replacedRequestOf(request)` returns the request an `onRequest` hook replaced with this one. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw can walk back to it. `idempotency()` uses this to keep its claim when a later hook such as `methodOverride()` rewrites the request: a retry replays the stored response instead of answering 409 and then running the handler a second time. `metrics()` uses it to count such requests and to decrement its in-flight gauge for them.
+- 894f888: `csrf()` rejects a streamed form body as soon as it passes the token field limit, and cancels the request body without waiting for the stream's own cleanup. A form within the limit still reaches the handler with its body intact.
+- 4936309: perf(core,node): close the realistic-route Node gap to Fastify
+
+  The fused derive-before(-after) lifecycle lanes only had Web (`Response`-building)
+  renderers, so on the Node-direct lane a derive+before route fell back to the generic
+  route program while Bun rode the single closure. The same lanes now build a generic
+  (finalize/wrapResponse-parameterized) fused runner that the Node dispatcher prefers
+  exactly as it prefers the body-only runner - validate → derive → before → handler →
+  (after) in one frame, finalizing through the caller's own outcome renderer. Semantics
+  are stage-for-stage identical to the generic program (pinned by a Web-vs-Node-direct
+  parity suite); Bun's fused Web lanes are untouched.
+
+  `@nifrajs/node`'s JSON writer now emits lowercase `content-type`/`content-length`,
+  matching the other Node writer paths and the Web runtimes. Proven lowercase,
+  mutable records stay in place and receive framing headers without the old
+  rename-and-delete dictionary-mode transition; mixed-case, frozen, and explicitly
+  framed records keep the isolated normalization fallback.
+
+  Realistic-shape bench (oha, auth + security headers + CORS + request-id + cookie,
+  Node): GET 89% → 96% of Fastify, POST 94% → ~98%, body-hash 92% → 96% (each now at
+  or above the raw-`node:http` ceiling).
+  The Node adapter's parser-error drain guard keeps the same close-after-active-responses contract with a per-socket active counter and shared response-finish/close release listener, removing the per-request response Set while retaining close-only abort cleanup.
+
+- 6daaa05: Each guard you build is its own plugin: `bearer()`, `basicAuth()`, `jwt()`, `ipRestriction()`, `rateLimit()`, `csrf()` and `bodyLimit()`. A second, stricter one before later routes or inside a `group()` applies alongside the first. The same instance passed to `use()` twice still applies once.
+- 8e52704: fix(middleware, auth): CSRF behind TLS proxies, CORS caching, and token parsing
+
+  The CSRF same-origin default in `csrf()` from both packages accepts an `https:` Origin on an `http:`
+  request URL, which is what a TLS-terminating proxy presents. A downgrade or another host is still
+  rejected.
+
+  `cors()` with an allowlist or predicate sends `Vary: Origin` on every response, including ones that
+  carry no `Access-Control-Allow-Origin`. An existing `Origin` member is not repeated, and `Vary: *` is
+  kept as it is.
+
+  `jwt()` and `verifyCsrfToken()` accept only canonical base64url signatures. `jwt()` and `bearer()`
+  match the `Bearer` auth-scheme case-insensitively.
+
+- a9923cc: `idempotency()` no longer caches a `401`, `403`, `408`, `409`, `425`, or `429` by default. Each says the operation did not run, so a retry under the same key now reaches the handler instead of replaying the refusal until the key expires. A custom `shouldCache` is unaffected.
+- 7f64e2c: fix(middleware): a date-form `If-Range` in `rangeResponse()` keeps the range only when it equals the
+  representation's `Last-Modified` to the second, as RFC 9110 requires. Any other date, earlier or
+  later, gets the whole representation with 200.
+- 027f795: `etag()` passes an event stream (`text/event-stream`) through untouched, and likewise a raw-body response marked `cache-control: no-store` or `no-transform`, instead of reading the whole body to hash it before any of it is sent. `compression()` no longer treats `text/event-stream` as compressible, so each event reaches the client as it is produced rather than waiting for the gzip window to fill.
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [4b8d8de]
+- Updated dependencies [f56b6a8]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [a158b74]
+- Updated dependencies [ff25d68]
+  - @nifrajs/core@4.0.0
+  - @nifrajs/schema@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

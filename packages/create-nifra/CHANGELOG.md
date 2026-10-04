@@ -1,5 +1,173 @@
 # create-nifra
 
+## 4.0.0
+
+### Major Changes
+
+- 5f1f3d8: feat(create-nifra)!: every template keeps its server code in `backend/`
+
+  - The `api` and `batteries` templates keep their app in `backend/` (`backend/app.ts`,
+    `backend/index.ts`), and `backend/app.ts` exports `backend` and `type Backend`, so `nifra contracts`
+    and `nifra sdk` find it without configuration.
+  - `--db` writes its data layer to `backend/db/` (the Drizzle config, scripts and `.gitignore` entries
+    point there), and `--auth` writes `backend/auth.ts`. Every module a scaffold writes is in a zone,
+    so a site's route backends can import them.
+  - The `isr` template's Workers entry and local Bun server are `backend/worker.ts` and
+    `backend/dev-server.ts`.
+
+- 6c978a1: feat(create-nifra)!: a site scaffold picks one deploy target
+
+  - `--target bun|node|deno|cloudflare|vercel` (default `bun`) chooses where the site deploys.
+    `--deploy` is refused with that name.
+  - `--docker` adds a Dockerfile and `.dockerignore` for `bun` or `node`.
+  - The scaffold carries no hand-written server entry or build script. `nifra build` generates the
+    target's entry, and `nifra.config.ts` exports the `target` (`nifra target <t>` switches it).
+  - Only the target's own config file is written (`deno.json` for Deno, `wrangler.toml` for
+    Cloudflare), plus `start` / `deploy` scripts for it. `--ci` deploys the chosen target.
+
+- 214d674: feat(create-nifra)!: site scaffolds use the zoned layout - `backend/app.ts`, `backend/framework.ts`,
+  and each route's loader and action in its `x.backend.ts`.
+
+### Minor Changes
+
+- c3057ee: feat: AGENTS.md is the one copy of an app's agent guidance
+
+  A scaffold and `nifra init-agents` write `AGENTS.md` plus a pointer to it for each agent:
+  `CLAUDE.md` and `GEMINI.md` import it, `.cursor/rules/nifra.mdc` is an always-applied Cursor rule
+  that attaches it, and `.github/copilot-instructions.md` names it. None of them carries guidance of its
+  own, so they cannot drift apart. A web app's `AGENTS.md` gains a "Project structure" section on the
+  frontend/backend zones the build enforces, and `nifra init-agents` appends it to an app with `routes/`.
+
+- a0cfffa: `export const clientIp = "platform"` in `nifra.config.ts` makes a `cloudflare` or `vercel` build read `c.clientIp` from the header that platform's edge overwrites (`cf-connecting-ip`, `x-real-ip`), so per-caller middleware such as `rateLimit` works there. Without it an edge build still has no caller address; Bun, Node and Deno builds use the socket peer either way. `buildTarget` and `generateServerEntry` take the same `clientIp` option. Site scaffolds declare it.
+
+### Patch Changes
+
+- a8b33bc: The Solid and Svelte compiler plugins live on their `/plugin` subpaths, and each adapter root exports only the render adapter.
+
+  - `solidBunPlugin` is imported from `@nifrajs/web-solid/plugin`, matching `@nifrajs/web-svelte/plugin` and `@nifrajs/web-vue/plugin`.
+  - `@nifrajs/web-solid` and `@nifrajs/web-svelte` link no build-time or `node:` module, so a server or edge bundle that imports the adapter builds under edge resolve conditions (Cloudflare Workers, Vercel Edge, Deno).
+  - Solid site scaffolds import the plugin from the subpath.
+
+  Breaking: `solidBunPlugin` is no longer exported from `@nifrajs/web-solid`, nor `svelteBunPlugin` from `@nifrajs/web-svelte`. `nifra fix --code NF-C005` rewrites those imports.
+
+- a0cfffa: Cloudflare scaffolds (a site with `--target cloudflare`, and the ISR template) declare `compatibility_date = "2025-04-01"`, the first date at which `nodejs_compat` fills `process.env` from the project's variables, so `NIFRA_ALLOW_MEMORY_RATE_LIMIT` reaches the starter's rate limit. Their local-only commands (`bun run start` for the site, `bun run dev` for ISR) set it for the one local process; a deploy still refuses to start until the variable is set.
+- 6ce7975: The `AGENTS.md` a new app ships with names every route schema slot (`body`, `query`, `params`, `headers`, `cookies`) and shows a `params` schema validating and coercing a path param, where it used to say path params and headers could not be declared in the route schema.
+- 7669f56: A project whose name has capitals, `_`, or `.` (`MyApp`, `my_app`) gets a Docker image tag, a `wrangler.toml` `name`, and Cloudflare Pages and Deno Deploy CI project names in lowercase letters, digits, and `-`, the form those platforms take. `package.json` keeps the name as given.
+- a77b341: The `site` and `isr` templates now ignore `.env` and `.env.*` (keeping `.env.example`), as the `api` and `batteries` templates already did.
+- ce169a2: `create-nifra` refuses a destination that already holds files unless `--force` is given, for every template. Before, the site template scaffolded into such a directory and replaced its `.gitignore`, `AGENTS.md`, `CLAUDE.md` and agent/MCP config files. An existing empty directory is now accepted without `--force`, and `bun create nifra . --force` names the project after the current directory instead of rejecting the name `.`.
+- b83d400: The Vue site starter keeps its global stylesheet in an SFC `<style>` block, and the Preact starter renders its stylesheet unescaped, so both hydrate with no mismatch and the server-rendered page has its fonts before the client loads.
+- 29c6c94: feat(middleware): client-IP default keys and a CSRF form field
+
+  `rateLimit()` without `key`, `header`, or `trustedProxies` keys each bucket on the caller IP the
+  server resolved: the socket peer, or the app's `server({ clientIp })` trust declaration behind a
+  proxy. It no longer throws at construction, so the scaffolded backend templates, which pass only
+  `store`, `max`, and `windowMs`, start. A request with no resolvable caller IP gets 500
+  `rate_limit_key_unavailable`. A custom `key` receives the platform as its second argument.
+
+  `ipRestriction()` without `clientIp`, `header`, or `trustedProxies` judges the same resolved caller
+  IP, and denies a request that has none. A custom `clientIp` receives the platform as its second
+  argument.
+
+  Both read an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, how Bun and Node report an IPv4 peer on
+  their default listener) as the IPv4 address it carries, so IPv4 `allow`/`deny` rules match it; a rule
+  may also be written in that form (`::ffff:10.0.0.0/104`). `rateLimit()` counts an IPv6 caller by its
+  `/64`, however the key was derived.
+
+  `csrf({ field })` also accepts the token from a form field in an
+  `application/x-www-form-urlencoded` or `multipart/form-data` body, for plain HTML forms that cannot
+  set a header. Bodies over `fieldMaxBytes` (default 64 KiB) are not read for the field, file parts
+  never count as the token, and the body stays readable by the route. Keep the Origin check on when
+  using a field.
+
+- 4b8d8de: feat(web)!: everything a route sends to the browser passes a declared output schema
+
+  A route's backend half declares what its loader and action send to the browser:
+  `export const loaderOutput = t.object({ ... })` and `export const actionOutput = ...`. A boundary
+  loader declares `boundaryLoaders[name].output`, and a server function `serverFn({ output }, fn)`.
+  Before the page renders and before anything is serialized, the data is projected through its schema:
+  keys the schema does not declare are dropped, at every depth, even when the schema itself would accept
+  them, so the component and the browser see the same value. A declared field of the wrong shape fails
+  the request with a 500 whose message names the field's path, never its value. A loader that returns
+  data without an output schema fails the request; one that returns nothing, redirects or answers with
+  an error status needs none. A loader, action, boundary loader or server function that returns a 2xx
+  `Response` is refused, since its body would bypass the schema.
+
+  A deferred value is declared with `t.deferred(schema)`, and what it resolves to is projected and
+  validated by `schema` before it streams. A deferred value the schema does not declare as one is
+  refused.
+
+  An output schema that names a field such as `password`, `passwordHash`, `secret`, `token`, `apiKey`,
+  `privateKey` or `ssn` fails the route when it loads, unless the field is wrapped in
+  `t.declassified("why it may reach the browser", schema)`. `@nifrajs/web/zones` exports the name test
+  as `isSensitiveFieldName`.
+
+  Projection reads a nifra schema's JSON Schema, or a Standard JSON Schema such as zod's. A schema that
+  exposes neither keeps whatever its own `validate` returns.
+
+  The scaffolded site and ISR routes declare their loader and action output schemas.
+
+- d50f73e: feat: generated route types
+
+  Every route file gets a generated `Route` namespace, imported from `./+types/<name>` by both halves
+  of the route:
+
+  ```ts
+  // routes/blog/[slug].backend.ts
+  import type { Route } from "./+types/[slug]"
+  export const loaderOutput = t.object({ title: t.string() })
+  export async function loader({ api, params }: Route.LoaderArgs) { ... }
+
+  // routes/blog/[slug].tsx
+  import type { Route } from "./+types/[slug]"
+  export default function Post({ data, params }: Route.ComponentProps) { ... }
+  ```
+
+  `Route.Params` comes from the path (`[id]`, optional `[[lang]]`, catch-all `[...path]`).
+  `Route.LoaderData` and `Route.ActionData` are the output types of `loaderOutput` and `actionOutput`,
+  so a component is typed with exactly what reaches it. `Route.LoaderArgs` types `api` from the app's
+  `backend/app.ts`, which `.nifra/types/register.d.ts` registers once with `@nifrajs/client`'s new
+  `Register` interface; no route imports the backend for its types.
+
+  `nifra types` writes the files to `.nifra/types` (and `--check` fails when one is stale); `nifra dev`,
+  `nifra build` and `nifra check` refresh them, and `nifra dev` keeps them current as routes are added
+  or removed. A route resolves `./+types/<name>` through `"rootDirs": [".", "./.nifra/types"]` in
+  tsconfig, which the scaffolded site and ISR apps now carry; `nifra types` says so when it is missing.
+  `@nifrajs/web/route-types` exports the generator.
+
+- 4936309: Pin generated CI workflows to the repository's current Bun release.
+- fb7c5b3: Site and ISR scaffolds declare `@types/bun` and load its ambient types. The starter database rules in `nifra.assurance.ts` are optional, so an app without a database passes `nifra assure`; an import that matches a rule still grants its capabilities.
+
+  The ISR template's client build no longer copies `public/` into its own output directory.
+
+- 715186c: `--auth better-auth` scaffolds ship no placeholder secret.
+
+  - `.env.example` leaves `BETTER_AUTH_SECRET` empty. Locally, better-auth falls back to its development secret; in production it refuses to start until a secret is set.
+  - The generated `backend/auth.ts` refuses a `BETTER_AUTH_SECRET` shorter than 32 characters in production, where better-auth itself only logs a warning.
+
+- d1e2f50: feat: starters type their routes with the generated `./+types`
+
+  The site and ISR starters type the landing page as `import type { Route } from "./+types/index"`:
+  `props: Route.ComponentProps` in the page, `Route.LoaderArgs` / `Route.ActionArgs` in its backend
+  half. `data` is the `loaderOutput` schema's type, which is what reaches the browser. A scaffold
+  ships its `.nifra/types`, so the types resolve right after `bun install`, before any nifra command
+  has run. The Svelte starter types its `$props()` the same way, and the Vue starter types the props it
+  declares from `Route`. Svelte and Vue scaffolds include their `.svelte` / `.vue` files in
+  `tsconfig.json`, so svelte-check, vue-tsc and the editor type-check routes. `nifra_frontend`'s
+  loader-typing guidance now points at the route types.
+
+- 784d772: `testClient` calls now come from `127.0.0.1`, as a socket peer's would, so middleware keyed on the caller's address, such as `rateLimit()`, runs in tests as it does behind a listener. Pass `clientIp` to test another address. `inProcessClient` calls made outside a page render still carry no address.
+
+  The batteries template declares `@nifrajs/middleware`, and its tests pass on a fresh scaffold.
+
+- e32268d: fix(web): portable public-directory serving and required endpoint secrets
+
+  `publicDir()` now serves files on Node and Deno as well as Bun, sets `content-type` from the file
+  extension, sends `x-content-type-options: nosniff`, and never serves dot-prefixed paths other than
+  `/.well-known/`.
+
+  `revalidateEndpoint()` and `previewEndpoint()` throw at construction when `secret` is empty or
+  missing. The ISR starter answers 404 on its revalidate route until `REVALIDATE_SECRET` is set.
+
 ## 3.5.0
 
 ## 3.4.0

@@ -1,5 +1,114 @@
 # @nifrajs/otel
 
+## 4.0.0
+
+### Minor Changes
+
+- ac703a1: `cacheTracing()` from `@nifrajs/otel/cache` turns `@nifrajs/cache` operations into spans.
+
+  - Pass it as `createCache({ observer: cacheTracing({ exporter }) })`. Every operation on a view bound with `cache.for(c)` becomes a `cache <op>` child span of `c.trace`, with `nifra.cache.operation`, `nifra.cache.outcome` and `nifra.cache.tag_count`.
+  - Raw keys stay in the process. By default a span carries only the key prefix (`user:42` gives `nifra.cache.key_prefix = "user"`); `keyAttribute: "none"` drops it and a function exports its own value.
+  - The background refresh of a stale `wrap` is a `cache revalidate` span in its own trace, linked to the request span.
+  - `StartObservation.startTime` and `EndObservation.durationMs` record work after it settled.
+
+- e1b89c0: `traceEventConsumer()` from `@nifrajs/otel/events` traces an `@nifrajs/events` consumer with one wrapper.
+
+  - `traceEventConsumer(contractOrRegistry, handler, { exporter })` returns `consume(input, parent?)`. Each envelope is one `process <type>` consumer span, linked to the producer's span through `causalitySpanLink(envelope.causality)`; with a `parent` trace (a webhook route's `c.trace`) the span is its child.
+  - Attributes: `nifra.event.type`, `nifra.event.version`, `messaging.message.id` (the envelope id), `messaging.operation.type`/`.name` = `process`, and `messaging.system` (`system` option, default `"nifra.events"`).
+  - Input that fails to parse never reaches the handler: it resolves `{ success: false, issueCount }` and records an error span carrying the issue count and, for a registry, its bounded reason. No payload is exported.
+  - The handler receives `{ trace }` for nested spans, and `scope` runs it inside an ambient context.
+
+- 1afbe9f: `jobTracing()` from `@nifrajs/otel/jobs` traces `@nifrajs/jobs` with OpenTelemetry messaging spans.
+
+  - Pass it as `createQueue({ instrument: jobTracing({ exporter }) })`.
+  - Each enqueue is a `send <job>` producer span (a child of `c.trace` when enqueued through `job.for(c)`), and its context is stored with the job.
+  - Each attempt is a `process <job>` consumer span: a child of the send span, plus a link to it. Retries are separate spans; a failed attempt is an error span, and the one that dead-letters the job carries `nifra.job.dead_lettered = true`.
+  - Attributes: `messaging.system = "nifra.jobs"`, `messaging.operation.type`, `messaging.operation.name`, `messaging.destination.name`, `messaging.message.id`, `nifra.job.attempt`, `nifra.job.outcome`. Error text is never exported.
+  - A malformed stored traceparent starts a new trace; the sampled flag travels with a valid one.
+  - `scope` runs each attempt inside an ambient context, such as the OpenTelemetry SDK's.
+
+- b8af5cf: `otelBridge()` from `@nifrajs/otel/sdk-bridge` connects nifra spans to the OpenTelemetry SDK. The app passes its own `@opentelemetry/api`; `@nifrajs/otel` adds no dependency.
+
+  - `bridge.plugin`: `app.use(bridge.plugin)` runs each subsequent route with its request span active in the OTel context, so the SDK's own instrumentations (pg, mysql2, ioredis, undici, prisma) nest under the request span. It costs one `around()` frame per request, only when installed.
+  - `bridge.adapter`: mirrors nifra spans into SDK spans (name, kind, parent, links, attributes, status, timing). Pass it in `tracing({ adapters })` and the other tracers' `adapters`.
+  - `bridge.idGenerator`: wired as the SDK provider's `idGenerator`, mirrored spans keep nifra's exact trace and span ids, so forwarded `traceparent` headers and the trace context stored with a job name real spans. Without it the adapter warns once.
+  - `bridge.scope`: runs code with a nifra span active in the OTel context; pass it as `jobTracing({ scope })` or `traceEventConsumer(..., { scope })` so spans inside a job or event handler nest under it.
+  - Context propagation needs the SDK's AsyncLocalStorage context manager. Verified on Node 26, Bun 1.4, Deno 2.9 and workerd with `nodejs_compat`. The SDK's undici instrumentation records `fetch` only on Node, where `fetch` is undici.
+
+- 6d87951: Spans carry an OpenTelemetry span kind.
+
+  - `NifraSpan.kind` and `StartObservation.kind` take `"server" | "client" | "producer" | "consumer" | "internal"`.
+  - `otlpExporter()` sends each kind as its OTLP enum value. A span without a kind is sent as `SERVER`.
+  - `tracing()` request spans are `server` spans; `effectTracing()` capability spans are `internal` spans.
+  - `consoleSpanExporter()` logs the kind when a span has one.
+
+### Patch Changes
+
+- 1b2d53a: `replacedRequestOf(request)` returns the request an `onRequest` hook replaced with this one. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw can walk back to it. `idempotency()` uses this to keep its claim when a later hook such as `methodOverride()` rewrites the request: a retry replays the stored response instead of answering 409 and then running the handler a second time. `metrics()` uses it to count such requests and to decrement its in-flight gauge for them.
+- 50e68d9: `metrics()` labels a request method outside HTTP's standard set as `_OTHER`, following OpenTelemetry's HTTP conventions. A runtime that accepts extension methods, such as Deno, can no longer be made to create a new series per request.
+- 76b7aa8: `tracing()` names a request span `{method} {route template}` - `GET /users/:id`, not `GET /users/42` - and records the template as `http.route`, as OpenTelemetry's HTTP conventions describe. The raw path stays in `url.path`. A method outside HTTP's own set is recorded as `_OTHER`, with the original in `http.request.method_original`.
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [a158b74]
+- Updated dependencies [ff25d68]
+  - @nifrajs/core@4.0.0
+
 ## 3.5.0
 
 ## 3.4.0

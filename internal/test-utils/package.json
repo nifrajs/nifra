@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/test-utils",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Internal test helpers shared across the workspace: type-level assertions for *.test-d.ts files, and a throwaway TLS certificate.",
   "type": "module",
   "private": true,
