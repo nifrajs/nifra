@@ -13284,7 +13284,7 @@
     "kind": "function",
     "package": "@nifrajs/image",
     "signature": "export declare function ogImageResponse(options: OgImageOptions, request?: Request): Promise<Response>;",
-    "doc": "/**\n * Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit\n * rasterization, so a crawler revalidation never repeats expensive codec work.\n */"
+    "doc": "/**\n * Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit\n * rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the\n * bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for the\n * same SVG and rasterizer, and rasterizes only when it has none.\n */"
   },
   {
     "name": "OnRequestResult",

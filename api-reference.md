@@ -3384,7 +3384,7 @@ _No named exports (side-effect entrypoint)._
 - **imageDimensions** _(function)_ - `imageDimensions: (bytes: Uint8Array) => ImageInfo | null`
   Parse intrinsic dimensions + format from image header bytes, or `null` if unrecognized/too short.
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
-  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
+  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for t…
 - **readImageDimensions** _(function)_ - `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Promise<ImageInfo | null>`
   Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).
 - **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
@@ -3431,7 +3431,7 @@ _No named exports (side-effect entrypoint)._
   Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
-  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
+  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for t…
 - **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
   Render a bounded, deterministic SVG suitable for an `og:image` endpoint.
 
