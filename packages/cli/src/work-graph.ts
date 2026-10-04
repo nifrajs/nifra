@@ -134,7 +134,8 @@ export interface ProjectWorkGraphResult {
   readonly evidence: EvidenceBundle
 }
 
-const SOURCE_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
+// Framework component, content, and style files are app source too: an edit to one makes a build stale.
+const SOURCE_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,svelte,vue,mdx,css}")
 const IGNORED = /(^|\/)(node_modules|dist|build|\.nifra|\.git|\.wrangler|coverage)\//
 const APP_SOURCE_DIR = /^(?:routes|frontend|backend|shared)\//
 const BACKEND_SOURCE_DIR = /^(?:backend|shared)\//
@@ -356,7 +357,9 @@ export function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): 
     ...new Set(changedFiles.map((file) => file.replace(/^\.\//, "").replaceAll("\\", "/"))),
   ]
   const seeds = new Set<string>()
+  const unmodeled: string[] = []
   for (const file of normalized) {
+    let seeded = false
     for (const node of graph.nodes) {
       if (
         (node.kind === "file" || node.kind === "test" || node.kind === "manifest") &&
@@ -364,12 +367,18 @@ export function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): 
           node.id === `test:${file}` ||
           node.id === `manifest:${file}` ||
           node.files.includes(file))
-      )
+      ) {
         seeds.add(node.id)
+        seeded = true
+      }
     }
+    // An app file the graph does not model (deleted, or a type it does not read) has an unknown
+    // reach, so it stands for itself and impacts every route rather than proving nothing.
+    if (!seeded && APP_SOURCE_DIR.test(file)) unmodeled.push(file)
   }
+  for (const file of unmodeled) seeds.add(`file:${file}`)
   // Any backend or shared module can reach every handler through backend/app.ts.
-  if (normalized.some((file) => BACKEND_SOURCE_DIR.test(file)))
+  if (unmodeled.length > 0 || normalized.some((file) => BACKEND_SOURCE_DIR.test(file)))
     for (const node of graph.nodes) if (node.kind === "route") seeds.add(node.id)
   const impacted = new Set(seeds)
   const queue = [...seeds]
