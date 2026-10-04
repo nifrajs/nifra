@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { fixedBackoff } from "../src/backoff.ts"
 import { createQueue, JobError, JobValidationError } from "../src/index.ts"
 import { MemoryJobStore } from "../src/memory-store.ts"
-import type { StandardSchemaV1 } from "../src/types.ts"
+import type { JobStore, StandardSchemaV1, StoredJob } from "../src/types.ts"
 
 /** A mutable injectable clock so retry/backoff/delay tests are deterministic (no real timers). */
 function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number) => void } {
@@ -185,6 +185,39 @@ describe("createQueue - worker lifecycle (real timers)", () => {
 })
 
 describe("worker polling survives a failing store", () => {
+  test("without onPollError a failed poll is logged, and stop() waits out the failing round", async () => {
+    const memory = new MemoryJobStore()
+    const leasing = deferred()
+    const gate = Promise.withResolvers<StoredJob[]>()
+    const store: JobStore = {
+      enqueue: (job) => memory.enqueue(job),
+      lease: () => {
+        leasing.resolve()
+        return gate.promise
+      },
+      complete: (id) => memory.complete(id),
+      retry: (id, runAt) => memory.retry(id, runAt),
+      deadLetter: (id, error) => memory.deadLetter(id, error),
+      counts: () => memory.counts(),
+    }
+    const logged: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => {
+      logged.push(args)
+    }
+    try {
+      const worker = createQueue({ store }).start({ pollIntervalMs: 5 })
+      await leasing.promise
+      const stopping = worker.stop()
+      gate.reject(new Error("db connection reset"))
+      await stopping
+      expect(worker.running).toBe(false)
+      expect(logged.some((args) => String(args[1]).includes("db connection reset"))).toBe(true)
+    } finally {
+      console.error = original
+    }
+  })
+
   test("a lease that throws is reported to onPollError and the next poll still runs jobs", async () => {
     class FlakyStore extends MemoryJobStore {
       failures = 1

@@ -205,6 +205,19 @@ test("a node: builtin in a route fails the Vite client build with the shared gua
   await expect(promise).rejects.toThrow(/node:crypto reached the client bundle/)
 }, 60_000)
 
+test("a web worker that reaches backend code fails the Vite client build naming it", async () => {
+  const { root, routesDir } = scaffold({
+    "backend/db.ts": 'export const query = "SELECT secret"\n',
+    "frontend/worker.ts": 'import { query } from "../backend/db.ts"\npostMessage(query)\n',
+    "routes/index.tsx":
+      'export const start = () => new Worker(new URL("../frontend/worker.ts", import.meta.url), { type: "module" })\n' +
+      "export default function Index() { return null }\n",
+  })
+  await expect(build(root, routesDir)).rejects.toThrow(
+    "backend/db.ts: it is backend code\n      via frontend/worker.ts → backend/db.ts",
+  )
+}, 60_000)
+
 test("same-basename routes get distinct chunks (index.tsx + blog/index.tsx)", async () => {
   const { root, routesDir } = scaffold({
     "routes/index.tsx": "export default function Index() { return null }\n",

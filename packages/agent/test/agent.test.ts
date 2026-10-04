@@ -844,4 +844,35 @@ describe("a resume continues only the step the turn suspended on", () => {
     expect(resumed.status).toBe("completed")
     expect(executed).toEqual(["lookup order 1"])
   })
+
+  test("the suspended input with its keys in another order still resumes", async () => {
+    executed.length = 0
+    const ports = {
+      model: sequenceModel(
+        [
+          { kind: "tool", name: "funds.transfer", input: { amount: 5, to: "acct" } },
+          { kind: "output", value: { answer: "done" } },
+        ],
+        { count: 0 },
+      ),
+      capabilities: ["orders.read", "funds.write"],
+      state: new MemoryAgentStateStore(),
+      clock: () => 1,
+    }
+    const first = await runAgent(agent, { value: { prompt: "pay" } }, ports, {
+      state: createAgentState("reordered"),
+      maxTurns: 1,
+    })
+    if (first.status !== "suspended") throw new Error("expected a suspension")
+    const continuation = { ...first.pending, input: { to: "acct", amount: 5 } }
+    const resumed = await resumeAgent(
+      agent,
+      "reordered",
+      { value: { prompt: "pay" }, resume: { continuation, approval: { granted: true } } },
+      ports,
+      { maxTurns: 2 },
+    )
+    expect(resumed.status).toBe("completed")
+    expect(executed).toEqual(["transfer 5"])
+  })
 })

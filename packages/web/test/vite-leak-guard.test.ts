@@ -335,11 +335,14 @@ test("real vite build FAILS on a server file a new URL(..., import.meta.url) nam
   const result = await buildWithAssetGuard({
     "backend/db.ts": 'export const query = "SELECT secret"\n',
     "backend/todos.fn.ts": 'export const list = () => "SELECT todos"\n',
+    "backend/keys.ts": 'export const key = "SELECT keys"\n',
     "frontend/entry.ts":
       'document.title = new URL("../backend/db.ts", import.meta.url).href\n' +
-      'export const fn = new URL(/* a comment */ "../backend/todos.fn.ts?inline", import.meta.url)\n',
+      'export const fn = new URL(/* a comment */ "../backend/todos.fn.ts?inline", import.meta.url)\n' +
+      "export const keys = new URL(`../backend/keys.ts`, import.meta.url)\n",
   })
   expect(result.ok).toBe(false)
+  expect(result.error).toContain("names backend/keys.ts: it is backend code")
   expect(result.error).toContain(
     'frontend/entry.ts: new URL("../backend/db.ts", import.meta.url) names backend/db.ts: it is backend code',
   )
@@ -359,9 +362,12 @@ test("real vite build FAILS on a server file a stylesheet url() names, emitted i
 test("real vite build PASSES for frontend files a new URL() and a url() name", async () => {
   const result = await buildWithAssetGuard({
     "frontend/logo.svg": '<svg xmlns="http://www.w3.org/2000/svg"/>\n',
+    // Past Vite's inline limit, so it is emitted as a binary asset the scan reads as bytes.
+    "frontend/photo.png": "x".repeat(5_000),
     "frontend/app.css": 'body { background: url("./logo.svg") }\n',
     "frontend/entry.ts":
-      'import "./app.css"\ndocument.title = new URL("./logo.svg", import.meta.url).href\n',
+      'import "./app.css"\ndocument.title = new URL("./logo.svg", import.meta.url).href\n' +
+      "export const photo = new URL(`./photo.png`, import.meta.url)\n",
   })
   expect(result.error).toBeUndefined()
   expect(result.ok).toBe(true)

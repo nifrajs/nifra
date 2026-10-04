@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { getEventListeners } from "node:events"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { createLocalProcessAdapter, LOCAL_PROCESS_LIMITATION } from "../src/execution-policy.ts"
 
 describe("local execution policy adapter", () => {
@@ -115,6 +118,45 @@ describe("local execution policy adapter", () => {
     },
     10_000,
   )
+
+  test.skipIf(process.platform === "win32")(
+    "a host that exits mid-run takes the run's process group with it",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-exec-exit-"))
+      const pidFile = join(dir, "pid")
+      const host = [
+        `import { existsSync, readFileSync } from "node:fs"`,
+        `import { createLocalProcessAdapter } from ${JSON.stringify(join(import.meta.dir, "../src/execution-policy.ts"))}`,
+        `const pidFile = ${JSON.stringify(pidFile)}`,
+        `void createLocalProcessAdapter().run({ command: "sh", args: ["-c", "sleep 30 & echo $! > " + pidFile + "; wait"], policy: ${JSON.stringify(policy(30_000))} })`,
+        `while (!existsSync(pidFile) || readFileSync(pidFile, "utf8").trim() === "") await Bun.sleep(10)`,
+        "process.exit(0)",
+      ].join("\n")
+      try {
+        const child = Bun.spawn([process.execPath, "-e", host], {
+          stdout: "ignore",
+          stderr: "inherit",
+        })
+        expect(await child.exited).toBe(0)
+        const pid = Number((await Bun.file(pidFile).text()).trim())
+        expect(pid).toBeGreaterThan(0)
+        expect(await gone(pid)).toBe(true)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    10_000,
+  )
+
+  test("a command that cannot start rejects as an invalid request", async () => {
+    await expect(
+      createLocalProcessAdapter().run({
+        command: join(tmpdir(), "nifra-missing-command"),
+        args: [],
+        policy: policy(1_000),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request" })
+  })
 
   test("a time budget past the timer range still waits for the process", async () => {
     const result = await createLocalProcessAdapter().run({

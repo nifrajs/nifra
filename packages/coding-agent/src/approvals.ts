@@ -221,10 +221,7 @@ export class ApprovalManager {
       createdAt,
       expiresAt: createdAt + this.options.timeoutMs,
     })
-    let settle = (_approved: boolean): void => {}
-    const decided = new Promise<boolean>((resolve) => {
-      settle = resolve
-    })
+    const { promise: decided, resolve: settle } = Promise.withResolvers<boolean>()
     const timer = setTimeout(() => {
       this.settle(request.id, false, "approval timed out")
     }, this.options.timeoutMs)

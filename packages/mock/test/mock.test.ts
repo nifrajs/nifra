@@ -38,6 +38,8 @@ describe("generateMockValue", () => {
     expect(
       at({ type: "integer", minimum: 0, maximum: 20, exclusiveMaximum: 20, multipleOf: 5 }, 1),
     ).toBe(15)
+    expect(at({ type: "integer", minimum: 5, exclusiveMinimum: 5, maximum: 10 }, 0)).toBe(6)
+    expect(at({ type: "integer", minimum: 7, exclusiveMinimum: 5, maximum: 10 }, 0)).toBe(7)
     expect(at({ type: "number", exclusiveMinimum: 1000, maximum: 2000 }, 0)).toBeGreaterThan(1000)
     expect(at({ type: "number", minimum: 0, exclusiveMaximum: 1 }, 1)).toBeLessThan(1)
     expect(at({ type: "number", minimum: 0.001, maximum: 0.002 }, 0)).toBe(0.001)

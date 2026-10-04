@@ -349,3 +349,77 @@ describe("subscribe() reconnect and framing", () => {
     expect(seen.slice(0, 3)).toEqual([null, "\u00e2\u0082\u00ac1", "\u00e2\u0082\u00ac1"])
   })
 })
+
+describe("bodies the client abandons", () => {
+  /** A body that enqueues `chunks` and then refuses to be cancelled. */
+  const refusingBody = (chunks: readonly string[], onCancel: () => void) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk))
+      },
+      cancel() {
+        onCancel()
+        throw new Error("cancel failed")
+      },
+    })
+  const app = server()
+    .use(streaming())
+    .get("/thing", () => ({ n: 1 }))
+    .sse("/feed", { sse: post }, (_c, stream) => stream.close())
+
+  test("a retried answer whose body refuses cancel does not stop the retry", async () => {
+    let calls = 0
+    let cancelled = false
+    const fetch: FetchFn = async () => {
+      calls += 1
+      return calls === 1
+        ? new Response(
+            refusingBody([], () => (cancelled = true)),
+            { status: 503 },
+          )
+        : Response.json({ n: 2 })
+    }
+    const api = client<typeof app>("http://t", { fetch, retry: { attempts: 2, backoff: () => 0 } })
+    const res = await api.thing.get()
+    await Bun.sleep(0)
+    expect(res.ok).toBe(true)
+    expect(calls).toBe(2)
+    expect(cancelled).toBe(true)
+  })
+
+  test("a refused stream connect and an oversized event still report their errors", async () => {
+    const cases = [
+      {
+        response: () =>
+          new Response(
+            refusingBody([], () => {}),
+            { status: 503 },
+          ),
+        error: "sse_http_503",
+      },
+      {
+        response: () =>
+          new Response(
+            refusingBody([`data: ${"x".repeat(200)}`], () => {}),
+            {
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        error: "sse_event_too_large",
+      },
+    ]
+    for (const { response, error } of cases) {
+      const fetch: FetchFn = async () => response()
+      const errors: unknown[] = []
+      const closed = Promise.withResolvers<void>()
+      client<typeof app>("http://t", { fetch, maxDecodedBytes: 64 }).feed.subscribe(() => {}, {
+        reconnect: false,
+        onError: (failure) => errors.push(failure),
+        onClose: () => closed.resolve(),
+      })
+      await closed.promise
+      await Bun.sleep(0)
+      expect(String(errors[0])).toContain(error)
+    }
+  })
+})

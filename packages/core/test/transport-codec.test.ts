@@ -8,6 +8,7 @@ import {
   encodeTransportFrame,
   encodeTransportResponse,
   plainJsonCodec,
+  readBoundedBytes,
   TransportCodecError,
 } from "../src/transport-codec.ts"
 import { richWireCodec } from "../src/transport-codec-rich.ts"
@@ -423,6 +424,24 @@ describe("transport lane edges", () => {
 // in-process branch). A UTF-16 length check bounds the encoded size from above so the common case
 // skips re-encoding; only a string within 3x of the cap is measured exactly, and that exact count
 // is what decides accept vs reject for multi-byte text.
+describe("readBoundedBytes", () => {
+  test("an oversized stream whose cancel rejects still fails with the bound", async () => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => controller.enqueue(new Uint8Array(600)),
+      cancel: () => {
+        cancelled = true
+        throw new Error("cancel failed")
+      },
+    })
+    await expect(readBoundedBytes(new Response(stream), { maxBytes: 1000 })).rejects.toThrow(
+      "transport payload exceeds maxBytes",
+    )
+    await Bun.sleep(0)
+    expect(cancelled).toBe(true)
+  })
+})
+
 describe("assertTransportTextBounded", () => {
   test("accepts without measuring when the length bound already proves it fits", () => {
     expect(() => assertTransportTextBounded("x".repeat(10), { maxBytes: 1000 })).not.toThrow()

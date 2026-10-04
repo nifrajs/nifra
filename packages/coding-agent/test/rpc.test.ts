@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setSystemTime, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -154,6 +154,34 @@ describe("coding agent RPC", () => {
         message: "RPC response exceeded the configured size limit",
       })
     } finally {
+      await rpc.stop()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test("wrong guesses older than the failure window stop throttling", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-agent-rpc-"))
+    const rpc = new CodingAgentRpcServer({
+      cwd: process.cwd(),
+      backend: new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] }),
+      sessionStore: new FileSessionStore({ root }),
+    })
+    const handle = await rpc.start()
+    const guess = async () =>
+      (
+        await fetch(`${handle.url}/rpc`, {
+          method: "POST",
+          headers: { authorization: "Bearer definitely-wrong" },
+          body: JSON.stringify({ method: "session.create" }),
+        })
+      ).status
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) expect(await guess()).toBe(401)
+      expect(await guess()).toBe(429)
+      setSystemTime(new Date(Date.now() + 61_000))
+      expect(await guess()).toBe(401)
+    } finally {
+      setSystemTime()
       await rpc.stop()
       await rm(root, { recursive: true, force: true })
     }
