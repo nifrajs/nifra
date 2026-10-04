@@ -57,6 +57,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import type { BunPlugin } from "bun"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 /**
  * Packages whose duplication is a defect rather than a waste. Each keeps module-scoped state that
@@ -452,8 +453,8 @@ export function planSingleCopy(options: SingleCopyOptions = {}): SingleCopyPlan 
       redirects.push({ package: name, from: theirs.root, to: ours.root, version: ours.version })
     }
   }
-  redirects.sort((a, b) => a.from.localeCompare(b.from))
-  skipped.sort((a, b) => a.from.localeCompare(b.from))
+  redirects.sort((a, b) => codeUnitOrder(a.from, b.from))
+  skipped.sort((a, b) => codeUnitOrder(a.from, b.from))
   return { root, declared, redirects, skipped }
 }
 

@@ -14,6 +14,7 @@ import type {
   CapabilityFinding,
 } from "./capabilities.ts"
 import type { ResponseClassification } from "./classification.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { evidenceProvenance } from "./internal/route-assurance.ts"
 import {
   type JsonSchema,
@@ -185,7 +186,7 @@ function assuranceEvidenceOf(values: readonly AssuranceEvidence[]): readonly Ass
           provenance: evidenceProvenance(item),
         }),
       )
-      .sort((a, b) => a.id.localeCompare(b.id) || a.source.localeCompare(b.source)),
+      .sort((a, b) => codeUnitOrder(a.id, b.id) || codeUnitOrder(a.source, b.source)),
   )
 }
 
@@ -197,9 +198,9 @@ function capabilityEvidenceOf(
       .map((item) => Object.freeze({ id: item.id, kind: item.kind, source: item.source }))
       .sort(
         (a, b) =>
-          a.id.localeCompare(b.id) ||
-          a.kind.localeCompare(b.kind) ||
-          a.source.localeCompare(b.source),
+          codeUnitOrder(a.id, b.id) ||
+          codeUnitOrder(a.kind, b.kind) ||
+          codeUnitOrder(a.source, b.source),
       ),
   )
 }
@@ -208,7 +209,7 @@ const sortByRoute = <T extends { readonly method: string; readonly path: string 
   values: readonly T[],
 ): readonly T[] =>
   Object.freeze(
-    [...values].sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method)),
+    [...values].sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method)),
   )
 
 function evidenceRouteOf(
@@ -253,9 +254,9 @@ function assuranceOf(report: AssuranceReport | undefined): ProjectEvidenceAssura
     findings: Object.freeze(
       [...report.findings].sort(
         (a, b) =>
-          a.path.localeCompare(b.path) ||
-          a.method.localeCompare(b.method) ||
-          a.code.localeCompare(b.code),
+          codeUnitOrder(a.path, b.path) ||
+          codeUnitOrder(a.method, b.method) ||
+          codeUnitOrder(a.code, b.code),
       ),
     ),
   })
@@ -283,9 +284,9 @@ function capabilitiesOf(
     findings: Object.freeze(
       [...report.findings].sort(
         (a, b) =>
-          a.path.localeCompare(b.path) ||
-          a.method.localeCompare(b.method) ||
-          a.code.localeCompare(b.code),
+          codeUnitOrder(a.path, b.path) ||
+          codeUnitOrder(a.method, b.method) ||
+          codeUnitOrder(a.code, b.code),
       ),
     ),
   })
@@ -433,9 +434,9 @@ export function composeProjectEvidence(
               .flatMap((report) => report.findings)
               .sort(
                 (a, b) =>
-                  a.path.localeCompare(b.path) ||
-                  a.method.localeCompare(b.method) ||
-                  a.code.localeCompare(b.code),
+                  codeUnitOrder(a.path, b.path) ||
+                  codeUnitOrder(a.method, b.method) ||
+                  codeUnitOrder(a.code, b.code),
               ),
           ),
         })
@@ -450,9 +451,9 @@ export function composeProjectEvidence(
               .flatMap((report) => report.findings)
               .sort(
                 (a, b) =>
-                  a.path.localeCompare(b.path) ||
-                  a.method.localeCompare(b.method) ||
-                  a.code.localeCompare(b.code),
+                  codeUnitOrder(a.path, b.path) ||
+                  codeUnitOrder(a.method, b.method) ||
+                  codeUnitOrder(a.code, b.code),
               ),
           ),
         })

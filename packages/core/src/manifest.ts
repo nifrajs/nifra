@@ -14,6 +14,7 @@ import {
   type RouteSnapshotSchema,
 } from "./diff.ts"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "./evidence.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 export interface NifraManifestAssurance {
   readonly rule?: string
@@ -226,7 +227,7 @@ export async function buildNifraManifest(input: BuildNifraManifestInput): Promis
                 evidence: Object.freeze(
                   [...assurance.evidence]
                     .map((item) => ({ id: item.id, source: item.source }))
-                    .sort((a, b) => a.id.localeCompare(b.id) || a.source.localeCompare(b.source)),
+                    .sort((a, b) => codeUnitOrder(a.id, b.id) || codeUnitOrder(a.source, b.source)),
                 ),
               },
             }
@@ -246,7 +247,7 @@ export async function buildNifraManifest(input: BuildNifraManifestInput): Promis
           : {}),
       }
     })
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
   const body = Object.freeze({ manifestVersion: 1 as const, routes: Object.freeze(routes) })
   return Object.freeze({ ...body, contentHash: await sha256Hex(canonicalManifest(body)) })
 }

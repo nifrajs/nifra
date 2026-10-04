@@ -43,6 +43,16 @@ async function manifest(source: unknown) {
 }
 
 describe("signed versioned Nifra manifest", () => {
+  test("routes are ordered by code unit, so the bytes do not depend on the locale", async () => {
+    const app = server()
+      .get("/a_b", () => "x")
+      .get("/a", () => "x")
+      .get("/B", () => "x")
+      .get("/a-b", () => "x")
+    const manifest = await buildNifraManifest({ source: app })
+    expect(manifest.routes.map((route) => route.path)).toEqual(["/B", "/a", "/a-b", "/a_b"])
+  })
+
   test("emission is deterministic across route registration and object-key order", async () => {
     const a = server()
       .post(

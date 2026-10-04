@@ -21,6 +21,7 @@ import {
   type RegisteredCapabilityInterceptor,
   validCapabilityId,
 } from "./internal/capability-runtime.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { effectScopeForContext } from "./internal/effect-execution.ts"
 import { NIFRA_ASSURANCE_IDS } from "./internal/route-assurance.ts"
 import {
@@ -897,6 +898,6 @@ export function snapshotCapabilities(report: CapabilityAssuranceReport): Capabil
         ...(route.classification !== undefined ? { classification: route.classification } : {}),
       }),
     )
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
   return Object.freeze({ nifraCapabilities: 1, routes: Object.freeze(routes) })
 }
