@@ -406,6 +406,26 @@ describe("conformance - optional capabilities", () => {
     }
   })
 
+  test("an adapter that refuses only a leading ../ fails key safety", async () => {
+    class LeadingDotsOnly extends CapableMemoryStorage {
+      override async presign(
+        key: string,
+        operation: StoragePresignOperation,
+      ): Promise<StoragePresignedUrl> {
+        if (key.startsWith("../")) throw new Error("unsafe key")
+        return { url: `https://signed.example/${operation}/${key}` }
+      }
+    }
+    await expect(
+      assertStorageAdapterConformance({ createAdapter: () => new LeadingDotsOnly() }),
+    ).rejects.toMatchObject({
+      check: "key safety",
+      message: expect.stringContaining(
+        'presign accepted the unsafe key "nifra-conformance/../../escape"',
+      ),
+    })
+  })
+
   test("an expired presign fails conformance", async () => {
     class ExpiredPresign extends CapableMemoryStorage {
       override async presign(
