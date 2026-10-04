@@ -1,4 +1,5 @@
-import { relative, resolve, sep } from "node:path"
+import { realpath } from "node:fs/promises"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 export interface SubagentSpec {
   readonly id: string
@@ -124,7 +125,7 @@ export class BoundedSubagentRunner {
             ? resolve(spec.cwd)
             : resolve(this.options.workspace.root, spec.cwd)
       if (requestedCwd !== undefined && this.options.workspace !== undefined) {
-        if (!within(this.options.workspace.root, requestedCwd))
+        if (!(await within(this.options.workspace.root, requestedCwd)))
           return {
             id: spec.id,
             role: spec.role,
@@ -132,7 +133,7 @@ export class BoundedSubagentRunner {
             error: "subagent workspace escapes policy root",
           }
         const allowedRoots = this.options.workspace.allowedRoots ?? [this.options.workspace.root]
-        if (!allowedRoots.some((root) => within(root, requestedCwd)))
+        if (!(await withinAny(allowedRoots, requestedCwd)))
           return {
             id: spec.id,
             role: spec.role,
@@ -148,8 +149,8 @@ export class BoundedSubagentRunner {
       if (workspace !== undefined && this.options.workspace !== undefined) {
         const allowedRoots = this.options.workspace.allowedRoots ?? [this.options.workspace.root]
         if (
-          !within(this.options.workspace.root, workspace.cwd) ||
-          !allowedRoots.some((root) => within(root, workspace!.cwd))
+          !(await within(this.options.workspace.root, workspace.cwd)) ||
+          !(await withinAny(allowedRoots, workspace.cwd))
         )
           return {
             id: spec.id,
@@ -201,10 +202,32 @@ export class BoundedSubagentRunner {
   }
 }
 
-function within(root: string, candidate: string): boolean {
-  const relativePath = relative(resolve(root), resolve(candidate))
+/** Containment of the physical paths, so a symlink inside the root cannot lead out of it. */
+async function within(root: string, candidate: string): Promise<boolean> {
+  const relativePath = relative(await physicalPath(root), await physicalPath(candidate))
   return (
     relativePath === "" ||
-    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !relativePath.startsWith("/"))
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
   )
+}
+
+async function withinAny(roots: readonly string[], candidate: string): Promise<boolean> {
+  for (const root of roots) if (await within(root, candidate)) return true
+  return false
+}
+
+/** The path with its existing part's symlinks resolved; a part not created yet is kept as written. */
+async function physicalPath(path: string): Promise<string> {
+  const missing: string[] = []
+  let existing = resolve(path)
+  for (;;) {
+    try {
+      return join(await realpath(existing), ...missing)
+    } catch {
+      const parent = dirname(existing)
+      if (parent === existing) return resolve(path)
+      missing.unshift(basename(existing))
+      existing = parent
+    }
+  }
 }
