@@ -856,6 +856,8 @@ export function writeDevServerRecord(root: string, record: DevServerRecord): voi
 
 /** Remove the record only while it is still this server's: a newer server may have replaced it. */
 export function removeDevServerRecord(root: string, token: string): void {
+  // @nifra-gate-reviewed: the server comparing its own token with a file on this machine; no request
+  // reaches this comparison.
   if (readDevServerRecord(root)?.token !== token) return
   rmSync(join(root, DEV_SERVER_RECORD_FILE), { force: true })
 }

@@ -219,6 +219,8 @@ function formatMatches(text: string): Match[] {
   for (const found of text.matchAll(CREDENTIAL_URL)) {
     const user = found[1] ?? ""
     const password = found[2] ?? ""
+    // @nifra-gate-reviewed: a password equal to its user name is a placeholder in the text being
+    // scanned; nothing is authenticated here.
     if (PLACEHOLDER.test(password) || password === user || /[${}<>*]/.test(password)) continue
     matches.push({
       rule: "credential-url",
@@ -491,6 +493,7 @@ export function createRedactor(
     for (const { what, pattern } of KEY_FORMATS) out = out.replace(pattern, `[redacted:${what}]`)
     out = out.replace(JWT, "[redacted:JWT]")
     out = out.replace(CREDENTIAL_URL, (match, user: string, password: string) =>
+      // @nifra-gate-reviewed: the same placeholder test as the scan; nothing is authenticated here.
       PLACEHOLDER.test(password) || password === user
         ? match
         : match.replace(`:${password}@`, ":[redacted]@"),
