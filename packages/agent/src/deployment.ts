@@ -452,6 +452,8 @@ export class AgentDeployment {
   private handleRef: string | undefined
   private report: DeploymentCapabilityReport | undefined
   private readonly evidence: DeploymentEvidence[] = []
+  private queue: Promise<unknown> = Promise.resolve()
+  private starting: AbortController | undefined
 
   constructor(
     private readonly adapter: AgentDeploymentAdapter,
@@ -486,13 +488,25 @@ export class AgentDeployment {
     }
   }
 
-  async prepare(planInput: AgentDeploymentPlan | unknown): Promise<DeploymentPrepareResult> {
+  prepare(planInput: AgentDeploymentPlan | unknown): Promise<DeploymentPrepareResult> {
+    return this.serial(() => this.prepareNow(planInput))
+  }
+
+  private async prepareNow(planInput: unknown): Promise<DeploymentPrepareResult> {
     if (this.state !== "new") return this.fail("invalid_transition")
-    const plan = parseDeploymentPlan(planInput)
+    let plan: AgentDeploymentPlan
+    try {
+      plan = parseDeploymentPlan(planInput)
+    } catch (error) {
+      return this.fail(asDeploymentError(error, "invalid_plan").code)
+    }
     this.deploymentId = plan.deploymentId
     if (this.signal.aborted) return this.fail("cancelled")
-    const report = await this.capabilityReport()
-    assertCapabilityPlan(report, plan, this.authority, this.approved)
+    try {
+      assertCapabilityPlan(await this.capabilityReport(), plan, this.authority, this.approved)
+    } catch (error) {
+      return this.fail(asDeploymentError(error, "invalid_capabilities").code)
+    }
     try {
       const result = parsePrepare(
         await this.adapter.prepare({ plan, authority: this.authority, signal: this.signal }),
@@ -507,7 +521,11 @@ export class AgentDeployment {
     }
   }
 
-  async start(): Promise<DeploymentStartResult> {
+  start(): Promise<DeploymentStartResult> {
+    return this.serial(() => this.startNow())
+  }
+
+  private async startNow(): Promise<DeploymentStartResult> {
     if (
       this.state !== "prepared" ||
       this.preparedRef === undefined ||
@@ -515,13 +533,15 @@ export class AgentDeployment {
     )
       return this.fail("invalid_transition")
     if (this.signal.aborted) return this.fail("cancelled")
+    const starting = new AbortController()
+    this.starting = starting
     try {
       const result = parseStart(
         await this.adapter.start({
           deploymentId: this.deploymentId,
           preparedRef: this.preparedRef,
           authority: this.authority,
-          signal: this.signal,
+          signal: AbortSignal.any([this.signal, starting.signal]),
         }),
         this.deploymentId,
       )
@@ -530,11 +550,18 @@ export class AgentDeployment {
       this.evidence.push({ kind: "started", deploymentId: this.deploymentId, state: "running" })
       return result
     } catch (error) {
+      if (starting.signal.aborted) return this.fail("cancelled")
       return this.fail(asDeploymentError(error, "adapter_error").code)
+    } finally {
+      this.starting = undefined
     }
   }
 
-  async inspect(): Promise<DeploymentInspection> {
+  inspect(): Promise<DeploymentInspection> {
+    return this.serial(() => this.inspectNow())
+  }
+
+  private async inspectNow(): Promise<DeploymentInspection> {
     if (this.state === "new" || this.state === "disposed" || this.deploymentId === undefined)
       return this.fail("invalid_transition")
     try {
@@ -557,7 +584,16 @@ export class AgentDeployment {
     }
   }
 
-  async cancel(): Promise<DeploymentCancelResult> {
+  /**
+   * Cancel the deployment. A start still in flight is asked to stop through its signal, and the
+   * cancel runs once it settles, against the workload it left running, if any.
+   */
+  cancel(): Promise<DeploymentCancelResult> {
+    this.starting?.abort()
+    return this.serial(() => this.cancelNow())
+  }
+
+  private async cancelNow(): Promise<DeploymentCancelResult> {
     if ((this.state !== "prepared" && this.state !== "running") || this.deploymentId === undefined)
       return this.fail("invalid_transition")
     try {
@@ -579,7 +615,13 @@ export class AgentDeployment {
     }
   }
 
-  async dispose(): Promise<DeploymentDisposeResult> {
+  /** Dispose of the deployment; like {@link cancel}, it first asks a start in flight to stop. */
+  dispose(): Promise<DeploymentDisposeResult> {
+    this.starting?.abort()
+    return this.serial(() => this.disposeNow())
+  }
+
+  private async disposeNow(): Promise<DeploymentDisposeResult> {
     if (this.state === "disposed")
       return { deploymentId: this.deploymentId ?? this.id, state: "disposed" }
     try {
@@ -603,6 +645,13 @@ export class AgentDeployment {
     } catch (error) {
       return this.fail(asDeploymentError(error, "adapter_error").code)
     }
+  }
+
+  /** Lifecycle calls run one at a time, so each one sees the state the previous one left. */
+  private serial<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(operation)
+    this.queue = run.catch(() => {})
+    return run
   }
 
   private fail(code: DeploymentErrorCode): never {
