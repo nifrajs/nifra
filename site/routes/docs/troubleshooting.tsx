@@ -398,6 +398,21 @@ export default function Troubleshooting() {
         </p>
       </blockquote>
 
+      <h2>
+        A hook read the body, then the route answers <code>500</code> - "c.req.body was read as a
+        stream"
+      </h2>
+      <p>
+        <code>c.req.body</code> is the request's one-shot stream. A <code>derive</code> or{" "}
+        <code>beforeHandle</code> that reads it - an HMAC over the raw bytes of a webhook, say -
+        consumes it, and nothing after the hook can read the body again: the route's body schema,{" "}
+        <code>c.boundedJson()</code> and the handler's <code>c.req.json()</code> fail with this error,
+        which the server logs. Read the body in a hook with <code>c.req.bytes()</code>,{" "}
+        <code>c.req.text()</code>, <code>c.req.arrayBuffer()</code> or <code>c.req.json()</code>{" "}
+        instead: they read it once, within the route's body limit, and every reader after the hook
+        replays the same bytes.
+      </p>
+
       <h2>Still stuck?</h2>
       <p>
         Run <code>nifra check --json</code> as the done-gate - it surfaces the import-chain leaks,

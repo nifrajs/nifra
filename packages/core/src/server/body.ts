@@ -212,9 +212,45 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
     : (bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
 }
 
+/** The two members of a raw body stream {@link cappedStreamOf} uses. */
+interface RawStream {
+  getReader(): unknown
+  cancel(reason?: unknown): Promise<void>
+}
+
+// Deno's `process.env` throws without `--allow-env`, so the dev guard in `capRequestBodyReads` asks
+// `typeof Deno` first: a bare typeof is pure, so a production `NODE_ENV` define folds the guard away.
+declare const Deno: unknown
+
+/** Dev only: `body`, recording the first reader user code takes from it through the capped getter. */
+function markedOnRead(body: ReadableStream<Uint8Array>, mark: () => void): RawStream {
+  return {
+    getReader: () => {
+      mark()
+      return body.getReader()
+    },
+    cancel: (reason) => body.cancel(reason),
+  }
+}
+
+/**
+ * Dev only: user code streamed the native body, which is one-shot, so every framework reader after
+ * it (a body schema, `c.boundedJson()`, the handler's `c.req.json()`) can only fail. Each raw reader
+ * now throws, synchronously so no lane maps it to a client error, naming the reader that replays.
+ */
+function spendRaw(raw: RawBodyReaders): void {
+  const spent = (): never => {
+    throw new TypeError(
+      "[nifra] c.req.body was read as a stream; read it with c.req.bytes() in a hook",
+    )
+  }
+  Object.assign(raw, { arrayBuffer: spent, bytes: spent, json: spent })
+  Object.defineProperty(raw, "body", { get: spent })
+}
+
 /** A pass-through stream that errors (with `reject(413)`) once more than `maxBytes` flow through. */
 function cappedStreamOf(
-  body: ReadableStream<Uint8Array>,
+  body: RawStream,
   maxBytes: number,
   reject: (status: 400 | 413) => unknown,
 ): ReadableStream<Uint8Array> {
@@ -233,7 +269,7 @@ function cappedStreamOf(
   return new ReadableStream<Uint8Array>(
     {
       async pull(controller) {
-        reader ??= body.getReader() as unknown as CappedReader
+        reader ??= body.getReader() as CappedReader
         const active = reader
         const { done, value } = await active.read()
         if (done) {
@@ -364,7 +400,19 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
     get(): ReadableStream<Uint8Array> | null {
       if (cappedBody === undefined) {
         const rawBody = raw.body
-        cappedBody = rawBody === null ? null : cappedStreamOf(rawBody, maxBytes, reject)
+        cappedBody =
+          rawBody === null
+            ? null
+            : cappedStreamOf(
+                typeof Deno === "undefined" && process.env.NODE_ENV !== "production"
+                  ? markedOnRead(rawBody, () => {
+                      // After a buffered read the getter streams a replay, which spends nothing.
+                      if (buffered === undefined) spendRaw(raw)
+                    })
+                  : rawBody,
+                maxBytes,
+                reject,
+              )
       }
       return cappedBody
     },

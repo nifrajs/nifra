@@ -7399,6 +7399,19 @@ Both fixes preserve full type fidelity - the client derived from `typeof app` is
 exactly as precise after a `.merge()` or an `implement()` as it is for an
 inline route. Splitting or going contract-first costs you nothing at the call site.
 
+###
+A hook read the body, then the route answers `500` - "c.req.body was read as a
+stream"
+
+`c.req.body` is the request's one-shot stream. A `derive` or
+`beforeHandle` that reads it - an HMAC over the raw bytes of a webhook, say -
+consumes it, and nothing after the hook can read the body again: the route's body schema,
+`c.boundedJson()` and the handler's `c.req.json()` fail with this error,
+which the server logs. Read the body in a hook with `c.req.bytes()`,
+`c.req.text()`, `c.req.arrayBuffer()` or `c.req.json()`
+instead: they read it once, within the route's body limit, and every reader after the hook
+replays the same bytes.
+
 ### Still stuck?
 
 Run `nifra check --json` as the done-gate - it surfaces the import-chain leaks,

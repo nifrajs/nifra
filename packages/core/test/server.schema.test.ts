@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { RouteConfigError, server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import type { Logger } from "../src/server/logger.ts"
 import { isResponseResult, type ResponseResult } from "../src/server/runtime-core.ts"
 
 /** A POST whose length-less body is still producing when a cap trips: its last chunk is never
@@ -505,6 +506,62 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     const res = await app.fetch(jsonRequest("POST", "/raw", { a: 1 }))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ peek: '{"a":1}', bounded: { a: 1 } })
+  })
+
+  test("a body a hook streamed through c.req.body fails the readers after it, naming the replayable ones", async () => {
+    const details: unknown[] = []
+    const logger: Logger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: (_message, fields) => {
+        details.push(fields?.detail)
+      },
+    }
+    const app = server({ logger })
+      .derive(async (c) => {
+        const reader = c.req.body?.getReader()
+        if (reader !== undefined) for (;;) if ((await reader.read()).done) break
+        return {}
+      })
+      .post(
+        "/schema",
+        { body: t.object({ a: t.number() }), validationOrder: "auth-before-validation" },
+        (c) => ({ a: c.body.a }),
+      )
+      .post("/handler", async (c) => ({ got: await c.req.json() }))
+    for (const path of ["/schema", "/handler"]) {
+      expect((await app.fetch(jsonRequest("POST", path, { a: 1 }))).status).toBe(500)
+      expect((await app.fetch(streamRequest(path, '{"a":1}'))).status).toBe(500)
+    }
+    expect(details).toHaveLength(4)
+    for (const detail of details) expect(String(detail)).toContain("c.req.bytes()")
+  })
+
+  test("a hook that only looks at c.req.body leaves the body to the readers after it", async () => {
+    const app = server()
+      .derive((c) => ({ hasBody: c.req.body !== null }))
+      .post(
+        "/peek",
+        { body: t.object({ a: t.number() }), validationOrder: "auth-before-validation" },
+        (c) => ({ a: c.body.a, hasBody: c.hasBody }),
+      )
+    const res = await app.fetch(jsonRequest("POST", "/peek", { a: 1 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ a: 1, hasBody: true })
+  })
+
+  test("a stream read after a buffered read replays the bytes and spends nothing", async () => {
+    const app = server()
+      .derive(async (c) => ({ peek: await c.req.text() }))
+      .post("/replay", { bodyLimit: 1024 }, async (c) => ({
+        peek: c.peek,
+        streamed: await new Response(c.req.body).text(),
+        bounded: await c.boundedJson(),
+      }))
+    const res = await app.fetch(jsonRequest("POST", "/replay", { a: 1 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ peek: '{"a":1}', streamed: '{"a":1}', bounded: { a: 1 } })
   })
 
   test("a capped clone read over the cap answers, though the original is never read", async () => {
