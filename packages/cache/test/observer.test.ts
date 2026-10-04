@@ -154,7 +154,15 @@ describe("cache observer", () => {
       reads++
       return clock.now()
     }
-    const monotonic = spyOn(performance, "now")
+    // Only reads made from the cache's own source count: in a full run, work another test file left
+    // behind can read the shared performance clock while this spy is installed.
+    const original = performance.now.bind(performance)
+    const cacheReads: string[] = []
+    const monotonic = spyOn(performance, "now").mockImplementation(() => {
+      const stack = new Error().stack ?? ""
+      if (/[\\/]packages[\\/]cache[\\/]src[\\/]/.test(stack)) cacheReads.push(stack)
+      return original()
+    })
     try {
       const cache = createCache({ now, store: new MemoryCache({ now: clock.now }) })
       await cache.get("k")
@@ -163,11 +171,12 @@ describe("cache observer", () => {
       await cache.wrap("k", () => 2)
       clock.advance(20)
       await cache.wrap("k", () => 3)
+      setTimeout(() => performance.now(), 0)
       await flush()
       await cache.delete("k")
       await cache.invalidateTag("t")
       await cache.clear()
-      expect(monotonic).not.toHaveBeenCalled()
+      expect(cacheReads).toEqual([])
       // set + wrap(hit) + wrap(stale) + the background refresh's set: the TTL clock only.
       expect(reads).toBe(4)
     } finally {
