@@ -51,6 +51,23 @@ export interface SubagentRunnerOptions {
   readonly workspace?: SubagentWorkspacePolicy
 }
 
+/** `work`'s outcome, or `stopped()` as soon as `signal` aborts, even when `work` ignores it. */
+function untilAborted<T>(
+  work: () => T | PromiseLike<T>,
+  signal: AbortSignal,
+  stopped: () => Error,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const stop = (): void => reject(stopped())
+    if (signal.aborted) return stop()
+    signal.addEventListener("abort", stop, { once: true })
+    Promise.resolve()
+      .then(work)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", stop))
+  })
+}
+
 /** Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget. */
 export class BoundedSubagentRunner {
   private readonly executor: SubagentExecutor
@@ -111,11 +128,16 @@ export class BoundedSubagentRunner {
       }
     const controller = new AbortController()
     const onAbort = (): void => controller.abort(this.options.signal?.reason)
-    this.options.signal?.addEventListener("abort", onAbort, { once: true })
+    if (this.options.signal?.aborted === true) onAbort()
+    else this.options.signal?.addEventListener("abort", onAbort, { once: true })
+    let timedOut = false
     const timeout =
       spec.timeoutMs === undefined
         ? undefined
-        : setTimeout(() => controller.abort("timeout"), spec.timeoutMs)
+        : setTimeout(() => {
+            timedOut = true
+            controller.abort("timeout")
+          }, spec.timeoutMs)
     let workspace: SubagentWorkspaceLease | undefined
     try {
       const requestedCwd =
@@ -159,11 +181,17 @@ export class BoundedSubagentRunner {
             error: "isolated worktree escapes workspace policy",
           }
       }
-      const output = await this.executor.run({
-        spec,
-        signal: controller.signal,
-        ...(workspace === undefined ? {} : { cwd: workspace.cwd }),
-      })
+      const lease = workspace
+      const output = await untilAborted(
+        () =>
+          this.executor.run({
+            spec,
+            signal: controller.signal,
+            ...(lease === undefined ? {} : { cwd: lease.cwd }),
+          }),
+        controller.signal,
+        () => new Error(timedOut ? "subagent timed out" : "subagent cancelled"),
+      )
       return { id: spec.id, role: spec.role, ok: true, output }
     } catch (error) {
       return {

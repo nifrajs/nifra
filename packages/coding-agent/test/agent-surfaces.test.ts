@@ -38,6 +38,32 @@ describe("optional agent safety surfaces", () => {
     ).resolves.toMatchObject({ ok: false, error: "subagent workspace escapes policy root" })
   })
 
+  test("a timeout ends a run whose executor ignores the signal", async () => {
+    const runner = new BoundedSubagentRunner({ run: () => new Promise(() => {}) })
+    await expect(
+      runner.run({ id: "stuck", role: "reviewer", prompt: "inspect", timeoutMs: 20 }),
+    ).resolves.toEqual({ id: "stuck", role: "reviewer", ok: false, error: "subagent timed out" })
+  })
+
+  test("an already-aborted parent signal cancels before the executor starts", async () => {
+    let runs = 0
+    const parent = new AbortController()
+    parent.abort()
+    const runner = new BoundedSubagentRunner(
+      {
+        run: () => {
+          runs += 1
+          return "done"
+        },
+      },
+      { signal: parent.signal },
+    )
+    await expect(
+      runner.run({ id: "late", role: "reviewer", prompt: "inspect" }),
+    ).resolves.toMatchObject({ ok: false, error: "subagent cancelled" })
+    expect(runs).toBe(0)
+  })
+
   test("a symlink inside the workspace root does not lead a subagent out of it", async () => {
     const base = mkdtempSync(join(tmpdir(), "nifra-subagent-"))
     try {
