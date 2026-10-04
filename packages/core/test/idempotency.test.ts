@@ -1001,6 +1001,34 @@ describe("server({ idempotency }) - request path", () => {
     expect(renewals.length).toBe(settled)
   })
 
+  test("a renewal that fails lets the lease lapse, which completion reports", async () => {
+    const memory = new MemoryIdempotencyStore()
+    let attempts = 0
+    const store: IdempotencyStore = {
+      begin: (input) => memory.begin(input),
+      complete: (input) => memory.complete(input),
+      abandon: (input) => memory.abandon(input),
+      renew: () => {
+        attempts++
+        throw new Error("store unreachable")
+      },
+    }
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        { idempotency: { scope: "request", namespace: "public:pay", store, pendingTtlMs: 30 } },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 120))
+          return { ok: true }
+        },
+      )
+    const res = await app.fetch(post({ amount: 1 }, "flaky"))
+    expect(attempts).toBeGreaterThanOrEqual(1)
+    expect(res.status).toBe(503)
+    expect(await res.json()).toMatchObject({ error: "idempotency_reservation_lost" })
+  })
+
   test("a store without renew() holds a pending key for ttlMs, and pendingTtlMs on it is refused", async () => {
     const memory = new MemoryIdempotencyStore()
     const begun: IdempotencyBeginInput[] = []

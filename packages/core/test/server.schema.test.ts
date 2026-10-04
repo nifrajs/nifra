@@ -564,6 +564,41 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     expect(await res.json()).toEqual({ peek: '{"a":1}', streamed: '{"a":1}', bounded: { a: 1 } })
   })
 
+  test("cancelling c.req.body before reading it cancels the request's own stream", async () => {
+    let cancelled: unknown = "not cancelled"
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode("unread"))
+      },
+      cancel(reason) {
+        cancelled = reason
+      },
+    })
+    const app = server().post("/skip", async (c) => {
+      await c.req.body?.cancel("not needed")
+      return { skipped: true }
+    })
+    const init: RequestInit & { duplex: "half" } = { method: "POST", body: source, duplex: "half" }
+    const res = await app.fetch(new Request("http://localhost/skip", init))
+    expect(res.status).toBe(200)
+    expect(cancelled).toBe("not needed")
+  })
+
+  test("c.req.blob() holds the capped bytes, typed by the request", async () => {
+    const app = server().post("/blob", async (c) => {
+      const blob = await c.req.blob()
+      return { size: blob.size, type: blob.type, text: await blob.text() }
+    })
+    const res = await app.fetch(
+      new Request("http://localhost/blob", {
+        method: "POST",
+        headers: { "content-type": "application/x-nifra-test" },
+        body: new TextEncoder().encode("hello"),
+      }),
+    )
+    expect(await res.json()).toEqual({ size: 5, type: "application/x-nifra-test", text: "hello" })
+  })
+
   test("a capped clone read over the cap answers, though the original is never read", async () => {
     const app = server({ maxBodyBytes: 1024 }).post("/raw-clone", async (c) => ({
       len: (await c.req.clone().text()).length,
