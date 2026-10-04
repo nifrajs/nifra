@@ -3227,7 +3227,7 @@
     "kind": "class",
     "package": "@nifrajs/core",
     "signature": "export declare class CapabilityInterceptorProtocolError extends Error {\n    readonly capability: string;\n    readonly effectId: string;\n    constructor(capability: string, effectId: string);\n}",
-    "doc": "/** An interceptor called its one-shot `next()` continuation more than once. */"
+    "doc": "/** An interceptor called its one-shot `next()` continuation more than once, or after it returned. */"
   },
   {
     "name": "CapabilityInterceptorTimeoutError",

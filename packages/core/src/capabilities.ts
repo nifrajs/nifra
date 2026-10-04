@@ -596,13 +596,15 @@ export class CapabilityAdmissionAbortedError extends Error {
   }
 }
 
-/** An interceptor called its one-shot `next()` continuation more than once. */
+/** An interceptor called its one-shot `next()` continuation more than once, or after it returned. */
 export class CapabilityInterceptorProtocolError extends Error {
   constructor(
     public readonly capability: string,
     public readonly effectId: string,
   ) {
-    super(`capability assurance: ${capability} interceptor called next() more than once`)
+    super(
+      `capability assurance: ${capability} interceptor called next() more than once or after it returned`,
+    )
     this.name = "CapabilityInterceptorProtocolError"
   }
 }
@@ -682,22 +684,36 @@ async function runCapabilityInterceptors(
   const registration = registrations[index]
   if (registration === undefined) return
   let nextPromise: Promise<void> | undefined
-  await withInterceptorBound(
-    registration,
-    parentSignal,
-    baseEvent.capability,
-    baseEvent.effectId,
-    async (signal) => {
-      const event = Object.freeze({ ...baseEvent, signal })
-      await registration.interceptor(event, () => {
-        if (nextPromise !== undefined) {
-          throw new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId)
-        }
-        nextPromise = runCapabilityInterceptors(registrations, baseEvent, signal, index + 1)
-        return nextPromise
-      })
-    },
-  )
+  let returned = false
+  try {
+    await withInterceptorBound(
+      registration,
+      parentSignal,
+      baseEvent.capability,
+      baseEvent.effectId,
+      async (signal) => {
+        const event = Object.freeze({ ...baseEvent, signal })
+        await registration.interceptor(event, () => {
+          if (returned) {
+            // The interceptor already returned (a denial) or timed out, so the effect will not run and
+            // neither may the interceptors after it. Handled, since a late caller seldom awaits it.
+            const late = Promise.reject(
+              new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId),
+            )
+            late.catch(() => {})
+            return late
+          }
+          if (nextPromise !== undefined) {
+            throw new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId)
+          }
+          nextPromise = runCapabilityInterceptors(registrations, baseEvent, signal, index + 1)
+          return nextPromise
+        })
+      },
+    )
+  } finally {
+    returned = true
+  }
   if (nextPromise === undefined) {
     throw new CapabilityDeniedError(baseEvent.capability, baseEvent.effectId)
   }

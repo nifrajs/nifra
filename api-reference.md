@@ -1850,7 +1850,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CapabilityInterceptorNext** _(type)_ - `type CapabilityInterceptorNext = () => Promise<void>`
   Continue to the next admission policy. The owned effect runs only after the full chain admits.
 - **CapabilityInterceptorProtocolError** _(class)_ - `class CapabilityInterceptorProtocolError`
-  An interceptor called its one-shot `next()` continuation more than once.
+  An interceptor called its one-shot `next()` continuation more than once, or after it returned.
 - **CapabilityInterceptorTimeoutError** _(class)_ - `class CapabilityInterceptorTimeoutError`
   A capability admission policy exceeded its configured bound.
 - **CapabilityJournalTransitionError** _(class)_ - `class CapabilityJournalTransitionError`

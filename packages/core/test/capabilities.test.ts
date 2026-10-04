@@ -131,6 +131,32 @@ describe("route capabilities", () => {
     expect(executed).toBe(false)
   })
 
+  test("a next() called after its interceptor returned runs nothing past it", async () => {
+    let late: (() => Promise<void>) | undefined
+    let deeper = 0
+    let executed = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async (_event, next) => {
+        late = next
+      })
+      .aroundCapability(async (_event, next) => {
+        deeper += 1
+        await next()
+      })
+      .post("/orders", { capabilities: ["db.write"] }, async (c) => {
+        await executeCapability(c, "db.write", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect(
+      (await app.fetch(new Request("http://nifra.test/orders", { method: "POST" }))).status,
+    ).toBe(500)
+    await expect(late?.()).rejects.toThrow("after it returned")
+    expect(deeper).toBe(0)
+    expect(executed).toBe(false)
+  })
+
   test("reflects normalized declarations and denies an undeclared runtime effect", async () => {
     const observed: unknown[] = []
     const app = server({ onCapabilityUse: (event) => observed.push(event) }).post(
