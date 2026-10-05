@@ -834,9 +834,7 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       const planted = steps.findIndex((step) => step.startsWith("Planted links:"))
       expect(planted).toBeGreaterThan(-1)
       expect(planted).toBeLessThan(steps.findIndex((step) => step.startsWith("Fix 1")))
-      expect(steps[planted]).toContain(
-        `${link} → ${join("..", "elsewhere", "node_modules", "@nifrajs", "core")}`,
-      )
+      expect(steps[planted]).toContain(`${link} → ../elsewhere/node_modules/@nifrajs/core`)
       expect(result.identityPreflight?.duplicates[0]?.provenance).toContain("bun link")
     } finally {
       await rm(dir, { recursive: true, force: true })

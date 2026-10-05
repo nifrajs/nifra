@@ -35,7 +35,7 @@ afterAll(() => rm(root, { recursive: true, force: true }))
 describe("nifra i18n check", () => {
   test("finds the default entry, loads lazy and module catalogs, and checks them", async () => {
     const out = await runI18nCheck(root)
-    expect(out.entry).toBe(join("shared", "i18n.ts"))
+    expect(out.entry).toBe("shared/i18n.ts")
     const findings = out.result.findings.map(
       (f) => `${f.severity} ${f.locale} ${f.code} ${f.key ?? ""}`,
     )
@@ -88,7 +88,7 @@ describe("nifra i18n check", () => {
     const failing = await run("check", "--json")
     expect(failing.exit).toBe(1)
     const json = JSON.parse(failing.stdout) as { entry: string; result: { ok: boolean } }
-    expect(json.entry).toBe(join("shared", "i18n.ts"))
+    expect(json.entry).toBe("shared/i18n.ts")
     expect(json.result.ok).toBe(false)
 
     await writeFile(
