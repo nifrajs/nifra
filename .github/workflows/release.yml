@@ -6,7 +6,8 @@ name: Release
 #
 # After a release PR merges, the workflow_run path only publishes the exact CI-validated merge SHA.
 # It is guarded by the GitHub API association between that SHA and a merged release PR, so an
-# ordinary main merge is a no-op.
+# ordinary main merge is a no-op. A publish that failed after the merge (an expired token, a registry
+# or Pages outage) is retried with workflow_dispatch on main naming that merge SHA, under the same proofs.
 
 on:
   pull_request:
@@ -16,12 +17,18 @@ on:
     workflows: [CI]
     branches: [main]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      merge_sha:
+        description: Merge commit of the release PR whose publish to retry
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_run' && 'publish' || github.event.pull_request.number }}
+  group: release-${{ github.event_name != 'pull_request' && 'publish' || github.event.pull_request.number }}
   queue: max
   cancel-in-progress: false
 
@@ -75,14 +82,16 @@ jobs:
   publish:
     name: publish-release
     if: >-
-      github.event_name == 'workflow_run' &&
+      (github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: write
       pull-requests: read
       id-token: write
@@ -92,9 +101,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          MERGE_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_SHA: ${{ github.event.workflow_run.head_sha || inputs.merge_sha }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$MERGE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              echo "merge_sha must be a full 40-character commit SHA." >&2
+              exit 1
+            fi
+            # What the workflow_run path gets from its trigger: a commit on main whose push CI passed.
+            on_main="$(gh api "repos/${REPOSITORY}/compare/${MERGE_SHA}...main" --jq .status)"
+            if [[ "$on_main" != "ahead" && "$on_main" != "identical" ]]; then
+              echo "${MERGE_SHA} is not on main; refusing to publish." >&2
+              exit 1
+            fi
+            ci_passed="$(gh api \
+              "repos/${REPOSITORY}/actions/runs?head_sha=${MERGE_SHA}&event=push&branch=main" \
+              --jq 'any(.workflow_runs[]; (.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success")')"
+            if [[ "$ci_passed" != "true" ]]; then
+              echo "CI did not pass on ${MERGE_SHA} as pushed to main; refusing to publish." >&2
+              exit 1
+            fi
+          fi
           prs="$(gh api \
             --header 'Accept: application/vnd.github+json' \
             "repos/${REPOSITORY}/commits/${MERGE_SHA}/pulls")"
@@ -141,12 +170,13 @@ jobs:
           echo "Validated merged release PR for ${MERGE_SHA}."
           echo "is_release=true" >> "$GITHUB_OUTPUT"
           echo "release_base_sha=$release_base_sha" >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the validated merge
         if: steps.release.outputs.is_release == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ steps.release.outputs.merge_sha }}
           fetch-depth: 0
 
       - name: Set up Bun
@@ -163,8 +193,14 @@ jobs:
         if: steps.release.outputs.is_release == 'true'
         env:
           RELEASE_BASE_SHA: ${{ steps.release.outputs.release_base_sha }}
-          RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_HEAD_SHA: ${{ steps.release.outputs.merge_sha }}
         run: bun run release:check --merge
+
+      # npm reads its login only from an .npmrc. It expands ${NPM_TOKEN} from the publish step's
+      # environment, so the token itself is never written to disk.
+      - name: Configure npm auth
+        if: steps.release.outputs.is_release == 'true'
+        run: echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > "$HOME/.npmrc"
 
       - name: Publish versioned packages
         if: steps.release.outputs.is_release == 'true'

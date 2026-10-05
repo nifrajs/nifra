@@ -56,7 +56,7 @@ test("release workflow verifies release PRs and never invokes Version Packages a
     "utf8",
   )
   expect(workflow).toContain("startsWith(github.event.pull_request.head.ref, 'release/')")
-  expect(workflow).toContain("github.event_name == 'workflow_run' && 'publish'")
+  expect(workflow).toContain("github.event_name != 'pull_request' && 'publish'")
   expect(workflow).toContain("queue: max")
   expect(workflow).toContain('.name == "release-verification"')
   expect(workflow).toContain("bun run release:check")
@@ -80,4 +80,37 @@ test("release verification provisions the runtimes its gates run and leaves timi
   ]) {
     expect(job.match(pin)?.[0]).toBe(ci.match(pin)?.[0] ?? "missing from ci.yml")
   }
+})
+
+const publishJob = (): string => {
+  const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")
+  return release.slice(release.indexOf("\n  publish:"))
+}
+
+test("the publish job logs npm in from NPM_TOKEN before it publishes, without writing the token", () => {
+  const job = publishJob()
+  const login = job.indexOf(
+    `echo '//registry.npmjs.org/:_authToken=\${NPM_TOKEN}' > "$HOME/.npmrc"`,
+  )
+  expect(login).toBeGreaterThan(-1)
+  expect(login).toBeLessThan(job.indexOf("run: bun run changeset:publish"))
+})
+
+test("a failed publish is retried from main for a merged release SHA, under the same proofs", () => {
+  const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")
+  expect(release).toContain("  workflow_dispatch:\n    inputs:\n      merge_sha:")
+  const job = publishJob()
+  expect(job).toContain(
+    "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+  )
+  for (const proof of [
+    `compare/\${MERGE_SHA}...main`,
+    '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"',
+    '.name == "release-verification"',
+    `ref: \${{ steps.release.outputs.merge_sha }}`,
+    `RELEASE_HEAD_SHA: \${{ steps.release.outputs.merge_sha }}`,
+  ])
+    expect(job).toContain(proof)
+  // Every later step reads the validated SHA, not the trigger's.
+  expect(job.match(/workflow_run\.head_sha/g)).toHaveLength(1)
 })
