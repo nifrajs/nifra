@@ -439,6 +439,17 @@ describe("run (argv → code + message)", () => {
     expect(JSON.parse(await readFile(join(dir, "package.json"), "utf8")).name).toBe("here-app")
   })
 
+  test("with --force, a failure shows its own error, not advice to pass --force", async () => {
+    const dir = await freshDir("forced-blocked")
+    await mkdir(dir, { recursive: true })
+    // A file where the scaffold makes a folder.
+    await writeFile(join(dir, ".cursor"), "")
+    const { code, message } = await run([dir, "--force"])
+    expect(code).toBe(1)
+    expect(message).not.toContain("Use --force")
+    expect(message).toContain(".cursor")
+  })
+
   test("unknown deploy target → error, code 1", async () => {
     const dir = await freshDir("run-bad")
     const { code, message } = await run([dir, "--target", "heroku"])

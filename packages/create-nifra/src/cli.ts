@@ -231,7 +231,10 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // deploy scripts (`--name NAME`) that a shell runs - hence no metacharacters, no whitespace, and no
   // leading `-` to be read as a flag.
   // Resolved first, so `bun create nifra . --force` names the project after the directory it is in.
-  const name = basename(resolve(opts.target))
+  // Every path below is built from the resolved directory: on Windows, Bun fails to create `.` itself
+  // (EEXIST), which `mkdir(dirname(join(".", "AGENTS.md")), { recursive: true })` would ask it to.
+  const dir = resolve(opts.target)
+  const name = basename(dir)
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.length > 214) {
     throw new Error(
       `invalid project name ${JSON.stringify(name)}: use letters, digits, "-", "_", and "." ` +
@@ -316,7 +319,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // An occupied destination is refused before the first write. The template copy alone would refuse
   // only a colliding template file, and every file written after it (.gitignore, AGENTS.md, the agent
   // and MCP configs) would still replace one of the user's.
-  if (opts.force !== true && (await readdir(opts.target).catch(() => [])).length > 0) {
+  if (opts.force !== true && (await readdir(dir).catch(() => [])).length > 0) {
     throw new Error(`"${opts.target}" already exists and is not empty`)
   }
 
@@ -326,7 +329,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // Either way the default refuses an occupied destination rather than clobbering it; --force is what
   // `bun create nifra .` needs.
   if (deploy !== undefined) {
-    await materializeSite(opts.target, framework ?? "react", {
+    await materializeSite(dir, framework ?? "react", {
       force: opts.force === true,
       target: deploy.target,
       docker: deploy.docker,
@@ -336,24 +339,23 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     const templateDir = fileURLToPath(new URL(TEMPLATES[template], import.meta.url))
     // The destination is empty or --force was given (checked above), so nothing here replaces a file of
     // the user's; Bun's errorOnExist would also refuse an existing empty directory.
-    // Resolved: Bun's copy on Windows fails to create `.` as a destination (EEXIST).
-    await cp(templateDir, resolve(opts.target), { recursive: true, force: true })
+    await cp(templateDir, dir, { recursive: true, force: true })
     if (template === "isr") {
       for (const [file, contents] of starterRouteTypes("tsx")) {
-        await mkdir(dirname(join(opts.target, file)), { recursive: true })
-        await writeFile(join(opts.target, file), contents)
+        await mkdir(dirname(join(dir, file)), { recursive: true })
+        await writeFile(join(dir, file), contents)
       }
     }
   }
 
   // The template ships its ignore file as `gitignore` (npm strips a literal `.gitignore`); restore the dot.
   try {
-    await rename(join(opts.target, "gitignore"), join(opts.target, ".gitignore"))
+    await rename(join(dir, "gitignore"), join(dir, ".gitignore"))
   } catch {
     // A template without a `gitignore` - nothing to restore.
   }
 
-  const pkgPath = join(opts.target, "package.json")
+  const pkgPath = join(dir, "package.json")
   const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as {
     name?: string
     scripts?: Record<string, string>
@@ -392,7 +394,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
       }
     }
     const linkPackages = real(resolve(opts.link, "packages"))
-    const targetAbs = real(resolve(opts.target))
+    const targetAbs = real(dir)
     for (const section of ["dependencies", "devDependencies"] as const) {
       const deps = pkg[section]
       if (deps === undefined) continue
@@ -410,7 +412,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // Ship agent guidance so a coding agent (Claude Code, Cursor, …) writes correct nifra code from the
   // first prompt - the conventions + the gotchas, tailored to this template.
   await writeFile(
-    join(opts.target, "AGENTS.md"),
+    join(dir, "AGENTS.md"),
     agentsMd({
       template,
       framework: framework ?? "react",
@@ -422,24 +424,24 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
 
   // Every agent's own file points at AGENTS.md, and both MCP registries launch the same server - all from
   // agent-files.ts, which `nifra init-agents` shares, so none of them can drift.
-  await writeFile(join(opts.target, MCP_JSON_PATH), mcpJson())
-  await mkdir(join(opts.target, ".cursor"), { recursive: true })
-  await writeFile(join(opts.target, CURSOR_MCP_JSON_PATH), mcpJson())
+  await writeFile(join(dir, MCP_JSON_PATH), mcpJson())
+  await mkdir(join(dir, ".cursor"), { recursive: true })
+  await writeFile(join(dir, CURSOR_MCP_JSON_PATH), mcpJson())
   for (const pointer of AGENT_POINTERS) {
-    const path = join(opts.target, pointer.path)
+    const path = join(dir, pointer.path)
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, pointer.content())
   }
 
   // Wire the Drizzle data layer (db/ module + drizzle.config + .env.example + gitignore entries).
-  if (db !== undefined) await writeDbFiles(opts.target, db)
+  if (db !== undefined) await writeDbFiles(dir, db)
   // Wire auth AFTER the DB (it appends to the .env.example the DB preset wrote; --auth requires --db).
-  if (auth !== undefined && db !== undefined) await writeAuthFiles(opts.target, auth, db)
+  if (auth !== undefined && db !== undefined) await writeAuthFiles(dir, auth, db)
 
   // Emit a CI deploy workflow for the site's target.
   let ciResult: { ci: "github"; ciSecrets: readonly string[] } | undefined
   if (opts.ci === "github" && deploy !== undefined) {
-    const workflowsDir = join(opts.target, ".github", "workflows")
+    const workflowsDir = join(dir, ".github", "workflows")
     await mkdir(workflowsDir, { recursive: true })
     await writeFile(join(workflowsDir, "deploy.yml"), githubDeployWorkflow(deploy.target, name))
     ciResult = { ci: "github", ciSecrets: CI_DEPLOY[deploy.target].secrets }
@@ -553,10 +555,12 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    // A copy failure is almost always "destination exists" - say so plainly.
-    const friendly = /exist/i.test(msg)
-      ? `refusing to scaffold: "${target}" already exists. Use --force to overwrite.`
-      : msg
+    // Without --force a copy failure is almost always "destination exists" - say so plainly. With it,
+    // that advice is wrong, and the error itself is the only clue.
+    const friendly =
+      !force && /exist/i.test(msg)
+        ? `refusing to scaffold: "${target}" already exists. Use --force to overwrite.`
+        : msg
     return { code: 1, message: `✗ ${friendly}` }
   }
 
