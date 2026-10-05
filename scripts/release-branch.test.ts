@@ -105,7 +105,7 @@ test("a failed publish is retried from main for a merged release SHA, under the 
   )
   for (const proof of [
     `compare/\${MERGE_SHA}...main`,
-    '.path == ".github/workflows/ci.yml" and .conclusion == "success"',
+    '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"',
     '.name == "release-verification"',
     `ref: \${{ steps.release.outputs.merge_sha }}`,
     `RELEASE_HEAD_SHA: \${{ steps.release.outputs.merge_sha }}`,

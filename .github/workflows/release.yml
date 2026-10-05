@@ -118,7 +118,7 @@ jobs:
             fi
             ci_passed="$(gh api \
               "repos/${REPOSITORY}/actions/runs?head_sha=${MERGE_SHA}&event=push&branch=main" \
-              --jq 'any(.workflow_runs[]; .path == ".github/workflows/ci.yml" and .conclusion == "success")')"
+              --jq 'any(.workflow_runs[]; (.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success")')"
             if [[ "$ci_passed" != "true" ]]; then
               echo "CI did not pass on ${MERGE_SHA} as pushed to main; refusing to publish." >&2
               exit 1
