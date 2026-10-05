@@ -1048,10 +1048,7 @@ async function main(): Promise<void> {
   if (command === "db" && (dbSub === undefined || findCommandSpec(`db-${dbSub}`) === undefined)) {
     throw new Error("[nifra] usage: nifra db schema|query|role|audit - see `nifra help`")
   }
-  const catalogSpec =
-    command === undefined
-      ? undefined
-      : findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
+  const catalogSpec = findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
   if (catalogSpec?.transports.includes("cli")) {
     const markReflecting = installReflectionExitHint()
     try {
