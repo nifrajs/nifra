@@ -13,6 +13,7 @@ import { server } from "../src/index.ts"
 const COPIES = Symbol.for("nifra.core.copies")
 const registry = (globalThis as unknown as Record<symbol, string[]>)[COPIES] as string[]
 const loadedBefore = [...registry]
+const here = loadedBefore.find((url) => url.endsWith("/src/server/core-copies.ts"))
 const ground = await realpath(await mkdtemp(join(tmpdir(), "nifra-core-copies-")))
 
 afterAll(async () => {
@@ -39,6 +40,10 @@ test("merge() refuses a value that is not a server", () => {
 })
 
 test("a second copy warns once when it loads, and merge() refuses its servers by name", async () => {
+  if (here === undefined) throw new Error("this copy did not register")
+  // Bundles other test files imported into this process are copies too, and test file order
+  // differs by platform: count from this copy alone (afterAll restores the list).
+  registry.splice(0, registry.length, here)
   const entry = await copyOfCore("second")
   const warn = spyOn(console, "warn").mockImplementation(() => {})
   let other: typeof import("../src/index.ts")
@@ -56,7 +61,7 @@ test("a second copy warns once when it loads, and merge() refuses its servers by
   expect(message).toContain("@nifrajs/core is loaded 2 times")
   expect(message).toContain("nifra check")
   expect(message).toContain(pathToFileURL(join(ground, "second", "src", "server")).href)
-  expect(message).toContain(String(loadedBefore[0]))
+  expect(message).toContain(here)
 
   // Before: this merged, then answered the request with a 500 (the other copy's route reached this
   // copy's private request state through a symbol it does not share).
@@ -74,7 +79,6 @@ test("a second copy warns once when it loads, and merge() refuses its servers by
 })
 
 test("whichever copy loads second is the one that warns", async () => {
-  const here = loadedBefore.find((url) => url.endsWith("/src/server/core-copies.ts"))
   if (here === undefined) throw new Error("this copy did not register")
   const saved = [...registry]
   // Another install got here first, so this file, evaluated again, is the second copy.
