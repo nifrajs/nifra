@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { parseArgs } from "../src/cli.ts"
 
 describe("nifra-agent CLI arguments", () => {
@@ -53,7 +54,7 @@ describe("nifra-agent CLI arguments", () => {
 })
 
 describe("project extensions load only on request", () => {
-  const cli = new URL("../src/cli.ts", import.meta.url).pathname
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url))
 
   async function runIn(cwd: string, extra: readonly string[]): Promise<void> {
     const events = join(cwd, "events.jsonl")

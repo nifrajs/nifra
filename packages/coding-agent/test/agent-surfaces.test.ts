@@ -327,7 +327,8 @@ describe("optional agent safety surfaces", () => {
       )
       await expect(swapped.run({ ...spec, cwd: "alias" })).resolves.toMatchObject({
         ok: true,
-        output: realpathSync(join(root, "inside")),
+        // The native realpath, as the runner resolves it: it expands Windows short names like RUNNER~1.
+        output: realpathSync.native(join(root, "inside")),
       })
 
       const leased = new BoundedSubagentRunner(
