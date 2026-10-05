@@ -94,7 +94,7 @@ interface WorkflowStep {
 
 interface WorkflowJob {
   readonly if?: string
-  readonly needs?: string
+  readonly needs?: string | readonly string[]
   readonly environment?: unknown
   readonly permissions?: Readonly<Record<string, string>>
   readonly steps?: readonly WorkflowStep[]
@@ -138,6 +138,25 @@ test("npm publishes through trusted publishing, and only a proven release holds 
   expect(names.indexOf(NPM_GATE)).toBeLessThan(names.indexOf("Publish versioned packages"))
 })
 
+test("the job that can publish runs no install script and nothing after the publish", () => {
+  const { publish, "deploy-site": deploy } = workflowJobs("release.yml")
+  const { scripts } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))
+  const installs = (publish?.steps ?? []).filter((step) => step.run?.includes("bun install"))
+  expect(installs.map((step) => step.run?.trim().split("\n"))).toEqual([
+    ["bun install --frozen-lockfile --ignore-scripts", scripts.postinstall],
+  ])
+  expect(publish?.steps?.at(-1)?.name).toBe("Publish versioned packages")
+  // The registry smoke test and the wrangler deploy run after a publish, in a job without the identity.
+  expect(deploy?.needs).toEqual(["prove-release", "publish"])
+  expect(deploy?.steps?.map((step) => step.name)).toEqual(
+    expect.arrayContaining([
+      "Smoke test published registry packages",
+      "Deploy site to Cloudflare Pages",
+      "Probe production site",
+    ]),
+  )
+})
+
 test.skipIf(process.platform === "win32")(
   "the publish stops before it runs an npm too old for trusted publishing",
   () => {
@@ -171,7 +190,7 @@ test.skipIf(process.platform === "win32")(
 test("a failed publish is retried from main for a merged release SHA, under the same proofs", () => {
   const release = workflowText("release.yml")
   expect(release).toContain("  workflow_dispatch:\n    inputs:\n      merge_sha:")
-  const { "prove-release": prove, publish } = workflowJobs("release.yml")
+  const { "prove-release": prove, publish, "deploy-site": deploy } = workflowJobs("release.yml")
   expect(prove?.if).toContain(
     "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
   )
@@ -183,10 +202,13 @@ test("a failed publish is retried from main for a merged release SHA, under the 
   ])
     expect(proof).toContain(check)
   const merge = `\${{ needs.prove-release.outputs.merge_sha }}`
-  const steps = publish?.steps ?? []
-  expect(steps.find((step) => step.uses?.startsWith("actions/checkout@"))?.with?.ref).toBe(merge)
+  for (const job of [publish, deploy])
+    expect(job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))?.with?.ref).toBe(
+      merge,
+    )
   expect(
-    steps.find((step) => step.run === "bun run release:check --merge")?.env?.RELEASE_HEAD_SHA,
+    publish?.steps?.find((step) => step.run === "bun run release:check --merge")?.env
+      ?.RELEASE_HEAD_SHA,
   ).toBe(merge)
   // Every later step reads the validated SHA, not the trigger's.
   expect(release.match(/workflow_run\.head_sha/g)).toHaveLength(1)

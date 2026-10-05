@@ -162,13 +162,13 @@ Merging a release PR publishes it: `.github/workflows/release.yml` proves the me
   npm trust github <package> --file release.yml --repo nifrajs/nifra --env npm-publish --allow-publish
   ```
 
-- **A failed publish** is retried from main with the release PR's merge commit, under the same proofs. An `E404` on the publish request means a package has no trusted publisher yet.
+- **A failed publish** is retried from main with the release PR's merge commit, under the same proofs. An `E404` on the publish request means npm did not accept the workflow for that package: check that the package exists on npm and that its trusted publisher names `nifrajs/nifra`, `release.yml` and the `npm-publish` environment.
 
   ```bash
   gh workflow run Release --ref main -f merge_sha=<merge commit>
   ```
 
-- **A prerelease** publishes under its pre tag only. Trusted publishing cannot move dist-tags, so when `latest` should follow, a maintainer moves it with `npm dist-tag add`.
+- **A prerelease** publishes under its pre tag only. The trusted publishers allow only `npm publish`, so when `latest` should follow, a maintainer moves it with `npm dist-tag add`. Moving it from CI would take **Allow npm dist-tag** on each trusted publisher and npm 11.21.0 or newer in the workflow.
 
 ---
 

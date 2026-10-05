@@ -11,7 +11,8 @@ name: Release
 # SHA, under the same proofs.
 #
 # npm publishes through trusted publishing: every public package trusts this workflow file run in the
-# npm-publish environment, so there is no npm token to store or leak. Only a proven release enters it.
+# npm-publish environment, so there is no npm token to store or leak. Only a proven release enters
+# it, and only the publish job holds the identity npm trusts.
 
 on:
   pull_request:
@@ -218,8 +219,12 @@ jobs:
           fi
           echo "npm ${version} can publish through trusted publishing."
 
+      # Every step in this job can mint a token npm accepts, so no install script runs here; the root
+      # postinstall's workspace links are made by name.
       - name: Install
-        run: bun install --frozen-lockfile
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run scripts/link-for-node.ts
 
       - name: Validate the merged release artifact
         env:
@@ -231,6 +236,33 @@ jobs:
         run: bun run changeset:publish
         env:
           NPM_CONFIG_PROVENANCE: "true"
+
+  # The smoke test installs from the registry and the deploy runs wrangler: third-party code, kept out
+  # of the job that can publish.
+  deploy-site:
+    name: deploy-site
+    needs: [prove-release, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the validated merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prove-release.outputs.merge_sha }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # The site build reads the packages' dist and the corpora gen:llms writes.
+      - name: Build the packages
+        run: bun run build && bun run gen:llms
 
       - name: Smoke test published registry packages
         run: |
