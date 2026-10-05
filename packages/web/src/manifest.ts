@@ -1114,7 +1114,7 @@ export function buildManifest(
 
   const byPattern = new Map<string, string>()
   const routes: RouteEntry[] = []
-  const shapes: CompiledRoutePattern[] = []
+  const shapes: { file: string; pattern: string; shape: CompiledRoutePattern }[] = []
   for (const file of routeFiles) {
     const dirs = ancestorDirs(file)
     const layoutDirsForFile = dirs.filter((dir) => layoutDirs.has(dir))
@@ -1142,10 +1142,8 @@ export function buildManifest(
       // segment by segment - the router's own order), and each keeps paths of its own, so
       // `users/me.tsx` beside `users/[id].tsx` is ordinary. Only one shape twice is ambiguous.
       const shape = compileRoutePattern(pattern)
-      for (const [index, previous] of routes.entries()) {
-        if (compareRoutePatternSpecificity(shapes[index] as CompiledRoutePattern, shape) !== 0) {
-          continue
-        }
+      for (const previous of shapes) {
+        if (compareRoutePatternSpecificity(previous.shape, shape) !== 0) continue
         const witness = routePatternOverlap(previous.pattern, pattern)
         if (witness !== undefined) {
           throw new Error(
@@ -1153,7 +1151,7 @@ export function buildManifest(
           )
         }
       }
-      shapes.push(shape)
+      shapes.push({ file, pattern, shape })
       byPattern.set(pattern, file)
       routes.push({
         id,
