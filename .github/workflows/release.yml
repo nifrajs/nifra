@@ -6,8 +6,13 @@ name: Release
 #
 # After a release PR merges, the workflow_run path only publishes the exact CI-validated merge SHA.
 # It is guarded by the GitHub API association between that SHA and a merged release PR, so an
-# ordinary main merge is a no-op. A publish that failed after the merge (an expired token, a registry
-# or Pages outage) is retried with workflow_dispatch on main naming that merge SHA, under the same proofs.
+# ordinary main merge is a no-op. A publish that failed after the merge (a registry or Pages outage, a
+# package with no trusted publisher yet) is retried with workflow_dispatch on main naming that merge
+# SHA, under the same proofs.
+#
+# npm publishes through trusted publishing: every public package trusts this workflow file run in the
+# npm-publish environment, so there is no npm token to store or leak. Only a proven release enters
+# it, and only the publish job holds the identity npm trusts.
 
 on:
   pull_request:
@@ -79,8 +84,8 @@ jobs:
           RELEASE_MODE: "1"
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
 
-  publish:
-    name: publish-release
+  prove-release:
+    name: prove-release
     if: >-
       (github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
@@ -89,12 +94,15 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       actions: read
-      contents: write
+      contents: read
       pull-requests: read
-      id-token: write
+    outputs:
+      is_release: ${{ steps.release.outputs.is_release }}
+      release_base_sha: ${{ steps.release.outputs.release_base_sha }}
+      merge_sha: ${{ steps.release.outputs.merge_sha }}
     steps:
       - name: Prove this is a merged release PR
         id: release
@@ -172,45 +180,91 @@ jobs:
           echo "release_base_sha=$release_base_sha" >> "$GITHUB_OUTPUT"
           echo "merge_sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
 
+  publish:
+    name: publish-release
+    needs: prove-release
+    if: needs.prove-release.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
       - name: Checkout the validated merge
-        if: steps.release.outputs.is_release == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ steps.release.outputs.merge_sha }}
+          ref: ${{ needs.prove-release.outputs.merge_sha }}
           fetch-depth: 0
 
       - name: Set up Bun
-        if: steps.release.outputs.is_release == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+
+      # `changeset publish` runs the npm on PATH, so this decides which npm publishes.
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 26.10.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Check npm can publish through trusted publishing
+        run: |
+          set -euo pipefail
+          version="$(npm --version)"
+          if ! printf '%s\n' 11.5.1 "$version" | sort -V -C; then
+            echo "npm ${version} cannot publish through trusted publishing; it needs 11.5.1 or newer." >&2
+            exit 1
+          fi
+          echo "npm ${version} can publish through trusted publishing."
+
+      # Every step in this job can mint a token npm accepts, so no install script runs here; the root
+      # postinstall's workspace links are made by name.
+      - name: Install
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run scripts/link-for-node.ts
+
+      - name: Validate the merged release artifact
+        env:
+          RELEASE_BASE_SHA: ${{ needs.prove-release.outputs.release_base_sha }}
+          RELEASE_HEAD_SHA: ${{ needs.prove-release.outputs.merge_sha }}
+        run: bun run release:check --merge
+
+      - name: Publish versioned packages
+        run: bun run changeset:publish
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+  # The smoke test installs from the registry and the deploy runs wrangler: third-party code, kept out
+  # of the job that can publish.
+  deploy-site:
+    name: deploy-site
+    needs: [prove-release, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the validated merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prove-release.outputs.merge_sha }}
+
+      - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
 
       - name: Install
-        if: steps.release.outputs.is_release == 'true'
         run: bun install --frozen-lockfile
 
-      - name: Validate the merged release artifact
-        if: steps.release.outputs.is_release == 'true'
-        env:
-          RELEASE_BASE_SHA: ${{ steps.release.outputs.release_base_sha }}
-          RELEASE_HEAD_SHA: ${{ steps.release.outputs.merge_sha }}
-        run: bun run release:check --merge
-
-      # npm reads its login only from an .npmrc. It expands ${NPM_TOKEN} from the publish step's
-      # environment, so the token itself is never written to disk.
-      - name: Configure npm auth
-        if: steps.release.outputs.is_release == 'true'
-        run: echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > "$HOME/.npmrc"
-
-      - name: Publish versioned packages
-        if: steps.release.outputs.is_release == 'true'
-        run: bun run changeset:publish
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
+      # The site build reads the packages' dist and the corpora gen:llms writes.
+      - name: Build the packages
+        run: bun run build && bun run gen:llms
 
       - name: Smoke test published registry packages
-        if: steps.release.outputs.is_release == 'true'
         run: |
           set -euo pipefail
           version="$(node -p "require('./packages/core/package.json').version")"
@@ -226,7 +280,6 @@ jobs:
           exit 1
 
       - name: Deploy site to Cloudflare Pages
-        if: steps.release.outputs.is_release == 'true'
         working-directory: site
         run: |
           bun run build
@@ -236,7 +289,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Probe production site
-        if: steps.release.outputs.is_release == 'true'
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do

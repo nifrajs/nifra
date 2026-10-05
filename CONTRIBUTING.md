@@ -152,6 +152,24 @@ Concretely, these are `major`, not `minor`:
 
 If you are shipping one of these anyway, ship a **codemod with it**. Hand-editing every broken call site is toil the framework caused, and the framework is the thing that knows the mechanical fix. Register it in `packages/cli/src/fix-recipes.ts` and point the diagnostic's `fix.command` at it, so `nifra fix` performs the migration the release note describes.
 
+### Publishing
+
+Merging a release PR publishes it: `.github/workflows/release.yml` proves the merge, publishes every package version npm does not have yet, and deploys the site. npm accepts the workflow through [trusted publishing](https://docs.npmjs.com/trusted-publishers): each public package trusts `release.yml` run in the `npm-publish` environment, so there is no npm token to store or leak, and every version carries a provenance attestation.
+
+- **A new package** cannot publish that way until it exists on npm and trusts the workflow. Before the release that first ships it, a maintainer publishes a placeholder version by hand (deprecated once the release is out) and adds the trust, with npm 11.15 or newer and 2FA on:
+
+  ```bash
+  npm trust github <package> --file release.yml --repo nifrajs/nifra --env npm-publish --allow-publish
+  ```
+
+- **A failed publish** is retried from main with the release PR's merge commit, under the same proofs. An `E404` on the publish request means npm did not accept the workflow for that package: check that the package exists on npm and that its trusted publisher names `nifrajs/nifra`, `release.yml` and the `npm-publish` environment.
+
+  ```bash
+  gh workflow run Release --ref main -f merge_sha=<merge commit>
+  ```
+
+- **A prerelease** publishes under its pre tag only. The trusted publishers allow only `npm publish`, so when `latest` should follow, a maintainer moves it with `npm dist-tag add`. Moving it from CI would take **Allow npm dist-tag** on each trusted publisher and npm 11.21.0 or newer in the workflow.
+
 ---
 
 ## Authoring Custom Middleware & Plugins
