@@ -191,7 +191,7 @@ const page = (head: string, headers: Record<string, string>) => () =>
 const tagNonces = (html: string): Array<string | undefined> =>
   [
     ...html
-      .replace(/(<script\b[^>]*>)[\s\S]*?<\/script>/gi, "$1")
+      .replace(/(<script\b[^>]*>)[\s\S]*?<\/script[^>]*>/gi, "$1")
       .matchAll(/<(?:script|style)\b([^>]*)>/gi),
   ].map((match) => /\bnonce="([^"]*)"/.exec(match[1] ?? "")?.[1])
 

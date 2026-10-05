@@ -55,7 +55,7 @@ async function sha256Source(body: string): Promise<string> {
 
 /** Every inline script the browser would execute, as `{ attrs, body }`. */
 const executableInlineScripts = (html: string) =>
-  [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+  [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script[^>]*>/gi)]
     .map((m) => ({ attrs: m[1] ?? "", body: m[2] ?? "" }))
     .filter((s) => !/\bsrc=/.test(s.attrs) && !s.attrs.includes('type="application/json"'))
 

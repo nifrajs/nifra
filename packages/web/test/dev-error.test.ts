@@ -86,7 +86,7 @@ describe("renderDiagnosticOverlay", () => {
       { code: "NIFRA_UNHANDLED", name: "Error", message: "boom", frames: [] },
       [{ label: "Diagnose", prompt: "p" }],
     )
-    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? ""
+    const script = /<script>([\s\S]*?)<\/script[^>]*>/i.exec(html)?.[1] ?? ""
     const hash = createHash("sha256").update(script).digest("base64")
     const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? ""
     expect(csp).toContain(`script-src 'sha256-${hash}';`)

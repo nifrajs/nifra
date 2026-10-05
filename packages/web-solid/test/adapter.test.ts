@@ -72,7 +72,7 @@ test("renderToStream stamps the nonce on every script Solid streams for a resour
   const read = async (options?: { nonce: string }) =>
     new Response(await solidAdapter.renderToStream([App], { data: null }, options)).text()
   const nonced = await read({ nonce: "n0nce" })
-  const scripts = nonced.match(/<script\b[^>]*>/g) ?? []
+  const scripts = nonced.match(/<script\b[^>]*>/gi) ?? []
   expect(scripts.length).toBeGreaterThan(0) // the resource + boundary scripts were streamed
   for (const tag of scripts) expect(tag).toContain('nonce="n0nce"')
   expect(await read()).not.toContain("nonce=")

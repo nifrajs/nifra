@@ -106,7 +106,7 @@ test("rich() renders tags as vnodes and values as text", async () => {
     }),
   )
   // Fragment anchors are Vue's hydration markers, not part of what renders.
-  expect(html.replace(/<!--[\s\S]*?-->/g, "")).toBe(
+  expect(html.split(/<!--[\s\S]*?-->/).join("")).toBe(
     '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br>&lt;b&gt;Ada&lt;/b&gt;! x</p>',
   )
 })

@@ -102,7 +102,8 @@ test("rich() renders tags as elements and values as text", () => {
   // Hydration keys and markers are Solid's, not part of what renders.
   const visible = html
     .replace(/ data-hk="[^"]*"/g, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
+    .split(/<!--[\s\S]*?-->/)
+    .join("")
     .replace(/ +(\/?>)/g, "$1")
   expect(visible).toBe(
     '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br/>&lt;b>Ada&lt;/b>! x</p>',

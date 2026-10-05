@@ -96,7 +96,7 @@ test("renderToStream stamps the nonce on every script React streams for a late b
   const read = async (options?: { nonce: string }) =>
     new Response(await reactAdapter.renderToStream([App], { data: null }, options)).text()
   const nonced = await read({ nonce: "n0nce" })
-  const scripts = nonced.match(/<script\b[^>]*>/g) ?? []
+  const scripts = nonced.match(/<script\b[^>]*>/gi) ?? []
   expect(scripts.length).toBeGreaterThan(0) // the boundary-reveal runtime was streamed
   for (const tag of scripts) expect(tag).toContain('nonce="n0nce"')
   // Without one, the stream is unchanged.

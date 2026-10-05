@@ -45,7 +45,7 @@ test("<Rich> draws tags with snippets and keeps values and unknown tags as text"
   expect(stderr).toBe("")
   expect(exit).toBe(0)
   // Svelte's hydration comment anchors are not part of what renders.
-  const html = stdout.replace(/<!--[\s\S]*?-->/g, "")
+  const html = stdout.split(/<!--[\s\S]*?-->/).join("")
   expect(html).toContain(
     '<p id="terms">Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br/>&lt;b>Ada&lt;/b>! x</p>',
   )

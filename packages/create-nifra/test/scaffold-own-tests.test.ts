@@ -12,7 +12,7 @@ import { materializeAll } from "./_scaffold-fixtures.ts"
 const REPO_ROOT = resolve(import.meta.dir, "../../..")
 const SOURCES = new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,svelte,vue}")
 const TESTS = new Bun.Glob("**/*.test.{ts,tsx,js,jsx}")
-const SCRIPT_BLOCK = /<script\b[^>]*>([\s\S]*?)<\/script>/g
+const SCRIPT_BLOCK = /<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi
 
 const { scaffolds, cleanup } = await materializeAll()
 afterAll(cleanup)
