@@ -4713,6 +4713,94 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (result, set) => this.wrapWebResponse(toResponse(result, set)),
         this.wrapWebResponse,
       )
+    // Continuations capture route state once; each request supplies its own context.
+    const runAfter = (result: unknown, ctx: RawContext): MaybePromise<Response> => {
+      let transformed: unknown
+      try {
+        transformed = after(result, ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) =>
+            fusedRespond(
+              value,
+              ctx,
+              this.responseBodyTag,
+              this.staticResponseHeaders,
+              this.onResponseHooks.length === 0,
+            ),
+          (err) => logError(err, ctx),
+        )
+      }
+      return fusedRespond(
+        transformed,
+        ctx,
+        this.responseBodyTag,
+        this.staticResponseHeaders,
+        this.onResponseHooks.length === 0,
+      )
+    }
+    const runHandler = (ctx: RawContext): MaybePromise<Response> => {
+      let result: unknown
+      try {
+        result = handler(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => runAfter(value, ctx),
+          (err) => logError(err, ctx),
+        )
+      }
+      return runAfter(result, ctx)
+    }
+    const runBefore = (ctx: RawContext): MaybePromise<Response> => {
+      let early: unknown
+      try {
+        early = before(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => {
+            if (settled === undefined) return runHandler(ctx)
+            return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (early === undefined) return runHandler(ctx)
+      return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+    }
+    const runDerive = (ctx: RawContext): MaybePromise<Response> => {
+      let derived: unknown
+      try {
+        derived = derive(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (derived instanceof Promise) {
+        return derived.then(
+          (settled) => {
+            if (isResponseResult(settled) || settled instanceof Response) {
+              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+            }
+            Object.assign(ctx, settled as object)
+            return runBefore(ctx)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (isResponseResult(derived) || derived instanceof Response) {
+        return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+      }
+      Object.assign(ctx, derived as object)
+      return runBefore(ctx)
+    }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
         ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
@@ -4726,94 +4814,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      const runAfter = (result: unknown): MaybePromise<Response> => {
-        let transformed: unknown
-        try {
-          transformed = after(result, ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (transformed instanceof Promise) {
-          return transformed.then(
-            (value) =>
-              fusedRespond(
-                value,
-                ctx,
-                this.responseBodyTag,
-                this.staticResponseHeaders,
-                this.onResponseHooks.length === 0,
-              ),
-            (err) => logError(err, ctx),
-          )
-        }
-        return fusedRespond(
-          transformed,
-          ctx,
-          this.responseBodyTag,
-          this.staticResponseHeaders,
-          this.onResponseHooks.length === 0,
-        )
-      }
-      const runHandler = (): MaybePromise<Response> => {
-        let result: unknown
-        try {
-          result = handler(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (result instanceof Promise) {
-          return result.then(
-            (value) => runAfter(value),
-            (err) => logError(err, ctx),
-          )
-        }
-        return runAfter(result)
-      }
-      const runBefore = (): MaybePromise<Response> => {
-        let early: unknown
-        try {
-          early = before(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (early instanceof Promise) {
-          return early.then(
-            (settled) => {
-              if (settled === undefined) return runHandler()
-              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
-            },
-            (err) => logError(err, ctx),
-          )
-        }
-        if (early === undefined) return runHandler()
-        return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
-      }
-      const runDerive = (): MaybePromise<Response> => {
-        let derived: unknown
-        try {
-          derived = derive(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (derived instanceof Promise) {
-          return derived.then(
-            (settled) => {
-              if (isResponseResult(settled) || settled instanceof Response) {
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
-              }
-              Object.assign(ctx, settled as object)
-              return runBefore()
-            },
-            (err) => logError(err, ctx),
-          )
-        }
-        if (isResponseResult(derived) || derived instanceof Response) {
-          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
-        }
-        Object.assign(ctx, derived as object)
-        return runBefore()
-      }
-      if (querySchema === undefined) return runDerive()
+      if (querySchema === undefined) return runDerive(ctx)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
@@ -4826,7 +4827,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return this.wrapWebResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive()
+            return runDerive(ctx)
           },
           (err) => logError(err, ctx),
         )
@@ -4834,7 +4835,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive()
+      return runDerive(ctx)
     }
   }
 
