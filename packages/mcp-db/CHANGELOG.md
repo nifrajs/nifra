@@ -35,6 +35,7 @@
 
 ### Patch Changes
 
+- 0f486f2: Closing a connection from `openReadOnlySqlite` releases the database file right away, instead of when its statements are garbage collected.
 - Updated dependencies [d4d40a5]
 - Updated dependencies [9ccf198]
   - @nifrajs/mcp@4.0.0

@@ -51,6 +51,7 @@
   Breaking: `solidBunPlugin` is no longer exported from `@nifrajs/web-solid`, nor `svelteBunPlugin` from `@nifrajs/web-svelte`. `nifra fix --code NF-C005` rewrites those imports.
 
 - a0cfffa: Cloudflare scaffolds (a site with `--target cloudflare`, and the ISR template) declare `compatibility_date = "2025-04-01"`, the first date at which `nodejs_compat` fills `process.env` from the project's variables, so `NIFRA_ALLOW_MEMORY_RATE_LIMIT` reaches the starter's rate limit. Their local-only commands (`bun run start` for the site, `bun run dev` for ISR) set it for the one local process; a deploy still refuses to start until the variable is set.
+- 9868241: `bun create nifra . --force` scaffolds into the current directory on Windows.
 - 6ce7975: The `AGENTS.md` a new app ships with names every route schema slot (`body`, `query`, `params`, `headers`, `cookies`) and shows a `params` schema validating and coercing a path param, where it used to say path params and headers could not be declared in the route schema.
 - 7669f56: A project whose name has capitals, `_`, or `.` (`MyApp`, `my_app`) gets a Docker image tag, a `wrangler.toml` `name`, and Cloudflare Pages and Deno Deploy CI project names in lowercase letters, digits, and `-`, the form those platforms take. `package.json` keeps the name as given.
 - a77b341: The `site` and `isr` templates now ignore `.env` and `.env.*` (keeping `.env.example`), as the `api` and `batteries` templates already did.

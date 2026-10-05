@@ -603,6 +603,7 @@
 
 ### Patch Changes
 
+- 86e2d0f: In Bun dev, deleting a route regenerates the client entry and runs the leak guard once instead of twice.
 - 0e9b167: fix(web): a route's ISR freshness and tags stay between the app and its cache wrapper
 
   `x-nifra-isr-revalidate` and `x-nifra-isr-tags` carry a route's `revalidate` and `revalidateTags`
