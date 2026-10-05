@@ -122,6 +122,28 @@ function isWalDatabase(file: string): boolean {
 const SQLITE_BUSY_TIMEOUT_MS = 2_000
 
 /**
+ * Make `close()` finalize every statement prepared on `db`. Otherwise bun:sqlite keeps a connection with
+ * live statements open until they are garbage collected, and the process holds the file until then.
+ */
+function finalizeOnClose(db: Database): Database {
+  const statements: { finalize(): void }[] = []
+  const prepare = db.prepare.bind(db)
+  const close = db.close.bind(db)
+  Object.assign(db, {
+    prepare: (...args: Parameters<Database["prepare"]>) => {
+      const statement = prepare(...args)
+      statements.push(statement)
+      return statement
+    },
+    close: (throwOnError?: boolean) => {
+      for (const statement of statements.splice(0)) statement.finalize()
+      close(throwOnError)
+    },
+  })
+  return db
+}
+
+/**
  * Open a SQLite file read-only: the `readonly` flag plus `PRAGMA query_only = ON`.
  *
  * Trap: a read-only connection cannot create a WAL database's `-wal` file, so while no writer has the
@@ -140,7 +162,7 @@ export async function openReadOnlySqlite(file: string): Promise<Database> {
     return db
   }
   // safeIntegers: an INTEGER beyond 2^53 comes back exact (as a bigint) instead of rounded.
-  const readonly = new Database(file, { readonly: true, safeIntegers: true })
+  const readonly = finalizeOnClose(new Database(file, { readonly: true, safeIntegers: true }))
   try {
     return probe(readonly)
   } catch (error) {
@@ -153,7 +175,7 @@ export async function openReadOnlySqlite(file: string): Promise<Database> {
       throw error
     }
   }
-  const fallback = new Database(file, { readwrite: true, safeIntegers: true })
+  const fallback = finalizeOnClose(new Database(file, { readwrite: true, safeIntegers: true }))
   try {
     return probe(fallback)
   } catch (error) {

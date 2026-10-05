@@ -1,6 +1,16 @@
 import { Database } from "bun:sqlite"
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -53,6 +63,22 @@ function seededFile(options: { wal?: boolean } = {}): string {
 }
 
 const CAPS = { maxRows: 50, maxResultBytes: 64 * 1024 }
+
+/** The paths this process holds open (Linux and macOS). */
+const heldPaths = (): string[] =>
+  process.platform === "linux"
+    ? readdirSync("/proc/self/fd").flatMap((fd) => {
+        try {
+          return [readlinkSync(`/proc/self/fd/${fd}`)]
+        } catch {
+          return []
+        }
+      })
+    : Bun.spawnSync(["lsof", "-Fn", "-p", String(process.pid)])
+        .stdout.toString()
+        .split("\n")
+        .filter((line) => line.startsWith("n"))
+        .map((line) => line.slice(1))
 
 describe("refusals", () => {
   test("every refusal carries a fix and a docs anchor", () => {
@@ -182,6 +208,17 @@ describe("resolveSqliteFile", () => {
 })
 
 describe("openReadOnlySqlite", () => {
+  test("closing the connection lets go of the file", async () => {
+    const file = seededFile()
+    const db = await openReadOnlySqlite(file)
+    sqliteRelations(db)
+    expect(isDbRefusal(querySqlite(db, "SELECT * FROM orders", CAPS))).toBe(false)
+    db.close()
+    // Windows refuses to delete a file a process still holds; elsewhere the descriptor table says.
+    if (process.platform === "win32") rmSync(file)
+    else expect(heldPaths()).not.toContain(realpathSync(file))
+  })
+
   test("a rollback-journal file opens read-only and the engine refuses writes", async () => {
     const db = await openReadOnlySqlite(seededFile())
     try {
