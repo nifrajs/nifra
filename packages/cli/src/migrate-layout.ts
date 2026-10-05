@@ -947,21 +947,25 @@ export async function migrateLayout(
     }
     edges.set(file, refs)
   }
-  const reach = (roots: readonly string[]): Set<string> => {
+  const files = [...new Set([...next.keys(), ...everyFile.filter((f) => !original.has(f))])]
+  const frontendRoots = files.filter(
+    (f) => f.startsWith("routes/") && ROUTE_FILE.test(f) && !f.includes(".backend."),
+  )
+  // A route page the server imports - a generated `server-manifest.ts` imports them all - is rendered
+  // there, not run as server code, so the server's walk stops at it: what only pages use stays frontend.
+  const pages = new Set(frontendRoots)
+  const reach = (roots: readonly string[], stopAt?: ReadonlySet<string>): Set<string> => {
     const seen = new Set<string>()
     const queue = [...roots]
     while (queue.length > 0) {
       const file = queue.pop() as string
       if (seen.has(file)) continue
       seen.add(file)
+      if (stopAt?.has(file)) continue
       for (const edge of edges.get(file) ?? []) if (!edge.typeOnly) queue.push(edge.target)
     }
     return seen
   }
-  const files = [...new Set([...next.keys(), ...everyFile.filter((f) => !original.has(f))])]
-  const frontendRoots = files.filter(
-    (f) => f.startsWith("routes/") && ROUTE_FILE.test(f) && !f.includes(".backend."),
-  )
   const backendRoots = files.filter(
     (f) =>
       (f.startsWith("routes/") && f.includes(".backend.")) ||
@@ -970,11 +974,12 @@ export async function migrateLayout(
       (isRootScript(f) && f !== "nifra.config.ts" && !isTestFile(f)),
   )
   const browser = reach(frontendRoots)
-  const server = reach(backendRoots)
+  const server = reach(backendRoots, pages)
   // What the app's own server modules reach, without the root scripts: a root file in here is a module
   // the app imports, not an entry, so it moves into a zone.
   const appServer = reach(
     backendRoots.filter((f) => f.includes("/") || ROOT_MOVES[f] !== undefined),
+    pages,
   )
   // A `.server` module ran empty in the browser, so only server code used it: it moves under backend/.
   for (const file of files) {
