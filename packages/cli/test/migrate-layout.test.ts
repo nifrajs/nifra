@@ -226,6 +226,106 @@ describe("migrateLayout", () => {
     ])
   })
 
+  test("paths found at run time: a split folder, scripts and config are reported", async () => {
+    const dir = app({
+      "backend.ts": [
+        'import { migrate } from "./db/migrate.ts"',
+        'import release from "./release.json"',
+        "export const version = release.version",
+        "await migrate()",
+        "",
+      ].join("\n"),
+      "db/migrate.ts": [
+        'import { readdirSync } from "node:fs"',
+        'import { up } from "../migrations/0002_backfill.ts"',
+        'export const migrate = () => [readdirSync(import.meta.dir + "/../migrations"), up()]',
+        "",
+      ].join("\n"),
+      "migrations/0001_init.sql": "create table t (id int);\n",
+      "migrations/0002_backfill.ts": "export const up = () => 1\n",
+      "release.json": '{ "version": "1.0.0" }\n',
+      "scripts/release.sh": "#!/bin/sh\nbun db/migrate.ts\n",
+      "package.json": '{ "scripts": { "version": "jq .version release.json" } }\n',
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "backend/db/migrate.ts")).toContain('import.meta.dir + "/../../migrations"')
+    expect(result.moves.map((m) => m.to)).toEqual([
+      "backend/app.ts",
+      "backend/db/migrate.ts",
+      "backend/migrations/0002_backfill.ts",
+      "backend/release.json",
+    ])
+    // `./release.json` from backend/app.ts moved with it, so that import is current and not reported.
+    expect(result.issues).toEqual([
+      {
+        file: "package.json",
+        reason: 'mentions "release.json" by path; it moved to "backend/release.json"',
+      },
+      {
+        file: "scripts/release.sh",
+        reason: 'mentions "db/migrate.ts" by path; it moved to "backend/db/migrate.ts"',
+      },
+      {
+        file: "migrations/0002_backfill.ts",
+        reason:
+          'moves to "backend/migrations/0002_backfill.ts" but "migrations/0001_init.sql" stays in migrations/; code or tooling that lists migrations/ no longer finds what moved - move the folder together by hand',
+      },
+    ])
+  })
+
+  test("a moved module's paths from its own location are re-pointed; one it cannot follow is reported", async () => {
+    const dir = app({
+      "backend.ts": 'import { posts } from "./lib/content.ts"\nexport const all = posts\n',
+      "lib/content.ts": [
+        'import { join, resolve } from "node:path"',
+        'import { fileURLToPath } from "node:url"',
+        'import { util } from "./util.ts"',
+        "export const posts = [",
+        '  join(import.meta.dir, "..", "content", "posts"),',
+        '  resolve(__dirname, "../content/"),',
+        "  `${import.meta.dirname}/data.json`,",
+        '  new URL("./util.ts", import.meta.url),',
+        "  fileURLToPath(import.meta.url),",
+        "  util,",
+        "]",
+        "",
+      ].join("\n"),
+      "lib/util.ts": "export const util = 1\n",
+      "lib/data.json": "{}\n",
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "backend/lib/content.ts")).toBe(
+      [
+        'import { join, resolve } from "node:path"',
+        'import { fileURLToPath } from "node:url"',
+        'import { util } from "./util.ts"',
+        "export const posts = [",
+        '  join(import.meta.dir, "..", "..", "content", "posts"),',
+        '  resolve(__dirname, "../../content/"),',
+        "  `${import.meta.dirname}/../../lib/data.json`,",
+        '  new URL("./util.ts", import.meta.url),',
+        "  fileURLToPath(import.meta.url),",
+        "  util,",
+        "]",
+        "",
+      ].join("\n"),
+    )
+    expect(result.issues).toEqual([
+      {
+        file: "backend/lib/content.ts",
+        reason:
+          'builds a path from its own location (import.meta.url) that the migration could not re-point, and it moved from "lib/content.ts"; check that path by hand',
+      },
+      {
+        file: "lib/content.ts",
+        reason:
+          'moves to "backend/lib/content.ts" with 1 other file(s) but "lib/data.json" stays in lib/; code or tooling that lists lib/ no longer finds what moved - move the folder together by hand',
+      },
+    ])
+  })
+
   test("a moved module's import that leaves the app is re-based", async () => {
     const dir = app({
       "routes/index.tsx": 'import { Card } from "../ui/card.tsx"\nexport default () => <Card />\n',
