@@ -73,7 +73,7 @@ api.files("report.txt")
 // @ts-expect-error a mixed segment has no param name to call by
 api.files({ "name.json": "report" })
 // @ts-expect-error the segment is not a property: that spelling would send the pattern itself
-api["post-:id"]
+void api["post-:id"]
 // @ts-expect-error the literal text is required
 api.img("7")
 // @ts-expect-error the `.json` route has no `comments` child

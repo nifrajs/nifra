@@ -59,10 +59,11 @@ describe("local execution policy adapter", () => {
     })
     expect(result.ok).toBe(false)
     expect(result.timedOut).toBe(true)
-    // POSIX exposes the escalation signal. Windows' child-process layer reports the terminating
-    // signal as SIGTERM even when the second kill is the operation that closes the child; timeout
-    // and completion are the portable contract there.
-    expect(result.signal).toBe(process.platform === "win32" ? "SIGTERM" : "SIGKILL")
+    // POSIX exposes the escalation signal. On Windows taskkill ends the tree, and the child-process
+    // layer reports SIGTERM on some runs and no signal on others; timeout and completion are the
+    // portable contract there.
+    if (process.platform === "win32") expect([undefined, "SIGTERM"]).toContain(result.signal)
+    else expect(result.signal).toBe("SIGKILL")
   }, 10_000)
 
   const policy = (timeMs: number) => ({

@@ -76,7 +76,7 @@ const ARM_AND_THROW = `(() => {
 })()`
 
 const until = (condition: string, timeoutMs = 5000): string =>
-  `new Promise((resolve, reject) => { const start = Date.now(); const t = setInterval(() => { try { if (${condition}) { clearInterval(t); resolve(true) } } catch (e) {} if (Date.now() - start > ${timeoutMs}) { clearInterval(t); reject(new Error("timed out: " + ${JSON.stringify(condition)})) } }, 20) })`
+  `new Promise((resolve, reject) => { const start = Date.now(); const t = setInterval(() => { try { if (${condition}) { clearInterval(t); resolve(true) } } catch (e) {} if (Date.now() - start > ${timeoutMs}) { clearInterval(t); reject(new Error("timed out")) } }, 20) })`
 
 describe.skipIf(chrome === undefined)("dev issues indicator in a browser", () => {
   let page: ChromePage

@@ -21,9 +21,9 @@ const after = before.use(
     ] = [true, true, true, true]
     void checks
     // @ts-expect-error - a request no route matched has no body to read
-    input.body
+    void input.body
     // @ts-expect-error - and no raw request to read one from
-    input.request
+    void input.request
     // @ts-expect-error - the view is read-only
     input.pathname = "/other"
     return input.header("accept") === "text/html" ? new Response("<h1>404</h1>") : undefined
