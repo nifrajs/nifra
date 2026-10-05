@@ -8,6 +8,7 @@ import {
   type RouteEntry,
   type RouteModule,
 } from "../src/manifest.ts"
+import { createMatcher } from "../src/router.ts"
 
 test("filePathToPattern: index, static, nested, dynamic param", () => {
   expect(filePathToPattern("index.tsx")).toBe("/")
@@ -166,10 +167,33 @@ test("a route file name cannot carry a param constraint", () => {
   expect(filePathToPattern("x/{a|b}-[id].tsx")).toBe("/x/{a|b}-:id")
 })
 
-test("buildManifest rejects overlapping route patterns at boot", () => {
-  expect(() => buildManifest(["users/[id].tsx", "users/me.tsx"], fakeImporter)).toThrow(
-    /overlapping routes.*users\/\[id\]\.tsx.*\/users\/:id.*users\/me\.tsx.*\/users\/me/,
+test("buildManifest rejects two routes of one shape at boot", () => {
+  expect(() => buildManifest(["users/[id].tsx", "users/[slug].tsx"], fakeImporter)).toThrow(
+    /overlapping routes.*users\/\[id\]\.tsx.*\/users\/:id.*users\/\[slug\]\.tsx.*\/users\/:slug.*same shape/,
   )
+  expect(() => buildManifest(["[lang]/about.tsx", "[section]/about.tsx"], fakeImporter)).toThrow(
+    /overlapping routes.*same shape/,
+  )
+})
+
+test("buildManifest keeps a static route beside a dynamic one, and the static one serves its path", () => {
+  for (const files of [
+    ["users/[id].tsx", "users/me.tsx"],
+    ["users/me.tsx", "users/[id].tsx"],
+    ["[lang]/index.tsx", "[lang]/about.tsx", "about.tsx", "index.tsx", "pricing.tsx"],
+    ["docs/[...path].tsx", "docs/[page].tsx", "docs/intro.tsx"],
+  ]) {
+    const m = buildManifest(files, fakeImporter)
+    const match = createMatcher(m.routes.map((r) => ({ routeId: r.id, pattern: r.pattern })))
+    for (const r of m.routes) {
+      const literal = !r.pattern.includes(":") && !r.pattern.includes("*")
+      if (literal) expect(match(r.pattern)?.routeId).toBe(r.id)
+    }
+  }
+  const m = buildManifest(["users/[id].tsx", "users/me.tsx"], fakeImporter)
+  const match = createMatcher(m.routes.map((r) => ({ routeId: r.id, pattern: r.pattern })))
+  expect(match("/users/me")?.routeId).toBe("users/me")
+  expect(match("/users/42")?.routeId).toBe("users/[id]")
 })
 
 test("buildManifest keeps disjoint dynamic route patterns", () => {

@@ -5,7 +5,12 @@
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
 import { routePatternOverlap } from "@nifrajs/core"
-import { paramConstraint } from "@nifrajs/core/pattern"
+import {
+  type CompiledRoutePattern,
+  compareRoutePatternSpecificity,
+  compileRoutePattern,
+  paramConstraint,
+} from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
 import { guardChannel, outputGuard } from "./internal/output-guard.ts"
@@ -1109,6 +1114,7 @@ export function buildManifest(
 
   const byPattern = new Map<string, string>()
   const routes: RouteEntry[] = []
+  const shapes: CompiledRoutePattern[] = []
   for (const file of routeFiles) {
     const dirs = ancestorDirs(file)
     const layoutDirsForFile = dirs.filter((dir) => layoutDirs.has(dir))
@@ -1132,14 +1138,22 @@ export function buildManifest(
           `[nifra/web] duplicate route: "${file}" and "${existing}" both map to "${pattern}"`,
         )
       }
-      for (const previous of routes) {
+      // A path two shapes share goes to the more specific one (static > mixed > param > wildcard,
+      // segment by segment - the router's own order), and each keeps paths of its own, so
+      // `users/me.tsx` beside `users/[id].tsx` is ordinary. Only one shape twice is ambiguous.
+      const shape = compileRoutePattern(pattern)
+      for (const [index, previous] of routes.entries()) {
+        if (compareRoutePatternSpecificity(shapes[index] as CompiledRoutePattern, shape) !== 0) {
+          continue
+        }
         const witness = routePatternOverlap(previous.pattern, pattern)
         if (witness !== undefined) {
           throw new Error(
-            `[nifra/web] overlapping routes: "${previous.file}" (${previous.pattern}) and "${file}" (${pattern}) both match "${witness}"; make the patterns disjoint or remove one route`,
+            `[nifra/web] overlapping routes: "${previous.file}" (${previous.pattern}) and "${file}" (${pattern}) both match "${witness}" with the same shape, so one of them could never be served; make the patterns disjoint or remove one route`,
           )
         }
       }
+      shapes.push(shape)
       byPattern.set(pattern, file)
       routes.push({
         id,
