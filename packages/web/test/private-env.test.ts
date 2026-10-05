@@ -69,6 +69,15 @@ describe("privateEnvReads", () => {
     ).toEqual(["import.meta.env.SCRIPT", "process.env.ATTR", "process.env.MUSTACHE"])
   })
 
+  test("a script block ends at its closing tag however that tag is spaced", () => {
+    expect(
+      reads("a.svelte", "<script>\nconst k = process.env.SPACED\n</script >\n<p>hi</p>\n"),
+    ).toEqual(["process.env.SPACED"])
+    expect(
+      reads("a.vue", "<script setup>\nconst v = process.env.BROKEN\n</script\n>\n<template />\n"),
+    ).toEqual(["process.env.BROKEN"])
+  })
+
   test("MDX: ESM and expressions, never prose or code samples", () => {
     const source = [
       "export const k = process.env.ESM",

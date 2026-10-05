@@ -18,6 +18,7 @@ import {
 } from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
+import { HTML_COMMENT, withoutMatches } from "./html-spans.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
 import { publicUrlPath } from "./public-url.ts"
 
@@ -293,11 +294,10 @@ const hasStylesheetImport = (source: string): boolean => {
 }
 /** A single-file-component `<style>` block (Svelte/Vue). The bundler extracts these into the app
  * stylesheet even though no `import "...css"` statement exists, so the dev contract must count them
- * or a scoped-style component would look style-free next to a production manifest that carries css. */
+ * or a scoped-style component would look style-free next to a production manifest that carries css.
+ * A `<style>` inside markup or an expression is not a block, which is why the match is anchored to a
+ * line start; one in an HTML comment is prose, so comments are removed before it runs. */
 const SFC_STYLE = /^<style[\s>]/im
-/** A `<style>` mentioned in an HTML comment is prose, not a block the compiler extracts; neither is
- * one inside markup or an expression, which is why the match above is anchored to a line start. */
-const HTML_COMMENT = /<!--[\s\S]*?-->/g
 const isSingleFileComponent = (file: string): boolean =>
   file.endsWith(".svelte") || file.endsWith(".vue")
 
@@ -1088,7 +1088,7 @@ export function collectDevelopmentParityInput(
     const content = readFileSync(file, "utf8")
     return (
       hasStylesheetImport(content) ||
-      (isSingleFileComponent(file) && SFC_STYLE.test(content.replace(HTML_COMMENT, "")))
+      (isSingleFileComponent(file) && SFC_STYLE.test(withoutMatches(content, HTML_COMMENT)))
     )
   })
     ? ["css:present"]

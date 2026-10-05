@@ -92,7 +92,8 @@ export function createCspPolicy(options: CreateCspPolicyOptions): CspPolicy {
 export const isCspPolicy = (value: unknown): value is CspPolicy =>
   typeof value === "object" && value !== null && CSP_POLICY in value
 
-const INLINE_SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
+// A closing tag ends at any space, slash or `>` after its name, as a browser reads it.
+const INLINE_SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script(?=[\s/>])[^>]*>/gi
 
 /** The bodies of the executable inline scripts in a fragment of markup (no `src`, no inert type). */
 const inlineScriptBodies = (html: string): string[] => {

@@ -10,6 +10,7 @@
  * ESM lines.
  */
 import { readFileSync } from "node:fs"
+import { HTML_COMMENT, withoutMatches } from "./html-spans.ts"
 
 const IMPORT_META_FLAGS = new Set(["MODE", "DEV", "PROD", "SSR", "BASE_URL"])
 
@@ -196,19 +197,20 @@ function envReads(tokens: readonly Token[]): EnvRead[] {
   return reads
 }
 
+// A closing tag ends at any space, slash or `>` after its name, as a browser and the compilers read it.
+const SCRIPT_ELEMENT = /<script\b[^>]*>([\s\S]*?)<\/script(?=[\s/>])[^>]*>/gi
+const STYLE_ELEMENT = /<style\b[^>]*>[\s\S]*?<\/style(?=[\s/>])[^>]*>/gi
+
 /** The code of a Svelte or Vue file: its scripts as modules, its markup expressions one by one. */
 function sfcCode(
   source: string,
   vue: boolean,
 ): { readonly scripts: string[]; readonly expressions: string[] } {
   const scripts: string[] = []
-  const markup = source
-    .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (_, body: string) => {
-      scripts.push(body)
-      return ""
-    })
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
+  const withoutScripts = withoutMatches(source, SCRIPT_ELEMENT, (match) => {
+    scripts.push(match[1] ?? "")
+  })
+  const markup = withoutMatches(withoutMatches(withoutScripts, STYLE_ELEMENT), HTML_COMMENT)
   const expressions: string[] = []
   if (vue) {
     for (const match of markup.matchAll(/\{\{([\s\S]*?)\}\}/g)) expressions.push(match[1] ?? "")

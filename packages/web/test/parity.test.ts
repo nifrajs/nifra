@@ -293,6 +293,26 @@ test("development parity ignores a <style> in an SFC comment, markup or expressi
   }
 })
 
+test("development parity ends an SFC comment at --!> as a browser does", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-bang-comment-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "_layout.vue"),
+      [
+        "<!--",
+        "<style>.retired { color: red }</style>",
+        "--!>",
+        "<template><slot /></template>",
+      ].join("\n"),
+    )
+    expect(collectDevelopmentParityInput(routesDir, false).css).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("development parity reports no css for a style-free route", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-nocss-"))
   try {

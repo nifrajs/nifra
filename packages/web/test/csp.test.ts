@@ -134,6 +134,14 @@ test("an adapter whose hydration head stops matching the hashed one falls back t
   expect(res.headers.get("cache-control")).toBe("private, no-store")
 })
 
+test("a hydration script is hashed however its closing tag is spaced", async () => {
+  const spaced: RenderAdapter = {
+    ...adapter,
+    hydrationHead: () => "<script>globalThis.boot = 3</script >",
+  }
+  expect(await nifraScriptHashes(spaced)).toContain(await sha256Source("globalThis.boot = 3"))
+})
+
 test("createWebApp refuses `csp` with `nonce`, and a csp value not made by createCspPolicy", () => {
   const base = { adapter, clientEntry: "/c.js", manifest: manifestOf({}) }
   expect(() =>
