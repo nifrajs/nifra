@@ -1377,7 +1377,7 @@ describe("WS messageSchema (contract-validated messages)", () => {
     const frame = JSON.stringify({
       codec: "wire",
       version: 1,
-      payload: richWireCodec().encode([/^(a+)+$/]),
+      payload: richWireCodec().encode([/^a+$/]),
     })
     for (const acceptRegExp of [false, true]) {
       const seen: unknown[] = []
@@ -1400,7 +1400,7 @@ describe("WS messageSchema (contract-validated messages)", () => {
       await out.handler.message?.(fakeWs(), frame)
       expect({ acceptRegExp, seen, invalid }).toEqual(
         acceptRegExp
-          ? { acceptRegExp, seen: [[/^(a+)+$/]], invalid: [] }
+          ? { acceptRegExp, seen: [[/^a+$/]], invalid: [] }
           : { acceptRegExp, seen: [], invalid: ["invalid JSON"] },
       )
     }

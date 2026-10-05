@@ -375,7 +375,7 @@ describe("transport lane edges", () => {
           new Request("http://test/echo", {
             method: "POST",
             headers: { "content-type": rich.mediaType, accept: "application/json" },
-            body: rich.encode({ filter: [/^(a+)+$/] }),
+            body: rich.encode({ filter: [/^a+$/] }),
           }),
         )
     const refused = await post(false)
@@ -383,7 +383,7 @@ describe("transport lane edges", () => {
     expect(await refused.json()).toMatchObject({ error: "invalid_transport_payload" })
     expect(seen).toEqual([])
     expect((await post(true)).status).toBe(200)
-    expect(seen).toEqual([{ filter: [/^(a+)+$/] }])
+    expect(seen).toEqual([{ filter: [/^a+$/] }])
   })
 
   test("a shared reference within the bound still decodes", async () => {

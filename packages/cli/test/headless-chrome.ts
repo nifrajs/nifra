@@ -132,7 +132,8 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
     socket.addEventListener("message", (event) => {
       const message: CdpMessage = JSON.parse(String(event.data))
       if (message.id !== undefined) {
-        pending.get(message.id)?.(message)
+        const settle = pending.get(message.id)
+        if (typeof settle === "function") settle(message)
         pending.delete(message.id)
         return
       }
