@@ -100,8 +100,12 @@ interface WorkflowJob {
   readonly steps?: readonly WorkflowStep[]
 }
 
+// Windows checks the workflows out with CRLF line endings.
 const workflowText = (name: string): string =>
-  readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8")
+  readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  )
 
 const workflowJobs = (name: string): Readonly<Record<string, WorkflowJob | undefined>> =>
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a checked-in workflow; a field it lacks reads undefined and fails the assertion on it
@@ -246,23 +250,55 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
   },
 )
 
+const DEPLOY = "Deploy site to Cloudflare Pages"
+const PROBE = "Probe production site"
+
 test.skipIf(process.platform === "win32")(
-  "the site check passes once a healthy nifra.dev serves the llms.txt this job deployed",
+  "the deployment carries its own stamp, written before wrangler deploys the site",
+  () => {
+    const steps = workflowJobs("release.yml")["deploy-site"]?.steps ?? []
+    const stamps = [DEPLOY, PROBE].map(
+      (name) => steps.find((step) => step.name === name)?.env?.DEPLOYMENT,
+    )
+    expect(stamps).toEqual([
+      `\${{ github.run_id }}.\${{ github.run_attempt }}`,
+      `\${{ github.run_id }}.\${{ github.run_attempt }}`,
+    ])
+    const dir = mkdtempSync(join(tmpdir(), "release-site-deploy-"))
+    try {
+      mkdirSync(join(dir, "site"))
+      const PATH = fakeBin(dir, {
+        bun: "#!/bin/sh\nmkdir -p dist/assets\necho built > dist/index.html\n",
+        bunx: `#!/bin/sh\ncat dist/assets/deployment.txt > "${join(dir, "deployed.txt")}"\n`,
+      })
+      const deploy = Bun.spawnSync(["bash", "-e", "-c", releaseStep("deploy-site", DEPLOY)], {
+        cwd: join(dir, "site"),
+        env: { HOME: dir, PATH, DEPLOYMENT: "2.1" },
+      })
+      expect(deploy.exitCode).toBe(0)
+      expect(readFileSync(join(dir, "deployed.txt"), "utf8")).toBe("2.1\n")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
+
+test.skipIf(process.platform === "win32")(
+  "the site check passes once a healthy nifra.dev serves this deployment's stamp, not just the same pages",
   () => {
     const dir = mkdtempSync(join(tmpdir(), "release-site-probe-"))
     try {
-      mkdirSync(join(dir, "site", "dist"), { recursive: true })
-      writeFileSync(join(dir, "site", "dist", "llms.txt"), "# nifra\nthis release\n")
       const live = join(dir, "live")
-      // nifra.dev serves the previous deployment until `live` exists, which a wait creates under DEPLOYED.
+      // Until `live` exists nifra.dev serves the previous deployment: the same pages and corpus, an older
+      // stamp. A wait between rounds makes this deployment live under DEPLOYED.
       const PATH = fakeBin(dir, {
         curl: [
           "#!/bin/sh",
           'for arg; do url="$arg"; done',
-          `if [ -e "${live}" ]; then corpus="this release"; copy="new copy"; else corpus="last release"; copy="old copy"; fi`,
-          'if [ -n "$BROKEN" ]; then title="502 Bad Gateway"; else title="Nifra - $copy"; fi',
+          `if [ -e "${live}" ]; then stamp="$DEPLOYMENT"; else stamp="1.1"; fi`,
+          'if [ -n "$BROKEN" ]; then title="502 Bad Gateway"; else title="Nifra - the same copy"; fi',
           'case "$url" in',
-          '  */llms.txt) printf "# nifra\\n%s\\n" "$corpus" ;;',
+          '  */assets/deployment.txt) echo "$stamp" ;;',
           '  *) echo "<html><title>$title</title></html>" ;;',
           "esac",
           "",
@@ -270,9 +306,9 @@ test.skipIf(process.platform === "win32")(
         sleep: `#!/bin/sh\nif [ -n "$DEPLOYED" ]; then touch "${live}"; fi\n`,
       })
       const run = (env: Record<string, string>) =>
-        Bun.spawnSync(["bash", "-c", releaseStep("deploy-site", "Probe production site")], {
+        Bun.spawnSync(["bash", "-c", releaseStep("deploy-site", PROBE)], {
           cwd: dir,
-          env: { HOME: dir, PATH, ...env },
+          env: { HOME: dir, PATH, DEPLOYMENT: "2.1", ...env },
         }).exitCode
       expect(run({})).toBe(1)
       expect(run({ DEPLOYED: "1" })).toBe(0)

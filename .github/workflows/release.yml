@@ -305,28 +305,32 @@ jobs:
           echo "Registry smoke failed for @nifrajs/*@${version} after 3 attempts" >&2
           exit 1
 
+      # Two deployments can serve identical pages, so each carries its own stamp for the probe to look for.
+      # Pages serves /assets/* statically, without the Worker.
       - name: Deploy site to Cloudflare Pages
         working-directory: site
         run: |
           bun run build
+          printf '%s\n' "$DEPLOYMENT" > dist/assets/deployment.txt
           bunx wrangler pages deploy --branch main
         env:
+          DEPLOYMENT: ${{ github.run_id }}.${{ github.run_attempt }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # The homepage copy changes between releases, so a fixed string in it goes stale; the llms.txt this
-      # job deployed is what nifra.dev serves once the deployment is live.
       - name: Probe production site
         run: |
           set -euo pipefail
           for attempt in $(seq 1 20); do
             if home="$(curl --fail --silent --show-error https://nifra.dev/)" &&
               [[ "$home" == *"<title>Nifra - "* ]] &&
-              cmp -s <(curl --fail --silent --show-error https://nifra.dev/llms.txt) site/dist/llms.txt; then
-              echo "nifra.dev serves this build."
+              [[ "$(curl --fail --silent --show-error https://nifra.dev/assets/deployment.txt)" == "$DEPLOYMENT" ]]; then
+              echo "nifra.dev serves deployment ${DEPLOYMENT}."
               exit 0
             fi
             sleep 15
           done
-          echo "nifra.dev does not serve this build after 5 minutes." >&2
+          echo "nifra.dev does not serve deployment ${DEPLOYMENT} after 5 minutes." >&2
           exit 1
+        env:
+          DEPLOYMENT: ${{ github.run_id }}.${{ github.run_attempt }}
