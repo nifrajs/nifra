@@ -122,7 +122,8 @@ describe("scaffold - templates", () => {
     for (const template of ["api", "batteries", "site", "isr"] as const) {
       const dir = await freshDir(`env-${template}`)
       await scaffold({ target: dir, template })
-      const ignored = (await readFile(join(dir, ".gitignore"), "utf8")).split("\n")
+      // A Windows checkout can hand the template over with CRLF line endings.
+      const ignored = (await readFile(join(dir, ".gitignore"), "utf8")).split(/\r?\n/)
       expect(ignored).toContain(".env")
       expect(ignored).toContain(".env.*")
       expect(ignored).toContain("!.env.example")
@@ -431,7 +432,7 @@ describe("run (argv → code + message)", () => {
     const previous = process.cwd()
     process.chdir(dir)
     try {
-      expect((await run([".", "--force"])).code).toBe(0)
+      expect(await run([".", "--force"])).toMatchObject({ code: 0 })
     } finally {
       process.chdir(previous)
     }
