@@ -458,6 +458,7 @@
   impossible - no project CLI, no linked bin, or a hand-off that still disagrees - `nifra_check`,
   `nifra_types`, `nifra_docs`, `nifra_example`, `nifra_assure` and `nifra_contracts` fail with the
   version split and the command that fixes it, while release-independent tools keep working.
+- ff87ed3: `nifra migrate layout` finds an SFC's script blocks however their closing tag is spaced (`</script >`).
 - ba5dd1c: feat(web): a directory's route middleware runs before every page in it and below.
 
   ```ts
@@ -666,6 +667,7 @@
 - Updated dependencies [715186c]
 - Updated dependencies [4b8d8de]
 - Updated dependencies [f56b6a8]
+- Updated dependencies [8fa902c]
 - Updated dependencies [085e852]
 - Updated dependencies [b64c3ee]
 - Updated dependencies [dc2d4d3]
