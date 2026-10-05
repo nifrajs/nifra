@@ -63,3 +63,21 @@ test("release workflow verifies release PRs and never invokes Version Packages a
   expect(workflow).toContain("bun run changeset:publish")
   expect(workflow).not.toContain("changesets/action@")
 })
+
+test("release verification provisions the runtimes its gates run and leaves timing to the local run", () => {
+  const read = (name: string): string =>
+    readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8")
+  const release = read("release.yml")
+  const job = release.slice(
+    release.indexOf("\n  verify-release-pr:"),
+    release.indexOf("\n  publish:"),
+  )
+  const ci = read("ci.yml")
+  expect(job).toContain("bun run verify:release --shared-runner")
+  for (const pin of [
+    /denoland\/setup-deno@\w+\s+with:\s+deno-version: \S+/,
+    /actions\/setup-node@\w+\s+with:\s+node-version: \S+/,
+  ]) {
+    expect(job.match(pin)?.[0]).toBe(ci.match(pin)?.[0] ?? "missing from ci.yml")
+  }
+})
