@@ -81,7 +81,7 @@ type RawClient = {
 
 let instance: ReturnType<typeof app.listen>
 let api: Treaty<App>
-const url = (): string => `http://localhost:${instance.port}`
+const url = (): string => `http://127.0.0.1:${instance.port}`
 
 beforeAll(() => {
   instance = app.listen(0, { hostname: "127.0.0.1" })

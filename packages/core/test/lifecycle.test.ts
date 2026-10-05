@@ -27,7 +27,7 @@ describe("graceful shutdown", () => {
       return "done"
     })
     const srv = app.listen(0, { hostname: "127.0.0.1" })
-    const inflight = fetch(`http://localhost:${srv.port}/slow`)
+    const inflight = fetch(`http://127.0.0.1:${srv.port}/slow`)
       .then((r) => r.json())
       .catch(() => "ERR")
     await Bun.sleep(20) // ensure the request is in the handler
@@ -41,7 +41,7 @@ describe("graceful shutdown", () => {
       return "done"
     })
     const srv = app.listen(0, { hostname: "127.0.0.1" })
-    const inflight = fetch(`http://localhost:${srv.port}/slow`)
+    const inflight = fetch(`http://127.0.0.1:${srv.port}/slow`)
       .then((r) => r.text())
       .catch(() => "ERR")
     await Bun.sleep(50) // ensure the request is dispatched (pendingRequests > 0)
@@ -85,7 +85,7 @@ describe("graceful shutdown", () => {
     for (const handler of added) handler()
     await Bun.sleep(80)
 
-    const refused = await fetch(`http://localhost:${srv.port}/`)
+    const refused = await fetch(`http://127.0.0.1:${srv.port}/`)
       .then(() => false)
       .catch(() => true)
     expect(refused).toBe(true)
@@ -127,7 +127,7 @@ describe("body size limits", () => {
     const srv = app.listen(0, { hostname: "127.0.0.1" })
     try {
       // Over the wire, fetch sets a real Content-Length (~510 bytes > cap).
-      const res = await fetch(`http://localhost:${srv.port}/x`, {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/x`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ a: "x".repeat(500) }),

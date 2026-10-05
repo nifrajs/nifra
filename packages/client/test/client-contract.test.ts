@@ -64,7 +64,7 @@ let api: TreatyFromRegistry<RegistryFor<typeof contract>>
 beforeAll(() => {
   instance = app.listen(0, { hostname: "127.0.0.1" })
   // Decoupled: typed entirely from the contract VALUE - no server import.
-  api = client(contract, `http://localhost:${instance.port}`)
+  api = client(contract, `http://127.0.0.1:${instance.port}`)
 })
 afterAll(() => {
   instance.stop()
@@ -88,7 +88,7 @@ describe("decoupled client - client(contract, url)", () => {
 
   test("invalid body is still rejected at the boundary (422)", async () => {
     // raw escape to send a bad body the typed client would forbid
-    const raw = client(contract, `http://localhost:${instance.port}`) as unknown as {
+    const raw = client(contract, `http://127.0.0.1:${instance.port}`) as unknown as {
       users: { post: (b: unknown) => Promise<{ ok: boolean; status: number }> }
     }
     const res = await raw.users.post({ name: 123 })

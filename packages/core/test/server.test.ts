@@ -163,7 +163,7 @@ describe("Server - verbs and listen", () => {
     const app = server().get("/ping", () => ({ pong: true }))
     const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
-      const res = await fetch(`http://localhost:${instance.port}/ping`)
+      const res = await fetch(`http://127.0.0.1:${instance.port}/ping`)
       expect(await res.json()).toEqual({ pong: true })
     } finally {
       instance.stop()

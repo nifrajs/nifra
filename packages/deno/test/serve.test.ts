@@ -27,7 +27,7 @@ Deno.test("serves GET (JSON) + POST (body), resolves the bound port", async () =
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     assert(running.port > 0, "port should be resolved")
-    const base = `http://localhost:${running.port}`
+    const base = `http://127.0.0.1:${running.port}`
     assertEquals(await (await fetch(`${base}/users/42`)).json(), { id: "42" })
     const echoed = await fetch(`${base}/echo`, {
       method: "POST",
@@ -47,7 +47,7 @@ Deno.test("passes a 204 (no body) through correctly", async () => {
   })
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const res = await fetch(`http://localhost:${running.port}/empty`)
+    const res = await fetch(`http://127.0.0.1:${running.port}/empty`)
     assertEquals(res.status, 204)
     assertEquals(await res.text(), "")
   } finally {
@@ -65,7 +65,7 @@ Deno.test("a throwing app yields a flat 500 (no leak)", async () => {
     { hostname: "127.0.0.1", port: 0 },
   )
   try {
-    const res = await fetch(`http://localhost:${running.port}/`)
+    const res = await fetch(`http://127.0.0.1:${running.port}/`)
     assertEquals(res.status, 500)
     assertEquals(await res.json(), { ok: false, error: "internal_error" })
   } finally {
@@ -79,7 +79,7 @@ Deno.test("stop() drains an in-flight request, then is idempotent", async () => 
     return { done: true }
   })
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
-  const inflight = fetch(`http://localhost:${running.port}/slow`)
+  const inflight = fetch(`http://127.0.0.1:${running.port}/slow`)
     .then((r) => r.json())
     .catch(() => "ERR")
   await new Promise((resolve) => setTimeout(resolve, 20)) // ensure the request is in-flight
@@ -105,7 +105,7 @@ Deno.test("stop() force-closes a handler that outlives the drain deadline", asyn
     return { done: true }
   })
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
-  const inflight = fetch(`http://localhost:${running.port}/hang`).catch(() => undefined)
+  const inflight = fetch(`http://127.0.0.1:${running.port}/hang`).catch(() => undefined)
   await started
   const before = performance.now()
   await running.stop({ drainMs: 10 })
@@ -129,7 +129,7 @@ Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", asy
   })
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const res = await fetch(`http://localhost:${running.port}/slow`)
+    const res = await fetch(`http://127.0.0.1:${running.port}/slow`)
     assertEquals(res.status, 503)
     assertEquals(await res.json(), { ok: false, error: "request_timeout" })
   } finally {
@@ -178,7 +178,7 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
     .get("/health", () => ({ ok: true }))
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const wsBase = `ws://localhost:${running.port}`
+    const wsBase = `ws://127.0.0.1:${running.port}`
 
     const frames = await new Promise<string[]>((resolve, reject) => {
       const got: string[] = []
@@ -201,14 +201,14 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
     assertEquals(frames, ["welcome", "ping"])
 
     // A rejected upgrade comes back as a plain HTTP response, not a socket.
-    const denied = await fetch(`http://localhost:${running.port}/guarded?token=wrong`, {
+    const denied = await fetch(`http://127.0.0.1:${running.port}/guarded?token=wrong`, {
       headers: { upgrade: "websocket", connection: "Upgrade" },
     })
     await denied.body?.cancel()
     assertEquals(denied.status, 401)
 
     // Normal HTTP is unaffected on an app that also has WS routes.
-    assertEquals(await (await fetch(`http://localhost:${running.port}/health`)).json(), {
+    assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/health`)).json(), {
       ok: true,
     })
   } finally {
@@ -220,7 +220,7 @@ Deno.test("a WS-free app serves HTTP normally even when the client sends an Upgr
   const app = server().get("/health", () => ({ ok: true }))
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const res = await fetch(`http://localhost:${running.port}/health`, {
+    const res = await fetch(`http://127.0.0.1:${running.port}/health`, {
       headers: { upgrade: "websocket", connection: "Upgrade" },
     })
     assertEquals(await res.json(), { ok: true })
@@ -257,7 +257,7 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
     .get("/raw", () => new Response("<h1>hi</h1>", { headers: { "content-type": "text/html" } }))
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const base = `http://localhost:${running.port}`
+    const base = `http://127.0.0.1:${running.port}`
     const res = await fetch(`${base}/json`)
     assertEquals(res.status, 200)
     assertEquals(res.headers.get("x-request-id"), "rid-1")
@@ -324,7 +324,7 @@ Deno.test("statically declared response headers match the equivalent hook on the
     try {
       const out: unknown[] = []
       for (const path of paths) {
-        const res = await fetch(`http://localhost:${running.port}${path}`)
+        const res = await fetch(`http://127.0.0.1:${running.port}${path}`)
         const headers = [...res.headers]
           .filter(([name]) => name !== "date" && name !== "vary")
           .map(([name, value]) => [name, value])

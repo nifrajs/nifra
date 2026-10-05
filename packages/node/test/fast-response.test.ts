@@ -43,7 +43,7 @@ function rawResponseApp() {
 
 test("fastResponse serves a hand-rolled string Response byte-for-byte, with content-length", async () => {
   running = await serve(rawResponseApp(), { hostname: "127.0.0.1", port: 0, fastResponse: true })
-  const res = await fetch(`http://localhost:${running.port}/ping`)
+  const res = await fetch(`http://127.0.0.1:${running.port}/ping`)
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("text/plain")
   expect(res.headers.get("content-length")).toBe("2")
@@ -52,7 +52,7 @@ test("fastResponse serves a hand-rolled string Response byte-for-byte, with cont
 
 test("fastResponse preserves an explicit status and header on a raw Response", async () => {
   running = await serve(rawResponseApp(), { hostname: "127.0.0.1", port: 0, fastResponse: true })
-  const res = await fetch(`http://localhost:${running.port}/status`)
+  const res = await fetch(`http://127.0.0.1:${running.port}/status`)
   expect(res.status).toBe(201)
   expect(res.headers.get("x-mark")).toBe("1")
   expect(await res.text()).toBe("made")
@@ -60,11 +60,11 @@ test("fastResponse preserves an explicit status and header on a raw Response", a
 
 test("fastResponse leaves non-simple Responses (204, streamed) unchanged", async () => {
   running = await serve(rawResponseApp(), { hostname: "127.0.0.1", port: 0, fastResponse: true })
-  const empty = await fetch(`http://localhost:${running.port}/empty`)
+  const empty = await fetch(`http://127.0.0.1:${running.port}/empty`)
   expect(empty.status).toBe(204)
   expect(await empty.text()).toBe("")
 
-  const streamed = await fetch(`http://localhost:${running.port}/stream`)
+  const streamed = await fetch(`http://127.0.0.1:${running.port}/stream`)
   expect(streamed.headers.get("content-type")).toContain("text/plain")
   expect(await streamed.text()).toBe("streamed")
 })
