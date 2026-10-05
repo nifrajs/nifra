@@ -634,6 +634,7 @@
 
 - 08250bf: `nifra build` no longer fails its development/production css parity check when a tool such as `wrangler pages dev`, Vercel or SvelteKit has left bundles in a dot-directory (`.wrangler`, `.vercel`, `.svelte-kit`) inside the app.
 - 8fa902c: The private-env check reads every Svelte and Vue script block however its closing tag is spaced (`</script >`), CSP hashing finds the hydration head's inline scripts the same way, and development parity ends an SFC comment at `--!>` as a browser does.
+- 0dac7ec: Checking a Svelte or Vue file for private environment reads, and the development parity check, take time in proportion to the file's length when an HTML comment or a `{{` interpolation is left open.
 - b64c3ee: fix(web): the identity preflight behind `nifra check`, `nifra doctor` and the build now scans every
   package declared in `"nifra": { "singleCopy": [...] }`, not only the built-in identity-sensitive set.
   A declared package installed at two versions is a fatal `version-skew` finding with the same

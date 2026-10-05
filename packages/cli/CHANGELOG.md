@@ -546,6 +546,7 @@
   - The cli's route listings and the generated `llms.txt` print the call the same way
     (`` api.files(`${name}.json`) ``), and print an unnamed wildcard as `({ "*": rest })`.
 
+- af1e8af: Release verification takes `--shared-runner`, which leaves out the timing gates and names them for a local run, and a failed gate now shows the last lines its command printed.
 - 5a63dd4: feat(web): pages can carry a strict Content-Security-Policy and still be cached.
   A per-request nonce makes every document unique, so nifra marks a nonce-bearing page
   `private, no-store` and no shared cache (`withISR`, a CDN) may store it. `createCspPolicy({ header })`
@@ -669,6 +670,7 @@
 - Updated dependencies [f56b6a8]
 - Updated dependencies [8fa902c]
 - Updated dependencies [085e852]
+- Updated dependencies [0dac7ec]
 - Updated dependencies [b64c3ee]
 - Updated dependencies [dc2d4d3]
 - Updated dependencies [d1e2f50]
