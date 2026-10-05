@@ -336,7 +336,8 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     const templateDir = fileURLToPath(new URL(TEMPLATES[template], import.meta.url))
     // The destination is empty or --force was given (checked above), so nothing here replaces a file of
     // the user's; Bun's errorOnExist would also refuse an existing empty directory.
-    await cp(templateDir, opts.target, { recursive: true, force: true })
+    // Resolved: Bun's copy on Windows fails to create `.` as a destination (EEXIST).
+    await cp(templateDir, resolve(opts.target), { recursive: true, force: true })
     if (template === "isr") {
       for (const [file, contents] of starterRouteTypes("tsx")) {
         await mkdir(dirname(join(opts.target, file)), { recursive: true })
