@@ -8,6 +8,7 @@
  * Only type declarations below - this module must stay weightless, it is always in the base bundle.
  */
 
+import type { ProtoPoisoning } from "./proto-guard.ts"
 import type {
   NifraWebSocket,
   StandardWebSocket,
@@ -27,7 +28,7 @@ export interface BunWsHandlers {
 /** What `@nifrajs/core/ws` registers: everything `server.ts` and `toFetchHandler` need at runtime. */
 export interface WsRuntime {
   /** `wrapWebSocketMessageValidation` - applied once at `app.ws()` registration. */
-  wrapHandler(handler: WebSocketHandler): WebSocketHandler
+  wrapHandler(handler: WebSocketHandler, protoPoisoning: ProtoPoisoning): WebSocketHandler
   /** One in-process pub/sub registry per app (backs `ws.subscribe` + `app.publish`). */
   createTopics(): TopicRegistry
   /** The Bun `websocket` config for `listen()` when the app has WS routes. `nativePubsub` routes

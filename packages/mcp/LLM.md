@@ -34,5 +34,6 @@ _…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) fo
 ## Footguns
 
 - HTTP MCP is same-origin for browser clients by default. Set an exact `allowedOrigins` list for known cross-origin callers; use `allowAnyOrigin: true` only for an intentionally public, secret-free server.
+- A server on localhost or a private network needs `allowedHosts` (e.g. `["localhost", "127.0.0.1"]`): a DNS-rebound page reaches it under the attacker's hostname with a matching Origin, so only the Host check stops it. Unset, any Host is accepted.
 - `createMcpServer` has **no built-in authentication**. Put authorization at the host boundary with `authorizeMessage`, and do not expose state-changing or private tools on an unauthenticated mount.
 - Tool and prompt failures are deliberately returned as generic errors; log detailed diagnostics on the server and never put filesystem paths, SQL, provider responses, or secrets in thrown messages.

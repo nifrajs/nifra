@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
-import { parseJsonGuarded } from "../src/server/proto-guard.ts"
+import { guardDecodedValue, parseJsonGuarded } from "../src/server/proto-guard.ts"
 
 /**
  * The JSON body lane must not hand handlers a value that poisons prototypes downstream.
@@ -134,6 +134,31 @@ function streamRequest(path: string, payload: string): Request {
     body: stream,
   })
 }
+
+describe("guardDecodedValue - codec output", () => {
+  test("Set and Map members are walked like properties", () => {
+    const poisoned = () => JSON.parse('{"__proto__": {"admin": true}}')
+    expect(() => guardDecodedValue(new Set([1, poisoned()]), "reject")).toThrow(
+      "json_proto_poisoning",
+    )
+    expect(() => guardDecodedValue(new Map([["k", poisoned()]]), "reject")).toThrow(
+      "json_proto_poisoning",
+    )
+    expect(guardDecodedValue(new Set([{ ok: true }]), "reject")).toBeInstanceOf(Set)
+  })
+
+  test("strip deletes poisoned keys inside a decoded value, siblings survive", () => {
+    const member = JSON.parse('{"keep": 1, "__proto__": {"admin": true}}')
+    const value = {
+      list: new Set([member]),
+      nested: JSON.parse('{"constructor": {"prototype": {}}}'),
+    }
+    guardDecodedValue(value, "strip")
+    expect(Object.hasOwn(member, "__proto__")).toBe(false)
+    expect(Reflect.get(member, "keep")).toBe(1)
+    expect(Object.hasOwn(value.nested, "constructor")).toBe(false)
+  })
+})
 
 describe("protoPoisoning end to end (schema lane + c.boundedJson)", () => {
   test("default reject: poisoned body answers the same flat 400 as malformed JSON", async () => {

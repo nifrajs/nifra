@@ -54,7 +54,9 @@
  *   missed events and rejoin the still-running turn - the run is never re-executed. Without the
  *   log the header is ignored and every POST starts a run.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards,
- *   and scope the store/model returned by `ports` to the caller.
+ *   and scope the store/model returned by `ports` to the caller. With an `evidenceLog`, set
+ *   `evidenceOwner` too: without it a turn id (by default the client's `runId`) is a bearer
+ *   capability, and any caller who reaches the route with it replays that turn's events.
  */
 
 import {
@@ -78,6 +80,7 @@ import {
   type AgentEvidenceLog,
   type AgentEvidenceReplay,
   createAgentEvidenceStream,
+  scopeAgentEvidenceLog,
 } from "@nifrajs/agent/events"
 import {
   EMPTY_RESPONSE_CONTROLS,
@@ -145,6 +148,12 @@ export interface MountAgUIOptions<
    */
   readonly evidenceLog?: AgentEvidenceLog
   /**
+   * Who a turn's recorded events belong to - the caller's user or tenant id. Turns are recorded and
+   * replayed under it, so a reconnect or a reused run id from another caller finds nothing of this
+   * caller's turns. It runs before a replay is served; throw to refuse the request.
+   */
+  readonly evidenceOwner?: (c: AgUIRouteContext) => string | Promise<string>
+  /**
    * Emit a `MESSAGES_SNAPSHOT` (the request's `messages` plus the assistant output message)
    * before `RUN_FINISHED` on a successful completion. Default `false`: the snapshot echoes
    * client-sent message payloads, and terminal events are persisted to the evidence log when one
@@ -202,7 +211,10 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
   const resume = parseResume(forwarded.resume) ?? entry?.resume
-  const log = options.evidenceLog
+  const log =
+    options.evidenceLog === undefined || options.evidenceOwner === undefined
+      ? options.evidenceLog
+      : scopeAgentEvidenceLog(options.evidenceLog, await options.evidenceOwner(c))
   const identity: RunIdentity = { threadId, runId, turnId }
 
   // A reconnect replays recorded evidence and rejoins the turn; it never starts a second run.
@@ -222,15 +234,21 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const start = (
     telemetry: AgentPorts["telemetry"],
     deltas: AgentDeltaSink,
+    disconnect: AbortSignal | undefined,
   ): Promise<AgentRunResult<unknown>> => {
     // Compose rather than replace: the SSE evidence stream must not displace a telemetry port or
     // delta sink the caller injected through `ports`.
     const combined = combineAgentTelemetry(basePorts.telemetry, log?.open(turnId), telemetry)
     const sinks = combineAgentDeltaSinks(basePorts.deltas, deltas)
+    const signal =
+      basePorts.signal === undefined || disconnect === undefined
+        ? (basePorts.signal ?? disconnect)
+        : AbortSignal.any([basePorts.signal, disconnect])
     const ports = {
       ...basePorts,
       ...(combined === undefined ? {} : { telemetry: combined }),
       ...(sinks === undefined ? {} : { deltas: sinks }),
+      ...(signal === undefined ? {} : { signal }),
     }
     if (resume !== undefined) {
       return resumeAgent(options.agent, turnId, { value: input, resume }, ports, runOptions)
@@ -265,6 +283,7 @@ function sseResponse(
   start: (
     telemetry: AgentPorts["telemetry"],
     deltas: AgentDeltaSink,
+    disconnect: AbortSignal | undefined,
   ) => Promise<AgentRunResult<unknown>>,
   log: AgentEvidenceLog | undefined,
   snapshotMessages: unknown,
@@ -274,11 +293,18 @@ function sseResponse(
   const stream = createAgentEvidenceStream()
   // `id:` frames are only meaningful when a log can serve the reconnect they invite.
   const withIds = log !== undefined
+  // A disconnect detaches the client. With a log the run keeps recording for a reconnect to replay;
+  // without one nothing can rejoin it, so the run is cancelled.
+  const disconnect = log === undefined ? new AbortController() : undefined
+  let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller, maxOutputBytes)
+      const deliver = sseSender(controller, maxOutputBytes)
+      const send: SseSend = (event, id) => {
+        if (!detached) deliver(event, id)
+      }
       const projector = createDeltaProjector(send, identity.turnId)
-      const run = start(stream, projector.sink)
+      const run = start(stream, projector.sink, disconnect?.signal)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
       // below would hang; the run result (or the error) is still reported in-band after it drains.
       run
@@ -342,8 +368,12 @@ function sseResponse(
         }
       } finally {
         unsubscribe()
-        controller.close()
+        if (!detached) controller.close()
       }
+    },
+    cancel() {
+      detached = true
+      disconnect?.abort()
     },
   })
   return sseHeaders(body)
@@ -513,7 +543,7 @@ function createDeltaProjector(send: SseSend, turnId: string): DeltaProjector {
       // across model decisions without disturbing whichever stream is open.
       if (delta.kind === "usage") {
         usage = usage ?? new Map()
-        const key = `${delta.provider ?? ""} ${delta.model ?? ""}`
+        const key = `${delta.provider ?? ""}\u0000${delta.model ?? ""}`
         let entry = usage.get(key)
         if (entry === undefined) {
           entry = {

@@ -93,7 +93,11 @@ export function emitEffectLifecycle(
   if (input.attempt !== undefined && (!Number.isSafeInteger(input.attempt) || input.attempt < 1)) {
     return
   }
-  if (input.errorCode !== undefined && !ERROR_CODE.test(input.errorCode)) return
+  if (
+    input.errorCode !== undefined &&
+    (typeof input.errorCode !== "string" || !ERROR_CODE.test(input.errorCode))
+  )
+    return
   const event: EffectLifecycleEvent = Object.freeze({
     effectId: input.effectId,
     capability: input.capability,

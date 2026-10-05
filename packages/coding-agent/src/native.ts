@@ -123,6 +123,11 @@ export interface NifraBackendOptions {
   readonly approvalTimeoutMs?: number
   readonly maxSteps?: number
   readonly maxMessageChars?: number
+  /**
+   * Character budget for the conversation a session sends to the model (default 1 MiB). Past it,
+   * whole earlier turns are dropped, oldest first; the current turn is always sent in full.
+   */
+  readonly maxHistoryChars?: number
   readonly now?: () => number
 }
 
@@ -156,6 +161,7 @@ interface NativeSession {
   readonly id: string
   readonly cwd: string
   readonly messages: NativeMessage[]
+  historyChars: number
   controller: AbortController
   snapshot: AgentSessionSnapshot
   active: AgentEventStream | undefined
@@ -179,7 +185,9 @@ export class NifraBackend implements AgentBackend {
     name: "nifra",
     capabilities: Object.freeze(["sessions", "extensions", "reload", "approvals", "streaming"]),
   })
-  private readonly options: Required<Pick<NifraBackendOptions, "maxSteps" | "maxMessageChars">> &
+  private readonly options: Required<
+    Pick<NifraBackendOptions, "maxSteps" | "maxMessageChars" | "maxHistoryChars">
+  > &
     NifraBackendOptions
   private readonly sessions = new Map<string, NativeSession>()
   private readonly pendingApprovals = new Map<string, NativePendingApproval>()
@@ -189,6 +197,7 @@ export class NifraBackend implements AgentBackend {
       ...options,
       maxSteps: options.maxSteps ?? 32,
       maxMessageChars: options.maxMessageChars ?? 64 * 1024,
+      maxHistoryChars: options.maxHistoryChars ?? 1024 * 1024,
       tools: Object.freeze([...(options.tools ?? [])]),
     })
     if (
@@ -199,6 +208,8 @@ export class NifraBackend implements AgentBackend {
       throw new RangeError("nifra backend: maxSteps must be between 1 and 512")
     if (!Number.isSafeInteger(this.options.maxMessageChars) || this.options.maxMessageChars < 256)
       throw new RangeError("nifra backend: maxMessageChars must be at least 256")
+    if (!Number.isSafeInteger(this.options.maxHistoryChars) || this.options.maxHistoryChars < 256)
+      throw new RangeError("nifra backend: maxHistoryChars must be at least 256")
     if (
       this.options.approvalTimeoutMs !== undefined &&
       (!Number.isSafeInteger(this.options.approvalTimeoutMs) ||
@@ -243,6 +254,7 @@ export class NifraBackend implements AgentBackend {
       id,
       cwd: input.cwd,
       messages: [],
+      historyChars: 0,
       controller: new AbortController(),
       snapshot,
       active: undefined,
@@ -376,14 +388,15 @@ export class NifraBackend implements AgentBackend {
     }
     this.update(session, "running", turnId)
     this.emit(session, { type: "turn.started", turnId, prompt: message })
-    session.messages.push({ role: "user", text: message })
+    this.remember(session, { role: "user", text: message })
     try {
       for (let step = 0; step < this.options.maxSteps; step++) {
         this.assertCurrentTurn(session, stream, turnId, signal)
+        this.trimHistory(session)
         const raw = this.options.model.complete({
           sessionId: session.id,
           cwd: session.cwd,
-          messages: Object.freeze(session.messages.map((item) => Object.freeze({ ...item }))),
+          messages: Object.freeze(session.messages.slice()),
           tools: Object.freeze(
             this.options.tools!.map((tool) => ({
               name: tool.name,
@@ -397,7 +410,7 @@ export class NifraBackend implements AgentBackend {
         this.assertCurrentTurn(session, stream, turnId, signal)
         if (response.type === "text") {
           const text = boundedText(response.text, this.options.maxMessageChars)
-          session.messages.push({ role: "assistant", text })
+          this.remember(session, { role: "assistant", text })
           this.emit(session, { type: "assistant.message", turnId, text })
           this.finish(session, stream)
           return
@@ -412,7 +425,7 @@ export class NifraBackend implements AgentBackend {
             ok: false,
             error: agentError("UNKNOWN_TOOL", `unknown native tool: ${response.name}`),
           })
-          session.messages.push({ role: "tool", name: response.name, text: "unknown tool" })
+          this.remember(session, { role: "tool", name: response.name, text: "unknown tool" })
           continue
         }
         const callId = crypto.randomUUID()
@@ -449,7 +462,7 @@ export class NifraBackend implements AgentBackend {
               ok: false,
               error: agentError(code, boundedApprovalMessage(code, tool.name, resolution.reason)),
             })
-            session.messages.push({ role: "tool", name: tool.name, text: code })
+            this.remember(session, { role: "tool", name: tool.name, text: code })
             continue
           }
         }
@@ -457,7 +470,7 @@ export class NifraBackend implements AgentBackend {
           const output = await execute(response.input, { cwd: session.cwd, signal })
           this.assertCurrentTurn(session, stream, turnId, signal)
           const text = boundedText(output)
-          session.messages.push({ role: "tool", name: tool.name, text })
+          this.remember(session, { role: "tool", name: tool.name, text })
           this.emit(session, {
             type: "tool.completed",
             turnId,
@@ -472,7 +485,7 @@ export class NifraBackend implements AgentBackend {
             error instanceof Error ? error.message : error,
             this.options.maxMessageChars,
           )
-          session.messages.push({ role: "tool", name: tool.name, text: message })
+          this.remember(session, { role: "tool", name: tool.name, text: message })
           this.emit(session, {
             type: "tool.completed",
             turnId,
@@ -781,6 +794,26 @@ export class NifraBackend implements AgentBackend {
   private now(): number {
     return this.options.now?.() ?? Date.now()
   }
+
+  private remember(session: NativeSession, message: NativeMessage): void {
+    session.messages.push(Object.freeze(message))
+    session.historyChars += messageChars(message)
+  }
+
+  private trimHistory(session: NativeSession): void {
+    while (session.historyChars > this.options.maxHistoryChars) {
+      const nextTurn = session.messages.findIndex(
+        (item, index) => index > 0 && item.role === "user",
+      )
+      if (nextTurn === -1) return
+      for (const item of session.messages.splice(0, nextTurn))
+        session.historyChars -= messageChars(item)
+    }
+  }
+}
+
+function messageChars(message: NativeMessage): number {
+  return message.text.length + (message.name?.length ?? 0)
 }
 
 function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {

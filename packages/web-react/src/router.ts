@@ -22,6 +22,9 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  PrefetchMode,
+  RenderProps,
+  UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
@@ -31,6 +34,8 @@ import {
   registerBlocker,
   resolveNavigate,
 } from "@nifrajs/web/client"
+// Its own subpath, so an app that never calls `useMatches` bundles none of it.
+import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import {
   type AnchorHTMLAttributes,
   type CSSProperties,
@@ -47,7 +52,7 @@ import {
   useState,
 } from "react"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, PrefetchMode, UIMatch }
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */
 export interface RouterContextValue {
@@ -66,6 +71,8 @@ export interface RouterContextValue {
   /** The `pathname + search` a navigation is transitioning TO while `pending` (`undefined` when idle or
    * during a same-route revalidation). Powers {@link NavLink}'s per-link `isPending`. */
   readonly pendingPath?: string | undefined
+  /** The render's props, which {@link useMatches} derives the matches from. */
+  readonly renderProps?: RenderProps | undefined
 }
 
 // Frozen empty params/search so the default context value has a stable reference (no needless re-renders).
@@ -139,6 +146,26 @@ export function useSearch<
   return useContext(RouterContext).search as Schema extends StandardSchemaV1
     ? InferOutput<Schema>
     : Record<string, unknown>
+}
+
+const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
+
+/**
+ * The rendered chain, outermost layout first and the page last: each module's `id`, the URL
+ * `pathname` it wraps, its `params` and loader `data`, and its `handle` export. The same list on the
+ * server and in the browser, so a layout can render breadcrumbs or read a flag the page exports:
+ *
+ * ```tsx
+ * export const handle = { crumb: "Settings" } // in a page or a layout
+ * // in a layout above it:
+ * const crumbs = useMatches().flatMap((m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? [])
+ * ```
+ *
+ * Empty outside a nifra route tree.
+ */
+export function useMatches(): readonly UIMatch[] {
+  const props = useContext(RouterContext).renderProps
+  return useMemo(() => (props === undefined ? NO_MATCHES : chainMatches(props)), [props])
 }
 
 /** The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches
@@ -307,12 +334,16 @@ function isPlainLeftClick(event: MouseEvent, target: string | undefined): boolea
   return target === undefined || target === "" || target === "_self"
 }
 
-/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`. */
+/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and
+ * `prefetch`. */
 export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
   /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */
   readonly to: string
   /** Replace the current history entry instead of pushing. */
   readonly replace?: boolean
+  /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the
+   * nearest ancestor's `data-nifra-prefetch` decides, else `intent` (hover or focus). */
+  readonly prefetch?: PrefetchMode
 }
 
 /**
@@ -322,7 +353,7 @@ export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>,
  * document-level click handler sees `defaultPrevented` and stands down - exactly one navigation.
  */
 export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
-  { to, replace, onClick, target, ...rest },
+  { to, replace, prefetch, onClick, target, ...rest },
   ref,
 ) {
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
@@ -334,7 +365,14 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
     event.preventDefault()
     navigate(to, { replace: replace === true })
   }
-  return createElement("a", { ...rest, href: to, target, onClick: handleClick, ref })
+  return createElement("a", {
+    ...rest,
+    href: to,
+    target,
+    onClick: handleClick,
+    ref,
+    ...(prefetch !== undefined ? { "data-nifra-prefetch": prefetch } : {}),
+  })
 })
 
 /** The state a {@link NavLink}'s function-form `className`/`style`/`children` receive. */

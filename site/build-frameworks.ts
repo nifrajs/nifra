@@ -16,7 +16,7 @@
  * OWN isolated build with exactly its plugin. The Solid/Svelte SSR renderers are likewise prebuilt into
  * isolated modules and imported for their fragment (their components can't be `import`ed raw here).
  *
- *   bun run site/build-frameworks.ts   # standalone: refresh data/frameworks-demo.json + print sizes
+ *   bun run site/build-frameworks.ts   # standalone: refresh shared/data/frameworks-demo.json + print sizes
  * Normally invoked by site/build.ts with the real `dist/assets` outDir.
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -25,7 +25,7 @@ import { join } from "node:path"
 import { svelteDedupePlugin } from "@nifrajs/web/build"
 import { preactAdapter } from "@nifrajs/web-preact"
 import { reactAdapter } from "@nifrajs/web-react"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
 import { vueAdapter } from "@nifrajs/web-vue"
 import type { BunPlugin } from "bun"
@@ -33,7 +33,7 @@ import { App as ReactApp } from "../bench/ssr/nifra/app.tsx"
 import ReactLayout from "../bench/ssr/nifra/layout.tsx"
 import { App as PreactApp } from "../bench/ssr/nifra-preact/app.ts"
 import { App as VueApp } from "../bench/ssr/nifra-vue/app.ts"
-import { type CatalogPageData, catalogItems } from "./frameworks/data.ts"
+import { type CatalogPageData, catalogItems } from "./shared/frameworks/data.ts"
 
 const DIR = import.meta.dir
 
@@ -290,7 +290,7 @@ export interface FrameworksDemoArtifact {
 
 /** Default artifact path - committed JSON beside the other generated site data (benchmarks.json), so
  * the route's typed wrapper imports a real, reviewable file and a fresh checkout typechecks. */
-export const FRAMEWORKS_ARTIFACT_PATH = join(DIR, "data", "frameworks-demo.json")
+export const FRAMEWORKS_ARTIFACT_PATH = join(DIR, "shared", "data", "frameworks-demo.json")
 
 /** Build everything and write the route-ready JSON artifact. Called by site/build.ts BEFORE it bundles
  * the route (the route's typed wrapper imports this JSON), so the page always reflects this run's sizes. */

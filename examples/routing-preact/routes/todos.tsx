@@ -1,9 +1,8 @@
 /** @jsxImportSource preact */
-import type { ActionArgs, LoaderArgs, LoaderData } from "@nifrajs/client"
-import { revalidate } from "@nifrajs/web"
+
 import { useFetcher } from "@nifrajs/web-preact/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-preact/query"
-import type { backend } from "../backend"
+import type { Route } from "./+types/todos"
 
 // A keyed query for client-interactive data - distinct from the route loader. It fetches the home
 // route's count (data-mode GET), caches it under ["count"], and "refresh" invalidates that key to
@@ -31,28 +30,6 @@ export const meta = {
   meta: [{ name: "description", content: "nifra Preact bindings: useFetcher + useQuery" }],
 }
 
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.todos.get()
-  return { todos: res.data?.todos ?? [] }
-}
-
-// On POST: a per-row "bump" (a fetcher submit) appends "!" to one todo, then declares /todos changed
-// via revalidate() → the list refreshes. A plain "add" creates a todo (the active loader revalidates).
-export async function action({ request, api }: ActionArgs<typeof backend>) {
-  const form = await request.formData()
-  const bumpId = form.get("bump")
-  if (typeof bumpId === "string" && bumpId !== "") {
-    await new Promise<void>((resolve) => setTimeout(resolve, 500)) // slow → pending visible
-    await api.todos.bump.post({ id: Number(bumpId) })
-    return revalidate(["/todos"], { ok: true as const })
-  }
-  const raw = form.get("text")
-  const text = typeof raw === "string" ? raw.trim() : ""
-  if (text === "") return { ok: false as const }
-  await api.todos.post({ text })
-  return { ok: true as const }
-}
-
 // A todo row with its OWN bump fetcher. Submitting runs in an independent, concurrent state, so many
 // rows can bump at once - each showing its own pending - without disturbing the list or each other.
 function TodoRow(props: { todo: { id: number; text: string } }) {
@@ -77,7 +54,7 @@ function TodoRow(props: { todo: { id: number; text: string } }) {
   )
 }
 
-export default function Todos(props: { data: LoaderData<typeof loader>; pending?: boolean }) {
+export default function Todos(props: Route.ComponentProps) {
   return (
     <div>
       <h1 id="page">Todos</h1>

@@ -96,7 +96,8 @@ test("nifra's Vite build runs on that same runtime", async () => {
     join(root, "routes", "index.tsx"),
     "export default function Index() { return null }\n",
   )
-  writeFileSync(join(root, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(root, "frontend"), { recursive: true })
+  writeFileSync(join(root, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
 
   const built = await runUnderStrictRuntime(`
     const { buildClientVite } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "build-vite.ts"))})
@@ -104,7 +105,7 @@ test("nifra's Vite build runs on that same runtime", async () => {
       root: ${JSON.stringify(root)},
       routesDir: ${JSON.stringify(join(root, "routes"))},
       outDir: ${JSON.stringify(join(root, "dist", "assets"))},
-      clientModule: ${JSON.stringify(join(root, "client-stub.ts"))},
+      clientModule: ${JSON.stringify(join(root, "frontend/client-stub.ts"))},
       minify: false,
     })
     console.log("BUILD_OK")
@@ -137,7 +138,8 @@ test("nifra's Vite build runs on the NARROW runtime - this is the case that ship
     join(root, "routes", "index.tsx"),
     "export default function Index() { return null }\n",
   )
-  writeFileSync(join(root, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(root, "frontend"), { recursive: true })
+  writeFileSync(join(root, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
 
   const built = await runUnderStrictRuntime(
     `const { buildClientVite } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "build-vite.ts"))})
@@ -145,7 +147,7 @@ test("nifra's Vite build runs on the NARROW runtime - this is the case that ship
        root: ${JSON.stringify(root)},
        routesDir: ${JSON.stringify(join(root, "routes"))},
        outDir: ${JSON.stringify(join(root, "dist", "assets"))},
-       clientModule: ${JSON.stringify(join(root, "client-stub.ts"))},
+       clientModule: ${JSON.stringify(join(root, "frontend/client-stub.ts"))},
        minify: false,
      })
      console.log("BUILD_OK")`,

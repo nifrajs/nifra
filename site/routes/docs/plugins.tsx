@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/plugins",
@@ -183,7 +179,10 @@ export default function Plugins() {
         <code>decorate</code> are type-threaded, any context a plugin adds is <b>typed on every handler
         defined after</b> <code>app.use(plugin)</code> - no extra generics. Wrap a plugin with{" "}
         <code>definePlugin(name, …)</code> to make it <b>idempotent</b>: applied twice (e.g. because two
-        plugins both depend on it), it wires its hooks once.
+        plugins both depend on it), it wires its hooks once, however each copy was configured. A plugin
+        meant to stack needs a name per instance: nifra's guards (<code>bearer()</code>,{" "}
+        <code>jwt()</code>, <code>ipRestriction()</code>, <code>rateLimit()</code> and the rest) have one,
+        so a second, stricter guard before admin routes or inside a <code>group()</code> applies too.
       </p>
       <CodeBlock code={PLUGIN} />
 

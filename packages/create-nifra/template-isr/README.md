@@ -27,6 +27,9 @@ holds across `hit`s and bumps on a `miss`/regeneration.
 
 ## How it works
 
+`backend/worker.ts` is the Workers entry and `backend/dev-server.ts` the local Bun server; both wrap
+the same app, and `build.ts` builds the client bundle and the worker.
+
 - `withISR(app, { store, revalidate, now })` wraps the app's `fetch`. Only full-document `text/html`
   `GET` `200`s are cached; assets, soft-nav data fetches, redirects, and errors pass through.
 - A route sets its freshness with `export const revalidate = <seconds>` (see `routes/index.tsx`).

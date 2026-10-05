@@ -34,6 +34,7 @@ export interface SchemaSnapshot {
 
 export interface RouteSnapshotSchema {
   readonly headers?: SchemaSnapshot
+  readonly cookies?: SchemaSnapshot
   readonly body?: SchemaSnapshot
   readonly query?: SchemaSnapshot
   readonly params?: SchemaSnapshot
@@ -59,6 +60,7 @@ export interface RouteChange {
   readonly section:
     | "route"
     | "headers"
+    | "cookies"
     | "body"
     | "query"
     | "params"
@@ -120,12 +122,14 @@ const snapshotRoute = (route: ReflectedRoute): RouteSnapshot => {
   }
   const body = schemaSnapshot(schema.body)
   const headers = schemaSnapshot(schema.headers)
+  const cookies = schemaSnapshot(schema.cookies)
   const query = schemaSnapshot(schema.query)
   const params = schemaSnapshot(schema.params)
   const response = schemaSnapshot(schema.response)
   const sse = schemaSnapshot(schema.sse)
   const snapped: RouteSnapshotSchema = {
     ...(headers !== undefined ? { headers } : {}),
+    ...(cookies !== undefined ? { cookies } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(params !== undefined ? { params } : {}),
@@ -219,19 +223,40 @@ const fieldMap = (
   return new Map(snapshot.fields.map((field) => [field.name, field]))
 }
 
+/**
+ * An object schema without the parts the field diff already covers: its `properties`, and the
+ * `required` names of declared fields. What is left (`additionalProperties`, the `$defs` a field's
+ * `$ref` points into, a required name no field declares) changes the contract as surely as a field.
+ */
+const envelopeOf = (schema: JsonSchema): JsonSchema => {
+  if (typeof schema !== "object") return schema
+  const { properties, required, ...rest } = schema
+  const declared = typeof properties === "object" && properties !== null ? properties : {}
+  const undeclared = Array.isArray(required)
+    ? required.filter((name) => typeof name !== "string" || !Object.hasOwn(declared, name))
+    : required
+  return undeclared === undefined || (Array.isArray(undeclared) && undeclared.length === 0)
+    ? rest
+    : { ...rest, required: undeclared }
+}
+
 const diffFields = (ctx: SectionContext, before: SchemaSnapshot, after: SchemaSnapshot): void => {
+  const beforeSchema = before.jsonSchema as JsonSchema
+  const afterSchema = after.jsonSchema as JsonSchema
   const beforeFields = fieldMap(before)
   const afterFields = fieldMap(after)
   if (beforeFields === undefined || afterFields === undefined) {
     // Non-object schemas: compare the whole JSON Schema in one step.
-    const severity = compareJsonSchema(
-      ctx.direction,
-      before.jsonSchema as JsonSchema,
-      after.jsonSchema as JsonSchema,
-    )
+    const severity = compareJsonSchema(ctx.direction, beforeSchema, afterSchema)
     if (severity !== undefined) push(ctx, severity, `${ctx.section} schema changed`)
     return
   }
+  const envelope = compareJsonSchema(
+    ctx.direction,
+    envelopeOf(beforeSchema),
+    envelopeOf(afterSchema),
+  )
+  if (envelope !== undefined) push(ctx, envelope, `${ctx.section} schema changed`)
   for (const [name, beforeField] of beforeFields) {
     const afterField = afterFields.get(name)
     if (afterField === undefined) {
@@ -378,7 +403,7 @@ export function diffRouteSnapshots(
     const path = beforeRoute.path
     const beforeSchema = beforeRoute.schema ?? {}
     const afterSchema = afterRoute.schema ?? {}
-    for (const section of ["headers", "body", "query", "params"] as const) {
+    for (const section of ["headers", "cookies", "body", "query", "params"] as const) {
       diffSchemaSection(
         { method, path, section, direction: "request", changes },
         beforeSchema[section],

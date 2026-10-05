@@ -5,7 +5,13 @@
  */
 import { readdirSync } from "node:fs"
 import { join } from "node:path"
-import { buildManifest, type Manifest, type RouteModule } from "./manifest.ts"
+import {
+  buildManifest,
+  isMiddlewareFile,
+  isRouteBackendFile,
+  type Manifest,
+  type RouteModule,
+} from "./manifest.ts"
 
 /** Options for {@link discoverRoutes}. */
 export interface DiscoverRoutesOptions {
@@ -31,7 +37,12 @@ export interface DiscoverRoutesOptions {
 export function discoverRoutes(dir: string, options: DiscoverRoutesOptions = {}): Manifest {
   const files = (readdirSync(dir, { recursive: true }) as string[])
     .map((file) => file.replaceAll("\\", "/")) // normalize Windows separators
-    .filter((file) => /\.(tsx|jsx|svelte|vue|mdx)$/.test(file))
+    .filter(
+      (file) =>
+        /\.(tsx|jsx|svelte|vue|mdx)$/.test(file) ||
+        isRouteBackendFile(file) ||
+        isMiddlewareFile(file),
+    )
   const query = options.importQuery ? `?${options.importQuery}` : ""
   const load = options.load
   return buildManifest(files, (file) =>

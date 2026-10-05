@@ -34,6 +34,21 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
   }
 }
 
+// The issues past this are never reported (a 422 lists 100), so walking them is wasted work on a
+// large hostile body.
+const MAX_ISSUES = 100
+
+function firstIssues(
+  errors: Iterable<{ readonly message: string; readonly path: string }>,
+): StandardIssue[] {
+  const issues: StandardIssue[] = []
+  for (const error of errors) {
+    issues.push(toIssue(error))
+    if (issues.length === MAX_ISSUES) break
+  }
+  return issues
+}
+
 // ---------------------------------------------------------------------------------------------
 // Precompiled coercion for flat scalar objects - the shape every real query schema has.
 //
@@ -230,10 +245,10 @@ export function fromTypeBox<T extends TSchema>(
         }
         if (compiled !== undefined) {
           if (compiled.Check(input)) return { value: input as Static<T> }
-          return { issues: [...compiled.Errors(input)].map(toIssue) }
+          return { issues: firstIssues(compiled.Errors(input)) }
         }
         if (Value.Check(schema, input)) return { value: input as Static<T> }
-        return { issues: [...Value.Errors(schema, input)].map(toIssue) }
+        return { issues: firstIssues(Value.Errors(schema, input)) }
       },
       // Phantom: `types` carries no runtime value; this cast supplies the
       // compile-time `Static<T>` that nifra's `InferOutput` reads to type `c.body`.

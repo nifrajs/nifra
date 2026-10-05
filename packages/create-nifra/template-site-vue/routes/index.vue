@@ -1,33 +1,27 @@
 <!--
-  Home route (Vue SFC). The plain <script> carries nifra's route convention - loader/action/meta are
-  server-only named exports the client codegen tree-shakes out. <script setup> + <template> are the
-  component. The form POST is the SSR action path; after a client submit the loader revalidates with
+  Home route (Vue SFC). The plain <script> carries meta; loader and action live in index.backend.ts.
+  <script setup> + <template> are the component. The form POST is the SSR action path; after a client submit the loader revalidates with
   no full reload (progressive enhancement). Compiled by @nifrajs/web-vue/plugin.
 -->
 <script lang="ts">
-import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
-import type { backend } from "../backend"
-
 export const meta = {
   title: "nifra site",
   meta: [{ name: "description", content: "A nifra + Vue SSR site, deployable to every runtime." }],
 }
-
-// Loader runs on the server (in-process during SSR). The action handles the form POST.
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.count.get()
-  return { count: res.ok ? res.data.count : 0 }
-}
-
-export async function action({ api }: ActionArgs<typeof backend>) {
-  await api.count.post()
-  return { ok: true }
-}
 </script>
 
 <script setup lang="ts">
+import type { Route } from "./+types/index"
+
 // compose() spreads data/actionData/pending/submission as props - declare them so they aren't attrs.
-defineProps(["data", "actionData", "pending", "submission"])
+// Listed rather than `defineProps<Route.ComponentProps>()`: the SFC compiler cannot follow an imported
+// type through tsconfig `rootDirs`, but it can declare these keys and leave their types to TypeScript.
+defineProps<{
+  data: Route.LoaderData
+  actionData?: Route.ActionData
+  pending?: Route.ComponentProps["pending"]
+  submission?: Route.ComponentProps["submission"]
+}>()
 </script>
 
 <template>

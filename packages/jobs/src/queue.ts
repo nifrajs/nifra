@@ -30,7 +30,10 @@ import type {
   JobDefinition,
   JobHandle,
   JobHandler,
+  JobRunOutcome,
   JobStore,
+  JobTraceContext,
+  QueueInstrument,
   RetryPolicy,
   StandardSchemaV1,
   StoredJob,
@@ -75,6 +78,11 @@ export interface QueueOptions {
   readonly beacon?: CapabilityBeacon
   /** Override the announced token. Default `jobs.enqueue`. */
   readonly capabilities?: { readonly enqueue?: string }
+  /**
+   * Around-hooks for each enqueue and each attempt - pass `jobTracing()` from `@nifrajs/otel/jobs` for a
+   * `send <job>` producer span and a `process <job>` consumer span per attempt.
+   */
+  readonly instrument?: QueueInstrument
 }
 
 export interface WorkerOptions {
@@ -84,6 +92,9 @@ export interface WorkerOptions {
   readonly pollIntervalMs?: number
   /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */
   readonly leaseMs?: number
+  /** Called when a poll round fails (the store's `lease` threw); polling continues on the next tick.
+   * Default: `console.error`. A throwing handler here is swallowed. */
+  readonly onPollError?: (error: unknown) => void
 }
 
 export interface Worker {
@@ -153,6 +164,30 @@ function normalizeRetries(
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
+const TRACEPARENT = /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/
+
+// A shape check only, to keep arbitrary strings out of the store; the tracer parses it properly.
+const traceparentOrUndefined = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length === 55 && TRACEPARENT.test(value) ? value : undefined
+
+function contextTraceparent(context: object): string | undefined {
+  if (!("trace" in context)) return undefined
+  const trace = context.trace
+  return typeof trace === "object" && trace !== null && "traceparent" in trace
+    ? traceparentOrUndefined(trace.traceparent)
+    : undefined
+}
+
+// Marked handled at creation: a hook may drop the promise `next` returns, and an unobserved
+// rejection would end a Node process before the queue awaits it.
+function handled<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined)
+  return promise
+}
+
+const lateNext = (hook: string): Promise<never> =>
+  handled(Promise.reject(new JobError(`instrument.${hook} called next() after it returned`)))
+
 /** Create a job queue. Define jobs, enqueue payloads, and `start()` a worker (or `drain()` once). */
 export function createQueue(options: QueueOptions = {}): Queue {
   const store = options.store ?? new MemoryJobStore()
@@ -163,6 +198,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
   const defaultAttempts = options.defaultAttempts ?? 3
   const defaultBackoff = options.backoff ?? exponentialBackoff()
   const enqueueToken = options.capabilities?.enqueue ?? "jobs.enqueue"
+  const instrument = options.instrument
   const defs = new Map<string, Def>()
 
   let timer: ReturnType<typeof setInterval> | undefined
@@ -204,12 +240,12 @@ export function createQueue(options: QueueOptions = {}): Queue {
     })
     const handle: JobHandle<Payload> = {
       name,
-      enqueue: (payload, opts) => enqueue(name, payload, opts),
+      enqueue: (payload, opts) => enqueue(name, payload, opts, undefined),
       for(context) {
         const beacon = options.beacon
-        if (beacon === undefined) {
+        if (beacon === undefined && instrument === undefined) {
           throw new Error(
-            "@nifrajs/jobs: for(context) needs a beacon - pass `beacon: useCapability` (from @nifrajs/core/capabilities) to createQueue",
+            "@nifrajs/jobs: for(context) needs a beacon or an instrument - pass `beacon: useCapability` (from @nifrajs/core/capabilities) or `instrument` to createQueue",
           )
         }
         return {
@@ -218,11 +254,11 @@ export function createQueue(options: QueueOptions = {}): Queue {
           // promise, so a caller using `.catch(…)` rather than `try` would otherwise miss it entirely.
           enqueue: (payload, opts) => {
             try {
-              beacon(context, enqueueToken)
+              beacon?.(context, enqueueToken)
             } catch (error) {
               return Promise.reject(error)
             }
-            return enqueue(name, payload, opts)
+            return enqueue(name, payload, opts, contextTraceparent(context))
           },
         }
       },
@@ -230,17 +266,73 @@ export function createQueue(options: QueueOptions = {}): Queue {
     return handle
   }
 
+  async function write(
+    name: string,
+    def: Def,
+    payload: unknown,
+    opts: EnqueueOptions,
+    traceparent: string | undefined,
+  ): Promise<string> {
+    const value = await validate(name, def.input, payload)
+    const runAt = opts.runAt ?? now() + Math.max(0, opts.delayMs ?? 0)
+    const job = { name, payload: value, runAt, maxAttempts: def.attempts }
+    return await store.enqueue(traceparent === undefined ? job : { ...job, traceparent })
+  }
+
   async function enqueue(
     name: string,
     payload: unknown,
     opts: EnqueueOptions = {},
+    contextTrace: string | undefined,
   ): Promise<string> {
     const def = defs.get(name)
     if (def === undefined)
       throw new JobError(`unknown job ${JSON.stringify(name)} - define it first`)
-    const value = await validate(name, def.input, payload)
-    const runAt = opts.runAt ?? now() + Math.max(0, opts.delayMs ?? 0)
-    return await store.enqueue({ name, payload: value, runAt, maxAttempts: def.attempts })
+    const traceparent = traceparentOrUndefined(opts.traceparent) ?? contextTrace
+    const hook = instrument?.enqueue
+    if (hook === undefined) return await write(name, def, payload, opts, traceparent)
+    let written: Promise<string> | undefined
+    let closed = false
+    const next = (scope?: { readonly traceparent?: string }): Promise<string> => {
+      if (closed) return lateNext("enqueue")
+      written ??= handled(
+        write(name, def, payload, opts, traceparentOrUndefined(scope?.traceparent) ?? traceparent),
+      )
+      return written
+    }
+    try {
+      await hook.call(instrument, { name, traceparent }, next)
+    } catch {
+      // The instrument cannot change the result; a rejection of `next` itself surfaces below.
+    }
+    closed = true
+    return await (written ?? write(name, def, payload, opts, traceparent))
+  }
+
+  async function attemptJob(
+    job: StoredJob,
+    def: Def,
+    attempt: number,
+    trace: JobTraceContext | undefined,
+  ): Promise<JobRunOutcome> {
+    try {
+      await def.handler(
+        job.payload,
+        trace === undefined
+          ? { id: job.id, name: job.name, attempt }
+          : { id: job.id, name: job.name, attempt, trace },
+      )
+      await store.complete(job.id)
+      return "completed"
+    } catch (err) {
+      safeOnError(err, job.name)
+      if (attempt >= job.maxAttempts) {
+        await store.deadLetter(job.id, errText(err))
+        return "dead-lettered"
+      }
+      await store.retry(job.id, now() + Math.max(0, def.backoff(attempt)))
+      return "retried"
+    }
   }
 
   async function runOne(job: StoredJob): Promise<void> {
@@ -251,14 +343,32 @@ export function createQueue(options: QueueOptions = {}): Queue {
       return
     }
     const attempt = job.attempt + 1
-    try {
-      await def.handler(job.payload, { id: job.id, name: job.name, attempt })
-      await store.complete(job.id)
-    } catch (err) {
-      safeOnError(err, job.name)
-      if (attempt >= job.maxAttempts) await store.deadLetter(job.id, errText(err))
-      else await store.retry(job.id, now() + Math.max(0, def.backoff(attempt)))
+    const hook = instrument?.run
+    if (hook === undefined) {
+      await attemptJob(job, def, attempt, undefined)
+      return
     }
+    let attempted: Promise<JobRunOutcome> | undefined
+    let closed = false
+    const next = (scope?: { readonly trace?: JobTraceContext }): Promise<JobRunOutcome> => {
+      if (closed) return lateNext("run")
+      attempted ??= handled(attemptJob(job, def, attempt, scope?.trace))
+      return attempted
+    }
+    const info = {
+      id: job.id,
+      name: job.name,
+      attempt,
+      maxAttempts: job.maxAttempts,
+      traceparent: job.traceparent,
+    }
+    try {
+      await hook.call(instrument, info, next)
+    } catch {
+      // The instrument cannot change the result; a store failure inside `next` surfaces below.
+    }
+    closed = true
+    await (attempted ?? attemptJob(job, def, attempt, undefined))
   }
 
   async function processInner(): Promise<number> {
@@ -288,7 +398,19 @@ export function createQueue(options: QueueOptions = {}): Queue {
     concurrency = opts.concurrency ?? 1
     leaseMs = opts.leaseMs ?? 30_000
     const intervalMs = opts.pollIntervalMs ?? 250
-    if (timer === undefined) timer = setInterval(() => void process(), intervalMs)
+    const onPollError =
+      opts.onPollError ?? ((error: unknown) => console.error("[nifra/jobs] poll failed:", error))
+    // A store outage must not become an unhandled rejection, which ends a Node process.
+    const poll = (): void => {
+      process().catch((error: unknown) => {
+        try {
+          onPollError(error)
+        } catch {
+          /* a throwing onPollError must not crash the worker */
+        }
+      })
+    }
+    if (timer === undefined) timer = setInterval(poll, intervalMs)
     return {
       get running() {
         return timer !== undefined
@@ -298,10 +420,19 @@ export function createQueue(options: QueueOptions = {}): Queue {
           clearInterval(timer)
           timer = undefined
         }
-        if (round !== undefined) await round
+        // A failed round was already reported to onPollError.
+        if (round !== undefined) await round.catch(() => {})
       },
     }
   }
 
-  return { define, enqueue, process, drain, start, counts: () => store.counts(), store }
+  return {
+    define,
+    enqueue: (name, payload, opts) => enqueue(name, payload, opts, undefined),
+    process,
+    drain,
+    start,
+    counts: () => store.counts(),
+    store,
+  }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/cli",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).",
   "keywords": [
     "bun",
@@ -17,6 +17,9 @@
     "dev-server"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
   "bin": {
     "nifra": "./dist/cli.js"
   },
@@ -69,7 +72,9 @@
     "@nifrajs/client": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/agent-review": "workspace:*",
+    "@nifrajs/i18n": "workspace:*",
     "@nifrajs/mcp": "workspace:*",
+    "@nifrajs/mcp-db": "workspace:*",
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/testing": "workspace:*",

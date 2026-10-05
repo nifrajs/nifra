@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -69,14 +69,22 @@ class FakeR2 implements R2BucketLike {
     return Promise.resolve()
   }
 
+  /** Pages like R2: at most 1000 keys a call, `truncated` + an opaque `cursor` for the rest. */
   list(options?: {
     prefix?: string
     limit?: number
-  }): Promise<{ objects: ReadonlyArray<{ key: string }> }> {
-    let keys = [...this.m.keys()]
-    if (options?.prefix !== undefined) keys = keys.filter((k) => k.startsWith(options.prefix ?? ""))
-    if (options?.limit !== undefined) keys = keys.slice(0, options.limit)
-    return Promise.resolve({ objects: keys.map((key) => ({ key })) })
+    cursor?: string
+  }): Promise<{ objects: ReadonlyArray<{ key: string }>; truncated?: boolean; cursor?: string }> {
+    const limit = options?.limit ?? 1000
+    if (limit > 1000) return Promise.reject(new Error("list limit must be 1-1000"))
+    const keys = [...this.m.keys()].filter((k) => k.startsWith(options?.prefix ?? "")).sort()
+    const start = options?.cursor === undefined ? 0 : Number(options.cursor.slice(1))
+    const objects = keys.slice(start, start + limit).map((key) => ({ key }))
+    return Promise.resolve(
+      start + limit < keys.length
+        ? { objects, truncated: true, cursor: `c${start + limit}` }
+        : { objects, truncated: false },
+    )
   }
 }
 
@@ -254,6 +262,61 @@ describe("FileStorage filesystem containment", () => {
   )
 })
 
+describe("R2Storage listing", () => {
+  test("list() follows the cursor past the 1000 keys one R2 call returns", async () => {
+    const storage = new R2Storage(new FakeR2())
+    for (let i = 0; i < 2500; i++) await storage.put(`tmp/${String(i).padStart(4, "0")}`, "x")
+    expect(await storage.list({ prefix: "tmp/" })).toHaveLength(2500)
+    expect(await storage.list({ prefix: "tmp/", limit: 1500 })).toHaveLength(1500)
+    const first = await storage.listPage({ prefix: "tmp/", limit: 5000 })
+    expect(first.keys).toHaveLength(1000)
+    expect(first.cursor).toBeDefined()
+  })
+})
+
+describe("FileStorage on an ordinary host", () => {
+  test.skipIf(process.platform === "win32")(
+    "works under umask 002: the directories it creates are never group-writable",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "nifra-storage-umask-"))
+      const root = join(parent, "objects")
+      tmpDirs.push(parent, `${root}.nifra-metadata`)
+      const previous = process.umask(0o002)
+      try {
+        const storage = new FileStorage(root)
+        await storage.put("avatars/u1.png", "x", { contentType: "image/png" })
+        expect(new TextDecoder().decode((await storage.get("avatars/u1.png"))?.body)).toBe("x")
+        expect((await stat(join(root, "avatars"))).mode & 0o777).toBe(0o755)
+      } finally {
+        process.umask(previous)
+      }
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "a group-writable directory it refuses is named, with the fix",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+      tmpDirs.push(root, `${root}.nifra-metadata`)
+      await chmod(root, 0o775)
+      await expect(new FileStorage(root).get("a.txt")).rejects.toThrow(
+        `${root} is group- or world-writable (chmod go-w removes that)`,
+      )
+    },
+  )
+
+  test("a directory under the root is a key prefix, not an object", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+    tmpDirs.push(root, `${root}.nifra-metadata`)
+    const storage = new FileStorage(root)
+    await storage.put("private/secret.txt", "s")
+    expect(await storage.exists("private")).toBe(false)
+    expect(await storage.get("private")).toBeNull()
+    await storage.delete("private")
+    expect(await storage.exists("private/secret.txt")).toBe(true)
+  })
+})
+
 describe("toBytes", () => {
   test("normalizes string, Uint8Array, and ArrayBuffer payloads", () => {
     expect(toBytes("hi")).toEqual(new TextEncoder().encode("hi"))
@@ -341,6 +404,26 @@ describe("conformance - optional capabilities", () => {
       expect((error as StorageAdapterConformanceError).check).toBe("move")
       expect((error as StorageAdapterConformanceError).name).toBe("StorageAdapterConformanceError")
     }
+  })
+
+  test("an adapter that refuses only a leading ../ fails key safety", async () => {
+    class LeadingDotsOnly extends CapableMemoryStorage {
+      override async presign(
+        key: string,
+        operation: StoragePresignOperation,
+      ): Promise<StoragePresignedUrl> {
+        if (key.startsWith("../")) throw new Error("unsafe key")
+        return { url: `https://signed.example/${operation}/${key}` }
+      }
+    }
+    await expect(
+      assertStorageAdapterConformance({ createAdapter: () => new LeadingDotsOnly() }),
+    ).rejects.toMatchObject({
+      check: "key safety",
+      message: expect.stringContaining(
+        'presign accepted the unsafe key "nifra-conformance/../../escape"',
+      ),
+    })
   })
 
   test("an expired presign fails conformance", async () => {

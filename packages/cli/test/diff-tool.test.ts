@@ -11,9 +11,9 @@ import {
   type SnapshotFile,
 } from "../src/diff-tool.ts"
 
-// Fixtures live INSIDE the package so the dynamically imported backend.ts resolves @nifrajs/* from
+// Fixtures live INSIDE the package so the dynamically imported backend/app.ts resolves @nifrajs/* from
 // the workspace (a system tmp dir has no node_modules above it).
-import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("tmp-nifra-diff-fixtures")
 
@@ -39,8 +39,7 @@ export const backend = server()
 
 async function project(name: string, backendSource: string): Promise<string> {
   const dir = join(FIXTURES, name)
-  await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, "backend.ts"), backendSource)
+  writeAppFile(dir, "backend/app.ts", backendSource)
   return dir
 }
 
@@ -83,7 +82,7 @@ describe("formatDiff", () => {
   })
 })
 
-describe("runSnapshot + runDiff over a real backend.ts", () => {
+describe("runSnapshot + runDiff over a real backend/app.ts", () => {
   test("snapshot → identical diff passes; contract break fails the gate", async () => {
     const v1 = await project("v1", BACKEND_V1)
     await runSnapshot(v1, {})
@@ -108,8 +107,8 @@ describe("runSnapshot + runDiff over a real backend.ts", () => {
     await expect(runDiff(v1, "nope.json", {})).rejects.toThrow("baseline not found")
     const empty = join(FIXTURES, "empty")
     await mkdir(empty, { recursive: true })
-    await expect(runSnapshot(empty, {})).rejects.toThrow("no backend.ts")
-    await writeFile(join(empty, "backend.ts"), "export const other = 1\n")
+    await expect(runSnapshot(empty, {})).rejects.toThrow("no backend/app.ts")
+    writeAppFile(empty, "backend/app.ts", "export const other = 1\n")
     await expect(runSnapshot(empty, {})).rejects.toThrow("does not export")
   })
 

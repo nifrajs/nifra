@@ -29,7 +29,7 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog` · from `@nifrajs/agent/events`
 
-_…and 133 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 135 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

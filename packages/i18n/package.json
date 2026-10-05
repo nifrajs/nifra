@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/i18n",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.",
   "keywords": [
     "bun",
@@ -14,6 +14,9 @@
     "translations"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,6 +35,16 @@
       "bun": "./src/routing.ts",
       "types": "./dist/routing.d.ts",
       "default": "./dist/routing.js"
+    },
+    "./rich": {
+      "bun": "./src/rich.ts",
+      "types": "./dist/rich.d.ts",
+      "default": "./dist/rich.js"
+    },
+    "./check": {
+      "bun": "./src/check.ts",
+      "types": "./dist/check.d.ts",
+      "default": "./dist/check.js"
     }
   },
   "files": [

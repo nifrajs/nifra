@@ -83,6 +83,41 @@ test("renderToStream streams a Suspense boundary: the shell's fallback flushes b
   expect(order[0]).toBe("fallback") // ...after the fallback (the shell flushed first)
 })
 
+test("renderToStream stamps the nonce on every script React streams for a late boundary", async () => {
+  const slow = new Promise<string>((r) => setTimeout(() => r("RESOLVED"), 30))
+  const Slow = () => createElement("span", null, use(slow))
+  const App = () =>
+    createElement(
+      "div",
+      null,
+      createElement("h1", null, "SHELL"),
+      createElement(Suspense, { fallback: "FALLBACK" }, createElement(Slow)),
+    )
+  const read = async (options?: { nonce: string }) =>
+    new Response(await reactAdapter.renderToStream([App], { data: null }, options)).text()
+  const nonced = await read({ nonce: "n0nce" })
+  const scripts = nonced.match(/<script\b[^>]*>/gi) ?? []
+  expect(scripts.length).toBeGreaterThan(0) // the boundary-reveal runtime was streamed
+  for (const tag of scripts) expect(tag).toContain('nonce="n0nce"')
+  // Without one, the stream is unchanged.
+  expect(await read()).not.toContain("nonce=")
+})
+
 test("hydrationHead is empty (React reconciles the DOM; no bootstrap script)", () => {
   expect(reactAdapter.hydrationHead()).toBe("")
+})
+
+test("a render error rejects both render paths with the error itself", async () => {
+  const boom = new Error("boom in render")
+  const Broken = (): ReactNode => {
+    throw boom
+  }
+  const original = console.error
+  console.error = () => {}
+  try {
+    await expect(reactAdapter.renderToString?.([Broken], { data: null })).rejects.toBe(boom)
+    await expect(reactAdapter.renderToStream([Broken], { data: null })).rejects.toBe(boom)
+  } finally {
+    console.error = original
+  }
 })

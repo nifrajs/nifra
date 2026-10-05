@@ -112,14 +112,23 @@ const batches: ReadonlyArray<readonly [string, readonly string[]]> = [
 
 // The isolated extension test launches a second Bun process and is sensitive to Windows runner
 // contention. Keep it covered, but run the package serially with a diagnostic-only timeout budget.
-const codingAgentStatus = await runBatch(
-  "coding-agent (dedicated; serial, 30s timeout)",
-  ["packages/coding-agent/test"],
-  ["--parallel=1", "--max-concurrency=1", "--timeout=30000"],
+const failed: string[] = []
+const codingAgent = "coding-agent (dedicated; serial, 30s timeout)"
+if (
+  (await runBatch(
+    codingAgent,
+    ["packages/coding-agent/test"],
+    ["--parallel=1", "--max-concurrency=1", "--timeout=30000"],
+  )) !== 0
 )
-if (codingAgentStatus !== 0) process.exit(codingAgentStatus)
+  failed.push(codingAgent)
 
+// Every batch runs even after one fails, so a single run reports every Windows failure.
 for (const [label, directories] of batches) {
   const status = await runBatch(label, directories, ["--parallel=1", "--max-concurrency=1"])
-  if (status !== 0) process.exit(status)
+  if (status !== 0) failed.push(label)
+}
+if (failed.length > 0) {
+  console.error(`\n[windows-tests] failed: ${failed.join(", ")}`)
+  process.exit(1)
 }

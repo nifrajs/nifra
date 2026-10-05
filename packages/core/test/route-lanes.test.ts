@@ -151,4 +151,32 @@ describe("selectRouteLanes", () => {
     ]
     for (const lanes of cases) expect(lanes.fusedLane).toBeUndefined()
   })
+
+  test("keeps every cookie-schema route on the stage runner", () => {
+    const cookies = t.cookies({ session: t.string() })
+    const shapes = [
+      selectRouteLanes({ ...base, schema: { cookies } }),
+      selectRouteLanes({ ...base, schema: { cookies, query: t.query({ q: t.string() }) } }),
+      selectRouteLanes({ ...base, schema: { cookies, body: t.object({ name: t.string() }) } }),
+      selectRouteLanes({ ...base, schema: { cookies }, derives: 1, beforeHandle: 1 }),
+      selectRouteLanes({
+        ...base,
+        schema: { cookies, body: t.object({ name: t.string() }) },
+        derives: 1,
+        beforeHandle: 1,
+      }),
+    ]
+    for (const lanes of shapes) {
+      expect(lanes).toMatchObject({
+        bare: false,
+        fusedQuery: false,
+        bodyOnly: false,
+        fusedBody: false,
+        lane: "lifecycle",
+        lifecycleLane: undefined,
+        lifecycleHookLane: undefined,
+        fusedLane: undefined,
+      })
+    }
+  })
 })

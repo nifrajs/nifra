@@ -51,22 +51,34 @@ const DEFAULT_MAX_AGE = 31_536_000
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 const COLOR = /^(?:#[0-9a-fA-F]{3,8}|[A-Za-z]{1,32})$/
 
+/**
+ * CMS-shaped text as the card draws it: line breaks and tabs as spaces, an empty optional field as
+ * absent, and text past `max` characters cut with an ellipsis (the card shows a few lines anyway).
+ * Only a missing title and a control character an SVG cannot hold are errors.
+ */
 function boundedText(
   value: string | undefined,
   name: string,
   max: number,
   required = false,
 ): string {
-  if (value === undefined && !required) return ""
-  if (typeof value !== "string" || value.length === 0 || value.length > max) {
-    throw new TypeError(`og image: ${name} must be a non-empty string of at most ${max} characters`)
+  if (typeof value !== "string" && (value !== undefined || required)) {
+    throw new TypeError(`og image: ${name} must be a string`)
   }
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index)
+  const text = (value ?? "").replace(/[\t\n\r]+/g, " ").trim()
+  if (text === "") {
+    if (required) throw new TypeError(`og image: ${name} must not be empty`)
+    return ""
+  }
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index)
     if (code <= 31 || code === 127)
       throw new TypeError(`og image: ${name} contains a control character`)
   }
-  return value
+  if (text.length <= max) return text
+  // Never cut a surrogate pair in half.
+  const cut = /[\uD800-\uDBFF]$/.test(text.slice(0, max - 1)) ? max - 2 : max - 1
+  return `${text.slice(0, cut).trimEnd()}\u2026`
 }
 
 function dimension(value: number | undefined, name: string, fallback: number): number {
@@ -191,9 +203,30 @@ function contentType(value: string): string {
   return value
 }
 
+/** What a rasterized card's response said, by its SVG: enough to answer a revalidation alone. */
+interface RasterizedTag {
+  readonly etag: string
+  readonly contentType: string
+  readonly length: number
+}
+
+const RASTERIZED_TAGS_MAX = 512
+const rasterizedTags = new WeakMap<OgImageRasterizer, Map<string, RasterizedTag>>()
+
+/** Remember a card's tag, oldest out first past {@link RASTERIZED_TAGS_MAX} per rasterizer. */
+function rememberTag(rasterizer: OgImageRasterizer, svgHash: string, tag: RasterizedTag): void {
+  const tags = rasterizedTags.get(rasterizer) ?? new Map<string, RasterizedTag>()
+  rasterizedTags.set(rasterizer, tags)
+  tags.delete(svgHash)
+  tags.set(svgHash, tag)
+  if (tags.size > RASTERIZED_TAGS_MAX) tags.delete(tags.keys().next().value ?? svgHash)
+}
+
 /**
  * Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit
- * rasterization, so a crawler revalidation never repeats expensive codec work.
+ * rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the
+ * bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for the
+ * same SVG and rasterizer, and rasterizes only when it has none.
  */
 export async function ogImageResponse(
   options: OgImageOptions,
@@ -205,12 +238,29 @@ export async function ogImageResponse(
   const cacheMaxAge = nonNegativeInteger(options.cacheMaxAge, "cacheMaxAge", DEFAULT_MAX_AGE)
   const maxBytes = nonNegativeInteger(options.maxBytes, "maxBytes", DEFAULT_MAX_BYTES)
   const svg = renderOgImage(options)
+  const responseHeaders = (tag: RasterizedTag): Headers =>
+    new Headers({
+      "cache-control": `public, max-age=${cacheMaxAge}, immutable`,
+      "content-type": `${tag.contentType}${tag.contentType === "image/svg+xml" ? "; charset=utf-8" : ""}`,
+      etag: tag.etag,
+      "content-length": String(tag.length),
+      "x-content-type-options": "nosniff",
+    })
+  const { rasterizer } = options
+  let svgHash: string | undefined
+  if (rasterizer !== undefined) {
+    svgHash = await sha256(new TextEncoder().encode(svg))
+    const known = rasterizedTags.get(rasterizer)?.get(svgHash)
+    if (known !== undefined && ifNoneMatch(request, known.etag)) {
+      return new Response(null, { status: 304, headers: responseHeaders(known) })
+    }
+  }
   let bytes: Uint8Array
   let mediaType = "image/svg+xml"
   try {
-    if (options.rasterizer === undefined) bytes = new TextEncoder().encode(svg)
+    if (rasterizer === undefined) bytes = new TextEncoder().encode(svg)
     else {
-      const rasterized = await options.rasterizer(svg)
+      const rasterized = await rasterizer(svg)
       if (!(rasterized.bytes instanceof Uint8Array) || rasterized.bytes.byteLength > maxBytes) {
         throw new TypeError("og image: rasterizer output exceeds maxBytes")
       }
@@ -223,15 +273,10 @@ export async function ogImageResponse(
   // Hash the bytes actually sent. A rasterizer may produce different pixels for the same SVG
   // (for example after a backend/font update), so hashing only the source would make a conditional
   // request incorrectly return 304 for a changed representation.
-  const etag = `"${await sha256(bytes)}"`
-  const headers = new Headers({
-    "cache-control": `public, max-age=${cacheMaxAge}, immutable`,
-    "content-type": `${mediaType}${mediaType === "image/svg+xml" ? "; charset=utf-8" : ""}`,
-    etag,
-    "content-length": String(bytes.byteLength),
-    "x-content-type-options": "nosniff",
-  })
-  if (ifNoneMatch(request, etag)) return new Response(null, { status: 304, headers })
+  const tag = { etag: `"${await sha256(bytes)}"`, contentType: mediaType, length: bytes.byteLength }
+  if (rasterizer !== undefined && svgHash !== undefined) rememberTag(rasterizer, svgHash, tag)
+  const headers = responseHeaders(tag)
+  if (ifNoneMatch(request, tag.etag)) return new Response(null, { status: 304, headers })
   if (request?.method === "HEAD") return new Response(null, { status: 200, headers })
   return new Response(bytes.slice(), { status: 200, headers })
 }

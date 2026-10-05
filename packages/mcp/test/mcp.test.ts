@@ -331,6 +331,21 @@ describe("handleRpc - MCP Apps extensions", () => {
     })
     expect(JSON.stringify(toolResponse)).not.toContain(secretDetail)
 
+    // A transport that trusts its caller (a local stdio server) opts in to the message.
+    const exposed = await handleRpc(
+      { id: 10, method: "tools/call", params: { name: "failing" } },
+      [failingTool],
+      INFO,
+      {},
+      { exposeToolErrors: true },
+    )
+    expect(exposed).toMatchObject({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: `Tool execution failed: ${secretDetail}` }],
+      },
+    })
+
     const promptResponse = await handleRpc(
       { id: 9, method: "prompts/get", params: { name: "failing-prompt" } },
       [],
@@ -615,6 +630,54 @@ describe("respondMcpHttp - transport hardening", () => {
     for (const header of ["mcp-protocol-version", "mcp-method", "mcp-name", "authorization"]) {
       expect(allow).toContain(header)
     }
+  })
+
+  test("same-origin default survives a TLS-terminating proxy but never a downgrade", async () => {
+    const init = { jsonrpc: "2.0", id: 1, method: "initialize" }
+    const at = (url: string, origin: string): Request =>
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify(init),
+      })
+    expect((await serve(at("http://app.test/mcp", "https://app.test"))).status).toBe(200)
+    expect((await serve(at("https://app.test/mcp", "http://app.test"))).status).toBe(403)
+    expect((await serve(at("http://app.test/mcp", "https://evil.test"))).status).toBe(403)
+  })
+
+  test("allowedHosts validates and normalizes the inbound Host authority", async () => {
+    const init = { jsonrpc: "2.0", id: 1, method: "initialize" }
+    const at = (url: string, headers: Record<string, string> = {}): Request =>
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(init),
+      })
+    const allowedHosts = ["localhost", "127.0.0.1:3000"]
+    // Rebinding: the attacker's name resolves to 127.0.0.1, so Origin and Host both say rebind.test.
+    const rebound = at("http://rebind.test:3000/mcp", { origin: "http://rebind.test:3000" })
+    expect((await serve(rebound)).status).toBe(200)
+    expect((await serve(rebound, { allowedHosts })).status).toBe(403)
+    expect((await serve(at("http://rebind.test:3000/mcp"), { allowedHosts })).status).toBe(403)
+
+    // A canonical request URL must not conceal the actual inbound Host header.
+    const masked = at("http://localhost:3000/mcp", {
+      host: "rebind.test:3000",
+      origin: "http://localhost:3000",
+    })
+    expect((await serve(masked, { allowedHosts })).status).toBe(403)
+
+    expect((await serve(at("http://localhost:4000/mcp"), { allowedHosts })).status).toBe(200)
+    expect((await serve(at("http://127.0.0.1:3000/mcp"), { allowedHosts })).status).toBe(200)
+    expect((await serve(at("http://127.0.0.1:3001/mcp"), { allowedHosts })).status).toBe(403)
+    // Config is case-insensitive and an explicit default port matches URL canonicalization.
+    expect(
+      (await serve(at("http://localhost/mcp"), { allowedHosts: ["LOCALHOST:80"] })).status,
+    ).toBe(200)
+    expect(
+      (await serve(at("https://example.test/mcp"), { allowedHosts: ["EXAMPLE.TEST:443"] })).status,
+    ).toBe(200)
+    expect((await serve(at("http://[::1]:4000/mcp"), { allowedHosts: ["[::1]"] })).status).toBe(200)
   })
 
   test("rejects a non-finite body cap before reading the request", async () => {

@@ -10,6 +10,11 @@
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
  *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface.
  *
+ * Upgrading across several releases runs every recipe between the installed version (the lowest
+ * fixed-group version the workspace declares) and the target, oldest first, then pins the target. A
+ * target newer than this CLI prints the newer CLI's command instead of guessing at recipes it does not
+ * carry; nothing is downloaded or run on the user's behalf.
+ *
  * Dry-run by default (prints the plan, writes nothing); `--write` applies. Fail-closed on an unknown
  * target version or a missing package.json, and deterministic (same repo + target → same edits).
  *
@@ -35,6 +40,10 @@ export interface UpgradeOptions {
   readonly verify?: boolean
   /** Permit a target BELOW the installed version (a rollback). Default false → fail-closed. */
   readonly allowDowngrade?: boolean
+  /** Pin the exact target (`3.6.0`), dropping the `^`/`~` a spec used. Default false → keep it. */
+  readonly exact?: boolean
+  /** The running CLI's version: the newest target it applies. Default: its newest recipe. */
+  readonly cliVersion?: string
 }
 
 export interface PinChange {
@@ -85,16 +94,27 @@ const SEMVER_SPEC =
   /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
 /**
- * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …).
- * Returns null when the spec is not a plain semver spec (→ skip it) or already equals the target.
+ * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …), or
+ * dropping it when `exact`. Returns null when the spec is not a plain semver spec (→ skip it) or
+ * already equals the target.
  */
-export function rewriteVersionSpec(spec: string, toVersion: string): string | null {
+export function rewriteVersionSpec(spec: string, toVersion: string, exact = false): string | null {
   const match = SEMVER_SPEC.exec(spec.trim())
   if (!match) return null
-  const operator = match[1] ?? ""
+  const operator = exact ? "" : (match[1] ?? "")
   const next = `${operator}${toVersion}`
   return next === spec ? null : next
 }
+
+/** The version a plain semver spec names (`^2.4.1` → `2.4.1`), or null for any other spec. */
+export function specVersion(spec: string): string | null {
+  const match = SEMVER_SPEC.exec(spec.trim())
+  if (!match) return null
+  return `${match[2]}.${match[3]}.${match[4]}${match[5] === undefined ? "" : `-${match[5]}`}`
+}
+
+// A release target: a bare version, never a range, so it can be pinned and printed in a command.
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
 /** Numeric core (major, minor, patch) of a semver spec, ignoring the range operator + prerelease/build. */
 export function specVersionTuple(spec: string): readonly [number, number, number] | null {
@@ -168,6 +188,7 @@ export function pinSweepText(
   text: string,
   rules: readonly { match: string; to: string }[],
   allowDowngrade = false,
+  exact = false,
 ): {
   text: string
   changes: Array<Omit<PinChange, "file">>
@@ -191,7 +212,7 @@ export function pinSweepText(
         (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
       )
       if (!rule) continue
-      const next = rewriteVersionSpec(rawSpec, rule.to)
+      const next = rewriteVersionSpec(rawSpec, rule.to, exact)
       if (next === null) continue
       // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
       // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
@@ -270,12 +291,12 @@ function rewriteDependencyEntry(
     let start = match.index
     let end = match.index + match[0].length
     let after = end
-    while (/\\s/.test(body[after] ?? "")) after++
+    while (/\s/.test(body[after] ?? "")) after++
     if (body[after] === ",") {
       end = after + 1
     } else {
       let before = start - 1
-      while (before >= 0 && /\\s/.test(body[before] ?? "")) before--
+      while (before >= 0 && /\s/.test(body[before] ?? "")) before--
       if (body[before] === ",") start = before
     }
     nextBody = body.slice(0, start) + body.slice(end)
@@ -287,6 +308,7 @@ function rewriteDependencyEntry(
 export function moveDependenciesText(
   text: string,
   moves: readonly { from: string; to: string; toVersion: string }[],
+  exact = false,
 ): { text: string; changes: Array<Omit<DependencyMoveChange, "file">> } {
   let out = text
   const changes: Array<Omit<DependencyMoveChange, "file">> = []
@@ -304,7 +326,7 @@ export function moveDependenciesText(
       if (!Object.hasOwn(dependencyMap, move.from)) continue
       const fromVersion = dependencyMap[move.from]
       if (typeof fromVersion !== "string") continue
-      const movedVersion = rewriteVersionSpec(fromVersion, move.toVersion) ?? fromVersion
+      const movedVersion = rewriteVersionSpec(fromVersion, move.toVersion, exact) ?? fromVersion
       // Dependency fields have different install semantics. A devDependency does not satisfy a runtime
       // dependency, so only deduplicate the successor inside the same field.
       const targetExists = Object.hasOwn(dependencyMap, move.to)
@@ -328,6 +350,12 @@ export function moveDependenciesText(
         action,
       })
     }
+  }
+  // The edit is textual; a result that no longer parses is never written.
+  try {
+    JSON.parse(out)
+  } catch {
+    return { text, changes: [] }
   }
   return { text: out, changes }
 }
@@ -358,10 +386,15 @@ export function applyImportMoves(
 }
 
 const SOURCE_GLOB = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
-const IGNORE_SEGMENTS = ["node_modules/", "/dist/", "/build/", "/.git/", "/coverage/", "/.next/"]
+const IGNORED_DIRECTORIES = new Set(["node_modules", "dist", "build", ".git", "coverage", ".next"])
 
+// Any directory on the path counts, the top-level one included (`dist/index.js`). Bun's glob yields
+// `dist\index.js` on Windows.
 const isIgnored = (path: string): boolean =>
-  path.startsWith("node_modules/") || IGNORE_SEGMENTS.some((seg) => path.includes(seg))
+  path
+    .split(/[\\/]/)
+    .slice(0, -1)
+    .some((segment) => IGNORED_DIRECTORIES.has(segment))
 
 function scan(cwd: string, pattern: string): string[] {
   const glob = new Glob(pattern)
@@ -372,12 +405,89 @@ function scan(cwd: string, pattern: string): string[] {
   return out.sort() // deterministic order
 }
 
+// The fixed version group: every package released together at one version.
+const isFixedGroup = (name: string): boolean =>
+  name.startsWith("@nifrajs/") || name === "nifra" || name === "create-nifra"
+
+const groupPins = (version: string): UpgradeRecipe["pins"] => [
+  { match: "@nifrajs/", to: version },
+  { match: "create-nifra", to: version },
+  { match: "nifra", to: version },
+]
+
+/**
+ * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
+ * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ */
+export function installedGroupVersion(cwd: string): string | null {
+  let lowest: string | null = null
+  for (const rel of scan(cwd, "**/package.json")) {
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(readFileSync(join(cwd, rel), "utf8")) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    for (const field of DEP_FIELDS) {
+      const deps = parsed[field]
+      if (typeof deps !== "object" || deps === null) continue
+      for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+        if (!isFixedGroup(name) || typeof spec !== "string") continue
+        const version = specVersion(spec)
+        if (version !== null && (lowest === null || compareSemverSpec(version, lowest) < 0)) {
+          lowest = version
+        }
+      }
+    }
+  }
+  return lowest
+}
+
+/** One recipe that applies every release recipe after `installed` up to `target`, oldest first. */
+export interface ChainedRecipe extends UpgradeRecipe {
+  /** The release recipes it applies, oldest first. */
+  readonly steps: readonly string[]
+}
+
+/**
+ * Chain the recipes after `installed` (exclusive) up to `target` (inclusive): their dependency and
+ * import moves in release order, their notes labeled by release, and the fixed group pinned to
+ * `target`. Without a known installed version only the target's own recipe applies.
+ */
+export function chainRecipes(target: string, installed: string | null): ChainedRecipe {
+  const steps =
+    installed === null
+      ? getRecipe(target) === undefined
+        ? []
+        : [target]
+      : listRecipeVersions().filter(
+          (version) =>
+            compareSemverSpec(version, installed) > 0 && compareSemverSpec(version, target) <= 0,
+        )
+  const recipes = steps.flatMap((version) => getRecipe(version) ?? [])
+  // A later rule for the same match replaces an earlier one; the target's pins win last.
+  const pins = new Map<string, string>()
+  for (const recipe of recipes) for (const rule of recipe.pins) pins.set(rule.match, rule.to)
+  for (const rule of getRecipe(target)?.pins ?? groupPins(target)) pins.set(rule.match, rule.to)
+  return {
+    version: target,
+    steps,
+    pins: [...pins].map(([match, to]) => ({ match, to })),
+    dependencyMoves: recipes.flatMap((recipe) => recipe.dependencyMoves ?? []),
+    importMoves: recipes.flatMap((recipe) => recipe.importMoves),
+    notes: recipes.flatMap((recipe) =>
+      (recipe.notes ?? []).map((note) => `${recipe.version}: ${note}`),
+    ),
+  }
+}
+
 /** Compute the plan (and, when `write`, apply it) for a target recipe against `cwd`. */
 export function computeUpgrade(
   cwd: string,
   recipe: UpgradeRecipe,
   write: boolean,
   allowDowngrade = false,
+  exact = false,
 ): UpgradePlan {
   const pins: PinChange[] = []
   const dependencyMoves: DependencyMoveChange[] = []
@@ -388,9 +498,9 @@ export function computeUpgrade(
     for (const rel of scan(cwd, "**/package.json")) {
       const abs = join(cwd, rel)
       const original = readFileSync(abs, "utf8")
-      const moved = moveDependenciesText(original, recipe.dependencyMoves ?? [])
+      const moved = moveDependenciesText(original, recipe.dependencyMoves ?? [], exact)
       for (const change of moved.changes) dependencyMoves.push({ file: rel, ...change })
-      const pinned = pinSweepText(moved.text, recipe.pins, allowDowngrade)
+      const pinned = pinSweepText(moved.text, recipe.pins, allowDowngrade, exact)
       for (const change of pinned.changes) pins.push({ file: rel, ...change })
       for (const d of pinned.downgrades) downgrades.push({ file: rel, ...d })
       if (write && pinned.text !== original) writeFileSync(abs, pinned.text)
@@ -418,10 +528,22 @@ export function computeUpgrade(
   }
 }
 
-function renderPlan(plan: UpgradePlan, write: boolean): string {
+function renderPlan(
+  plan: UpgradePlan,
+  write: boolean,
+  from: string | null,
+  steps: readonly string[],
+): string {
   const lines: string[] = []
   const verb = write ? "Applied" : "Planned"
   lines.push(`nifra upgrade → ${plan.version}  (${write ? "write" : "dry-run"})`)
+  if (from !== null) {
+    lines.push(
+      steps.length === 0
+        ? `From ${from}; no release recipe in between.`
+        : `From ${from}, applying the ${steps.join(", ")} recipe${steps.length === 1 ? "" : "s"}.`,
+    )
+  }
   lines.push("")
   if (
     plan.pins.length === 0 &&
@@ -471,24 +593,73 @@ function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[
   ].join("\n")
 }
 
+/** The targets this CLI applies: each release recipe up to its own version, and that version. */
+export function upgradeTargets(cliVersion: string): string[] {
+  const versions = listRecipeVersions().filter(
+    (version) => compareSemverSpec(version, cliVersion) <= 0,
+  )
+  if (!versions.includes(cliVersion)) versions.push(cliVersion)
+  return versions.sort(compareSemverSpec)
+}
+
+/** The command that runs `version`'s own CLI with the same flags. `version` is a validated release. */
+function newerCliCommand(version: string, options: UpgradeOptions): string {
+  const flags = [
+    options.write === true ? "--write" : "",
+    options.exact === true ? "--exact" : "",
+    options.allowDowngrade === true ? "--allow-downgrade" : "",
+    options.verify === false ? "--no-verify" : "",
+    options.json === true ? "--json" : "",
+  ].filter((flag) => flag !== "")
+  return ["bunx", `@nifrajs/cli@${version}`, "upgrade", version, ...flags].join(" ")
+}
+
 /** CLI entry. Returns false (→ non-zero exit) on an unknown version, no project, or a failed verify. */
 export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<boolean> {
+  const cliVersion = options.cliVersion ?? listRecipeVersions().at(-1) ?? "0.0.0"
+  const targets = upgradeTargets(cliVersion)
   if (options.list) {
-    const versions = listRecipeVersions()
-    if (options.json) console.log(JSON.stringify({ versions }, null, 2))
-    else console.log(`available upgrade targets:\n${versions.map((v) => `  ${v}`).join("\n")}`)
+    if (options.json) console.log(JSON.stringify({ versions: targets, cliVersion }, null, 2))
+    else {
+      console.log(
+        `available upgrade targets:\n${targets.map((v) => `  ${v}`).join("\n")}\n\n` +
+          `A newer release upgrades with its own CLI: bunx @nifrajs/cli@<version> upgrade <version>`,
+      )
+    }
     return true
   }
 
   const { version } = options
   if (version === undefined) {
-    console.error("[nifra] upgrade needs a target version, e.g. `nifra upgrade 1.8.0` (or --list)")
+    console.error(
+      `[nifra] upgrade needs a target version, e.g. \`nifra upgrade ${cliVersion}\` (or --list)`,
+    )
     return false
   }
-  const recipe = getRecipe(version)
-  if (!recipe) {
+  if (!RELEASE_VERSION.test(version)) {
+    console.error(`[nifra] ${JSON.stringify(version)} is not a release version, e.g. ${cliVersion}`)
+    return false
+  }
+  if (compareSemverSpec(version, cliVersion) > 0) {
+    // Recipes ship with the CLI: only the target release's CLI knows every recipe up to it. Print its
+    // command rather than downloading and running code on the user's behalf.
+    const command = newerCliCommand(version, options)
+    if (options.json) {
+      console.log(
+        JSON.stringify({ version, cliVersion, refused: "newer-than-cli", command }, null, 2),
+      )
+    } else {
+      console.error(
+        `nifra upgrade → ${version}: this CLI is ${cliVersion} and carries the recipes up to it.\n` +
+          `Run the ${version} CLI, which carries every recipe up to ${version}:\n\n  ${command}`,
+      )
+    }
+    return false
+  }
+  if (!targets.includes(version)) {
     console.error(
-      `[nifra] no upgrade recipe for ${version}. Available: ${listRecipeVersions().join(", ") || "(none)"}`,
+      `[nifra] no upgrade recipe for ${version}. This CLI upgrades to: ${targets.join(", ")}. ` +
+        `For ${version} itself, run: ${newerCliCommand(version, options)}`,
     )
     return false
   }
@@ -505,24 +676,33 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
 
   const write = options.write === true
   const allowDowngrade = options.allowDowngrade === true
+  const exact = options.exact === true
+  const from = installedGroupVersion(cwd)
+  const recipe = chainRecipes(version, from)
 
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
-  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade)
+  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact)
   if (preview.downgrades.length > 0) {
     if (options.json) {
-      console.log(JSON.stringify({ ...preview, write: false, refused: "downgrade" }, null, 2))
+      console.log(
+        JSON.stringify(
+          { ...preview, from, steps: recipe.steps, write: false, refused: "downgrade" },
+          null,
+          2,
+        ),
+      )
     } else {
       console.error(renderDowngradeRefusal(recipe.version, preview.downgrades))
     }
     return false
   }
 
-  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade) : preview
+  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact) : preview
 
   if (options.json) {
-    console.log(JSON.stringify({ ...plan, write }, null, 2))
+    console.log(JSON.stringify({ ...plan, from, steps: recipe.steps, write }, null, 2))
   } else {
-    console.log(renderPlan(plan, write))
+    console.log(renderPlan(plan, write, from, recipe.steps))
   }
 
   // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.

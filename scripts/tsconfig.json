@@ -1,0 +1,8 @@
+{
+  // The repository's own tooling: release, gate, and generator scripts. The root program's `include`
+  // stops at packages, internal, bench and examples, so these are checked as their own project.
+  "extends": "../tsconfig.json",
+  "include": ["./**/*.ts"],
+  // A sample app `check:pipeline-parity` builds, not tooling - the same class as `examples/`.
+  "exclude": ["./fixtures"]
+}

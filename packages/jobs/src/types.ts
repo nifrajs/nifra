@@ -22,12 +22,26 @@ export interface StandardSchemaV1<Output = unknown> {
   }
 }
 
+/**
+ * The trace an instrumented attempt runs in. It has the shape of `c.trace` from `@nifrajs/otel`, so
+ * `cache.for(ctx)` and a nested `job.for(ctx).enqueue()` inside the handler stay in the same trace.
+ */
+export interface JobTraceContext {
+  readonly traceId: string
+  readonly spanId: string
+  readonly sampled: boolean
+  /** W3C `traceparent` of the attempt's span. */
+  readonly traceparent: string
+}
+
 /** What a handler receives alongside the payload: identity + which attempt this is (1-based). */
 export interface JobContext {
   readonly id: string
   readonly name: string
   /** 1 on the first run, 2 on the first retry, … */
   readonly attempt: number
+  /** Set when the queue's `instrument.run` opened a span for this attempt (see `jobTracing()`). */
+  readonly trace?: JobTraceContext
 }
 
 /** A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter - never crashes the worker. */
@@ -63,12 +77,14 @@ export interface JobHandle<Payload> {
   readonly name: string
   enqueue(payload: Payload, options?: EnqueueOptions): Promise<string>
   /**
-   * A handle bound to a request context: `enqueue` announces its capability first, and fails closed
-   * when the route did not declare it. Evidence from the CALL is per-route and exact, where evidence
-   * from an import is as broad as the module that holds it.
+   * A handle bound to a request (or job) context. With a `beacon` on the queue, `enqueue` announces its
+   * capability first and fails closed when the route did not declare it - evidence from the CALL is
+   * per-route and exact, where evidence from an import is as broad as the module that holds it. The
+   * context's `trace.traceparent` (from `tracing()`, or `JobContext.trace`) is stored with the job, so
+   * the run continues the producer's trace.
    *
-   * Requires `beacon` on the queue. Without one this throws rather than handing back a handle that
-   * quietly produces no evidence.
+   * Requires `beacon` or `instrument` on the queue. With neither this throws rather than handing back a
+   * handle that quietly produces no evidence.
    */
   for(context: object): JobHandle<Payload>
 }
@@ -78,6 +94,57 @@ export interface EnqueueOptions {
   readonly delayMs?: number
   /** Absolute epoch-ms eligibility time. Overrides `delayMs`. */
   readonly runAt?: number
+  /**
+   * The producer's W3C `traceparent`, for an enqueue outside a request (a cron tick, a script).
+   * Overrides the bound context's trace. A value that is not a well-formed traceparent is dropped.
+   */
+  readonly traceparent?: string
+}
+
+/** What `instrument.enqueue` sees. */
+export interface JobEnqueueInfo {
+  readonly name: string
+  /** The producer's `traceparent` (bound context or {@link EnqueueOptions.traceparent}), if any. */
+  readonly traceparent: string | undefined
+}
+
+/** What `instrument.run` sees for one attempt. */
+export interface JobRunInfo {
+  readonly id: string
+  readonly name: string
+  /** 1-based, as on {@link JobContext}. */
+  readonly attempt: number
+  readonly maxAttempts: number
+  /** The `traceparent` stored with the job. It came back from the store: parse it before trusting it. */
+  readonly traceparent: string | undefined
+}
+
+/** How an attempt ended: removed, rescheduled, or moved to the dead-letter set. */
+export type JobRunOutcome = "completed" | "retried" | "dead-lettered"
+
+/**
+ * Around-hooks for tracing (or timing) the queue - the seam `jobTracing()` from `@nifrajs/otel/jobs`
+ * plugs into. Each hook calls `next` once and returns what it resolves to. A hook that throws, or never
+ * calls `next`, cannot change behavior: the work still runs, uninstrumented.
+ */
+export interface QueueInstrument {
+  /**
+   * Wraps one enqueue (payload validation + the store write). `next({ traceparent })` stores that trace
+   * context with the job instead of the producer's - the producer span's own context, so the run can
+   * be its child - and resolves to the job id.
+   */
+  enqueue?(
+    info: JobEnqueueInfo,
+    next: (scope?: { readonly traceparent?: string }) => Promise<string>,
+  ): Promise<unknown>
+  /**
+   * Wraps one attempt. `next({ trace })` runs the handler with `ctx.trace` set, settles the job in the
+   * store, and resolves to the outcome; it rejects only when the store itself fails.
+   */
+  run?(
+    info: JobRunInfo,
+    next: (scope?: { readonly trace?: JobTraceContext }) => Promise<JobRunOutcome>,
+  ): Promise<unknown>
 }
 
 // ── Store contract ────────────────────────────────────────────────────────────────────────────────
@@ -89,6 +156,11 @@ export interface StoredJob {
   readonly payload: unknown
   readonly attempt: number
   readonly maxAttempts: number
+  /**
+   * The producer's W3C `traceparent`, as given to {@link JobStore.enqueue}. A store that does not
+   * persist it still runs every job; only the link between the producer's and the run's spans is lost.
+   */
+  readonly traceparent?: string
 }
 
 export interface JobCounts {
@@ -106,12 +178,13 @@ export interface JobCounts {
  * workers. All methods may be sync or async - the queue awaits them.
  */
 export interface JobStore {
-  /** Persist a new job; return its id. */
+  /** Persist a new job; return its id. Hand `traceparent` back on {@link StoredJob} when present. */
   enqueue(job: {
     name: string
     payload: unknown
     runAt: number
     maxAttempts: number
+    traceparent?: string
   }): string | Promise<string>
   /** Atomically claim up to `limit` jobs due at/before `now`, hiding them for `leaseMs`. */
   lease(now: number, limit: number, leaseMs: number): StoredJob[] | Promise<StoredJob[]>

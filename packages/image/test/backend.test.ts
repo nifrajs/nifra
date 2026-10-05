@@ -19,6 +19,10 @@ function stubSharp(over: { metadata?: unknown; toBufferError?: unknown } = {}): 
     let fmt = "png"
     const inst = {
       metadata: async () => (over.metadata ?? { width: 200, height: 100, format: "jpeg" }) as never,
+      rotate() {
+        calls.resize.push("rotate")
+        return inst
+      },
       resize(o: { width: number; withoutEnlargement?: boolean }) {
         calls.resize.push(o)
         return inst
@@ -66,10 +70,22 @@ describe("sharpImageBackend", () => {
       quality: 80,
       format: "webp",
     })
-    expect(calls.resize).toEqual([{ width: 150, withoutEnlargement: true }])
+    // Upright by EXIF first, so the encoded image (which drops the tag) displays the same way.
+    expect(calls.resize).toEqual(["rotate", { width: 150, withoutEnlargement: true }])
     expect(calls.encode).toEqual(["webp"])
     expect(out.contentType).toBe("image/webp")
     expect(new TextDecoder().decode(out.bytes)).toBe("<<webp>>")
+  })
+
+  test("probe reports the displayed size of a quarter-turned photo", async () => {
+    const { sharp } = stubSharp({
+      metadata: { width: 400, height: 300, format: "jpeg", orientation: 6 },
+    })
+    expect(await sharpImageBackend(sharp).probe(new Uint8Array())).toEqual({
+      width: 300,
+      height: 400,
+      format: "jpeg",
+    })
   })
 
   test("probe throws decode when sharp can't read dimensions", async () => {
@@ -190,5 +206,125 @@ describe("wasmImageBackend", () => {
         format: "png",
       }),
     ).rejects.toBeInstanceOf(ImageProcessingError)
+  })
+})
+
+/** A JPEG header: an APP1 EXIF block declaring `orientation`, then a SOF0 for a `width`x`height` frame. */
+function exifJpeg(orientation: number, width: number, height: number): Uint8Array {
+  const tiff = [
+    0x4d,
+    0x4d,
+    0,
+    42,
+    0,
+    0,
+    0,
+    8,
+    0,
+    1,
+    0x01,
+    0x12,
+    0,
+    3,
+    0,
+    0,
+    0,
+    1,
+    0,
+    orientation,
+    0,
+    0,
+  ]
+  const app1 = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff, 0, 0, 0, 0]
+  const sof = [0xff, 0xc0, 0, 17, 8, height >> 8, height & 0xff, width >> 8, width & 0xff, 3]
+  return new Uint8Array([
+    0xff,
+    0xd8,
+    0xff,
+    0xe1,
+    0,
+    app1.length + 2,
+    ...app1,
+    ...sof,
+    ...new Array<number>(9).fill(0),
+  ])
+}
+
+describe("wasmImageBackend turns a JPEG upright by its EXIF orientation", () => {
+  // Stored 3 wide x 2 high, each pixel's red channel its label.
+  const STORED = [1, 2, 3, 4, 5, 6]
+  // What a viewer shows for each orientation (rows top to bottom), per the EXIF definitions.
+  const SHOWN: Record<number, number[][]> = {
+    1: [
+      [1, 2, 3],
+      [4, 5, 6],
+    ],
+    2: [
+      [3, 2, 1],
+      [6, 5, 4],
+    ],
+    3: [
+      [6, 5, 4],
+      [3, 2, 1],
+    ],
+    4: [
+      [4, 5, 6],
+      [1, 2, 3],
+    ],
+    5: [
+      [1, 4],
+      [2, 5],
+      [3, 6],
+    ],
+    6: [
+      [4, 1],
+      [5, 2],
+      [6, 3],
+    ],
+    7: [
+      [6, 3],
+      [5, 2],
+      [4, 1],
+    ],
+    8: [
+      [3, 6],
+      [2, 5],
+      [1, 4],
+    ],
+  }
+
+  const encodedFrom = async (orientation: number, decoded: DecodedImage): Promise<DecodedImage> => {
+    let encoded: DecodedImage | undefined
+    const codecs: WasmImageCodecs = {
+      decode: () => decoded,
+      resize: (image) => image,
+      encode(image) {
+        encoded = image
+        return new Uint8Array()
+      },
+    }
+    const backend = wasmImageBackend(codecs)
+    const bytes = exifJpeg(orientation, 3, 2)
+    const { width } = await backend.probe(bytes)
+    await backend.transform({ bytes, width, quality: 80, format: "png" })
+    if (encoded === undefined) throw new Error("nothing was encoded")
+    return encoded
+  }
+
+  test.each([1, 2, 3, 4, 5, 6, 7, 8])("orientation %d", async (orientation) => {
+    const data = new Uint8Array(STORED.flatMap((label) => [label, 0, 0, 255]))
+    const image = await encodedFrom(orientation, { data, width: 3, height: 2 })
+    const rows = SHOWN[orientation] ?? []
+    expect({ width: image.width, height: image.height }).toEqual({
+      width: rows[0]?.length ?? 0,
+      height: rows.length,
+    })
+    expect([...image.data].filter((_, i) => i % 4 === 0)).toEqual(rows.flat())
+  })
+
+  test("a codec that already turned the pixels is left as it is", async () => {
+    const data = new Uint8Array([4, 1, 5, 2, 6, 3].flatMap((label) => [label, 0, 0, 255]))
+    const image = await encodedFrom(6, { data, width: 2, height: 3 })
+    expect([...image.data].filter((_, i) => i % 4 === 0)).toEqual([4, 1, 5, 2, 6, 3])
   })
 })

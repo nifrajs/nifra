@@ -15,7 +15,8 @@
  * the CHANGELOG line, which lands in the named package and nowhere else.
  *
  * The comparison base is the last release commit, found as the most recent commit that DELETED
- * `.changeset/*.md` (what `changeset version` does when it consumes them). That makes the gate
+ * `.changeset/*.md` and wrote a `packages/<dir>/CHANGELOG.md` (what `changeset version` does when it
+ * consumes them; a commit that only drops or replaces a changeset is not a release). That makes the gate
  * self-anchoring: it needs no tag, no PR base ref, and no network, and it answers over exactly the
  * range the pending changesets are supposed to describe.
  *
@@ -28,6 +29,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import {
   type PublishedPackage,
   publishedPackages as readPublishedPackages,
@@ -52,26 +54,37 @@ const git = (root: string, args: readonly string[]): string => {
  * inconclusive rather than as "nothing changed".
  */
 export const lastReleaseCommit = (root: string = ROOT): string | undefined => {
-  const out = git(root, [
+  const log = git(root, [
     "log",
-    "--diff-filter=D",
-    "--format=%H",
-    "-1",
+    "--no-renames",
+    "--format=%x00%H",
+    "--name-status",
     "--",
     ".changeset/*.md",
-  ]).trim()
-  return out === "" ? undefined : out
+    "packages/*/CHANGELOG.md",
+  ])
+  for (const record of log.split("\0").slice(1)) {
+    const [hash, ...entries] = record.trim().split("\n")
+    if (
+      entries.some((entry) => /^D\t\.changeset\/[^/]+\.md$/.test(entry)) &&
+      entries.some((entry) => /^[AM]\tpackages\/[^/]+\/CHANGELOG\.md$/.test(entry))
+    )
+      return hash
+  }
+  return undefined
 }
 
-/** Changed files since the base, committed and uncommitted alike - staged work counts as changed. */
+/**
+ * Changed files since the base, committed and uncommitted alike - staged work counts as changed. A move
+ * is listed as its deletion and its addition, so the package a file left counts as changed too.
+ */
 export const changedFiles = (base: string, root: string = ROOT): readonly string[] => {
-  const committed = git(root, ["diff", "--name-only", `${base}..HEAD`]).split("\n")
-  const working = git(root, ["status", "--porcelain=1", "-z"])
+  const committed = git(root, ["diff", "--name-only", "--no-renames", "-z", `${base}..HEAD`]).split(
+    "\0",
+  )
+  const working = git(root, ["status", "--porcelain=1", "--no-renames", "-z"])
     .split("\0")
     .filter((entry) => entry !== "")
-    // Porcelain v1 records are `XY <path>`; a rename carries its old path as a separate NUL field with
-    // no status prefix, dropped here rather than mistaken for a path whose first two characters are a
-    // status code.
     .map((entry) => (/^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3) : undefined))
     .filter((path): path is string => path !== undefined)
   return [...new Set([...committed, ...working])].filter((path) => path !== "")
@@ -153,7 +166,7 @@ const run = (root: string): number => {
   console.error(
     `changeset-coverage: ${uncovered.size} package${plural ? "" : "s"} changed since the last release (${base.slice(0, 8)}) with no pending changeset naming ${plural ? "it" : "them"}:`,
   )
-  for (const [name, files] of [...uncovered].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, files] of [...uncovered].sort(([a], [b]) => codeUnitOrder(a, b))) {
     console.error(`\n  ${name}`)
     for (const file of files) console.error(`    ${file}`)
   }

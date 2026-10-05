@@ -99,6 +99,53 @@ describe("contract laboratory", () => {
     expect(report.results.every((result) => result.replay.seed === 73)).toBe(true)
   })
 
+  test("a synthesized path satisfies a param constraint and fills a part-literal segment", async () => {
+    const seen: Record<string, unknown>[] = []
+    const response = t.object({ ok: t.boolean() })
+    const record = (params: Record<string, unknown>) => {
+      seen.push({ ...params })
+      return { ok: true }
+    }
+    const app = server()
+      .get("/users/:id{[0-9]+}", { response }, (c) => record(c.params))
+      .get("/codes/:code{[A-Z]{2,3}}", { response }, (c) => record(c.params))
+      .get("/img/:kind{thumb|full}", { response }, (c) => record(c.params))
+      .get("/f/:name.:ext{png|jpg}", { response }, (c) => record(c.params))
+      .get("/files/:name.json", { response }, (c) => record(c.params))
+      .get("/o/:page{[0-9]+}?", { response }, (c) => record(c.params))
+      .get("/assets/*rest", { response }, (c) => record(c.params))
+
+    const report = await runAdversarialContract(app)
+
+    expect(report.ok).toBe(true)
+    expect(report.gaps).toEqual([])
+    // Every route reached its handler: a path that missed the constraint would be a 404.
+    expect(report.results.filter((result) => result.target === "response")).toHaveLength(8)
+    expect(report.results.every((result) => result.ok)).toBe(true)
+    expect(seen).toContainEqual({ id: "0" })
+    expect(seen).toContainEqual({ code: "AA" })
+    expect(seen).toContainEqual({ kind: "thumb" })
+    expect(seen).toContainEqual({ name: "name-contract", ext: "png" })
+    expect(seen).toContainEqual({ name: "name-contract" })
+    expect(seen).toContainEqual({ page: "0" })
+    expect(seen).toContainEqual({ rest: "rest/contract" })
+  })
+
+  test("a path witness is used as given, even where it does not satisfy the constraint", async () => {
+    const response = t.object({ id: t.string() })
+    const app = server().get("/users/:id{[0-9]+}", { response }, (c) => ({ id: c.params.id }))
+
+    const served = await runAdversarialContract(app, {
+      witnesses: { "GET /users/:id{[0-9]+}": { params: { id: "42" } } },
+    })
+    expect(served.ok).toBe(true)
+
+    const missed = await runAdversarialContract(app, {
+      witnesses: { "GET /users/:id{[0-9]+}": { params: { id: "ada" } } },
+    })
+    expect(missed.ok).toBe(false)
+  })
+
   test("normalizes query witnesses through URL semantics before deriving mutations", async () => {
     const response = t.object({ limit: t.integer() })
     const app = server().get(

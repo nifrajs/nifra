@@ -4,6 +4,7 @@ import { existsSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
+import { CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import type { Diagnostic } from "./diagnostics.ts"
 
 export interface AssureSink {
@@ -294,7 +295,7 @@ export async function collectAssureBundle(
   })
 
   await addGate("render", async () => {
-    if (!existsSync(join(cwd, "nifra.config.ts")) && !existsSync(join(cwd, "framework.ts")))
+    if (!existsSync(join(cwd, CONFIG_FILE)) && !existsSync(join(cwd, FRAMEWORK_FILE)))
       return { diagnostics: [], skipReason: "no client render target configured" }
     const { renderPages } = await import("./mcp-render.ts")
     const result = await renderPages(cwd, [{ path: "/" }])

@@ -10,6 +10,7 @@ import {
   collectDuplicateInstalls,
   collectStaleWorkspaceDists,
   packageOf,
+  runDoctor,
   scanUndeclaredImports,
 } from "../src/doctor.ts"
 
@@ -75,6 +76,43 @@ describe("scanUndeclaredImports - undeclared bare imports, all import forms", ()
       "side-effect-pkg",
       "zod",
     ])
+  })
+
+  test("reads every import clause shape, and a long module in linear time", () => {
+    const src = [
+      'import Default from "pkg-default"',
+      'import Mixed, { named } from "pkg-mixed"',
+      'import * as ns from "pkg-namespace"',
+      'import Both, * as ns2 from "pkg-default-namespace"',
+      'import type { T } from "pkg-type"',
+      'import {\n  a,\n  b as c,\n} from "pkg-multiline"',
+      'import{min}from"pkg-minified"',
+      'export * from "pkg-star"',
+      'export * as all from "pkg-star-as"',
+      'export type { U } from "pkg-export-type"',
+    ].join("\n")
+    expect(
+      scanUndeclaredImports("a.ts", src, declared, noAlias)
+        .map((f) => f.snippet)
+        .sort(),
+    ).toEqual([
+      "pkg-default",
+      "pkg-default-namespace",
+      "pkg-export-type",
+      "pkg-minified",
+      "pkg-mixed",
+      "pkg-multiline",
+      "pkg-namespace",
+      "pkg-star",
+      "pkg-star-as",
+      "pkg-type",
+    ])
+    const long = Array.from({ length: 20_000 }, (_, i) => `export const value${i} = ${i}`).join(
+      "\n",
+    )
+    const started = performance.now()
+    expect(scanUndeclaredImports("constants.ts", long, declared, noAlias)).toEqual([])
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 
   test("does not match identifiers that merely contain import/require", () => {
@@ -455,6 +493,43 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("auto-fix re-points a path spec copied from an ancestor", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
+    const app = join(dir, "apps", "web")
+    await mkdir(join(app, "src"), { recursive: true })
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        private: true,
+        dependencies: {
+          "local-lib": "file:packages/local-lib",
+          linked: "link:../outside",
+          vendored: "./vendor/vendored.tgz",
+          zod: "^4.1.0",
+          shared: "workspace:*",
+        },
+      }),
+    )
+    await writeFile(join(app, "package.json"), JSON.stringify({ name: "web" }))
+    await writeFile(
+      join(app, "src", "x.ts"),
+      ["local-lib", "linked", "vendored", "zod", "shared"].map((n) => `import "${n}"`).join("\n"),
+    )
+
+    await applyDoctorAutoFix(app)
+    expect(JSON.parse(await readFile(join(app, "package.json"), "utf8"))).toEqual({
+      name: "web",
+      dependencies: {
+        "local-lib": "file:../../packages/local-lib",
+        linked: "link:../../../outside",
+        vendored: "../../vendor/vendored.tgz",
+        zod: "^4.1.0",
+        shared: "workspace:*",
+      },
+    })
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("auto-fix infers a version from local node_modules metadata", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
     await mkdir(join(dir, "src"), { recursive: true })
@@ -516,14 +591,14 @@ describe("doctor production readiness", () => {
         join(dir, "backend.ts"),
         'const app = server().get("/users", () => ({ ok: true }))\nexport { app }\n',
       )
-      const advisory = await collectDoctorResult(dir, { target: "cf-pages" })
+      const advisory = await collectDoctorResult(dir, { target: "cloudflare" })
       expect(advisory.ok).toBe(true)
       expect(advisory.readiness?.items.filter((item) => item.status === "absent")).toHaveLength(5)
       expect(
         advisory.readiness?.items.find((item) => item.id === "graceful-lifecycle")?.status,
       ).toBe("not-applicable")
 
-      const strict = await collectDoctorResult(dir, { target: "cf-pages", strict: true })
+      const strict = await collectDoctorResult(dir, { target: "cloudflare", strict: true })
       expect(strict.ok).toBe(false)
       expect(strict.readiness?.ok).toBe(false)
     } finally {
@@ -1057,6 +1132,72 @@ describe("collectDoctorResult - CLI-vs-project version drift", () => {
       await installCore(dir, "1.0.0")
       const result = await collectDoctorResult(dir)
       expect(result.toolingDrift).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  const printed = async (dir: string, cliVersion: string): Promise<string> => {
+    const lines: string[] = []
+    const log = console.log
+    console.log = (...args: unknown[]) => lines.push(args.join(" "))
+    try {
+      await runDoctor(dir, { cliVersion })
+    } finally {
+      console.log = log
+    }
+    return lines.join("\n")
+  }
+
+  test("the drift fix names the command that re-pins the project's MCP launch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-drift-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "2.11.3")
+      expect(await printed(dir, "2.10.0")).toContain(
+        "`bunx @nifrajs/cli@2.10.0 init-agents --sync-mcp` re-pins the project's MCP launch",
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("flags an MCP launch pinned to a nifra the project no longer installs - advisory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-pin-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "2.11.3")
+      await writeFile(
+        join(dir, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { nifra: { command: "bunx", args: ["@nifrajs/cli@2.4.0", "mcp"] } },
+        }),
+      )
+      // The CLI running doctor matches the project, so there is no drift - only the pin is stale.
+      const result = await collectDoctorResult(dir, { cliVersion: "2.11.3" })
+      expect(result.toolingDrift).toBeUndefined()
+      expect(result.staleMcpPins).toEqual({
+        target: "2.11.3",
+        files: [{ path: ".mcp.json", pinned: ["2.4.0"] }],
+      })
+      expect(result.ok).toBe(true)
+      const out = await printed(dir, "2.11.3")
+      expect(out).toContain(".mcp.json: @nifrajs/cli@2.4.0")
+      expect(out).toContain("`bunx @nifrajs/cli@2.11.3 init-agents --sync-mcp`")
+
+      await writeFile(
+        join(dir, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { nifra: { command: "bunx", args: ["@nifrajs/cli@2.11.3", "mcp"] } },
+        }),
+      )
+      expect((await collectDoctorResult(dir)).staleMcpPins).toBeUndefined()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

@@ -52,11 +52,11 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom:
       "A client component crashes at build or runtime with a missing Node built-in, a leaked secret, or 'module not found in the browser'.",
     cause:
-      "A server-only module (the DB, a secret, `node:*`, the backend file) is imported at the top level of a component, so the bundler tries to ship it to the browser.",
-    fix: "Move the access into a server-only `loader`/`action` and read the result in the component. Reach the backend through the typed `api` argument, never a top-level server-only import.",
+      "Browser code (a page, `frontend/` or `shared/`) imports backend code - `backend/`, a route's `.backend.ts` half, the DB, a secret, `node:*` - so the browser build refuses it.",
+    fix: "Move the access into the route's `.backend.ts` half (`loader`/`action` with `loaderOutput`/`actionOutput`) and read the result as `data` in the page. Reach the backend through the typed `api` argument; put code both sides need in `shared/`.",
     verify:
       "nifra_check - its transitive server-import scan flags the exact import chain into a client module.",
-    seeAlso: "loader action server-only import boundary",
+    seeAlso: "project structure route backend half import rules",
   },
   {
     id: "hydration-mismatch",
@@ -88,10 +88,10 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
       "Loader data is typed `any` in the page, or a hand-written interface silently drifts from what the loader actually returns.",
     cause:
       "The component types its props by hand instead of inferring them from the loader, so a change to the loader is not a type error at the use site.",
-    fix: "Type the page from the loader: `props: { data: LoaderData<typeof loader> }`. Call the backend through the typed `api` so the request/response shape is inferred, not restated.",
+    fix: 'Type the page from its generated route types: `import type { Route } from "./+types/<name>"` and `props: Route.ComponentProps`. Its `data` is the `loaderOutput` schema\'s type - what actually reaches the browser - while `LoaderData<typeof loader>` also types fields the schema strips. Call the backend through the typed `api` (`Route.LoaderArgs`) so the request/response shape is inferred, not restated.',
     verify:
       "nifra_context prints the exact loader shape and typed call form; nifra_check fails on drift.",
-    seeAlso: "LoaderData typed client loader inference",
+    seeAlso: "route types Route.ComponentProps loaderOutput typed client",
   },
   {
     id: "list-key",

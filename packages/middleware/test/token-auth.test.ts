@@ -42,6 +42,15 @@ describe("bearer()", () => {
     expect((await app.fetch(withAuth({ authorization: "Bearer wrong" }))).status).toBe(401)
   })
 
+  test("matches the Bearer auth-scheme case-insensitively", async () => {
+    const app = server()
+      .use(bearer({ verify: lookup }))
+      .get("/private", () => ({ ok: true }))
+    expect((await app.fetch(withAuth({ authorization: "bearer good" }))).status).toBe(200)
+    expect((await app.fetch(withAuth({ authorization: "BEARER good" }))).status).toBe(200)
+    expect((await app.fetch(withAuth({ authorization: "Bearergood" }))).status).toBe(401)
+  })
+
   test("honors a custom realm", async () => {
     const app = server()
       .use(bearer({ verify: lookup, realm: "secure" }))

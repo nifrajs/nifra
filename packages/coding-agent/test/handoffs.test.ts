@@ -142,4 +142,61 @@ describe("HandoffCoordinator lifecycle", () => {
     expect(approvals.pending).toHaveLength(0)
     approvals.close()
   })
+
+  test("the paired approval carries the boundary's coordinate, so only the handoff settles it", () => {
+    const decisions: boolean[] = []
+    const approvals = new ApprovalManager({
+      timeoutMs: 60_000,
+      onResolved: (decision) => {
+        decisions.push(decision.approved)
+      },
+    })
+    const coordinator = new HandoffCoordinator({ now, approvals })
+    const view = coordinator.open({
+      runId: "run-1",
+      nodeId: "node-1",
+      capability: "delegate",
+      requestId: "req-mirror",
+      from: "planner",
+      requireApproval: true,
+      expiresInMs: 1_000,
+    })
+    expect(approvals.pending[0]?.coordinate).toEqual(coordOf(view))
+    expect(approvals.resolve("req-mirror", true)).toBeUndefined()
+    expect(coordinator.inspect("req-mirror")?.state).toBe("pending")
+    coordinator.decline({ coordinate: coordOf(view) })
+    expect(decisions).toEqual([false])
+    approvals.close()
+  })
+
+  test("open() refuses a session id the approval broker would reject, and never rejects later", async () => {
+    const unhandled: unknown[] = []
+    const record = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on("unhandledRejection", record)
+    try {
+      const failing = new ApprovalManager({
+        onRequired: () => Promise.reject(new Error("broadcast down")),
+      })
+      const coordinator = new HandoffCoordinator({ now, approvals: failing })
+      const input = {
+        runId: "run-1",
+        nodeId: "node-1",
+        capability: "delegate",
+        from: "planner",
+        requireApproval: true,
+      }
+      expect(() =>
+        coordinator.open({ ...input, requestId: "req-bad", sessionId: "user@example.com/s" }),
+      ).toThrow(HandoffError)
+      expect(coordinator.inspect("req-bad")).toBeUndefined()
+      expect(coordinator.open({ ...input, requestId: "req-ok" }).state).toBe("pending")
+      await Bun.sleep(5)
+      expect(unhandled).toEqual([])
+      failing.close()
+    } finally {
+      process.off("unhandledRejection", record)
+    }
+  })
 })

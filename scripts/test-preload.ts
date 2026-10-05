@@ -44,7 +44,7 @@
 
 const realFetch = globalThis.fetch
 
-function isLoopback(target: RequestInfo | URL): boolean {
+function isLoopback(target: Request | string | URL): boolean {
   const url = target instanceof Request ? target.url : String(target)
   return url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:")
 }

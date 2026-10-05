@@ -22,6 +22,7 @@ import type {
   RunPlan,
 } from "@nifrajs/agent-protocol"
 import { parseRunPlan, RUN_PLAN_VERSION } from "@nifrajs/agent-protocol"
+import type { SubagentAbandonment, SubagentAbandonmentLedger } from "../subagents.ts"
 import type { WorkflowStep } from "../workflows.ts"
 import { type WorkflowEvent, WorkflowRunner } from "../workflows.ts"
 import { noopArtifactPort } from "./artifact-port.ts"
@@ -92,6 +93,11 @@ export interface OrchestrationHostOptions {
    * approval requirement. A descriptor, plan, model, or extension cannot override it.
    */
   readonly policy?: HostPolicy
+  /**
+   * Called when a subagent node's run returns while its executor, which ignored the abort, keeps
+   * running. `limits.maxAbandonedSubagents` bounds how many may run at once across all runs.
+   */
+  onSubagentAbandoned?(runId: string, nodeId: string, abandonment: SubagentAbandonment): void
 }
 
 const DEFAULT_MAX_STEPS = 100_000
@@ -128,6 +134,8 @@ export class OrchestrationHost {
   private readonly vectors = new ChildVectorTracker()
   private readonly runs = new Map<string, RunRecord>()
   private counter = 0
+  private readonly subagentAbandonment: SubagentAbandonmentLedger = { abandoned: 0 }
+  private readonly onSubagentAbandoned: OrchestrationHostOptions["onSubagentAbandoned"]
 
   constructor(options: OrchestrationHostOptions) {
     this.catalog = options.catalog
@@ -135,6 +143,12 @@ export class OrchestrationHost {
     this.maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.policy = options.policy
+    this.onSubagentAbandoned = options.onSubagentAbandoned
+  }
+
+  /** Subagent executors abandoned by any run of this host that are still running. */
+  get abandonedSubagents(): number {
+    return this.subagentAbandonment.abandoned
   }
 
   /**
@@ -186,6 +200,9 @@ export class OrchestrationHost {
       planDigest,
       artifactPort,
       ...(this.limits !== undefined ? { limits: this.limits } : {}),
+      subagentAbandonment: this.subagentAbandonment,
+      onSubagentAbandoned: (nodeId, abandonment) =>
+        this.onSubagentAbandoned?.(runId, nodeId, abandonment),
       onNodeEffect: (nodeId, key) => effectKeys.set(nodeId, key),
       collectArtifact: (nodeId, ref) => {
         const list = artifacts.get(nodeId)

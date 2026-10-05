@@ -67,13 +67,23 @@ AG-UI `STATE_SNAPSHOT`/`STATE_DELTA` events.
 SSE streams are resumable: give `mountAgent` (or `@nifrajs/ag-ui`'s `mountAgUI`) an `evidenceLog`
 and `step` frames carry `id: <seq>`. A client that loses the connection re-POSTs the same `turnId`
 with a `Last-Event-ID` header and receives the missed evidence, rejoining a still-running turn live
-or replaying the stored terminal frame - the run is never re-executed.
+or replaying the stored terminal frame - the run is never re-executed. A disconnected run keeps
+going and records its real result for that reconnect. Without an `evidenceLog` nothing can rejoin a
+dropped stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.
+When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
+tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
+reused `turnId` finds none of them. Without it a turn id works as a bearer capability. The owner
+function runs before any replay; throwing from it refuses the request.
 
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
-environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
+environment filtering, timeouts, and cancellation to child processes. On POSIX each run leads its
+own process group: a timeout, a cancel, or the run's own end stops every process the command
+started, background ones included, and runs still in flight end when the host exits. On Windows a
+timeout or cancel ends the command's whole process tree (`taskkill /T /F`), but a background process
+still running after the command exits normally is not tracked. The local adapter is NOT a
 security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
 
 For the compact agent contract, see [`LLM.md`](./LLM.md). The full machine-readable corpus is

@@ -89,6 +89,57 @@ async function peekText(res: Response, maxBytes: number): Promise<Peeked> {
   }
 }
 
+/**
+ * Re-indent JSON text the way `JSON.stringify(value, null, spaces)` lays it out, without turning it
+ * into values: every string and number is copied as written. A parse/stringify round trip rounds an
+ * integer past 2^53 (`12345678901234567890` came back `12345678901234567000`), turns `1e400` into
+ * `null`, and rewrites escapes. `text` must already be known-valid JSON.
+ */
+function reindentJson(text: string, spaces: number): string {
+  const unit = " ".repeat(spaces)
+  const pretty = spaces > 0
+  let out = ""
+  let depth = 0
+  const nextSignificant = (from: number): number => {
+    let at = from
+    while (at < text.length && isJsonWhitespace(text.charCodeAt(at))) at++
+    return at
+  }
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (isJsonWhitespace(code)) continue
+    if (code === 34 /* " */) {
+      let end = i + 1
+      while (text.charCodeAt(end) !== 34) end += text.charCodeAt(end) === 92 /* \ */ ? 2 : 1
+      out += text.slice(i, end + 1)
+      i = end
+    } else if (code === 123 /* { */ || code === 91 /* [ */) {
+      const close = nextSignificant(i + 1)
+      if (text.charCodeAt(close) === code + 2) {
+        out += code === 123 ? "{}" : "[]"
+        i = close
+      } else {
+        depth++
+        out += pretty ? `${text[i]}\n${unit.repeat(depth)}` : text[i]
+      }
+    } else if (code === 125 /* } */ || code === 93 /* ] */) {
+      depth--
+      out += pretty ? `\n${unit.repeat(depth)}${text[i]}` : text[i]
+    } else if (code === 44 /* , */) {
+      out += pretty ? `,\n${unit.repeat(depth)}` : ","
+    } else if (code === 58 /* : */) {
+      out += pretty ? ": " : ":"
+    } else {
+      out += text[i]
+    }
+  }
+  return out
+}
+
+function isJsonWhitespace(code: number): boolean {
+  return code === 32 || code === 9 || code === 10 || code === 13
+}
+
 function requestView(request: Request): NodeRequestContext {
   return { method: request.method, url: request.url, header: (name) => request.headers.get(name) }
 }
@@ -129,13 +180,12 @@ export function prettyJson(options: PrettyJsonOptions = {}) {
           ) {
             return undefined
           }
-          let parsed: unknown
           try {
-            parsed = JSON.parse(text)
+            JSON.parse(text)
           } catch {
             return undefined
           }
-          return `${JSON.stringify(parsed, null, spaces)}${newline ? "\n" : ""}`
+          return `${reindentJson(text, spaces)}${newline ? "\n" : ""}`
         },
         onResponseRaw(response, req) {
           if (!isEnabled(requestView(req))) return response
@@ -172,9 +222,8 @@ async function prettyRawResponse(
 ): Promise<Response> {
   const peeked = await peekText(response, maxBytes)
   if ("response" in peeked) return peeked.response
-  let parsed: unknown
   try {
-    parsed = JSON.parse(peeked.text)
+    JSON.parse(peeked.text)
   } catch {
     return new Response(peeked.bytes.slice(), {
       status: response.status,
@@ -184,7 +233,7 @@ async function prettyRawResponse(
   }
   const headers = new Headers(response.headers)
   headers.delete("content-length")
-  return new Response(`${JSON.stringify(parsed, null, spaces)}${newline ? "\n" : ""}`, {
+  return new Response(`${reindentJson(peeked.text, spaces)}${newline ? "\n" : ""}`, {
     status: response.status,
     statusText: response.statusText,
     headers,

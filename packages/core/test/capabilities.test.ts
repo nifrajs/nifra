@@ -10,6 +10,7 @@ import {
 } from "../src/capabilities.ts"
 import { server } from "../src/index.ts"
 import { defineContract, implement } from "../src/server/contract.ts"
+import { method } from "../src/server/methods.ts"
 
 const policy = defineCapabilityPolicy({
   definitions: [
@@ -128,6 +129,32 @@ describe("route capabilities", () => {
       (await app.fetch(new Request("http://nifra.test/orders", { method: "POST" }))).status,
     ).toBe(500)
     expect(intercepted).toBe(false)
+    expect(executed).toBe(false)
+  })
+
+  test("a next() called after its interceptor returned runs nothing past it", async () => {
+    let late: (() => Promise<void>) | undefined
+    let deeper = 0
+    let executed = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async (_event, next) => {
+        late = next
+      })
+      .aroundCapability(async (_event, next) => {
+        deeper += 1
+        await next()
+      })
+      .post("/orders", { capabilities: ["db.write"] }, async (c) => {
+        await executeCapability(c, "db.write", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect(
+      (await app.fetch(new Request("http://nifra.test/orders", { method: "POST" }))).status,
+    ).toBe(500)
+    await expect(late?.()).rejects.toThrow("after it returned")
+    expect(deeper).toBe(0)
     expect(executed).toBe(false)
   })
 
@@ -258,6 +285,28 @@ describe("capability assurance", () => {
       "missing-request-idempotency",
     ])
     expect(report.routes.find((route) => route.path === "/read")?.unproven).toEqual(["db.read"])
+  })
+
+  test("an OPTIONS route is held to the same rule as a GET, declared or reached", () => {
+    const app = server()
+      .use(method("OPTIONS", "/declares", { capabilities: ["db.write"] }, () => ({ ok: true })))
+      .use(method("OPTIONS", "/reaches", () => ({ ok: true })))
+    const report = evaluateCapabilityAssurance(app, policy, {
+      routes: [
+        { method: "OPTIONS", path: "/declares", covered: true, evidence: [] },
+        {
+          method: "OPTIONS",
+          path: "/reaches",
+          covered: true,
+          evidence: [{ id: "db.write", kind: "static", source: "app-db" }],
+        },
+      ],
+    })
+    const codes = (path: string) =>
+      report.findings.filter((finding) => finding.path === path).map((finding) => finding.code)
+    expect(codes("/declares")).toContain("safe-method-domain-write")
+    expect(codes("/reaches")).toContain("unconfined-write-reach")
+    expect(report.ok).toBe(false)
   })
 
   /**

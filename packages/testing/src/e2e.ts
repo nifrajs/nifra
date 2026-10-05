@@ -74,22 +74,27 @@ export async function serveTestApp(
   }
 }
 
+/** `path` on the test app's origin, refused unless it is a same-origin absolute path. */
+function onTestAppOrigin(baseUrl: string, path: string, label: string): URL {
+  const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)
+  const resolved = new URL(path, base)
+  // The origin compare also holds if the path rule ever admits a form the URL parser re-reads.
+  if (!isSameOriginPath(path) || resolved.origin !== base.origin) {
+    throw new TypeError(`@nifrajs/testing/e2e: ${label} must be a same-origin absolute path`)
+  }
+  return resolved
+}
+
 /**
  * Join `baseUrl` and a declared route path. The path is checked against the app's registry, so
  * `page.goto(e2eUrl<typeof app>(www.baseUrl, "/dashbord"))` fails typecheck instead of 404ing
  * mid-suite - the same guarantee `formFor` gives form fields.
  */
 export function e2eUrl<App>(baseUrl: string, path: E2EPaths<App>): string {
-  if (!isSameOriginPath(path)) {
-    throw new TypeError("@nifrajs/testing/e2e: path must be a same-origin absolute path")
-  }
-  const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)
-  const resolved = new URL(path, base)
-  if (resolved.origin !== base.origin) {
-    throw new TypeError("@nifrajs/testing/e2e: path escaped the test app origin")
-  }
-  return resolved.href
+  return onTestAppOrigin(baseUrl, path, "path").href
 }
+
+const WEB_SOCKET_BASES: ReadonlySet<string> = new Set(["http:", "https:", "ws:", "wss:"])
 
 /**
  * Build a real WebSocket URL for an adapter-backed test server. The path uses the same-origin guard as
@@ -97,22 +102,11 @@ export function e2eUrl<App>(baseUrl: string, path: E2EPaths<App>): string {
  * HTTP URL with a WebSocket client or escape the test server origin.
  */
 export function e2eWebSocket<App>(baseUrl: string, path: E2EPaths<App>): string {
-  if (!isSameOriginPath(path)) {
-    throw new TypeError("@nifrajs/testing/e2e: WebSocket path must be same-origin absolute path")
-  }
-  const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)
-  if (
-    base.protocol !== "http:" &&
-    base.protocol !== "https:" &&
-    base.protocol !== "ws:" &&
-    base.protocol !== "wss:"
-  ) {
+  const resolved = onTestAppOrigin(baseUrl, path, "WebSocket path")
+  if (!WEB_SOCKET_BASES.has(resolved.protocol)) {
     throw new TypeError("@nifrajs/testing/e2e: unsupported WebSocket base URL protocol")
   }
-  const resolved = new URL(path, base)
-  if (resolved.origin !== base.origin) {
-    throw new TypeError("@nifrajs/testing/e2e: WebSocket path escaped test app origin")
-  }
-  resolved.protocol = base.protocol === "https:" || base.protocol === "wss:" ? "wss:" : "ws:"
+  resolved.protocol =
+    resolved.protocol === "https:" || resolved.protocol === "wss:" ? "wss:" : "ws:"
   return resolved.href
 }

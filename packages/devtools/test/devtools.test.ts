@@ -9,6 +9,15 @@ import {
 } from "../src/index.ts"
 
 describe("devtools server middleware", () => {
+  test("never touches a bare `process` global (Workers without nodejs_compat)", async () => {
+    const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text()
+    const code = source
+      .split("\n")
+      .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+      .join("\n")
+    expect(code).not.toMatch(/(?<![.\w])process\./)
+  })
+
   test("captures events and streams via SSE", async () => {
     const app = server()
       .use(devtools({ enabled: true, maxEvents: 10 }))
@@ -164,17 +173,35 @@ describe("devtools server middleware", () => {
     })
     expect(remoteWithForgedHost.status).toBe(403)
 
-    const loopback = await app.fetch(new Request("http://example.com/_nifra/devtools"), {
+    const loopback = await app.fetch(new Request("http://localhost/_nifra/devtools"), {
       clientIp: "127.0.0.1",
     })
     expect(loopback.status).toBe(200)
     await loopback.body?.cancel()
 
-    const mappedLoopback = await app.fetch(new Request("http://example.com/_nifra/devtools"), {
+    const mappedLoopback = await app.fetch(new Request("http://127.0.0.1/_nifra/devtools"), {
       clientIp: "[::ffff:127.0.0.1%lo0]",
     })
     expect(mappedLoopback.status).toBe(200)
     await mappedLoopback.body?.cancel()
+
+    // A DNS-rebound page: the peer is this machine, but Host and Origin name the attacker's domain.
+    for (const path of ["/_nifra/devtools", "/_nifra/devtools/state"]) {
+      const rebound = await app.fetch(
+        new Request(`http://attacker.example:3000${path}`, {
+          headers: { origin: "http://attacker.example:3000" },
+        }),
+        { clientIp: "127.0.0.1" },
+      )
+      expect(rebound.status).toBe(403)
+    }
+
+    const remoteAllowed = server().use(devtools({ enabled: true, allowRemote: true }))
+    const proxied = await remoteAllowed.fetch(new Request("http://example.com/_nifra/devtools"), {
+      clientIp: "127.0.0.1",
+    })
+    expect(proxied.status).toBe(200)
+    await proxied.body?.cancel()
 
     const edgeFallback = await app.fetch(new Request("http://localhost/_nifra/devtools"))
     expect(edgeFallback.status).toBe(200)

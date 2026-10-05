@@ -53,7 +53,7 @@ test("renderPage builds an HTML doc: SSR markup, hydration head, data, client en
   expect(html).toContain("<title>Hi</title>")
   expect(html).toContain("<!--hydration-head-->")
   expect(html).toContain('<div id="root"><p>chain=2:{"user":"ada"}</p></div>')
-  expect(html).toContain(`window.${DATA_GLOBAL}={"user":"ada"}`)
+  expect(html).toContain(`"${DATA_GLOBAL}":{"user":"ada"}`)
   expect(html).toContain('<script type="module" src="/assets/client.js">')
   // The pre-hydration form guard is inlined in <head> on a hydrating page.
   expect(html).toContain("addEventListener('submit'")
@@ -120,6 +120,18 @@ test("renderPage emits stylesheets even on a non-hydrated page (e.g. _error)", a
   expect(esc).not.toContain('"><script>x')
 })
 
+test('renderPage refuses an empty clientEntry on a hydrating page instead of emitting src=""', () => {
+  for (const clientEntry of ["", "  "]) {
+    expect(() => renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry })).toThrow(
+      /non-empty clientEntry/,
+    )
+  }
+  // The same document without a client takeover never references the entry, so it is fine.
+  expect(() =>
+    renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry: "", hydrate: false }),
+  ).not.toThrow()
+})
+
 test("renderPage defers framework CSS only for hydrating pages and preserves JS-off styling", async () => {
   const html = await (
     await renderPage({
@@ -163,7 +175,7 @@ test("renderPage injects the matched route id only when provided", async () => {
       routeId: "users/[id]",
     })
   ).text()
-  expect(withId).toContain(`window.${ROUTE_GLOBAL}="users/[id]"`)
+  expect(withId).toContain(`"${ROUTE_GLOBAL}":"users/[id]"`)
 
   const withoutId = await (
     await renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry: "/c.js" })
@@ -385,6 +397,32 @@ test("unsafeInlineScript makes executable code explicit and nonce-bound", async 
   )
 })
 
+test("an executable inline script is emitted as written and refuses an element breakout", async () => {
+  const code = "if (innerWidth < 600 && a <b) globalThis.narrow = true"
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { unsafeScript: [unsafeInlineScript(code, { nonce: "n0" })] },
+    })
+  ).text()
+  expect(html).toContain(`<script type="module" nonce="n0" data-nifra>${code}</script>`)
+  expect(() => unsafeInlineScript('document.write("</SCRIPT>")', { nonce: "n0" })).toThrow(
+    /cannot contain/,
+  )
+  expect(() =>
+    renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { unsafeScript: [{ unsafe: true, type: "module", nonce: "n0", content: "x <!-- y" }] },
+    }),
+  ).toThrow(/cannot contain/)
+})
+
 test("request-bound document nonces reject stale executable head descriptors", () => {
   expect(() =>
     renderPage({
@@ -446,10 +484,13 @@ test("renderPage propagates a CSP nonce to every framework-owned executable scri
   const executable: string[] = []
   for (let i = html.indexOf("<script"); i !== -1; i = html.indexOf("<script", i + 1)) {
     const close = html.indexOf(">", i)
-    if (close !== -1) executable.push(html.slice(i, close + 1))
+    const open = close === -1 ? "" : html.slice(i, close + 1)
+    // The page-state handover is inert JSON - never executed, so it needs no nonce.
+    if (open !== "" && !open.includes('type="application/json"')) executable.push(open)
   }
   expect(executable.length).toBeGreaterThan(5)
   for (const open of executable) expect(open).toContain('nonce="page-nonce"')
+  expect(html).toContain('<script type="application/json" id="__nifra-handover">{')
   expect(() =>
     renderPage({
       adapter: stub,
@@ -611,10 +652,34 @@ test("renderPage with deferred data: client placeholder + the inline registry ru
     })
   ).text()
   // The serialized data carries a numeric-id placeholder (not the promise).
-  expect(html).toContain(`window.${DATA_GLOBAL}={"now":1,"slow":{"__nifra_deferred":0}}`)
+  expect(html).toContain(`"${DATA_GLOBAL}":{"now":1,"slow":{"__nifra_deferred":0}}`)
   // The inline registry runtime is present (settles streamed __nifraResolve scripts).
   expect(html).toContain("window.__nifraResolve")
   expect(html).toContain("window.__nifraDeferred")
+})
+
+test("renderPage hands the document nonce to the adapter's stream renderer", async () => {
+  const seen: unknown[] = []
+  const recording: RenderAdapter = {
+    renderToStream: (_chain, _props, options) => {
+      seen.push(options)
+      return streamOf("<p>x</p>")
+    },
+    hydrationHead: () => "",
+  }
+  const render = async (nonce?: string) =>
+    (
+      await renderPage({
+        adapter: recording,
+        chain: [null],
+        data: { slow: defer(Promise.resolve("later")) },
+        clientEntry: "/c.js",
+        ...(nonce === undefined ? {} : { nonce }),
+      })
+    ).text()
+  await render("n0nce")
+  await render()
+  expect(seen).toEqual([{ nonce: "n0nce" }, undefined])
 })
 
 test("renderPage omits the deferred runtime when nothing is deferred", async () => {
@@ -622,7 +687,7 @@ test("renderPage omits the deferred runtime when nothing is deferred", async () 
     await renderPage({ adapter: stub, chain: [null], data: { a: 1 }, clientEntry: "/c.js" })
   ).text()
   expect(html).not.toContain("__nifraResolve") // non-deferred output is unchanged
-  expect(html).toContain(`window.${DATA_GLOBAL}={"a":1}`)
+  expect(html).toContain(`"${DATA_GLOBAL}":{"a":1}`)
 })
 
 test("renderPage streams __nifraReject for a deferred that rejects (no broken body)", async () => {
@@ -904,7 +969,7 @@ test("renderPage uses the sync renderToString fast path when nothing defers", as
   const html = await res.text()
   expect(html).toContain('<div id="root"><p>string:chain=2:{"a":1}</p></div>') // buffered, NOT streamed
   expect(html).not.toContain("stream:")
-  expect(html).toContain(`window.${DATA_GLOBAL}={"a":1}`) // same tail/data as the streaming path
+  expect(html).toContain(`"${DATA_GLOBAL}":{"a":1}`) // same tail/data as the streaming path
   expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8") // a real Response, headers intact
 })
 

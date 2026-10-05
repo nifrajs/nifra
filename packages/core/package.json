@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/core",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Bun-native, contract-first HTTP framework - the router, server, and route descriptor.",
   "keywords": [
     "bun",
@@ -18,6 +18,9 @@
     "backend"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -232,6 +235,26 @@
       "types": "./dist/seo.d.ts",
       "default": "./dist/seo.js"
     },
+    "./multipart": {
+      "bun": "./src/server/multipart.ts",
+      "types": "./dist/server/multipart.d.ts",
+      "default": "./dist/server/multipart.js"
+    },
+    "./body-parser": {
+      "bun": "./src/server/body-parser.ts",
+      "types": "./dist/server/body-parser.d.ts",
+      "default": "./dist/server/body-parser.js"
+    },
+    "./methods": {
+      "bun": "./src/server/methods.ts",
+      "types": "./dist/server/methods.d.ts",
+      "default": "./dist/server/methods.js"
+    },
+    "./not-found": {
+      "bun": "./src/server/not-found.ts",
+      "types": "./dist/server/not-found.d.ts",
+      "default": "./dist/server/not-found.js"
+    },
     "./sse": {
       "bun": "./src/server/sse.ts",
       "types": "./dist/server/sse.d.ts",
@@ -290,7 +313,9 @@
     "./src/node-direct.ts",
     "./dist/node-direct.js",
     "./src/single-copy-register.ts",
-    "./dist/single-copy-register.js"
+    "./dist/single-copy-register.js",
+    "./src/server/core-copies.ts",
+    "./dist/server/core-copies.js"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"

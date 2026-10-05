@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { getEventListeners } from "node:events"
 import { client, testClient } from "@nifrajs/client"
 import type { RunningServer, StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
@@ -102,7 +103,7 @@ afterEach(() => {
 
 describe("typed client .ws()", () => {
   test("send/messages round-trip a typed frame over a real socket", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
 
     const chat = api.chat.ws()
@@ -120,7 +121,7 @@ describe("typed client .ws()", () => {
   })
 
   test("onMessage callback form delivers parsed frames and unsubscribes", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
     const chat = api.chat.ws()
 
@@ -143,7 +144,7 @@ describe("typed client .ws()", () => {
   })
 
   test("a schema-invalid inbound frame is dropped by the server, not echoed", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
     const chat = api.chat.ws()
     await chat.opened
@@ -266,5 +267,38 @@ describe("WebSocket runtime behavior", () => {
     const closingPending = closingIterator.next()
     socket.end()
     expect(await closingPending).toEqual({ value: undefined, done: true })
+  })
+
+  test("a closed socket ends a new iteration at once and drops a send", async () => {
+    useFakeWebSocket()
+    const handle = openWebSocket("http://example.test", "/chat", undefined, false)
+    const socket = FakeWebSocket.instances[0]!
+    socket.readyState = 3
+    socket.end()
+    expect(await handle.messages().next()).toEqual({ value: undefined, done: true })
+
+    handle.send({ late: true })
+    socket.open() // anything still queued would be flushed here
+    expect(socket.sent).toEqual([])
+    expect(await handle.messages({ signal: AbortSignal.abort() }).next()).toEqual({
+      value: undefined,
+      done: true,
+    })
+  })
+
+  test("an ended iteration and a closed socket leave no listener on a long-lived signal", async () => {
+    useFakeWebSocket()
+    const controller = new AbortController()
+    const handle = openWebSocket(
+      "http://example.test",
+      "/chat",
+      { signal: controller.signal },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    await handle.messages({ signal: controller.signal }).return?.()
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1) // the call's own
+    socket.end()
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0)
   })
 })

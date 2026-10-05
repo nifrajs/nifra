@@ -44,12 +44,17 @@ import {
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
+import { unsupportedBuiltin } from "./internal/target-compat.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
-import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
+import {
+  viteAssetUrlGuard,
+  viteBareBuiltinExternal,
+  viteLeakGuard,
+  viteServerZoneGuard,
+} from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
-import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
 // ---------------------------------------------------------------------------------------------------
 // Structural Vite typings - no hard `vite` dependency (mirrors vite.ts). Only the build API is used.
@@ -174,6 +179,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
       ...routeManifest.routes.map((r) => r.file),
       ...Object.values(routeManifest.layouts).map((l) => l.file),
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
+      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
+      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -201,7 +208,28 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const vite = await loadVite()
-  const leakGuard = viteLeakGuard()
+  // A worker is bundled by its own sub-build the main graph never sees, so it gets its own guard; the
+  // main guard then accepts the worker chunks that guard verified.
+  const verified = new Set<string>()
+  const exemptions = options.secretExemptions
+  const guardOptions = {
+    appRoot: dirname(routesDir),
+    routesDir,
+    root,
+    outDir: resolvePath(outDir),
+    generatedFiles: [entryFile],
+    verified,
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+    secrets: { env: buildEnv, ...(exemptions ? { exemptions } : {}) },
+  }
+  // nifra copies `public/` after the build; the main guard scans it with the bundle.
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const leakGuard = viteLeakGuard({
+    ...guardOptions,
+    secrets: { ...guardOptions.secrets, ...(publicDir !== undefined ? { publicDir } : {}) },
+  })
+  const assetUrlGuard = viteAssetUrlGuard(guardOptions)
+  const workerGuards: { readonly leak?: string | undefined }[] = []
   try {
     await withSerializedNodeEnv(mode, () =>
       vite.build({
@@ -235,7 +263,17 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
               scopedName(reproduciblePath(filename), name),
           },
         },
-        plugins: [...(options.vitePlugins ?? [])],
+        // First, so a bare built-in is named before Vite turns it into an anonymous stub.
+        // The asset URL guard last, so it reads each module after any framework plugin made it JavaScript.
+        plugins: [viteBareBuiltinExternal(), ...(options.vitePlugins ?? []), assetUrlGuard],
+        worker: {
+          plugins: () => {
+            const guard = viteLeakGuard(guardOptions)
+            const urlGuard = viteAssetUrlGuard(guardOptions)
+            workerGuards.push(guard, urlGuard)
+            return [viteBareBuiltinExternal(), viteServerFnStub(), guard, urlGuard]
+          },
+        },
         build: {
           outDir,
           emptyOutDir: false, // buildTargetWith owns outDir lifecycle; never let Vite wipe sibling files
@@ -251,7 +289,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
             external: [/^node:/],
             input,
             // The leak guard is a Rollup plugin - last, so it sees the final graph.
-            plugins: [viteServerFnStub(), viteServerOnlyEmpty(), leakGuard],
+            plugins: [viteServerFnStub(), leakGuard],
             output: {
               entryFileNames: "[name]-[hash].js",
               chunkFileNames: "[name]-[hash].js",
@@ -267,7 +305,11 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     // that construction fails, replacing a precise "node:crypto reached the client bundle" with an
     // internal complaint naming nothing. Raising it here puts the message beyond anything that can
     // rewrite it; the bundler's error is kept as `cause` for the rest of the context.
-    if (leakGuard.leak !== undefined) throw new Error(leakGuard.leak, { cause: error })
+    const leak =
+      assetUrlGuard.leak ??
+      leakGuard.leak ??
+      workerGuards.find((guard) => guard.leak !== undefined)?.leak
+    if (leak !== undefined) throw new Error(leak, { cause: error })
     throw error
   } finally {
     rmSync(entryDir, { recursive: true, force: true })
@@ -336,6 +378,12 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   if (css.length > 0 && cssCodeSplit) {
     for (const route of routeManifest.routes) routeStyles[route.id] = stylesFor(chainFiles(route))
     if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
+      routeStyles[id] = stylesFor([
+        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
+        page.file,
+      ])
+    }
   }
 
   // assets - every emitted file + stylesheet across the manifest (chunks, entries, css).
@@ -346,7 +394,6 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     for (const asset of entry.assets ?? []) assets.add(url(asset))
   }
 
-  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
@@ -385,6 +432,10 @@ export interface BuildServerViteOptions {
   readonly target?: "browser" | "node" | "bun"
   /** Vite project root (default: the parent of `routesDir`). */
   readonly root?: string
+  /** Modules the build generated besides the entry and manifest (a target's adapter import). */
+  readonly generatedFiles?: readonly string[]
+  /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
+  readonly publicEnvPrefix?: string
 }
 
 interface EdgeBundleChunk {
@@ -431,12 +482,13 @@ function edgeBuiltinGuard(): EdgeGuardPlugin {
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue
         for (const specifier of [...(output.imports ?? []), ...(output.dynamicImports ?? [])]) {
-          if (specifier.startsWith("node:")) builtins.add(specifier)
+          if (unsupportedBuiltin(specifier, "browser")) builtins.add(specifier)
         }
         for (const id of output.moduleIds ?? []) {
           const info = this.getModuleInfo(id)
           const imports = [...(info?.importedIds ?? []), ...(info?.dynamicallyImportedIds ?? [])]
-          if (imports.some((specifier) => specifier.startsWith("node:"))) importers.add(id)
+          if (imports.some((specifier) => unsupportedBuiltin(specifier, "browser")))
+            importers.add(id)
         }
       }
       if (builtins.size === 0) return
@@ -497,6 +549,16 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
   const edgeGuard = edgeBuiltinGuard()
+  const zoneGuard = viteServerZoneGuard({
+    appRoot: root,
+    routesDir: resolvePath(routesDir),
+    generatedFiles: [
+      serverEntry,
+      join(entryDir, manifestFile),
+      ...(options.generatedFiles ?? []),
+    ].map((file) => resolvePath(file)),
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+  })
   try {
     await withSerializedNodeEnv(mode, () =>
       vite.build({
@@ -525,7 +587,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
             // Keep builtins external so Node/Bun use their native implementations. Edge builds add a
             // generateBundle guard below, so an external specifier can never silently ship to workerd.
             external: [/^node:/],
-            ...(edge ? { plugins: [edgeGuard] } : {}),
+            plugins: [...(edge ? [edgeGuard] : []), zoneGuard],
             // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb
             // every module - the app, the adapter, react/react-dom, @nifrajs/* - so no second chunk is
             // emitted. It is NOT redundant with `ssr.noExternal`: `noExternal` decides what gets bundled,
@@ -550,7 +612,8 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   } catch (error) {
     // Re-raise the guard's own message from here, where no bundler error-reporting path can rewrite it
     // (see the same handling in buildClientVite).
-    if (edgeGuard.leak !== undefined) throw new Error(edgeGuard.leak, { cause: error })
+    const leak = zoneGuard.leak ?? edgeGuard.leak
+    if (leak !== undefined) throw new Error(leak, { cause: error })
     throw error
   }
 
@@ -578,6 +641,7 @@ export const viteBundler: Bundler = {
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       ...(input.root ? { root: input.root } : {}),
     }),
   buildServer: (input) =>
@@ -593,6 +657,8 @@ export const viteBundler: Bundler = {
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.root ? { root: input.root } : {}),
+      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
+      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
     }),
 }
 

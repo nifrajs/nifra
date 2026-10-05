@@ -98,7 +98,7 @@ const EAGER_MANIFEST = [
   'import * as m0 from "./routes/_layout"',
   'import * as m1 from "./routes/about"',
   'import * as m2 from "./routes/index"',
-  "const modules: Record<string, RouteModule> = {",
+  "const modules: Record<string, object> = {",
   '  "_layout.tsx": m0,',
   '  "about.tsx": m1,',
   '  "index.tsx": m2,',
@@ -106,20 +106,20 @@ const EAGER_MANIFEST = [
   'export const clientEntry = "/assets/_nifra-entry-deadbeef.js"',
   "export const styles = []",
   "export const routeStyles = {}",
-  "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
+  "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file] as RouteModule))",
 ].join("\n")
 
 // A lazy manifest (`() => import(...)`), the other shape generateServerManifest emits.
 const LAZY_MANIFEST = [
   'import { buildManifest, type RouteModule } from "@nifrajs/web"',
-  "const loaders: Record<string, () => Promise<RouteModule>> = {",
+  "const loaders: Record<string, () => Promise<object>> = {",
   '  "_layout.tsx": () => import("./routes/_layout"),',
   '  "index.tsx": () => import("./routes/index"),',
   "}",
   'export const clientEntry = "/assets/_nifra-entry-cafe1234.js"',
   "export const styles = []",
   "export const routeStyles = {}",
-  "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
+  "export const manifest = buildManifest(Object.keys(loaders), (file) => loaders[file] as () => Promise<RouteModule>)",
 ].join("\n")
 
 describe("parseManifestRouteFiles", () => {
@@ -137,7 +137,7 @@ describe("parseManifestRouteFiles", () => {
 
   test("reads the extension-bearing keys regardless of import prefix, ignoring baked routeStyles", () => {
     const src = [
-      "const loaders: Record<string, () => Promise<RouteModule>> = {",
+      "const loaders: Record<string, () => Promise<object>> = {",
       '  "index.tsx": () => import("../app/routes/index"),',
       "}",
       // A single-line `routeStyles` whose keys must NOT be mistaken for route-map entries - including
@@ -209,9 +209,9 @@ describe("diffManifestRoutes + formatManifestDrift", () => {
 // --- Generated server entry (per-target) --------------------------------------------------------------
 
 describe("generateServerEntry", () => {
-  test("cf-pages → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
+  test("cloudflare → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
     const src = generateServerEntry({
-      target: "cf-pages",
+      target: "cloudflare",
       adapterImport: "../framework.ts",
       backendImport: "../backend.ts",
       title: "my site",
@@ -231,9 +231,42 @@ describe("generateServerEntry", () => {
     const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
     expect(src).toContain("Bun.serve(")
     expect(src).toContain('pathname.startsWith("/assets/")')
+    // The socket peer reaches the app (rateLimit keys on it), and Bun's own framing is trusted.
+    expect(src).toContain("server.requestIP(req)?.address")
+    expect(src).toContain('Symbol.for("nifra.body.trustedFraming")')
     // Frontend-only (no backend) → no inProcessClient/api line.
     expect(src).not.toContain("inProcessClient")
     expect(src).not.toContain("api:")
+  })
+
+  test("every self-hosting entry serves static files with a real type, nosniff and a cache policy", async () => {
+    for (const target of ["bun", "node", "deno"] as const) {
+      const src = generateServerEntry({ target, adapterImport: "../framework.ts" })
+      expect(src).toContain("headers: staticHeaders(pathname)")
+      expect(src).not.toContain("TYPES[ext]")
+      // Evaluate the generated helper itself rather than pattern-match its text.
+      const helper = src.slice(
+        src.indexOf("const TYPES"),
+        src.indexOf("\n})\n", src.indexOf("const staticHeaders")) + 3,
+      )
+      const staticHeaders = new Function(
+        `${new Bun.Transpiler({ loader: "ts" }).transformSync(helper)}; return staticHeaders`,
+      )() as (pathname: string) => Record<string, string>
+      expect(staticHeaders("/robots.txt")).toEqual({
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "public, max-age=86400",
+        "x-content-type-options": "nosniff",
+      })
+      expect(staticHeaders("/logo.SVG")["content-type"]).toBe("image/svg+xml")
+      expect(staticHeaders("/assets/page-1a2b3c.js")).toEqual({
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable",
+        "x-content-type-options": "nosniff",
+      })
+      expect(staticHeaders("/.well-known/acme-challenge/token")["content-type"]).toBe(
+        "application/octet-stream",
+      )
+    }
   })
 
   test("node → @nifrajs/node serve + node:fs readFile", () => {
@@ -249,12 +282,15 @@ describe("generateServerEntry", () => {
     expect(src).toContain('new Set(["/robots.txt","/.well-known/acme-challenge/token"])')
     expect(src).toContain("PUBLIC_FILES.has(pathname)")
     expect(src).toContain("new URL(filePath, STATIC_ROOT)")
+    expect(src).toContain("return app.fetch(req, platform)")
   })
 
-  test("deno → Deno.serve + fetch handler", () => {
+  test("deno → Deno.serve passing the peer address", () => {
     const src = generateServerEntry({ target: "deno", adapterImport: "../framework.ts" })
     expect(src).toContain("Deno.serve(")
-    expect(src).toContain("toFetchHandler(app)")
+    expect(src).toContain("app.fetch(req, { clientIp: info.remoteAddr.hostname })")
+    expect(src).toContain('Symbol.for("nifra.body.trustedFraming")')
+    expect(src).not.toContain("toFetchHandler")
   })
 
   test("vercel → edge config + default fetch export", () => {
@@ -267,6 +303,49 @@ describe("generateServerEntry", () => {
     expect(() =>
       generateServerEntry({ target: "static", adapterImport: "../framework.ts" }),
     ).toThrow(/static/)
+  })
+
+  test("no target trusts a client-address header unless the app declares clientIp", () => {
+    for (const target of BUILD_TARGETS.filter((t) => t !== "static")) {
+      const src = generateServerEntry({ target, adapterImport: "../framework.ts" })
+      expect(src).not.toContain("server:")
+      expect(src).not.toContain("clientIp: {")
+      expect(src).not.toContain("cf-connecting-ip")
+      expect(src).not.toContain("x-real-ip")
+      expect(src).not.toContain("x-forwarded-for")
+    }
+  })
+
+  test('clientIp "platform" trusts exactly the header each edge platform overwrites', () => {
+    const header = (target: "cloudflare" | "vercel") =>
+      generateServerEntry({ target, adapterImport: "../framework.ts", clientIp: "platform" })
+    // Core's `{ header }` trust on the page app, so the /api mount and loaders get the derived caller.
+    expect(header("cloudflare")).toContain(
+      '  server: { clientIp: { header: "cf-connecting-ip" } },\n})',
+    )
+    expect(header("vercel")).toContain('  server: { clientIp: { header: "x-real-ip" } },\n})')
+    // One header each - nothing a client could append to (`x-forwarded-for`) is consulted.
+    expect(header("cloudflare")).not.toContain("x-real-ip")
+    expect(header("cloudflare")).not.toContain("x-forwarded-for")
+    expect(header("vercel")).not.toContain("cf-connecting-ip")
+    expect(header("vercel")).not.toContain("x-forwarded-for")
+  })
+
+  test('clientIp "platform" leaves self-hosting targets on the socket peer', () => {
+    for (const target of ["bun", "node", "deno"] as const) {
+      const base = { target, adapterImport: "../framework.ts", backendImport: "../backend.ts" }
+      expect(generateServerEntry({ ...base, clientIp: "platform" })).toBe(generateServerEntry(base))
+    }
+  })
+
+  test("an unknown clientIp value is refused, not silently ignored", () => {
+    expect(() =>
+      generateServerEntry({
+        target: "cloudflare",
+        adapterImport: "../framework.ts",
+        clientIp: "cf-connecting-ip" as "platform",
+      }),
+    ).toThrow(/clientIp must be "platform"/)
   })
 
   test("imports + passes styles/routeStyles to createWebApp (so the SSR head links CSS)", () => {
@@ -451,12 +530,12 @@ describe("cloudflareRouteRules", () => {
   })
 })
 
-describe("generateServerEntry - cf-pages static fallback", () => {
+describe("generateServerEntry - cloudflare static fallback", () => {
   test("serves an allowlisted public path through ASSETS instead of 404ing in the router", () => {
     // `_routes.json` cannot always name every public file, so a static request CAN reach the worker.
     // Correctness must not depend on how much of that list fit.
     const src = generateServerEntry({
-      target: "cf-pages",
+      target: "cloudflare",
       adapterImport: "../framework.ts",
       publicFiles: ["/robots.txt"],
     })
@@ -544,7 +623,7 @@ describe("server-manifest resync preserves what it cannot recompute", () => {
     // the name and `=` is exactly what defeated the old substring detector, so the fixture must carry it.
     const lazySource = BUILT.replace(
       "const modules = { }",
-      "const loaders: Record<string, () => Promise<RouteModule>> = { }",
+      "const loaders: Record<string, () => Promise<object>> = { }",
     )
     const manifest = {
       routes: [

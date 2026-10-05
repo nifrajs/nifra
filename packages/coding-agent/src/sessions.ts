@@ -132,7 +132,7 @@ export class FileSessionStore implements SessionStore {
   async checkpoint(sessionId: string, payload: unknown): Promise<void> {
     validateToken(sessionId, "sessionId")
     await this.withSessionLock(sessionId, async () => {
-      const target = join(this.root, `${sessionId}.checkpoint.json`)
+      const target = join(this.root, `${sessionFileStem(sessionId)}.checkpoint.json`)
       const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
       await mkdir(dirname(target), { recursive: true })
       const content = JSON.stringify({
@@ -178,7 +178,7 @@ export class FileSessionStore implements SessionStore {
   }
 
   private pathFor(sessionId: string): string {
-    return join(this.root, `${sessionId}.jsonl`)
+    return join(this.root, `${sessionFileStem(sessionId)}.jsonl`)
   }
 
   private async nextSequence(sessionId: string): Promise<number> {
@@ -416,6 +416,22 @@ async function rejectSessionSymlink(path: string): Promise<void> {
     if (isNotFound(error)) return
     throw error
   }
+}
+
+// Device names Windows reserves even with an extension after them: `nul.jsonl` is the NUL device.
+const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i
+
+/**
+ * The file name stem for a session id. On Windows a `:` in a file name addresses an NTFS alternate
+ * data stream, so it is written as `%3A` there, and an id that starts with a reserved device name has
+ * its first character percent-encoded. `%` is outside the id grammar, so no two ids collide.
+ */
+export function sessionFileStem(sessionId: string, platform = process.platform): string {
+  if (platform !== "win32") return sessionId
+  const stem = sessionId.replaceAll(":", "%3A")
+  return WINDOWS_DEVICE.test(stem)
+    ? `%${stem.charCodeAt(0).toString(16).toUpperCase()}${stem.slice(1)}`
+    : stem
 }
 
 function validateToken(value: string, name: string): void {

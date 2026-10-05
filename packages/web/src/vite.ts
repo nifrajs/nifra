@@ -16,11 +16,14 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"
-import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
-import { createDevDiagnostics } from "./dev-diagnostics.ts"
+import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
+import { CLIENT_BATCH_MAX_BYTES } from "./dev-client.ts"
+import { DEV_REQUEST_ID_HEADER, DEV_SERVER_FILES } from "./dev-feed.ts"
 import { listenOrExplain } from "./dev-port.ts"
+import { createDevSession, type DevAppHooks, isDevAgentPath } from "./dev-session.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
+import { admitViteTags } from "./internal/dev-csp.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import {
   assertIdentityParity,
@@ -39,7 +42,7 @@ import {
   reproduciblePath,
 } from "./plugins/kit.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
-import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
+import { viteZoneGuard } from "./plugins/vite-zone-guard.ts"
 
 /** Minimal app surface - `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -62,7 +65,11 @@ interface ViteModuleGraph {
 interface ViteLike {
   /** Load a module through VITE's graph - the seam that makes the Vite pipeline own SSR too. */
   ssrLoadModule(url: string): Promise<Record<string, unknown>>
-  readonly middlewares: (req: IncomingMessage, res: ServerResponse, next: () => void) => void
+  readonly middlewares: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    next: (error?: unknown) => void,
+  ) => void
   transformIndexHtml(url: string, html: string): Promise<string>
   ssrFixStacktrace(err: Error): void
   /** The module graph, used to invalidate a changed file AND its transitive importers before reload. */
@@ -97,10 +104,14 @@ export interface ViteDevServerOptions {
    * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one
    * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React
    * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.
+   *
+   * Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders still reach the
+   * dev feed (`nifra errors`).
    */
   readonly createApp: (
     clientEntry: string,
     load: (absolutePath: string) => Promise<unknown>,
+    dev: DevAppHooks,
   ) => FetchApp | Promise<FetchApp>
   /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */
   readonly plugins?: readonly unknown[]
@@ -136,6 +147,16 @@ export interface ViteDevServerOptions {
    * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.
    */
   readonly allowDuplicateIdentity?: boolean
+  /**
+   * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)
+   * and the persisted dev log beside it (default `true`).
+   */
+  readonly record?: boolean
+  /**
+   * Show the browser errors a dev page reports in a badge on that page, with a Copy prompt button per
+   * fix (default `true`). Off, the errors still reach the feed.
+   */
+  readonly indicator?: boolean
 }
 
 export interface ViteDevServer {
@@ -143,10 +164,12 @@ export interface ViteDevServer {
   stop(): Promise<void>
 }
 
+export type { DevAppHooks } from "./dev-session.ts"
 export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 // The codegen'd client entry is written here (at the Vite root) so Vite serves + HMRs it.
 const DEV_ENTRY = ".nifra-vite-entry.tsx"
+const VITE_CLOSE_BOUND_MS = 2000
 
 /** Candidate spellings for Vite's module-graph map. Vite has used native and slash-normalized
  * absolute Windows paths across versions, while watcher events can additionally arrive as a file URL. */
@@ -166,6 +189,23 @@ const readNodeBody = async (req: IncomingMessage): Promise<Buffer | undefined> =
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
   return Buffer.concat(chunks)
+}
+
+/**
+ * An agent request's body, never buffered past `max` bytes. A larger body is drained, not kept, so the
+ * client still gets an answer: the session refuses the truncated batch.
+ */
+const readAgentBody = async (req: IncomingMessage, max: number): Promise<Buffer | undefined> => {
+  if (req.method === "GET" || req.method === "HEAD") return undefined
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of req) {
+    if (!Buffer.isBuffer(chunk)) continue
+    total += chunk.length
+    if (total <= max) chunks.push(chunk)
+  }
+  // One byte past the cap is enough for the session's own size check to refuse it.
+  return total > max ? Buffer.alloc(max + 1) : Buffer.concat(chunks)
 }
 
 /** Build a Web `Request` from a Node `IncomingMessage` (+ already-read body) for nifra's `app.fetch`. */
@@ -385,27 +425,101 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // `vite`, which is assigned just below before the server starts listening.
   let vite!: ViteLike
   let app: FetchApp
-  // The most recent SSR failure, served as JSON at LAST_ERROR_PATH. Shared with the Bun adapter so the
-  // endpoint and its headers can't drift between the two dev servers.
-  const devDiagnostics = createDevDiagnostics(root)
+  // Failures, console output, request traces and the discovery record for the agent driving this
+  // server, plus the overlay and LAST_ERROR_PATH. Shared with the Bun adapter so they cannot drift.
+  const session = createDevSession({
+    root,
+    pipeline: "vite",
+    publicEnvPrefix: options.publicEnvPrefix,
+    record: options.record,
+    indicator: options.indicator,
+  })
+  const devHooks: DevAppHooks = { onLoaderError: session.onLoaderError }
+
+  // Refuses backend code before Vite serves or transforms it; held here so a refused module's request
+  // is answered with the refusal rather than falling through to the app.
+  const zoneGuard = viteZoneGuard({
+    appRoot: dirname(routesDir),
+    routesDir,
+    generatedFiles: [resolvePath(root, DEV_ENTRY)],
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+  })
 
   const server: NodeHttpServer = createHttpServer((req, res) => {
-    // Keep this before Vite's middleware: it is an agent endpoint owned by nifra, not a file or app route.
-    if (devDiagnostics.isLastErrorPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
-      const { body, headers } = devDiagnostics.lastError()
-      res.statusCode = 200
-      for (const [key, value] of Object.entries(headers)) res.setHeader(key, value)
-      res.end(body)
+    // Keep this before Vite's middleware: the agent endpoints are owned by nifra, not files or routes.
+    if (isDevAgentPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
+      void (async () => {
+        try {
+          const body = await readAgentBody(req, CLIENT_BATCH_MAX_BYTES)
+          const agent = await session.handle(toWebRequest(req, body))
+          if (agent === undefined) {
+            handleWithVite(req, res)
+            return
+          }
+          res.statusCode = agent.status
+          applyResponseHeaders(agent.headers, res)
+          res.end(await agent.text())
+        } catch (err) {
+          // A client that aborts mid-body rejects the read; unhandled, that rejection ends the process.
+          if (!req.destroyed) console.error("[nifra/web/vite] dev endpoint failed:", err)
+          if (!res.headersSent) res.statusCode = 500
+          res.end()
+        }
+      })()
       return
     }
-    vite.middlewares(req, res, () => {
+    handleWithVite(req, res)
+  })
+
+  function handleWithVite(req: IncomingMessage, res: ServerResponse): void {
+    vite.middlewares(req, res, (error) => {
+      // In middleware mode Vite reports a module's transform error to the overlay and passes the
+      // request on. A request naming a source file was for a module, never a page: it gets the error,
+      // not the app's HTML.
+      const url = req.url ?? "/"
+      const file = /\.[\w]+(?:[?#]|$)/.test(url) ? zoneGuard.fileForUrl(url) : undefined
+      if (error !== undefined || file !== undefined) {
+        res.statusCode = 500
+        res.setHeader("content-type", "text/plain; charset=utf-8")
+        res.setHeader("cache-control", "no-store")
+        const reason =
+          zoneGuard.refusalFor(url) ??
+          (error instanceof Error
+            ? error.message
+            : `[nifra] ${url} failed to transform; the dev server log has the error`)
+        session.buildFailed(error ?? new Error(reason), `${url} failed to transform`)
+        res.end(`${reason}\n`)
+        return
+      }
       // Not a Vite asset → nifra SSR. (`next` runs after Vite declines, so the body is still readable.)
       void (async () => {
         try {
           const body = await readNodeBody(req)
-          const nifraRes = await app.fetch(toWebRequest(req, body))
+          const webRequest = toWebRequest(req, body)
+          let overlay = false
+          const nifraRes = await session.track(webRequest, async () => {
+            try {
+              return await app.fetch(webRequest)
+            } catch (err) {
+              // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
+              // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
+              if (err instanceof Error) vite.ssrFixStacktrace(err)
+              overlay = true
+              return new Response(
+                session.failure(err, { method: req.method ?? "GET", url: req.url ?? "/" }),
+                { status: 500, headers: { "content-type": "text/html; charset=utf-8" } },
+              )
+            }
+          })
           const contentType = nifraRes.headers.get("content-type") ?? ""
           res.statusCode = nifraRes.status
+          const requestId = nifraRes.headers.get(DEV_REQUEST_ID_HEADER)
+          if (requestId !== null) res.setHeader(DEV_REQUEST_ID_HEADER, requestId)
+          if (overlay || session.isOverlay(nifraRes)) {
+            res.setHeader("content-type", "text/html; charset=utf-8")
+            res.end(await nifraRes.text())
+            return
+          }
           if (!contentType.includes("text/html")) {
             // Data / redirect / asset response - pass through untouched, streamed (SSE-safe). Set-Cookie is
             // emitted per-header so multi-cookie responses (e.g. better-auth sessions) aren't collapsed.
@@ -413,25 +527,26 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
             await pipeWebBodyToNode(nifraRes.body, res)
             return
           }
-          // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML.
-          const html = await vite.transformIndexHtml(req.url ?? "/", await nifraRes.text())
+          // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML, keeping the
+          // app's headers (cookies, CSP, cache-control) as the Bun pipeline does.
+          const headers = new Headers(nifraRes.headers)
+          headers.delete("content-length") // the body grows with Vite's tags
+          const page = session.decorateHtml(webRequest, await nifraRes.text(), headers, requestId)
+          const html = admitViteTags(await vite.transformIndexHtml(req.url ?? "/", page), headers)
+          applyResponseHeaders(headers, res)
           res.setHeader("content-type", "text/html; charset=utf-8")
           res.end(html)
         } catch (err) {
-          // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
-          // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
+          // A failure past the app (reading the body, Vite's HTML transform): same overlay, same feed.
           if (err instanceof Error) vite.ssrFixStacktrace(err)
-          const html = devDiagnostics.capture(err, {
-            method: req.method ?? "GET",
-            url: req.url ?? "/",
-          })
+          const html = session.failure(err, { method: req.method ?? "GET", url: req.url ?? "/" })
           res.statusCode = 500
           res.setHeader("content-type", "text/html; charset=utf-8")
           res.end(html)
         }
       })()
     })
-  })
+  }
 
   // `conditions: ["bun"]` makes Vite resolve nifra's workspace packages (`@nifrajs/web-react/client`, …) to
   // their TS **source** - so the dev server needs no prior `dist` build of the adapter packages.
@@ -464,6 +579,16 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const adapterPackage = packageNameOf(options.clientModule)
   const ssrExternal = [...(adapterPackage !== undefined ? [adapterPackage] : []), "@nifrajs/web"]
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
+  // The feed writes its record and log under `.nifra/`: watching them would turn every log flush into
+  // a "file change" that re-creates the app and marks every entry stale.
+  const watch: { ignored: RegExp[]; usePolling?: boolean; interval?: number } = {
+    ignored: [DEV_SERVER_FILES],
+  }
+  // Poll when native fs events aren't delivered (containers/sandboxes).
+  if (usePolling) {
+    watch.usePolling = true
+    watch.interval = 80
+  }
   // Never `import("vite")` directly here: the guard in `importVite` has to run first, and the dev
   // server importing vite unguarded is precisely what poisoned the module for the whole process.
   const viteModule = await importVite<ViteModule>()
@@ -483,12 +608,11 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     server: {
       middlewareMode: true,
       hmr: { server },
-      // Explicit watch config; poll when native fs events aren't delivered (containers/sandboxes).
-      watch: usePolling ? { usePolling: true, interval: 80 } : {},
+      watch,
     },
-    // Ahead of the user's plugins: a `*.fn` module must be replaced before anything else
-    // reads it, and the dev server is a client bundler like any other.
-    plugins: [viteServerFnStub(), viteServerOnlyEmpty(), ...plugins],
+    // Ahead of the user's plugins: the zone guard refuses backend code before anything serves or
+    // transforms it, and a `*.fn` module must be replaced before anything else reads it.
+    plugins: [zoneGuard, viteServerFnStub(), ...plugins],
     resolve: {
       conditions: resolveConditions,
       // Dedupe each framework runtime to ONE copy. In a multi-root workspace a shared package can pull
@@ -549,7 +673,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // `Chain.svelte`) would otherwise take it from the runtime, which has no compiler for it and no
   // reason to agree with Vite about which copy of the framework runtime it renders through.
   setSsrModuleLoader(ssrLoad)
-  app = await options.createApp(entryUrl, ssrLoad)
+  app = await options.createApp(entryUrl, ssrLoad, devHooks)
 
   // Evict a changed file from the SSR graph together with every module that (transitively) imports it,
   // BEFORE re-creating the app. Vite re-evaluates a directly-changed module on its own, but a parent
@@ -585,17 +709,31 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const refreshApp = (path?: string): void => {
     if (path !== undefined) invalidateImporterClosure(path)
     const version = ++refreshVersion
-    Promise.resolve(options.createApp(entryUrl, ssrLoad))
+    Promise.resolve(options.createApp(entryUrl, ssrLoad, devHooks))
       .then((next) => {
         if (version === refreshVersion) app = next
       })
-      .catch((err) => console.error("[nifra/web/vite] app re-create failed:", err))
+      .catch((err) => {
+        console.error("[nifra/web/vite] app re-create failed:", err)
+        session.buildFailed(err, "app re-create failed")
+      })
   }
-  vite.watcher.on("change", (path) => refreshApp(normalizeFilePath(path)))
+  vite.watcher.on("change", (path) => {
+    session.markChange()
+    refreshApp(normalizeFilePath(path))
+  })
   for (const event of ["add", "unlink"] as const) {
     vite.watcher.on(event, (path) => {
+      session.markChange()
       const filePath = normalizeFilePath(path)
-      if (pathInside(routesDir, filePath)) writeClientEntry()
+      if (pathInside(routesDir, filePath)) {
+        writeClientEntry()
+        // A newly added route is not in Vite's module graph yet, so invalidating only the
+        // route path cannot evict the cached generated entry that imports the route. Evict the
+        // generated entry after rewriting it before recreating the SSR app; this also prevents
+        // an unlink refresh from briefly loading an entry that still references the deleted file.
+        invalidateImporterClosure(resolvePath(root, DEV_ENTRY))
+      }
       refreshApp(filePath)
     })
   }
@@ -609,21 +747,34 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     // then HANGS on it, which is worse than the raw crash this guard replaced: the user sees a dev server
     // that appears to be starting. Tear Vite down so the failure is terminal.
     await vite.close().catch(() => {})
+    session.stop()
     throw err
   }
   // Report the port actually BOUND, not the one requested. They differ for `port: 0`, which is how you
   // ask the OS for a free one - the correct thing to do in a test or when running several apps at once.
   // Echoing the request back would return a literal 0, which connects to nothing.
   const address = server.address()
+  const boundPort = typeof address === "object" && address !== null ? address.port : port
+  session.listening(boundPort)
   return {
-    port: typeof address === "object" && address !== null ? address.port : port,
+    port: boundPort,
     stop: async () => {
+      session.stop()
       // Cleared with the server that owns it: the slot is process-global, so a stopped server leaving
       // its loader behind would hand the next one's adapter a graph that is closed (tests start and
       // stop several dev servers in one process).
       setSsrModuleLoader(undefined)
       server.close()
-      await vite.close()
+      // Vite (8.2) never settles a first dependency optimization that close() cuts short, and close()
+      // waits on it for good. Everything else closes in parallel, so only that wait is bounded.
+      let bound: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        vite.close(),
+        new Promise<void>((resolve) => {
+          bound = setTimeout(resolve, VITE_CLOSE_BOUND_MS)
+        }),
+      ])
+      clearTimeout(bound)
     },
   }
 }

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core/server"
 import { type OpenAPIDocument, toOpenAPI } from "@nifrajs/schema/openapi"
-import { renderSdk, SdkGenerationError } from "../src/sdk.ts"
+import { renderSdk, runSdk, SdkGenerationError } from "../src/sdk.ts"
+import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
 
 const document = toOpenAPI(server().get("/users/:id", () => ({ ok: true }))) as OpenAPIDocument
 
@@ -21,6 +22,19 @@ describe("SDK generation", () => {
     expect(source).toContain("package nifrasdk")
     expect(source).toContain("func (c *Client) GetUsersId(")
     expect(source).toContain("http.DefaultClient")
+  })
+
+  test("emits operations in code-unit order, the same in every locale", () => {
+    const app = server()
+      .get("/a_y", () => 1)
+      .get("/B", () => 1)
+      .get("/a-x", () => 1)
+      .get("/a", () => 1)
+    const ordered: OpenAPIDocument = toOpenAPI(app)
+    const names = renderSdk(ordered, "python")
+      .split("\n")
+      .flatMap((line) => /def (get_\w+)\(/.exec(line)?.slice(1) ?? [])
+    expect(names).toEqual(["get_B", "get_a", "get_a_x", "get_a_y"])
   })
 
   test("renders typed models, query structs, and typed error bodies", () => {
@@ -78,6 +92,35 @@ describe("SDK generation", () => {
     expect(go).toContain("type GetUserError struct")
   })
 
+  test("a property name with no Go struct-tag spelling is reported, never written raw", () => {
+    const evil =
+      'id"`\n}\n\nfunc init() { panic("injected") }\n\ntype Pad struct {\n\tX string `json:"x'
+    const object = {
+      type: "object",
+      properties: { [evil]: { type: "string" }, "-": { type: "string" }, name: { type: "string" } },
+      required: [evil, "-", "name"],
+    }
+    const withKeys = {
+      openapi: "3.1.0",
+      info: { title: "keys", version: "1.0.0" },
+      paths: {
+        "/item": {
+          get: {
+            operationId: "getItem",
+            responses: {
+              "200": { description: "ok", content: { "application/json": { schema: object } } },
+            },
+          },
+        },
+      },
+    } satisfies OpenAPIDocument
+    const go = renderSdk(withKeys, "go")
+    expect(go).not.toContain("injected")
+    expect(go).toContain('`json:"-,"`')
+    expect(go).toContain('`json:"name"`')
+    expect(() => renderSdk(withKeys, "go", { strict: true })).toThrow(/Go struct tag/)
+  })
+
   test("strict generation fails closed on an opaque response", () => {
     expect(() => renderSdk(document, "python", { strict: true })).toThrow(SdkGenerationError)
     expect(() => renderSdk(document, "go", { strict: true })).toThrow(/response 200/)
@@ -96,6 +139,48 @@ describe("SDK generation", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  test("generated Python refuses a path parameter that is a dot segment", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))
+    try {
+      await Bun.write(join(dir, "nifra_sdk.py"), renderSdk(document, "python"))
+      // The base URL is unreachable: a refused call never gets as far as the network, and a sent
+      // one fails with a connection error instead.
+      const script = [
+        "import sys, urllib.error",
+        "sys.path.insert(0, sys.argv[1])",
+        "import nifra_sdk",
+        'api = nifra_sdk.Client("http://127.0.0.1:1", timeout=2)',
+        'for value in ("..", ".", "...", "a.b"):',
+        "    try:",
+        "        api.get_users_id(value)",
+        '        print(value, "answered")',
+        "    except ValueError:",
+        '        print(value, "refused")',
+        "    except urllib.error.URLError:",
+        '        print(value, "sent")',
+      ].join("\n")
+      const process = Bun.spawn(["python3", "-c", script, dir], { stdout: "pipe", stderr: "pipe" })
+      const [exitCode, output] = await Promise.all([
+        process.exited,
+        new Response(process.stdout).text(),
+      ])
+      expect(exitCode).toBe(0)
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        ".. refused",
+        ". refused",
+        "... sent",
+        "a.b sent",
+      ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+    // Windows takes about two seconds to report each refused connection.
+  }, 30_000)
+
+  test("generated Go refuses a path parameter that is a dot segment", () => {
+    expect(renderSdk(document, "go")).toContain('if segment == "." || segment == ".."')
   })
 
   if (Bun.which("go") !== null) {
@@ -128,5 +213,20 @@ describe("SDK generation", () => {
       },
       { timeout: goCompileTimeout },
     )
+  }
+})
+
+test("runSdk reads a real backend from backend/app.ts and writes the client", async () => {
+  const root = createFixtureRoot("tmp-sdk-run-")
+  try {
+    writeAppFile(
+      root,
+      "backend/app.ts",
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/ping", () => ({ ok: true }))\n',
+    )
+    await runSdk(root, { language: "python" })
+    expect(await Bun.file(join(root, "nifra_sdk.py")).text()).toContain("/ping")
+  } finally {
+    removeFixtureRoot(root)
   }
 })

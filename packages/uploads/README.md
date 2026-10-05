@@ -10,6 +10,15 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/uploads
 ```
 
+## With a schema
+
+`validateUpload` is for a route that reads the upload itself. To declare the file in the route's
+body schema instead - validated before the handler runs, typed in `c.body` - use `t.file` and
+`t.form` from `@nifrajs/schema/form`, which run the same signature detection.
+
+`@nifrajs/uploads/detect` exports the detection alone (`detectFileType`, `DETECTABLE_MIME_TYPES`,
+`FILE_TYPE_PREFIX_BYTES`) for code that needs the type and nothing else.
+
 ## Docs
 
 - Reference: <https://nifra.dev/docs>

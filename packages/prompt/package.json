@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/prompt",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Type-safe prompts - bind an instruction to input/output Standard Schemas and get validated, typed LLM results from any provider.",
   "keywords": [
     "bun",
@@ -12,6 +12,9 @@
     "ai"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

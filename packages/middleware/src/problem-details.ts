@@ -176,12 +176,19 @@ export function problemDetails(options: ProblemDetailsOptions = {}) {
           return JSON.stringify(document)
         },
         async onResponseRaw(response, req) {
+          // Only a JSON body can hold the envelope, so nothing else is read: reading waits for the
+          // body to arrive, which an error page streamed in pieces - or a stream that never ends -
+          // would turn into a held-back or hung response.
+          const contentType = response.headers.get("content-type")
+          const declared = Number(response.headers.get("content-length") ?? 0)
           if (
             response.status < 400 ||
             response.status >= 600 ||
             response.body === null ||
             response.headers.has("content-encoding") ||
-            isAlreadyProblemDetails(response.headers.get("content-type"))
+            contentType === null ||
+            !JSON_TYPE.test(contentType) ||
+            declared > maxBytes
           ) {
             return response
           }

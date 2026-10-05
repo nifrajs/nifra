@@ -88,9 +88,10 @@ const readHtml = async (
  * Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.
  *
  * The promise resolves only when the adapter proves all shared invariants: page props reach a
- * page-only render, streams contain byte chunks, layout chains nest outermost-first, optional
- * buffered rendering is byte-for-byte hydration-equivalent to streaming for non-deferred content,
- * and hydration-head output is a stable string. It rejects with
+ * page-only render, streams contain byte chunks, layout chains nest outermost-first, a leaf that
+ * renders nothing leaves its layouts standing, optional buffered rendering is byte-for-byte
+ * hydration-equivalent to streaming for non-deferred content, and hydration-head output is a stable
+ * string. It rejects with
  * {@link RenderAdapterConformanceError} naming the first failed check.
  *
  * Framework semantics outside the interface-Suspense scheduling, compiler plugins, DOM hydration,
@@ -123,6 +124,18 @@ export async function assertRenderAdapterConformance(
   const pageAt = nestedHtml.indexOf(markers.page)
   if (!(outerAt < innerAt && innerAt < pageAt)) {
     fail("layout order", "expected outer layout → inner layout → page source order")
+  }
+
+  // The page slot of an `ssr = false` route with no `HydrateFallback`: a plain function returning
+  // `null`, in every framework. The layouts must render around it and the slot must be empty.
+  const emptyHtml = await readHtml(
+    () => adapter.renderToStream([outerLayout, innerLayout, () => null], props),
+    "empty leaf",
+  )
+  contains(emptyHtml, markers.outer, "empty leaf")
+  contains(emptyHtml, markers.inner, "empty leaf")
+  if (emptyHtml.includes(markers.page)) {
+    fail("empty leaf", "a leaf that renders nothing must leave the page slot empty")
   }
 
   if (adapter.renderToString !== undefined) {

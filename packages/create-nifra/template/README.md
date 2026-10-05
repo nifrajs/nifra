@@ -15,16 +15,22 @@ rate-limit store intentionally refuses production unless `NIFRA_ALLOW_MEMORY_RAT
 shared store for a multi-instance deployment. If you add cookie sessions, install the signed CSRF
 middleware and keep authenticated mutation routes covered by both authenticated and CSRF assurance.
 
-- `src/app.ts` - your routes (exported without `listen`, so tests drive it via `app.fetch`).
-- `src/index.ts` - boots the server.
-- `src/app.test.ts` - an example test.
+Server code lives in `backend/`, the same folder a site keeps its backend in, so pages can be added
+later without moving anything:
 
-Add a typed client from `typeof app`:
+- `backend/app.ts` - exports `backend`, your API: it composes the route modules (exported without
+  `listen`, so tests drive it via `backend.fetch`). `nifra contracts` and `nifra sdk` read it from
+  here.
+- `backend/routes.ts` - the routes.
+- `backend/index.ts` - boots the server.
+- `backend/app.test.ts` - an example test.
+
+Add a typed client from `typeof backend`:
 
 ```ts
 import { client } from "@nifrajs/client"
-import type { App } from "./src/app.ts"
+import type { Backend } from "./backend/app.ts"
 
-const api = client<App>("http://localhost:3000")
+const api = client<Backend>("http://localhost:3000")
 const { data } = await api.users({ id: "42" }).get()
 ```

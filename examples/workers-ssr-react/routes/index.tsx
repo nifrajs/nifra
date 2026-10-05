@@ -1,25 +1,11 @@
-import type { ActionArgs, LoaderArgs, LoaderData } from "@nifrajs/client"
-import type { backend } from "../backend"
+import type { Route } from "./+types/index"
 
 export const meta = {
   title: "nifra on the edge - Home",
   meta: [{ name: "description", content: "nifra file-routed SSR on Cloudflare Workers" }],
 }
 
-// Typed loader + action against the contract - the SAME code that runs on Bun/Node/Deno, now on
-// workerd. The loader reads the count; the action increments it. After a client submit the loader
-// revalidates (no full reload); with JS off the native POST re-renders (progressive enhancement).
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
-}
-
-export async function action({ api }: ActionArgs<typeof backend>) {
-  await api.count.post()
-  return { ok: true }
-}
-
-export default function Home(props: { data: LoaderData<typeof loader> }) {
+export default function Home(props: Route.ComponentProps) {
   return (
     <div>
       <h1 id="page">Home</h1>

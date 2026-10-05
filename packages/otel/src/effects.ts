@@ -110,6 +110,7 @@ export function effectTracing(options: EffectTracingOptions = {}): EffectTracing
         Object.freeze({
           observation: lifecycle.start({
             name: `nifra.effect.${event.stage}`,
+            kind: "internal",
             parent: event.trace ?? null,
             attributes: attributesOf(event),
           }),
@@ -124,6 +125,7 @@ export function effectTracing(options: EffectTracingOptions = {}): EffectTracing
     if (entry === undefined) {
       observation = lifecycle.start({
         name: `nifra.effect.${event.stage}`,
+        kind: "internal",
         parent: event.trace ?? null,
         attributes: attributesOf(event),
       })

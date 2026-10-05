@@ -12,5 +12,5 @@
     "types": ["bun"],
     "skipLibCheck": true
   },
-  "include": ["src/**/*"]
+  "include": ["backend/**/*"]
 }

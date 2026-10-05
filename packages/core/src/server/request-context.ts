@@ -157,6 +157,15 @@ function responseTextContentType(): string {
  * passes no headers of their own. */
 const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8"
 
+/** Where a serving adapter that shares one platform across requests leaves its socket-peer lookup.
+ * `c.clientIp` calls it with the request when a handler reads the address, so a request whose
+ * handler never reads it costs the adapter neither a lookup nor a platform object of its own. */
+export const PLATFORM_PEER = Symbol()
+
+export type PeerPlatform = Platform & {
+  readonly [PLATFORM_PEER]?: (source: RequestSource) => string | undefined
+}
+
 export class RequestContext implements RawContext {
   // `declare` keeps TypeScript's class-field emit from first writing `undefined` to every slot; the
   // constructor initializes only the eager request state, while lazy fields remain absent until used.
@@ -167,13 +176,16 @@ export class RequestContext implements RawContext {
   private declare searchValue: string | undefined
   private declare signalValue: AbortSignal | undefined
   private declare budgetValue: RequestBudget | undefined
-  private declare platformValue: Platform | undefined
+  private declare platformValue: PeerPlatform | undefined
+  private declare peerValue: string | undefined
 
   private declare setValue: CtxSet | undefined
   private declare queryValue: unknown
   private declare queryReady: boolean
   private declare headersValue: Record<string, string> | undefined
   private declare cookiesValue: Readonly<Record<string, string>> | undefined
+  declare jsonReply: Response | undefined
+  declare jsonBody: unknown
   private declare readonly source: RequestSource
   private declare readonly maxBodyBytes: number
   private declare readonly protoPoisoning: ProtoPoisoning
@@ -268,8 +280,12 @@ export class RequestContext implements RawContext {
 
   get clientIp(): string | undefined {
     // The server resolves the trust declaration into `platform.clientIp` before the context is built,
-    // so this getter just surfaces the already-derived value (raw socket peer by default).
-    return this.platformValue?.clientIp
+    // so this getter just surfaces the already-derived value (raw socket peer by default). A platform
+    // shared across requests holds no address of its own and is asked for this request's peer, once:
+    // the answer is kept, so a read after the socket closed agrees with one before it.
+    const platform = this.platformValue
+    this.peerValue ??= platform?.clientIp ?? platform?.[PLATFORM_PEER]?.(this.source)
+    return this.peerValue
   }
 
   get waitUntil(): (promise: Promise<unknown>) => void {
@@ -312,19 +328,27 @@ export class RequestContext implements RawContext {
    */
   json(body: unknown, init?: ResponseInit | number): Response {
     const i = statusInit(init)
-    if (!DEFERS_RESPONSE) return Response.json(body, i)
-    const defer = deferredResponderFor()
-    if (defer === undefined) return Response.json(body, i)
-    // The same bytes `Response.json` would produce, kept one step short of it so the direct writer
-    // can have them. `JSON.stringify` returns `undefined` for a value with no JSON form (`undefined`,
-    // a function, a symbol) - exactly the case where `Response.json` throws, so hand it back the
-    // throw rather than inventing a body. The content-type is the runtime's own, read off
-    // `Response.json` once, so a deferred response carries the same one byte for byte.
-    const text = JSON.stringify(body) as string | undefined
-    if (text === undefined) return Response.json(body, i)
-    const headers = ownHeaderRecord(i?.headers, responseJsonContentType())
-    if (headers === undefined) return Response.json(body, i)
-    return defer(text, i?.status ?? 200, headers)
+    let reply: Response | undefined
+    if (DEFERS_RESPONSE) {
+      const defer = deferredResponderFor()
+      // The same bytes `Response.json` would produce, kept one step short of it so the direct
+      // writer can have them. `JSON.stringify` returns `undefined` for a value with no JSON form
+      // (`undefined`, a function, a symbol) - exactly the case where `Response.json` throws, so it
+      // gets the throw rather than an invented body. The content-type is the runtime's own, read
+      // off `Response.json` once, so a deferred response carries the same one byte for byte.
+      const text = defer === undefined ? undefined : (JSON.stringify(body) as string | undefined)
+      const headers =
+        text === undefined ? undefined : ownHeaderRecord(i?.headers, responseJsonContentType())
+      if (defer !== undefined && text !== undefined && headers !== undefined) {
+        reply = defer(text, i?.status ?? 200, headers)
+      }
+    }
+    reply ??= Response.json(body, i)
+    // Remembered so a response contract holds the value to the route's schema: this is the
+    // framework's JSON helper, not a raw-Response escape hatch.
+    this.jsonBody = body
+    this.jsonReply = reply
+    return reply
   }
 
   /**
@@ -368,6 +392,10 @@ export class RequestContext implements RawContext {
   get cookies(): Readonly<Record<string, string>> {
     this.cookiesValue ??= parseCookies(headerOf(this.source, "cookie"))
     return this.cookiesValue
+  }
+
+  set cookies(value: Readonly<Record<string, string>>) {
+    this.cookiesValue = value
   }
 
   boundedBody(maxBytes?: number): Promise<Uint8Array> {

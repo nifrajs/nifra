@@ -1,32 +1,16 @@
 /** @jsxImportSource preact */
-import type { LoaderArgs, LoaderData } from "@nifrajs/client"
-import type { StandardSchemaV1 } from "@nifrajs/core/server"
-import { useNavigate, useSearch } from "@nifrajs/web-preact/router"
-import type { backend } from "../backend"
 
-// A route's typed search contract (hand-rolled Standard Schema, no schema lib needed for the example).
-export const searchSchema = {
-  "~standard": {
-    version: 1,
-    vendor: "example",
-    validate(input: unknown) {
-      const raw = (input ?? {}) as { page?: unknown; q?: unknown }
-      const page = typeof raw.page === "number" && Number.isFinite(raw.page) ? raw.page : 1
-      const q = typeof raw.q === "string" ? raw.q : ""
-      return { value: { page, q } }
-    },
-  },
-} satisfies StandardSchemaV1<unknown, { page: number; q: string }>
+import { useNavigate, useSearch } from "@nifrajs/web-preact/router"
+import { searchSchema } from "../shared/search.ts"
+import type { Route } from "./+types/search"
+
+export { searchSchema }
 
 export const meta = { title: "nifra + Preact - Typed search" }
 
-export async function loader({ search }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
-  return { echoed: `${search.page}:${search.q}` }
-}
-
 // Preact's useSearch returns the validated search VALUE directly (SSR-correct), so `page`/`q` render
 // server-side and hydrate with no mismatch, and a soft-nav re-derives search identically.
-export default function Search({ data }: { data: LoaderData<typeof loader> }) {
+export default function Search({ data }: Route.ComponentProps) {
   const { page, q } = useSearch<typeof searchSchema>() // { page: number; q: string }
   const navigate = useNavigate()
   return (

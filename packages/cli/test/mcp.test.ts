@@ -27,6 +27,7 @@ import {
   WarmWorker,
 } from "../src/mcp.ts"
 import { catalogProjectTools } from "../src/mcp-exec.ts"
+import { joinHeadTail, readHeadTail } from "../src/mcp-io.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -133,6 +134,35 @@ test("child output is cancelled at its byte budget", async () => {
   expect(result.text.length).toBe(10)
   expect(limited).toBe(true)
   expect(CHILD_OUTPUT_MAX_BYTES).toBeGreaterThan(0)
+})
+
+test("a drained stream keeps only its head and tail", async () => {
+  const chunks = (...parts: string[]): ReadableStream<Uint8Array> =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(new TextEncoder().encode(part))
+        controller.close()
+      },
+    })
+  const long = await readHeadTail(chunks("aaaa", "bbbb", "cccc", "dddd"), 5, 3)
+  expect(long).toEqual({ head: "aaaab", tail: "ddd", droppedBytes: 8 })
+  expect(joinHeadTail(long)).toBe("aaaab\n…(8 bytes omitted)…\nddd")
+  const short = await readHeadTail(chunks("ab", "c"), 2, 5)
+  expect(joinHeadTail(short)).toBe("abc")
+})
+
+test("nifra_manifest neither advertises nor accepts the operator signing key", async () => {
+  const tool = catalogProjectTools(process.cwd()).find((t) => t.name === "nifra_manifest")
+  expect(tool).toBeDefined()
+  expect(Object.keys(Object(tool?.inputSchema.properties))).not.toContain("sign")
+  const answer = await tool?.handler(
+    { action: "emit", sign: "release-key" },
+    { signal: new AbortController().signal, requestId: 1, reportProgress: () => {} },
+  )
+  expect(JSON.parse(String(answer))).toEqual({
+    ok: false,
+    error: "sign is available only from the nifra CLI",
+  })
 })
 
 describe("handleRpc (MCP protocol)", () => {
@@ -461,7 +491,8 @@ describe("runBackend (nifra_run engine) - input guards", () => {
           "",
         ].join("\n"),
       )
-      await symlink(evil, join(root, "backend.ts"))
+      await mkdir(join(root, "backend"))
+      await symlink(evil, join(root, "backend", "app.ts"))
 
       const viaSymlink = (await loadBackend(root)) as { error?: string }
       expect(viaSymlink.error).toContain("outside the project root")
@@ -496,8 +527,9 @@ describe("runBackend (nifra_run engine) - input guards", () => {
     }
     let proc: PipeProc | undefined
     try {
+      await mkdir(join(dir, "backend"))
       await writeFile(
-        join(dir, "backend.ts"),
+        join(dir, "backend", "app.ts"),
         [
           "let count = 0",
           "export const backend = {",
@@ -577,8 +609,9 @@ describe("runBackend (nifra_run engine) - input guards", () => {
     try {
       // `/slow` parks long enough to be cancelled mid-flight; `count` persists so we can prove the
       // follow-up request hit the SAME loaded process (no cold respawn).
+      await mkdir(join(dir, "backend"))
       await writeFile(
-        join(dir, "backend.ts"),
+        join(dir, "backend", "app.ts"),
         [
           "let count = 0",
           "export const backend = {",
@@ -704,6 +737,34 @@ describe("monorepo detection + tool namespacing", () => {
     // Confirm originals all start with nifra_
     for (const n of rawNames) {
       expect(n.startsWith("nifra_")).toBe(true)
+    }
+  })
+
+  test("nifra_explain shows a codeframe from project source only, never .env or a dot directory", async () => {
+    const root = realpathSync(await mkdtemp(join(tmpdir(), "nifra-explain-")))
+    try {
+      await writeFile(join(root, ".env"), "A=1\nDB_PASSWORD=hunter2\nB=2\n")
+      await mkdir(join(root, ".git"))
+      await writeFile(join(root, ".git/config"), "[remote]\n  token = secret-token\n")
+      await writeFile(join(root, "app.ts"), "const a = 1\nthrow new Error('boom')\n")
+      const explain = projectTools(root).find((tool) => tool.name === "nifra_explain")
+      const context = {
+        signal: new AbortController().signal,
+        requestId: 1,
+        reportProgress: () => {},
+      }
+      const run = async (file: string): Promise<{ codeframe?: unknown }> => {
+        const stack = `Error: boom\n    at x (${join(root, file)}:2:1)`
+        return JSON.parse(String(await explain?.handler({ error: "boom", stack }, context)))
+      }
+      for (const file of [".env", ".git/config"]) {
+        const result = await run(file)
+        expect(result.codeframe).toBeUndefined()
+        expect(JSON.stringify(result)).not.toMatch(/hunter2|secret-token/)
+      }
+      expect(JSON.stringify((await run("app.ts")).codeframe)).toContain("throw new Error")
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   })
 
@@ -1073,7 +1134,7 @@ describe("extractBackendResources / extractBackendPrompts (.resource()/.prompt()
 })
 
 /**
- * A backend-only project - no `nifra.config.ts`/`framework.ts`, no `routes/` - is what
+ * A backend-only project - no `nifra.config.ts`/`backend/framework.ts`, no `routes/` - is what
  * `create-nifra`'s DEFAULT template produces, and the MCP server could not start in one.
  *
  * `runMcpServer` awaited `loadApp` twice: once at boot to collect backend resources/prompts, and once
@@ -1153,7 +1214,7 @@ describe("runMcpServer starts on a project it cannot load", () => {
 
   test("initialize succeeds and the built-in tools are served", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-backend-only-"))
-    // Deliberately NO nifra.config.ts, framework.ts or routes/ - just an app module, as the
+    // Deliberately NO nifra.config.ts, backend/framework.ts or routes/ - just an app module, as the
     // default template ships it.
     await mkdir(join(dir, "src"), { recursive: true })
     await writeFile(

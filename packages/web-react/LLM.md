@@ -17,19 +17,19 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode` · from `@nifrajs/web-react/auth`
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => ReactNode` · from `@nifrajs/web-react/await`
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => ReactElement` · from `@nifrajs/web-react/content`
-- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-react/client`
 - **HydrationBoundary** _(function)_ - `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => ReactNode` · from `@nifrajs/web-react/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => ReactElement` · from `@nifrajs/web-react/image`
 - **Island** _(function)_ - `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode` · from `@nifrajs/web-react/island`
-- **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-react/client`
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-react/client`
+- **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-react/client`
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-react/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
-- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession` · from `@nifrajs/web-react/auth`
 
-_…and 52 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 57 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

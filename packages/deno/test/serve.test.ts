@@ -1,6 +1,12 @@
 import { server } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
+import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
+import {
+  rawUpgradeStatus,
+  requestTargetApp,
+  requestTargetMismatches,
+} from "../../core/test/request-target-matrix.ts"
 import { serve } from "../src/index.ts"
 
 // Minimal local assertions - keeps `deno test` offline + dependency-free.
@@ -18,10 +24,10 @@ Deno.test("serves GET (JSON) + POST (body), resolves the bound port", async () =
     .use(responseObserver())
     .get("/users/:id", (c) => ({ id: c.params.id }))
     .post("/echo", (c) => c.req.json())
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     assert(running.port > 0, "port should be resolved")
-    const base = `http://localhost:${running.port}`
+    const base = `http://127.0.0.1:${running.port}`
     assertEquals(await (await fetch(`${base}/users/42`)).json(), { id: "42" })
     const echoed = await fetch(`${base}/echo`, {
       method: "POST",
@@ -39,9 +45,9 @@ Deno.test("passes a 204 (no body) through correctly", async () => {
     c.set.status = 204
     return undefined
   })
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const res = await fetch(`http://localhost:${running.port}/empty`)
+    const res = await fetch(`http://127.0.0.1:${running.port}/empty`)
     assertEquals(res.status, 204)
     assertEquals(await res.text(), "")
   } finally {
@@ -56,10 +62,10 @@ Deno.test("a throwing app yields a flat 500 (no leak)", async () => {
         throw new Error("boom")
       },
     },
-    { port: 0 },
+    { hostname: "127.0.0.1", port: 0 },
   )
   try {
-    const res = await fetch(`http://localhost:${running.port}/`)
+    const res = await fetch(`http://127.0.0.1:${running.port}/`)
     assertEquals(res.status, 500)
     assertEquals(await res.json(), { ok: false, error: "internal_error" })
   } finally {
@@ -72,8 +78,8 @@ Deno.test("stop() drains an in-flight request, then is idempotent", async () => 
     await new Promise((resolve) => setTimeout(resolve, 80))
     return { done: true }
   })
-  const running = await serve(app, { port: 0 })
-  const inflight = fetch(`http://localhost:${running.port}/slow`)
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const inflight = fetch(`http://127.0.0.1:${running.port}/slow`)
     .then((r) => r.json())
     .catch(() => "ERR")
   await new Promise((resolve) => setTimeout(resolve, 20)) // ensure the request is in-flight
@@ -98,8 +104,8 @@ Deno.test("stop() force-closes a handler that outlives the drain deadline", asyn
     })
     return { done: true }
   })
-  const running = await serve(app, { port: 0 })
-  const inflight = fetch(`http://localhost:${running.port}/hang`).catch(() => undefined)
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const inflight = fetch(`http://127.0.0.1:${running.port}/hang`).catch(() => undefined)
   await started
   const before = performance.now()
   await running.stop({ drainMs: 10 })
@@ -121,9 +127,9 @@ Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", asy
     })
     return { done: true }
   })
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const res = await fetch(`http://localhost:${running.port}/slow`)
+    const res = await fetch(`http://127.0.0.1:${running.port}/slow`)
     assertEquals(res.status, 503)
     assertEquals(await res.json(), { ok: false, error: "request_timeout" })
   } finally {
@@ -170,9 +176,9 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
       open: (ws) => ws.send("allowed"),
     })
     .get("/health", () => ({ ok: true }))
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const wsBase = `ws://localhost:${running.port}`
+    const wsBase = `ws://127.0.0.1:${running.port}`
 
     const frames = await new Promise<string[]>((resolve, reject) => {
       const got: string[] = []
@@ -195,14 +201,14 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
     assertEquals(frames, ["welcome", "ping"])
 
     // A rejected upgrade comes back as a plain HTTP response, not a socket.
-    const denied = await fetch(`http://localhost:${running.port}/guarded?token=wrong`, {
+    const denied = await fetch(`http://127.0.0.1:${running.port}/guarded?token=wrong`, {
       headers: { upgrade: "websocket", connection: "Upgrade" },
     })
     await denied.body?.cancel()
     assertEquals(denied.status, 401)
 
     // Normal HTTP is unaffected on an app that also has WS routes.
-    assertEquals(await (await fetch(`http://localhost:${running.port}/health`)).json(), {
+    assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/health`)).json(), {
       ok: true,
     })
   } finally {
@@ -212,9 +218,9 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
 
 Deno.test("a WS-free app serves HTTP normally even when the client sends an Upgrade header", async () => {
   const app = server().get("/health", () => ({ ok: true }))
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const res = await fetch(`http://localhost:${running.port}/health`, {
+    const res = await fetch(`http://127.0.0.1:${running.port}/health`, {
       headers: { upgrade: "websocket", connection: "Upgrade" },
     })
     assertEquals(await res.json(), { ok: true })
@@ -249,9 +255,9 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
       return { ok: true }
     })
     .get("/raw", () => new Response("<h1>hi</h1>", { headers: { "content-type": "text/html" } }))
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
-    const base = `http://localhost:${running.port}`
+    const base = `http://127.0.0.1:${running.port}`
     const res = await fetch(`${base}/json`)
     assertEquals(res.status, 200)
     assertEquals(res.headers.get("x-request-id"), "rid-1")
@@ -314,11 +320,11 @@ Deno.test("statically declared response headers match the equivalent hook on the
   const paths = ["/json", "/own", "/collision", "/cookie", "/raw", "/boom", "/missing"]
 
   const dumpAll = async (app: ReturnType<typeof server>): Promise<unknown[]> => {
-    const running = await serve(app, { port: 0 })
+    const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     try {
       const out: unknown[] = []
       for (const path of paths) {
-        const res = await fetch(`http://localhost:${running.port}${path}`)
+        const res = await fetch(`http://127.0.0.1:${running.port}${path}`)
         const headers = [...res.headers]
           .filter(([name]) => name !== "date" && name !== "vary")
           .map(([name, value]) => [name, value])
@@ -359,4 +365,118 @@ Deno.test("statically declared response headers match the equivalent hook on the
     collision?.headers.filter(([name]) => name === "x-frame-options"),
     [["x-frame-options", "SAMEORIGIN"]],
   )
+})
+
+/** One HTTP/1.1 request written straight to the socket, so the method token reaches the server
+ * exactly as typed (`fetch` would normalise it). Returns the response status line. */
+async function rawStatusLine(port: number, method: string, path: string): Promise<string> {
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port })
+  try {
+    const body = "x".repeat(32)
+    await conn.write(
+      new TextEncoder().encode(
+        `${method} ${path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n` +
+          `Content-Type: text/plain\r\nContent-Length: ${body.length}\r\n\r\n${body}`,
+      ),
+    )
+    const chunk = new Uint8Array(1024)
+    const read = await conn.read(chunk)
+    return new TextDecoder().decode(chunk.subarray(0, read ?? 0)).split("\r\n")[0] ?? ""
+  } finally {
+    conn.close()
+  }
+}
+
+Deno.test("a method token that differs only in case is a different method on the wire", async () => {
+  const hookSaw: string[] = []
+  const handlerSaw: string[] = []
+  const app = server()
+    .onRequest((req) => {
+      hookSaw.push(req.method)
+    })
+    .post("/mutate", (c) => {
+      handlerSaw.push(c.req.method)
+      return { ok: true }
+    })
+    .patch("/mutate/:id", (c) => {
+      handlerSaw.push(c.req.method)
+      return { ok: true }
+    })
+    .mountFetch("/legacy", (req) => {
+      handlerSaw.push(`mount:${req.method}`)
+      return Response.json({ ok: true })
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await rawStatusLine(running.port, "POST", "/mutate"), "HTTP/1.1 200 OK")
+    assertEquals(await rawStatusLine(running.port, "PATCH", "/mutate/1"), "HTTP/1.1 200 OK")
+    // This runtime hands the token over as sent. Anything but the exact registered token must stop
+    // at routing: no hook, handler or mount may observe a method string a method check would not match.
+    for (const method of ["post", "Post", "pOST"]) {
+      assertEquals(
+        await rawStatusLine(running.port, method, "/legacy/item"),
+        "HTTP/1.1 404 Not Found",
+      )
+    }
+    for (const [method, path] of [
+      ["post", "/mutate"],
+      ["Post", "/mutate"],
+      ["pOST", "/mutate"],
+      ["patch", "/mutate/1"],
+      ["Patch", "/mutate/1"],
+    ] as const) {
+      assertEquals(
+        await rawStatusLine(running.port, method, path),
+        "HTTP/1.1 405 Method Not Allowed",
+      )
+    }
+    assertEquals(hookSaw, ["POST", "PATCH"])
+    assertEquals(handlerSaw, ["POST", "PATCH"])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// Deno hands the adapter the target exactly as sent; the app routes the path a URL parser resolves
+// it to, as it does on every other runtime.
+Deno.test("a target with dot segments or a backslash routes the path it resolves to", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await requestTargetMismatches(running.port), [])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/echo", { message: (ws, data) => ws.send(data) })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await rawUpgradeStatus(running.port, "/rooms/../echo"), 101)
+    assertEquals(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo"), 101)
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("tls serves HTTPS from PEM bytes, and request URLs see https:", async () => {
+  const { cert, key } = await selfSignedCertificate()
+  const app = server().get("/where", (c) => ({ url: c.req.url }))
+  const bytes = new TextEncoder()
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: { cert: bytes.encode(cert), key: bytes.encode(key) },
+  })
+  // The certificate is self-signed, so the client trusts it explicitly.
+  const client = Deno.createHttpClient({ caCerts: [cert] })
+  try {
+    const base = `https://127.0.0.1:${running.port}`
+    assertEquals(await (await fetch(`${base}/where`, { client })).json(), { url: `${base}/where` })
+  } finally {
+    client.close()
+    await running.stop({ drainMs: 0 })
+  }
 })

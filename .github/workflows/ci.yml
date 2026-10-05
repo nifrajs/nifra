@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A manual run, for any branch, to get the Windows job on a branch before cutting a release.
+  workflow_dispatch:
 
 jobs:
   check:
@@ -80,12 +82,13 @@ jobs:
         run: bun run check:publish
 
       # The names to scan for are themselves private, so they arrive as a repository secret rather
-      # than living in the tree. Unset, the step still enforces the structural half (seams exported,
-      # no runtime builtins in an edge seam).
+      # than living in the tree. A fork's pull request has no secrets, so there the step enforces the
+      # structural half (seams exported, no runtime builtins in an edge seam); a push to main must scan.
       - name: Public boundary (seam exports, edge portability, private markers)
         run: bun run check:public-boundary
         env:
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
+          RELEASE_MODE: ${{ github.event_name == 'push' && '1' || '' }}
 
       - name: Public product manifest (README package map is generated)
         run: bun run check:public-manifest
@@ -135,11 +138,14 @@ jobs:
         run: bun run check:verification-parity
 
   windows:
-    # Windows is the slowest platform job and is a release gate, not the fast PR feedback loop.
-    # Release listens for a successful CI run on main, so this still runs before Version Packages
-    # publishing while avoiding a full Windows build/test on every pull request (including the bot's
-    # Version Packages PR).
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Windows is the slowest platform job. Run it for main pushes, release PRs, and manual runs so a
+    # release is fully validated before merge, while ordinary feature PRs keep the fast loop.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: windows-latest
     permissions:
       contents: read
@@ -257,10 +263,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build the Worker contract dependencies
-        # Schema's build resolves @nifrajs/core/* through core's published-style dist declarations.
-        # Keep these explicit and sequential: one multi-filter invocation may start both builds in
-        # parallel, which makes a clean CI checkout fail before core has emitted its subpath .d.ts files.
-        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/schema' build
+        # Schema's build resolves @nifrajs/core/* and @nifrajs/uploads/detect through their
+        # published-style dist declarations. Keep these explicit and sequential: one multi-filter
+        # invocation may start the builds in parallel, which makes a clean CI checkout fail before
+        # a dependency has emitted its subpath .d.ts files.
+        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/uploads' build && bun run --filter '@nifrajs/schema' build
 
       - name: Run the real workerd contract laboratory
         run: bun run check:workerd
@@ -290,6 +297,11 @@ jobs:
 
       - name: Compare Bun and Vite production pipelines on the fixture app
         run: bun run check:pipeline-parity
+
+      # Every way server code or a credential can reach a browser, against both bundlers, both dev
+      # servers, the server build, each framework's route syntax and each deploy target's output.
+      - name: Leak matrix
+        run: bun run check:leak-matrix
 
   # Scan Bun's lockfile as part of the release-gated CI workflow. This job is deliberately a
   # reusable OSV workflow so a known advisory cannot pass CI and still reach the release workflow.

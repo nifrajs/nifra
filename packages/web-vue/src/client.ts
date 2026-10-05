@@ -1,7 +1,4 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
-// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
-// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
-import { searchOfChain } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-vue/client - Vue client runtime. `hydrate` hydrates a single SSR'd route; `mountRouter`
  * hydrates a stateful Router whose root component subscribes to the agnostic store (a `shallowRef`
@@ -12,6 +9,7 @@ import { searchOfChain } from "@nifrajs/web/client"
 import { type Component, createSSRApp, defineComponent, onScopeDispose, shallowRef } from "vue"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own module, re-exported here so nifra's client
 // codegen resolves it from `@nifrajs/web-vue/client` alongside `mountRouter`.
@@ -58,7 +56,7 @@ export const hydrationAssuranceHook = Object.freeze({
  * client navigations swap routes without a full reload. The initial snapshot matches the SSR markup.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Root = defineComponent({
     setup() {
@@ -69,18 +67,7 @@ export function mountRouter(options: MountRouterOptions): void {
       onScopeDispose(unsubscribe)
       return () => {
         const s = state.value
-        // This route's typed `search` from the URL + schema chain (the SAME `searchOfChain` the server
-        // ran), recomputed each render so `useSearch` stays reactive and hydrates with no drift.
-        const q = s.path.indexOf("?")
-        const rawSearch = q === -1 ? "" : s.path.slice(q)
-        return compose(routes[s.routeId] ?? [], {
-          data: s.data,
-          actionData: s.actionData,
-          pending: s.pending,
-          search: searchOfChain(searchSchemas?.[s.routeId] ?? [], rawSearch),
-          ...(s.submission ? { submission: s.submission } : {}),
-          ...(s.boundaries !== undefined ? { boundaries: s.boundaries } : {}),
-        })
+        return compose(routes[s.routeId] ?? [], routeProps(s, searchSchemas, matchChains))
       }
     },
   })

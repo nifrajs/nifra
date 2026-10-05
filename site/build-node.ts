@@ -6,10 +6,13 @@
  *   bun run site/build-node.ts
  */
 import { cpSync, mkdirSync, rmSync } from "node:fs"
+import { mdxBunPlugin } from "@nifrajs/content/mdx"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { buildSiteIslands } from "./build-islands"
 
 const dir = import.meta.dir
+// `.mdx` routes need the same compiler build.ts uses; without it Bun.build crashes on them.
+const mdx = mdxBunPlugin({ jsxImportSource: "react" })
 const dist = `${dir}/dist-node`
 
 rmSync(dist, { recursive: true, force: true })
@@ -21,6 +24,7 @@ const client = await buildClient({
   clientModule: "@nifrajs/web-react/client",
   conditions: ["bun", "browser"],
   define: { "process.env.NODE_ENV": '"production"' },
+  plugins: [mdx],
 })
 await buildSiteIslands({ outDir: `${dist}/assets` })
 
@@ -30,6 +34,7 @@ const { worker } = await buildServer({
   outDir: `${dir}/.build-node`,
   target: "node", // node:* external; react-dom resolves to its Node SSR build
   clientEntry: client.entry,
+  plugins: [mdx],
 })
 
 cpSync(worker, `${dist}/server-node.js`)
@@ -39,6 +44,8 @@ cpSync(`${dir}/public/logo-mark.png`, `${dist}/assets/logo-mark.png`)
 cpSync(`${dir}/public/og.jpg`, `${dist}/assets/og.jpg`)
 cpSync(`${dir}/public/background.png`, `${dist}/assets/background.png`)
 cpSync(`${dir}/public/nifra-bot-avatar.png`, `${dist}/assets/nifra-bot-avatar.png`)
+cpSync(`${dir}/public/fonts`, `${dist}/assets/fonts`, { recursive: true })
+cpSync(`${dir}/public/media`, `${dist}/assets/media`, { recursive: true })
 rmSync(`${dir}/.build-node`, { recursive: true, force: true })
 
 console.log(`Node output: site/dist-node (server-node.js + client ${client.entry})`)

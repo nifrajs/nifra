@@ -162,17 +162,19 @@ export class CodingAgentRpcServer {
     const url = new URL(request.url)
     if (url.pathname === "/health" && request.method === "GET")
       return this.response({ ok: true, protocol: 1 }, 200, cors)
-    const backoffMs = this.authBackoffMs()
-    if (backoffMs > 0) {
-      const throttledCors = new Headers(cors)
-      throttledCors.set("retry-after", String(Math.ceil(backoffMs / 1000)))
-      return this.response(
-        { error: { code: "auth_throttled", message: "too many failed authorization attempts" } },
-        429,
-        throttledCors,
-      )
-    }
     if (!authorized(request, this.token)) {
+      // Only failed attempts are throttled. A caller holding the token is served during a backoff,
+      // or anyone who can reach the port could keep the real client locked out with wrong guesses.
+      const backoffMs = this.authBackoffMs()
+      if (backoffMs > 0) {
+        const throttledCors = new Headers(cors)
+        throttledCors.set("retry-after", String(Math.ceil(backoffMs / 1000)))
+        return this.response(
+          { error: { code: "auth_throttled", message: "too many failed authorization attempts" } },
+          429,
+          throttledCors,
+        )
+      }
       this.noteAuthFailure()
       return this.response(
         { error: { code: "unauthorized", message: "agent RPC authorization required" } },
@@ -180,7 +182,6 @@ export class CodingAgentRpcServer {
         cors,
       )
     }
-    this.noteAuthSuccess()
     if (url.pathname !== "/rpc" || request.method !== "POST")
       return this.response(
         { error: { code: "not_found", message: "unknown agent RPC endpoint" } },
@@ -635,7 +636,7 @@ export class CodingAgentRpcServer {
     const now = Date.now()
     if (this.authFailures === 0) return 0
     if (now - this.authLastFailureAt > AUTH_FAILURE_WINDOW_MS) {
-      this.noteAuthSuccess()
+      this.resetAuthFailures()
       return 0
     }
     return Math.max(0, this.authBackoffUntil - now)
@@ -653,7 +654,7 @@ export class CodingAgentRpcServer {
     }
   }
 
-  private noteAuthSuccess(): void {
+  private resetAuthFailures(): void {
     this.authFailures = 0
     this.authLastFailureAt = 0
     this.authBackoffUntil = 0

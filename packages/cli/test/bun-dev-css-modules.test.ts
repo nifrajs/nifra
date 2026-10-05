@@ -33,7 +33,8 @@ test(
       for (const pkg of ["web", "web-react"]) {
         symlinkSync(resolve(import.meta.dir, "..", "..", pkg), join(nodeModules, pkg), "dir")
       }
-      writeFileSync(join(root, "styles.module.css"), ".card { color: rebeccapurple }\n")
+      mkdirSync(join(root, "frontend"))
+      writeFileSync(join(root, "frontend/styles.module.css"), ".card { color: rebeccapurple }\n")
       writeFileSync(
         join(root, "nifra.config.ts"),
         [
@@ -45,7 +46,7 @@ test(
       writeFileSync(
         join(root, "routes", "index.tsx"),
         [
-          'import styles from "../styles.module.css"',
+          'import styles from "../frontend/styles.module.css"',
           "export default function Home() {",
           "  return <div className={styles.card}>hello</div>",
           "}",

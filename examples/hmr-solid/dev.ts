@@ -1,8 +1,9 @@
 /**
  * True-HMR dev server (Solid) - the `@nifrajs/web/vite` server with `vite-plugin-solid` (client HMR via
- * solid-refresh). `solidBunPlugin("ssr")` (preloaded, see ssr-preload.ts) handles the Bun-side SSR.
+ * solid-refresh). The same plugin compiles route modules for SSR: `createApp`'s `load` resolves them
+ * through Vite, so a server render reflects the latest edit.
  *
- *   bun --preload hmr-solid/ssr-preload.ts hmr-solid/dev.ts
+ *   bun hmr-solid/dev.ts
  *   (containers/sandboxes: prefix CHOKIDAR_USEPOLLING=1)
  *
  * Solid needs the `"solid"` resolve condition (routes solid-js to its source/JSX-dev build) - passed
@@ -15,7 +16,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { solidAdapter } from "@nifrajs/web-solid"
 import solid from "vite-plugin-solid"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const server = await createViteDevServer({
@@ -23,15 +24,15 @@ const server = await createViteDevServer({
   routesDir,
   clientModule: "@nifrajs/web-solid/client",
   // `ssr: true` makes vite-plugin-solid emit *hydratable* client output (generate: "dom" +
-  // hydratable), matching nifra's Bun SSR (solidBunPlugin "ssr") - without it, Solid throws a
-  // hydration mismatch ("Failed attempt to create new DOM elements during hydration").
+  // hydratable) to match the server render - without it, Solid throws a hydration mismatch
+  // ("Failed attempt to create new DOM elements during hydration").
   plugins: [solid({ ssr: true })],
   conditions: ["solid"],
   port: Number(Bun.env.PORT ?? 3000),
-  createApp: (clientEntry, importQuery) =>
+  createApp: (clientEntry, load) =>
     createWebApp({
       adapter: solidAdapter,
-      manifest: discoverRoutes(routesDir, { importQuery }),
+      manifest: discoverRoutes(routesDir, { load }),
       clientEntry,
       api: inProcessClient(backend),
       title: "nifra HMR (Solid, dev)",

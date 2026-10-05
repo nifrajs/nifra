@@ -161,9 +161,9 @@ describe("Server - verbs and listen", () => {
 
   test("listen serves real HTTP on an ephemeral port", async () => {
     const app = server().get("/ping", () => ({ pong: true }))
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
-      const res = await fetch(`http://localhost:${instance.port}/ping`)
+      const res = await fetch(`http://127.0.0.1:${instance.port}/ping`)
       expect(await res.json()).toEqual({ pong: true })
     } finally {
       instance.stop()
@@ -178,7 +178,7 @@ describe("Server - verbs and listen", () => {
       })
       .get("/users/:id", (c) => ({ id: c.params.id, q: c.query.get("q") }))
       .get("/files/*path", (c) => ({ path: c.params.path }))
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const encoded = await fetch(`http://127.0.0.1:${instance.port}/users/a%20b?q=hello`)
       expect(await encoded.json()).toEqual({ id: "a b", q: "hello" })
@@ -205,7 +205,7 @@ describe("Server - verbs and listen", () => {
           }),
       )
       .get("/u/:id", (c) => new Response(`u${c.params.id}`, { headers: { "x-kind": "param" } }))
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     const base = `http://127.0.0.1:${instance.port}`
     try {
       const head = await fetch(base, { method: "HEAD" })
@@ -233,7 +233,7 @@ describe("Server - verbs and listen", () => {
           }),
       )
       .get("/target", () => "rewritten")
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const response = await fetch(`http://127.0.0.1:${instance.port}/source`)
       expect(await response.json()).toBe("rewritten")
@@ -246,7 +246,7 @@ describe("Server - verbs and listen", () => {
     const app = server({ acceptInboundDeadlines: true }).get("/fast/:id", (c) => ({
       id: c.params.id,
     }))
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     const url = `http://127.0.0.1:${instance.port}/fast/42`
     try {
       expect(await (await fetch(url)).json()).toEqual({ id: "42" })
@@ -269,7 +269,7 @@ describe("Server - verbs and listen", () => {
 
   test("the fused Bun-native lane serves zero-param deadline routes on both admission arms", async () => {
     const app = server({ acceptInboundDeadlines: true }).get("/edge", () => ({ ok: true }))
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     const url = `http://127.0.0.1:${instance.port}/edge`
     try {
       // No inbound deadline → the zero-admission fused fast path still serves the route.
@@ -295,7 +295,7 @@ describe("Server - verbs and listen", () => {
       .get("/blow/:id", () => {
         throw new Error("boom: secret detail")
       })
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     const base = `http://127.0.0.1:${instance.port}`
     try {
       // Multi-param, no deadline → fused fast path preserves both params.
@@ -326,7 +326,7 @@ describe("Server - verbs and listen", () => {
     const app = server({ maxBodyBytes: 10 }).post("/echo", async (c) => ({
       len: (await c.req.arrayBuffer()).byteLength,
     }))
-    const instance = app.listen(0)
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
     const url = `http://127.0.0.1:${instance.port}/echo`
     try {
       expect(await (await fetch(url, { method: "POST", body: "tiny" })).json()).toEqual({ len: 4 })

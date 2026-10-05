@@ -25,9 +25,12 @@ Usage:
   nifra-agent [--backend pi|replay] [--cwd <dir>] [--once <prompt>]
               [--json] [--no-session] [--session-dir <dir>] [--session-id <id>]
               [--verify-after-turn check,assure] [--max-repair-attempts <n>]
-              [--pi <command>] [--replay <file>]
+              [--pi <command>] [--replay <file>] [--extensions]
   nifra-agent --migrate-session <id> --migrate-from <dir> --migrate-to <dir> [--json]
   nifra-agent --rpc [--cwd <dir>] [--host 127.0.0.1] [--port 0] [--expose-error-stacks]
+
+--extensions loads and runs .nifra/extensions/** from --cwd. That is the project's own code: pass it
+only for a repository you trust. Without it no extension is loaded.
 
 Commands in interactive mode:
   /reload       reload Pi or Nifra extensions
@@ -64,6 +67,7 @@ export interface CliOptions {
   readonly migrationTarget?: string
   readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
   readonly maxRepairAttempts: number
+  readonly extensions: boolean
 }
 
 export function parseArgs(args: readonly string[]): CliOptions {
@@ -72,6 +76,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
   let once: string | undefined
   let json = false
   let noSession = false
+  let extensions = false
   let piCommand = "pi"
   let replayFile: string | undefined
   let sessionDir: string | undefined
@@ -93,6 +98,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
     else if (arg === "--once" || arg === "--message") once = args[++index]
     else if (arg === "--json") json = true
     else if (arg === "--no-session") noSession = true
+    else if (arg === "--extensions") extensions = true
     else if (arg === "--session-dir") sessionDir = resolve(args[++index] ?? "")
     else if (arg === "--session-id") sessionId = args[++index]
     else if (arg === "--migrate-session") migrateSession = args[++index]
@@ -142,6 +148,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
     ...(once === undefined ? {} : { once }),
     json,
     noSession,
+    extensions,
     piCommand,
     ...(replayFile === undefined ? {} : { replayFile }),
     ...(sessionDir === undefined ? {} : { sessionDir }),
@@ -215,7 +222,9 @@ async function main(): Promise<void> {
           enableNifraTools: true,
           ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
         })
-  const extensionRoots = await discoverExtensions(options.cwd)
+  // A module's top-level code runs as soon as it is imported, before any capability check can refuse
+  // it, so a cloned repository's extensions load only when the user asks.
+  const extensionRoots = options.extensions ? await discoverExtensions(options.cwd) : []
   const extensions = new ExtensionHost({
     cwd: options.cwd,
     roots: extensionRoots,

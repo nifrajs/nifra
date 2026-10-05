@@ -11,6 +11,7 @@
  *   - {@link toResponse}       render a {@link ResponseResult} (e.g. a 413 / 415 rejection) to a `Response`
  *   - {@link plainError}       the structured rejection envelope the lane returns
  *   - {@link queryObjectOf} / {@link searchOf}   query parse without a full WHATWG URL construction
+ *   - {@link answerNotFound}   run a not-found handler under the same rules (404 only, no 2xx, fail closed)
  *
  * Everything here carries only structure - bytes, guards, and envelopes - never routing, lifecycle,
  * or app state. It is the interface, not the framework.
@@ -18,6 +19,12 @@
 
 export { readBodyFramed } from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"
+export {
+  answerNotFound,
+  type NotFoundHandler,
+  type NotFoundInput,
+  notFoundInput,
+} from "./server/not-found-answer.ts"
 export type { ProtoPoisoning } from "./server/proto-guard.ts"
 export { type QueryValue, queryObjectOf, searchOf } from "./server/query.ts"
 export { toResponse } from "./server/respond.ts"

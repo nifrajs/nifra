@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { type IdempotencyOptions, idempotency, MemoryIdempotencyStore } from "../src/index.ts"
+import {
+  type IdempotencyOptions,
+  idempotency,
+  MemoryIdempotencyStore,
+  methodOverride,
+} from "../src/index.ts"
 
 function counterApp(
   options: Omit<IdempotencyOptions, "store"> & { store: MemoryIdempotencyStore },
@@ -39,6 +44,26 @@ describe("idempotency middleware", () => {
     expect(second.status).toBe(200)
     expect(second.headers.get("idempotent-replayed")).toBe("true")
     expect(calls()).toBe(1) // the side effect ran exactly once
+  })
+
+  test("a later hook rewriting the request does not lose the claim", async () => {
+    let executions = 0
+    const app = server()
+      .use(idempotency({ store: new MemoryIdempotencyStore() }))
+      .use(methodOverride())
+      .delete("/orders/1", () => ({ executions: ++executions }))
+    const send = () =>
+      app.fetch(
+        new Request("http://x/orders/1", {
+          method: "POST",
+          headers: { "x-http-method-override": "DELETE", "idempotency-key": "k1" },
+        }),
+      )
+    expect(await (await send()).json()).toEqual({ executions: 1 })
+    const retry = await send()
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toEqual({ executions: 1 })
+    expect(executions).toBe(1)
   })
 
   test("distinct keys run independently", async () => {
@@ -209,6 +234,28 @@ describe("idempotency middleware", () => {
     expect((await app.fetch(flaky())).status).toBe(503)
     expect((await app.fetch(flaky())).status).toBe(503)
     expect(calls).toBe(2) // transient 5xx must be retryable, not replayed
+  })
+
+  test("a refusal that says the call never ran is not replayed", async () => {
+    for (const status of [401, 403, 408, 409, 425, 429]) {
+      let calls = 0
+      const app = server()
+        .use(idempotency({ store: new MemoryIdempotencyStore() }))
+        .post("/pay", () => {
+          calls += 1
+          return calls === 1 ? new Response("not now", { status }) : { paid: true }
+        })
+      const pay = (): Request =>
+        new Request("http://x/pay", {
+          method: "POST",
+          body: "{}",
+          headers: { "idempotency-key": "r" },
+        })
+
+      expect((await app.fetch(pay())).status).toBe(status)
+      const retry = await app.fetch(pay())
+      expect({ status, retried: retry.status, calls }).toEqual({ status, retried: 200, calls: 2 })
+    }
   })
 
   test("Set-Cookie is not cached or replayed (avoids leaking a session to a second caller)", async () => {

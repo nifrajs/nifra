@@ -15,6 +15,12 @@ export interface IdempotencyConfig {
   readonly scope: IdempotencyScope
   /** Retention for the stored response. Default 24h. */
   readonly ttlMs?: number
+  /**
+   * How long a key whose handler is still running stays reserved without a renewal. The server
+   * renews it every third of this while the handler runs, so only a dead process lets it lapse and a
+   * retry waits this long rather than `ttlMs`. Needs a store with `renew()`; default 60s with one.
+   */
+  readonly pendingTtlMs?: number
   /** Store override. Defaults to the server's shared in-memory store; inject a durable store here. */
   readonly store?: IdempotencyStore
   /** Header carrying the key. Default `idempotency-key`. */
@@ -42,23 +48,201 @@ export interface IdempotencyConfig {
 /** Flattens an intersection into a single object type for readable hovers. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {}
 
+type ParamNameStart =
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f"
+  | "g"
+  | "h"
+  | "i"
+  | "j"
+  | "k"
+  | "l"
+  | "m"
+  | "n"
+  | "o"
+  | "p"
+  | "q"
+  | "r"
+  | "s"
+  | "t"
+  | "u"
+  | "v"
+  | "w"
+  | "x"
+  | "y"
+  | "z"
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "L"
+  | "M"
+  | "N"
+  | "O"
+  | "P"
+  | "Q"
+  | "R"
+  | "S"
+  | "T"
+  | "U"
+  | "V"
+  | "W"
+  | "X"
+  | "Y"
+  | "Z"
+  | "_"
+type ParamNameChar = ParamNameStart | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+
+/** The longest parameter name at the start of `Text`, and the text after it. */
+type TakeParamName<
+  Text extends string,
+  Name extends string = "",
+> = Text extends `${infer Char}${infer Rest}`
+  ? Char extends (Name extends "" ? ParamNameStart : ParamNameChar)
+    ? TakeParamName<Rest, `${Name}${Char}`>
+    : [Name, Text]
+  : [Name, ""]
+
+/**
+ * Whether a colon is literal text: one with no name after it, or one that follows a name character
+ * and whose name runs to the end of the segment (`/things:batchGet`).
+ */
+type IsLiteralColon<
+  Before extends string,
+  Name extends string,
+  Rest extends string,
+> = Name extends ""
+  ? true
+  : Before extends `${string}${ParamNameChar}`
+    ? Rest extends "" | `/${string}`
+      ? true
+      : false
+    : false
+
 /**
  * Extracts `:param` and trailing `*wildcard` names from a route-path literal into
  * a string→string record: `/users/:id/posts/:postId` → `{ id: string; postId:
  * string }`, `/files/*path` → `{ path: string }`, `/files/*` → `{ "*": string }`.
+ * A name ends where the router ends it, at the first character that cannot be part of one, so
+ * `/files/:name.json` → `{ name: string }` and `/v:major.:minor` → `{ major: string; minor: string }`.
+ * A constraint does not change the type: `/users/:id{[0-9]+}` → `{ id: string }`.
  * A non-literal `string` path widens to `Record<string, string>`.
  */
 type RawParams<Path extends string> = string extends Path
   ? Record<string, string>
-  : Path extends `${infer _Start}:${infer Param}/${infer Rest}`
-    ? Record<Param, string> & RawParams<`/${Rest}`>
-    : Path extends `${infer _Start}:${infer Param}`
-      ? Record<Param, string>
-      : Path extends `${infer _Start}*${infer Wild}`
-        ? Record<Wild extends "" ? "*" : Wild, string>
-        : Record<never, string>
+  : Path extends `${infer Before}:${infer After}`
+    ? TakeParamName<After> extends [infer Name extends string, infer Rest extends string]
+      ? IsLiteralColon<Before, Name, Rest> extends true
+        ? RawParams<Rest>
+        : Record<Name, string> & RawParams<Rest>
+      : never
+    : Path extends `${infer _Start}*${infer Wild}`
+      ? Record<Wild extends "" ? "*" : Wild, string>
+      : Record<never, string>
 
-export type Params<Path extends string> = Prettify<RawParams<Path>>
+/** `[constraint, rest]` for a leading `{...}`, else `["", Text]`. One nested level, for `{[0-9]{2}}`. */
+type TakeConstraint<Text extends string> = Text extends `{${infer Inner}}${infer Rest}`
+  ? Inner extends `[${string}` | `\\${string}` | `${string}|${string}`
+    ? Inner extends `${string}{${string}`
+      ? Rest extends `}${infer After}`
+        ? [`{${Inner}}}`, After]
+        : ["", Text]
+      : [`{${Inner}}`, Rest]
+    : ["", Text]
+  : ["", Text]
+
+/**
+ * Whether `Run` is nothing but whole-segment optional parameters, each with or without a constraint:
+ * `/:a?`, `/:a?/:b?`, `/:id{[0-9]+}?`.
+ */
+type IsOptionalRun<Run extends string> = Run extends ""
+  ? true
+  : Run extends `/:${infer After}`
+    ? TakeParamName<After> extends [infer Name extends string, infer Tail extends string]
+      ? TakeConstraint<Tail> extends [string, `?${infer Rest}`]
+        ? Name extends ""
+          ? false
+          : IsOptionalRun<Rest>
+        : false
+      : false
+    : false
+
+/** `[head, run]` for a path ending in `:name?` segments, else `false`; the same cut the router makes. */
+type SplitOptionalRun<
+  Path extends string,
+  Head extends string = "",
+> = Path extends `${infer Before}/:${infer After}`
+  ? IsOptionalRun<`/:${After}`> extends true
+    ? [`${Head}${Before}`, `/:${After}`]
+    : SplitOptionalRun<After, `${Head}${Before}/:`>
+  : false
+
+/** `Head`, then `Head` with each longer prefix of `Run` appended - the `?` marks dropped. */
+type OptionalForms<Head extends string, Run extends string, Done extends string = ""> =
+  | (`${Head}${Done}` extends "" ? "/" : `${Head}${Done}`)
+  | (Run extends `/:${infer After}`
+      ? TakeParamName<After> extends [infer Name extends string, infer Tail extends string]
+        ? TakeConstraint<Tail> extends [infer Constraint extends string, `?${infer Rest}`]
+          ? OptionalForms<Head, Rest, `${Done}/:${Name}${Constraint}`>
+          : never
+        : never
+      : never)
+
+/** The registry keys of a route path: `/users/:id?` is `"/users" | "/users/:id"`, others are themselves. */
+export type RoutePaths<Path extends string> = Path extends `${string}?`
+  ? SplitOptionalRun<Path> extends [infer Head extends string, infer Run extends string]
+    ? OptionalForms<Head, Run>
+    : Path
+  : Path
+
+/** One concrete path's request text: each parameter replaced by `${string}`, literal text kept. */
+type PathText<Path extends string> = Path extends `${infer Before}:${infer After}`
+  ? TakeParamName<After> extends [infer Name extends string, infer Rest extends string]
+    ? IsLiteralColon<Before, Name, Rest> extends true
+      ? `${Before}:${Name}${PathText<Rest>}`
+      : TakeConstraint<Rest> extends [string, infer Tail extends string]
+        ? `${Before}${string}${PathText<Tail>}`
+        : never
+    : never
+  : Path extends `${infer Start}/*${string}`
+    ? `${Start}/${string}`
+    : Path
+
+/**
+ * The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``,
+ * `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``.
+ * Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}`
+ * is `` `/users/${string}` `` - and a path ending in optional parameters is one template per form:
+ * `/users/:id?` → `` "/users" | `/users/${string}` ``. A non-literal `string` path stays `string`.
+ */
+export type RequestPath<Path extends string> = string extends Path
+  ? string
+  : RoutePaths<Path> extends infer Form extends string
+    ? Form extends unknown
+      ? PathText<Form>
+      : never
+    : never
+
+/**
+ * The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since
+ * the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
+ */
+export type Params<Path extends string> = Path extends `${string}?`
+  ? SplitOptionalRun<Path> extends [infer Head extends string, infer Run extends string]
+    ? Prettify<RawParams<Head> & Partial<RawParams<Run>>>
+    : Prettify<RawParams<Path>>
+  : Prettify<RawParams<Path>>
 
 /** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */
 export interface RouteSchema {
@@ -131,6 +315,12 @@ export interface RouteSchema {
    * output is exposed as `c.headers`; use lower-case keys because HTTP header names are
    * case-insensitive. */
   readonly headers?: StandardSchemaV1
+  /** Optional request-cookie schema. It validates the cookies parsed from the `Cookie` header -
+   * names as sent, values URL-decoded strings, the first of a repeated name - before the handler
+   * runs, and the validated output is `c.cookies`. A failure is a `422`, like `headers`. A browser
+   * sends every cookie the site has set, so declare the ones the route reads with an open schema
+   * (`t.cookies`, `t.looseObject`) rather than rejecting the rest. */
+  readonly cookies?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   /** Optional **response contract**. When declared: the handler's return is type-checked against it
@@ -155,7 +345,7 @@ export interface RouteSchema {
    */
   readonly sse?: StandardSchemaV1
   /**
-   * Hook fired when the request fails `headers`/`params`/`body`/`query` validation, before the handler
+   * Hook fired when the request fails `headers`/`cookies`/`params`/`body`/`query` validation, before the handler
    * runs. `kind` says which input failed. Its return value selects one of three outcomes (may be async):
    *   - a **`Response`** → returned as-is, short-circuiting the route (custom error envelope, redirect, …).
    *   - **any other value** → treated as a repaired payload and **re-validated once** against the same
@@ -170,7 +360,7 @@ export interface RouteSchema {
   readonly onValidationError?: (
     issues: ReadonlyArray<StandardIssue>,
     ctx: Context,
-    kind: "body" | "query" | "params" | "headers",
+    kind: "body" | "query" | "params" | "headers" | "cookies",
   ) => Response | unknown | Promise<Response | unknown>
 }
 
@@ -189,6 +379,13 @@ type HeadersOf<S extends RouteSchema> = S extends {
   headers: infer H extends StandardSchemaV1
 }
   ? InferOutput<H>
+  : Readonly<Record<string, string>>
+
+/** The validated cookie type when a cookie schema is declared, else the parsed name → value record. */
+type CookiesOf<S extends RouteSchema> = S extends {
+  cookies: infer C extends StandardSchemaV1
+}
+  ? InferOutput<C>
   : Readonly<Record<string, string>>
 
 /** The validated params type when a params schema is declared, else the path-inferred `Params<Path>`. */
@@ -253,8 +450,9 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>
   /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on
-   * first access + cached. Signed cookies arrive as `value.signature` - verify with `unsignValue`. */
-  readonly cookies: Readonly<Record<string, string>>
+   * first access + cached; validated/coerced when `schema.cookies` is declared. Signed cookies arrive
+   * as `value.signature` - verify with `unsignValue`. */
+  readonly cookies: CookiesOf<S>
   readonly set: ResponseControls
   /**
    * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout

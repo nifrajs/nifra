@@ -1,5 +1,6 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { scriptKindOf } from "../internal/script-kind.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -38,8 +39,13 @@ function parsedTree(
     files.set(file, null)
     return undefined
   }
-  const kind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
+  const tree = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindOf(ts, file),
+  )
   files.set(file, { tree })
   return tree
 }

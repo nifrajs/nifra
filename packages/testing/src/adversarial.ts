@@ -8,6 +8,11 @@
  */
 
 import {
+  compileRoutePattern,
+  type ParamConstraint,
+  type RoutePatternSegment,
+} from "@nifrajs/core/pattern"
+import {
   type JsonSchema,
   type ReflectedRoute,
   reflectRoutes,
@@ -656,25 +661,48 @@ async function resolveInput(
   }
 }
 
-const materializePath = (
+/**
+ * A value `constraint` accepts: its first listed value, or one accepted character repeated to the
+ * shortest accepted length. Every character a constraint can name is legal in a path as written.
+ */
+function satisfying(constraint: ParamConstraint): string {
+  if (constraint.oneOf !== undefined) return constraint.oneOf[0]!
+  // Digits and letters first, so the usual classes give a value that reads like one.
+  let code = 48
+  while (constraint.mask[code] !== "1") code = code === 127 ? 33 : code + 1
+  return String.fromCharCode(code).repeat(constraint.min)
+}
+
+/** Params filled from the witness or a placeholder the route accepts, split by the router's compiler. */
+function materializePath(
   path: string,
   params: Readonly<Record<string, string>> | undefined,
-): string =>
-  path
-    .split("/")
-    .map((segment) => {
-      if (segment.startsWith(":")) {
-        const name = segment.slice(1)
-        return encodeURIComponent(params?.[name] ?? `${name || "param"}-contract`)
-      }
-      if (segment.startsWith("*")) {
-        const name = segment.slice(1)
-        const value = params?.[name] ?? `${name || "path"}/contract`
-        return value.split("/").filter(Boolean).map(encodeURIComponent).join("/")
-      }
-      return segment
-    })
-    .join("/")
+): string {
+  let segments: readonly RoutePatternSegment[]
+  try {
+    segments = compileRoutePattern(path).segments
+  } catch {
+    return path
+  }
+  const fill = (name: string, constraint?: ParamConstraint): string => {
+    const given = params?.[name]
+    if (given !== undefined) return encodeURIComponent(given)
+    return constraint === undefined ? `${name}-contract` : satisfying(constraint)
+  }
+  const filled = segments.map((segment) => {
+    if (segment.kind === "static") return segment.value
+    if (segment.kind === "param") return fill(segment.name)
+    if (segment.kind === "mixed") {
+      return segment.parts
+        .map((part) => (part.t === "lit" ? part.v : fill(part.name, part.c)))
+        .join("")
+    }
+    const value =
+      params?.[segment.name] ?? `${segment.name === "*" ? "path" : segment.name}/contract`
+    return value.split("/").filter(Boolean).map(encodeURIComponent).join("/")
+  })
+  return `/${filled.join("/")}`
+}
 
 function requestFor(
   laboratory: RouteLaboratory,

@@ -8,7 +8,7 @@
  * request); delivery failures reach `onError`.
  */
 
-import type { AttributeValue, NifraSpan, ObservationAdapter, SpanStatus } from "./span.ts"
+import type { AttributeValue, NifraSpan, ObservationAdapter, SpanKind, SpanStatus } from "./span.ts"
 
 export interface OtlpExporterOptions {
   /** The collector's traces endpoint, e.g. `http://localhost:4318/v1/traces`. */
@@ -40,6 +40,22 @@ export interface OtlpExporter extends ObservationAdapter {
 }
 
 const STATUS_CODE: Readonly<Record<SpanStatus, number>> = { unset: 0, ok: 1, error: 2 }
+// OTLP `Span.SpanKind`; 0 (UNSPECIFIED) is never sent. A kind is caller data, so anything unknown
+// exports as server, the kind of the spans that predate the field.
+function kindCode(kind: SpanKind | undefined): number {
+  switch (kind) {
+    case "internal":
+      return 1
+    case "client":
+      return 3
+    case "producer":
+      return 4
+    case "consumer":
+      return 5
+    default:
+      return 2
+  }
+}
 
 function assertPositiveSafeInteger(value: number, option: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -69,7 +85,7 @@ function toOtlpSpan(span: NifraSpan): Record<string, unknown> {
     spanId: span.spanId,
     ...(span.parentSpanId !== undefined ? { parentSpanId: span.parentSpanId } : {}),
     name: span.name,
-    kind: 2, // SPAN_KIND_SERVER
+    kind: kindCode(span.kind),
     startTimeUnixNano: String(span.startTime * MS_TO_NANOS),
     endTimeUnixNano: String(end * MS_TO_NANOS),
     attributes: keyValues(span.attributes),

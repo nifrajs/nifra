@@ -11,10 +11,54 @@ export type RoutePatternSegment =
   /** A segment that is part literal, part parameter: `:key.txt`, `feed.:format`, `v:major.:minor`. */
   | { readonly kind: "mixed"; readonly parts: readonly MixedPart[] }
 
-/** One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. */
+/**
+ * One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. A parameter
+ * written with a constraint (`:id{[0-9]+}`) carries it as `c`; a segment that is one constrained
+ * parameter and nothing else is a `mixed` segment with that single part.
+ */
 export type MixedPart =
   | { readonly t: "lit"; readonly v: string }
-  | { readonly t: "param"; readonly name: string }
+  | { readonly t: "param"; readonly name: string; readonly c?: ParamConstraint | undefined }
+
+/**
+ * What a constrained parameter accepts, parsed from the `{...}` after its name.
+ *
+ * A constraint is one of two things:
+ *   - a character class with an optional count: `[0-9]+`, `[a-z0-9-]{3,32}`, `\d{4}`, `\w+`. The class
+ *     is `[...]` holding characters, `x-y` ranges, `\d` and `\w`, or a bare `\d` / `\w`. The count is
+ *     `+` (one or more), `{n}`, `{n,}` or `{n,m}` with `n` at least 1; with no count the value is
+ *     exactly one character.
+ *   - a list of two or more literal values: `en|fr|de`.
+ *
+ * Anything else in braces is not a constraint, and the braces stay the literal text they always were.
+ *
+ * A value is tested as it appears in the request path, before percent-decoding, and only ASCII can
+ * satisfy a constraint. `%` is never accepted, so a value that passes holds no escape and reaches the
+ * handler as exactly the text that was tested.
+ */
+export interface ParamConstraint {
+  /** The text between the braces, as written. */
+  readonly source: string
+  /** The accepted values, for a list (`en|fr|de`), in the order written. */
+  readonly oneOf?: readonly string[] | undefined
+  /** The same values as the keys of an object with no prototype, which is what a value is looked up in. */
+  readonly index?: Readonly<Record<string, 1>> | undefined
+  /**
+   * For a class: which ASCII codes it holds. 128 characters, the one at index `code` being `1` when
+   * the class holds that code and `0` when it does not. All `0` for a list.
+   */
+  readonly mask: string
+  /** For a class: the fewest and the most characters a value may have. */
+  readonly min: number
+  readonly max: number
+  /** How many characters the class holds, or how many values the list has. */
+  readonly size: number
+  /**
+   * What the constraint accepts, spelled one way: `\d+` and `[0-9]+` share a key, and so do `a|b`
+   * and `b|a`. Two parameters with one key are the same parameter to the router.
+   */
+  readonly key: string
+}
 
 /**
  * Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
@@ -34,32 +78,128 @@ export type RoutePatternMatch =
   | { readonly matched: true; readonly params: Record<string, string> }
   | { readonly matched: false; readonly reason: "not-found" | "malformed" }
 
-/**
- * Regex per compiled pattern, derived on first use. The core trie matches by descending segments and
- * never asks for one, so building it during {@link compileRoutePattern} would charge every server's
- * boot for the browser/mock adapters alone. Keyed by the frozen pattern, so the cache dies with it.
- */
-const REGEX_CACHE = new WeakMap<CompiledRoutePattern, RegExp>()
+/** What {@link matchRoutePattern} needs per compiled pattern: the whole-path regex, and for each mixed
+ * segment its shape and, when it has a constraint, its parts (both indexed like `segments`,
+ * `undefined` elsewhere). */
+interface PatternMatcher {
+  readonly regex: RegExp
+  readonly shapes: readonly (MixedSegmentShape | undefined)[]
+  readonly checked: readonly (readonly MixedPart[] | undefined)[]
+}
 
-function regexOf(compiled: CompiledRoutePattern): RegExp {
-  let regex = REGEX_CACHE.get(compiled)
-  if (regex === undefined) {
+/**
+ * Matcher per compiled pattern, derived on first use. The core trie matches by descending segments
+ * and never asks for one, so building it during {@link compileRoutePattern} would charge every
+ * server's boot for the browser/mock adapters alone. Keyed by the frozen pattern, so the cache dies
+ * with it.
+ */
+const MATCHER_CACHE = new WeakMap<CompiledRoutePattern, PatternMatcher>()
+
+function matcherOf(compiled: CompiledRoutePattern): PatternMatcher {
+  let matcher = MATCHER_CACHE.get(compiled)
+  if (matcher === undefined) {
     if (compiled[COMPILED_ROUTE_PATTERN] !== true) {
       throw new TypeError("route pattern was not produced by compileRoutePattern()")
     }
+    // A mixed segment is captured WHOLE here and taken apart by `matchMixedSegment` afterwards. Its
+    // parameters never become separate lazy groups in this regex: several of those in one segment
+    // make the engine retry every split of the text between them, and the text is the request's.
     const parts = compiled.segments.map((segment) =>
       segment.kind === "static"
         ? escapeRegex(segment.value)
-        : segment.kind === "param"
-          ? "([^/]+)"
-          : segment.kind === "mixed"
-            ? mixedSegmentSource(segment.parts)
-            : "(.+)",
+        : segment.kind === "wildcard"
+          ? "(.+)"
+          : "([^/]+)",
     )
-    regex = new RegExp(parts.length === 0 ? "^/$" : `^/${parts.join("/")}$`)
-    REGEX_CACHE.set(compiled, regex)
+    matcher = {
+      regex: new RegExp(parts.length === 0 ? "^/$" : `^/${parts.join("/")}$`),
+      shapes: compiled.segments.map((segment) =>
+        segment.kind === "mixed" ? mixedSegmentShape(segment.parts) : undefined,
+      ),
+      checked: compiled.segments.map((segment) =>
+        segment.kind === "mixed" ? constrainedParts(segment.parts) : undefined,
+      ),
+    }
+    MATCHER_CACHE.set(compiled, matcher)
   }
-  return regex
+  return matcher
+}
+
+// No pattern text ever becomes a RegExp. This recognises the constraint grammar, anchored at a `{`:
+// group 1 is a class, 2 its count (3 and 4 the bounds), 5 a list of values.
+const CONSTRAINT =
+  /^\{(?:(\[(?:[\w.~!$&'()+,;=@-]|\\[dw])+]|\\[dw])(\+|\{(\d+)(?:,(\d*))?})?|([\w.~-]+(?:\|[\w.~-]+)+))}/
+
+/**
+ * Parse the constraint `text` starts with, or `undefined` when it starts with none. `text` begins at
+ * the `{` that follows a parameter name; the constraint read is `source.length + 2` characters long.
+ */
+export function paramConstraint(text: string): ParamConstraint | undefined {
+  const found = CONSTRAINT.exec(text)
+  if (found === null) return undefined
+  const oneOf = found[5]?.split("|")
+  const table: number[] = new Array(128).fill(0)
+  let min = 1
+  let max = 1
+  const set = (from: number, to: number): unknown => table.fill(1, from, to + 1)
+  // A list has no class to read: `body` is empty for it, and so is the count.
+  const body = found[1] ?? ""
+  const members = body.length > 2 ? body.slice(1, -1) : body
+  for (let i = 0; i < members.length; i++) {
+    const from = members.charCodeAt(i)
+    let to = from
+    if (from === 92 /* \ */) {
+      if (members[++i] === "w") {
+        set(65, 90)
+        set(95, 95)
+        set(97, 122)
+      }
+      set(48, 57)
+      continue
+    }
+    // `x-y` is a range when something follows the hyphen; a hyphen at either end is itself.
+    if (members[i + 1] === "-" && i + 2 < members.length) {
+      i += 2
+      to = members.charCodeAt(i)
+      // A range that takes in `%` would let a percent-escape through, and the handler would then
+      // see a value other than the one tested.
+      if (to === 92 || to < from || (from < 37 && to > 37)) return undefined
+    }
+    set(from, to)
+  }
+  if (found[2] !== undefined) {
+    min = Number(found[3] ?? 1)
+    max = found[2] === "+" || found[4] === "" ? Infinity : Number(found[4] ?? found[3])
+    if (min < 1 || max < min) return undefined
+  }
+  const mask = table.join("")
+  let index: Record<string, 1> | undefined
+  if (oneOf) {
+    index = Object.create(null) as Record<string, 1>
+    for (const value of oneOf) index[value] = 1
+  }
+  return Object.freeze({
+    source: found[0].slice(1, -1),
+    oneOf: oneOf && Object.freeze(oneOf),
+    index: index && Object.freeze(index),
+    mask,
+    min,
+    max,
+    size: oneOf ? oneOf.length : mask.split("1").length - 1,
+    key: oneOf ? [...oneOf].sort().join("|") : `${mask},${min},${max}`,
+  })
+}
+
+// Runs per request: lookups hit a string or a frozen object, as a frozen array reads several times slower.
+function satisfies(constraint: ParamConstraint | undefined, value: string): boolean {
+  if (!constraint) return true
+  if (constraint.index) return constraint.index[value] === 1
+  let i = value.length
+  if (i < constraint.min || i > constraint.max) return false
+  const mask = constraint.mask
+  // A code past 127 reads outside the mask, which is `NaN` and so not a `1`.
+  while (i-- > 0) if (mask.charCodeAt(value.charCodeAt(i)) !== 49 /* 1 */) return false
+  return true
 }
 
 function validParamName(name: string): boolean {
@@ -131,16 +271,26 @@ function splitMixed(value: string): MixedPart[] | undefined {
       parts.push({ t: "lit", v: literal })
       literal = ""
     }
-    parts.push({ t: "param", name })
+    // A constraint belongs to the parameter; braces that are not one stay literal text.
+    const constraint = paramConstraint(value.slice(paramEnd))
+    parts.push({ t: "param", name, c: constraint })
     sawParam = true
-    i += name.length
+    i = paramEnd - 1 + (constraint ? constraint.source.length + 2 : 0)
   }
   if (!sawParam) return undefined
   if (literal !== "") parts.push({ t: "lit", v: literal })
   return parts
 }
 
-/** The regex source matching one segment's worth of a mixed pattern, with a capture per parameter. */
+/**
+ * A canonical string for one mixed segment's shape: the anchored-regex source that describes what the
+ * segment accepts, with a capture per parameter. Two segments with the same source are the same shape.
+ *
+ * It is an identity and an ordering key. Matching goes through {@link matchMixedSegment}, which accepts
+ * exactly what this source describes without compiling it - for a segment with no constraint. A
+ * constrained parameter's capture is its constraint, and there the scanner accepts less than the
+ * source describes: it places the literals as if nothing were constrained and then tests each value.
+ */
 export function mixedSegmentSource(parts: readonly MixedPart[]): string {
   let source = ""
   for (const part of parts) {
@@ -148,9 +298,148 @@ export function mixedSegmentSource(parts: readonly MixedPart[]): string {
     // `/abc.txt` would capture `abc.txt` and then fail to match `\.txt`. With `^…$` anchoring, the
     // lazy form still yields `abc.txt` for `/abc.txt.txt` - the anchor forces the LAST `.txt` to be
     // the literal. `+?` and not `*?`: an empty capture must not match (see the empty-segment rule).
-    source += part.t === "lit" ? escapeRegex(part.v) : "([^/]+?)"
+    source +=
+      part.t === "lit"
+        ? escapeRegex(part.v)
+        : part.c === undefined
+          ? "([^/]+?)"
+          : `(${part.c.oneOf?.map(escapeRegex).join("|") ?? part.c.source})`
   }
   return source
+}
+
+/**
+ * A mixed segment laid out for matching: the literals around its parameters, in order. The first
+ * entry is the literal before the first parameter, and each entry after it is the literal following
+ * the next parameter, so a segment with N parameters has N + 1 entries. An entry is `""` where the
+ * segment has no literal in that position - at either end, or between two parameters that touch.
+ *
+ * `/v:major.:minor` is `["v", ".", ""]`; `/:name.json` is `["", ".json"]`.
+ */
+export type MixedSegmentShape = readonly string[]
+
+/** Lay a mixed segment's parts out as a {@link MixedSegmentShape}. Done once, at registration. */
+export function mixedSegmentShape(parts: readonly MixedPart[]): MixedSegmentShape {
+  // Two literals are never adjacent, so a literal fills the open slot and a parameter opens the next.
+  const shape = [""]
+  for (const part of parts) {
+    if (part.t === "lit") shape[shape.length - 1] = part.v
+    else shape.push("")
+  }
+  return shape
+}
+
+/**
+ * The parts of a mixed segment when at least one of its parameters has a constraint, else
+ * `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.
+ */
+export function constrainedParts(parts: readonly MixedPart[]): readonly MixedPart[] | undefined {
+  return parts.some((part) => part.t === "param" && part.c) ? parts : undefined
+}
+
+/**
+ * Match ONE path segment against a mixed shape, in a single left-to-right pass.
+ *
+ * On a match the captures are appended to `out` in parameter order and the result is `true`. On a miss
+ * `out` is left exactly as it was and the result is `false`.
+ *
+ * The rule: the leading literal must start the segment and the trailing literal must end it; every
+ * parameter takes at least one character; and each literal between two parameters is taken at its
+ * FIRST occurrence that leaves the parameter before it non-empty. The last parameter takes what
+ * remains. Two parameters with nothing between them give the first one a single character.
+ *
+ * That is the match an anchored pattern with lazy captures selects, reached without trying the
+ * alternatives: taking a literal earlier only ever hands more text to the parameter after it, so if
+ * any placement matches, the earliest one does. The work is therefore bounded by the segment's length
+ * however many parameters the shape has - a segment is request-controlled and must not be able to buy
+ * more than one pass.
+ *
+ * Constraints are tested last, on the values that rule produced: pass `checked` (from
+ * {@link constrainedParts}) and a value that fails its parameter's constraint is a miss. A failed
+ * test never moves a literal to a later occurrence to try again, so the cost stays one pass to place
+ * the literals and one over the values.
+ *
+ * `segment` must not contain `/`.
+ */
+export function matchMixedSegment(
+  shape: MixedSegmentShape,
+  segment: string,
+  out: string[],
+  checked?: readonly MixedPart[],
+): boolean {
+  const last = shape.length - 1
+  const head = shape[0]!
+  const tail = shape[last]!
+  let at = head.length
+  const end = segment.length - tail.length
+  // The first parameter needs a character between the two end literals. This also refuses end
+  // literals that would overlap in the text (`a.:x.b` against `a.b`).
+  if (at >= end) return false
+  if (at !== 0 && !segment.startsWith(head)) return false
+  if (end !== segment.length && !segment.endsWith(tail)) return false
+  const base = out.length
+  for (let i = 1; i < last; i++) {
+    const separator = shape[i]!
+    // An empty separator is found right here, which gives the parameter before it one character.
+    const found = segment.indexOf(separator, at + 1)
+    const next = found + separator.length
+    // The parameter after this separator needs a character before the trailing literal. A first
+    // occurrence that leaves none means every later one does too.
+    if (found === -1 || next >= end) {
+      out.length = base
+      return false
+    }
+    out.push(segment.slice(at, found))
+    at = next
+  }
+  out.push(segment.slice(at, end))
+  if (checked !== undefined) {
+    let value = base
+    for (const part of checked) {
+      if (part.t === "param" && !satisfies(part.c, out[value++]!)) {
+        out.length = base
+        return false
+      }
+    }
+  }
+  return true
+}
+
+/** Whether a segment is `:name?` or `:name{constraint}?` and nothing else. The caller has seen
+ * that the pattern ends in `?`; a segment before the last one is tested for it here. */
+function isOptionalParam(segment: string): boolean {
+  const parts = segment.endsWith("?") ? splitMixed(segment.slice(0, -1)) : undefined
+  return parts?.length === 1 && parts[0]!.t === "param"
+}
+
+/**
+ * The concrete patterns an optional-parameter pattern stands for, shortest first.
+ *
+ * A path may END in a run of whole-segment optional parameters, `:name?` or, with a constraint,
+ * `:name{[0-9]+}?`. It is shorthand for one
+ * route per prefix of that run: `/users/:id?` is `/users` and `/users/:id`, and `/a/:b?/:c?` is `/a`,
+ * `/a/:b`, and `/a/:b/:c`. A later parameter is only present when every earlier one is, so a run of
+ * `n` parameters is `n + 1` patterns, never `2^n`.
+ *
+ * Every other pattern comes back unchanged as the only element. That includes a `?` anywhere but the
+ * trailing run (`/a/:b?/c`) or inside a mixed segment (`/files/:name.:ext?`): there it is literal
+ * text, as it always was.
+ *
+ * Expansion happens before compilation, so each result is an ordinary pattern for
+ * {@link compileRoutePattern} and a matcher never learns that a parameter was optional.
+ */
+export function expandOptionalParams(pattern: string): readonly string[] {
+  if (pattern.charCodeAt(pattern.length - 1) !== 63 /* ? */) return [pattern]
+  const segments = pattern.split("/")
+  let first = segments.length
+  while (first > 1 && isOptionalParam(segments[first - 1]!)) first--
+  let form = segments.slice(0, first).join("/")
+  const forms = [form || "/"]
+  for (let i = first; i < segments.length; i++) {
+    form += `/${segments[i]!.slice(0, -1)}`
+    forms.push(form)
+  }
+  return forms
 }
 
 /** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */
@@ -272,6 +561,8 @@ export function compareMixedPartsSpecificity(
   const literalWeight = (parts: readonly MixedPart[]): number =>
     parts.reduce((sum, part) => (part.t === "lit" ? sum + part.v.length : sum), 0)
   const order = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+  const rank = (constraint: ParamConstraint | undefined): number =>
+    constraint ? (constraint.oneOf ? 0 : 1) : 2
 
   const weightDifference = literalWeight(right) - literalWeight(left)
   if (weightDifference !== 0) return weightDifference
@@ -285,9 +576,23 @@ export function compareMixedPartsSpecificity(
     if (a.t === "lit" && b.t === "lit" && a.v !== b.v) {
       return a.v.length === b.v.length ? order(a.v, b.v) : b.v.length - a.v.length
     }
+    if (a.t === "param" && b.t === "param") {
+      // A constrained parameter before a free one, a list of values before a class. Two of a kind:
+      // the one that accepts less goes first, so a constraint contained in another is tried before
+      // it (`\d+` before `\w+`, whichever way each is spelled). The key settles the rest, and the
+      // result never depends on registration order.
+      const x = a.c
+      const y = b.c
+      const difference =
+        rank(x) - rank(y) ||
+        (x && y && (x.size - y.size || x.max - x.min - (y.max - y.min) || order(x.key, y.key)))
+      if (difference) return difference
+    }
   }
 
-  return order(mixedSegmentSource(left), mixedSegmentSource(right))
+  // Same kinds in the same order with the same literals and constraints: the two are one shape.
+  // Parameter names do not enter into what a segment matches, so they do not order it either.
+  return 0
 }
 
 /** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of
@@ -346,11 +651,30 @@ export function matchRoutePattern(
   compiled: CompiledRoutePattern,
   pathname: string,
 ): RoutePatternMatch {
-  const match = regexOf(compiled).exec(pathname)
+  const matcher = matcherOf(compiled)
+  const match = matcher.regex.exec(pathname)
   if (match === null) return { matched: false, reason: "not-found" }
   const params: Record<string, string> = {}
-  for (let i = 0; i < compiled.paramNames.length; i++) {
-    params[compiled.paramNames[i]!] = match[i + 1] ?? ""
+  const names = compiled.paramNames
+  // One capture group per dynamic segment, in order. A mixed segment's group is the whole segment,
+  // which the scanner splits into that segment's parameters.
+  let group = 1
+  let name = 0
+  let captures: string[] | undefined
+  for (let i = 0; i < compiled.segments.length; i++) {
+    if (compiled.segments[i]!.kind === "static") continue
+    const value = match[group++] ?? ""
+    const shape = matcher.shapes[i]
+    if (shape === undefined) {
+      params[names[name++]!] = value
+      continue
+    }
+    captures ??= []
+    captures.length = 0
+    if (!matchMixedSegment(shape, value, captures, matcher.checked[i])) {
+      return { matched: false, reason: "not-found" }
+    }
+    for (const capture of captures) params[names[name++]!] = capture
   }
   const decoded = decodeRouteParams(params)
   return decoded === null

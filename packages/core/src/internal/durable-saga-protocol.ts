@@ -22,6 +22,8 @@ function transitionSaga(
 ): SagaRecord | undefined {
   if (
     input.record.version !== input.version + 1 ||
+    // A record filed under another saga's key could never load again, and scans would act on its id.
+    input.record.sagaId !== input.sagaId ||
     (current !== undefined &&
       (current.sagaId !== input.sagaId || current.version !== input.version))
   ) {

@@ -53,3 +53,45 @@ test("renderToString returns synchronously after the renderer is warmed", async 
   expect(rendered).not.toBeInstanceOf(Promise)
   expect(rendered).toContain("hi sync")
 })
+
+test("renderToStream stamps the nonce on Preact's streamed island runtime, and only on it", async () => {
+  const { Suspense } = await import("preact/compat")
+  // A fresh suspender per render: each one throws its pending promise once, then renders the value.
+  const app = (): FunctionComponent => {
+    let settled = false
+    const slow = new Promise<void>((r) =>
+      setTimeout(() => {
+        settled = true
+        r()
+      }, 30),
+    )
+    const Slow: FunctionComponent = () => {
+      if (!settled) throw slow
+      return h("span", null, "RESOLVED")
+    }
+    // An app-rendered script must not inherit the framework's nonce.
+    return () =>
+      h("div", null, [
+        h("script", { dangerouslySetInnerHTML: { __html: "window.app=1" } }),
+        h(Suspense, { fallback: "FALLBACK" }, h(Slow, null)),
+      ])
+  }
+  const read = async (options?: { nonce: string }) =>
+    new Response(await preactAdapter.renderToStream([app()], { data: null }, options)).text()
+  const nonced = await read({ nonce: 'n"0' })
+  expect(nonced).toContain("RESOLVED")
+  expect(nonced).toContain('<script nonce="n&quot;0">(function(){')
+  expect(nonced).toContain("<script>window.app=1</script>")
+  expect(nonced.match(/nonce=/g)?.length).toBe(1)
+  expect(await read()).not.toContain("nonce=")
+})
+
+test("renderToStream leaves an app script that opens like the island runtime un-nonced", async () => {
+  // Same opening bytes as Preact's streamed runtime, but no `preact-island` definition inside.
+  const Page: FunctionComponent = () =>
+    h("script", { dangerouslySetInnerHTML: { __html: "(function(){window.app=2})()" } })
+  const html = await new Response(
+    await preactAdapter.renderToStream([Page], { data: null }, { nonce: "n0" }),
+  ).text()
+  expect(html).toBe("<script>(function(){window.app=2})()</script>")
+})

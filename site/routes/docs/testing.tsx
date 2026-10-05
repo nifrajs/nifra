@@ -1,7 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/testing",

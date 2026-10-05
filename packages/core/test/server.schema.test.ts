@@ -1,7 +1,39 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { RouteConfigError, server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import type { Logger } from "../src/server/logger.ts"
 import { isResponseResult, type ResponseResult } from "../src/server/runtime-core.ts"
+
+/** A POST whose length-less body is still producing when a cap trips: its last chunk is never
+ * pulled. */
+function overCapPost(url: string, headers: Record<string, string> = {}): Request {
+  let sent = 0
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers,
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ >= 2) return controller.close()
+        controller.enqueue(new Uint8Array(65_536).fill(32))
+      },
+    }),
+    duplex: "half",
+  }
+  return new Request(url, init)
+}
+
+/** Resolves with the response, or with "no response" once `ms` pass without one. */
+function within(
+  ms: number,
+  response: Promise<Response> | Response,
+): Promise<Response | "no response"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"no response">((resolve) => {
+    timer = setTimeout(() => resolve("no response"), ms)
+  })
+  return Promise.race([Promise.resolve(response), deadline]).finally(() => clearTimeout(timer))
+}
 
 /**
  * A minimal Standard Schema, hand-rolled so these tests exercise the framework
@@ -180,6 +212,43 @@ describe("body validation", () => {
       body: "Ada",
     })
     expect((await app.fetch(req)).status).toBe(415)
+  })
+
+  test("JSON is matched by media type, not by substring", async () => {
+    const app = server().post("/users", { body: userBody }, (c) => c.body)
+    const send = (contentType: string) =>
+      app.fetch(
+        new Request("http://localhost/users", {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body: JSON.stringify({ name: "Ada" }),
+        }),
+      )
+    // A no-preflight text/plain request, even though the header contains "application/json".
+    expect((await send("text/plain; x=application/json")).status).toBe(415)
+    expect((await send("text/plain;application/json")).status).toBe(415)
+    expect((await send("application/jsonx")).status).toBe(415)
+    expect((await send("application/json+x")).status).toBe(415)
+    expect((await send("application/json garbage")).status).toBe(415)
+    expect((await send("application/json\tgarbage")).status).toBe(415)
+    expect((await send("application/x +json")).status).toBe(415)
+    expect((await send("application/vnd.api+json garbage")).status).toBe(415)
+    expect((await send("application/vnd.api+jsonx")).status).toBe(415)
+    expect((await send("text/x+json")).status).toBe(415)
+    for (const accepted of [
+      "application/json",
+      "application/json; charset=utf-8",
+      "application/json;charset=UTF-8",
+      "application/json ; charset=utf-8",
+      "Application/JSON; charset=UTF-8",
+      "application/vnd.api+json",
+      "application/merge-patch+json",
+      "application/problem+json; charset=utf-8",
+      "application/vnd.api+json ; ext=x",
+      "APPLICATION/VND.API+JSON",
+    ]) {
+      expect((await send(accepted)).status).toBe(200)
+    }
   })
 
   test("malformed JSON is rejected with 400 invalid_json", async () => {
@@ -367,6 +436,177 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" })
   })
 
+  test("an auth-first schema route caps the direct c.req reads its hooks make", async () => {
+    let read: number | undefined
+    const app = server()
+      .derive(async (c) => {
+        read = (await c.req.text()).length
+        return {}
+      })
+      .post(
+        "/hook",
+        {
+          body: t.object({ a: t.string() }),
+          validationOrder: "auth-before-validation",
+          bodyLimit: 1024,
+        },
+        () => ({ ok: true }),
+      )
+    const res = await app.fetch(jsonRequest("POST", "/hook", { a: "x".repeat(100_000) }))
+    expect(res.status).toBe(413)
+    expect(read).toBeUndefined()
+  })
+
+  test("an auth-first body schema still parses a body its hooks read through c.req", async () => {
+    const seen: unknown[] = []
+    const app = server()
+      .derive(async (c) => {
+        seen.push(c.req.headers.get("x-read") === "json" ? await c.req.json() : await c.req.text())
+        return {}
+      })
+      .post(
+        "/hook",
+        {
+          body: t.object({ a: t.string() }),
+          validationOrder: "auth-before-validation",
+          bodyLimit: 1024,
+        },
+        (c) => ({ a: c.body.a }),
+      )
+    const json = jsonRequest("POST", "/hook", { a: "framed" })
+    json.headers.set("x-read", "json")
+    const framed = await app.fetch(json)
+    expect(framed.status).toBe(200)
+    expect(await framed.json()).toEqual({ a: "framed" })
+    // A chunked body, with no Content-Length, takes the streaming path of the same lane.
+    const streamed: RequestInit & { duplex: "half" } = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"a":"chunked"}'))
+          controller.close()
+        },
+      }),
+      duplex: "half",
+    }
+    const chunked = await app.fetch(new Request("http://localhost/hook", streamed))
+    expect(chunked.status).toBe(200)
+    expect(await chunked.json()).toEqual({ a: "chunked" })
+    expect(seen).toEqual([{ a: "framed" }, '{"a":"chunked"}'])
+  })
+
+  test("c.boundedJson() reads a body a hook already read through c.req", async () => {
+    const app = server()
+      .derive(async (c) => ({ peek: await c.req.text() }))
+      .post("/raw", { bodyLimit: 1024 }, async (c) => ({
+        peek: c.peek,
+        bounded: await c.boundedJson(),
+      }))
+    const res = await app.fetch(jsonRequest("POST", "/raw", { a: 1 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ peek: '{"a":1}', bounded: { a: 1 } })
+  })
+
+  test("a body a hook streamed through c.req.body fails the readers after it, naming the replayable ones", async () => {
+    const details: unknown[] = []
+    const logger: Logger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: (_message, fields) => {
+        details.push(fields?.detail)
+      },
+    }
+    const app = server({ logger })
+      .derive(async (c) => {
+        const reader = c.req.body?.getReader()
+        if (reader !== undefined) for (;;) if ((await reader.read()).done) break
+        return {}
+      })
+      .post(
+        "/schema",
+        { body: t.object({ a: t.number() }), validationOrder: "auth-before-validation" },
+        (c) => ({ a: c.body.a }),
+      )
+      .post("/handler", async (c) => ({ got: await c.req.json() }))
+    for (const path of ["/schema", "/handler"]) {
+      expect((await app.fetch(jsonRequest("POST", path, { a: 1 }))).status).toBe(500)
+      expect((await app.fetch(streamRequest(path, '{"a":1}'))).status).toBe(500)
+    }
+    expect(details).toHaveLength(4)
+    for (const detail of details) expect(String(detail)).toContain("c.req.bytes()")
+  })
+
+  test("a hook that only looks at c.req.body leaves the body to the readers after it", async () => {
+    const app = server()
+      .derive((c) => ({ hasBody: c.req.body !== null }))
+      .post(
+        "/peek",
+        { body: t.object({ a: t.number() }), validationOrder: "auth-before-validation" },
+        (c) => ({ a: c.body.a, hasBody: c.hasBody }),
+      )
+    const res = await app.fetch(jsonRequest("POST", "/peek", { a: 1 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ a: 1, hasBody: true })
+  })
+
+  test("a stream read after a buffered read replays the bytes and spends nothing", async () => {
+    const app = server()
+      .derive(async (c) => ({ peek: await c.req.text() }))
+      .post("/replay", { bodyLimit: 1024 }, async (c) => ({
+        peek: c.peek,
+        streamed: await new Response(c.req.body).text(),
+        bounded: await c.boundedJson(),
+      }))
+    const res = await app.fetch(jsonRequest("POST", "/replay", { a: 1 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ peek: '{"a":1}', streamed: '{"a":1}', bounded: { a: 1 } })
+  })
+
+  test("cancelling c.req.body before reading it cancels the request's own stream", async () => {
+    let cancelled: unknown = "not cancelled"
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode("unread"))
+      },
+      cancel(reason) {
+        cancelled = reason
+      },
+    })
+    const app = server().post("/skip", async (c) => {
+      await c.req.body?.cancel("not needed")
+      return { skipped: true }
+    })
+    const init: RequestInit & { duplex: "half" } = { method: "POST", body: source, duplex: "half" }
+    const res = await app.fetch(new Request("http://localhost/skip", init))
+    expect(res.status).toBe(200)
+    expect(cancelled).toBe("not needed")
+  })
+
+  test("c.req.blob() holds the capped bytes, typed by the request", async () => {
+    const app = server().post("/blob", async (c) => {
+      const blob = await c.req.blob()
+      return { size: blob.size, type: blob.type, text: await blob.text() }
+    })
+    const res = await app.fetch(
+      new Request("http://localhost/blob", {
+        method: "POST",
+        headers: { "content-type": "application/x-nifra-test" },
+        body: new TextEncoder().encode("hello"),
+      }),
+    )
+    expect(await res.json()).toEqual({ size: 5, type: "application/x-nifra-test", text: "hello" })
+  })
+
+  test("a capped clone read over the cap answers, though the original is never read", async () => {
+    const app = server({ maxBodyBytes: 1024 }).post("/raw-clone", async (c) => ({
+      len: (await c.req.clone().text()).length,
+    }))
+    const res = await within(2000, app.fetch(overCapPost("http://localhost/raw-clone")))
+    expect(res === "no response" ? res : res.status).toBe(413)
+  })
+
   test("a lying small Content-Length cannot bypass the transport cap", async () => {
     const app = server({ maxBodyBytes: 100 }).post("/raw-lying", async (c) => ({
       len: (await c.req.arrayBuffer()).byteLength,
@@ -538,6 +778,149 @@ describe("header validation", () => {
   })
 })
 
+describe("cookie validation", () => {
+  const sessionCookies = schema<{ session: string }>((value) => {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "session" in value &&
+      typeof value.session === "string"
+    ) {
+      return { value: { session: value.session } }
+    }
+    return { issues: [{ message: "session is required", path: ["session"] }] }
+  })
+  const withCookie = (path: string, cookie?: string, init: RequestInit = {}): Request =>
+    new Request(`http://localhost${path}`, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(cookie === undefined ? {} : { cookie }),
+      },
+    })
+
+  test("exposes the validated value as c.cookies", async () => {
+    const app = server().get("/me", { cookies: sessionCookies }, (c) => c.cookies)
+    const res = await app.fetch(withCookie("/me", "_ga=GA1.2; session=a%20b"))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ session: "a b" })
+  })
+
+  test("a missing cookie is rejected with 422 before the handler", async () => {
+    let ran = false
+    const app = server().get("/me", { cookies: sessionCookies }, () => {
+      ran = true
+      return "bad"
+    })
+    const res = await app.fetch(withCookie("/me", "theme=dark"))
+    expect(res.status).toBe(422)
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "validation",
+      issues: [{ message: "session is required", path: ["session"] }],
+    })
+    expect(ran).toBe(false)
+  })
+
+  test("t.cookies coerces declared fields and passes the other cookies through", async () => {
+    const app = server().get(
+      "/prefs",
+      { cookies: t.cookies({ page: t.integer(), dark: t.boolean() }) },
+      (c) => ({ next: c.cookies.page + 1, dark: c.cookies.dark, all: c.cookies }),
+    )
+    const ok = await app.fetch(withCookie("/prefs", "page=2; dark=true; _ga=GA1.2"))
+    expect(await ok.json()).toEqual({
+      next: 3,
+      dark: true,
+      all: { page: 2, dark: true, _ga: "GA1.2" },
+    })
+    expect((await app.fetch(withCookie("/prefs", "page=two; dark=true"))).status).toBe(422)
+  })
+
+  test("every route shape validates cookies, on app.fetch and on listen()", async () => {
+    const shapes = server()
+      .get("/only", { cookies: sessionCookies }, (c) => c.cookies.session)
+      .get(
+        "/query",
+        { cookies: sessionCookies, query: t.query({ q: t.string() }) },
+        (c) => `${c.cookies.session}:${c.query.q}`,
+      )
+      .post(
+        "/body",
+        { cookies: sessionCookies, body: t.object({ name: t.string() }) },
+        (c) => `${c.cookies.session}:${c.body.name}`,
+      )
+      .get(
+        "/ordered",
+        { cookies: sessionCookies, validationOrder: "auth-before-validation" },
+        (c) => c.cookies.session,
+      )
+    const hooked = server()
+      .derive(() => ({ role: "user" }))
+      .beforeHandle(() => undefined)
+      .get("/hooked", { cookies: sessionCookies }, (c) => `${c.cookies.session}:${c.role}`)
+      .post(
+        "/hooked-body",
+        { cookies: sessionCookies, body: t.object({ name: t.string() }) },
+        (c) => `${c.cookies.session}:${c.body.name}:${c.role}`,
+      )
+    const body = { method: "POST", body: JSON.stringify({ name: "Ada" }) }
+    const json = { "content-type": "application/json" }
+    const cases = [
+      [shapes, "/only", {}, "s1"],
+      [shapes, "/query?q=x", {}, "s1:x"],
+      [shapes, "/body", { ...body, headers: json }, "s1:Ada"],
+      [shapes, "/ordered", {}, "s1"],
+      [hooked, "/hooked", {}, "s1:user"],
+      [hooked, "/hooked-body", { ...body, headers: json }, "s1:Ada:user"],
+    ] as const
+    for (const [app, path, init, expected] of cases) {
+      const accepted = await app.fetch(withCookie(path, "session=s1", init))
+      expect(await accepted.json()).toBe(expected)
+      expect((await app.fetch(withCookie(path, undefined, init))).status).toBe(422)
+    }
+    for (const app of [shapes, hooked]) {
+      const instance = app.listen(0, { hostname: "127.0.0.1" })
+      try {
+        for (const [owner, path, init, expected] of cases) {
+          if (owner !== app) continue
+          const url = `http://127.0.0.1:${instance.port}${path}`
+          const accepted = await fetch(url, {
+            ...init,
+            headers: { ...(init as RequestInit).headers, cookie: "session=s1" },
+          })
+          expect(await accepted.json()).toBe(expected)
+          expect((await fetch(url, init as RequestInit)).status).toBe(422)
+        }
+      } finally {
+        instance.stop(true)
+      }
+    }
+  })
+
+  test("onValidationError sees kind cookies and may heal the value", async () => {
+    const kinds: string[] = []
+    const app = server({
+      onValidationError: (_issues, _ctx, kind) => {
+        kinds.push(kind)
+        return { session: "guest" }
+      },
+    }).get("/me", { cookies: sessionCookies }, (c) => c.cookies.session)
+    const res = await app.fetch(withCookie("/me"))
+    expect(await res.json()).toBe("guest")
+    expect(kinds).toEqual(["cookies"])
+  })
+
+  test("an unhealable cookie repair is still a 422", async () => {
+    const app = server({ onValidationError: () => ({ session: 42 }) }).get(
+      "/me",
+      { cookies: sessionCookies },
+      (c) => c.cookies.session,
+    )
+    expect((await app.fetch(withCookie("/me"))).status).toBe(422)
+  })
+})
+
 describe("drainCapped chunk shapes", () => {
   const chunkedRequest = (chunks: string[]) =>
     new Request("http://t/echo", {
@@ -573,5 +956,40 @@ describe("drainCapped chunk shapes", () => {
     })
     const res = await app.fetch(chunkedRequest(["aaaa", "bbbb", "cccc"]))
     expect(res.status).toBe(413)
+  })
+})
+
+describe("a 422 lists a bounded number of issues", () => {
+  test("a body with thousands of invalid items answers with the first 100", async () => {
+    const app = server().post(
+      "/ids",
+      { body: t.object({ ids: t.array(t.integer()) }) },
+      (c) => c.body,
+    )
+    const ids = Array.from({ length: 5_000 }, () => "x")
+    const res = await app.fetch(
+      new Request("http://h/ids", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids }),
+      }),
+    )
+    expect(res.status).toBe(422)
+    expect(await res.json()).toHaveProperty("issues.length", 100)
+  })
+
+  test("a non-TypeBox validator's issue list is capped too", async () => {
+    const many = schema<unknown>(() => ({
+      issues: Array.from({ length: 1_000 }, (_, i) => ({ message: `bad ${i}` })),
+    }))
+    const app = server().post("/x", { body: many }, () => "ok")
+    const res = await app.fetch(
+      new Request("http://h/x", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    )
+    expect(await res.json()).toHaveProperty("issues.length", 100)
   })
 })

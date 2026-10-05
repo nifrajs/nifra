@@ -29,7 +29,7 @@ export { docsTools } from "./mcp-docs-tools.ts"
 export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const VERSION = "3.5.0"
+const VERSION = "4.0.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 // Derive the GET/health tool list from the tools actually served, so the line can never drift from them.
 const docsHealth = (tools: McpTool[]): string =>
@@ -40,10 +40,12 @@ const docsHealth = (tools: McpTool[]): string =>
 /** The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text
  * docs tools plus the `nifra_gallery` MCP Apps widget tool. */
 export function publicDocsTools(): McpTool[] {
-  return [
-    ...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus),
-    examplesAppTool(loadExamplesCorpus),
-  ]
+  return [...openAiDocsTools(), examplesAppTool(loadExamplesCorpus)]
+}
+
+/** The text-only tool surface used by the public OpenAI Agent Plugin package. */
+function openAiDocsTools(): McpTool[] {
+  return docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus)
 }
 
 /**
@@ -59,9 +61,21 @@ export function respondMcpHttp(
   return respondMcpHttpCore(request, tools, SERVER_INFO, { health: docsHealth(tools), ...options })
 }
 
+/** The text-only handler used by the OpenAI Agent Plugin surface. */
+function handleOpenAiMcpHttp(request: Request): Promise<Response> {
+  return respondMcpHttp(request, openAiDocsTools(), {
+    features: {
+      instructions:
+        "Nifra's public documentation tools for the OpenAI plugin. The server is stateless, read-only, and limited to Nifra's bundled documentation corpus, verified examples, API types, learning path, and frontend guidance.",
+    },
+    allowAnyOrigin: true,
+  })
+}
+
 /** The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://`
  * resource so MCP Apps hosts can render `nifra_gallery`. (`nifra docs-mcp` / `bun run` this file.) */
 export function handleMcpHttp(request: Request): Promise<Response> {
+  if (new URL(request.url).pathname === "/openai") return handleOpenAiMcpHttp(request)
   return respondMcpHttp(request, publicDocsTools(), {
     features: {
       resources: [examplesWidget.resource],

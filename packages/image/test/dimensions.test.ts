@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { jpegOrientation } from "../src/dimensions.ts"
 import { imageDimensions, readImageDimensions } from "../src/index.ts"
 
 // A 1×1 PNG (real bytes).
@@ -10,6 +11,18 @@ const PNG_1x1 = Uint8Array.fromBase64(
 const gif = (w: number, h: number): Uint8Array =>
   new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, w & 0xff, w >> 8, h & 0xff, h >> 8, 0, 0, 0])
 
+/** A GIF whose first frame differs from its logical screen, behind a color table and two extensions. */
+const framedGif = (screen: [number, number], frame: [number, number]): Uint8Array => {
+  const u16 = (n: number): number[] => [n & 0xff, n >> 8]
+  return new Uint8Array([
+    ...[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, ...u16(screen[0]), ...u16(screen[1]), 0x81, 0, 0],
+    ...new Array<number>(12).fill(0),
+    ...[0x21, 0xf9, 0x04, 0, 0, 0, 0, 0x00],
+    ...[0x21, 0xfe, 0x03, 0x61, 0x62, 0x63, 0x02, 0x64, 0x65, 0x00],
+    ...[0x2c, 0, 0, 0, 0, ...u16(frame[0]), ...u16(frame[1]), 0],
+  ])
+}
+
 const jpeg = (w: number, h: number): Uint8Array => {
   // SOI + a SOF0 marker (@2): length @4, precision @6, height @7, width @9 (marker+5 / marker+7).
   const b = new Uint8Array(12)
@@ -18,6 +31,27 @@ const jpeg = (w: number, h: number): Uint8Array => {
   dv.setUint16(7, h)
   dv.setUint16(9, w)
   return b
+}
+
+/** {@link jpeg} behind an APP1 EXIF block whose IFD0 declares `orientation`, in either byte order. */
+const exifJpeg = (w: number, h: number, orientation: number, little = false): Uint8Array => {
+  const u16 = (n: number): number[] => (little ? [n & 0xff, n >> 8] : [n >> 8, n & 0xff])
+  const u32 = (n: number): number[] => (little ? [n, 0, 0, 0] : [0, 0, 0, n])
+  const tiff = [
+    ...(little ? [0x49, 0x49] : [0x4d, 0x4d]),
+    ...u16(42),
+    ...u32(8),
+    ...u16(1),
+    ...u16(0x0112),
+    ...u16(3),
+    ...u32(1),
+    ...u16(orientation),
+    0,
+    0,
+  ]
+  const app1 = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff]
+  const frame = jpeg(w, h)
+  return new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, app1.length + 2, ...app1, ...frame.slice(2)])
 }
 
 const webpHeader = (chunk: string, body: Uint8Array): Uint8Array => {
@@ -42,6 +76,21 @@ describe("imageDimensions", () => {
     expect(imageDimensions(gif(640, 480))).toEqual({ width: 640, height: 480, format: "gif" })
   })
 
+  test("GIF: each side is the larger of the logical screen and the first frame, as browsers draw it", () => {
+    const sized = (bytes: Uint8Array) => imageDimensions(bytes)
+    expect(sized(framedGif([1, 1], [10, 20]))).toEqual({ width: 10, height: 20, format: "gif" })
+    expect(sized(framedGif([0, 0], [10, 20]))).toEqual({ width: 10, height: 20, format: "gif" })
+    expect(sized(framedGif([30, 5], [10, 20]))).toEqual({ width: 30, height: 20, format: "gif" })
+    // A first frame past the bytes read (mid-extension, mid-descriptor) leaves the logical screen.
+    for (const end of [30, 50]) {
+      expect(sized(framedGif([30, 5], [10, 20]).subarray(0, end))).toEqual({
+        width: 30,
+        height: 5,
+        format: "gif",
+      })
+    }
+  })
+
   test("JPEG (SOF0; skips an earlier segment)", () => {
     expect(imageDimensions(jpeg(800, 600))).toEqual({ width: 800, height: 600, format: "jpeg" })
     // a JPEG with a leading APP0 segment before the SOF0 → the scanner skips it
@@ -50,6 +99,26 @@ describe("imageDimensions", () => {
     new DataView(withApp0.buffer).setUint16(15, 120) // height @ off+5 (off=10)
     new DataView(withApp0.buffer).setUint16(17, 240) // width @ off+7
     expect(imageDimensions(withApp0)).toEqual({ width: 240, height: 120, format: "jpeg" })
+  })
+
+  test("JPEG: the size it is displayed at, its EXIF orientation applied", () => {
+    expect(imageDimensions(exifJpeg(400, 300, 6))).toEqual({
+      width: 300,
+      height: 400,
+      format: "jpeg",
+    })
+    expect(imageDimensions(exifJpeg(400, 300, 8, true))).toEqual({
+      width: 300,
+      height: 400,
+      format: "jpeg",
+    })
+    expect(imageDimensions(exifJpeg(400, 300, 3))).toEqual({
+      width: 400,
+      height: 300,
+      format: "jpeg",
+    })
+    expect(jpegOrientation(exifJpeg(400, 300, 7, true))).toBe(7)
+    expect(jpegOrientation(jpeg(400, 300))).toBe(1)
   })
 
   test("WebP - VP8 (lossy), VP8L (lossless), VP8X (extended)", () => {

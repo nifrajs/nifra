@@ -42,7 +42,8 @@ export function extractWorkflowCommands(workflow: string): readonly string[] {
       }
       const directTest = segment.match(/\bbun\s+test\b([^#;|]*)/)
       if (directTest !== null) {
-        const key = `test${directTest[1].trim() === "" ? "" : ` ${directTest[1].trim()}`}`
+        const args = (directTest[1] ?? "").trim()
+        const key = `test${args === "" ? "" : ` ${args}`}`
         if (!found.includes(key)) found.push(key)
       }
     }

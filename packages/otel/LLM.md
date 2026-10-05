@@ -10,10 +10,11 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 
 ## Public entrypoints
 
-`@nifrajs/otel` · `@nifrajs/otel/effects` · `@nifrajs/otel/metrics`
+`@nifrajs/otel` · `@nifrajs/otel/cache` · `@nifrajs/otel/effects` · `@nifrajs/otel/events` · `@nifrajs/otel/jobs` · `@nifrajs/otel/metrics` · `@nifrajs/otel/sdk-bridge`
 
 ## Key exports
 
+- **cacheTracing** _(function)_ - `cacheTracing: (options?: CacheTracingOptions) => CacheTracingObserver` · from `@nifrajs/otel/cache`
 - **causalitySpanLink** _(function)_ - `causalitySpanLink: (context: CausalityContext) => ObservationLink | undefined` · from `@nifrajs/otel`
 - **combineObservationAdapters** _(function)_ - `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter` · from `@nifrajs/otel`
 - **consoleSpanExporter** _(function)_ - `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter` · from `@nifrajs/otel`
@@ -23,13 +24,12 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 - **formatTraceparent** _(function)_ - `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string` · from `@nifrajs/otel`
 - **generateSpanId** _(function)_ - `generateSpanId: () => string` · from `@nifrajs/otel`
 - **generateTraceId** _(function)_ - `generateTraceId: () => string` · from `@nifrajs/otel`
+- **jobTracing** _(function)_ - `jobTracing: (options?: JobTracingOptions) => JobTracingInstrument` · from `@nifrajs/otel/jobs`
 - **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => IdentityPlugin` · from `@nifrajs/otel/metrics`
+- **otelBridge** _(function)_ - `otelBridge: (options: OtelBridgeOptions) => OtelBridge` · from `@nifrajs/otel/sdk-bridge`
 - **otlpExporter** _(function)_ - `otlpExporter: (options: OtlpExporterOptions) => OtlpExporter` · from `@nifrajs/otel`
-- **parseTraceparent** _(function)_ - `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null` · from `@nifrajs/otel`
-- **traceHeaders** _(function)_ - `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>` · from `@nifrajs/otel`
-- **tracing** _(function)_ - `tracing: (options?: TracingOptions) => ContextPlugin<TracingContext>` · from `@nifrajs/otel`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 52 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

@@ -43,7 +43,8 @@ function scaffold(): { root: string; routes: string; client: string; server: str
       "",
     ].join("\n"),
   )
-  const client = join(root, "client.ts")
+  const client = join(root, "frontend/client.ts")
+  mkdirSync(join(root, "frontend"), { recursive: true })
   const server = join(root, "server.ts")
   writeFileSync(client, "export function mountRouter() {}\n")
   writeFileSync(

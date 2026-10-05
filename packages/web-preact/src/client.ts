@@ -1,7 +1,4 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
-// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
-// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
-import { searchOfChain } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -13,6 +10,7 @@ import { type FunctionComponent, h, hydrate as preactHydrate } from "preact"
 import { useSyncExternalStore } from "preact/compat"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own (DOM-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-preact/client` alongside `mountRouter`.
@@ -44,23 +42,11 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  * (no `getServerSnapshot`); `router.snapshot` is deterministic, so hydration matches the SSR markup.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Router: FunctionComponent = () => {
     const state = useSyncExternalStore(router.subscribe, router.snapshot)
-    // Derive this route's typed `search` from the URL + the route's schema chain (the SAME `searchOfChain`
-    // the server ran), so `useSearch` reads an identical value and hydrates with no drift.
-    const q = state.path.indexOf("?")
-    const rawSearch = q === -1 ? "" : state.path.slice(q)
-    return compose(routes[state.routeId] ?? [], {
-      data: state.data,
-      actionData: state.actionData,
-      pending: state.pending,
-      search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
-      // The in-flight submission (for optimistic UI) - spread only when present.
-      ...(state.submission ? { submission: state.submission } : {}),
-      ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-    })
+    return compose(routes[state.routeId] ?? [], routeProps(state, searchSchemas, matchChains))
   }
   preactHydrate(h(Router, null), container as Element)
 }

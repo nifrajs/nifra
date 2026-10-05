@@ -31,35 +31,27 @@ registerFixRecipe({
   description: "Replace a direct secret comparison with a length check and timing-safe comparison.",
   verify: "nifra check --lints-only",
   async apply(root, diagnostic) {
-    if (diagnostic.file === undefined || diagnostic.line === undefined) return []
+    if (diagnostic.file === undefined) return []
     const path = await resolveInsideProject(root, diagnostic.file)
     if (path === undefined) return []
-    const lines = (await readFile(path, "utf8")).split("\n")
-    const index = diagnostic.line - 1
-    const original = lines[index]
-    if (original === undefined || original.includes("@nifra-gate-reviewed")) return []
-    const comparison = /\b([A-Za-z_$][\w$]*)\s*(===|!==|==|!=)\s*([A-Za-z_$][\w$]*)/.exec(original)
-    if (comparison === null) return []
-    const left = comparison[1] as string
-    const operator = comparison[2] as string
-    const right = comparison[3] as string
-    const expression = `nifraTimingSafeEqual(${left}, ${right})`
-    const replacement = operator === "!==" || operator === "!=" ? `!${expression}` : expression
-    lines[index] = original.replace(comparison[0], replacement)
-    if (!lines.some((line) => line.includes("function nifraTimingSafeEqual"))) {
-      lines.unshift(
-        'import { timingSafeEqual } from "node:crypto"',
-        "",
-        "function nifraTimingSafeEqual(left: string, right: string): boolean {",
-        "  const leftBytes = Buffer.from(left)",
-        "  const rightBytes = Buffer.from(right)",
-        "  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)",
-        "}",
-        "",
+    const { loadProjectTypeScript } = await import("./internal/typescript-import.ts")
+    const loaded = await loadProjectTypeScript(root)
+    if (loaded.unsupported !== undefined) throw loaded.unsupported
+    if (loaded.compiler === undefined)
+      throw new Error(
+        "[nifra] the timing-safe fix finds each comparison in the syntax tree, so it needs TypeScript - run `bun add -d typescript`, then rerun the fix",
       )
+    try {
+      const { rewriteSecretComparisons } = await import("./rules/security.ts")
+      const source = await readFile(path, "utf8")
+      // Every site in the file at once, so the rest of that file's diagnostics find nothing left.
+      const rewritten = rewriteSecretComparisons(loaded.compiler, diagnostic.file, source)
+      if (rewritten === source) return []
+      await writeFile(path, rewritten, "utf8")
+      return [diagnostic.file]
+    } finally {
+      await loaded.session?.close()
     }
-    await writeFile(path, lines.join("\n"), "utf8")
-    return [diagnostic.file]
   },
 })
 
@@ -101,7 +93,7 @@ registerFixRecipe({
     // Refusing is a result the caller has to see. Returning "changed nothing" made `nifra fix
     // --code NF-C010` a silent no-op on the only findings that produce it.
     if (!linked.ok) throw new Error(`[nifra] cannot rebuild ${packageName}: ${linked.reason}`)
-    const proc = Bun.spawn(["bun", "run", linked.buildScript], {
+    const proc = Bun.spawn([process.execPath, "run", linked.buildScript], {
       cwd: linked.dir,
       stdout: "ignore",
       stderr: "pipe",
@@ -114,6 +106,24 @@ registerFixRecipe({
       )
     }
     return [diagnostic.evidence?.[1] ?? packageName]
+  },
+})
+
+registerFixRecipe({
+  id: "imports.moved-export",
+  description: "Import a name that moved to a subpath from the module that now exports it.",
+  verify: "nifra check --lints-only",
+  async apply(root, diagnostic) {
+    if (diagnostic.file === undefined) return []
+    const path = await resolveInsideProject(root, diagnostic.file)
+    if (path === undefined) return []
+    const { rewriteMovedExports } = await import("./check-scan.ts")
+    const source = await readFile(path, "utf8")
+    // Rewrites every site in the file at once, so the rest of that file's diagnostics find nothing left.
+    const rewritten = rewriteMovedExports(source)
+    if (rewritten === source) return []
+    await writeFile(path, rewritten, "utf8")
+    return [diagnostic.file]
   },
 })
 
@@ -147,11 +157,14 @@ registerFixRecipe({
     const changed = new Set<string>()
     const skipped: string[] = []
     for (let pass = 0; pass < RESERVED_SEGMENT_PASSES; pass += 1) {
-      const proc = Bun.spawn(["bun", tscBin, "--noEmit", "--pretty", "false", "-p", tsconfig], {
-        cwd: root,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      const proc = Bun.spawn(
+        [process.execPath, tscBin, "--noEmit", "--pretty", "false", "-p", tsconfig],
+        {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
       const [stdout, stderr] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),

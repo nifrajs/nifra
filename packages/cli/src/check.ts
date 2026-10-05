@@ -17,7 +17,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join, relative } from "node:path"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
   type CheckConfig,
@@ -50,6 +51,7 @@ export type {
 
 import {
   createProjectSqlImports,
+  isBrowserSource,
   type ModuleReader,
   type ModuleResolver,
   resolveServerOnlyChains,
@@ -69,7 +71,6 @@ import {
 
 export * from "./check-scan.ts"
 
-const ROUTE_FILE = /(^|\/)routes\//
 interface TypecheckResult {
   readonly ran: boolean
   readonly ok: boolean
@@ -104,6 +105,9 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
   const tsconfig = join(cwd, "tsconfig.json")
   if (!(await Bun.file(tsconfig).exists()))
     return { ran: false, ok: true, note: "no tsconfig.json" }
+  // Routes import their generated `./+types` modules; bring them up to date before tsc reads them.
+  const { refreshRouteTypes } = await import("./route-types.ts")
+  refreshRouteTypes(cwd, () => {})
   const tscBin = resolveTscBin(cwd)
   if (tscBin === undefined) {
     return {
@@ -114,7 +118,7 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
     }
   }
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
-  const proc = Bun.spawn(["bun", tscBin, "--noEmit", "-p", tsconfig], {
+  const proc = Bun.spawn([process.execPath, tscBin, "--noEmit", "-p", tsconfig], {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -236,7 +240,7 @@ interface ProjectScan {
 }
 
 async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
-  const hasBackend = existsSync(join(cwd, "backend.ts"))
+  const hasBackend = existsSync(join(cwd, BACKEND_APP_FILE))
   const hasLock = existsSync(join(cwd, DEFAULT_CONTRACTS_LOCK))
   if (!hasBackend && !hasLock) return { present: false, vacuous: false, diagnostics: [] }
   try {
@@ -272,7 +276,7 @@ async function buildProjectScan(
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
   const interpolatedSql: SourceFinding[] = []
-  const routeModules: Array<{ rel: string; content: string }> = []
+  const browserModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
   const {
     config: checkConfig,
@@ -289,7 +293,7 @@ async function buildProjectScan(
       streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
       untypedClients.push(...scanUntypedClient(rel, content))
       removedImports.push(...scanRemovedImports(rel, content))
-      if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
+      if (isBrowserSource(rel)) browserModules.push({ rel, content })
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
@@ -312,22 +316,26 @@ async function buildProjectScan(
         interpolatedSql.push(...scanInterpolatedSql(file, content, sqlCompiler, sqlImports))
     }
 
+    // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
+    // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
     const resolveModule: ModuleResolver = (fromFile, specifier) => {
       try {
         const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
-        return Bun.resolveSync(specifier, dirname(fromAbs))
+        const resolved = Bun.resolveSync(specifier, dirname(fromAbs))
+        const rel = relative(cwd, resolved).replaceAll("\\", "/")
+        return rel.startsWith("../") || isAbsolute(rel) ? resolved : rel
       } catch {
         return undefined
       }
     }
-    const readModule: ModuleReader = (absPath) => {
+    const readModule: ModuleReader = (path) => {
       try {
-        return readFileSync(absPath, "utf8")
+        return readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
       } catch {
         return undefined
       }
     }
-    for (const { rel, content } of routeModules) {
+    for (const { rel, content } of browserModules) {
       serverImports.push(
         ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
       )
@@ -391,7 +399,7 @@ const REPORT_SECTIONS = [
   ["typecheck", "typecheck"],
   ["typed-client", "hand-rolled fetch()/EventSource/WebSocket to your own API"],
   ["untyped-client", 'client("…") missing its <typeof app> type argument'],
-  ["server-only-import", "server-only import in a route module"],
+  ["server-only-import", "backend code in browser code"],
   ["interpolated-sql", "SQL built by interpolating a value into the statement"],
   ["response-route", "route returns a raw Response (typed client → data: never)"],
   ["undeclared-dependency", "undeclared dependency in package.json"],
@@ -434,6 +442,9 @@ export function renderCheckReport(result: CheckResult): string[] {
     lines.push(
       `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
     )
+  }
+  for (const gap of result.knownGaps ?? []) {
+    lines.push(`• known gap, not capability-analyzed: ${gap.path} - ${gap.reason}`)
   }
   const deduplicated = result.identityPreflight?.deduplicated ?? []
   if (deduplicated.length > 0) {
@@ -566,7 +577,7 @@ export async function runCheck(
 
   console.log(renderCheckReport(result).join("\n"))
   // Discoverability nudge: a project with no `.mcp.json` hasn't wired its nifra MCP for coding agents.
-  // `nifra init-agents` writes it (+ .cursor/mcp.json + a CLAUDE.md preamble), no-clobber. A non-fatal
+  // `nifra init-agents` writes it (+ .cursor/mcp.json + each agent's pointer to AGENTS.md), no-clobber. A non-fatal
   // one-line tip in the human report only (the `--json` path returns above, unaffected).
   if (!existsSync(join(cwd, ".mcp.json"))) {
     console.log(

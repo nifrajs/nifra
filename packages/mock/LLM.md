@@ -14,10 +14,10 @@ Contract-based mock server - reads route schemas and generates fake responses.
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
 - **UnsupportedMockSchemaError** _(class)_ - `class UnsupportedMockSchemaError`
-- **MockableApp** _(interface)_ - `interface MockableApp`
-- **MockableRoute** _(interface)_ - `interface MockableRoute`
 - **MockServer** _(interface)_ - `interface MockServer`
 - **MockServerOptions** _(interface)_ - `interface MockServerOptions`
+- **MockableApp** _(interface)_ - `interface MockableApp`
+- **MockableRoute** _(interface)_ - `interface MockableRoute`
 
 ## Footguns
 

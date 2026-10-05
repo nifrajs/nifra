@@ -1,6 +1,6 @@
 import type { BinaryResponse, RawResponse } from "../binary.ts"
 import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
-import type { Params, RouteSchema } from "./context.ts"
+import type { Params, RoutePaths, RouteSchema } from "./context.ts"
 import type { StatusResponse } from "./runtime-core.ts"
 
 /**
@@ -196,10 +196,25 @@ export type WsRouteInfoFor<
  * `.merge()` them (each group is a short chain; a merge is one `R & R2` intersection with no
  * per-call context work), or contract-first `implement()` (the registry is one object type declared
  * upfront - no grow-R-per-call, so no ceiling at all).
+ *
+ * A path ending in optional parameters is keyed once per concrete path it serves (`RoutePaths`), all
+ * sharing the one route info, so `/users/:id?` adds `/users` and `/users/:id`.
  */
 export type AddRoute<
   R extends Registry,
   Method extends string,
   Path extends string,
   Info extends RouteInfo,
-> = R & { [P in Path]: { [M in Method]: Info } }
+> = R & { [P in RoutePaths<Path>]: { [M in Method]: Info } }
+
+/** Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route
+ * serves the prefix itself (no trailing slash), every other path is appended verbatim. */
+export type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/"
+  ? Prefix
+  : `${Prefix}${Path}`
+
+/** Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried
+ * unchanged: a prefix is static text, so it adds no params and cannot change any route's contract. */
+export type PrefixRegistry<Prefix extends string, R extends Registry> = {
+  [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path]
+}

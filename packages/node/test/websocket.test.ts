@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
+import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 
 // @nifrajs/node serves WebSockets via the optional `ws` package (a devDependency here). These run on the
@@ -54,7 +55,7 @@ function rt(url: string, send: string[], count: number): Promise<string[]> {
 
 describe("@nifrajs/node WebSockets", () => {
   test("echo: open → welcome, message → echo", async () => {
-    running = await serve(makeApp(), { port: 0 })
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual(["welcome", "hi"])
   })
 
@@ -66,22 +67,28 @@ describe("@nifrajs/node WebSockets", () => {
         message: (ws, data) => ws.send(data),
       })
     const parent = server().mount({ path: "/api", app: child, stripPrefix: true })
-    running = await serve(parent, { port: 0 })
+    running = await serve(parent, { hostname: "127.0.0.1", port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/api/echo`, ["child-ping"], 2)).toEqual([
       "child-ready",
       "child-ping",
     ])
   })
 
+  test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
+    running = await serve(makeApp(), { port: 0, hostname: "127.0.0.1" })
+    expect(await rawUpgradeStatus(running.port, "/rooms/../echo")).toBe(101)
+    expect(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo")).toBe(101)
+  })
+
   test("guarded: accepts with token, threading data to ws.data", async () => {
-    running = await serve(makeApp(), { port: 0 })
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/guarded?token=secret`, [], 1)).toEqual([
       "hi secret",
     ])
   })
 
   test("guarded: rejects without token (never opens)", async () => {
-    running = await serve(makeApp(), { port: 0 })
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     const outcome = await new Promise<string>((resolve) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/guarded`)
       let opened = false
@@ -102,7 +109,7 @@ describe("@nifrajs/node WebSockets", () => {
   })
 
   test("binary frames round-trip (Uint8Array normalization)", async () => {
-    running = await serve(makeApp(), { port: 0 })
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     const port = running.port
     const ok = await new Promise<boolean>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${port}/echo`)
@@ -129,7 +136,7 @@ describe("@nifrajs/node WebSockets", () => {
   })
 
   test("a normal HTTP route works alongside WS routes", async () => {
-    running = await serve(makeApp(), { port: 0 })
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     const res = await fetch(`http://127.0.0.1:${running.port}/health`)
     expect(await res.json()).toEqual({ ok: true })
   })
@@ -144,7 +151,7 @@ describe("@nifrajs/node WebSockets", () => {
             ws.close(1000, "done")
           },
         }),
-      { port: 0 },
+      { hostname: "127.0.0.1", port: 0 },
     )
     const result = await new Promise<{ msg: string; code: number }>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/c`)
@@ -176,7 +183,7 @@ describe("@nifrajs/node WebSockets", () => {
           },
           error: (ws) => ws.send("errored"),
         }),
-      { port: 0 },
+      { hostname: "127.0.0.1", port: 0 },
     )
     expect(await rt(`ws://127.0.0.1:${running.port}/e`, [], 1)).toEqual(["errored"])
   })
@@ -190,7 +197,7 @@ describe("@nifrajs/node WebSockets", () => {
           if (m === "leave") ws.unsubscribe("lobby")
         },
       })
-    running = await serve(app, { port: 0 })
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     const url = `ws://127.0.0.1:${running.port}/room`
     const a = new WebSocket(url)
     const b = new WebSocket(url)
@@ -224,8 +231,17 @@ describe("@nifrajs/node WebSockets", () => {
     // (this real-socket pub/sub test occasionally exceeded the default 5s under parallel load).
   }, 15000)
 
+  test("an upgrade naming a host outside allowedHosts is refused before any route runs", async () => {
+    running = await serve(makeApp(), {
+      hostname: "127.0.0.1",
+      port: 0,
+      allowedHosts: ["app.example.test"],
+    })
+    expect(await rawUpgradeStatus(running.port, "/echo")).toBe(400)
+  })
+
   test("an upgrade to a path with no WS route is rejected (404, never opens)", async () => {
-    running = await serve(makeApp(), { port: 0 })
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     const outcome = await new Promise<string>((resolve) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/no-such-ws`)
       let opened = false

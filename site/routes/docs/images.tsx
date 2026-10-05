@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/images",
@@ -228,8 +224,8 @@ export default function Images() {
       <p>
         Signatures over <code>(src, w, q)</code> are <b>stable</b> (no expiry), so an SSR-rendered{" "}
         <code>&lt;Image&gt;</code> srcset hydrates and caches identically. The secret makes a loader{" "}
-        config <b>server-only</b> - inject it from <code>env</code> and never import it into a route/client
-        module (same discipline as a <a href="/docs/auth">session secret</a>). For time-limited links to
+        config <b>server-only</b> - inject it from <code>env</code> in backend code, never a page or{" "}
+        <code>frontend/</code> module (same discipline as a <a href="/docs/auth">session secret</a>). For time-limited links to
         private images, <code>signImageUrl(…, {`{ expiresIn }`})</code> adds an <code>&amp;exp=</code> the
         handler enforces.
       </p>

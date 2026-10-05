@@ -3,6 +3,7 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
+import { compileRoutePattern, type RoutePatternSegment } from "@nifrajs/core/pattern"
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
@@ -58,6 +59,32 @@ function tsTypeOf(schema: unknown, depth = 0): string {
   }
 }
 
+/**
+ * The call a non-static segment adds to the typed-client chain, or `undefined` for a static one. Read
+ * by the router's own grammar: a whole param or a wildcard is called by its name (`:id` and
+ * `:id{[0-9]+}` are `({ id })`), and a segment that is part literal, part parameter is called with
+ * the segment text (`:name.json` is ``(`${name}.json`)``).
+ */
+function paramCall(seg: string): string | undefined {
+  let segment: RoutePatternSegment | undefined
+  try {
+    segment = compileRoutePattern(`/${seg}`).segments[0]
+  } catch {
+    return undefined
+  }
+  if (segment === undefined || segment.kind === "static") return undefined
+  if (segment.kind === "param") return `({ ${segment.name} })`
+  if (segment.kind === "wildcard") {
+    return segment.name === "*" ? '({ "*": rest })' : `({ ${segment.name} })`
+  }
+  const [only] = segment.parts
+  if (segment.parts.length === 1 && only?.t === "param") return `({ ${only.name} })`
+  const text = segment.parts
+    .map((part) => (part.t === "lit" ? part.v.replace(/[`\\]|\$\{/g, "\\$&") : `\${${part.name}}`))
+    .join("")
+  return `(\`${text}\`)`
+}
+
 function clientCall(method: string, path: string, schema: unknown): string {
   const s = schema as { body?: unknown; query?: unknown } | undefined
   const verb = method.toLowerCase()
@@ -66,10 +93,7 @@ function clientCall(method: string, path: string, schema: unknown): string {
   if (segs.length === 0) chain += ".index"
   else
     for (const seg of segs) {
-      if (seg.startsWith(":") || seg.startsWith("*")) {
-        const name = seg.replace(/^[:*]/, "") || "value"
-        chain += `({ ${name} })`
-      } else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
+      chain += paramCall(seg) ?? (IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`)
     }
   const isBodyVerb = verb === "post" || verb === "put" || verb === "patch"
   let call: string

@@ -1,44 +1,17 @@
-import type { LoaderArgs, LoaderData } from "@nifrajs/client"
-import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { useNavigate, useSearch } from "@nifrajs/web-react/router"
-import type { backend } from "../backend"
+import { searchSchema } from "../shared/search.ts"
+import type { Route } from "./+types/search"
 
-// A route's typed search contract. Hand-rolled Standard Schema (no schema lib needed for the example):
-// `page`/`q` drive the loader; `view` is client-side UI only (see `searchClientKeys`). Hostile input
-// falls back, so `ctx.search` / `useSearch` are always well-typed.
-export const searchSchema = {
-  "~standard": {
-    version: 1,
-    vendor: "example",
-    validate(input: unknown) {
-      const raw = (input ?? {}) as { page?: unknown; q?: unknown; view?: unknown }
-      const page = typeof raw.page === "number" && Number.isFinite(raw.page) ? raw.page : 1
-      const q = typeof raw.q === "string" ? raw.q : ""
-      const view = raw.view === "grid" ? "grid" : "list"
-      return { value: { page, q, view } }
-    },
-  },
-} satisfies StandardSchemaV1<unknown, { page: number; q: string; view: "list" | "grid" }>
+export { searchSchema }
 
 // `view` is purely presentational, so toggling it re-renders WITHOUT re-running the loader.
 export const searchClientKeys = ["view"]
 
 export const meta = { title: "nifra - Typed search params" }
 
-// A loader-run counter, so the page can show whether the loader actually re-ran: a client-only `?view`
-// change leaves it unchanged, a `?page` change bumps it.
-let loaderRuns = 0
-
-// The loader reads the validated query as `ctx.search` (typed by the third LoaderArgs arg), never by
-// parsing the URL itself. `search.page` is a number here.
-export async function loader({ search }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
-  loaderRuns++
-  return { echoed: `${search.page}:${search.q}`, run: loaderRuns }
-}
-
 // The component reads the SAME value with `useSearch` (SSR-correct), so `page`/`q` render server-side and
 // hydrate with no mismatch. The buttons/link change the query; a soft-nav re-derives search identically.
-export default function Search({ data }: { data: LoaderData<typeof loader> }) {
+export default function Search({ data }: Route.ComponentProps) {
   const { page, q, view } = useSearch<typeof searchSchema>() // { page: number; q: string; view }
   const navigate = useNavigate()
   const base = `page=${page}${q ? `&q=${q}` : ""}`

@@ -54,7 +54,7 @@ function toYaml(value: unknown, depth = 0): string {
  * worth the risk of emitting a `$ref` with no target.
  */
 function renderOpenApiWithResponses(
-  app: LoadedApp,
+  app: Pick<LoadedApp, "cwd" | "backend">,
   format: OpenApiFormat,
   pathPrefix: string | undefined,
   inferredResponses: InferredOpenAPIResponses | undefined,
@@ -81,7 +81,11 @@ function renderOpenApiWithResponses(
 }
 
 /** Render the current runtime route table without loading the TypeScript compiler. */
-export function renderOpenApi(app: LoadedApp, format: OpenApiFormat, pathPrefix?: string): string {
+export function renderOpenApi(
+  app: Pick<LoadedApp, "cwd" | "backend">,
+  format: OpenApiFormat,
+  pathPrefix?: string,
+): string {
   return renderOpenApiWithResponses(app, format, pathPrefix, undefined)
 }
 
@@ -90,7 +94,7 @@ export function renderOpenApi(app: LoadedApp, format: OpenApiFormat, pathPrefix?
  * only in this explicit CLI path; the server and schema runtime packages remain compiler-free.
  */
 export async function renderOpenApiWithTypes(
-  app: LoadedApp,
+  app: Pick<LoadedApp, "cwd" | "backend">,
   format: OpenApiFormat,
   pathPrefix?: string,
 ): Promise<string> {

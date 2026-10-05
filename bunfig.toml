@@ -6,7 +6,9 @@
 # `tolerant-test.ts` wrapper would mask it. When coverage IS requested, the 0.9 floor below is the gate
 # (≥90% line/function coverage per file) - honoured off the CLI flag even without `coverage = true`
 # (verified on 1.3.14); the router/validator/descriptor core is held to 100% by review (the per-file
-# report makes any regression visible immediately).
+# report makes any regression visible immediately). `scripts/test-coverage.ts` applies the floor per
+# file, as Bun does; a file the committed `coverage-baseline.json` already records under the floor is
+# held at that number by `check:coverage` instead, and every other file must clear it.
 [test]
 coverageThreshold = 0.9
 # Loads before any test file. Disables fetch connection pooling for loopback only, so a recycled
@@ -113,5 +115,18 @@ coveragePathIgnorePatterns = [
   # in the socket-heavy run. Coverage of the harness measures which suite is executing, not whether the
   # code under test is exercised, so it is excluded rather than chased.
   "**/scripts/test-preload.ts",
+  # More harness, same reasoning, measured 2026-10-04: `headless-chrome.ts` drives a real Chrome when
+  # one is installed (89.19% function coverage here), and `packed-tree.ts` packs the workspace only on
+  # the opt-in built-checkout path of `scaffold-check.test.ts` (0% function, 11.54% line).
+  "**/cli/test/headless-chrome.ts",
+  "**/scripts/packed-tree.ts",
+  # The cli tests' dot-prefixed fixture roots (`.nifra-capability-fixtures-RFjrrM`,
+  # `.nifra-levels-fixtures-2wAq0Q`, `.nifra-verification-golden-xNR6qa`): stub backends at 0-50%
+  # function coverage under a directory name that is random per run. Same class as `cli/test/.tmp-*`.
+  "**/cli/test/.nifra-*/**",
+  # The create-nifra scaffold templates the scaffold tests load: sample apps (0% function coverage on
+  # each template's `backend/` routes, measured 2026-10-04), the same class as `examples/`.
+  "**/create-nifra/template/**",
+  "**/create-nifra/template-*/**",
 ]
 pathIgnorePatterns = ["**/template/**", "**/template-*/**"]

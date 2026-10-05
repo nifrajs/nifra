@@ -5,8 +5,16 @@
  * and the client rebuilds the same formatter from the same props (no mismatch). Uses `preact` +
  * `preact/hooks` - no JSX.
  */
-import { createFormatter, type Formatter, type Messages } from "@nifrajs/i18n"
-import { type ComponentChildren, createContext, createElement, type VNode } from "preact"
+import {
+  createFormatter,
+  type Formatter,
+  type FormatterOptions,
+  type MessageKey,
+  type RegisteredMessages,
+  type Translation,
+} from "@nifrajs/i18n"
+import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
+import { type ComponentChildren, createContext, createElement, Fragment, type VNode } from "preact"
 import { useContext, useMemo } from "preact/hooks"
 
 const I18nContext = createContext<Formatter | null>(null)
@@ -21,27 +29,61 @@ const createProvider = createElement as (
   children?: ComponentChildren,
 ) => VNode
 
-export interface I18nProviderProps {
+export interface I18nProviderProps extends FormatterOptions {
   readonly locale: string
-  readonly messages: Messages
+  /** The catalog for `locale`, checked against the registered catalog type when one is declared. */
+  readonly messages: Translation
   readonly children?: ComponentChildren
 }
 
-/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on
- * `locale`/`messages`, so switching locale rebuilds it and re-renders consumers. */
+/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,
+ * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized
+ * on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by
+ * catalog identity, so an inline `fallback={[en]}` still yields the same instance. */
 export function I18nProvider(props: I18nProviderProps): VNode {
+  const { locale, messages, fallback, onMissing, timeZone, numberingSystem } = props
   const formatter = useMemo(
-    () => createFormatter(props.locale, props.messages),
-    [props.locale, props.messages],
+    () => createFormatter(locale, messages, { fallback, onMissing, timeZone, numberingSystem }),
+    [locale, messages, fallback, onMissing, timeZone, numberingSystem],
   )
   return createProvider(I18nContext.Provider, { value: formatter }, props.children)
 }
 
-/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. */
+/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. */
 export function useT(): Formatter {
   const formatter = useContext(I18nContext)
   if (formatter === null) {
     throw new Error("[nifra/web-preact] useT() must be used within an <I18nProvider>")
   }
   return formatter
+}
+
+/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */
+export type RichTags = Readonly<Record<string, (content: ComponentChildren) => ComponentChildren>>
+
+const join = (chunks: RichChunks<ComponentChildren>): ComponentChildren =>
+  chunks.length === 0
+    ? null
+    : chunks.length === 1
+      ? chunks[0]
+      : createElement(Fragment, null, ...chunks)
+const PREACT_RICH: RichRenderer<ComponentChildren> = {
+  join,
+  lineBreak: () => createElement("br", null),
+}
+
+/**
+ * The message at `key` with its tags rendered by `tags`, as Preact nodes - no HTML, no
+ * `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with
+ * `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with
+ * no handler renders its content as text, `<br/>` is a `<br>`, and interpolated values are always
+ * text. See `@nifrajs/i18n/rich`.
+ */
+export function rich<M extends object = RegisteredMessages>(
+  formatter: Formatter<M>,
+  key: MessageKey<M>,
+  tags?: RichTags,
+  vars?: Readonly<Record<string, unknown>>,
+): ComponentChildren {
+  return renderRich(PREACT_RICH, formatter, key, tags, vars)
 }

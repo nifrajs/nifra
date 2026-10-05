@@ -21,6 +21,19 @@ describe("renderOgImage", () => {
     expect(renderOgImage({ title: "same" })).toBe(renderOgImage({ title: "same" }))
   })
 
+  test("takes CMS-shaped text: line breaks as spaces, an empty description as none, long text cut", () => {
+    const svg = renderOgImage({ title: "Release\tnotes\n", description: "" })
+    expect(svg).toContain(">Release notes</text>")
+    expect(svg).toContain('aria-label="Release notes"')
+    const long = renderOgImage({ title: "x".repeat(300) })
+    expect(long).toContain(`aria-label="${"x".repeat(239)}\u2026"`)
+    // A cut never leaves half of a surrogate pair.
+    expect(renderOgImage({ title: `${"x".repeat(238)}\u{1F680}y` })).toContain(
+      `${"x".repeat(238)}\u2026`,
+    )
+    expect(() => renderOgImage({ title: " \n " })).toThrow(/title must not be empty/)
+  })
+
   test("rejects unsafe text, colors, and dimensions before rendering", () => {
     expect(() => renderOgImage({ title: "" })).toThrow(/title/)
     expect(() => renderOgImage({ title: "x", width: 0 })).toThrow(/width/)
@@ -109,6 +122,31 @@ describe("ogImageResponse", () => {
     )
     expect(response.headers.get("content-type")).toBe("image/png")
     expect((await response.arrayBuffer()).byteLength).toBe(1)
+  })
+
+  test("a revalidation of an unchanged card is answered without rasterizing again", async () => {
+    let calls = 0
+    const rasterizer = (svg: string) => {
+      calls++
+      return { bytes: new TextEncoder().encode(svg), contentType: "image/png" }
+    }
+    const url = "https://example.test/og"
+    const first = await ogImageResponse({ title: "Ship it", rasterizer }, new Request(url))
+    const etag = first.headers.get("etag") ?? ""
+    const again = await ogImageResponse(
+      { title: "Ship it", rasterizer },
+      new Request(url, { headers: { "if-none-match": etag } }),
+    )
+    expect(again.status).toBe(304)
+    expect(again.headers.get("etag")).toBe(etag)
+    expect(again.headers.get("content-type")).toBe("image/png")
+    expect(calls).toBe(1)
+    const changed = await ogImageResponse(
+      { title: "Ship it twice", rasterizer },
+      new Request(url, { headers: { "if-none-match": etag } }),
+    )
+    expect(changed.status).toBe(200)
+    expect(calls).toBe(2)
   })
 
   test("ETags represent rasterized bytes, not only the source SVG", async () => {

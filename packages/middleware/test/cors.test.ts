@@ -77,6 +77,36 @@ describe("cors", () => {
     expect(allowed.headers.get("vary")).toContain("Origin")
     const denied = await app.fetch(new Request("http://x/", origin("https://evil.com")))
     expect(denied.headers.get("access-control-allow-origin")).toBeNull()
+    // The header-less answer still depends on Origin: a shared cache must not replay it to b.com.
+    expect(denied.headers.get("vary")).toContain("Origin")
+    const noOrigin = await app.fetch(new Request("http://x/"))
+    expect(noOrigin.headers.get("vary")).toContain("Origin")
+  })
+
+  test("Vary: Origin is deduplicated and preserves the wildcard form", async () => {
+    const middleware = cors({ origin: "https://app.com" })
+    const request = {
+      method: "GET",
+      url: "http://x/",
+      header: (name: string) => (name === "origin" ? "https://app.com" : null),
+    }
+    const wildcard = new Headers({ vary: "*" })
+    await middleware.onResponseHeaders!(wildcard, request, 200)
+    expect(wildcard.get("vary")).toBe("*")
+
+    const existing = new Headers({ vary: "Accept-Encoding, origin" })
+    await middleware.onResponseHeaders!(existing, request, 200)
+    expect(existing.get("vary")).toBe("Accept-Encoding, origin")
+
+    const native: NodeResponseContext = {
+      status: 200,
+      headers: { vary: "*" },
+      headersAreLowercase: true,
+      cookies: undefined,
+      body: "ok",
+    }
+    await middleware.onNodeResponseHeaders!(native, request)
+    expect(native.headers?.vary).toBe("*")
   })
 
   test("predicate origin", async () => {

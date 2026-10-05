@@ -1,5 +1,11 @@
 # @nifrajs/aws-lambda
 
+## 4.0.0
+
+### Patch Changes
+
+- 031c33d: fix(runtime): preserve typed-array compatibility across Fetch runtimes and reject invalid request bodies at the runner boundary.
+
 ## 3.5.0
 
 ## 3.4.0

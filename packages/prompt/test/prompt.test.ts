@@ -115,6 +115,25 @@ describe("run", () => {
     expect(heals).toBe(2)
   })
 
+  test("a heal bound that is not an integer is refused before the model is called", async () => {
+    for (const healAttempts of [Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      let calls = 0
+      const run = contact.run(
+        { text: "..." },
+        {
+          complete: () => {
+            calls++
+            return "not json"
+          },
+          heal: () => "still not json",
+          healAttempts,
+        },
+      )
+      await expect(run).rejects.toBeInstanceOf(RangeError)
+      expect(calls).toBe(0)
+    }
+  })
+
   test("extra messages are appended to the request", async () => {
     let seen: PromptRequest | undefined
     await contact.run(

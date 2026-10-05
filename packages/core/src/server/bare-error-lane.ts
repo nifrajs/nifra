@@ -19,17 +19,18 @@
  */
 import { pathnameOf } from "./http.ts"
 import type { Logger } from "./logger.ts"
-import { isResponseResult, type ResponseResult } from "./runtime-core.ts"
+import { isResponseResult } from "./runtime-core.ts"
 import type { CtxSet, RawContext } from "./server.ts"
 
 /** How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option. */
 export type ErrorLogDetail = "full" | "message" | "none"
 
 /**
- * Render a value thrown on the bare lane. Three shapes, in the order the lane means them:
- *   - a bare `Response` is the app answering directly - passed through untouched;
- *   - a thrown `status(...)` is control flow, still plain data: rendered through the same `finalize`
- *     a RETURNED one takes, with the request's `c.set`, so it costs what the return costs;
+ * Render a value thrown on the bare lane. Two shapes, in the order the lane means them:
+ *   - a `Response` or a `status(...)` is control flow - the app answering directly, or plain data.
+ *     Either renders through the same `finalize` a RETURNED one takes, with the request's `c.set`,
+ *     so a thrown one means what the return means: a `Response` ships as built, plus the cookies the
+ *     request queued (the set-session-then-`throw redirect()` pattern);
  *   - anything else is a real fault: logged once, then a bodyless 500 (never the caller's error text).
  *
  * `responseSet` and `logError` are injected rather than imported so this file keeps no runtime edge
@@ -40,13 +41,11 @@ export function renderBareError<T>(
   err: unknown,
   ctx: RawContext,
   finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-  wrapResponse: (response: Response | ResponseResult) => T,
   responseSet: (ctx: RawContext) => CtxSet,
   logError: (err: unknown, ctx: RawContext) => void,
   internalError: () => T,
 ): T {
-  if (err instanceof Response) return wrapResponse(err)
-  if (isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
+  if (err instanceof Response || isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
   logError(err, ctx)
   return internalError()
 }
@@ -62,11 +61,13 @@ export function emitRequestErrorLog(
   logger: Logger,
   detail: ErrorLogDetail,
   err: unknown,
-  ctx: RawContext,
+  // Only the request line is read, so a lane with no context yet (a request no route matched) can
+  // log through the same policy.
+  // Absent for a failure the runtime reports without its request (Bun's serve `error` callback).
+  ctx: { readonly req: { readonly method: string; readonly url: string } } | undefined,
 ): void {
   logger.error("unhandled request error", {
-    method: ctx.req.method,
-    path: pathnameOf(ctx.req.url),
+    ...(ctx === undefined ? {} : { method: ctx.req.method, path: pathnameOf(ctx.req.url) }),
     name: err instanceof Error ? err.name : "Error",
     // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of
     // that name is silently overwritten and the thrown error's own text never reaches the sink. It

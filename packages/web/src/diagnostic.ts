@@ -14,6 +14,22 @@
 import { readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { classify, type FixOption } from "./diagnostic-catalog.ts"
+
+export {
+  classify,
+  DIAGNOSTIC_CATALOG,
+  type FixOption,
+  isHydrationMismatch,
+} from "./diagnostic-catalog.ts"
+export {
+  buildFixPrompt,
+  type FixPrompt,
+  type FixPromptContext,
+  type FixPromptSurface,
+  fixPrompts,
+  promptPath,
+} from "./diagnostic-prompt.ts"
 
 /** Shared endpoint name used by both dev pipelines and the agent-facing MCP tools. */
 export const LAST_ERROR_PATH = "/__nifra/last-error"
@@ -40,7 +56,7 @@ export interface Codeframe {
 
 /** The structured failure. Serialisable as-is to JSON for the agent surfaces. */
 export interface Diagnostic {
-  /** Stable, greppable identifier, e.g. `NIFRA_SERVER_ONLY_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */
+  /** Stable, greppable identifier, e.g. `NIFRA_BACKEND_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */
   readonly code: string
   readonly name: string
   readonly message: string
@@ -51,8 +67,10 @@ export interface Diagnostic {
   readonly cause?: string | undefined
   /** Plain-language "do this", when the failure is recognised. */
   readonly fix?: string | undefined
-  /** Docs section anchor for the code, e.g. `errors#server-only-in-client`. */
+  /** Docs section anchor for the code, e.g. `errors#backend-in-client`. */
   readonly docsAnchor?: string | undefined
+  /** The distinct ways to fix it, when more than one is right; `fix` covers them all in one line. */
+  readonly fixOptions?: readonly FixOption[] | undefined
 }
 
 /** Reads a source file's text, or returns undefined if it cannot (missing, binary, permission). */
@@ -178,61 +196,6 @@ export function buildCodeframe(
   return { file, line, column, lines }
 }
 
-/** A recognised failure shape: a stable code plus the plain-language cause/fix/anchor to attach. */
-interface CatalogEntry {
-  readonly code: string
-  readonly match: (name: string, message: string) => boolean
-  readonly cause: string
-  readonly fix: string
-  readonly docsAnchor: string
-}
-
-/**
- * The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new
- * classes of error earn a stable code. Order matters only in that the first match wins.
- */
-export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
-  {
-    code: "NIFRA_SERVER_ONLY_IN_CLIENT",
-    match: (_n, m) => m.includes("server-only module(s) in the client bundle"),
-    cause:
-      "A module marked server-only was reachable from a client entry, so it would ship to the browser.",
-    fix: "Follow the import chain in the message and move the server-only use behind a loader/action or a `*.server.ts` boundary, so it never enters a client component.",
-    docsAnchor: "errors#server-only-in-client",
-  },
-  {
-    code: "NIFRA_NODE_BUILTIN_IN_CLIENT",
-    match: (_n, m) => m.includes("Node built-in(s) in the client bundle"),
-    cause: "A `node:` built-in was reached from a client entry; it has no browser implementation.",
-    fix: "Move the code using the built-in to the server (loader/action or `*.server.ts`); the message lists the import chain that pulled it in.",
-    docsAnchor: "errors#node-builtin-in-client",
-  },
-  {
-    code: "NIFRA_SCHEMA_PARSE",
-    match: (n, m) =>
-      n === "SchemaError" ||
-      /failed to (parse|validate)|invalid_type|expected .* received/i.test(m),
-    cause: "Data crossing a boundary did not match its declared schema.",
-    fix: "Check the value against the schema at the failing boundary (loader input, search params, or request body); parse-don't-cast means the shape must match exactly.",
-    docsAnchor: "errors#schema-parse",
-  },
-]
-
-/** Classify an error name+message against the catalog; falls back to the generic unhandled code. */
-export function classify(
-  name: string,
-  message: string,
-): {
-  code: string
-  cause?: string
-  fix?: string
-  docsAnchor?: string
-} {
-  const hit = DIAGNOSTIC_CATALOG.find((e) => e.match(name, message))
-  if (hit === undefined) return { code: "NIFRA_UNHANDLED" }
-  return { code: hit.code, cause: hit.cause, fix: hit.fix, docsAnchor: hit.docsAnchor }
-}
-
 /** Split an Error's `stack` into its leading message block and its frame lines. */
 function messageAndStack(err: Error): { message: string; stack: string } {
   const stack = err.stack ?? `${err.name}: ${err.message}`
@@ -251,6 +214,37 @@ export interface BuildDiagnosticOptions {
   readonly root?: string
   /** Injectable source reader (tests pass a fake; production reads the filesystem). */
   readonly read?: SourceReader
+  /** Whether a file's source may appear in the codeframe, given the path the codeframe would read. The
+   * overlay is served to a browser, so a dev server passes the zone check here and backend source never
+   * renders in it. */
+  readonly showSource?: (file: string) => boolean
+  /** A frame's authored position when its file was compiled by a plugin whose map the runtime did not
+   * apply (Bun ignores a plugin's inline map), so a compiled line never lands in the codeframe. */
+  readonly remap?: (
+    file: string,
+    line: number,
+    column: number,
+  ) => { readonly line: number; readonly column: number } | undefined
+}
+
+function remapFrames(
+  frames: DiagnosticFrame[],
+  remap: BuildDiagnosticOptions["remap"],
+): DiagnosticFrame[] {
+  if (remap === undefined) return frames
+  return frames.map((frame) => {
+    if (frame.file === undefined || frame.line === undefined || frame.column === undefined) {
+      return frame
+    }
+    const authored = remap(frame.file, frame.line, frame.column)
+    if (authored === undefined) return frame
+    const at = frame.raw.lastIndexOf(`:${frame.line}:${frame.column}`)
+    const raw =
+      at === -1
+        ? frame.raw
+        : `${frame.raw.slice(0, at)}:${authored.line}:${authored.column}${frame.raw.slice(at + `:${frame.line}:${frame.column}`.length)}`
+    return { raw, file: frame.file, line: authored.line, column: authored.column }
+  })
 }
 
 /**
@@ -262,18 +256,20 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
   const error = err instanceof Error ? err : new Error(String(err))
   const root = options.root ?? safeCwd()
   const { message } = messageAndStack(error)
-  const frames = parseFrames(error.stack ?? "")
+  const frames = remapFrames(parseFrames(error.stack ?? ""), options.remap)
   const top = topUserFrame(frames, root)
+  // The gate sees the path that will be read: a frame's text can come from a browser.
+  const source =
+    top?.file === undefined
+      ? undefined
+      : options.read === undefined
+        ? canonicalPath(top.file)
+        : top.file
   const codeframe =
-    top?.file !== undefined && top.line !== undefined
-      ? buildCodeframe(
-          options.read === undefined ? canonicalPath(top.file) : top.file,
-          top.line,
-          top.column,
-          options.read,
-        )
+    source !== undefined && top?.line !== undefined && (options.showSource?.(source) ?? true)
+      ? buildCodeframe(source, top.line, top.column, options.read)
       : undefined
-  const { code, cause, fix, docsAnchor } = classify(error.name || "Error", message)
+  const { code, cause, fix, docsAnchor, fixOptions } = classify(error.name || "Error", message)
   return {
     code,
     name: error.name || "Error",
@@ -284,6 +280,7 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
     cause,
     fix,
     docsAnchor,
+    fixOptions,
   }
 }
 

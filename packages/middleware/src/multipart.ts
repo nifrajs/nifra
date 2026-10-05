@@ -27,6 +27,9 @@ export interface MultipartResponseOptions {
 
 const TEXT = new TextEncoder()
 const BOUNDARY = /^[A-Za-z0-9'()+_,./:=? -]{1,70}$/
+// The boundary characters that are also header tokens. The rest - `( ) , / : = ?` and space - are
+// delimiters in a Content-Type parameter, so a boundary holding one must be sent quoted.
+const TOKEN_BOUNDARY = /^[A-Za-z0-9'+_.-]+$/
 
 interface ActiveReader {
   current: ReadableStreamDefaultReader<Uint8Array> | undefined
@@ -161,6 +164,8 @@ export function multipartResponse(
   })
   return new Response(stream, {
     status: options.status ?? 200,
-    headers: { "content-type": `multipart/${subtype}; boundary=${boundary}` },
+    headers: {
+      "content-type": `multipart/${subtype}; boundary=${TOKEN_BOUNDARY.test(boundary) ? boundary : `"${boundary}"`}`,
+    },
   })
 }

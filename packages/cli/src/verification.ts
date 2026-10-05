@@ -123,13 +123,16 @@ export async function collectProjectVerification(
           : {}),
         routes: reflectedRoutes,
       })
+      const mounts = composedEvidence.mounts ?? []
       if (config.capabilities !== undefined) {
         capability = await collectCapabilityProjectReport(cwd, config.source, config.capabilities, {
           routes: reflectedRoutes,
+          mounts,
         })
       }
       evidence = snapshotProjectEvidence(config.source, {
         routes: reflectedRoutes,
+        mounts,
         ...(routeAssurance !== undefined ? { assurance: routeAssurance } : {}),
         ...(capability !== undefined ? { capabilities: capability.report } : {}),
       })

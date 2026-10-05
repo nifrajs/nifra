@@ -90,7 +90,7 @@ A suspended run finishes with `outcome: { "type": "interrupt", "interrupts": [in
 }
 ```
 
-Resume with the AG-UI `resume` array. The runtime keeps state token-only - it holds no interrupt registry - so the payload must echo `metadata.continuation`, with the suspended tool's input replayed in `continuation.input`:
+Resume with the AG-UI `resume` array. The runtime keeps state token-only - it holds no interrupt registry - so the payload must echo `metadata.continuation`, with the suspended tool's input replayed in `continuation.input`. The turn keeps a digest of that input: a continuation naming another tool, effect, kind or input is refused, and an `approval` answers only an `approval` interrupt:
 
 ```jsonc
 {
@@ -114,7 +114,9 @@ The pre-interrupt form - the same `{ continuation, approval? }` object in `forwa
 Pass an `evidenceLog` to make a dropped SSE connection resumable. Evidence-derived frames then
 carry SSE `id: <seq>`; a client reconnects by re-POSTing the same body with a `Last-Event-ID`
 header and receives the missed events, rejoining a still-running turn live or replaying the stored
-terminal events - the run is never re-executed.
+terminal events - the run is never re-executed. A disconnected run keeps going and records its
+real terminal events for that reconnect. Without an `evidenceLog` nothing can rejoin a dropped
+stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 
 ```ts
 import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
@@ -124,6 +126,11 @@ mountAgUI(app, { agent, ports, evidenceLog: createMemoryAgentEvidenceLog() })
 
 The in-memory log is the single-process dev/test reference; a durable, multi-process log is an
 adapter implementing the same `AgentEvidenceLog` interface.
+
+When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
+tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
+reused `runId` finds none of them. Without it a turn id (by default the client's `runId`) works as a
+bearer capability. The owner function runs before any replay; throwing from it refuses the request.
 
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 

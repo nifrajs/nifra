@@ -37,6 +37,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 const DEFAULT_LCOV = "coverage/lcov.info"
 const DEFAULT_BASELINE = "coverage-baseline.json"
@@ -81,7 +82,7 @@ export function parseLcov(source: string): Record<string, FileCoverage> {
     const line = raw.trim()
     if (line.startsWith("SF:")) {
       flush()
-      file = line.slice(3)
+      file = line.slice(3).replaceAll("\\", "/")
     } else if (line.startsWith("FNF:")) fnFound = Number(line.slice(4))
     else if (line.startsWith("FNH:")) fnHit = Number(line.slice(4))
     else if (line.startsWith("DA:")) {
@@ -119,13 +120,13 @@ export function findRegressions(
       }
     }
   }
-  return out.sort((a, b) => a.file.localeCompare(b.file) || a.metric.localeCompare(b.metric))
+  return out.sort((a, b) => codeUnitOrder(a.file, b.file) || codeUnitOrder(a.metric, b.metric))
 }
 
 const pct = (n: number): string => `${n.toFixed(2)}%`
 
 function sortKeys(record: Record<string, FileCoverage>): Record<string, FileCoverage> {
-  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)))
+  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => codeUnitOrder(a, b)))
 }
 
 /** What a run decided: the process exit code, and the lines to print. */
@@ -139,8 +140,8 @@ export interface RatchetOutcome {
  * instead of the repo - a gate nothing can exercise is not a gate, and this one had grown a hardcoded
  * baseline path while the lcov path was already overridable. */
 export interface RatchetPaths {
-  readonly lcov?: string
-  readonly baseline?: string
+  readonly lcov?: string | undefined
+  readonly baseline?: string | undefined
 }
 
 /**
@@ -264,7 +265,8 @@ export async function run(
           `    ${r.metric}: ${pct(r.was)} -> ${pct(r.now)}`,
         ]),
         "",
-        "Add the tests, or accept the drop deliberately with `bun run check:coverage --update`",
+        "Add the tests, or accept the drop deliberately with",
+        "  bun run check:coverage --update --accept-drop",
         "(the baseline is committed, so the reduction shows up in review).",
       ],
     }

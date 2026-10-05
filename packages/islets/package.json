@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/islets",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Fine-grained signals + declarative DOM bindings for nifra islands - interactivity in ~1 KB, no framework runtime. The client companion to @nifrajs/web-vanilla.",
   "keywords": [
     "bun",
@@ -14,6 +14,9 @@
     "web"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

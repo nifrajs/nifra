@@ -189,7 +189,12 @@ export class AgentAppClient {
       ...(options?.signal ? { signal: options.signal } : {}),
     })
     for await (const event of stream) {
-      for (const view of buffer.offer(toEventView(event))) yield view
+      for (const view of buffer.offer(toEventView(event))) {
+        // The host numbers events per session, so the next turn's buffer starts after this one.
+        if (this.currentSession !== undefined && view.seq > this.currentSession.lastSeq)
+          this.currentSession = Object.freeze({ ...this.currentSession, lastSeq: view.seq })
+        yield view
+      }
     }
   }
 

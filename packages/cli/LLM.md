@@ -34,7 +34,7 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 ## Footguns
 
 - `nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.
-- One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
+- One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cloudflare/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
 - `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.
 
 ## Stable project commands
@@ -50,7 +50,9 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra openapi [--format <value>] [--path <value>] - Generate the backend OpenAPI document, including supported build-time response inference.
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
 - nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
-- nifra migrate [--from <value>] [--to <value>] [--write] [--json] [--dir <value>] - Migrate safe static Tailwind className utilities to native StyleX props.
+- nifra migrate <kind> [--from <value>] [--to <value>] [--write] [--json] [--dir <value>] - Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.
+- nifra target <target> [--json] [--dir <value>] - Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.
+- nifra types [--check] [--json] [--dir <value>] - Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.
 - nifra snapshot [--out <value>] [--json] - Write the backend API contract as a versioned JSON baseline.
 - nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.
 - nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.
@@ -60,3 +62,11 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra replay <file> - Validate a token-only verification metadata file and dispatch it against its gate.
 - nifra smoke [--fixture <value>] [--in-process] [--json] - Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.
 - nifra port [--target <value>] [--json] [--ci] [--strict] - Print a feature by deploy-target portability matrix with file:line evidence and gate against an unsupported target.
+- nifra i18n <action> <entry> [--json] [--strict] - Check i18n catalogs (imports the module exporting `locales` and `catalogs`): coverage, missing and unused keys, ICU syntax, placeholder and tag parity, plural cases, script purity, untranslated messages.
+- nifra errors [--port <value>] [--since <value>] [--category <value>] [--request <value>] [--include-stale] [--include-resolved] [--id <value>] [--prompt] [--option <value>] [--limit <value>] [--dir <value>] [--json] - Read the running dev server's errors: SSR, loader and API failures, build errors, browser runtime and hydration errors, each a structured diagnostic with its request.
+- nifra logs [--port <value>] [--since <value>] [--level <value>] [--source <value>] [--request <value>] [--grep <value>] [--limit <value>] [--dir <value>] [--json] - Read the running dev server's console output, server and browser, each line tagged with the request that wrote it.
+- nifra cdn-check <url> [--json] - Check a deployed page behind a CDN: is it served from cache, do internal or CDN-only headers reach the visitor, and does a soft navigation get page data rather than the cached document.
+- nifra db-schema <table> [--dir <value>] [--json] - Describe the development database declared as devDatabase in nifra.config.ts: tables with row estimates, columns, primary and foreign keys, and indexes, read from the catalog by queries nifra writes. Excluded tables are left out.
+- nifra db-query <sql> [--explain] [--analyze] [--dir <value>] [--json] - Run one read-only SELECT against the declared development database, in a fresh process killed at the deadline. Rows are capped, credential columns and secret values masked, and marked untrusted. explain returns the plan instead; analyze also executes it (Postgres).
+- nifra db-role [--dir <value>] [--json] - Print the SQL that creates a read-only Postgres role for the declared development database (pg_read_all_data on 14+, else GRANT SELECT, with a REVOKE per excluded table). Nothing is run.
+- nifra db-audit [--limit <value>] [--dir <value>] [--json] - Show what nifra db calls ran, from .nifra/db-audit.jsonl: redacted SQL, fingerprint, row count, duration and refusal code. Rows are never recorded.

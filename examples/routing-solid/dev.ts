@@ -9,8 +9,9 @@ import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { createDevServer } from "@nifrajs/web/dev"
 import { discoverRoutes } from "@nifrajs/web/fs"
-import { solidAdapter, solidBunPlugin } from "@nifrajs/web-solid"
-import { backend } from "./backend"
+import { solidAdapter } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const server = await createDevServer({

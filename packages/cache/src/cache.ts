@@ -11,12 +11,54 @@
  *   await cache.invalidateTag(`user:${id}`) // on write
  */
 import { MemoryCache } from "./memory-cache.ts"
-import type { Cache, CacheOptions, CacheStore, SetOptions, WrapOptions } from "./types.ts"
+import type {
+  Cache,
+  CacheEvent,
+  CacheObserver,
+  CacheOperation,
+  CacheOptions,
+  CacheOutcome,
+  CacheStore,
+  SetOptions,
+  StoredEntry,
+  WrapOptions,
+} from "./types.ts"
 
 function assertDuration(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`[nifra/cache] ${name} must be a finite non-negative number`)
   }
+}
+
+function notify(observer: CacheObserver, event: CacheEvent): void {
+  try {
+    const result: unknown = observer(event)
+    if (result instanceof Promise) result.catch(() => undefined)
+  } catch {
+    // An observer can never change a cache result.
+  }
+}
+
+function report(
+  observer: CacheObserver,
+  op: CacheOperation,
+  outcome: CacheOutcome,
+  started: number,
+  key: string | undefined,
+  tag: string | undefined,
+  tagCount: number,
+  context: object | undefined,
+): void {
+  notify(observer, {
+    op,
+    outcome,
+    startedAt: performance.timeOrigin + started,
+    durationMs: performance.now() - started,
+    key,
+    tag,
+    tagCount,
+    context,
+  })
 }
 
 /** Create a cache over the given (or a fresh in-memory) store. */
@@ -31,6 +73,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     ((error, key) =>
       console.error(`[nifra/cache] revalidate ${JSON.stringify(key)} failed:`, error))
 
+  const observer = options.observer
   // Single-flight: concurrent loads for the same key share one promise (miss stampede + SWR dedup).
   const inflight = new Map<string, Promise<unknown>>()
 
@@ -70,9 +113,23 @@ export function createCache(options: CacheOptions = {}): Cache {
     return p
   }
 
-  function revalidate(key: string, loader: () => unknown, opts: WrapOptions): void {
+  function revalidate(
+    key: string,
+    loader: () => unknown,
+    opts: WrapOptions,
+    context: object | undefined,
+  ): void {
     if (inflight.has(key)) return // a refresh is already running
-    void load(key, loader, opts).catch((error) => {
+    const started = observer === undefined ? 0 : performance.now()
+    const refresh = load(key, loader, opts)
+    if (observer !== undefined) {
+      const tagCount = opts.tags?.length ?? 0
+      refresh.then(
+        () => report(observer, "revalidate", "ok", started, key, undefined, tagCount, context),
+        () => report(observer, "revalidate", "error", started, key, undefined, tagCount, context),
+      )
+    }
+    void refresh.catch((error) => {
       try {
         onError(error, key)
       } catch {
@@ -89,35 +146,129 @@ export function createCache(options: CacheOptions = {}): Cache {
     const entry = await store.get(key)
     if (entry !== undefined) {
       if (now() < entry.staleAt) return entry.value as Awaited<T> // fresh hit
-      revalidate(key, loader as () => unknown, opts) // stale-but-live → serve stale, refresh in background
+      revalidate(key, loader as () => unknown, opts, undefined) // stale-but-live → serve stale, refresh in background
       return entry.value as Awaited<T>
     }
     return (await load(key, loader as () => unknown, opts)) as Awaited<T> // miss → load (single-flight)
   }
 
+  const readOutcome = (entry: StoredEntry | undefined): CacheOutcome =>
+    entry === undefined ? "miss" : now() < entry.staleAt ? "hit" : "stale"
+
+  // A separate surface rather than branches in the plain one, so a cache without an observer runs
+  // exactly the code it ran before observers existed.
+  function observed(observer: CacheObserver, context: object | undefined): Cache {
+    const settle = async <T>(
+      op: CacheOperation,
+      key: string | undefined,
+      tag: string | undefined,
+      tagCount: number,
+      run: () => Promise<T>,
+      success: CacheOutcome,
+    ): Promise<T> => {
+      const started = performance.now()
+      let outcome: CacheOutcome = "error"
+      try {
+        const value = await run()
+        outcome = success
+        return value
+      } finally {
+        report(observer, op, outcome, started, key, tag, tagCount, context)
+      }
+    }
+    const read = async <T>(op: "get" | "has", key: string, pick: (e?: StoredEntry) => T) => {
+      const started = performance.now()
+      let outcome: CacheOutcome = "error"
+      try {
+        const entry = await store.get(key)
+        outcome = readOutcome(entry)
+        return pick(entry)
+      } finally {
+        report(observer, op, outcome, started, key, undefined, 0, context)
+      }
+    }
+    return {
+      get: <T = unknown>(key: string): Promise<T | undefined> =>
+        read("get", key, (entry) =>
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the store keeps values untyped; T is the caller's claim for this key, exactly as in the plain get().
+          entry === undefined ? undefined : (entry.value as T),
+        ),
+      has: (key) => read("has", key, (entry) => entry !== undefined),
+      set: (key, value, opts) =>
+        settle("set", key, undefined, opts?.tags?.length ?? 0, () => set(key, value, opts), "ok"),
+      async wrap<T>(key: string, loader: () => T, opts: WrapOptions = {}): Promise<Awaited<T>> {
+        const started = performance.now()
+        let outcome: CacheOutcome = "error"
+        try {
+          const entry = await store.get(key)
+          if (entry !== undefined) {
+            outcome = readOutcome(entry)
+            if (outcome === "stale") revalidate(key, loader, opts, context)
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the store keeps values untyped; a wrap of this key stored what a loader of the caller's T returned.
+            return entry.value as Awaited<T>
+          }
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: load() resolves to what this loader returned, or what a concurrent wrap of the same key loaded for the same T.
+          const value = (await load(key, loader, opts)) as Awaited<T>
+          outcome = "miss"
+          return value
+        } finally {
+          report(
+            observer,
+            "wrap",
+            outcome,
+            started,
+            key,
+            undefined,
+            opts.tags?.length ?? 0,
+            context,
+          )
+        }
+      },
+      delete: (key) =>
+        settle("delete", key, undefined, 0, () => Promise.resolve(store.delete(key)), "ok"),
+      invalidateTag: (tag) =>
+        settle(
+          "invalidateTag",
+          undefined,
+          tag,
+          1,
+          () => Promise.resolve(store.invalidateTag(tag)),
+          "ok",
+        ),
+      clear: () =>
+        settle("clear", undefined, undefined, 0, () => Promise.resolve(store.clear()), "ok"),
+      for: bind,
+    }
+  }
+
   const readToken = options.capabilities?.read ?? "cache.read"
   const writeToken = options.capabilities?.write ?? "cache.write"
 
-  const plain: Cache = {
-    get,
-    has,
-    set,
-    wrap,
-    delete: (key) => Promise.resolve(store.delete(key)),
-    invalidateTag: (tag) => Promise.resolve(store.invalidateTag(tag)),
-    clear: () => Promise.resolve(store.clear()),
-    for: bind,
-  }
+  const plain: Cache =
+    observer === undefined
+      ? {
+          get,
+          has,
+          set,
+          wrap,
+          delete: (key) => Promise.resolve(store.delete(key)),
+          invalidateTag: (tag) => Promise.resolve(store.invalidateTag(tag)),
+          clear: () => Promise.resolve(store.clear()),
+          for: bind,
+        }
+      : observed(observer, undefined)
 
   // Built per call rather than cached per context: a cache keyed by context would hold every request's
   // context object for the process lifetime, which is a leak with a request body attached to it.
   function bind(context: object): Cache {
     const beacon = options.beacon
-    if (beacon === undefined) {
+    if (beacon === undefined && observer === undefined) {
       throw new Error(
-        "@nifrajs/cache: for(context) needs a beacon - pass `beacon: useCapability` (from @nifrajs/core/capabilities) to createCache",
+        "@nifrajs/cache: for(context) needs a beacon or an observer - pass `beacon: useCapability` (from @nifrajs/core/capabilities) or `observer` to createCache",
       )
     }
+    const base = observer === undefined ? plain : observed(observer, context)
+    if (beacon === undefined) return base
     // A refused capability has to surface as a REJECTION, not a synchronous throw: every method here
     // returns a promise, and a caller who writes `.catch(…)` instead of `try` would otherwise miss it
     // entirely - turning a fail-closed gate into an unhandled crash.
@@ -133,16 +284,16 @@ export function createCache(options: CacheOptions = {}): Cache {
     const WRITE = [writeToken]
     return {
       get: <T = unknown>(key: string): Promise<T | undefined> =>
-        guard(READ, () => plain.get<T>(key)),
-      has: (key) => guard(READ, () => plain.has(key)),
+        guard(READ, () => base.get<T>(key)),
+      has: (key) => guard(READ, () => base.has(key)),
       set: <T>(key: string, value: T, opts?: SetOptions): Promise<void> =>
-        guard(WRITE, () => plain.set(key, value, opts)),
+        guard(WRITE, () => base.set(key, value, opts)),
       // Both, because a miss writes and which one happens is not knowable before the call.
       wrap: <T>(key: string, loader: () => T, opts?: WrapOptions): Promise<Awaited<T>> =>
-        guard([readToken, writeToken], () => plain.wrap(key, loader, opts)),
-      delete: (key) => guard(WRITE, () => plain.delete(key)),
-      invalidateTag: (tag) => guard(WRITE, () => plain.invalidateTag(tag)),
-      clear: () => guard(WRITE, () => plain.clear()),
+        guard([readToken, writeToken], () => base.wrap(key, loader, opts)),
+      delete: (key) => guard(WRITE, () => base.delete(key)),
+      invalidateTag: (tag) => guard(WRITE, () => base.invalidateTag(tag)),
+      clear: () => guard(WRITE, () => base.clear()),
       for: bind,
     }
   }

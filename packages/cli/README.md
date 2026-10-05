@@ -47,7 +47,9 @@ Ed25519 sidecar, so the private key can stay inside KMS/HSM infrastructure.
 
 At promotion time, `nifra manifest diff previous.json candidate.json` hash-verifies both files and exits
 non-zero on a breaking API change, removed assurance, expanded effect, lost provenance coverage, or
-increased data sensitivity. This is separate from the frontend asset `dist/manifest.json`.
+increased data sensitivity. A new route counts as well: one that declares a capability or returns `pii`
+or `secret` data blocks promotion as the same change to an existing route would. This is separate from
+the frontend asset `dist/manifest.json`.
 
 ## `nifra verify` - verification tiers
 
@@ -55,7 +57,9 @@ increased data sensitivity. This is separate from the frontend asset `dist/manif
 It is not a release claim. `nifra verify` runs the ordered local verification plan; its default mode
 is the feedback plan and reports which release gates it omits. CI and release automation should run
 `nifra verify --release` (or `bun run check:release`), which includes build, coverage, corpus,
-consumer, publish, and cross-runtime gates. Run `nifra port --ci --target <target>` for an app's
+consumer, publish, and cross-runtime gates. Each gate runs a `package.json` script (`bun run lint`,
+`bun run check:docs`, ...); a gate whose script the project does not declare is reported as
+`undeclared` and does not fail the run. Run `nifra port --ci --target <target>` for an app's
 resolved deployment target; CI never guesses a target when none is configured.
 
 ## `nifra check` - the drift gate (run as "done")
@@ -84,6 +88,15 @@ green check means the frontend and backend can't have silently diverged.
 For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simple string-literal calls
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
+
+## `nifra i18n check` - the catalog gate
+
+`nifra i18n check [entry]` imports the module that exports your `locales` (from `defineLocales`) and
+`catalogs` - unlike `nifra check`, it runs that code - and reports per-locale coverage, missing and
+unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural cases
+the locale's grammar needs, script purity (letters from a script the locale does not write in), and
+untranslated messages. It exits 1 on an error, `--strict` also fails on warnings, and `--json` prints
+the result. The checks are `checkCatalogs()` from `@nifrajs/i18n/check`, usable in a test.
 
 ## `nifra migrate --from tailwind --to stylex`
 
@@ -120,7 +133,7 @@ an agent can act on the project, not just read about it. Core tools:
 - **`nifra_context`** - the same project surface as above.
 - **`nifra_routes`** / **`nifra_openapi`** - structured API route contracts and an OpenAPI 3.1 document.
 - **`nifra_docs`** / **`nifra_example`** - token-efficient docs slices and verified code snippets.
-- **`nifra_scaffold`** - map a URL to the correct `routes/` file; optionally write safe JSX stubs.
+- **`nifra_scaffold`** - map a URL to the correct `routes/` files and a route pair (the page + its `.backend.ts` loader with an output schema); optionally write them.
 - **`nifra_run`** - run HTTP requests through this project's backend and get structured results
   (status, headers, parsed body, and any thrown error). The backend is re-loaded in a fresh process
   each call by default, so it reflects the agent's latest edits - the write → run → see-the-failure
@@ -163,6 +176,21 @@ Claude Code:
 ```sh
 claude mcp add nifra -- nifra mcp
 ```
+
+The server answers for the nifra the project installs. When the project has its own `@nifrajs/cli` at
+a different version than the `nifra` the client spawned (a global install, say), the session is handed
+to `./node_modules/.bin/nifra mcp`. When that is impossible, `nifra_check`, `nifra_types`,
+`nifra_docs`, `nifra_example`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of
+describing a different release.
+
+The server runs none of the project's code and keeps none of its `.env`. Every tool, resource and
+prompt that loads the app, including the ones the app declares with `.tool()`, runs in a fresh process
+started in the project's directory, which loads that directory's `.env` files, answers and exits; a
+config that exits or hangs fails only that call. Values from the environment and from
+`nifra mcp --env-file <path>` reach every such process. In a monorepo each app's tools see that app's
+`.env`, not the root's. A call that loads the app costs one process start, and `warm: true` on
+`nifra_run`/`nifra_render` keeps one worker with the app loaded until a source file changes. Details
+and limits: [Where your code and secrets run](https://nifra.dev/docs/agents#project-code).
 
 ## Structured verification
 

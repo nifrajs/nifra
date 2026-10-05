@@ -12,7 +12,7 @@ both renderers *and* all five runtimes. `createWebApp` + the entries are identic
   build on the edge (`browser`) targets (the `worker` condition would too but segfaults Bun.build), and
   the `node`/`solid` conditions resolve it on the Node target.
 
-Everything else mirrors the React example: a shared `app.ts` + `cloudflare`/`node`/`deno`/`vercel`
+Everything else mirrors the React example: a shared `backend/web-app.ts` + `cloudflare`/`node`/`deno`/`vercel`
 entries + one `build.ts`; assets served by the platform on edge, from disk on Node/Deno.
 
 ## Run / verify each runtime

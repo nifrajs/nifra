@@ -1,7 +1,8 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { METHODS, type Middleware } from "@nifrajs/core/server"
+import { isSameOriginRequest, METHODS, type Middleware } from "@nifrajs/core/server"
 import {
   base64UrlEncode,
+  guardName,
   hmacSha256,
   jsonError,
   parseCookies,
@@ -35,9 +36,27 @@ export interface CsrfOptions {
   readonly cookie?: string
   /** Header carrying the same signed token. Default `"x-csrf-token"`. */
   readonly header?: string
+  /**
+   * Form field that may carry the token when the header is absent, so a plain HTML `<form>` (no
+   * script to set a header) can submit - e.g. `field: "_csrf"` with
+   * `<input type="hidden" name="_csrf" value="...">`. Read from `application/x-www-form-urlencoded`
+   * and `multipart/form-data` bodies only, through a clone, so the handler still reads the body.
+   * Unset (default), only the header is accepted.
+   *
+   * A cross-site form can set any field but never a custom header, so keep `checkOrigin` on with a
+   * field: the Origin check is what stops a site that can plant a cookie on your domain (a sibling
+   * subdomain) from pairing it with a matching field.
+   */
+  readonly field?: string
+  /**
+   * Largest body scanned for {@link field}, in bytes. Default 64 KiB. A bigger form (a file upload)
+   * fails closed - send the header, or raise this for that app.
+   */
+  readonly fieldMaxBytes?: number
   /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */
   readonly methods?: readonly string[]
-  /** Allowed request origins. Default: same-origin derived from the request URL. */
+  /** Allowed request origins. Default: same host as the request URL, where an `https:` Origin may
+   * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). */
   readonly origins?: readonly string[]
   /** Check Origin/Referer on protected requests. Default true. */
   readonly checkOrigin?: boolean
@@ -49,17 +68,92 @@ function protectedMethod(method: string, configured: Set<string> | undefined): b
   return configured !== undefined ? configured.has(method) : !SAFE_METHODS.has(method)
 }
 
+/**
+ * An explicit allowlist compares exact origins. The same-origin default goes through core's
+ * {@link isSameOriginRequest} instead of comparing against `new URL(req.url).origin`: behind a
+ * TLS-terminating proxy the request URL says `http:` while the browser reports `https:`, and an exact
+ * compare rejected every protected request there.
+ */
 function originAllowed(req: Request, origins: Set<string> | undefined): boolean {
-  const allowed = origins ?? new Set([new URL(req.url).origin])
+  const allows = (candidate: string): boolean =>
+    origins !== undefined ? origins.has(candidate) : isSameOriginRequest(candidate, req)
   const origin = req.headers.get("origin")
-  if (origin !== null) return allowed.has(origin)
+  if (origin !== null) return allows(origin)
 
   const referer = req.headers.get("referer")
   if (referer === null) return false
   try {
-    return allowed.has(new URL(referer).origin)
+    return allows(new URL(referer).origin)
   } catch {
     return false
+  }
+}
+
+function mediaEssence(contentType: string): string {
+  const semi = contentType.indexOf(";")
+  return (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
+}
+
+/** Up to `maxBytes` of a request clone, or `null` when it is longer (or fails mid-read). */
+async function readAtMost(req: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const body = req.clone().body
+  if (body === null) return null
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        // A clone tees the request: cancel both branches on terminal rejection, without waiting
+        // for the unread branch or an upstream cleanup promise that may never settle.
+        void Promise.allSettled([reader.cancel(), req.body?.cancel()])
+        return null
+      }
+      chunks.push(value)
+    }
+  } catch {
+    return null
+  } finally {
+    reader.releaseLock()
+  }
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return out
+}
+
+/**
+ * The token a form body carries in `field`, read from a clone so the handler keeps the original body.
+ * Anything unexpected - another media type, an oversized or unreadable body, a file part under the
+ * field's name - yields `null`, which the caller treats as a missing token.
+ */
+async function formFieldToken(
+  req: Request,
+  field: string,
+  maxBytes: number,
+): Promise<string | null> {
+  if (req.body === null) return null
+  const contentType = req.headers.get("content-type") ?? ""
+  const essence = mediaEssence(contentType)
+  const urlencoded = essence === "application/x-www-form-urlencoded"
+  if (!urlencoded && essence !== "multipart/form-data") return null
+  const declared = req.headers.get("content-length")
+  if (declared !== null && !(Number(declared) <= maxBytes)) return null
+  const bytes = await readAtMost(req, maxBytes)
+  if (bytes === null) return null
+  try {
+    if (urlencoded) return new URLSearchParams(new TextDecoder().decode(bytes)).get(field)
+    const form = await new Response(bytes, { headers: { "content-type": contentType } }).formData()
+    const value = form.get(field)
+    return typeof value === "string" ? value : null
+  } catch {
+    return null
   }
 }
 
@@ -93,27 +187,38 @@ export async function verifyCsrfToken(token: string, secret: CsrfSecret): Promis
 
 /**
  * Signed double-submit CSRF protection. A protected request must carry the same signed token in a
- * cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
+ * cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and
+ * must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
  */
 export function csrf(options: CsrfOptions): Middleware {
   const keys = csrfKeys(options.secret)
   const cookie = options.cookie ?? "csrf-token"
   const header = (options.header ?? "x-csrf-token").toLowerCase()
+  const field = options.field
+  if (field !== undefined && field.trim() === "") throw new Error("csrf: field must not be empty")
+  const fieldMaxBytes = options.fieldMaxBytes ?? 64 * 1024
+  if (!Number.isInteger(fieldMaxBytes) || fieldMaxBytes < 1) {
+    throw new Error("csrf: fieldMaxBytes must be a positive integer")
+  }
   const methods =
     options.methods !== undefined ? new Set(options.methods.map((m) => m.toUpperCase())) : undefined
   const origins = options.origins !== undefined ? new Set(options.origins) : undefined
   const checkOrigin = options.checkOrigin !== false
 
   const middleware: Middleware = {
-    name: "csrf",
+    name: guardName("csrf"),
     async onRequest(req) {
       if (!protectedMethod(req.method, methods)) return undefined
       if (checkOrigin && !originAllowed(req, origins)) return jsonError(403, "csrf_failed")
 
       const cookieToken = parseCookies(req.headers.get("cookie"))[cookie]
-      const headerToken = req.headers.get(header)
-      if (cookieToken === undefined || headerToken === null) return jsonError(403, "csrf_failed")
-      if (!(await timingSafeEqualString(cookieToken, headerToken))) {
+      if (cookieToken === undefined) return jsonError(403, "csrf_failed")
+      // The header wins; the body is only read (from a clone) when a form had no way to set one.
+      const requestToken =
+        req.headers.get(header) ??
+        (field === undefined ? null : await formFieldToken(req, field, fieldMaxBytes))
+      if (requestToken === null) return jsonError(403, "csrf_failed")
+      if (!(await timingSafeEqualString(cookieToken, requestToken))) {
         return jsonError(403, "csrf_failed")
       }
       return (await verifyCsrfToken(cookieToken, keys)) ? undefined : jsonError(403, "csrf_failed")

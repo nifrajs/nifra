@@ -1,0 +1,109 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+pattern top_type() {
+  or {
+    r"unknown",
+    r"any"
+  }
+}
+
+pattern record_type() {
+  or {
+    r"Record<\s*[A-Za-z |]+,\s*unknown,?\s*>",
+    r"Record<\s*[A-Za-z |]+,\s*any,?\s*>",
+    r"Readonly<\s*Record<\s*[A-Za-z |]+,\s*unknown,?\s*>,?\s*>",
+    r"Readonly<\s*Record<\s*[A-Za-z |]+,\s*any,?\s*>,?\s*>",
+    r"\{\s*\[\w+:\s*[A-Za-z |]+\]:\s*unknown;?\s*\}",
+    r"\{\s*\[\w+:\s*[A-Za-z |]+\]:\s*any;?\s*\}"
+  }
+}
+
+pattern broad_type() {
+  or {
+    top_type(),
+    r"object",
+    record_type()
+  }
+}
+
+pattern object_type() {
+  or {
+    TsArrayType(),
+    TsTupleType(),
+    TsFunctionType(),
+    TsConstructorType(),
+    TsMappedType(),
+    TsNonPrimitiveType(),
+    TsObjectType(members=not []),
+    TsTypeOperatorType(ty=or {
+      TsArrayType(),
+      TsTupleType()
+    })
+  }
+}
+
+pattern narrower_record_type() {
+  and { not record_type(),
+  or {
+    TsObjectType(members=some not TsIndexSignatureTypeMember()),
+    r"Record<[\s\S]+>",
+    r"Readonly<\s*Record<[\s\S]+>,?\s*>"
+  } }
+}
+
+// What the binding provably held before it was widened: a literal, a constructor, or a precise assertion.
+pattern known_value() {
+  or {
+    JsObjectExpression(),
+    JsArrayExpression(),
+    JsNewExpression(),
+    JsTemplateExpression(),
+    JsArrowFunctionExpression(),
+    JsFunctionExpression(),
+    JsClassExpression(),
+    JsStringLiteralExpression(),
+    JsNumberLiteralExpression(),
+    JsBooleanLiteralExpression(),
+    JsNullLiteralExpression(),
+    JsBigintLiteralExpression(),
+    JsRegexLiteralExpression(),
+    TsAsExpression(ty=not broad_type()),
+    TsSatisfiesExpression()
+  }
+}
+
+// A `const` widened to unknown, object, or a loose record, then asserted back to something narrower in
+// the same scope. Identifier initializers are not followed, so `const a = b` never counts as evidence.
+or {
+  TsAsExpression(expression=$name, ty=$narrow),
+  TsTypeAssertionExpression(expression=$name, ty=$narrow)
+} as $assertion where {
+  $name <: JsIdentifierExpression(),
+  $narrow <: not or {
+    r"const",
+    broad_type()
+  },
+  $assertion <: within or {
+    JsFunctionBody(),
+    JsModule(),
+    JsScript()
+  } as $scope ,
+  $scope <: contains JsVariableDeclaration(declarators=some JsVariableDeclarator(id=$name, variable_annotation=$annotation, initializer=JsInitializerClause(expression=$init))) as $declaration,
+  $declaration <: r"const\s[\s\S]*",
+  or {
+    and {
+      $annotation <: TsTypeAnnotation(ty=$broad),
+      $broad <: broad_type(),
+      $init <: known_value()
+    },
+    $init <: TsAsExpression(expression=known_value(), ty=$broad)
+  },
+  $broad <: broad_type(),
+  or {
+    $broad <: top_type(),
+    and { $broad <: r"object", $narrow <: object_type() },
+    and { $broad <: record_type(), $narrow <: narrower_record_type() }
+  },
+  register_diagnostic(span=$assertion, message="This binding discards type evidence and later recreates it with an assertion. Keep the precise type from initialization through use; parse boundary input once.", severity="info")
+}

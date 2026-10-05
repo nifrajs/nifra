@@ -18,6 +18,7 @@ import {
   evidenceProvenance,
   validEvidence,
 } from "./internal/route-assurance.ts"
+import { NIFRA_BACKEND_EVIDENCE } from "./mount.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
 
@@ -39,6 +40,11 @@ export interface SchemaReflection {
   readonly jsonSchema: JsonSchema | undefined
   /** Top-level object fields, or `undefined` when the JSON Schema is absent/non-object. */
   readonly fields: readonly ReflectedSchemaField[] | undefined
+  /**
+   * The media types a body schema reads through a parser of its own (`bodyParser`), beyond the
+   * JSON and urlencoded bodies every body schema reads. Absent when it declares none.
+   */
+  readonly mediaTypes?: readonly string[]
 }
 
 export interface ReflectedRouteSchema {
@@ -51,6 +57,8 @@ export interface ReflectedRouteSchema {
   readonly bodyLimitReason?: string
   /** Request-header schema; names are normalized to lower-case at runtime. */
   readonly headers?: SchemaReflection
+  /** Request-cookie schema, validated against the parsed `Cookie` header. */
+  readonly cookies?: SchemaReflection
   readonly body?: SchemaReflection
   readonly query?: SchemaReflection
   /** Path-params schema - constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */
@@ -152,6 +160,24 @@ const fieldsOf = (schema: JsonSchema | undefined): readonly ReflectedSchemaField
   return fields
 }
 
+// The brand a body schema carries its own reader under. Spelled here rather than imported so that
+// reflection does not pull the body lane into a bundle that only describes routes.
+const BODY_READER = Symbol.for("nifra.body.schemaReader")
+
+const mediaTypesOf = (value: unknown): readonly string[] | undefined => {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined
+  try {
+    const reader = (value as Record<symbol, unknown>)[BODY_READER]
+    if (typeof reader !== "function") return undefined
+    const declared = (reader as { readonly mediaTypes?: unknown }).mediaTypes
+    if (!Array.isArray(declared)) return undefined
+    const types = declared.filter((type): type is string => typeof type === "string")
+    return types.length > 0 ? Object.freeze(types) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.
  * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
@@ -159,7 +185,13 @@ const fieldsOf = (schema: JsonSchema | undefined): readonly ReflectedSchemaField
 export function reflectSchema(value: unknown): SchemaReflection {
   const standard = standardOf(value)
   const jsonSchema = jsonSchemaOf(value, standard)
-  return { standard, jsonSchema, fields: fieldsOf(jsonSchema) }
+  const mediaTypes = mediaTypesOf(value)
+  return {
+    standard,
+    jsonSchema,
+    fields: fieldsOf(jsonSchema),
+    ...(mediaTypes !== undefined ? { mediaTypes } : {}),
+  }
 }
 
 const routeCandidates = (source: unknown): readonly unknown[] => {
@@ -197,6 +229,7 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
       ? { bodyLimitReason: schema.bodyLimitReason }
       : {}),
     ...(schema.headers !== undefined ? { headers: reflectSchema(schema.headers) } : {}),
+    ...(schema.cookies !== undefined ? { cookies: reflectSchema(schema.cookies) } : {}),
     ...(schema.body !== undefined ? { body: reflectSchema(schema.body) } : {}),
     ...(schema.query !== undefined ? { query: reflectSchema(schema.query) } : {}),
     ...(schema.params !== undefined ? { params: reflectSchema(schema.params) } : {}),
@@ -264,4 +297,40 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
     })
   }
   return reflected
+}
+
+/** A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see. */
+export interface ReflectedMount {
+  /** The mount prefix with `/*`: the child serves every path under it. */
+  readonly path: string
+  /** Why the child is not analyzed, as declared by `opaque` on the mount. */
+  readonly opaque?: string
+}
+
+/**
+ * The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app
+ * publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach
+ * reflection through that evidence. Anything that is not a nifra server yields an empty list.
+ */
+export function reflectMounts(source: unknown): readonly ReflectedMount[] {
+  // `fetchMounts` is the server's own mount table, read here rather than exposed through a method so
+  // apps that never reflect pay nothing for it.
+  const mounts = recordOf(source)?.fetchMounts
+  if (!Array.isArray(mounts)) return []
+  const reflected: ReflectedMount[] = []
+  for (const candidate of mounts) {
+    const mount = recordOf(candidate)
+    if (typeof mount?.path !== "string") continue
+    const app = mount.app as { readonly [NIFRA_BACKEND_EVIDENCE]?: unknown } | undefined
+    if (typeof app?.[NIFRA_BACKEND_EVIDENCE] === "function") continue
+    // Checked here, at analysis time, so serving pays nothing: a blank reason is no reason.
+    const opaque = typeof mount.opaque === "string" ? mount.opaque.trim() || undefined : undefined
+    reflected.push(
+      Object.freeze({
+        path: mount.path === "/" ? "/*" : `${mount.path}/*`,
+        ...(opaque !== undefined ? { opaque } : {}),
+      }),
+    )
+  }
+  return reflected.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }

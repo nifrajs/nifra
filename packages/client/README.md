@@ -20,10 +20,19 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
 - **Zero codegen.** Types flow from `typeof app` (coupled) - or from a contract via
   `client(contract, url)` (decoupled), with no dependency on the server's source.
 - **Proxy chaining.** Path segments are properties, `:params` are calls, verbs are
-  methods: `api.users({ id }).posts({ postId }).get()`. The root is `api.index`.
+  methods: `api.users({ id }).posts({ postId }).get()`. The root is `api.index`. A segment that
+  is part literal, part param (`/files/:name.json`) is a call with the segment as it is sent:
+  `api.files("report.json").get()`.
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
-  pass `{ query, headers, signal }` as call options.
+  pass `{ query, headers, signal }` as call options. A call that gets no HTTP answer has
+  `status: 0` and the code `network_error`, `timeout`, `response_too_large` or `invalid_path`.
+- **A param value is never a path step.** `.` and `..` are resolved by URL parsing in every
+  encoding, so `api.users({ id: ".." }).delete()` sends nothing and returns `invalid_path`
+  instead of reaching another route. `.subscribe()` reports it through `onError`; `.ws()` throws.
+- **Files.** A body that holds a `File` or `Blob` is sent as `multipart/form-data`, typed from the
+  route's `t.form`: `api.avatars.post({ avatar: file, caption: "me" })`. `inProcessClient` and
+  `testClient` send the same form with its `Content-Length`, as a network peer would.
 - **Environment-agnostic.** No Bun/Node APIs - runs in the browser, workers, or any
   runtime with `fetch`.
 

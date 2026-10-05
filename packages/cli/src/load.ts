@@ -1,38 +1,43 @@
 /**
  * Zero-config app discovery. The CLI reads a few conventions from the project root:
  *   - `routes/`         - the file-based routes (per `@nifrajs/web/fs`).
- *   - `nifra.config.ts`  - the CLI's framework wiring (see {@link NifraFramework}); `framework.ts` is
- *                         used as a fallback. One of the two is required.
- *   - `backend.ts`      - exports `backend` (a `@nifrajs/core` server, the contract). Optional.
+ *   - `nifra.config.ts`  - the CLI's framework wiring (see {@link NifraFramework});
+ * `backend/framework.ts` is                         used as a fallback. One of the two is required.
+ *   - `backend/app.ts`      - exports `backend` (a `@nifrajs/core` server, the contract). Optional.
  *
- * Why two filenames: a multi-target app's edge entry (`_worker.ts`) imports `framework.ts` for the
- * render adapter, so `framework.ts` must stay edge-bundlable - it can't reference Vite plugins or the
- * SFC compiler (Bun would pull them into the `target:"browser"` worker and fail on `child_process`).
- * `nifra.config.ts` holds that build/dev tooling instead: it's imported ONLY by this CLI (which runs on
- * Bun), so its Vite plugin + SFC-compiler imports (`@vitejs/plugin-vue`, `@nifrajs/web-vue/plugin`) never
- * reach the edge bundle. A simple single-target app with no edge build can put it all in `framework.ts`.
+ * Why two filenames: a multi-target app's edge entry (`_worker.ts`) imports `backend/framework.ts`
+ * for the render adapter, so `backend/framework.ts` must stay edge-bundlable - it can't reference
+ * Vite plugins or the SFC compiler (Bun would pull them into the `target:"browser"` worker and fail
+ * on `child_process`). `nifra.config.ts` holds that build/dev tooling instead: it's imported ONLY
+ * by this CLI (which runs on Bun), so its Vite plugin + SFC-compiler imports (`@vitejs/plugin-vue`,
+ * `@nifrajs/web-vue/plugin`) never reach the edge bundle. A simple single-target app with no edge
+ * build can put it all in `backend/framework.ts`.
  */
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
-import type { CssLoadingMode } from "@nifrajs/web"
+import type { CreateWebAppOptions, CssLoadingMode } from "@nifrajs/web"
+import type { SecretExemption } from "@nifrajs/web/build"
+import { assertCurrentLayout, BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
 /**
- * A plugin list - either an array, or a **thunk** that returns one (optionally async). Both forms are
- * accepted; {@link resolvePlugins} normalizes them. The thunk is just a convenience for deferring a
- * plugin's construction - it does NOT make a plugin edge-safe (Bun.build follows a dynamic `import()`
- * even from an unused export, so a Vite/compiler import in an edge-bundled file fails regardless). Edge
- * safety comes from WHERE the config lives: keep these fields in `nifra.config.ts` (CLI-only), not in
- * the edge-imported `framework.ts`. See the module header.
+ * A plugin list - either an array, or a **thunk** that returns one (optionally async). Both forms
+ * are accepted; {@link resolvePlugins} normalizes them. The thunk is just a convenience for
+ * deferring a plugin's construction - it does NOT make a plugin edge-safe (Bun.build follows a
+ * dynamic `import()` even from an unused export, so a Vite/compiler import in an edge-bundled file
+ * fails regardless). Edge safety comes from WHERE the config lives: keep these fields in
+ * `nifra.config.ts` (CLI-only), not in the edge-imported `backend/framework.ts`. See the module
+ * header.
  */
 export type PluginsField =
   | readonly unknown[]
   | (() => readonly unknown[] | Promise<readonly unknown[]>)
 
 /**
- * The CLI's framework wiring - exported from `nifra.config.ts` (or `framework.ts` as a fallback).
- * `create-nifra` generates it. Only `adapter` + `clientModule` are required; the plugin/condition
- * fields are framework-specific extras (Vue/Svelte/Solid need them; React/Preact don't).
+ * The CLI's framework wiring - exported from `nifra.config.ts` (or `backend/framework.ts` as a
+ * fallback). `create-nifra` generates it. Only `adapter` + `clientModule` are required; the
+ * plugin/condition fields are framework-specific extras (Vue/Svelte/Solid need them; React/Preact
+ * don't).
  */
 export interface NifraFramework {
   /** The render adapter, e.g. `reactAdapter` from `@nifrajs/web-react`. */
@@ -42,7 +47,7 @@ export interface NifraFramework {
   /** App-level middleware applied to the web app before its page routes are declared -
    * e.g. `(app) => app.use(securityHeaders())`. Runs ahead of the `api`/`mounts` hooks.
    *
-   * MUST be exported from `framework.ts`, not `nifra.config.ts`: `nifra build` emits a
+   * MUST be exported from `backend/framework.ts`, not `nifra.config.ts`: `nifra build` emits a
    * server entry that imports it, and that entry is edge-bundled. See the module header. */
   readonly use?: (app: never) => void
   /** Vite plugins for `nifra dev`'s HMR, e.g. `[react()]` / `() => import("@vitejs/plugin-vue")…`. */
@@ -57,14 +62,88 @@ export interface NifraFramework {
   readonly conditions?: readonly string[]
   /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */
   readonly define?: Readonly<Record<string, string>>
+  /** The deploy target `nifra build` emits without `--target` (default `"bun"`); `nifra target <t>`
+   * rewrites it. */
+  readonly target?: string
+  /** `"platform"` makes a `cloudflare` / `vercel` build read `c.clientIp` from the header that
+   * platform's edge overwrites (`cf-connecting-ip` / `x-real-ip`). Left out, an edge build has no
+   * caller address, so a per-caller `rateLimit` refuses every request. Declare it only while that edge
+   * is the sole way in: served any other way the header is whatever the client sent. Self-hosting
+   * targets use the socket peer either way. */
+  readonly clientIp?: "platform"
+  /** `nifra dev` settings. `indicator: false` turns the in-page issues badge off for every run
+   * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`. */
+  readonly dev?: { readonly indicator?: boolean }
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
   readonly publicEnvPrefix?: string
+  /** Reviewed false positives of `nifra build`'s secret scan, each `{ rule, file, reason }` (or
+   * `{ rule: "private-env-value", env, reason }`). There is no exemption by value. */
+  readonly secretExemptions?: readonly SecretExemption[]
   /** Vite production CSS output policy. `false` emits one aggregate stylesheet for the whole client. */
   readonly cssCodeSplit?: boolean
   /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
   readonly cssLoading?: CssLoadingMode
+  /** Path `backend/app.ts`'s backend is served at (default `"/api"`; `""` turns the mount off). A
+   * page file under it can never render, so the app refuses to start and `nifra build` refuses to
+   * build.
+   *
+   * The fields from here down reach the generated server entry, so like `use` they MUST be exported
+   * from `backend/framework.ts` (re-export them from `nifra.config.ts` when both exist). */
+  readonly apiPrefix?: string
+  /** Strip {@link apiPrefix} before the backend sees the path, for a backend that declares its routes
+   * without it. Default `false`. */
+  readonly apiStrip?: boolean
+  /** Apps mounted ahead of page routing - an auth handler, a webhook receiver, a backend served at an
+   * extra path. See `createWebApp`'s `mounts`. */
+  readonly mounts?: CreateWebAppOptions["mounts"]
+  /** A hash-based Content-Security-Policy from `createCspPolicy`. Exclusive with {@link nonce}. */
+  readonly csp?: CreateWebAppOptions["csp"]
+  /** A per-request CSP nonce resolver. Exclusive with {@link csp}. */
+  readonly nonce?: CreateWebAppOptions["nonce"]
+}
+
+/** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
+ * entry, in one list so every command that builds the app forwards the same set. */
+export const FRAMEWORK_WEB_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
+
+/** Refuse a forwarded field of the wrong shape at load, naming the field, rather than letting it fail
+ * later inside `createWebApp` or the generated server entry. */
+function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: string): void {
+  const wrong = (field: string, expected: string): never => {
+    throw new Error(`[nifra] ${configFile}: \`${field}\` must be ${expected}.`)
+  }
+  if (fw.apiPrefix !== undefined && typeof fw.apiPrefix !== "string") {
+    wrong("apiPrefix", 'a path string such as "/api", or "" to turn the backend mount off')
+  }
+  if (fw.apiStrip !== undefined && typeof fw.apiStrip !== "boolean") wrong("apiStrip", "a boolean")
+  if (fw.mounts !== undefined && !Array.isArray(fw.mounts)) {
+    wrong("mounts", "an array of { path, app } entries")
+  }
+  if (fw.csp !== undefined && (typeof fw.csp !== "object" || fw.csp === null)) {
+    wrong("csp", "the policy createCspPolicy() returns")
+  }
+  if (fw.nonce !== undefined && typeof fw.nonce !== "function") {
+    wrong("nonce", "a nonce resolver function, such as createNonceResolver() returns")
+  }
+  if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
+    wrong("secretExemptions", "an array of { rule, file, reason } entries")
+  }
+  if (fw.target !== undefined && typeof fw.target !== "string") {
+    wrong("target", 'a deploy target name such as "bun"')
+  }
+  if (fw.clientIp !== undefined && fw.clientIp !== "platform") {
+    wrong("clientIp", '"platform" (trust the edge platform\'s client-address header), or left out')
+  }
+  if (fw.dev !== undefined) {
+    if (typeof fw.dev !== "object" || fw.dev === null)
+      wrong("dev", "an object such as { indicator: false }")
+    const indicator: unknown = Reflect.get(fw.dev, "indicator")
+    if (indicator !== undefined && typeof indicator !== "boolean")
+      wrong("dev.indicator", "a boolean")
+  }
 }
 
 /**
@@ -104,8 +183,9 @@ export interface ResolvedPlugins {
 
 export interface LoadedApp {
   readonly cwd: string
-  /** Absolute path of the config this app was loaded from - `nifra.config.ts`, or `framework.ts` as the
-   * fallback. `nifra dev`'s Bun pipeline re-imports it from a GENERATED module so the app's own
+  /** Absolute path of the config this app was loaded from - `nifra.config.ts`, or
+   * `backend/framework.ts` as the fallback. `nifra dev`'s Bun pipeline re-imports it from a
+   * GENERATED module so the app's own
    * `clientPlugins` reach Bun's dev-server bundler, which takes plugins only as module paths. */
   readonly configPath: string
   readonly routesDir: string
@@ -114,7 +194,7 @@ export interface LoadedApp {
   readonly framework: NifraFramework
   /** Plugin thunks resolved exactly once during app loading and reused by every command phase. */
   readonly resolvedPlugins: ResolvedPlugins
-  /** The `backend` export from `backend.ts`, or `undefined` if there's no `backend.ts`. */
+  /** The `backend` export from `backend/app.ts`, or `undefined` if there's no `backend/app.ts`. */
   readonly backend: unknown
 }
 
@@ -126,7 +206,8 @@ export interface LoadAppOptions {
 /**
  * Root-level monorepo config - exported from `nifra.config.ts` at the workspace root.
  * Each key in `apps` is the short name used to namespace MCP tools (`nifra_<name>_context` etc.);
- * each value is a path relative to the root that contains its own `nifra.config.ts` / `framework.ts`.
+ * each value is a path relative to the root that contains its own `nifra.config.ts` /
+ * `backend/framework.ts`.
  *
  * Example:
  * ```ts
@@ -177,23 +258,48 @@ const isAdapter = (v: unknown): boolean => typeof v === "object" && v !== null
 const importWithQuery = (path: string, query: string | undefined): Promise<unknown> =>
   import(query === undefined || query === "" ? path : `${path}?${query}`)
 
-/** Discover + validate the app conventions rooted at `cwd`. Prefers `nifra.config.ts`, falls back to
- * `framework.ts`. Throws a clear, actionable error if neither exists or the config is malformed. */
+/**
+ * What reads only the backend (`nifra openapi`): the whole app when it has a web config, else
+ * `backend/app.ts` alone, so an API-only app needs no adapter to describe its routes.
+ */
+export async function loadBackendApp(
+  cwd: string,
+  options: LoadAppOptions = {},
+): Promise<Pick<LoadedApp, "cwd" | "backend">> {
+  if (existsSync(resolve(cwd, CONFIG_FILE)) || existsSync(resolve(cwd, FRAMEWORK_FILE))) {
+    return loadApp(cwd, "dist", options)
+  }
+  assertCurrentLayout(cwd)
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (!existsSync(backendPath)) {
+    throw new Error(
+      `[nifra] no ${BACKEND_APP_FILE} in ${cwd}: the OpenAPI document describes its routes`,
+    )
+  }
+  const backend = (
+    (await importWithQuery(backendPath, options.importQuery)) as { backend?: unknown }
+  ).backend
+  return { cwd, backend }
+}
+
+/** Discover + validate the app conventions rooted at `cwd`. Prefers `nifra.config.ts`, falls back
+ * to
+ * `backend/framework.ts`. Throws a clear, actionable error if neither exists or the config is
+ * malformed. */
 export async function loadApp(
   cwd: string,
   outDirName = "dist",
   options: LoadAppOptions = {},
 ): Promise<LoadedApp> {
   // nifra.config.ts is the CLI's config (it may import Vite plugins / the SFC compiler, which a
-  // multi-target app keeps OUT of the edge-imported framework.ts). framework.ts is the fallback for a
-  // simple single-target app that has no edge build.
-  const configFile = existsSync(resolve(cwd, "nifra.config.ts"))
-    ? "nifra.config.ts"
-    : "framework.ts"
+  // multi-target app keeps OUT of the edge-imported backend/framework.ts). backend/framework.ts is
+  // the fallback for a simple single-target app that has no edge build.
+  assertCurrentLayout(cwd)
+  const configFile = existsSync(resolve(cwd, CONFIG_FILE)) ? CONFIG_FILE : FRAMEWORK_FILE
   const configPath = resolve(cwd, configFile)
   if (!existsSync(configPath)) {
     throw new Error(
-      `[nifra] no nifra.config.ts or framework.ts found in ${cwd}.\n` +
+      `[nifra] no ${CONFIG_FILE} or ${FRAMEWORK_FILE} found in ${cwd}.\n` +
         "      nifra is zero-config but needs one of them exporting at least:\n" +
         "        export const adapter = reactAdapter            // from @nifrajs/web-react\n" +
         '        export const clientModule = "@nifrajs/web-react/client"\n' +
@@ -211,6 +317,7 @@ export async function loadApp(
       `[nifra] ${configFile} must export \`adapter\` (a render adapter object) and \`clientModule\` (a string).`,
     )
   }
+  assertFrameworkWebOptions(fw, configFile)
   // A `clientModule` given as a RELATIVE path (a local client entry, e.g. `./src/client.tsx`) is
   // resolved to absolute here. It is embedded verbatim as an import specifier in the generated client
   // entry, and `nifra dev` and `nifra build` write that entry into DIFFERENT directories - so a relative
@@ -251,7 +358,7 @@ export async function loadApp(
   assertPipelineSeparation(resolvedPlugins, configFile)
 
   let backend: unknown
-  const backendPath = resolve(cwd, "backend.ts")
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (existsSync(backendPath)) {
     backend = ((await importWithQuery(backendPath, options.importQuery)) as { backend?: unknown })
       .backend

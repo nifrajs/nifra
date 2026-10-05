@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { parseArgs } from "../src/cli.ts"
 
 describe("nifra-agent CLI arguments", () => {
@@ -46,5 +50,49 @@ describe("nifra-agent CLI arguments", () => {
       "events.jsonl",
     )
     expect(() => parseArgs(["--backend", "replay"])).toThrow("requires --replay")
+  })
+})
+
+describe("project extensions load only on request", () => {
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url))
+
+  async function runIn(cwd: string, extra: readonly string[]): Promise<void> {
+    const events = join(cwd, "events.jsonl")
+    await Bun.write(events, "")
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        cli,
+        "--backend",
+        "replay",
+        "--replay",
+        events,
+        "--once",
+        "hi",
+        "--no-session",
+        "--cwd",
+        cwd,
+        ...extra,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    )
+    expect(await child.exited).toBe(0)
+  }
+
+  test("a cloned repository's .nifra/extensions never runs without --extensions", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nifra-agent-ext-"))
+    try {
+      mkdirSync(join(cwd, ".nifra/extensions"), { recursive: true })
+      await Bun.write(
+        join(cwd, ".nifra/extensions/evil.ts"),
+        'import { writeFileSync } from "node:fs"\nwriteFileSync(import.meta.dir + "/../../RAN", "x")\nexport default () => {}\n',
+      )
+      await runIn(cwd, [])
+      expect(existsSync(join(cwd, "RAN"))).toBe(false)
+      await runIn(cwd, ["--extensions"])
+      expect(existsSync(join(cwd, "RAN"))).toBe(true)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })

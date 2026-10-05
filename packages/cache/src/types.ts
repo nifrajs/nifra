@@ -54,6 +54,53 @@ export interface CacheCapabilities {
   readonly write?: string
 }
 
+/** A cache operation reported to a {@link CacheObserver}. `revalidate` is the background SWR refresh. */
+export type CacheOperation =
+  | "get"
+  | "has"
+  | "set"
+  | "wrap"
+  | "delete"
+  | "invalidateTag"
+  | "clear"
+  | "revalidate"
+
+/**
+ * How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and
+ * a completed revalidation report `ok`; `error` means the store or the loader threw.
+ */
+export type CacheOutcome = "hit" | "stale" | "miss" | "ok" | "error"
+
+/** One settled cache operation, as an observer sees it. */
+export interface CacheEvent {
+  readonly op: CacheOperation
+  readonly outcome: CacheOutcome
+  /** Epoch ms the operation started. */
+  readonly startedAt: number
+  /** Monotonic duration in ms. */
+  readonly durationMs: number
+  /**
+   * The raw key. Keys often hold ids or emails: this value is for in-process use, and an exporter
+   * decides what (if anything) of it leaves the process. Absent for `clear` and `invalidateTag`.
+   */
+  readonly key: string | undefined
+  /** The tag passed to `invalidateTag`, with the same caution as `key`. */
+  readonly tag: string | undefined
+  /** Tags written by `set`, `wrap` and `revalidate`; 1 for `invalidateTag`; otherwise 0. */
+  readonly tagCount: number
+  /**
+   * The context bound with `for(context)`, or `undefined` for the unbound cache. For `revalidate` it is
+   * the context whose read found the stale entry.
+   */
+  readonly context: object | undefined
+}
+
+/**
+ * Called once per operation after it settles, never before the caller sees the result. A throwing (or
+ * rejecting) observer is swallowed: it cannot change a cache result.
+ */
+export type CacheObserver = (event: CacheEvent) => void
+
 export interface CacheOptions {
   /** Storage adapter. Default: a fresh {@link MemoryCache}. */
   readonly store?: CacheStore
@@ -76,6 +123,11 @@ export interface CacheOptions {
   readonly now?: () => number
   /** Called when a background SWR revalidation throws. Default: `console.error`. */
   readonly onError?: (error: unknown, key: string) => void
+  /**
+   * Receives one {@link CacheEvent} per operation - the seam `cacheTracing()` from `@nifrajs/otel/cache`
+   * plugs into. Without one the cache reads no extra clock and allocates no event.
+   */
+  readonly observer?: CacheObserver
 }
 
 export interface Cache {
@@ -96,15 +148,17 @@ export interface Cache {
    */
   wrap<T>(key: string, loader: () => T, options?: WrapOptions): Promise<Awaited<T>>
   /**
-   * A view bound to a request context: every operation announces its capability first, and fails closed
-   * when the route did not declare it.
+   * A view bound to a request (or job) context. With a `beacon`, every operation announces its
+   * capability first and fails closed when the route did not declare it. With an `observer`, every
+   * event carries `context`, which is how a tracer parents the span to `context.trace`.
    *
    * `wrap` announces BOTH read and write, because a miss writes and which one happens is not known
    * before the call. A declaration describes what a route may do, so the conservative answer is the
    * correct one.
    *
-   * Requires `beacon`. Without one this throws rather than handing back a cache that quietly produces
-   * no evidence - a beacon nobody notices is missing is the exact failure the beacon exists to prevent.
+   * Requires `beacon` or `observer`. With neither this throws rather than handing back a view that
+   * quietly does nothing - a beacon nobody notices is missing is the exact failure the beacon exists
+   * to prevent.
    */
   for(context: object): Cache
 }

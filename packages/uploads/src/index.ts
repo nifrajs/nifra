@@ -7,7 +7,12 @@
  * - {@link signDownloadUrl} / {@link verifyDownloadUrl} - short-TTL, tamper-evident download URLs.
  * - {@link stripImageMetadata} - drop EXIF/GPS by re-encoding via any `@nifrajs/image` backend.
  */
-export { detectFileType, type FileType } from "./detect.ts"
+export {
+  DETECTABLE_MIME_TYPES,
+  detectFileType,
+  FILE_TYPE_PREFIX_BYTES,
+  type FileType,
+} from "./detect.ts"
 export {
   type SignDownloadUrlOptions,
   signDownloadUrl,

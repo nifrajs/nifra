@@ -58,6 +58,14 @@ function nodeHeader(
   return null
 }
 
+function varyOnOrigin(value: string | null): string {
+  if (value === null || value.trim() === "") return "Origin"
+  const fields = value.split(",").map((field) => field.trim())
+  // `Vary: *` is the complete field value, not one member of a list.
+  if (fields.includes("*")) return "*"
+  return fields.some((field) => field.toLowerCase() === "origin") ? value : `${value}, Origin`
+}
+
 /**
  * CORS as a {@link Middleware}. Preflight (`OPTIONS` + `Access-Control-Request-Method`)
  * short-circuits to `204` via `onRequest`; the origin/credentials headers are added in
@@ -106,24 +114,26 @@ export function cors(options: CorsOptions = {}): Middleware {
       return new Response(null, { status: 204, headers })
     },
     onResponseHeaders(headers, req) {
+      // Any policy other than `*` makes the answer depend on the request's Origin - including the
+      // answer that omits Allow-Origin. Without `Vary` on that one, a shared cache stores the
+      // header-less response and replays it to an allowed origin, breaking CORS for everyone.
+      if (origin !== "*") {
+        headers.set("vary", varyOnOrigin(headers.get("vary")))
+      }
       const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
       if (allowOrigin === null) return
       headers.set("access-control-allow-origin", allowOrigin)
-      if (allowOrigin !== "*") {
-        const vary = headers.get("vary")
-        headers.set("vary", vary === null || vary === "" ? "Origin" : `${vary}, Origin`)
-      }
       if (credentials) headers.set("access-control-allow-credentials", "true")
       if (exposedHeaders !== undefined) headers.set("access-control-expose-headers", exposedHeaders)
     },
     onNodeResponseHeaders(response: NodeResponseContext, req: NodeRequestContext) {
+      if (origin !== "*") {
+        const vary = nodeHeader(response.headers, "vary", response.headersAreLowercase)
+        setNodeHeader(response, "vary", varyOnOrigin(vary))
+      }
       const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
       if (allowOrigin === null) return
       setNodeHeader(response, "access-control-allow-origin", allowOrigin)
-      if (allowOrigin !== "*") {
-        const vary = nodeHeader(response.headers, "vary", response.headersAreLowercase)
-        setNodeHeader(response, "vary", vary === null || vary === "" ? "Origin" : `${vary}, Origin`)
-      }
       if (credentials) setNodeHeader(response, "access-control-allow-credentials", "true")
       if (exposedHeaders !== undefined)
         setNodeHeader(response, "access-control-expose-headers", exposedHeaders)

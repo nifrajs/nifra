@@ -15,7 +15,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { preactAdapter } from "@nifrajs/web-preact"
 import preact from "@preact/preset-vite"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const server = await createViteDevServer({
@@ -24,10 +24,10 @@ const server = await createViteDevServer({
   clientModule: "@nifrajs/web-preact/client",
   plugins: [preact()],
   port: Number(Bun.env.PORT ?? 3000),
-  createApp: (clientEntry, importQuery) =>
+  createApp: (clientEntry, load) =>
     createWebApp({
       adapter: preactAdapter,
-      manifest: discoverRoutes(routesDir, { importQuery }),
+      manifest: discoverRoutes(routesDir, { load }),
       clientEntry,
       api: inProcessClient(backend),
       title: "nifra HMR (Preact, dev)",

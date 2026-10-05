@@ -1,12 +1,18 @@
 import type { StandardIssue } from "../schema/standard.ts"
 import { type ResponseResult, status } from "./runtime-core.ts"
 
+/** The most issues a 422 body lists: a body of a million bad array items must not answer with a
+ * response many times its own size. */
+const MAX_VALIDATION_ISSUES = 100
+
 function validationIssues(issues: ReadonlyArray<StandardIssue>): {
   ok: false
   error: string
   issues: unknown[]
 } {
-  const serialized = issues.map((issue) => {
+  const listed =
+    issues.length > MAX_VALIDATION_ISSUES ? issues.slice(0, MAX_VALIDATION_ISSUES) : issues
+  const serialized = listed.map((issue) => {
     const path = issue.path?.map((seg) => String(typeof seg === "object" ? seg.key : seg))
     return path !== undefined ? { message: issue.message, path } : { message: issue.message }
   })

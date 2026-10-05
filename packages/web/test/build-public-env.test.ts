@@ -87,7 +87,8 @@ test("buildClient resolves app dependencies when outDir is outside the project",
   const routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
   writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
-  const clientModule = join(projectRoot, "client-stub.ts")
+  const clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
   externalOut = mkdtempSync(join(tmpdir(), "nifra-client-output-"))
 
@@ -108,15 +109,28 @@ test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a se
 
   const routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
-  // A route module that reads BOTH a public and a secret var off `process.env`.
+  // The route reads the public var; a dependency reads the secret. App code reading a private var
+  // fails the build, so third-party code is where the define layer still decides.
+  const lib = join(projectRoot, "node_modules/env-reader")
+  mkdirSync(lib, { recursive: true })
+  writeFileSync(
+    join(lib, "package.json"),
+    '{ "name": "env-reader", "type": "module", "main": "index.js" }',
+  )
+  writeFileSync(
+    join(lib, "index.js"),
+    "export const secret = process.env.SECRET_E2E_KEY\n" +
+      'export const declared = "SECRET_E2E_KEY" in process.env\n',
+  )
   writeFileSync(
     join(routesDir, "index.tsx"),
     "export default function Index() { return null }\n" +
       "export const apiUrl = process.env.PUBLIC_E2E_API_URL\n" +
-      "export const secret = process.env.SECRET_E2E_KEY\n",
+      'export { secret } from "env-reader"\n',
   )
   // A local client module exposing `mountRouter` so the generated bootstrap import resolves.
-  const clientModule = join(projectRoot, "client-stub.ts")
+  const clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
 
   const outDir = join(projectRoot, "dist")
@@ -129,4 +143,6 @@ test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a se
   }
   expect(bundle).toContain("https://e2e.example.com/api") // PUBLIC_ value baked into the client
   expect(bundle).not.toContain("sk_live_e2e_must_not_leak") // secret never reaches the bundle
+  // The bare `process.env` is an empty object, not a string `"X" in` would throw on.
+  expect(bundle).toContain('"SECRET_E2E_KEY" in {}')
 })

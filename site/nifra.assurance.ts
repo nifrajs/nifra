@@ -5,7 +5,7 @@
  * Page routes under `routes/` are not classified; this is the backend contract those pages call.
  */
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 export default defineAssuranceConfig({
   source: backend,
@@ -15,11 +15,14 @@ export default defineAssuranceConfig({
       { id: "db.write", zone: "domain", access: "write" },
     ],
     provenance: {
+      // The site has no database today, so none of these drivers is imported. `optional` keeps each
+      // rule armed for the day one is: a route that reaches a driver then has to declare the
+      // capability, and the write rule below applies to it.
       imports: [
-        { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
-        { specifier: "postgres", capabilities: ["db.read", "db.write"] },
-        { specifier: "drizzle-orm", capabilities: ["db.read", "db.write"] },
-        { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"] },
+        { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "postgres", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "drizzle-orm", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"], optional: true },
       ],
       forbiddenImports: [],
     },

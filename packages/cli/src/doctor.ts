@@ -19,7 +19,7 @@
 import type { Dirent } from "node:fs"
 import { readdir, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
-import { dirname, join, relative, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   collectIdentityParity,
   displayPath,
@@ -29,7 +29,9 @@ import {
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
-import { detectToolingDrift, type ToolingDrift } from "./mcp-root.ts"
+import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
 import { buildScriptName } from "./workspace-link.ts"
@@ -46,8 +48,10 @@ const BUILTINS: ReadonlySet<string> = new Set<string>([
 // import, and CJS require. Anchored with `(?<![.\w$])` so `myimport`/`.import`/`foorequire` never match.
 // Comments are stripped before these run (see stripComments) - else a doc-comment usage example would be
 // flagged as a real import.
+// The clause before `from` is spelled out rather than scanned lazily: a lazy scan restarts at every
+// `export const` line and is quadratic on a long module with no string literal.
 const IMPORT_PATTERNS: readonly RegExp[] = [
-  /(?<![.\w$])(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
+  /(?<![.\w$])(?:import|export)\b\s*(?:type\b\s*)?(?:[\w$]+\s*,?\s*)?(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)?from\s*['"]([^'"]+)['"]/g,
   /(?<![.\w$])import\s+['"]([^'"]+)['"]/g,
   /(?<![.\w$])import\s*\(\s*['"]([^'"]+)['"]/g,
   /(?<![.\w$])require\s*\(\s*['"]([^'"]+)['"]/g,
@@ -126,7 +130,7 @@ export function scanUndeclaredImports(
       out.push({ file, line, snippet: pkg })
     }
   }
-  return out.sort((a, b) => a.line - b.line || a.snippet.localeCompare(b.snippet))
+  return out.sort((a, b) => a.line - b.line || codeUnitOrder(a.snippet, b.snippet))
 }
 
 export interface DoctorFinding {
@@ -174,6 +178,12 @@ export interface DoctorResult {
    * supplied and the feature versions disagree. Computed by {@link detectToolingDrift}.
    */
   readonly toolingDrift?: ToolingDrift
+  /**
+   * Agent files whose MCP launch pins an `@nifrajs/cli` other than the one the project installs, so
+   * the agent's server answers for a release the code no longer builds with. Advisory (never folded
+   * into `ok`). Present only when at least one file is stale. Computed by {@link collectStaleMcpPins}.
+   */
+  readonly staleMcpPins?: { readonly target: string; readonly files: readonly StaleMcpPin[] }
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /** The explicit source boundary used by the dependency scan. */
@@ -585,7 +595,7 @@ export async function collectStaleWorkspaceDists(
       if (worst !== undefined) findings.push(worst)
     }
   }
-  return findings.sort((a, b) => a.package.localeCompare(b.package))
+  return findings.sort((a, b) => codeUnitOrder(a.package, b.package))
 }
 
 interface ReadinessSource {
@@ -623,7 +633,7 @@ async function collectDoctorReadiness(
   await walkSource(cwd, (file, source) => {
     files.push({ file, source, code: codePositionMask(source) })
   })
-  const edgeTarget = /^(?:cf-pages|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
+  const edgeTarget = /^(?:cloudflare|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
   const configured = (
     id: DoctorReadinessItem["id"],
     label: string,
@@ -713,11 +723,25 @@ async function ancestorDependencySpec(cwd: string, name: string): Promise<string
     const pkg = await readJson(join(dir, "package.json"))
     if (pkg !== undefined) {
       const spec = dependencySpec(pkg, name)
-      if (spec !== undefined) return spec
+      if (spec !== undefined) return rebaseDependencySpec(spec, dir, cwd)
     }
     const parent = dirname(dir)
     if (parent === dir) return undefined
   }
+}
+
+/**
+ * A path spec (`file:packages/x`, `link:../x`, `./vendor/x.tgz`) resolves against the package.json
+ * that declares it, so a spec copied from an ancestor is re-pointed to the same target from `cwd`.
+ */
+function rebaseDependencySpec(spec: string, declaredIn: string, cwd: string): string {
+  const protocol = /^(?:file|link|portal):/.exec(spec)?.[0] ?? ""
+  const path = spec.slice(protocol.length)
+  const relativePath =
+    protocol === "" ? /^\.\.?(?:[\\/]|$)/.test(path) : !isAbsolute(path) && !path.startsWith("~")
+  if (!relativePath) return spec
+  const rebased = relative(cwd, resolve(declaredIn, path)).replaceAll("\\", "/")
+  return protocol + (rebased === ".." || rebased.startsWith("../") ? rebased : `./${rebased}`)
 }
 
 async function installedPackageSpec(cwd: string, name: string): Promise<string | undefined> {
@@ -792,7 +816,7 @@ export async function collectDoctorResult(
     },
     { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
-  findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+  findings.sort((a, b) => codeUnitOrder(a.file, b.file) || a.line - b.line)
   const identity = await collectAllDuplicateInstalls(cwd, pkg)
   const duplicateInstalls = identity.duplicates
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
@@ -804,7 +828,8 @@ export async function collectDoctorResult(
   // pass its own version (e.g. the MCP server, which already annotates every result with the drift).
   const toolingDrift =
     opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
-  // `staleDists` and `toolingDrift` are advisory (see DoctorResult): they never fail `ok`.
+  const staleMcpPins = await collectStaleMcpPins(cwd).catch(() => undefined)
+  // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
       findings.length === 0 &&
@@ -821,6 +846,7 @@ export async function collectDoctorResult(
     readiness,
     scanScope,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
+    ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
 }
@@ -846,7 +872,7 @@ export async function applyDoctorAutoFix(
 
   const fixed: DoctorAppliedFix[] = []
   const skippedFixes: DoctorSkippedFix[] = []
-  for (const [root, names] of [...byRoot.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [root, names] of [...byRoot.entries()].sort(([a], [b]) => codeUnitOrder(a, b))) {
     const pkgPath = join(root, "package.json")
     const pkg = await readJson(pkgPath)
     if (pkg === undefined) continue
@@ -1000,8 +1026,26 @@ export async function runDoctor(
         "its types, checks, and docs may describe a different version than your code builds with.",
     )
     console.log(
-      "      fix: run the project's own CLI (`bunx --bun nifra doctor` from the project directory, " +
+      `      fix: \`${syncMcpCommand(drift.cli)}\` re-pins the project's MCP launch to the nifra it installs; ` +
+        "for the CLI itself, run the project's own (`bunx --bun nifra doctor` from the project directory, " +
         "or ./node_modules/.bin/nifra)\n",
+    )
+  }
+  // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
+  // release even when the CLI running doctor matches the project.
+  if (result.staleMcpPins !== undefined) {
+    const { target, files } = result.staleMcpPins
+    console.log(
+      `⚠ the MCP launch pins a nifra other than the project's ${target} - an agent's nifra server answers for that release:`,
+    )
+    for (const file of files)
+      console.log(`    ${file.path}: @nifrajs/cli@${file.pinned.join(", ")}`)
+    const command =
+      opts.cliVersion !== undefined
+        ? syncMcpCommand(opts.cliVersion)
+        : "nifra init-agents --sync-mcp"
+    console.log(
+      `      fix: \`${command}\` rewrites only the pinned version, then restart the agent\n`,
     )
   }
   if (result.ok) {
@@ -1044,6 +1088,8 @@ export async function runDoctor(
         console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
       console.log(`      ${finding.explanation}`)
+      // A planted symlink is the cause no reinstall here can see, so it is named before the fix.
+      if (finding.provenance !== undefined) console.log(`      links: ${finding.provenance}`)
       // The shape of the split decides which fix can work, so it is printed above the fix itself.
       if (finding.topology !== undefined) console.log(`      topology: ${finding.topology}`)
       // Why a copy this directory never imports still counts. Without it, a workspace-wide answer

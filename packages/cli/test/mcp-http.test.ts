@@ -60,6 +60,39 @@ describe("handleMcpHttp", () => {
     expect(body.result.tools[0]?.inputSchema).toBeDefined()
   })
 
+  test("the /openai route omits the gallery resource and tool", async () => {
+    const res = await handleMcpHttp(
+      new Request("http://x/openai", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list" }),
+      }),
+    )
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{
+          name: string
+          annotations?: Record<string, boolean>
+        }>
+      }
+    }
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "nifra_docs",
+      "nifra_example",
+      "nifra_frontend",
+      "nifra_learn",
+      "nifra_types",
+    ])
+    for (const tool of body.result.tools) {
+      expect(tool.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      })
+    }
+  })
+
   test("tools/call nifra_example returns verified snippet content", async () => {
     const res = await handleMcpHttp(
       post({

@@ -1,9 +1,9 @@
 import { serve } from "@nifrajs/deno"
-import { app } from "./app"
+import { app } from "./backend/web-app"
 
 // Deno's runtime APIs (this entry runs under `deno run` and on Deno Deploy, which is the same runtime).
 declare const Deno: {
-  readFile(path: string): Promise<Uint8Array>
+  readFile(path: string): Promise<Uint8Array<ArrayBuffer>>
   env: { get(key: string): string | undefined }
 }
 

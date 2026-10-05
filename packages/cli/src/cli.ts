@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
- * `nifra` - the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
- * the project root (see {@link loadApp}) and wires the right `@nifrajs/web` entrypoint:
+ * `nifra` - the zero-config CLI for a nifra app. Reads `backend/framework.ts` + `backend/app.ts` +
+ * `routes/` from the project root (see {@link loadApp}) and wires the right `@nifrajs/web`
+ * entrypoint:
  *
  *   nifra dev      true-HMR dev server (Bun native HMR + nifra SSR)         - @nifrajs/web/dev
  *   nifra build    emit a complete target-specific deploy directory        - @nifrajs/web/build
@@ -12,27 +13,34 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { inProcessClient } from "@nifrajs/client"
 import {
-  type CreateWebAppOptions,
   type CssLoadingMode,
   createWebApp,
   DEFAULT_DEV_PORT,
   type RenderAdapter,
 } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
+import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
+import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
-import { applyEnvFiles, takeEnvFileFlags } from "./env-file.ts"
-import { type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
+import { applyEnvFiles, forgetAutoLoadedEnv, takeEnvFileFlags } from "./env-file.ts"
+import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
+import {
+  frameworkMountPaths,
+  frameworkOptionImports,
+  frameworkWebAppOptions,
+} from "./web-app-options.ts"
 
 export interface Flags {
   readonly port: number
-  readonly out: string
+  /** `--out <dir>`; without it `dist`, or `.vercel/output` for a Vercel build. */
+  readonly out: string | undefined
   readonly poll: boolean
-  /** `nifra build --target <t>`: emit a full deploy dir for this target. Defaults to `bun`. */
-  readonly target: string
+  /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, the `target` that
+   * `nifra.config.ts` exports, else `bun`. */
+  readonly target: string | undefined
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
@@ -47,22 +55,51 @@ export interface Flags {
    * a hard failure to a loud warning so a duplicate coming from a linked sibling repo doesn't take dev
    * down while you fix the resolution. Dev only - `nifra build` always fails hard on a duplicate. */
   readonly allowDuplicateIdentity: boolean
+  /** `nifra dev --no-indicator`: no in-page issues badge; browser errors still reach the dev feed. */
+  readonly noIndicator: boolean
 }
 
 /** Forward a re-exec'd Bun child's output without relying on Windows inheriting a pipe-of-a-pipe. */
 async function forwardChildOutput(
   stream: ReadableStream<Uint8Array>,
   sink: { write(chunk: Uint8Array): unknown },
+  observe?: (chunk: Uint8Array) => void,
 ): Promise<void> {
   const reader = stream.getReader()
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) return
+      observe?.(value)
       await sink.write(value)
     }
   } finally {
     reader.releaseLock()
+  }
+}
+
+/** The last `max` bytes of a stream, decoded: what a crashed child printed last. */
+function streamTail(max: number): { push(chunk: Uint8Array): void; text(): string } {
+  let chunks: Uint8Array[] = []
+  let size = 0
+  return {
+    push(chunk) {
+      chunks.push(chunk)
+      size += chunk.length
+      while (size - (chunks[0]?.length ?? 0) >= max && chunks.length > 1) {
+        size -= chunks.shift()?.length ?? 0
+      }
+    },
+    text() {
+      const all = new Uint8Array(size)
+      let offset = 0
+      for (const chunk of chunks) {
+        all.set(chunk, offset)
+        offset += chunk.length
+      }
+      chunks = [all]
+      return new TextDecoder().decode(all.subarray(Math.max(0, size - max)))
+    },
   }
 }
 
@@ -81,14 +118,33 @@ Usage:
                                          loud warning instead of a hard failure, so a duplicate React/
                                          adapter copy from a linked sibling repo doesn't take dev down
                                          while you fix the resolution. Dev only - \`nifra build\` still fails.
+                [--no-indicator]         No in-page issues badge. Browser errors still reach
+                                         \`nifra errors\` and the agent tools.
+  nifra errors  [--since <n>] [--category <c>] [--request <id>]  What the running dev server caught:
+                                         SSR/loader/API/build/browser/hydration errors, each a structured
+                                         diagnostic. Finds the server itself; reads the log a crashed
+                                         one left. Exits 1 while current-code errors are open.
+  nifra logs    [--since <n>] [--level <l>] [--grep <s>]  The dev server's console, server and
+                                         browser, each line tagged with its request.
+  nifra cdn-check <url>                  Check a deployed page behind a CDN: served from cache, no
+                                         internal or CDN-only headers reaching the visitor, and soft
+                                         navigations get page data, not the cached document. Exits 1
+                                         on a failure.
+  nifra db schema [<table>]              The development database declared as \`devDatabase\` in
+                                         nifra.config.ts: tables, columns, keys, indexes.
+  nifra db query "<sql>" [--explain [--analyze]]  One read-only SELECT (or its plan), in a fresh
+                                         process killed at devDatabase.timeoutMs. Rows capped, secrets
+                                         masked. Postgres: a superuser connection is refused.
+  nifra db role                          Print the SQL for a read-only Postgres role. Runs nothing.
+  nifra db audit [--limit <n>]           What nifra db ran (.nifra/db-audit.jsonl), never the rows.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
-                                         bun | node | deno | cf-pages | vercel | static. Packages
+                                         bun | node | deno | cloudflare | vercel | static. Packages
                                          buildClient + buildServer (+ prerender for static) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
-                                         framework.ts (adapter) + backend.ts + routes/. --report prints
-                                         a per-chunk size + gzip table (biggest first).
+                                         backend/framework.ts (adapter) + backend/app.ts + routes/.
+                                         --report prints a per-chunk size + gzip table (biggest first).
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
                                          (faster, Bun-native) unless your ONLY transforms are
                                          \`vitePlugins\`, which the Bun build cannot run - then Vite,
@@ -109,12 +165,20 @@ Usage:
                                          against it: a route the target can't honour (an ssr route on a
                                          static build, ISR where there's no revalidation) exits nonzero
                                          with the consequence - run in CI so it fails the build, not prod.
-  nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent-discovery files a new
-                                         app ships: .mcp.json + .cursor/mcp.json (register this project's
-                                         nifra MCP), CLAUDE.md (MCP-first preamble + @AGENTS.md import),
-                                         and a "## MCP server" section in AGENTS.md. No-clobber by
-                                         default (skips a file you've customized); --force overwrites the
-                                         owned files. AGENTS.md is only appended to, never overwritten.
+  nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent files a new app ships:
+                                         .mcp.json + .cursor/mcp.json (register this project's nifra MCP),
+                                         each agent's pointer to AGENTS.md (CLAUDE.md, GEMINI.md,
+                                         .cursor/rules/nifra.mdc, .github/copilot-instructions.md), and
+                                         AGENTS.md's "## MCP server" and (with routes/) "## Project
+                                         structure" sections. No-clobber by default (skips a file you've
+                                         customized); --force overwrites the owned files. AGENTS.md is
+                                         only appended to, never overwritten.
+  nifra init-agents --sync-mcp [--json]  Re-pin an existing app's MCP launch to the nifra the project
+                                         installs: rewrites only the @nifrajs/cli@x.y.z version in
+                                         .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
+                                         section - every other byte stays as it is. Creates nothing.
+                                         At a workspace root with one nifra member, the two registries'
+                                         launch also names that member (\`mcp app\`).
   nifra mcp [dir]                        Start an MCP server (stdio) exposing this project to a coding
                                          agent. The project root is [dir] when given, else resolved from
                                          cwd (marker walk-up + the client's MCP roots); tools refuse
@@ -123,15 +187,18 @@ Usage:
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
                                          nifra_check (drift gate + fixes), nifra_levels (verification
-                                         ladder), nifra_doctor (deps), nifra_explain (structured errors),
-                                         nifra_inspect (request traces), nifra_learn (guided build path).
+                                         ladder), nifra_doctor (deps), nifra_errors + nifra_logs (what
+                                         the running dev server saw), nifra_db_schema + nifra_db_query +
+                                         nifra_db_role (the declared dev database, read-only),
+                                         nifra_explain (structured errors), nifra_inspect (request
+                                         traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
                                          no arg for the step index, a number for one step's goal/do/verify.
   nifra check   [--json] [--sarif] [--lints-only]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
-                                         server-only imports in routes/). Run as "done"; --json for agents;
+                                         backend code in browser code). Run as "done"; --json for agents;
                                          --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
                                          review tools; --lints-only skips tsc for a near-instant inner-loop pass.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
@@ -152,7 +219,7 @@ Usage:
                                          request enum or adding a response field doesn't) and fails
                                          closed. Exits non-zero on any breaking change - run it in CI.
   nifra sdk     --lang <python|go> [--out <file>] [--strict]
-                                         Generate a deterministic non-TypeScript SDK from backend.ts.
+                                         Generate a deterministic non-TypeScript SDK from backend/app.ts.
   nifra assure  [--config <file>] [--json]  Route-assurance report. Human table by default; --json emits
                                          the {ok, routes, findings} report for agents.
   nifra assure  --bundle [--json] [--strict] [--out <file>] [--hydration] [--interact]
@@ -190,22 +257,40 @@ Usage:
                                          print production readiness, with --strict making absent
                                          applicable guarantees fail. --auto-fix writes safe local-
                                          version dependency fixes.
-  nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
-                [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact), move removed
-                [--list] [--json]        packages, apply exact imports, then verify with nifra check.
+  nifra upgrade <version>                Upgrade to <version>, running every release recipe between the
+                [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
+                [--list] [--json]        apply exact imports, pin every matching dependency (keeping
+                [--exact]                ^/~, or exact with --exact), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                                         to skip). --list shows available targets. Fail-closed on an
-                                         unknown version or a rollback (--allow-downgrade overrides).
-                                         Deterministic + idempotent.
+                                         to skip). --list shows available targets. A version newer than
+                                         this CLI prints the command for that release's CLI. Fail-closed
+                                         on an unknown version or a rollback (--allow-downgrade
+                                         overrides). Deterministic + idempotent.
+  nifra migrate layout [--write] [--json]
+                                         Move an app onto the frontend/backend split: split each route
+                                         into x.tsx + x.backend.ts, fold _middleware.ts into
+                                         _layout.backend.ts, move backend.ts/framework.ts under backend/,
+                                         and zone the other modules into frontend/, backend/ or shared/.
+                                         Dry-run by default; --write applies.
+  nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
+                                         params, the data its output schemas let through, and api typed
+                                         by backend/app.ts. dev, build and check refresh them too;
+                                         --check fails when one is stale.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
                                          detected from build/deploy scripts, wrangler.toml, or vercel config;
                                          --ci (or any --target) exits nonzero when a used feature is
                                          unsupported on the target; --strict also fails on caveats.
+  nifra i18n check [entry]               Check i18n catalogs: coverage, missing + unused keys, ICU syntax,
+                [--json] [--strict]      placeholder + tag parity, plural cases, script purity,
+                                         untranslated messages. IMPORTS the entry (default: the first
+                                         i18n.ts in ., lib/, src/, src/lib/, app/), which exports
+                                         \`locales\` + \`catalogs\` (+ optional \`ignore\`). Exits 1 on
+                                         errors; --strict also on warnings.
 
-Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backend.ts (optional), and
-routes/ from the current directory. Run from your project root.
+Reads nifra.config.ts (adapter + clientModule + plugins; or backend/framework.ts), backend/app.ts
+(optional), and routes/ from the current directory. Run from your project root.
 
 Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with \`--port <n>\` (alias \`-p\`) or the
 \`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).
@@ -219,15 +304,11 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "3.5.0"
+const CLI_VERSION = "4.0.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
 const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
-const asUse = (v: (app: never) => void): NonNullable<CreateWebAppOptions["use"]> =>
-  v as NonNullable<CreateWebAppOptions["use"]>
-const apiOf = (backend: unknown): { api?: unknown } =>
-  backend === undefined ? {} : { api: inProcessClient(backend as never) }
 
 /**
  * Render an error for the CLI, unwrapping the detail a bare `.message` drops.
@@ -284,7 +365,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   )
   if (decision.pipeline === "bun") {
     // Bun's dev-server bundler takes plugins only via bunfig `[serve.static]`, read at process
-    // start - so the boundary plugins (server-fn stubs, server-only emptying) are delivered by
+    // start - so the boundary plugins (zone guard, server-fn stubs) are delivered by
     // generating a config and re-execing this same command once with `--config=`. The child proves
     // it IS the configured child with a per-launch random token (matched against the file the
     // parent just wrote, consumed on first read). A fixed sentinel here would be a secret-leak
@@ -302,7 +383,11 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             "launches; refusing to serve without the client-boundary plugins.",
         )
       }
-      const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd, app.configPath)
+      const { bunfigPath, launchToken } = await writeBunDevConfig(
+        app.cwd,
+        app.configPath,
+        app.framework.define,
+      )
       // Bun 1.4 on Windows may discard the script-relative portion of argv when `--config` is
       // present. Keep a second, authenticated copy of the user vector in the child's environment so
       // the configured process cannot silently fall back to `nifra`'s help and exit 0. The launch token
@@ -353,16 +438,30 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           },
         },
       )
+      // The child's last words, kept so a crash leaves a record `nifra errors` can read after the fact.
+      const stderrTail = streamTail(16 * 1024)
       const forwarded = Promise.all([
         forwardChildOutput(child.stdout as ReadableStream<Uint8Array>, Bun.stdout),
-        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, Bun.stderr),
+        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, Bun.stderr, stderrTail.push),
       ])
-      const forward = (): void => child.kill("SIGINT")
+      let interrupted = false
+      const forward = (): void => {
+        interrupted = true
+        child.kill("SIGINT")
+      }
       process.on("SIGINT", forward)
       process.on("SIGTERM", forward)
       try {
         const [code] = await Promise.all([child.exited, forwarded])
         process.exitCode = code
+        if (code !== 0 && !interrupted) {
+          try {
+            const { recordDevCrash } = await import("@nifrajs/web/dev-feed")
+            recordDevCrash(app.cwd, code, stderrTail.text())
+          } catch {
+            // The crash is already on the terminal; failing to persist it must not mask the exit code.
+          }
+        }
       } finally {
         process.off("SIGINT", forward)
         process.off("SIGTERM", forward)
@@ -411,13 +510,14 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
-      createApp: (clientEntry, importQuery) =>
+      indicator: showsIndicator(flags, fw),
+      createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
           manifest: discoverRoutes(routesDir, { importQuery }),
           clientEntry,
-          ...(fw.use ? { use: asUse(fw.use) } : {}),
-          ...apiOf(backend),
+          ...frameworkWebAppOptions(fw, backend),
+          onLoaderError: dev.onLoaderError,
         }),
     })
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
@@ -467,18 +567,19 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     poll: flags.poll,
     port: flags.port,
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
+    indicator: showsIndicator(flags, fw),
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
     // pipeline own the whole phase: the client and the server now agree on every specifier, so
     // `resolve.dedupe` finally governs SSR and the dual-React crash cannot occur.
-    createApp: (clientEntry, load) =>
+    createApp: (clientEntry, load, dev) =>
       createWebApp({
         adapter: asAdapter(fw.adapter),
         manifest: discoverRoutes(routesDir, { load }),
         clientEntry,
-        ...(fw.use ? { use: asUse(fw.use) } : {}),
-        ...apiOf(backend),
+        ...frameworkWebAppOptions(fw, backend),
+        onLoaderError: dev.onLoaderError,
       }),
   })
   console.log(`nifra dev (vite) → http://localhost:${server.port}`)
@@ -488,23 +589,26 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
 /**
  * `nifra build --target <t>` - package the engine (buildClient + buildServer + prerender) into one
  * command that emits a full deploy dir, so an app no longer hand-writes build-bun.ts + _worker.ts +
- * _routes.json per target. The adapter is imported from `framework.ts` (the edge-bundlable file - never
- * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
- * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
+ * _routes.json per target. The adapter is imported from `backend/framework.ts` (the edge-bundlable
+ * file - never `nifra.config.ts`, which pulls in Vite plugins), and the backend from
+ * `backend/app.ts` when present; `buildTarget` generates the per-target server entry from those +
+ * the app's `routes/`.
  */
 /**
  * Refuse a `use` the generated server entry cannot import.
  *
- * `nifra build` emits `import { use } from <frameworkFile>` (framework.ts, the edge-bundlable file),
- * but `loadApp` prefers `nifra.config.ts` - so an app with BOTH files whose `use` lives only in
- * `nifra.config.ts` makes `fw.use` defined while `framework.ts` exports nothing of that name, and the
- * build dies later with an opaque bundler error pointing at generated code. Refuse it here with the
- * exact move instead, in the spirit of `assertPipelineSeparation` (load.ts).
+ * `nifra build` emits `import { use } from <frameworkFile>` (backend/framework.ts, the
+ * edge-bundlable file), but `loadApp` prefers `nifra.config.ts` - so an app with BOTH files whose
+ * `use` lives only in `nifra.config.ts` makes `fw.use` defined while `backend/framework.ts` exports
+ * nothing of that name, and the build dies later with an opaque bundler error pointing at generated
+ * code. Refuse it here with the exact move instead, in the spirit of `assertPipelineSeparation`
+ * (load.ts).
  *
- * Detected by importing `frameworkFile` and checking the named export, not by comparing paths alone:
- * a split app legitimately DEFINES `use` in framework.ts and re-exports it from nifra.config.ts
- * (exactly how `adapter` reaches both readers), and a path compare would refuse that correct layout.
- * The import is cheap - framework.ts is already in the loaded config's module graph in that layout.
+ * Detected by importing `frameworkFile` and checking the named export, not by comparing paths
+ * alone: a split app legitimately DEFINES `use` in backend/framework.ts and re-exports it from
+ * nifra.config.ts (exactly how `adapter` reaches both readers), and a path compare would refuse
+ * that correct layout. The import is cheap - backend/framework.ts is already in the loaded config's
+ * module graph in that layout.
  */
 export async function assertUseIsEdgeExported(
   use: NifraFramework["use"],
@@ -516,11 +620,63 @@ export async function assertUseIsEdgeExported(
   if (typeof mod.use === "function") return
   throw new Error(
     `[nifra] \`use\` is exported from ${configPath} but not from ${frameworkFile}. ` +
-      "`nifra build` generates a server entry that imports `use` from framework.ts (the edge-bundled " +
-      "file), so this build would fail later with an opaque bundler error inside generated code.\n\n" +
-      "  - Define `use` in framework.ts and re-export it from nifra.config.ts " +
-      '(`export { use } from "./framework.ts"`) so `nifra dev` sees it too.',
+      "`nifra build` generates a server entry that imports `use` from backend/framework.ts (the " +
+      "edge-bundled file), so this build would fail later with an opaque bundler error inside generated code.\n\n" +
+      "  - Define `use` in backend/framework.ts and re-export it from nifra.config.ts " +
+      '(`export { use } from "./backend/framework.ts"`) so `nifra dev` sees it too.',
   )
+}
+
+/**
+ * Refuse a forwarded framework field (`apiPrefix`, `mounts`, `csp`, ...) the generated server entry
+ * would not see, or would see with a different value.
+ *
+ * `nifra dev` reads these from the loaded config (`nifra.config.ts` when it exists) while the
+ * server entry imports them from backend/framework.ts. A field set only in nifra.config.ts would be
+ * missing from production, and one defined separately in each file could differ - dev mounting the
+ * backend at one path while production mounts it at another. Identity is required, which a
+ * re-export satisfies.
+ */
+export async function assertFrameworkOptionsEdgeExported(
+  fw: NifraFramework,
+  configPath: string,
+  frameworkFile: string,
+): Promise<void> {
+  if (configPath === frameworkFile) return
+  const set = FRAMEWORK_WEB_OPTIONS.filter((name) => fw[name] !== undefined)
+  if (set.length === 0) return
+  const mod = (await import(frameworkFile).catch(() => ({}))) as Record<string, unknown>
+  const drifted = set.filter((name) => mod[name] !== fw[name])
+  if (drifted.length === 0) return
+  const names = drifted.map((name) => `\`${name}\``).join(", ")
+  throw new Error(
+    `[nifra] ${names} ${drifted.length === 1 ? "is" : "are"} exported from ${configPath} but not, or not as the same value, from ${frameworkFile}. ` +
+      "`nifra build` generates a server entry that imports these from backend/framework.ts, so production " +
+      "would serve a different app than `nifra dev`.\n\n" +
+      `  - Define ${drifted.length === 1 ? "it" : "them"} in backend/framework.ts and re-export from nifra.config.ts ` +
+      `(\`export { ${drifted.join(", ")} } from "./backend/framework.ts"\`).`,
+  )
+}
+
+/**
+ * Refuse a build whose page routes sit under a mount: each would ship as a route that can never render.
+ * Read from the config and `routes/` alone; the server also checks its own mount table at startup,
+ * which covers a mount added inside `use`.
+ */
+/** `nifra dev` shows the in-page issues badge unless `--no-indicator` or `dev.indicator: false` turns it off. */
+export function showsIndicator(
+  flags: Pick<Flags, "noIndicator">,
+  fw: Pick<NifraFramework, "dev">,
+): boolean {
+  return !flags.noIndicator && fw.dev?.indicator !== false
+}
+
+export function assertNoShadowedPages(app: LoadedApp): void {
+  const paths = frameworkMountPaths(app.framework, app.backend !== undefined)
+  if (paths.length === 0) return
+  const shadowed = shadowedPages(discoverRoutes(app.routesDir), paths)
+  if (shadowed.length === 0) return
+  throw new Error(`[nifra] build blocked: ${formatShadowedPages(shadowed)}`)
 }
 
 /**
@@ -557,11 +713,16 @@ async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
   )
 }
 
-async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Promise<void> {
-  const { isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import("@nifrajs/web/build")
-  if (!isBuildTarget(target)) {
-    throw new Error(`[nifra] unknown --target "${target}". Valid: ${BUILD_TARGETS.join(", ")}.`)
-  }
+async function buildForTarget(
+  app: LoadedApp,
+  flag: string | undefined,
+  flags: Flags,
+): Promise<void> {
+  const { parseBuildTarget, renderSizeReport } = await import("@nifrajs/web/build")
+  const target = parseBuildTarget(
+    flag ?? app.framework.target ?? "bun",
+    flag === undefined ? "target in nifra.config.ts" : "--target",
+  )
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
@@ -604,17 +765,19 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
   const buildTarget = useVite
     ? (await import("@nifrajs/web/build-vite")).buildTargetVite
     : (await import("@nifrajs/web/build")).buildTarget
-  const { routesDir, outDir, cwd, backend } = app
-  // The server entry must import the adapter from `framework.ts` (edge-safe), not the loaded config.
-  // `loadApp` guarantees one of them exists; prefer framework.ts so a multi-target app's Vite-plugin
-  // config never reaches the edge bundle (see load.ts module header).
-  const frameworkFile = existsSync(resolve(cwd, "framework.ts"))
-    ? resolve(cwd, "framework.ts")
-    : existsSync(resolve(cwd, "nifra.config.ts"))
-      ? resolve(cwd, "nifra.config.ts")
-      : resolve(cwd, "framework.ts")
-  const backendFile = resolve(cwd, "backend.ts")
+  const { routesDir, cwd, backend } = app
+  // `vercel deploy --prebuilt` uploads `.vercel/output` from the project root, so that is where a
+  // Vercel build goes unless `--out` says otherwise.
+  const outDir =
+    target === "vercel" && flags.out === undefined ? resolve(cwd, ".vercel/output") : app.outDir
+  // The server entry must import the adapter from `backend/framework.ts` (edge-safe), not the
+  // loaded config, so a multi-target app's Vite-plugin config never reaches the edge bundle
+  // (load.ts header).
+  const frameworkFile = adapterFile(cwd)
+  const backendFile = resolve(cwd, BACKEND_APP_FILE)
   await assertUseIsEdgeExported(fw.use, app.configPath, frameworkFile)
+  await assertFrameworkOptionsEdgeExported(fw, app.configPath, frameworkFile)
+  assertNoShadowedPages(app)
   // Plugin FORMAT differs by pipeline: the Bun build takes Bun plugins (clientPlugins/serverPlugins); the
   // Vite build takes the app's Vite plugins (fw.vitePlugins) for BOTH halves. buildTargetWith forwards
   // whatever it's given straight to the chosen bundler, which casts to its own plugin type.
@@ -634,14 +797,17 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     clientModule: fw.clientModule,
     adapterImport: frameworkFile,
     ...(fw.use ? { useImport: frameworkFile } : {}),
+    ...frameworkOptionImports(fw, frameworkFile),
     ...(backend !== undefined && existsSync(backendFile) ? { backendImport: backendFile } : {}),
     ...plugins,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
     ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
+    ...(fw.secretExemptions !== undefined ? { secretExemptions: fw.secretExemptions } : {}),
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
+    ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
     // The static target needs a built app to drive prerendering - only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
@@ -674,12 +840,11 @@ async function buildPrerenderApp(
       adapter: asAdapter(fw.adapter),
       manifest: discoverRoutes(routesDir),
       clientEntry: client.entry,
-      ...(fw.use ? { use: asUse(fw.use) } : {}),
+      ...frameworkWebAppOptions(fw, backend),
       ...(client.routes ? { routePreload: client.routes } : {}),
       ...(client.css ? { styles: client.css } : {}),
       ...(client.routeStyles ? { routeStyles: client.routeStyles } : {}),
       ...(client.cssLoading !== undefined ? { cssLoading: client.cssLoading } : {}),
-      ...apiOf(backend),
     })
 }
 
@@ -695,7 +860,7 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   const serverFile = resolve(app.outDir, "server.js")
   if (!existsSync(serverFile)) {
     // A Cloudflare Pages build emits `_worker.js` (a Workers bundle), not a self-hosting `server.js` - so
-    // `nifra start` on a dir built for cf-pages would otherwise fail with a bare "no server.js". Name the
+    // `nifra start` on a dir built for cloudflare would otherwise fail with a bare "no server.js". Name the
     // actual mismatch and the fix.
     if (existsSync(resolve(app.outDir, "_worker.js"))) {
       throw new Error(
@@ -716,13 +881,14 @@ export function parseFlags(args: readonly string[]): Flags {
   // the SAME uncommon port for `nifra dev` and `nifra start` (DEFAULT_DEV_PORT) so a project's URL is
   // stable across commands and doesn't collide with the usual 3000/5173/8080 crowd.
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
-  let out = "dist"
+  let out: string | undefined
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
-  let target = "bun"
+  let target: string | undefined
   let report = false
   let vite = false
   let bun = false
   let allowDuplicateIdentity = false
+  let noIndicator = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
@@ -733,11 +899,12 @@ export function parseFlags(args: readonly string[]): Flags {
     else if (a === "--vite") vite = true
     else if (a === "--bun") bun = true
     else if (a === "--allow-duplicate-identity") allowDuplicateIdentity = true
+    else if (a === "--no-indicator") noIndicator = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, target, report, vite, bun, allowDuplicateIdentity }
+  return { port, out, poll, target, report, vite, bun, allowDuplicateIdentity, noIndicator }
 }
 
 /**
@@ -778,8 +945,17 @@ function installReflectionExitHint(): (command: string | undefined) => void {
   }
 }
 
+/** Set on the copy of `nifra mcp` that serves without `.env` files, so it does not restart again. */
+const MCP_WITHOUT_ENV_FILES = "NIFRA_MCP_WITHOUT_ENV_FILES"
+
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
+  // `nifra mcp` keeps none of the `.env` values Bun loaded at startup. Decided before the
+  // `--env-file`s below, which the caller names explicitly and which stay.
+  const forgotten =
+    rawArgv[0] === "mcp" && process.env[MCP_WITHOUT_ENV_FILES] !== "1"
+      ? await forgetAutoLoadedEnv()
+      : []
   // Applied before any command runs: a reflecting command imports the app on its first await, and the
   // app reads its environment at module scope, so the variables must already be in place by then.
   if (envFiles.length > 0) await applyEnvFiles(process.cwd(), envFiles)
@@ -802,6 +978,19 @@ async function main(): Promise<void> {
   // `mcp` runs a long-lived stdio server and loads the project lazily per-tool - it must not go through
   // the eager `loadApp` below (which would fail fast on a project that's API-only / not yet built).
   if (command === "mcp") {
+    // Bun passes what it loaded to every subprocess whatever `process.env` says now, so the session
+    // moves to a copy of this process that never loads `.env` files.
+    if (forgotten.length > 0) {
+      const { handOffSession } = await import("./mcp-delegate.ts")
+      const exitCode = await handOffSession(
+        [process.execPath, "--no-env-file", ...process.argv.slice(1)],
+        { cwd: process.cwd(), env: { ...process.env, [MCP_WITHOUT_ENV_FILES]: "1" } },
+      )
+      if (exitCode !== undefined) {
+        process.exitCode = exitCode
+        return
+      }
+    }
     const { runMcpServer } = await import("./mcp.ts")
     // `nifra mcp [dir]` - an explicit project directory pins the root (for clients configured outside
     // the project); otherwise the server resolves it from cwd + the client's MCP roots.
@@ -853,11 +1042,17 @@ async function main(): Promise<void> {
     )
     return
   }
-  const catalogSpec = command === undefined ? undefined : findCommandSpec(command)
+  // `nifra db <sub>` is the catalog's `db-<sub>` command, projected to MCP as `nifra_db_<sub>`.
+  const dbSub =
+    command === "db" && argv[1] !== undefined && !argv[1].startsWith("-") ? argv[1] : undefined
+  if (command === "db" && (dbSub === undefined || findCommandSpec(`db-${dbSub}`) === undefined)) {
+    throw new Error("[nifra] usage: nifra db schema|query|role|audit - see `nifra help`")
+  }
+  const catalogSpec = findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
   if (catalogSpec?.transports.includes("cli")) {
     const markReflecting = installReflectionExitHint()
     try {
-      const input = bindCommandArgv(catalogSpec, argv.slice(1))
+      const input = bindCommandArgv(catalogSpec, argv.slice(dbSub === undefined ? 1 : 2))
       markReflecting(command)
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
       markReflecting(undefined)
@@ -902,7 +1097,7 @@ async function main(): Promise<void> {
     if (!ok) process.exitCode = 1
     return
   }
-  // `init-agents` retrofits the agent-discovery files (.mcp.json, CLAUDE.md, …) into the cwd. It's a
+  // `init-agents` retrofits the agent files (.mcp.json, CLAUDE.md, AGENTS.md, …) into the cwd. It's a
   // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
   if (command === "init-agents") {
@@ -910,6 +1105,7 @@ async function main(): Promise<void> {
     await runInitAgents(process.cwd(), {
       json: argv.includes("--json"),
       force: argv.includes("--force"),
+      syncMcp: argv.includes("--sync-mcp"),
     })
     return
   }
@@ -955,6 +1151,8 @@ async function main(): Promise<void> {
         list: argv.includes("--list"),
         verify: !argv.includes("--no-verify"),
         allowDowngrade: argv.includes("--allow-downgrade"),
+        exact: argv.includes("--exact"),
+        cliVersion: CLI_VERSION,
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
@@ -973,6 +1171,12 @@ async function main(): Promise<void> {
   }
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
+  if (command !== "start") {
+    const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
+    refreshRouteTypes(app.cwd)
+    // A relaunched `nifra dev --bun` child runs beside its parent, which already watches.
+    if (command === "dev" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) watchRouteTypes(app.cwd)
+  }
   if (command === "dev") await dev(app, flags)
   else if (command === "build") await buildForTarget(app, flags.target, flags)
   else await start(app, flags)
@@ -1057,6 +1261,7 @@ function isCliCommandToken(value: string): boolean {
     value === "mcp" ||
     value === "init-agents" ||
     value === "upgrade" ||
+    value === "db" ||
     value === "help" ||
     value === "--help" ||
     value === "-h" ||

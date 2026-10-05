@@ -380,6 +380,30 @@ describe("durable journal and saga reconciliation", () => {
     ])
   })
 
+  test("a non-string error code, digest, or capability is refused, from the caller or the store", async () => {
+    const store = new MemoryDurableEffectStore()
+    const journal = createDurableEffectJournal({ store, now: () => 10, allowMemoryStore: true })
+    await journal.intent({ effectId: "effect_1", capability: "db.write" })
+    await expect(
+      journal.failed("effect_1", { began: false, errorCode: JSON.parse("null") }),
+    ).rejects.toThrow("durable effect errorCode is invalid")
+    const stored = store.get("effect_1")
+    for (const corrupt of [
+      { errorCode: JSON.parse("null") },
+      { digest: ["a".repeat(64)] },
+      { capability: ["db.write"] },
+    ]) {
+      const tampered = new MemoryDurableEffectStore()
+      tampered.get = () => JSON.parse(JSON.stringify({ ...stored, ...corrupt }))
+      const reader = createDurableEffectJournal({
+        store: tampered,
+        now: () => 10,
+        allowMemoryStore: true,
+      })
+      await expect(reader.executing("effect_1")).rejects.toThrow(/store returned an invalid/)
+    }
+  })
+
   test("compatibility reconciliation fails loudly instead of silently truncating", async () => {
     class OverflowStore extends MemoryDurableEffectStore {
       override scan(
@@ -479,6 +503,29 @@ describe("durable journal and saga reconciliation", () => {
       "compensate:reserve",
     ])
     expect(compensationIds[0]).toBe(compensationIds[1])
+  })
+
+  test("a saga store refuses a transition whose record names another saga", async () => {
+    const store = new MemorySagaStore()
+    const record = {
+      sagaId: "saga_a",
+      definition: "test",
+      state: "running" as const,
+      input: null,
+      steps: [],
+      createdAt: 1,
+      updatedAt: 1,
+      version: 1,
+    }
+    expect(store.create(record)).toBe(true)
+    expect(
+      store.compareAndSet({
+        sagaId: "saga_a",
+        version: 1,
+        record: { ...record, sagaId: "saga_b", updatedAt: 2, version: 2 },
+      }),
+    ).toBe(false)
+    expect(store.get("saga_a")).toEqual(record)
   })
 
   test("an unknown step outcome is never repeated automatically and is reconciled", async () => {

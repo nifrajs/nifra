@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/security",
@@ -83,6 +79,75 @@ const app = server().use(securityHeaders({
   contentSecurityPolicy: "default-src 'self'",
   hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // opt in once HTTPS-only
 }))`
+
+const FORM = `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema/form"
+
+const app = server()
+
+app.post(
+  "/listings",
+  {
+    body: t.form(
+      {
+        title: t.string({ minLength: 1, maxLength: 120 }),
+        price: t.integer({ minimum: 0 }), // form values arrive as text; "1200" becomes 1200
+        cover: t.file({ maxBytes: 5_000_000, accept: ["image/png", "image/jpeg"] }),
+        photos: t.array(t.file({ maxBytes: 5_000_000, accept: ["image/*"] }), { maxItems: 8 }),
+        floorPlan: t.optional(t.file({ accept: ["application/pdf"] })),
+      },
+      { maxFiles: 10, maxFields: 20 },
+    ),
+    bodyLimit: 50_000_000, // the default body cap is 1 MB: raise it on the routes that take files
+  },
+  (c) => {
+    const { title, cover, photos } = c.body // cover: File, photos: File[], floorPlan?: File
+    // Name the stored object yourself. \`cover.name\` is whatever the client typed.
+    const key = \`\${crypto.randomUUID()}.\${cover.type === "image/png" ? "png" : "jpg"}\`
+    return { title, key, photos: photos.length }
+  },
+)`
+
+const FORM_CLIENT = `// doc-check: skip - fragment: \`app\` is the server above; \`input\` is a file input on your page.
+import { client } from "@nifrajs/client"
+
+const api = client<typeof app>("https://api.example.com")
+const files = [...(input.files ?? [])]
+
+// A body that holds a File is sent as multipart/form-data. The call is typed like any other.
+const { data, error } = await api.listings.post({
+  title: "Two rooms by the park",
+  price: 1200,
+  cover: files[0],
+  photos: files.slice(1),
+})`
+
+const FORM_BYO = `// doc-check: skip - fragment: \`app\` is your server; zod is your own dependency.
+import { multipartBody } from "@nifrajs/core/multipart"
+import { z } from "zod"
+
+const Upload = z.object({ title: z.string(), attachment: z.instanceof(File) })
+
+// Any Standard Schema can validate a form. \`multipartBody\` is what tells the route to read one.
+app.post("/attachments", { body: multipartBody(Upload, { maxFiles: 1 }) }, (c) => c.body.title)`
+
+const BODY_PARSER = `// doc-check: skip - fragment: \`app\` is your server; \`Pipeline\` is your schema; yaml is your own dependency.
+import { bodyParser } from "@nifrajs/core/body-parser"
+import { parse } from "yaml"
+
+const utf8 = new TextDecoder("utf-8", { fatal: true })
+
+app.post(
+  "/pipelines",
+  {
+    body: bodyParser(Pipeline, {
+      types: ["application/yaml"],
+      // Handed the bytes, already within bodyLimit. Bound the decoder too: alias count, nesting.
+      parse: (bytes) => parse(utf8.decode(bytes), { maxAliasCount: 0 }),
+    }),
+  },
+  (c) => c.body.name, // validated by Pipeline, whatever format it arrived in
+)`
 
 const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
@@ -165,9 +230,10 @@ const app = server()
   .use(jwt({ key: process.env.JWT_SECRET!, algorithms: ["HS256"], issuer: "my-app" }))
   // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.
   .use(csrf({ secret: process.env.CSRF_SECRET! }))
-  // Allow/deny by IPv4/IPv6 + CIDR. FAILS CLOSED with no trusted client IP; X-Forwarded-For is ignored
-  // unless trustedProxies > 0 (set it to the number of proxies you actually run in front of the app).
-  .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"], trustedProxies: 1 }))
+  // Allow/deny by IPv4/IPv6 + CIDR, judged against c.clientIp: the socket peer, or the chain your
+  // server({ clientIp }) trust declaration names. FAILS CLOSED with no caller IP; a raw
+  // X-Forwarded-For is never believed.
+  .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"] }))
   // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
   // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
   .use(bodyLimit({ maxBytes: 1_000_000 }))`
@@ -311,7 +377,9 @@ export default function Security() {
         <code>&quot;warn&quot;</code> checks every response, logs the undeclared fields by name, and
         serves the payload <strong>unchanged</strong> - so turning it on in staging can never be the
         thing that broke production. <code>&quot;enforce&quot;</code> serializes the validated value
-        instead of the raw result. Install it before the routes it should cover: like{" "}
+        instead of the raw result. Both cover a returned value, a <code>status(...)</code> result and
+        a <code>c.json(...)</code> reply alike; only a hand-built <code>Response</code> (a redirect, a
+        stream) passes unchecked. Install it before the routes it should cover: like{" "}
         <code>idempotency()</code>, the decision is made per route at registration.
       </p>
       <p>
@@ -385,14 +453,157 @@ export default function Security() {
         <code>&quot;strip&quot;</code> deletes the offending keys and hands the handler the cleaned
         value, siblings intact. <code>&quot;ignore&quot;</code> parses as-is, for a route you are sure
         never merges body input into another object. A string <i>value</i> of <code>&quot;__proto__&quot;</code>{" "}
-        is legal data and never triggers - only an own key of that name does.
+        is legal data and never triggers - only an own key of that name does. A WebSocket route with a{" "}
+        <code>messageSchema</code> parses each frame under the same policy; under{" "}
+        <code>&quot;reject&quot;</code> a poisoned frame reaches <code>onInvalidMessage</code> as invalid
+        JSON.
       </p>
       <p>
         The check is sound against escape smuggling: a <code>__proto__</code>-spelled key
-        parses to the same own property, so it is caught the same way. And it is cheap on the common
-        path - a clean body pays a substring pre-scan only; the deep walk runs solely when the raw text
-        actually contains a suspect token, so an honest payload is never charged for the tree it does
-        not have.
+        parses to the same own property, so it is caught the same way. And it is cheap: one walk over the
+        objects the parse already built, with no reviver and no pre-scan of the raw text.
+      </p>
+
+      <h2>Forms and file uploads - <code>t.form</code></h2>
+      <p>
+        A <code>multipart/form-data</code> body is declared like any other: text fields and files side by
+        side, validated before the handler runs, typed in <code>c.body</code>. The constructors live on
+        the <code>t</code> of <code>@nifrajs/schema/form</code> - the same builder as{" "}
+        <code>@nifrajs/schema</code> plus <code>t.file</code> and <code>t.form</code> - so an app that
+        takes no uploads ships none of this.
+      </p>
+      <CodeBlock code={FORM} lang="ts" />
+      <p>
+        <code>t.file</code> checks the size before it reads a byte, and <code>accept</code> is matched
+        against the file&rsquo;s <b>leading bytes</b>, never the type the client claimed: a script renamed{" "}
+        <code>photo.png</code> fails validation. With <code>accept</code> set, the file the handler
+        receives carries the detected type. A type that has no signature to check (<code>text/csv</code>,{" "}
+        <code>image/svg+xml</code>) is refused when the schema is built, not silently let through. Text
+        fields are coerced from their string form, a repeated field becomes a list, and a field the form
+        does not declare fails validation unless <code>additionalProperties</code> is set.
+      </p>
+      <p>
+        The body is bounded before any of it is validated. The route&rsquo;s <code>bodyLimit</code> caps
+        the whole request; <code>maxFields</code> (100), <code>maxFiles</code> (10),{" "}
+        <code>maxFieldBytes</code> (64 KiB) and <code>maxFileBytes</code> cap what it may carry. A request
+        over one is answered <code>413</code> with the limit it crossed (<code>payload_too_large</code>,{" "}
+        <code>too_many_parts</code>, <code>too_many_fields</code>, <code>too_many_files</code>,{" "}
+        <code>field_too_large</code>, <code>file_too_large</code>); a body that is not a well-formed form
+        is a <code>400</code> <code>invalid_multipart</code>, and any other content type a{" "}
+        <code>415</code>. A body that ends before its closing delimiter is refused rather than read as the
+        parts that did arrive. Field names are screened by the same <code>protoPoisoning</code> policy as
+        JSON keys.
+      </p>
+      <p>
+        The typed client needs nothing extra: a body that holds a <code>File</code> or <code>Blob</code>{" "}
+        goes out as a form.
+      </p>
+      <CodeBlock code={FORM_CLIENT} lang="ts" />
+      <p>
+        Bringing your own validator? <code>multipartBody</code> marks any Standard Schema as a form body
+        and takes the same limits. <code>t.form</code> has already done this for itself.
+      </p>
+      <CodeBlock code={FORM_BYO} lang="ts" />
+      <p>What a validated file does and does not tell you:</p>
+      <ul>
+        <li>
+          <b>The signature is all that was checked.</b> A file can open as a PNG and still carry another
+          format behind it, and <code>application/zip</code> is also what a <code>.docx</code> or{" "}
+          <code>.xlsx</code> is. Re-encode images you will serve back, and scan what you will open.
+        </li>
+        <li>
+          <b>
+            <code>file.name</code> is the client&rsquo;s.
+          </b>{" "}
+          Path separators and control characters are removed, and that is all. Generate the storage key;
+          never build a path from the name.
+        </li>
+        <li>
+          <b>
+            Without <code>accept</code>, <code>file.type</code> is the client&rsquo;s too.
+          </b>{" "}
+          Some runtimes derive it from the file extension. Only a type that <code>accept</code> matched is
+          one the bytes proved.
+        </li>
+        <li>
+          <b>Serve uploads as downloads.</b> Send <code>content-disposition: attachment</code> and{" "}
+          <code>x-content-type-options: nosniff</code>, from a separate origin where you can.
+        </li>
+        <li>
+          <b>A form post is a simple cross-origin request.</b> A browser sends{" "}
+          <code>multipart/form-data</code> with cookies and no preflight, so a cookie-authenticated upload
+          route needs <code>csrf()</code> like any other state change.
+        </li>
+        <li>
+          <b>The form is held in memory.</b> Budget roughly twice <code>bodyLimit</code> per request in
+          flight. Past tens of megabytes, hand the client a presigned URL and let it upload to storage
+          directly.
+        </li>
+      </ul>
+      <p>
+        An input nobody filled in is not a file: a zero-byte file part, or an empty text part in a file
+        field, counts as absent, so it fails a required field and leaves an optional one{" "}
+        <code>undefined</code>. A required list nobody filled in is <code>[]</code>; bound it with{" "}
+        <code>minItems</code> if one entry is mandatory. A browser checkbox submits <code>&quot;on&quot;</code>,
+        which is not a boolean - give the input <code>value=&quot;true&quot;</code>. And a form with no
+        required file also accepts the same fields as JSON or <code>application/x-www-form-urlencoded</code>,
+        so one route serves a plain HTML form and a script.
+      </p>
+      <p>
+        In tests, send forms through <code>inProcessClient</code> or <code>testClient</code>: they encode
+        the form first, so the request arrives with the <code>Content-Length</code> a network peer would
+        send. A <code>Request</code> built straight from a <code>FormData</code> and passed to{" "}
+        <code>app.fetch</code> has none, and on Node 26 the runtime raises an unhandled rejection when the
+        app stops reading such a body early, as it does for one over the limit.
+      </p>
+
+      <h2>Other body formats - <code>bodyParser</code></h2>
+      <p>
+        A route reads JSON and urlencoded bodies and answers <code>415</code> to everything else.{" "}
+        <code>bodyParser</code> from <code>@nifrajs/core/body-parser</code> names the other media types
+        one route reads and the function that decodes them. What it decodes is validated by the same
+        schema, so the handler sees one typed body whatever format it arrived in.
+      </p>
+      <CodeBlock code={BODY_PARSER} lang="ts" />
+      <p>
+        The route opts in, not the app: a parser registered once for every route would widen what each
+        of them accepts. Before <code>parse</code> runs, the request&rsquo;s media type has matched one
+        of <code>types</code> in full (case folded, parameters set aside) and the body has been read
+        under the route&rsquo;s <code>bodyLimit</code>, counted on the bytes delivered. After it, and
+        before the schema:
+      </p>
+      <ul>
+        <li>
+          <b>A parser that throws is a <code>400</code>.</b> The answer is <code>invalid_body</code>; the
+          parser&rsquo;s own message is not sent.
+        </li>
+        <li>
+          <b>The value must be a tree.</b> An object or array reached twice is what an alias or a cycle
+          decodes to, and a few bytes of it can describe a value that takes minutes to walk. It is
+          refused with a <code>400</code> under every <code>protoPoisoning</code> setting.
+        </li>
+        <li>
+          <b>
+            The <code>protoPoisoning</code> policy applies.
+          </b>{" "}
+          A <code>__proto__</code> key, a <code>constructor</code> that carries a <code>prototype</code>,
+          and an object whose prototype the decoder replaced with data are rejected or stripped, as for
+          JSON. An instance of a class, such as a <code>Date</code> or a <code>Uint8Array</code>, is
+          passed through without being looked into.
+        </li>
+      </ul>
+      <p>
+        What stays yours is the decoder&rsquo;s own limits: nesting depth, alias expansion, and the size
+        of a number or a string are spent inside <code>parse</code>, before anything above can look.
+        Configure it for untrusted input.
+      </p>
+      <p>
+        <code>types</code> takes full media types only, and refuses four: JSON, urlencoded and multipart
+        already have readers, and <code>text/plain</code> is a body a browser sends from any site with
+        the user&rsquo;s cookies and no preflight. Every type it does accept is one a browser must
+        preflight, so your CORS policy sees the request first. The generated OpenAPI document lists
+        each type under the operation&rsquo;s request body. The typed client keeps sending JSON, which
+        the route still reads; send another format with <code>fetch</code>.
       </p>
 
       <h2>File uploads - <code>@nifrajs/uploads</code></h2>
@@ -459,7 +670,14 @@ export default function Security() {
         </li>
         <li>
           Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
-          Transient <code>5xx</code> aren't cached, so a failed call stays retryable.
+          Transient <code>5xx</code> aren't cached, and neither are <code>401</code>, <code>403</code>,{" "}
+          <code>408</code>, <code>409</code>, <code>425</code>, or <code>429</code>: each says the call
+          never ran, so it stays retryable under the same key.
+        </li>
+        <li>
+          The key is not bound to the body: a key reused with a different body replays the first answer. A
+          route that needs that check declares <code>schema.idempotency</code>, which fingerprints the
+          request and refuses a mismatched reuse with <code>409</code>.
         </li>
       </ul>
 
@@ -506,7 +724,10 @@ export default function Security() {
       <p>
         Every value is fixed at construction, so the headers are declared statically rather than
         written by a response hook - an app whose response middleware is only this keeps the fused
-        native response lanes. A route that sets one of these names itself keeps its own value.
+        native response lanes. A route that sets one of these names itself keeps its own value. A
+        group can apply its own configuration over the app&apos;s - <code>{`admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`}</code>{" "}
+        inside <code>app.group("/admin", ...)</code> - and each header it sets replaces the app&apos;s
+        value on the group&apos;s routes only.
       </p>
 
       <h2>Route assurance - prove every route is guarded</h2>

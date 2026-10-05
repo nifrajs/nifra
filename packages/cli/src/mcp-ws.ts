@@ -324,5 +324,8 @@ if (import.meta.main) {
       error: 'invalid input: expected JSON { "path": "/..." }',
     } satisfies WebSocketVerificationResult
   }
-  process.stdout.write(JSON.stringify(output, null, 2))
+  // Flushed, then exit: the app's own handles would keep this single-use process alive until the
+  // parent's timeout, as in mcp-run and mcp-render.
+  await Bun.write(Bun.stdout, JSON.stringify(output, null, 2))
+  process.exit(0)
 }

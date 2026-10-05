@@ -1,6 +1,12 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "plugins": [
+    "./scripts/anti-slop/noChainedTypeAssertions.grit",
+    "./scripts/anti-slop/noConditionalEmptyObjectSpread.grit",
+    "./scripts/anti-slop/noWidenThenAssert.grit",
+    "./scripts/anti-slop/requireSafetyCommentForTypeAssertion.grit"
+  ],
   "linter": {
     "enabled": true,
     "rules": {
@@ -39,6 +45,7 @@
       "**",
       "!**/node_modules",
       "!**/.claude",
+      "!.planning",
       "!**/.playwright-cli",
       "!bench/.published",
       "!**/output",

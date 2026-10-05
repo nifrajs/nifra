@@ -1,5 +1,94 @@
 # @nifrajs/node
 
+## 4.0.0
+
+### Minor Changes
+
+- 10bc446: feat(core): `tls` serves HTTPS straight from the process, on Bun, Node and Deno.
+
+  ```ts
+  import { readFileSync } from "node:fs";
+
+  const tls = { cert: readFileSync("cert.pem"), key: readFileSync("key.pem") };
+
+  app.listen(443, { tls }); // Bun
+  await serve(app, { port: 443, tls }); // @nifrajs/node or @nifrajs/deno
+  ```
+
+  `cert` and `key` are PEM, as text or the files' bytes. Requests then arrive with `https:` URLs, and
+  WebSocket upgrades use the same port. Bun also takes `passphrase` for an encrypted key. On Node,
+  `tls` accepts any `node:tls` server option (`ca` and `requestCert` for client certificates,
+  `minVersion`, `SNICallback`), and the request protocol defaults to `https` when it is set. Without
+  `tls`, each runtime serves plain HTTP, which is what a proxy or platform that ends TLS expects.
+
+- a92345b: feat(node): conditional and range requests for static files
+
+  `serve({ static })` sends a strong `ETag`, `Last-Modified`, and `Accept-Ranges: bytes`. It answers
+  `If-None-Match` and `If-Modified-Since` with 304, and a single `Range` on GET with 206, or with 416
+  and `Content-Range: bytes */size` when unsatisfiable. `If-Range` keeps the range only when it matches
+  the current validator: the exact `ETag`, or the `Last-Modified` date to the second. An `ETag` or
+  `Last-Modified` supplied through `headers`, in any case, is the validator these requests compare
+  against. A 304 carries no `Content-Length` or `Content-Type`. Multi-range and malformed ranges get
+  the whole file.
+
+  fix(node): a request hook that reads the body through `req.clone()` leaves it readable for the route
+  handler and schema validation.
+
+### Patch Changes
+
+- 4936309: perf(core,node): close the realistic-route Node gap to Fastify
+
+  The fused derive-before(-after) lifecycle lanes only had Web (`Response`-building)
+  renderers, so on the Node-direct lane a derive+before route fell back to the generic
+  route program while Bun rode the single closure. The same lanes now build a generic
+  (finalize/wrapResponse-parameterized) fused runner that the Node dispatcher prefers
+  exactly as it prefers the body-only runner - validate → derive → before → handler →
+  (after) in one frame, finalizing through the caller's own outcome renderer. Semantics
+  are stage-for-stage identical to the generic program (pinned by a Web-vs-Node-direct
+  parity suite); Bun's fused Web lanes are untouched.
+
+  `@nifrajs/node`'s JSON writer now emits lowercase `content-type`/`content-length`,
+  matching the other Node writer paths and the Web runtimes. Proven lowercase,
+  mutable records stay in place and receive framing headers without the old
+  rename-and-delete dictionary-mode transition; mixed-case, frozen, and explicitly
+  framed records keep the isolated normalization fallback.
+
+  Realistic-shape bench (oha, auth + security headers + CORS + request-id + cookie,
+  Node): GET 89% → 96% of Fastify, POST 94% → ~98%, body-hash 92% → 96% (each now at
+  or above the raw-`node:http` ceiling).
+  The Node adapter's parser-error drain guard keeps the same close-after-active-responses contract with a per-socket active counter and shared response-finish/close release listener, removing the per-request response Set while retaining close-only abort cleanup.
+
+- d530146: A request whose target is in absolute form (`GET http://host/path`) is routed as `/path` with its Host header, as Bun and Deno route it. Hooks and the router used to see the full URL appended to the origin.
+- 334383c: - `c.req.signal` aborts when the client disconnects before the response finished, matching Bun and Deno.
+  - A peer that resets the connection while an async WebSocket `upgrade` guard runs no longer ends the process.
+  - On Node versions with `shouldUpgradeCallback`, a request whose `Upgrade` header is not a WebSocket handshake (such as curl's `h2c` offer) is served as an ordinary HTTP request instead of answered 404.
+- 31072c1: A `HEAD` request to a route that streams its body cancels that body once the headers are sent, as on Bun and Deno, so the route's producer stops instead of running with no reader.
+- 6d5b0e3: A client that leaves while a streamed response is idle now cancels the response body, as on Bun and Deno. Before, a stream waiting to produce its next chunk (an SSE feed, a streamed agent run) never learned the client had gone: it kept running, and `stop()` waited on it until the drain timeout.
+- 1c104e6: A request with a WebSocket `Upgrade` header to a path that has no WebSocket route is answered by that path's HTTP route, as on Bun, with the response body streamed rather than buffered. A request other than `GET` carrying an `Upgrade` header is served as an ordinary request.
+- 6907cbe: fix(core): a request path is routed the same way on every runtime. A path with `.` or `..`
+  segments, written as-is or percent-encoded (`%2e`, in either case), or with a backslash, is
+  resolved the way a WHATWG URL parser resolves it before a route is chosen: `/users/../posts` and
+  `/users/%2e%2e/posts` are `/posts`, and `/users/..\posts` is `/posts` too.
+
+  Bun and workerd already hand an app the resolved URL. Now Deno, Bun's `listen()` route table and
+  `@nifrajs/node` route the same path, and `c.req.url` shows it. The same holds for a WebSocket
+  handshake. The query string is never touched, and neither is a dot inside a longer segment
+  (`/.well-known`, `/a..b`) or an encoded slash or backslash (`%2f`, `%5c`), which stay part of the
+  segment.
+
+  fix(node): the adapter resolves the request target before anything reads it, so static files,
+  mounts, the app and `c.req.url` all see the same path.
+
+- bda9637: fix(core): a `Response` thrown after `c.set.cookie(...)` or `c.set.deleteCookie(...)` ships those
+  cookies, as the same `Response` returned does. A login handler or a guard that sets or clears a
+  session and then throws a redirect now sends the `Set-Cookie` on every runtime and lane, whether the
+  throw comes from the handler, `derive`, or `beforeHandle`. `c.set.headers` and `c.set.status` still
+  do not apply to a `Response`, thrown or returned, and a thrown `Response` still skips `onError`.
+
+  fix(core): queued cookies reach a `Response` whose headers are immutable, such as
+  `Response.redirect(...)` or a `fetch()` result on Node, Deno, and Workers, whether it is returned or
+  thrown.
+
 ## 3.5.0
 
 ### Patch Changes

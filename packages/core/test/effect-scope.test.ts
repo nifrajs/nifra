@@ -38,6 +38,19 @@ describe("owned effect scope", () => {
     expect(scope.evidence()).toEqual({ began: true, committed: true, ambiguous: false })
   })
 
+  test("an error code that is not a string is refused, not stringified into a token", async () => {
+    const scope = createEffectScope()
+    await expect(
+      scope.run(
+        // An `any`-typed mapper (here parsed JSON) can hand back null; "null" is a valid code shape.
+        { capability: "payments.charge", errorCode: () => JSON.parse("null") },
+        async () => {
+          throw new Error("provider down")
+        },
+      ),
+    ).rejects.toThrow("effect errorCode is invalid")
+  })
+
   test("manual evidence preserves retry safety and terminal certainty", () => {
     const scope = createEffectScope()
     scope.markSafeToRetry()

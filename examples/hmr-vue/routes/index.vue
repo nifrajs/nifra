@@ -1,30 +1,28 @@
 <!--
-  Home route (Vue SFC). The plain <script> carries nifra's loader/meta (server-only, tree-shaken from
-  the client); <script setup> + <template> are the component. The view lives in <Counter> so editing
-  it Fast-Refreshes with state intact; this route file full-reloads on save (it exports loader/meta).
+  Home route (Vue SFC). The plain <script> carries meta (the loader lives in index.backend.ts);
+  <script setup> + <template> are the component. The view lives in <Counter> so editing it
+  Fast-Refreshes with state intact; this route file full-reloads on save (it exports meta).
 -->
 <script lang="ts">
-import type { LoaderArgs, LoaderData } from "@nifrajs/client"
-import type { backend } from "../backend"
-
 export const meta = {
   title: "nifra - HMR (Vue)",
   meta: [{ name: "description", content: "True HMR via @nifrajs/web/vite" }],
 }
-
-// Proves SSR still runs under the Vite dev server: this value is server-rendered into the document.
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.hello.get()
-  return { message: res.data?.message ?? "" }
-}
-export type Data = LoaderData<typeof loader>
 </script>
 
 <script setup lang="ts">
-import Counter from "../components/Counter.vue"
+import Counter from "../frontend/components/Counter.vue"
+import type { Route } from "./+types/index"
 
 // compose() spreads data/actionData/pending/submission as props - declare them so they aren't attrs.
-defineProps<{ data: Data; actionData?: unknown; pending?: unknown; submission?: unknown }>()
+// Listed rather than `defineProps<Route.ComponentProps>()`: the SFC compiler cannot follow an imported
+// type through tsconfig `rootDirs`, but it can declare these keys and leave their types to TypeScript.
+defineProps<{
+  data: Route.LoaderData
+  actionData?: Route.ActionData
+  pending?: Route.ComponentProps["pending"]
+  submission?: Route.ComponentProps["submission"]
+}>()
 </script>
 
 <template>

@@ -1,4 +1,4 @@
-import logo from "../logo.svg"
+import logo from "../frontend/logo.svg"
 import styles from "./about.module.css"
 
 export default function About() {

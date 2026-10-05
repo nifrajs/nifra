@@ -1,9 +1,8 @@
 import { existsSync, statSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { inProcessClient } from "@nifrajs/client"
 import { defineReplayFile } from "@nifrajs/core/replay"
 import { type AppLike, runApp } from "@nifrajs/runner"
 import { createWebApp, type RenderAdapter } from "@nifrajs/web"
@@ -12,6 +11,8 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { collectDoctorResult } from "./doctor.ts"
 import { loadApp, resolvePlugins } from "./load.ts"
+import { CHILD_OUTPUT_MAX_BYTES, joinHeadTail, readBoundedStream, readHeadTail } from "./mcp-io.ts"
+import { frameworkWebAppOptions } from "./web-app-options.ts"
 
 const HYDRATION_ASSURANCE = Symbol.for("nifra.hydration.assurance")
 const SOURCE_GLOB = "**/*.{ts,tsx,js,jsx,vue,svelte,mdx}"
@@ -176,6 +177,8 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
     const client = await buildClient({
       routesDir: loaded.routesDir,
       outDir: clientOutput,
+      // The runner imports the entry from disk, where a `/assets/` chunk URL is a filesystem path.
+      publicPath: `${pathToFileURL(clientOutput).href}/`,
       clientModule: loaded.framework.clientModule,
       ...(plugins.length === 0 ? {} : { plugins: plugins as BunPlugin[] }),
       ...(loaded.framework.conditions === undefined
@@ -186,6 +189,9 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
       ...(loaded.framework.publicEnvPrefix === undefined
         ? {}
         : { publicEnvPrefix: loaded.framework.publicEnvPrefix }),
+      ...(loaded.framework.secretExemptions === undefined
+        ? {}
+        : { secretExemptions: loaded.framework.secretExemptions }),
     })
     if (client.entry.trim() === "" || client.assets.length === 0) {
       await rm(workDir, { recursive: true, force: true })
@@ -200,7 +206,7 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
       adapter: loaded.framework.adapter as RenderAdapter,
       manifest: discoverRoutes(loaded.routesDir),
       clientEntry: client.entry,
-      ...(loaded.backend === undefined ? {} : { api: inProcessClient(loaded.backend as never) }),
+      ...frameworkWebAppOptions(loaded.framework, loaded.backend),
     }) as unknown as AppLike
     return {
       app: webApp,
@@ -232,19 +238,12 @@ async function sourceFiles(cwd: string): Promise<Array<{ file: string; content: 
   return files
 }
 
+/** How long a route may take to mark itself hydrated before the gate fails it. */
+const HYDRATION_TIMEOUT_MS = 5_000
+let entryCopies = 0
+
 function outputPath(outputDir: string, entry: string): string {
   return join(outputDir, basename(entry))
-}
-
-function globalValue(html: string, name: string): unknown {
-  const expression = new RegExp(`window\\.${name}=([\\s\\S]*?)(?:</script>|;window\\.)`)
-  const value = expression.exec(html)?.[1]?.replace(/;$/, "")
-  if (value === undefined) return undefined
-  try {
-    return JSON.parse(value)
-  } catch {
-    return undefined
-  }
 }
 
 async function runDomHydration(
@@ -288,11 +287,21 @@ async function runDomHydration(
     else if (name === "cancelAnimationFrame") globals[name] = (id: number) => clearTimeout(id)
     else globals[name] = windowValue[name]
   }
+  // Framework runtimes reach for more DOM globals (Vue's `SVGElement`, `Text`, `Comment`). Lend every
+  // one the runtime does not define itself, so its own `fetch`, `URL` and timers stay in place.
+  for (const name of Object.getOwnPropertyNames(windowValue)) {
+    if (name in globals) continue
+    let value: unknown
+    try {
+      value = windowValue[name]
+    } catch {
+      continue
+    }
+    previous.set(name, undefined)
+    globals[name] =
+      typeof value === "function" && !/^[A-Z]/.test(name) ? value.bind(windowValue) : value
+  }
   const windowRecord = windowValue as Record<string, unknown>
-  windowRecord.__NIFRA_ROUTE__ = globalValue(html, "__NIFRA_ROUTE__")
-  windowRecord.__NIFRA_DATA__ = globalValue(html, "__NIFRA_DATA__")
-  windowRecord.__NIFRA_LAYOUT_DATA__ = globalValue(html, "__NIFRA_LAYOUT_DATA__")
-  windowRecord.__NIFRA_ACTION__ = globalValue(html, "__NIFRA_ACTION__")
   windowRecord.console = console
   const errors: string[] = []
   const recover = (error: unknown, info?: unknown): void => {
@@ -310,7 +319,12 @@ async function runDomHydration(
       documentValue.querySelector as (selector: string) => { innerHTML?: unknown } | null
     )("#root")
     const before = String(beforeRoot?.innerHTML ?? "")
-    const entry = outputPath(built.outputDir, built.client.entry)
+    // Bun evaluates a file module once per path, query or not, so each route imports its own copy.
+    // A fresh directory each time: Bun's resolver caches a directory's listing once it has read it.
+    const copyDir = join(built.outputDir, `route-${++entryCopies}`)
+    await mkdir(copyDir)
+    const entry = join(copyDir, basename(built.client.entry))
+    await copyFile(outputPath(built.outputDir, built.client.entry), entry)
     const originalError = console.error
     const originalWarn = console.warn
     console.error = (...args) => {
@@ -323,10 +337,32 @@ async function runDomHydration(
       if (/hydr|mismatch|server|client|expected|recover/i.test(message)) errors.push(message)
       originalWarn(...args)
     }
+    // A render that throws on the client surfaces from a scheduler task, not from the import.
+    const uncaught = (error: unknown): void => {
+      errors.push(`uncaught: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    process.on("uncaughtException", uncaught)
+    process.on("unhandledRejection", uncaught)
+    let hydrated = false
     try {
-      await import(`${pathToFileURL(entry).href}?nifra-hydration=${encodeURIComponent(path)}`)
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
+      await import(pathToFileURL(entry).href)
+      // The entry marks <html> once the adapter has mounted the route. `Date.now` is pinned by the
+      // deterministic runtime, so the bound is measured with `performance.now`.
+      const marked = documentValue.documentElement as { hasAttribute(name: string): boolean }
+      const started = performance.now()
+      for (;;) {
+        hydrated = marked.hasAttribute("data-nifra-hydrated")
+        if (hydrated || errors.length > 0 || performance.now() - started >= HYDRATION_TIMEOUT_MS)
+          break
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1))
+      }
+      // The framework commits the hydration in its own scheduler tasks after the marker's frame.
+      for (let tick = 0; tick < 10; tick++) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
+      }
     } finally {
+      process.off("uncaughtException", uncaught)
+      process.off("unhandledRejection", uncaught)
       console.error = originalError
       console.warn = originalWarn
     }
@@ -335,6 +371,16 @@ async function runDomHydration(
     )("#root")
     const after = String(afterRoot?.innerHTML ?? "")
     const diagnostics: import("./diagnostics.ts").Diagnostic[] = []
+    if (!hydrated && errors.length === 0) {
+      diagnostics.push(
+        diagnostic(
+          "NF-H001",
+          `client hydration did not complete within ${HYDRATION_TIMEOUT_MS / 1000}s`,
+          undefined,
+          [built.framework],
+        ),
+      )
+    }
     if (errors.length > 0 || before !== after) {
       diagnostics.push(
         diagnostic("NF-H001", "client hydration reported a recoverable mismatch", undefined, [
@@ -555,57 +601,104 @@ async function runHydrationProof(cwd: string, options: HydrationOptions): Promis
   }
 }
 
+/** How long one hydration run may take: it builds the client and renders every route. */
+const HYDRATION_RUN_TIMEOUT_MS = 300_000
+
+/** Bounds on a hydration run beyond its {@link HydrationOptions}. */
+export interface HydrationRunControl {
+  readonly signal?: AbortSignal
+  /** Default 300000 (five minutes). */
+  readonly timeoutMs?: number
+}
+
 /** Run hydration in a fresh process so the project's current client and framework modules are isolated. */
 export async function runHydrationAssurance(
   cwd: string,
   options: HydrationOptions = {},
+  control: HydrationRunControl = {},
 ): Promise<HydrationResult> {
+  const failed = (reason: string): HydrationResult => ({
+    diagnostics: [diagnostic("NF-H001", `hydration runner failed: ${reason}`)],
+  })
+  if (control.signal?.aborted) return failed("cancelled")
   const root = resolve(cwd)
   const entry = fileURLToPath(import.meta.url)
+  // The answer line carries this token, so whatever project code prints cannot be read as the result.
+  const token = crypto.randomUUID()
   const proc = Bun.spawn(
     [process.execPath, entry, root, "--nifra-hydration-child", JSON.stringify(options)],
     {
-      stdin: "ignore",
+      cwd: root,
+      // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+      env: process.env,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     },
   )
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ])
-  await proc.exited
+  let stopped: string | undefined
+  const stop = (reason: string): void => {
+    stopped ??= reason
+    proc.kill()
+  }
+  const onAbort = (): void => stop("cancelled")
+  control.signal?.addEventListener("abort", onAbort, { once: true })
+  const timeoutMs = control.timeoutMs ?? HYDRATION_RUN_TIMEOUT_MS
+  const timer = setTimeout(() => stop(`timed out after ${timeoutMs} ms`), timeoutMs)
   try {
-    return JSON.parse(stdout) as HydrationResult
-  } catch {
-    return {
-      diagnostics: [
-        diagnostic(
-          "NF-H001",
-          `hydration runner failed: ${stderr.trim() || stdout.trim() || "no result"}`,
-        ),
-      ],
+    try {
+      proc.stdin.write(`${token}\n`)
+      await proc.stdin.end()
+    } catch {
+      // The child exited before reading its token; its stderr says why.
     }
+    const [stdout, stderr] = await Promise.all([
+      readBoundedStream(proc.stdout, CHILD_OUTPUT_MAX_BYTES, () =>
+        stop(`output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes`),
+      ),
+      readHeadTail(proc.stderr, 2048, 2048),
+      proc.exited,
+    ])
+    if (stopped !== undefined) return failed(stopped)
+    const prefix = `${token} `
+    const answer = stdout.text.split("\n").find((line) => line.startsWith(prefix))
+    if (answer !== undefined) {
+      try {
+        return JSON.parse(answer.slice(prefix.length)) as HydrationResult
+      } catch {
+        // A truncated answer line falls through to the stderr report.
+      }
+    }
+    return failed(joinHeadTail(stderr).trim() || "no result")
+  } finally {
+    clearTimeout(timer)
+    control.signal?.removeEventListener("abort", onAbort)
   }
 }
 
 if (import.meta.main && process.argv.includes("--nifra-hydration-child")) {
+  // Bound before project code loads, so a `console.log` in a config or loader goes to stderr and
+  // never reaches the answer channel.
+  const stdout = process.stdout.write.bind(process.stdout)
+  const toStderr = (...args: unknown[]): void => {
+    process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`)
+  }
+  console.log = toStderr
+  console.info = toStderr
+  console.debug = toStderr
+  const token = (await readBoundedStream(Bun.stdin.stream(), 256)).text.trim()
   const cwd = process.argv[2] ?? process.cwd()
   const rawOptions = process.argv[4]
+  let result: HydrationResult
   try {
     process.chdir(cwd)
     const options = rawOptions === undefined ? {} : (JSON.parse(rawOptions) as HydrationOptions)
-    const result = await runHydrationProof(cwd, options)
-    await Bun.write(Bun.stdout, JSON.stringify(result))
+    result = await runHydrationProof(cwd, options)
   } catch (error) {
-    await Bun.write(
-      Bun.stdout,
-      JSON.stringify({
-        diagnostics: [
-          diagnostic("NF-H001", error instanceof Error ? error.message : String(error)),
-        ],
-      }),
-    )
+    result = {
+      diagnostics: [diagnostic("NF-H001", error instanceof Error ? error.message : String(error))],
+    }
   }
+  await new Promise<void>((done) => stdout(`${token} ${JSON.stringify(result)}\n`, () => done()))
   process.exit(0)
 }

@@ -497,6 +497,61 @@ describe("mountAgUI resumable streams", () => {
     expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
   })
 
+  test("a client that disconnects mid-run can still replay the run's real result", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports({
+        model: {
+          complete: async () => {
+            await gate
+            return { kind: "output", value: { answer: "late" } }
+          },
+        },
+      }),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const reader = (await call(replayInput({}))).body!.getReader()
+    await reader.read()
+    await reader.cancel()
+    release()
+    const replayed = framed(await (await call(replayInput({ "last-event-id": "0" }))).text())
+    expect(replayed.types).not.toContain("RUN_ERROR")
+    expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
+  })
+
+  test("without an evidence log a client disconnect cancels the run", async () => {
+    const { app, call } = captureApp()
+    let reached!: (signal: AbortSignal) => void
+    const signalSeen = new Promise<AbortSignal>((resolve) => {
+      reached = resolve
+    })
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports({
+        model: {
+          complete: ({ signal }) => {
+            reached(signal)
+            return new Promise((_, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+            })
+          },
+        },
+      }),
+    })
+
+    const reader = (await call(replayInput({}))).body!.getReader()
+    await reader.read()
+    const signal = await signalSeen
+    await reader.cancel()
+    expect(signal.aborted).toBe(true)
+  })
+
   test("rejects an unknown replay and a malformed Last-Event-ID", async () => {
     const { app, call } = captureApp()
     mountAgUI(app, {
@@ -513,6 +568,37 @@ describe("mountAgUI resumable streams", () => {
 
     const malformed = await call(replayInput({ "last-event-id": "nope" }))
     expect(malformed.status).toBe(400)
+  })
+
+  test("evidenceOwner keeps one caller's recorded turns out of another caller's replay and rerun", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: (c) =>
+        ports({ model: outputModel({ answer: `for ${c.req.headers.get("x-user")}` }) })(c),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      evidenceOwner: (c) => {
+        const user = c.req.headers.get("x-user")
+        if (user === null) throw new Error("unauthenticated")
+        return user
+      },
+    })
+    const results = async (res: Response): Promise<unknown[]> =>
+      (await events(res)).filter((e) => e.type === "RUN_FINISHED").map((e) => e.result)
+
+    expect(await results(await call(replayInput({ "x-user": "alice" })))).toEqual([
+      { answer: "for alice" },
+    ])
+    // Another caller's reconnect finds no turn; a refused owner stops the request before any replay.
+    expect((await call(replayInput({ "x-user": "bob", "last-event-id": "0" }))).status).toBe(409)
+    expect((await call(replayInput({ "last-event-id": "0" }))).status).toBe(400)
+    // Another caller reusing the run id records a turn of its own; the owner's replay is unchanged.
+    expect(await results(await call(replayInput({ "x-user": "bob" })))).toEqual([
+      { answer: "for bob" },
+    ])
+    expect(
+      await results(await call(replayInput({ "x-user": "alice", "last-event-id": "0" }))),
+    ).toEqual([{ answer: "for alice" }])
   })
 })
 

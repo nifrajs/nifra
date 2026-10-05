@@ -17,6 +17,7 @@ import type {
 } from "../schema/standard.ts"
 import { validateStandard } from "../schema/standard.ts"
 import { decodeTransportFrame, type TransportCodecRegistry } from "../transport-codec.ts"
+import { guardDecodedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -180,6 +181,10 @@ export interface WebSocketHandler<
   transport?: {
     readonly registry: TransportCodecRegistry
     readonly maxBytes?: number
+    /** Whether an inbound frame may decode to a value holding a `RegExp`. Default `false`: a
+     * client-supplied pattern is code (catastrophic backtracking stalls the event loop), so such a
+     * frame is treated as invalid. */
+    readonly acceptRegExp?: boolean
   }
   open?(ws: NifraWebSocket<Data>): MaybePromise<void>
   message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>
@@ -223,7 +228,7 @@ export type WsAttach = (
   socket: StandardWebSocket,
   handler: WebSocketHandler,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
+  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number | undefined },
 ) => NifraWebSocket
 
 /**
@@ -263,7 +268,7 @@ export function attachWebSocket<
   socket: StandardWebSocket,
   handler: WebSocketHandler<Data, Env, Schema, Send>,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
+  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number | undefined },
 ): NifraWebSocket<Data> {
   const { pubsub } = options
   let ws!: NifraWebSocket<Data>
@@ -436,8 +441,13 @@ export function createWebSocketSender(
  * parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or
  * `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at
  * `app.ws()` registration, so every adapter dispatches validated messages with no per-adapter code.
+ * `protoPoisoning` is the app's body policy: a frame with a `__proto__` key gets what a JSON body
+ * with one gets, and under `"reject"` reads as invalid JSON.
  */
-export function wrapWebSocketMessageValidation(handler: WebSocketHandler): WebSocketHandler {
+export function wrapWebSocketMessageValidation(
+  handler: WebSocketHandler,
+  protoPoisoning: ProtoPoisoning = "reject",
+): WebSocketHandler {
   const schema = handler.messageSchema
   if (schema === undefined) return handler
   // The handler is type-erased here; the user's `message` really accepts the schema's validated output
@@ -452,12 +462,16 @@ export function wrapWebSocketMessageValidation(handler: WebSocketHandler): WebSo
       const text = typeof raw === "string" ? raw : WS_MESSAGE_DECODER.decode(raw)
       parsed =
         handler.transport === undefined
-          ? JSON.parse(text)
-          : decodeTransportFrame(text, handler.transport.registry, {
-              ...(handler.transport.maxBytes === undefined
-                ? {}
-                : { maxBytes: handler.transport.maxBytes }),
-            })
+          ? parseJsonGuarded(text, protoPoisoning)
+          : guardDecodedValue(
+              decodeTransportFrame(text, handler.transport.registry, {
+                ...(handler.transport.maxBytes === undefined
+                  ? {}
+                  : { maxBytes: handler.transport.maxBytes }),
+              }),
+              protoPoisoning,
+              handler.transport.acceptRegExp === true,
+            )
     } catch {
       return onInvalid?.(ws, [{ message: "invalid JSON" }], raw)
     }

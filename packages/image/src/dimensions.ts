@@ -1,7 +1,8 @@
 /**
  * Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no
  * dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe
- * `width`/`height` (build-time tooling can pre-read them into a manifest).
+ * `width`/`height` (build-time tooling can pre-read them into a manifest). A JPEG's are the size it is
+ * displayed at: its EXIF orientation applied, as a browser applies it.
  */
 export type ImageFormat = "png" | "jpeg" | "gif" | "webp"
 
@@ -17,25 +18,105 @@ const png = (b: Uint8Array, dv: DataView): ImageInfo | null => {
   return { width: dv.getUint32(16), height: dv.getUint32(20), format: "png" }
 }
 
+/** The first image descriptor's width/height, past the global color table and any extensions. */
+const gifFirstFrame = (
+  b: Uint8Array,
+  dv: DataView,
+): { width: number; height: number } | undefined => {
+  const packed = b[10] ?? 0
+  let offset = 13 + (packed & 0x80 ? 3 * 2 ** ((packed & 0x07) + 1) : 0)
+  while (offset < b.length) {
+    const block = b[offset]
+    if (block === 0x2c) {
+      if (offset + 9 > b.length) return undefined
+      return { width: dv.getUint16(offset + 5, true), height: dv.getUint16(offset + 7, true) }
+    }
+    if (block !== 0x21) return undefined
+    // An extension: label, then data sub-blocks (a length byte each) to a zero-length terminator.
+    offset += 2
+    while (offset < b.length && b[offset] !== 0) offset += (b[offset] ?? 0) + 1
+    offset += 1
+  }
+  return undefined
+}
+
 const gif = (b: Uint8Array, dv: DataView): ImageInfo | null => {
   // 'GIF', then the logical-screen width/height as little-endian uint16 @6/@8.
   if (b.length < 10 || b[0] !== 0x47 || b[1] !== 0x49 || b[2] !== 0x46) return null
-  return { width: dv.getUint16(6, true), height: dv.getUint16(8, true), format: "gif" }
+  // A browser draws a GIF at the larger of its logical screen and its first frame, per side - a
+  // 1x1 (or 0x0) screen holding a 10x20 frame displays 10x20.
+  const frame = gifFirstFrame(b, dv)
+  return {
+    width: Math.max(dv.getUint16(6, true), frame?.width ?? 0),
+    height: Math.max(dv.getUint16(8, true), frame?.height ?? 0),
+    format: "gif",
+  }
 }
 
-const jpeg = (b: Uint8Array, dv: DataView): ImageInfo | null => {
+/** The EXIF orientation (1-8) an APP1 segment's TIFF block declares, read within `[start, end)`. */
+const exifOrientation = (b: Uint8Array, dv: DataView, start: number, end: number): number => {
+  // "Exif\0\0", then a TIFF header: byte order ("II" little / "MM" big), 42, IFD0's offset.
+  const exif = [0x45, 0x78, 0x69, 0x66, 0, 0]
+  if (start + 14 > end || exif.some((byte, i) => b[start + i] !== byte)) return 1
+  const tiff = start + 6
+  const little = b[tiff] === 0x49 && b[tiff + 1] === 0x49
+  if (!little && !(b[tiff] === 0x4d && b[tiff + 1] === 0x4d)) return 1
+  if (dv.getUint16(tiff + 2, little) !== 42) return 1
+  const ifd = tiff + dv.getUint32(tiff + 4, little)
+  if (ifd + 2 > end) return 1
+  for (let i = 0, count = dv.getUint16(ifd, little); i < count; i++) {
+    const entry = ifd + 2 + i * 12
+    if (entry + 12 > end) return 1
+    if (dv.getUint16(entry, little) !== 0x0112) continue
+    const orientation = dv.getUint16(entry + 8, little)
+    return orientation >= 1 && orientation <= 8 ? orientation : 1
+  }
+  return 1
+}
+
+/** A JPEG's stored frame size and its EXIF orientation, from the segments before the frame. */
+const jpegFrame = (
+  b: Uint8Array,
+  dv: DataView,
+): { width: number; height: number; orientation: number } | null => {
   if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null
   let offset = 2
+  let orientation = 1
   while (offset + 9 < b.length) {
     if (dv.getUint8(offset) !== 0xff) return null // not aligned on a marker → malformed
     const marker = dv.getUint8(offset + 1)
     // SOF0..SOF15 carry the frame's height/width - except DHT(c4)/DNL(c8)/DAC(cc).
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-      return { height: dv.getUint16(offset + 5), width: dv.getUint16(offset + 7), format: "jpeg" }
+      return { height: dv.getUint16(offset + 5), width: dv.getUint16(offset + 7), orientation }
     }
-    offset += 2 + dv.getUint16(offset + 2) // skip this segment (2-byte marker + segment length)
+    const next = offset + 2 + dv.getUint16(offset + 2) // skip this segment (2-byte marker + length)
+    if (marker === 0xe1 && orientation === 1) {
+      orientation = exifOrientation(b, dv, offset + 4, Math.min(next, b.length))
+    }
+    offset = next
   }
   return null
+}
+
+const jpeg = (b: Uint8Array, dv: DataView): ImageInfo | null => {
+  const frame = jpegFrame(b, dv)
+  if (frame === null) return null
+  // A browser draws a JPEG turned by its EXIF orientation, and 5-8 turn it a quarter: the sides swap.
+  return frame.orientation >= 5
+    ? { width: frame.height, height: frame.width, format: "jpeg" }
+    : { width: frame.width, height: frame.height, format: "jpeg" }
+}
+
+/**
+ * The EXIF orientation (1-8) a JPEG declares - how its stored pixels are turned for display - or `1`
+ * for upright, for another format, or for an unreadable header.
+ */
+export function jpegOrientation(bytes: Uint8Array): number {
+  if (bytes.length < 4) return 1
+  return (
+    jpegFrame(bytes, new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength))?.orientation ??
+    1
+  )
 }
 
 const webp = (b: Uint8Array, dv: DataView): ImageInfo | null => {

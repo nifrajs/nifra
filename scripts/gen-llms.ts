@@ -17,6 +17,7 @@ import { basename, join } from "node:path"
  */
 import { Glob } from "bun"
 import ts from "typescript"
+import { codeUnitOrder } from "./code-unit-order.ts"
 
 const ROOT = `${import.meta.dir}/..`
 
@@ -215,7 +216,7 @@ function exportsOf(indexSrc: string): string[] {
       if (name && /^\w+$/.test(name)) names.add(name)
     }
   }
-  return [...names].sort((a, b) => a.localeCompare(b))
+  return [...names].sort((a, b) => codeUnitOrder(a, b))
 }
 
 // ---- gather sources ----------------------------------------------------------------------------
@@ -261,7 +262,7 @@ for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
 docs.sort((a, b) => {
   const ia = DOC_ORDER.indexOf(a.slug)
   const ib = DOC_ORDER.indexOf(b.slug)
-  return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.slug.localeCompare(b.slug)
+  return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || codeUnitOrder(a.slug, b.slug)
 })
 
 interface Pkg {
@@ -297,7 +298,7 @@ for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
       json.types !== undefined,
   })
 }
-pkgs.sort((a, b) => a.name.localeCompare(b.name))
+pkgs.sort((a, b) => codeUnitOrder(a.name, b.name))
 
 /**
  * The type corpus is declaration-backed. Refuse to read an absent or older `dist` declaration so a
@@ -572,7 +573,7 @@ function extractTypesFromDts(
   seen: Set<string>,
   out: TypeEntry[],
 ): void {
-  for (const name of [...exportedNamesOf(file)].sort((a, b) => a.localeCompare(b))) {
+  for (const name of [...exportedNamesOf(file)].sort((a, b) => codeUnitOrder(a, b))) {
     if (seen.has(`${pkgName}:${name}`)) continue
     const found = declarationOf(file, name)
     if (found === undefined) continue
@@ -682,7 +683,7 @@ for (const p of pkgs) {
   typedPkgs += 1
   for (const f of dts) extractTypesFromDts(p.name, f, typeSeen, types)
 }
-types.sort((a, b) => a.name.localeCompare(b.name) || a.package.localeCompare(b.package))
+types.sort((a, b) => codeUnitOrder(a.name, b.name) || codeUnitOrder(a.package, b.package))
 
 /**
  * A published package that contributes NO signature is a hole in the corpus `nifra_types` answers
@@ -808,7 +809,7 @@ emit(`${ROOT}/packages/cli/docs/llms-full.txt`, llmsFull)
 // Verified-example corpus for the `nifra_example` MCP tool: the same checkable snippets `check:docs`
 // typechecks against the live API, shipped inside @nifrajs/cli so an agent gets a guaranteed-compiling
 // example without a network fetch. Same generator run → cannot drift from the docs or the check.
-examples.sort((a, b) => a.slug.localeCompare(b.slug) || a.name.localeCompare(b.name))
+examples.sort((a, b) => codeUnitOrder(a.slug, b.slug) || codeUnitOrder(a.name, b.name))
 emit(`${ROOT}/packages/cli/docs/examples.json`, `${JSON.stringify(examples, null, 2)}\n`)
 
 // Type-signature corpus for the `nifra_types` MCP tool - exact TypeScript per exported symbol, shipped

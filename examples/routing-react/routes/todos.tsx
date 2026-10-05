@@ -1,8 +1,6 @@
-import type { ActionArgs, ActionData, LoaderArgs, LoaderData } from "@nifrajs/client"
-import { revalidate, type Submission } from "@nifrajs/web"
 import { useFetcher } from "@nifrajs/web-react/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
-import type { backend } from "../backend"
+import type { Route } from "./+types/todos"
 
 // F16 (query-cache): a keyed query for client-interactive data - distinct from the route loader. It
 // fetches the home route's count (data-mode GET), caches it under ["count"], and the "refresh" button
@@ -32,38 +30,6 @@ export const meta = {
   meta: [{ name: "description", content: "nifra F15/F16 optimistic UI + revalidation + fetchers" }],
 }
 
-// The list loader - reads the current todos via the in-process api. After a client submit the loader
-// REVALIDATES (unless the form opts out), so the reconciled list reflects what the server accepted.
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.todos.get()
-  return { todos: res.data?.todos ?? [] }
-}
-
-// The mutation handles two flows on POST /todos:
-//   • per-row "bump" (a fetcher submit, F16): append "!" to one todo, then declare /todos changed via
-//     revalidate() → X-Nifra-Revalidate, so the list (and any other mounted view of it) refreshes.
-//   • "add" (a form submit, F15): the optimistic-UI + revalidation-control demo. Returns a typed
-//     error for the reject case (a 200, so no native fallback) and the created todo as actionData.
-// Both are artificially slow so their in-flight states are observable.
-export async function action({ request, api }: ActionArgs<typeof backend>) {
-  const form = await request.formData()
-
-  const bumpId = form.get("bump")
-  if (typeof bumpId === "string" && bumpId !== "") {
-    await new Promise<void>((resolve) => setTimeout(resolve, 900)) // slow → concurrent pending visible
-    await api.todos.bump.post({ id: Number(bumpId) })
-    return revalidate(["/todos"], { ok: true as const, created: null })
-  }
-
-  const raw = form.get("text")
-  const text = typeof raw === "string" ? raw.trim() : ""
-  await new Promise<void>((resolve) => setTimeout(resolve, 700))
-  if (text === "" || text === "fail") return { ok: false as const, error: "rejected" as const }
-  const res = await api.todos.post({ text })
-  if (res.error || res.data === undefined) return { ok: false as const, error: "rejected" as const }
-  return { ok: true as const, created: res.data.todo }
-}
-
 // A todo row with its OWN bump fetcher (F16). Submitting runs in an independent, concurrent state, so
 // many rows can be bumping at once - each showing its own pending - without disturbing the list, the
 // add form, or each other. The bump action declares /todos changed, so the list refreshes per bump.
@@ -89,12 +55,7 @@ function TodoRow(props: { todo: { id: number; text: string } }) {
   )
 }
 
-export default function Todos(props: {
-  data: LoaderData<typeof loader>
-  actionData?: ActionData<typeof action>
-  pending?: boolean
-  submission?: Submission
-}) {
+export default function Todos(props: Route.ComponentProps) {
   // F15: the in-flight submission drives the OPTIMISTIC row - rendered instantly from the FormData
   // the client just submitted, before the server has responded. `formData.get` may return a File, so
   // narrow to string. Cleared automatically when the submit settles (then the real data shows).
@@ -104,7 +65,7 @@ export default function Todos(props: {
   // Revalidation control: when a submit opts OUT of revalidation (data-nifra-revalidate="false"), the
   // loader data stays stale, so we surface the created todo from actionData instead - deduped against
   // the list so the revalidating form (whose reconcile already includes it) never double-renders.
-  const created = props.actionData?.ok ? props.actionData.created : null
+  const created = props.actionData?.ok ? (props.actionData.created ?? null) : null
   const createdIsNew = created !== null && !props.data.todos.some((todo) => todo.id === created.id)
 
   return (

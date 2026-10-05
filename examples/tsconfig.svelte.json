@@ -1,0 +1,8 @@
+{
+  // Checked by svelte-check, which reads `.svelte` files through this include.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "types": ["bun", "svelte"]
+  },
+  "include": ["${configDir}/**/*.ts", "${configDir}/**/*.svelte"]
+}

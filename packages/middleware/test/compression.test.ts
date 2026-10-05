@@ -18,6 +18,40 @@ const streamOf = (text: string): ReadableStream<Uint8Array> =>
     },
   })
 
+/** An endless event stream, one event every 20ms; the first event's arrival shows nothing buffers it. */
+function eventStream(headers: Record<string, string> = {}): Response {
+  let n = 0
+  let cancelled = false
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull: (controller) =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            if (!cancelled) controller.enqueue(new TextEncoder().encode(`data: ${n++}\n\n`))
+            resolve()
+          }, 20),
+        ),
+      cancel: () => {
+        cancelled = true
+      },
+    }),
+    { headers: { "content-type": "text/event-stream", ...headers } },
+  )
+}
+
+async function firstChunk(response: Response, ms: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) return "no body"
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve("nothing arrived"), ms)
+  })
+  const first = reader.read().then((chunk) => new TextDecoder().decode(chunk.value))
+  const outcome = await Promise.race([first, deadline]).finally(() => clearTimeout(timer))
+  await reader.cancel()
+  return outcome
+}
+
 describe("compression()", () => {
   test("gzips a framework-serialized body when the client accepts gzip (round-trips)", async () => {
     const app = server()
@@ -36,6 +70,54 @@ describe("compression()", () => {
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
     expect(res.headers.get("content-encoding")).toBe("gzip")
     expect(await gunzip(res)).toBe(big)
+  })
+
+  test("a strong ETag is weakened on the compressed representation", async () => {
+    const big = "x".repeat(4096)
+    const app = server()
+      .use(compression())
+      .get("/strong", (c) => {
+        c.set.headers.etag = '"v1"'
+        return { big }
+      })
+      .get(
+        "/raw",
+        () => new Response(big, { headers: { "content-type": "text/plain", etag: '"v2"' } }),
+      )
+      .get(
+        "/weak",
+        () => new Response(big, { headers: { "content-type": "text/plain", etag: 'W/"v3"' } }),
+      )
+    const gzip = { headers: { "accept-encoding": "gzip" } }
+    for (const [path, expected] of [
+      ["/strong", 'W/"v1"'],
+      ["/raw", 'W/"v2"'],
+      ["/weak", 'W/"v3"'],
+    ] as const) {
+      const res = await app.fetch(new Request(`http://x${path}`, gzip))
+      expect({
+        path,
+        encoding: res.headers.get("content-encoding"),
+        etag: res.headers.get("etag"),
+      }).toEqual({
+        path,
+        encoding: "gzip",
+        etag: expected,
+      })
+    }
+    const identity = await app.fetch(new Request("http://x/raw"))
+    expect(identity.headers.get("etag")).toBe('"v2"')
+  })
+
+  test("an event stream without no-transform still passes through uncompressed", async () => {
+    const app = server()
+      .use(compression({ threshold: 1 }))
+      .get("/events", () => eventStream())
+    const response = await app.fetch(
+      new Request("http://x/events", { headers: { "accept-encoding": "gzip" } }),
+    )
+    expect(response.headers.get("content-encoding")).toBeNull()
+    expect(await firstChunk(response, 1000)).toBe("data: 0\n\n")
   })
 
   test("skips when the client does not accept gzip", async () => {

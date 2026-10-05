@@ -154,6 +154,63 @@ export function serializeBoundedJson(
   return text
 }
 
+/** What {@link readHeadTail} kept: the start and end of a stream, and how many bytes fell between. */
+export interface HeadTailOutput {
+  readonly head: string
+  readonly tail: string
+  /** Bytes dropped between `head` and `tail`; when 0, `head + tail` is the whole stream. */
+  readonly droppedBytes: number
+}
+
+/**
+ * Drain a stream to its end, keeping at most `headBytes` from its start and `tailBytes` from its end,
+ * so a child that prints without limit costs bounded memory and still runs to completion.
+ */
+export async function readHeadTail(
+  stream: ReadableStream<Uint8Array>,
+  headBytes: number,
+  tailBytes: number,
+): Promise<HeadTailOutput> {
+  const head: Uint8Array[] = []
+  let headSize = 0
+  const tail: Uint8Array[] = []
+  let tailSize = 0
+  let droppedBytes = 0
+  for await (let chunk of stream) {
+    if (headSize < headBytes) {
+      const taken = chunk.subarray(0, headBytes - headSize)
+      head.push(taken)
+      headSize += taken.byteLength
+      chunk = chunk.subarray(taken.byteLength)
+    }
+    if (chunk.byteLength === 0) continue
+    tail.push(chunk)
+    tailSize += chunk.byteLength
+    while (tailSize > tailBytes) {
+      const first = tail[0]!
+      const excess = tailSize - tailBytes
+      if (first.byteLength <= excess) {
+        tail.shift()
+        tailSize -= first.byteLength
+        droppedBytes += first.byteLength
+      } else {
+        tail[0] = first.subarray(excess)
+        tailSize -= excess
+        droppedBytes += excess
+      }
+    }
+  }
+  const decode = (chunks: readonly Uint8Array[]): string => Buffer.concat(chunks).toString("utf8")
+  return { head: decode(head), tail: decode(tail), droppedBytes }
+}
+
+/** A {@link HeadTailOutput} as one string, marking where bytes were dropped. */
+export function joinHeadTail(output: HeadTailOutput): string {
+  return output.droppedBytes === 0
+    ? output.head + output.tail
+    : `${output.head}\n…(${output.droppedBytes} bytes omitted)…\n${output.tail}`
+}
+
 /** Read child output incrementally and cancel as soon as the byte budget is crossed. */
 export async function readBoundedStream(
   stream: ReadableStream<Uint8Array>,

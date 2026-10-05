@@ -615,23 +615,20 @@ async function composeCollectedReport(
   const changedPaths = new Set(scope.changedPaths)
   const retainedByCheck = new Map<ReviewCheckId, CandidateFinding[]>()
   let totalOutOfScope = 0
+  let typeErrorOutOfScope = false
   for (const id of CHECK_IDS) {
-    const source = candidatesByCheck.get(id) ?? []
     const retained: CandidateFinding[] = []
-    let outOfScope = 0
-    for (const candidate of source) {
+    for (const candidate of candidatesByCheck.get(id) ?? []) {
       if (
         scope.kind === "diff" &&
         candidate.location !== undefined &&
         !changedPaths.has(candidate.location.path)
       ) {
-        outOfScope += 1
         totalOutOfScope += 1
+        if (id === "typecheck" && candidate.severity === "error") typeErrorOutOfScope = true
       } else retained.push(candidate)
     }
     retainedByCheck.set(id, retained)
-    // Store the per-check count temporarily on the scope map below through a side channel-free map.
-    void outOfScope
   }
 
   const checks: ReviewCheckResult[] = []
@@ -653,6 +650,11 @@ async function composeCollectedReport(
           : checkResult.typecheckNote?.toLowerCase().includes("typescript")
             ? "missing-typescript"
             : "unsupported"
+    } else if (id === "typecheck" && typeErrorOutOfScope) {
+      // A change can break a caller it never touched, so a type error outside the diff cannot be
+      // ruled out as this change's: the required check stays open instead of passing.
+      status = "unavailable"
+      reasonCode = "filtered-out-of-scope"
     } else if (!configured) {
       status = "skipped"
       reasonCode = "not-configured"
@@ -671,7 +673,8 @@ async function composeCollectedReport(
       id,
       required: REQUIRED_CHECKS.has(id),
       status,
-      duration: status === "unavailable" ? "timeout" : "standard",
+      duration:
+        status === "unavailable" && reasonCode !== "filtered-out-of-scope" ? "timeout" : "standard",
       counts: countsFor(retained, outOfScope),
       findingIds: retained.map((candidate) => candidate.finding.id),
       evidence: checkEvidence,
@@ -942,7 +945,9 @@ export function renderReviewReport(report: ReviewReport): readonly string[] {
   for (const check of report.checks) {
     if (check.status === "skipped") lines.push(`  skipped ${check.id}`)
     if (check.status === "unavailable" || check.status === "error")
-      lines.push(`  unavailable ${check.id}`)
+      lines.push(
+        `  unavailable ${check.id}${check.reasonCode === undefined ? "" : ` (${check.reasonCode})`}`,
+      )
   }
   return lines
 }

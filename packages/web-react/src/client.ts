@@ -1,7 +1,4 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
-// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
-// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
-import { searchOfChain } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-react/client - React client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -13,6 +10,7 @@ import { createElement, type FunctionComponent, useSyncExternalStore } from "rea
 import { hydrateRoot } from "react-dom/client"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own (react-dom-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-react/client` alongside `mountRouter`.
@@ -58,29 +56,16 @@ export const hydrationAssuranceHook = Object.freeze({
  * SSR markup on hydration.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
+  // What the server rendered. React hydrates against THIS, whatever the store says by the time it gets
+  // to the component - hydration is scheduled, and a store that moved on first (a client loader that
+  // answered, a held `ssr = false` page released) would otherwise hydrate a tree the markup never had.
+  // React then re-renders with the live snapshot on its own.
+  const hydrated = router.snapshot()
   const Router: FunctionComponent = () => {
-    const state = useSyncExternalStore(router.subscribe, router.snapshot, router.snapshot)
-    // Derive this route's typed `search` from the URL query + the route's schema CHAIN (layout schemas +
-    // page, merged page-wins), the SAME `searchOfChain` the server ran, so `useSearch` reads an identical
-    // value and hydrates with no drift.
-    const q = state.path.indexOf("?")
-    const rawSearch = q === -1 ? "" : state.path.slice(q)
-    return compose(routes[state.routeId] ?? [], {
-      data: state.data,
-      actionData: state.actionData,
-      pending: state.pending,
-      ...(state.pendingPath !== undefined ? { pendingPath: state.pendingPath } : {}),
-      // `params`/`path` feed the routing hooks (useParams/useLocation) via compose's RouterContext -
-      // sourced from router state here, matching the SSR render's request-derived values on hydration.
-      params: state.params,
-      path: state.path,
-      search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
-      // The in-flight submission (for optimistic UI) - spread only when present.
-      ...(state.submission ? { submission: state.submission } : {}),
-      ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-    })
+    const state = useSyncExternalStore(router.subscribe, router.snapshot, () => hydrated)
+    return compose(routes[state.routeId] ?? [], routeProps(state, searchSchemas, matchChains))
   }
   const onRecoverableError = assuranceError()
   hydrateRoot(

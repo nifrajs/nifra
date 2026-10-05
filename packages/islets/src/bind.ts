@@ -10,9 +10,17 @@
  *   data-bind-text="count"                  textContent ← String(signal())
  *   data-bind-show="isOpen"                 hidden ← !signal()
  *   data-bind-class="active:isOpen,b:sigB"  classList.toggle per pair
- *   data-bind-attr="aria-expanded:isOpen"   setAttribute / removeAttribute (false/null remove)
+ *   data-bind-attr="aria-expanded:isOpen"   setAttribute / removeAttribute (false/null remove);
+ *                                           never an `on*` handler or `srcdoc`, and a URL attribute
+ *                                           takes only an http(s)/mailto/tel or relative URL
  *   data-bind-value="query"                 two-way <input>/<select>/<textarea> (input event)
  *   data-bind-on="click:inc,submit:save"    addEventListener per pair
+ *
+ * Nothing inside a `data-island-ignore` element binds or mounts: render user HTML there, so its
+ * markup cannot reach the island's handlers or signals.
+ *
+ * A binding belongs to its nearest island: an island never binds inside a nested island's host. The
+ * nested host element itself is still the outer island's markup, so the outer island may bind it.
  */
 
 import { effect, type Signal } from "./signals.ts"
@@ -51,6 +59,19 @@ function pairs(spec: string): Array<[string, string]> {
   return out
 }
 
+// A bound value is data (often from island state the markup carries), so an attribute that would run
+// it as code, or navigate to it as a script URL, is refused.
+const CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
+const URL_ATTRIBUTE =
+  /^(?:href|src|action|formaction|xlink:href|poster|data|background|cite|ping)$/i
+const SAFE_URL = /^(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
+
+function bindableAttribute(attr: string): boolean {
+  if (!CODE_ATTRIBUTE.test(attr)) return true
+  warnOnce("attribute", attr)
+  return false
+}
+
 /** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
 export interface BindableElement {
   getAttribute(name: string): string | null
@@ -71,9 +92,17 @@ export interface BindableRoot {
  * the created effects (an island unmount can stop them; page-lifetime islands just drop them). */
 export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void> {
   const stops: Array<() => void> = []
+  // Each element carrying `data-bind-<kind>` outside any ignored subtree and any nested island, with
+  // that attribute's value.
+  const each = (kind: string): Array<[BindableElement, string]> =>
+    [
+      ...root.querySelectorAll(
+        `[data-bind-${kind}]:not([data-island-ignore],[data-island-ignore] *,:scope [data-island] *)`,
+      ),
+    ].map((el) => [el, el.getAttribute(`data-bind-${kind}`) ?? ""])
 
-  for (const el of root.querySelectorAll("[data-bind-text]")) {
-    const s = signalOf(scope, el.getAttribute("data-bind-text") ?? "")
+  for (const [el, name] of each("text")) {
+    const s = signalOf(scope, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -83,8 +112,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-show]")) {
-    const s = signalOf(scope, el.getAttribute("data-bind-show") ?? "")
+  for (const [el, name] of each("show")) {
+    const s = signalOf(scope, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -94,8 +123,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-class]")) {
-    for (const [className, name] of pairs(el.getAttribute("data-bind-class") ?? "")) {
+  for (const [el, spec] of each("class")) {
+    for (const [className, name] of pairs(spec)) {
       const s = signalOf(scope, name)
       if (s) {
         stops.push(
@@ -107,14 +136,17 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-attr]")) {
-    for (const [attr, name] of pairs(el.getAttribute("data-bind-attr") ?? "")) {
+  for (const [el, spec] of each("attr")) {
+    for (const [attr, name] of pairs(spec)) {
+      if (!bindableAttribute(attr)) continue
       const s = signalOf(scope, name)
       if (s) {
+        const isUrl = URL_ATTRIBUTE.test(attr)
         stops.push(
           effect(() => {
             const v = s()
-            if (v === false || v === null || v === undefined) el.removeAttribute(attr)
+            if (v === false || v == null || (isUrl && !SAFE_URL.test(String(v).trim())))
+              el.removeAttribute(attr)
             else el.setAttribute(attr, String(v))
           }),
         )
@@ -122,8 +154,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-value]")) {
-    const s = signalOf(scope, el.getAttribute("data-bind-value") ?? "")
+  for (const [el, name] of each("value")) {
+    const s = signalOf(scope, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -136,8 +168,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     }
   }
 
-  for (const el of root.querySelectorAll("[data-bind-on]")) {
-    for (const [event, name] of pairs(el.getAttribute("data-bind-on") ?? "")) {
+  for (const [el, spec] of each("on")) {
+    for (const [event, name] of pairs(spec)) {
       const handler = scope.handlers[name]
       if (handler === undefined) {
         warnOnce("handler", name)

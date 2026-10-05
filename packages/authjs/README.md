@@ -20,7 +20,8 @@ export const app = server()
 
 - `authjs(config, options?)` - identity plugin mounting Auth.js at `/api/auth/*` (GET + POST).
   Secrets resolve per request (explicit → platform binding → `process.env`); missing fails loud.
-- `getSession(req, config)` - `Session | null`, usable in handlers and loaders.
+- `getSession(req, config, options?)` - `Session | null`, usable in handlers and loaders. Pass the
+  mount's `authUrl`, `trustProxy` and `basePath` so the session is read where the mount serves it.
 - `requireAuthUser(req, config, { redirectTo? })` - returns the user or throws a 401/redirect.
 - `@nifrajs/authjs/client` - `createAuthClient()` (session, sign-in, sign-out) for any frontend.
 - `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()`.

@@ -109,6 +109,12 @@ const GATES = Object.freeze([
     { workflowRequired: false },
   ),
   gate(
+    "output-guard-performance",
+    [["run", "check:output-guard"]],
+    "Run `bun run check:output-guard` and investigate the data guard's projection cost.",
+    { workflowRequired: false },
+  ),
+  gate(
     "edge-startup",
     [["run", "check:edge-startup"]],
     "Run `bun run check:edge-startup` and investigate edge/Workers import-time growth.",
@@ -151,6 +157,11 @@ const GATES = Object.freeze([
     "pipeline-parity",
     [["run", "check:pipeline-parity"]],
     "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
+  ),
+  gate(
+    "leak-matrix",
+    [["run", "check:leak-matrix"]],
+    "Run `bun run check:leak-matrix` and fix the pipeline that let server code or a credential through.",
   ),
   gate(
     "cli-isolation",
@@ -200,6 +211,7 @@ const RELEASE_PLAN = Object.freeze([
   "size",
   "core-performance",
   "middleware-performance",
+  "output-guard-performance",
   "edge-startup",
   "publish",
   "consumer",
@@ -208,6 +220,7 @@ const RELEASE_PLAN = Object.freeze([
   "cross-runtime-node",
   "workerd",
   "pipeline-parity",
+  "leak-matrix",
   "verification-parity",
   "changesets",
 ] as const)

@@ -1,8 +1,8 @@
 import type { ReactNode } from "react"
-import { DOCS_GROUPS as GROUPS } from "../../data/docs-nav"
+import { DOCS_GROUPS as GROUPS } from "../../shared/data/docs-nav"
 
 // Nested layout for /docs/* - a sidebar inside the root chrome (layout chain: root → docs → page).
-// The nav itself lives in `data/docs-nav.ts` because `docsMeta()` reads the same list to build each
+// The nav itself lives in `shared/data/docs-nav.ts` because `docsMeta()` reads the same list to build each
 // page's BreadcrumbList: one list, so the sidebar and the crawler never disagree.
 
 const NAV_SCRIPT = `(function(){
@@ -86,7 +86,7 @@ const NAV_SCRIPT = `(function(){
       
       var header = document.createElement("div");
       header.className = "code-window-header";
-      header.innerHTML = '<div class="code-window-dots"><div class="code-window-dot red"></div><div class="code-window-dot yellow"></div><div class="code-window-dot green"></div></div><div class="code-window-lang">' + lang + '</div>';
+      header.innerHTML = '<div class="code-window-dots" aria-hidden="true"><span class="code-window-dot red"></span><span class="code-window-dot yellow"></span><span class="code-window-dot green"></span></div><div class="code-window-lang">' + lang + '</div>';
       
       pre.parentNode.insertBefore(wrapper, pre);
       wrapper.appendChild(header);
@@ -140,7 +140,7 @@ const NAV_SCRIPT = `(function(){
         "1. Never hand-roll fetch() wrappers. Always communicate via the typed client: client<typeof app>(url).\\n" +
         "2. Define schemas (t) at request boundaries to reject bad queries/bodies with 422s before route handlers run.\\n" +
         "3. Route loaders run in-process on the server during SSR (no network/HTTP required). Keep endpoints decoupled.\\n" +
-        "4. Never import server-only code (e.g. Bun, Drizzle backend instances) at the top-level of client page routes.\\n\\n" +
+        "4. A route is x.tsx (the page) + x.backend.ts (loader, action, loaderOutput). Server code lives in backend/ and backend halves; pages and frontend/ may not import it, shared/ holds what both sides need.\\n\\n" +
         "Documentation and Reference Code:\\n" +
         "=================================\\n" +
         proseText;

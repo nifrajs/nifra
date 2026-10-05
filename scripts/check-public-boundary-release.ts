@@ -12,3 +12,5 @@ if (failures.length > 0) {
   process.exit(1)
 }
 console.log("✓ public boundary release: marker configuration present and structural policy passed")
+
+export {}

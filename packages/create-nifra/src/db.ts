@@ -109,11 +109,12 @@ export type NewNote = typeof notes.$inferInsert
 // it, and routes import whichever one they need - which is what lets a GET route declare \`db.read\`
 // and nothing else. See the header those files carry for why the split is load-bearing.
 const WIRE_DOC = `// The connection. Route modules do NOT import this file: they import \`./read.ts\` or \`./write.ts\`, so
-// what a route can reach matches what it declares. \`db/read-routes.ts\` shows the shape, and merging it
-// is one line:
-//   import { notesRead } from "../db/read-routes.ts"
-//   export const app = server().merge(notesRead)
-// Never top-level-import any of this into a routes/ page file (server-only) - reach it via ctx.api.`
+// what a route can reach matches what it declares. \`read-routes.ts\` shows the shape, and merging it
+// into \`backend/app.ts\` is one line:
+//   import { notesRead } from "./db/read-routes.ts"
+//   export const backend = server().merge(notesRead)
+// A frontend file (routes/x.tsx, frontend/) can never import this - the build refuses it. Reach it
+// from a route's x.backend.ts loader through ctx.api.`
 
 /**
  * Why the seam is split by access rather than exported as one `db`.
@@ -124,7 +125,7 @@ const WIRE_DOC = `// The connection. Route modules do NOT import this file: they
  * has to be moved. Splitting reads from writes at the seam, and again at the routes, is what keeps
  * every route's reach equal to what it says about itself.
  *
- * The same shape is what makes the policy in `nifra.assurance.ts` bite: `db/write.ts` grants
+ * The same shape is what makes the policy in `nifra.assurance.ts` bite: `backend/db/write.ts` grants
  * `db.write`, the `authenticated-write` rule demands authentication of anything holding it, and a POST
  * that skips auth fails the check rather than shipping.
  */
@@ -235,8 +236,8 @@ export * from "./schema.ts"
 const PG_CONFIG = `import { defineConfig } from "drizzle-kit"
 
 export default defineConfig({
-  schema: "./db/schema.ts",
-  out: "./db/migrations",
+  schema: "./backend/db/schema.ts",
+  out: "./backend/db/migrations",
   dialect: "postgresql",
   // biome-ignore lint/style/noNonNullAssertion: drizzle-kit reads this from .env (Bun auto-loads it).
   dbCredentials: { url: process.env.DATABASE_URL! },
@@ -246,8 +247,8 @@ export default defineConfig({
 const SQLITE_CONFIG = `import { defineConfig } from "drizzle-kit"
 
 export default defineConfig({
-  schema: "./db/schema.ts",
-  out: "./db/migrations",
+  schema: "./backend/db/schema.ts",
+  out: "./backend/db/migrations",
   dialect: "sqlite",
   dbCredentials: { url: process.env.DATABASE_URL ?? "local.db" },
 })
@@ -256,8 +257,8 @@ export default defineConfig({
 const LIBSQL_CONFIG = `import { defineConfig } from "drizzle-kit"
 
 export default defineConfig({
-  schema: "./db/schema.ts",
-  out: "./db/migrations",
+  schema: "./backend/db/schema.ts",
+  out: "./backend/db/migrations",
   dialect: "turso",
   dbCredentials: {
     url: process.env.DATABASE_URL ?? "file:local.db",
@@ -373,18 +374,18 @@ DATABASE_URL="file:./local.db"
 `
 
 // --- Kysely preset ----------------------------------------------------------------------------------
-// Kysely is a typed query builder, not an ORM: you describe the DB shape (db/schema.ts) and own the
-// migrations. It ships no CLI, so the scaffold includes a Migrator runner (db/migrate.ts) + a starter
+// Kysely is a typed query builder, not an ORM: you describe the DB shape (backend/db/schema.ts) and own the
+// migrations. It ships no CLI, so the scaffold includes a Migrator runner (backend/db/migrate.ts) + a starter
 // migration. Postgres via the official PostgresDialect + node-postgres.
 
 const KYSELY_VERSION = "^0.27.4"
 const KYSELY_SCRIPTS: Readonly<Record<string, string>> = {
-  "db:migrate": "bun run db/migrate.ts",
+  "db:migrate": "bun run backend/db/migrate.ts",
 }
 
 const KYSELY_PG_SCHEMA = `import type { ColumnType, Generated } from "kysely"
 
-// Kysely is types-only: describe the DB shape and keep it in sync with db/migrations (or generate it
+// Kysely is types-only: describe the DB shape and keep it in sync with backend/db/migrations (or generate it
 // with \`kysely-codegen\`). There is no runtime schema object.
 export interface NotesTable {
   id: Generated<string> // uuid PK, DB-defaulted (gen_random_uuid())
@@ -461,7 +462,7 @@ import { FileMigrationProvider, Migrator } from "kysely"
 import { db } from "./index.ts"
 
 // Kysely ships no migration CLI, so this is the runner: it applies every pending migration in
-// db/migrations (in filename order, each in its own transaction). Run with \`bun run db:migrate\`.
+// backend/db/migrations (in filename order, each in its own transaction). Run with \`bun run db:migrate\`.
 const migrator = new Migrator({
   db,
   provider: new FileMigrationProvider({
@@ -492,11 +493,11 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     devDeps: { "drizzle-kit": DRIZZLE_KIT },
     scripts: SCRIPTS,
     files: {
-      "db/schema.ts": SQLITE_SCHEMA,
-      "db/index.ts": LIBSQL_CLIENT,
-      "db/read.ts": DRIZZLE_READ,
-      "db/write.ts": DRIZZLE_WRITE,
-      "db/read-routes.ts": READ_ROUTES,
+      "backend/db/schema.ts": SQLITE_SCHEMA,
+      "backend/db/index.ts": LIBSQL_CLIENT,
+      "backend/db/read.ts": DRIZZLE_READ,
+      "backend/db/write.ts": DRIZZLE_WRITE,
+      "backend/db/read-routes.ts": READ_ROUTES,
       "drizzle.config.ts": LIBSQL_CONFIG,
       ".env.example": LIBSQL_ENV,
     },
@@ -510,11 +511,11 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     devDeps: { "drizzle-kit": DRIZZLE_KIT },
     scripts: SCRIPTS,
     files: {
-      "db/schema.ts": PG_SCHEMA,
-      "db/index.ts": PG_CLIENT,
-      "db/read.ts": DRIZZLE_READ,
-      "db/write.ts": DRIZZLE_WRITE,
-      "db/read-routes.ts": READ_ROUTES,
+      "backend/db/schema.ts": PG_SCHEMA,
+      "backend/db/index.ts": PG_CLIENT,
+      "backend/db/read.ts": DRIZZLE_READ,
+      "backend/db/write.ts": DRIZZLE_WRITE,
+      "backend/db/read-routes.ts": READ_ROUTES,
       "drizzle.config.ts": PG_CONFIG,
       ".env.example": PG_ENV,
     },
@@ -528,11 +529,11 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     devDeps: { "drizzle-kit": DRIZZLE_KIT },
     scripts: SCRIPTS,
     files: {
-      "db/schema.ts": SQLITE_SCHEMA,
-      "db/index.ts": SQLITE_CLIENT,
-      "db/read.ts": DRIZZLE_READ,
-      "db/write.ts": DRIZZLE_WRITE,
-      "db/read-routes.ts": READ_ROUTES,
+      "backend/db/schema.ts": SQLITE_SCHEMA,
+      "backend/db/index.ts": SQLITE_CLIENT,
+      "backend/db/read.ts": DRIZZLE_READ,
+      "backend/db/write.ts": DRIZZLE_WRITE,
+      "backend/db/read-routes.ts": READ_ROUTES,
       "drizzle.config.ts": SQLITE_CONFIG,
       ".env.example": SQLITE_ENV,
     },
@@ -547,13 +548,13 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     scripts: PRISMA_SCRIPTS,
     files: {
       "prisma/schema.prisma": PRISMA_PG_SCHEMA,
-      "db/index.ts": PRISMA_CLIENT,
+      "backend/db/index.ts": PRISMA_CLIENT,
 
-      "db/read.ts": PRISMA_READ,
+      "backend/db/read.ts": PRISMA_READ,
 
-      "db/write.ts": PRISMA_WRITE,
+      "backend/db/write.ts": PRISMA_WRITE,
 
-      "db/read-routes.ts": READ_ROUTES,
+      "backend/db/read-routes.ts": READ_ROUTES,
       ".env.example": PRISMA_PG_ENV,
     },
   },
@@ -567,13 +568,13 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     scripts: PRISMA_SCRIPTS,
     files: {
       "prisma/schema.prisma": PRISMA_SQLITE_SCHEMA,
-      "db/index.ts": PRISMA_CLIENT,
+      "backend/db/index.ts": PRISMA_CLIENT,
 
-      "db/read.ts": PRISMA_READ,
+      "backend/db/read.ts": PRISMA_READ,
 
-      "db/write.ts": PRISMA_WRITE,
+      "backend/db/write.ts": PRISMA_WRITE,
 
-      "db/read-routes.ts": READ_ROUTES,
+      "backend/db/read-routes.ts": READ_ROUTES,
       ".env.example": PRISMA_SQLITE_ENV,
     },
   },
@@ -586,16 +587,16 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     devDeps: { "@types/pg": "^8.11.10" },
     scripts: KYSELY_SCRIPTS,
     files: {
-      "db/schema.ts": KYSELY_PG_SCHEMA,
-      "db/index.ts": KYSELY_PG_CLIENT,
+      "backend/db/schema.ts": KYSELY_PG_SCHEMA,
+      "backend/db/index.ts": KYSELY_PG_CLIENT,
 
-      "db/read.ts": KYSELY_READ,
+      "backend/db/read.ts": KYSELY_READ,
 
-      "db/write.ts": KYSELY_WRITE,
+      "backend/db/write.ts": KYSELY_WRITE,
 
-      "db/read-routes.ts": READ_ROUTES,
-      "db/migrate.ts": KYSELY_MIGRATE_RUNNER,
-      "db/migrations/0001_create_notes.ts": KYSELY_MIGRATION,
+      "backend/db/read-routes.ts": READ_ROUTES,
+      "backend/db/migrate.ts": KYSELY_MIGRATE_RUNNER,
+      "backend/db/migrations/0001_create_notes.ts": KYSELY_MIGRATION,
       ".env.example": PG_ENV,
     },
   },
@@ -607,7 +608,7 @@ const GITIGNORE_BLOCK = `
 local.db
 *.db-shm
 *.db-wal
-db/migrations/meta
+backend/db/migrations/meta
 `
 
 /** Write a DB preset's files into `target` and ensure local DB artifacts + .env are gitignored. */

@@ -1,8 +1,8 @@
 /**
  * True-HMR dev server (React) - backed by Vite in middleware mode via `@nifrajs/web/vite`.
  *
- *   bun --preload examples/hmr-react/ssr-preload.ts examples/hmr-react/dev.ts
- *   CHOKIDAR_USEPOLLING=1 bun --preload examples/hmr-react/ssr-preload.ts examples/hmr-react/dev.ts  # sandboxes
+ *   bun examples/hmr-react/dev.ts
+ *   CHOKIDAR_USEPOLLING=1 bun examples/hmr-react/dev.ts  # sandboxes
  *
  * Vite serves + Fast-Refreshes the client modules (nifra's codegen'd entry + the route `.tsx`); nifra
  * still SSRs each request. Edit `components/Counter.tsx`'s <h1> while the counter is non-zero - the
@@ -10,8 +10,8 @@
  * (it exports `loader`/`meta`, so it's not a refresh boundary) does a clean full reload instead.
  * Production stays Bun-native (`build.ts`).
  *
- * `.mdx` routes (see `routes/notes.mdx`) hot-reload too: @mdx-js/rollup compiles them for Vite's
- * client side (in `plugins`), and `ssr-preload.ts`'s `mdxBunPlugin` compiles them for nifra's Bun SSR.
+ * `.mdx` routes (see `routes/notes.mdx`) hot-reload too: @mdx-js/rollup (in `plugins`) compiles them
+ * for both halves, since `createApp`'s `load` resolves SSR route modules through Vite as well.
  *
  * No `build.ts` here: in dev Vite resolves the route source directly (the `conditions: ["bun"]` in
  * createViteDevServer also routes `@nifrajs/web-react/*` to its TS source - no adapter build needed).
@@ -24,7 +24,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { reactAdapter } from "@nifrajs/web-react"
 import react from "@vitejs/plugin-react"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const server = await createViteDevServer({
@@ -34,10 +34,10 @@ const server = await createViteDevServer({
   // `.mdx` routes hot-reload in dev via @mdx-js/rollup (it sets enforce:"pre", running before react()).
   plugins: [mdx({ jsxImportSource: "react" }), react()],
   port: Number(Bun.env.PORT ?? 3000),
-  createApp: (clientEntry, importQuery) =>
+  createApp: (clientEntry, load) =>
     createWebApp({
       adapter: reactAdapter,
-      manifest: discoverRoutes(routesDir, { importQuery }), // fresh route modules for SSR per edit
+      manifest: discoverRoutes(routesDir, { load }),
       clientEntry,
       api: inProcessClient(backend),
       title: "nifra HMR (React, dev)",

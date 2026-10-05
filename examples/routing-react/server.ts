@@ -11,7 +11,7 @@ import { createWebApp, enumerateStaticRoutes } from "@nifrajs/web"
 import type { BuildManifest } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`
@@ -42,7 +42,7 @@ export const app = createWebApp({
   routePreload: assets.routes,
   // The app's bundled stylesheet (`buildClient`'s manifest.css) → `<link rel="stylesheet">` in every
   // page's <head>. Here `import "./app.css"` in _layout is the global stylesheet.
-  styles: assets.css,
+  styles: assets.css ?? [],
   prerenderedPaths,
   staticFallbacks,
   api,

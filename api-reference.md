@@ -57,6 +57,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentPendingContinuation** _(interface)_ - `interface AgentPendingContinuation`
 - **AgentPendingKind** _(type)_ - `type AgentPendingKind = "approval" | "budget" | "model" | "cancelled"`
 - **AgentPorts** _(interface)_ - `interface AgentPorts`
+- **AgentResumeMismatchError** _(class)_ - `class AgentResumeMismatchError`
+  A resume whose continuation is not the step the turn suspended on.
 - **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended" readonly pending: AgentPendingContinuation readonly reason: "max_turns" })`
 - **AgentSharedState** _(interface)_ - `interface AgentSharedState<State = unknown>`
   A shared, observable state document for one run - the state a live UI mirrors while the agent works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI `STATE_SNAPSHOT`/`STA…
@@ -246,6 +248,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Create an async iterable that yields the exact evidence values received by `step`.
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog`
   In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by construction: replay only sees runs recorded by this instance. Retention is bounded by `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports replay-unavailable rather than grow…
+- **scopeAgentEvidenceLog** _(function)_ - `scopeAgentEvidenceLog: (log: AgentEvidenceLog, owner: string) => AgentEvidenceLog`
+  A view of `log` holding one owner's turns: every turn id is recorded and replayed under `owner` (the caller's user or tenant id), so another owner's reconnect or reused turn id finds none of them. The HTTP seams apply it per request through their `evidenceOwner` option.
 
 ### `@nifrajs/agent/mount`
 
@@ -359,7 +363,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **boundaryCommands** _(function)_ - `boundaryCommands: (item: BoundaryStateView, options: { readonly inbox: boolean; readonly now: number; }) => readonly BoundaryCommand[]`
   The boundary commands a UI may currently offer for one item. A command appears only when the host has negotiated the `inbox` feature, the boundary has not expired, and the op is a legal transition from the boundary's live state. An unknown or terminal state yields no commands, so a stale, unsupport…
 - **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
-  True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed.
+  True once `now` reaches or passes the boundary's expiry, or when either is not a number. A stale boundary fails every command closed.
 - **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string, maxFrameBytes?: number) => AsyncIterable<AgentEvent>`
   Parse an SSE body into protocol events, skipping any frame whose data is not a valid event.
 - **toEvalComparisonView** _(function)_ - `toEvalComparisonView: (value: unknown) => EvalComparisonView | undefined`
@@ -668,7 +672,7 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/authjs`
 
 - **AuthGuardOptions** _(interface)_ - `interface AuthGuardOptions`
-  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON.
+  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on the origin and path the mount serves it from.
 - **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">`
   The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`.
 - **AuthJSOptions** _(interface)_ - `interface AuthJSOptions`
@@ -751,7 +755,15 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Cache** _(interface)_ - `interface Cache`
 - **CacheCapabilities** _(interface)_ - `interface CacheCapabilities`
   Capability tokens this cache announces. Defaults: `cache.read` and `cache.write`.
+- **CacheEvent** _(interface)_ - `interface CacheEvent`
+  One settled cache operation, as an observer sees it.
+- **CacheObserver** _(type)_ - `type CacheObserver = (event: CacheEvent) => void`
+  Called once per operation after it settles, never before the caller sees the result. A throwing (or rejecting) observer is swallowed: it cannot change a cache result.
+- **CacheOperation** _(type)_ - `type CacheOperation = | "get" | "has" | "set" | "wrap" | "delete" | "invalidateTag" | "clear" | "revalidate"`
+  A cache operation reported to a {@link CacheObserver}. `revalidate` is the background SWR refresh.
 - **CacheOptions** _(interface)_ - `interface CacheOptions`
+- **CacheOutcome** _(type)_ - `type CacheOutcome = "hit" | "stale" | "miss" | "ok" | "error"`
+  How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and a completed revalidation report `ok`; `error` means the store or the loader threw.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
@@ -883,7 +895,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **ActionArgs** _(type)_ - `type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api, Env, Search>`
   Context a route `action` (a mutation, run on POST) receives - identical to a loader's: route params, the request (read the form/JSON body off this), and the typed in-process `api` + platform `env`. An action returns either data (surfaced to the page as `actionData`) or a `Response` (e.g. a `redirec…
-- **ActionData** _(type)_ - `type ActionData<A> = A extends (...args: never[]) => infer R ? Awaited<R> extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer D } ? Exclude<D, Response> : Exclude<Awaited<R>, Response> : never`
+- **ActionData** _(type)_ - `type ActionData<A>`
   The (awaited) data return of an `action`, for typing a page component's `actionData` prop. A `Response` return (redirect/custom) is excluded - it never reaches the component. A `revalidate(paths, data)` wrapper (from `@nifrajs/web`) is transparent: matched structurally (so this stays decoupled from…
 - **ApiError** _(interface)_ - `interface ApiError`
   A structured API error, mirroring the server's `{ ok: false, error, issues }`.
@@ -902,20 +914,35 @@ Every public export of every package and documented subpath - name, kind, signat
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
 - **LoaderData** _(type)_ - `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
+- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
+  Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
+- **OutputOf** _(type)_ - `type OutputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> : never : null`
+  What a route module's output schema lets through to the browser: the output type of its `Name` export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without one sends no data.
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
   Intercepted by exact match: `subscribe`/`ws` are transports, `index` is `/`, `then` is the await guard.
 - **RESERVED_KEY_READOUT** _(const)_ - `RESERVED_KEY_READOUT: string`
   Human-readable readout of the closed set, for diagnostics that have to teach it.
 - **RESERVED_VERB_KEYS** _(const)_ - `RESERVED_VERB_KEYS: readonly ["get", "post", "put", "patch", "delete", "head", "options"]`
   Intercepted case-insensitively: `/api/Delete` collides just as `/api/delete` does.
+- **Register** _(interface)_ - `interface Register`
+  The app's registered types. `nifra types` writes `.nifra/types/register.d.ts`, which fills it in from `backend/app.ts`, so a route's generated `Route.LoaderArgs` types `api` without the route importing the backend:
+- **RegisteredBackend** _(type)_ - `type RegisteredBackend = Register extends { readonly backend: infer Backend } ? Backend : unknown`
+  The registered backend (`Register["backend"]`), or `unknown` before one is registered.
+- **RegisteredEnv** _(type)_ - `type RegisteredEnv = Register extends { readonly env: infer Env } ? Env : unknown`
+  The registered platform bindings (`Register["env"]`), or `unknown`.
 - **RegistryOf** _(type)_ - `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
   A response body that broke its route's declared contract. Thrown THROUGH the "never throws" client on purpose: this is a test assertion about the server's honesty, not a call outcome the caller should branch on - swallowing it into a `Result` would let the drift pass the test.
 - **Result** _(type)_ - `type Result<Data, Errors = unknown, Responses = unknown>`
   The outcome of a client call. The client never throws - inspect `ok` to branch.
+- **RouteLoaderArgs** _(type)_ - `type RouteLoaderArgs<Params, Search = undefined> = Omit< LoaderArgs<RegisteredBackend, RegisteredEnv, Search>, "params" > & { readonly params: Params }`
+  A route's loader or action context: its own `params`, and `api` typed by the registered backend.
+- **SearchSchemaOf** _(type)_ - `type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S } ? S : undefined`
+  The `searchSchema` a route's frontend half declares, or `undefined`.
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
 - **Subscription** _(interface)_ - `interface Subscription`
+- **TestClientOptions** _(interface)_ - `interface TestClientOptions`
 - **Treaty** _(type)_ - `type Treaty<App> = TreatyFromRegistry<RegistryOf<App>>`
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ - `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
@@ -928,8 +955,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **inProcessClient** _(function)_ - `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
 - **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
   The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards (`*rest`) never collide - they are not spelled as property accesses.
-- **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
-  The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on `res.ok`. An a…
+- **testClient** _(function)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: TestClientOptions) => InProcessClient<App>`
+  The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on `res.ok`. It i…
 
 ## @nifrajs/coding-agent
 
@@ -1053,6 +1080,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionMigrationReport** _(interface)_ - `interface SessionMigrationReport`
   Counts and integrity metadata emitted after a target has been fully validated.
 - **SessionStore** _(interface)_ - `interface SessionStore`
+- **SubagentAbandonment** _(interface)_ - `interface SubagentAbandonment`
+  A run that returned while its executor kept running, having ignored its abort signal.
+- **SubagentAbandonmentLedger** _(interface)_ - `interface SubagentAbandonmentLedger`
+  Abandoned executors still running. Runners sharing one ledger are counted, and bounded by `maxAbandoned`, together.
 - **SubagentExecutor** _(interface)_ - `interface SubagentExecutor`
 - **SubagentResult** _(interface)_ - `interface SubagentResult`
 - **SubagentRunnerOptions** _(interface)_ - `interface SubagentRunnerOptions`
@@ -1112,7 +1143,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
-  Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+  Run an existing Nifra gate without importing the large framework CLI into the agent runtime. `check` and `assure` are `nifra` commands; `test` is the project's own suite, run with `bun test` by the Bun this agent runs on.
 - **stableSessionEventCode** _(function)_ - `stableSessionEventCode: (type: string) => Promise<{ readonly code: string; readonly replaced: boolean; }>`
   Convert a legacy event type into a stable, content-free evidence code. Unknown event names are intentionally not copied to the target: their SHA-256 prefix gives a repeatable grouping key without disclosing an arbitrary source string.
 - **validateExtensionModule** _(function)_ - `validateExtensionModule: (path: string) => Promise<void>`
@@ -1358,7 +1389,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
-  Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+  Run an existing Nifra gate without importing the large framework CLI into the agent runtime. `check` and `assure` are `nifra` commands; `test` is the project's own suite, run with `bun test` by the Bun this agent runs on.
 
 ## @nifrajs/content
 
@@ -1481,16 +1512,20 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+  Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
 - **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
 - **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
+- **ListenTlsOptions** _(interface)_ - `interface ListenTlsOptions`
+  TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM, as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -1525,7 +1560,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
   A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
@@ -1533,6 +1569,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **PluginTypeCollapsed** _(interface)_ - `interface PluginTypeCollapsed`
   What {@link definePlugin} returns when its `apply` argument never pinned the input server type - the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+- **PrefixRegistry** _(type)_ - `type PrefixRegistry<Prefix extends string, R extends Registry> = { [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path] }`
+  Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried unchanged: a prefix is static text, so it adds no params and cannot change any route's contract.
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -1545,6 +1583,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
+  The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseBodyReplacement** _(interface)_ - `interface ResponseBodyReplacement`
@@ -1570,6 +1610,8 @@ Every public export of every package and documented subpath - name, kind, signat
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
   Build a {@link RouteInfo} from a route's path, schema, and handler output type.
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **RoutePatternOverlapLimitError** _(class)_ - `class RoutePatternOverlapLimitError`
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
@@ -1607,7 +1649,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "3.5.0"`
+- **VERSION** _(const)_ - `VERSION: "4.0.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -1647,8 +1689,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
+- **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
+  The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
-  Return a deterministic path accepted by both compiled patterns, or `undefined` when their path languages are disjoint.
+  Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
@@ -1732,6 +1776,14 @@ Every public export of every package and documented subpath - name, kind, signat
 - **raw** _(function)_ - `raw: <T>(response: Response) => RawResponse<T>`
   Brand a hand-built `Response` with the payload type `T` its body serializes to, so a route that must return a `Response` directly still types `res.data` as `Jsonify<T>` on the client instead of `never`. Use it for the endpoints that build their own `Response` - a token minted by a third-party SDK, …
 
+### `@nifrajs/core/body-parser`
+
+- **BodyParserInput** _(interface)_ - `interface BodyParserInput`
+  What `parse` is told about the body it is decoding.
+- **BodyParserOptions** _(interface)_ - `interface BodyParserOptions`
+- **bodyParser** _(function)_ - `bodyParser: <Schema extends StandardSchemaV1>(schema: Schema, options: BodyParserOptions) => Schema`
+  Opt a route's body schema into media types of your own. Returns a copy of `schema` that also reads a body whose media type is one of `types`, decoded by `parse`; the schema itself is not changed, and JSON and urlencoded bodies still reach it. A schema that already reads another type, such as a form…
+
 ### `@nifrajs/core/budget`
 
 - **BudgetClock** _(interface)_ - `interface BudgetClock`
@@ -1792,6 +1844,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CapabilityExecutor** _(type)_ - `type CapabilityExecutor<T> = (execution: CapabilityExecutionContext) => T | PromiseLike<T>`
 - **CapabilityFinding** _(interface)_ - `interface CapabilityFinding`
 - **CapabilityFindingCode** _(type)_ - `type CapabilityFindingCode`
+- **CapabilityGap** _(interface)_ - `interface CapabilityGap`
+  Part of the app that assurance knowingly does not cover: a mount declared `opaque`. Listed so the report states its own boundary; it never fails the report.
 - **CapabilityIdempotency** _(type)_ - `type CapabilityIdempotency = "none" | "request" | "durable"`
 - **CapabilityImportRule** _(interface)_ - `interface CapabilityImportRule`
 - **CapabilityInterceptor** _(type)_ - `type CapabilityInterceptor = ( event: CapabilityInterceptorEvent, next: CapabilityInterceptorNext, ) => void | PromiseLike<void>`
@@ -1800,7 +1854,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CapabilityInterceptorNext** _(type)_ - `type CapabilityInterceptorNext = () => Promise<void>`
   Continue to the next admission policy. The owned effect runs only after the full chain admits.
 - **CapabilityInterceptorProtocolError** _(class)_ - `class CapabilityInterceptorProtocolError`
-  An interceptor called its one-shot `next()` continuation more than once.
+  An interceptor called its one-shot `next()` continuation more than once, or after it returned.
 - **CapabilityInterceptorTimeoutError** _(class)_ - `class CapabilityInterceptorTimeoutError`
   A capability admission policy exceeded its configured bound.
 - **CapabilityJournalTransitionError** _(class)_ - `class CapabilityJournalTransitionError`
@@ -1940,7 +1994,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The handlers `implement` requires: one per operation, typed from the op's input + response contract, intersected with the host app's accumulated `derive`/`decorate` context - the same `Context & Ctx` an inline {@link Handler} receives, so a handler graduates either way unchanged.
 - **OperationDef** _(interface)_ - `interface OperationDef`
   One operation in a contract. Input schemas are any Standard Schema; `response` is optional.
-- **RegistryFor** _(type)_ - `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
+- **RegistryFor** _(type)_ - `type RegistryFor<C extends ContractShape> = { [P in RoutePaths<C[keyof C]["path"]>]: { [K in keyof C as P extends RoutePaths<C[K]["path"]> ? C[K]["method"] : never]: RouteInfoForOp< C[K] > } }`
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
 - **RegistryFromImpl** _(type)_ - `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C, Ctx>, Ctx = NonNullable<unknown>, HookOutput = never>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins - exactly as in the inline path), else the bound HANDLER's return - so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
@@ -2132,6 +2186,10 @@ Every public export of every package and documented subpath - name, kind, signat
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
+  Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
+  What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
 - **ProtoPoisoning** _(type)_ - `type ProtoPoisoning = "reject" | "strip" | "ignore"`
   Prototype-poisoning guard for the JSON body lane - the check behind `c.boundedJson` and the schema path. A single walk of the parsed value, never a reviver (a reviver taxes every key of every parse, including the parses that carry no object at all).
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
@@ -2139,13 +2197,15 @@ Every public export of every package and documented subpath - name, kind, signat
 - **RequestSource** _(interface)_ - `interface RequestSource`
   Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
+- **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
+- **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
 - **plainValidationError** _(function)_ - `plainValidationError: (issues: ReadonlyArray<StandardIssue>) => ResponseResult`
   The shared 422 response result used by every body-validation lane.
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
-  The shared content-type dispatcher around the JSON and urlencoded lanes.
+  The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries.
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
 
@@ -2226,6 +2286,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ - `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
   Canonical request header carrying the client-chosen idempotency key.
+- **DEFAULT_IDEMPOTENCY_PENDING_TTL_MS** _(const)_ - `DEFAULT_IDEMPOTENCY_PENDING_TTL_MS: 60000`
+  Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds.
 - **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ - `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
   Default retention for a stored idempotent response: 24 hours.
 - **IDEMPOTENT_REPLAY_HEADER** _(const)_ - `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
@@ -2237,6 +2299,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **IdempotencyCompletionInput** _(interface)_ - `interface IdempotencyCompletionInput`
 - **IdempotencyEntryKey** _(interface)_ - `interface IdempotencyEntryKey`
   Namespaces isolate the same client key across tenants/subjects without putting identity in a header.
+- **IdempotencyRenewInput** _(interface)_ - `interface IdempotencyRenewInput`
 - **IdempotencyResponseTooLargeError** _(class)_ - `class IdempotencyResponseTooLargeError`
 - **IdempotencyScope** _(type)_ - `type IdempotencyScope = "request" | "durable"`
   Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one.
@@ -2371,6 +2434,15 @@ Every public export of every package and documented subpath - name, kind, signat
 - **mcp** _(function)_ - `mcp: () => IdentityPlugin`
   Enable MCP declarations on a server: `.use(mcp())` turns on `.tool()`, `.resource()`, and `.prompt()`. Applying it twice is a no-op (named plugin dedupe).
 
+### `@nifrajs/core/methods`
+
+- **MethodRoutesPlugin** _(interface)_ - `interface MethodRoutesPlugin<M extends string, Path extends string, S extends RouteSchema, Output, Ctx>`
+  What `all()` and `method()` from `@nifrajs/core/methods` return: a plugin for `app.use()` that registers one handler under the methods `M` of `Path`. It is opaque - apply it with `use`, which reads the route's types from it and adds them to the app's registry.
+- **all** _(function)_ - `all: { <Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(path: Path, schema: S, handler: H): MethodRoutesPlugin<Method, Path, S, OutputOf<H>, Ctx>; <Path extends string, H extends H…`
+  Register one handler under every standard method: `app.use(all(path, handler))`.
+- **method** _(function)_ - `method: { <const M extends string, Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(name: M | readonly M[], path: Path, schema: S, handler: H): MethodRoutesPlugin<M, Path, S, Output…`
+  Register one handler under the method, or the methods, you name: `app.use(method("PROPFIND", path, handler))`.
+
 ### `@nifrajs/core/mount`
 
 - **BackendEvidenceProvider** _(type)_ - `type BackendEvidenceProvider = () => | ProjectEvidenceSnapshot | Promise<ProjectEvidenceSnapshot>`
@@ -2379,10 +2451,14 @@ Every public export of every package and documented subpath - name, kind, signat
   Structural mount capability exposed by an in-process typed client.
 - **BackendMountHandler** _(type)_ - `type BackendMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => Response | Promise<Response>`
   Dispatch one already-materialized request into a backend with its outer runtime platform context.
+- **BackendPlatformBinder** _(type)_ - `type BackendPlatformBinder<Env = unknown> = (platform: Platform<Env>) => unknown`
+  Returns a view of an in-process typed client bound to one request's platform.
 - **BackendWebSocketMountHandler** _(type)_ - `type BackendWebSocketMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => WebSocketUpgradeOutcome | Promise<WebSocketUpgradeOutcome>`
   Adapter-neutral WebSocket upgrade resolver for a mounted backend.
 - **BackendWebSocketRuntimeProvider** _(type)_ - `type BackendWebSocketRuntimeProvider = () => unknown`
   Opaque provider kept structural so public mount types do not expose the WS runtime internals.
+- **NIFRA_BACKEND_BIND_PLATFORM** _(const)_ - `NIFRA_BACKEND_BIND_PLATFORM: typeof NIFRA_BACKEND_BIND_PLATFORM`
+  Optional request-scoping seam carried by an in-process typed client. Called with one request's {@link Platform}, it returns a view of the same typed client whose calls dispatch with that platform, so a backend reached from an SSR loader sees the page visitor's `c.clientIp`, `c.env` and `c.waitUntil…
 - **NIFRA_BACKEND_EVIDENCE** _(const)_ - `NIFRA_BACKEND_EVIDENCE: typeof NIFRA_BACKEND_EVIDENCE`
   Optional offline assurance/evidence seam for composed applications.
 - **NIFRA_BACKEND_MOUNT** _(const)_ - `NIFRA_BACKEND_MOUNT: typeof NIFRA_BACKEND_MOUNT`
@@ -2391,6 +2467,19 @@ Every public export of every package and documented subpath - name, kind, signat
   Optional symbol-keyed upgrade seam carried by an in-process client mount.
 - **NIFRA_BACKEND_WS_RUNTIME** _(const)_ - `NIFRA_BACKEND_WS_RUNTIME: typeof NIFRA_BACKEND_WS_RUNTIME`
   Internal runtime-provider seam used when an in-process WebSocket backend is mounted in Bun.
+- **NIFRA_PLATFORM_CLIENT_IP_DERIVED** _(const)_ - `NIFRA_PLATFORM_CLIENT_IP_DERIVED: typeof NIFRA_PLATFORM_CLIENT_IP_DERIVED`
+  Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp` trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving it from the request's forwarding headers - an in-process call's `Request` is synthesized, so i…
+- **preRouteMountPaths** _(function)_ - `preRouteMountPaths: (app: unknown) => readonly string[]`
+  The path of every pre-route `mount()` on a nifra server, as the server matches it (`"/"` for a root mount). Such a mount answers every request under its path before the app's own routes run, and `fallbackOn: 404` only moves on to the next mount, so a route the app declares there is unreachable. Rea…
+
+### `@nifrajs/core/multipart`
+
+- **MultipartLimits** _(interface)_ - `interface MultipartLimits`
+  Per-route bounds on a multipart body. The total size is the route's `bodyLimit`.
+- **MultipartValue** _(type)_ - `type MultipartValue = string | File | Array<string | File>`
+  A value of the record handed to the schema: one part, or every part that shared the name.
+- **multipartBody** _(function)_ - `multipartBody: <Schema extends StandardSchemaV1>(schema: Schema, limits?: MultipartLimits) => Schema`
+  Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it. Opting in a schema that already was replaces its limits, and a schema that reads another media type thr…
 
 ### `@nifrajs/core/node-direct`
 
@@ -2399,12 +2488,25 @@ Every public export of every package and documented subpath - name, kind, signat
 - **nodeDirect** _(function)_ - `nodeDirect: () => IdentityPlugin`
   Enable `app.resolveNode()` for direct callers. Applying it twice is a no-op (named plugin dedupe).
 
+### `@nifrajs/core/not-found`
+
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
+  Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
+  What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
+- **notFound** _(function)_ - `notFound: <Env = unknown>(handler: NotFoundHandler<Env>) => IdentityPlugin`
+  Answer requests no route matched with a handler of your own: `app.use(notFound(handler))`.
+
 ### `@nifrajs/core/pattern`
 
 - **CompiledRoutePattern** _(interface)_ - `interface CompiledRoutePattern`
   Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
-- **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string }`
-  One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order.
+- **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string; readonly c?: ParamConstraint | undefined }`
+  One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. A parameter written with a constraint (`:id{[0-9]+}`) carries it as `c`; a segment that is one constrained parameter and nothing else is a `mixed` segment with that single part.
+- **MixedSegmentShape** _(type)_ - `type MixedSegmentShape = readonly string[]`
+  A mixed segment laid out for matching: the literals around its parameters, in order. The first entry is the literal before the first parameter, and each entry after it is the literal following the next parameter, so a segment with N parameters has N + 1 entries. An entry is `""` where the segment h…
+- **ParamConstraint** _(interface)_ - `interface ParamConstraint`
+  What a constrained parameter accepts, parsed from the `{...}` after its name.
 - **RoutePatternMatch** _(type)_ - `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
 - **RoutePatternSegment** _(type)_ - `type RoutePatternSegment`
 - **compareMixedPartsSpecificity** _(function)_ - `compareMixedPartsSpecificity: (left: readonly MixedPart[], right: readonly MixedPart[]) => number`
@@ -2413,12 +2515,22 @@ Every public export of every package and documented subpath - name, kind, signat
   Core precedence: static > mixed > param > wildcard at the first differing segment, independent of registration order.
 - **compileRoutePattern** _(function)_ - `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
+- **constrainedParts** _(function)_ - `constrainedParts: (parts: readonly MixedPart[]) => readonly MixedPart[] | undefined`
+  The parts of a mixed segment when at least one of its parameters has a constraint, else `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.
 - **decodeRouteParams** _(function)_ - `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
+- **expandOptionalParams** _(function)_ - `expandOptionalParams: (pattern: string) => readonly string[]`
+  The concrete patterns an optional-parameter pattern stands for, shortest first.
+- **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[], checked?: readonly MixedPart[]) => boolean`
+  Match ONE path segment against a mixed shape, in a single left-to-right pass.
 - **matchRoutePattern** _(function)_ - `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
+- **mixedSegmentShape** _(function)_ - `mixedSegmentShape: (parts: readonly MixedPart[]) => MixedSegmentShape`
+  Lay a mixed segment's parts out as a {@link MixedSegmentShape}. Done once, at registration.
 - **mixedSegmentSource** _(function)_ - `mixedSegmentSource: (parts: readonly MixedPart[]) => string`
-  The regex source matching one segment's worth of a mixed pattern, with a capture per parameter.
+  A canonical string for one mixed segment's shape: the anchored-regex source that describes what the segment accepts, with a capture per parameter. Two segments with the same source are the same shape.
+- **paramConstraint** _(function)_ - `paramConstraint: (text: string) => ParamConstraint | undefined`
+  Parse the constraint `text` starts with, or `undefined` when it starts with none. `text` begins at the `{` that follows a parameter name; the constraint read is `source.length + 2` characters long.
 - **sortRoutesBySpecificity** _(function)_ - `sortRoutesBySpecificity: <T extends { readonly pattern: CompiledRoutePattern; }>(routes: T[]) => T[]`
   Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router resolves a path in. The single home for that precedence: the web router, the mock server, and the editor plugin all order routes through this one comparator, so which file a path resolves to can ne…
 
@@ -2446,12 +2558,16 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **JsonSchema** _(type)_ - `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
+- **ReflectedMount** _(interface)_ - `interface ReflectedMount`
+  A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
 - **ReflectedRoute** _(interface)_ - `interface ReflectedRoute`
 - **ReflectedRouteSchema** _(interface)_ - `interface ReflectedRouteSchema`
 - **ReflectedSchemaField** _(interface)_ - `interface ReflectedSchemaField`
   One top-level property of an introspectable object schema.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
+  The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
@@ -2483,8 +2599,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What the server holds when the plugin is installed. The kernel calls `check` through this object and never imports the implementation, so an app that does not install the plugin does not carry it.
 - **checkResponseContract** _(function)_ - `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce") => ResponseContractOutcome | Promise<ResponseContractOutcome>`
   Check one result against the route's declared response schema.
-- **checkRouteResponseContract** _(function)_ - `checkRouteResponseContract: (definition: ResponseContractDefinition, result: unknown, mode: "warn" | "enforce") => ResponseContractOutcome | Promise<ResponseContractOutcome>`
-  Check a route's success or status-specific error payload. Plain `status()` results retain their status while enforcement replaces only the body with the validator's output. Raw `Response` remains an explicit transport escape hatch because inspecting it would consume streams or alter redirects; assu…
+- **checkRouteResponseContract** _(function)_ - `checkRouteResponseContract: (definition: ResponseContractDefinition, result: unknown, mode: "warn" | "enforce", jsonReply?: { readonly body: unknown; }) => ResponseContractOutcome | Promise<ResponseContractOutcome>`
+  Check a route's success or status-specific error payload. Plain `status()` results retain their status while enforcement replaces only the body with the validator's output. A `c.json(...)` reply is held to the contract through the value it was built from (`jsonReply`). Any other raw `Response` rema…
 - **responseContract** _(function)_ - `responseContract: (mode?: ResponseContractMode) => IdentityPlugin`
   Hold every route's declared `response` schema to what the handler actually returned.
 
@@ -2511,12 +2627,16 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **EMPTY_PARAMS** _(const)_ - `EMPTY_PARAMS: Record<string, string>`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **Router** _(class)_ - `class Router<T>`
   Radix-style segment trie router. Matching precedence is static > param > wildcard. Parameter/wildcard values are returned RAW (not percent-decoded); the server boundary decodes and rejects malformed encodings with a 400, keeping this layer pure and allocation-light.
 - **RouterMatch** _(type)_ - `type RouterMatch<T>`
   Result of {@link Router.find}. The `found: false` cases deliberately separate a missing path (404) from a path that exists for other methods (405), so the server layer can answer correctly and populate an `Allow` header.
+- **isRegistrableMethod** _(function)_ - `isRegistrableMethod: (method: string) => boolean`
+  Whether a route can be registered under `method` - one of {@link METHODS}, or another uppercase token such as `PROPFIND`. `TRACE`, `CONNECT` and `TRACK` never are.
 
 ### `@nifrajs/core/schema`
 
@@ -2593,16 +2713,20 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+  Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
 - **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
 - **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
+- **ListenTlsOptions** _(interface)_ - `interface ListenTlsOptions`
+  TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM, as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -2635,7 +2759,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
   A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
@@ -2643,6 +2768,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **PluginTypeCollapsed** _(interface)_ - `interface PluginTypeCollapsed`
   What {@link definePlugin} returns when its `apply` argument never pinned the input server type - the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+- **PrefixRegistry** _(type)_ - `type PrefixRegistry<Prefix extends string, R extends Registry> = { [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path] }`
+  Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried unchanged: a prefix is static text, so it adds no params and cannot change any route's contract.
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -2655,6 +2782,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
+  The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseBodyReplacement** _(interface)_ - `interface ResponseBodyReplacement`
@@ -2680,6 +2809,8 @@ Every public export of every package and documented subpath - name, kind, signat
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
   Build a {@link RouteInfo} from a route's path, schema, and handler output type.
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **RoutePatternOverlapLimitError** _(class)_ - `class RoutePatternOverlapLimitError`
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
@@ -2754,8 +2885,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
+- **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
+  The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
-  Return a deterministic path accepted by both compiled patterns, or `undefined` when their path languages are disjoint.
+  Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
@@ -2786,6 +2919,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Set once the runtime plugin is installed, so a checker can tell "one copy" from "deduplicated".
 - **SINGLE_COPY_REGISTER_SPECIFIER** _(const)_ - `SINGLE_COPY_REGISTER_SPECIFIER: "@nifrajs/core/single-copy/register"`
   The public specifier a `bunfig.toml` preload must name to arm the runtime.
+- **SINGLE_COPY_STRICT_ENV** _(const)_ - `SINGLE_COPY_STRICT_ENV: "NIFRA_SINGLE_COPY_STRICT"`
+  Environment switch for strict mode when the declaration does not set it: `1` or `true`.
 - **SingleCopyOptions** _(interface)_ - `interface SingleCopyOptions`
 - **SingleCopyPlan** _(interface)_ - `interface SingleCopyPlan`
 - **SingleCopyPlugin** _(interface)_ - `interface SingleCopyPlugin`
@@ -2795,7 +2930,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SingleCopyRegistration** _(interface)_ - `interface SingleCopyRegistration`
   Which unbundled phases have the resolver preloaded. Bundled phases never need it - nifra's build injects the plugin itself.
 - **SingleCopySkip** _(interface)_ - `interface SingleCopySkip`
-  A foreign copy deliberately left alone, and why - never silently dropped.
+  A foreign copy left alone, and why - never silently dropped.
 - **SingleCopySkipReason** _(type)_ - `type SingleCopySkipReason = "version-skew" | "no-counterpart"`
 - **matchesSingleCopyDeclaration** _(const)_ - `matchesSingleCopyDeclaration: (declared: readonly string[], name: string) => boolean`
   Match a package name against a declaration entry: an exact name, or a `@scope/*` prefix.
@@ -2805,6 +2940,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The declaration, read from `package.json` - deliberately NOT from `nifra.config.ts`.
 - **readSingleCopyRegistration** _(function)_ - `readSingleCopyRegistration: (cwd: string) => SingleCopyRegistration`
   Read the runtime proof out of `bunfig.toml`.
+- **readSingleCopyStrict** _(function)_ - `readSingleCopyStrict: (cwd: string) => boolean`
+  Whether the declaration's object form asks for strict mode (`"strict": true`).
 - **registerSingleCopy** _(function)_ - `registerSingleCopy: (options?: SingleCopyOptions) => SingleCopyPlan`
   Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a `bunfig.toml` preload rather than calling this from application code: a resolver installed from inside a module cannot affect the imports that module already resolved.
 - **singleCopyPlugin** _(function)_ - `singleCopyPlugin: (options?: SingleCopyOptions) => SingleCopyPlugin`
@@ -2957,7 +3094,7 @@ _No named exports (side-effect entrypoint)._
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **websocket** _(function)_ - `websocket: () => IdentityPlugin`
   Enable WebSocket routes on a server: `.use(websocket())` turns on `app.ws()`. Applying it twice is a no-op (named plugin dedupe).
-- **wrapWebSocketMessageValidation** _(function)_ - `wrapWebSocketMessageValidation: (handler: WebSocketHandler) => WebSocketHandler`
+- **wrapWebSocketMessageValidation** _(function)_ - `wrapWebSocketMessageValidation: (handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning) => WebSocketHandler`
   If the handler declares a `messageSchema`, return a copy whose `message` validates each frame - parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at `app.ws(…
 
 ## @nifrajs/cron
@@ -3013,15 +3150,24 @@ _No named exports (side-effect entrypoint)._
   The request handed to a route. Compact by design: no cookies, no response builder - return a value (rendered as JSON) or a `Response` for full control.
 - **EdgeHandler** _(type)_ - `type EdgeHandler<Path extends string = string, Body = unknown> = ( c: EdgeContext<Path, Body>, ) => unknown | Promise<unknown>`
   A route handler: returns a value (rendered as JSON), a `Response`, or a promise of either. A thrown `Response` is sent as-is; any other throw becomes a `500`.
+- **EdgeNotFound** _(type)_ - `type EdgeNotFound = (( request: Request, pathname: string, ) => Response | Promise<Response>) & { readonly [EDGE_NOT_FOUND]: true }`
+  What {@link notFound} builds for {@link EdgeOptions.notFound}. Opaque: only `notFound()` makes one.
 - **EdgeOptions** _(interface)_ - `interface EdgeOptions`
-  Construction-time options. Both mirror `@nifrajs/core`'s `ServerOptions` defaults.
+  Construction-time options. The defaults mirror `@nifrajs/core`'s `ServerOptions`.
 - **EdgeServer** _(class)_ - `class EdgeServer`
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
+  Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
+  What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
   A query value: a single occurrence is a string; a repeated key promotes to a string[] so an array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing `t.string()` schemas …
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
   The Standard Schema v1 interface (https://standardschema.dev), vendored as types + a tiny runtime helper so any compliant validator - zod, valibot, arktype, … - validates requests without coupling the framework to one lib. The spec is MIT-licensed and explicitly designed to be copied.
+- **notFound** _(function)_ - `notFound: (handler: NotFoundHandler) => EdgeNotFound`
+  Answer requests no route matched with a handler of your own: `server({ notFound: notFound(handler) })`.
 - **server** _(function)_ - `server: (options?: EdgeOptions) => EdgeServer`
   Create a compact edge server.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
@@ -3112,23 +3258,68 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/i18n`
 
-- **Formatter** _(interface)_ - `interface Formatter`
+- **Formatter** _(interface)_ - `interface Formatter<M extends object = RegisteredMessages>`
+- **FormatterOptions** _(interface)_ - `interface FormatterOptions<M extends object = RegisteredMessages>`
 - **Locale** _(type)_ - `type Locale = string`
   Locale negotiation - pick the best supported locale for a request, from (in priority order) an explicit query parameter, then a cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so `fr-CA` matches a supported `fr`). Pure + runtime-agnostic. The result is always a m…
+- **LocaleCookieOptions** _(interface)_ - `interface LocaleCookieOptions`
+- **LocaleInfo** _(interface)_ - `interface LocaleInfo<K extends string = string>`
+  One locale with every field resolved.
 - **LocaleParts** _(interface)_ - `interface LocaleParts`
   The slice of a request the negotiation reads. Pass a `Request`, or this structural shape where no `Request` object exists (e.g. inside an `onResponseHeaders` hook, which sees only `url` + `header`). `query`/`url` are consulted only when `queryParam` is configured; an already-parsed `query` is prefe…
 - **LocaleSource** _(type)_ - `type LocaleSource = "query" | "cookie" | "header" | "default"`
   Which source produced the locale, in priority order.
+- **LocaleSpec** _(interface)_ - `interface LocaleSpec`
+  How one locale is declared. Every field has a default derived from the URL segment.
+- **Locales** _(interface)_ - `interface Locales<K extends string = string>`
+  The registry {@link defineLocales} returns.
+- **LocalesConfig** _(interface)_ - `interface LocalesConfig<K extends string>`
+  What {@link defineLocales} takes.
+- **MessageAt** _(type)_ - `type MessageAt<M, P extends string>`
+  The type of the value at dotted key `P` in `M`, resolved the way the formatter looks it up: the whole key first, then segment by segment.
+- **MessageKey** _(type)_ - `type MessageKey<M> = string extends keyof M ? string : LeafPaths<M, 10>`
+  The dotted keys of `M` whose value is a message, which is what `t()` takes. `string` for an untyped catalog.
+- **MessagePath** _(type)_ - `type MessagePath<M> = string extends keyof M ? string : AllPaths<M, 10>`
+  Every dotted key of `M`, blocks and lists included, which is what `get()` takes.
+- **MessageTree** _(interface)_ - `interface MessageTree`
+  A message catalog: ICU strings, lists and nested blocks, keyed by name.
+- **MessageValue** _(type)_ - `type MessageValue = string | readonly MessageValue[] | MessageTree`
+  One catalog value: an ICU message, a list (FAQ items), or a nested block of either.
 - **Messages** _(type)_ - `type Messages = Record<string, string>`
-  A tiny ICU message formatter on the platform `Intl`. Supports interpolation (`{name}`), `plural` (`{n, plural, one {# item} other {# items}}`, with `=N` exact cases and `#` → the number), and `select` (`{kind, select, a {…} other {…}}`), nested arbitrarily. Parsed by a hand-written recursive descen…
+  A flat catalog of ICU strings. Any {@link MessageTree} is accepted where a catalog is taken.
 - **NegotiateOptions** _(interface)_ - `interface NegotiateOptions`
+- **PartialMessages** _(type)_ - `type PartialMessages<M> = string extends keyof M ? M : { readonly [K in keyof M]?: PartialValue<M[K]> }`
+  Another locale's catalog for `M`: every key optional at every level, and any string where `M` has one. A key it lacks falls back through the formatter's `fallback` catalogs.
+- **Register** _(interface)_ - `interface Register`
+  The app's catalog type, declared once so every `t()` key is checked. Empty by default (keys are plain strings). Augment it with the default locale's catalog:
+- **RegisteredMessages** _(type)_ - `type RegisteredMessages = Register extends { readonly messages: infer M extends object } ? M : MessageTree`
+  The catalog type {@link Register} declares, or {@link MessageTree} when it declares none.
 - **ResolvedLocale** _(interface)_ - `interface ResolvedLocale`
-- **createFormatter** _(function)_ - `createFormatter: (locale: string, messages: Messages) => Formatter`
-  Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are memoized inside each. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLoc…
+- **Translation** _(type)_ - `type Translation = CatalogFor<RegisteredMessages>`
+  Any locale's catalog for the {@link Register}ed type ({@link MessageTree} when none is declared).
+- **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>) => Formatter<M>`
+  Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale, options)`, and parsed ASTs + `Intl.*` are memoized. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLocale…
+- **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>`
+  Declare the app's locales once.
+- **localeCookie** _(function)_ - `localeCookie: (name: string, locale: string, options?: LocaleCookieOptions) => string`
+  The `document.cookie` string that remembers `locale` under the detector's cookie `name`: `Path=/; SameSite=Lax`, a one-year `Max-Age` by default, and `Secure` for a `__Secure-`/`__Host-` name. Not `HttpOnly`, like the detector's, so the switcher can write it. The value only ever selects one of the …
+- **localeDirection** _(function)_ - `localeDirection: (tag: string) => "ltr" | "rtl"`
+  The writing direction of a BCP-47 tag: an explicit script subtag decides (`pa-Arab` is rtl, `sd-Deva` ltr), then the language (`ur`, `ar`, `he`, ...), then the script the runtime's likely- subtags data gives for a rarer language. `ltr` when none of those says rtl, including for a tag the runtime ca…
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale`
   Negotiate the request's locale. Order: a valid {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`. {@link resolveLocale} additionally reports the winning source.
 - **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale`
   Negotiate the request's locale and report which source chose it. Order: a valid {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`.
+
+### `@nifrajs/i18n/check`
+
+- **CatalogCheckCode** _(type)_ - `type CatalogCheckCode`
+- **CatalogCheckOptions** _(interface)_ - `interface CatalogCheckOptions<K extends string = string>`
+- **CatalogCheckResult** _(interface)_ - `interface CatalogCheckResult`
+- **CatalogCheckSeverity** _(type)_ - `type CatalogCheckSeverity = "error" | "warning" | "info"`
+- **CatalogFinding** _(interface)_ - `interface CatalogFinding`
+- **LocaleCoverage** _(interface)_ - `interface LocaleCoverage`
+- **checkCatalogs** _(function)_ - `checkCatalogs: <K extends string>(options: CatalogCheckOptions<K>) => CatalogCheckResult`
+  Check every locale's catalog in `locales` against the default locale's.
 
 ### `@nifrajs/i18n/detector`
 
@@ -3138,16 +3329,34 @@ _No named exports (side-effect entrypoint)._
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>`
   Detect the request's locale and expose it as `c.locale` / `c.localeSource`.
 
+### `@nifrajs/i18n/rich`
+
+- **RichChunks** _(type)_ - `type RichChunks<R> = readonly (string | R)[]`
+  A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order. Adjacent text is merged.
+- **RichRenderer** _(interface)_ - `interface RichRenderer<N>`
+  How a framework turns rich chunks into one node: {@link renderRich} uses it for every tag's content and for the whole message.
+- **RichTags** _(type)_ - `type RichTags<R> = Readonly<Record<string, (chunks: RichChunks<R>) => R>>`
+  Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s.
+- **renderRich** _(function)_ - `renderRich: <N, M extends object = import("./format.ts").MessageTree>(renderer: RichRenderer<N>, formatter: Formatter<M>, key: MessageKey<M>, tags?: Readonly<Record<string, (content: N) => N>>, vars?: Readonly<Record<st…`
+  {@link rich} for a UI framework: each handler receives its tag's content as one node (`renderer.join`) and the result is one node, with `<br/>` rendered by `renderer.lineBreak` unless `tags.br` is given. The adapters' `rich()` is this with their own renderer.
+- **rich** _(function)_ - `rich: <R, M extends object = import("./format.ts").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>) => (string | R)[]`
+  The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution, `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no catalog has returns `[key]`.
+
 ### `@nifrajs/i18n/routing`
 
+- **Alternates** _(interface)_ - `interface Alternates`
+  A page's canonical URL and the alternates that point at it from each language.
+- **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>`
 - **HreflangLink** _(interface)_ - `interface HreflangLink`
-  One `hreflang` alternate: an absolute URL plus the tag search engines match on.
+  One `hreflang` alternate: a URL plus the tag search engines match on.
 - **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions`
-- **LocalizedRouter** _(interface)_ - `interface LocalizedRouter`
-- **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath`
+- **LocalizedRouter** _(interface)_ - `interface LocalizedRouter<K extends string = string>`
+- **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string>`
+  What a `[lang]` segment value means for the request.
+- **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath<K extends string = string>`
   A pathname with its locale prefix removed (or not, when it carries none).
-- **defineI18nRouting** _(function)_ - `defineI18nRouting: (options: I18nRoutingOptions) => LocalizedRouter`
-  Define the app's locale-prefixed URL scheme once (validated here, so the hot path never re-checks), and get the four path operations bound to it.
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>`
+  Bind the app's locale-prefixed URL scheme to a {@link Locales} registry.
 
 ## @nifrajs/image
 
@@ -3157,7 +3366,7 @@ _No named exports (side-effect entrypoint)._
 - **HtmlImageAttrs** _(interface)_ - `interface HtmlImageAttrs`
   Plain lowercase HTML `<img>` attributes (`srcset`/`fetchpriority`, not React's camelCase).
 - **ImageFormat** _(type)_ - `type ImageFormat = "png" | "jpeg" | "gif" | "webp"`
-  Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe `width`/`height` (build-time tooling can pre-read them into a manifest).
+  Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe `width`/`height` (build-time tooling can pre-read them into a manifest). A JPEG's are the size it is dis…
 - **ImageInfo** _(interface)_ - `interface ImageInfo`
 - **ImageLoader** _(type)_ - `type ImageLoader = (args: { src: string; width: number; quality?: number }) => string`
   Builds a variant URL for `src` at a target pixel `width` (and optional `quality`).
@@ -3184,7 +3393,7 @@ _No named exports (side-effect entrypoint)._
 - **imageDimensions** _(function)_ - `imageDimensions: (bytes: Uint8Array) => ImageInfo | null`
   Parse intrinsic dimensions + format from image header bytes, or `null` if unrecognized/too short.
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
-  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
+  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for t…
 - **readImageDimensions** _(function)_ - `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Promise<ImageInfo | null>`
   Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).
 - **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
@@ -3231,7 +3440,7 @@ _No named exports (side-effect entrypoint)._
   Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
-  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
+  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for t…
 - **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
   Render a bounded, deterministic SVG suitable for an `og:image` endpoint.
 
@@ -3335,14 +3544,22 @@ _No named exports (side-effect entrypoint)._
 - **JobCounts** _(interface)_ - `interface JobCounts`
 - **JobDefinition** _(interface)_ - `interface JobDefinition<Payload>`
   A job definition registered on a queue.
+- **JobEnqueueInfo** _(interface)_ - `interface JobEnqueueInfo`
+  What `instrument.enqueue` sees.
 - **JobError** _(class)_ - `class JobError`
   Thrown for a misuse of the queue API (duplicate/unknown job name).
 - **JobHandle** _(interface)_ - `interface JobHandle<Payload>`
   A typed handle to enqueue a defined job.
 - **JobHandler** _(type)_ - `type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | Promise<void>`
   A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter - never crashes the worker.
+- **JobRunInfo** _(interface)_ - `interface JobRunInfo`
+  What `instrument.run` sees for one attempt.
+- **JobRunOutcome** _(type)_ - `type JobRunOutcome = "completed" | "retried" | "dead-lettered"`
+  How an attempt ended: removed, rescheduled, or moved to the dead-letter set.
 - **JobStore** _(interface)_ - `interface JobStore`
   Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async - the queue awaits them.
+- **JobTraceContext** _(interface)_ - `interface JobTraceContext`
+  The trace an instrumented attempt runs in. It has the shape of `c.trace` from `@nifrajs/otel`, so `cache.for(ctx)` and a nested `job.for(ctx).enqueue()` inside the handler stay in the same trace.
 - **JobValidationError** _(class)_ - `class JobValidationError`
   Thrown by `enqueue` when the payload fails the job's `input` schema (validation at the trust boundary).
 - **MemoryJobStore** _(class)_ - `class MemoryJobStore`
@@ -3350,6 +3567,8 @@ _No named exports (side-effect entrypoint)._
 - **Queue** _(interface)_ - `interface Queue`
 - **QueueHealth** _(interface)_ - `interface QueueHealth`
   Queue health counters. A straight passthrough of `JobStore.counts()` - counters are safe.
+- **QueueInstrument** _(interface)_ - `interface QueueInstrument`
+  Around-hooks for tracing (or timing) the queue - the seam `jobTracing()` from `@nifrajs/otel/jobs` plugs into. Each hook calls `next` once and returns what it resolves to. A hook that throws, or never calls `next`, cannot change behavior: the work still runs, uninstrumented.
 - **QueueOptions** _(interface)_ - `interface QueueOptions`
 - **RetryPolicy** _(interface)_ - `interface RetryPolicy`
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> }`
@@ -3520,6 +3739,8 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/mcp-db
 
+### `@nifrajs/mcp-db`
+
 - **McpDbAuthorizeContext** _(interface)_ - `interface McpDbAuthorizeContext`
   Context forwarded to `authorize` - the inbound HTTP Request carrying the `run_query` call.
 - **McpDbConfigError** _(class)_ - `class McpDbConfigError`
@@ -3529,6 +3750,118 @@ _No named exports (side-effect entrypoint)._
   The structural slice of `bun:sqlite`'s `Database` this package needs.
 - **serveDatabaseAsMcp** _(function)_ - `serveDatabaseAsMcp: (db: SqliteDatabaseLike, options: ServeDatabaseAsMcpOptions) => McpServer`
   Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the security model. Throws {@link McpDbConfigError} on any unsafe configuration - always at construction (boot), never at request time.
+
+### `@nifrajs/mcp-db/engine`
+
+- **DbPlan** _(interface)_ - `interface DbPlan`
+  A plan for a statement, as the engine reports it.
+- **DbRedaction** _(interface)_ - `interface DbRedaction`
+  What keeps secrets out of a result: which columns to mask, and how to scrub text.
+- **DbRefusal** _(interface)_ - `interface DbRefusal`
+  A refused or failed call: what happened, the fix, and its anchor under `https://nifra.dev/docs/`.
+- **DbRefusalCode** _(type)_ - `type DbRefusalCode`
+  Every reason a database call is refused or fails, as a stable code.
+- **DbRows** _(interface)_ - `interface DbRows`
+  Rows ready to leave the process: capped, masked and JSON-safe.
+- **DbSchemaColumn** _(interface)_ - `interface DbSchemaColumn`
+  A column in {@link DbSchemaTable}.
+- **DbSchemaForeignKey** _(interface)_ - `interface DbSchemaForeignKey`
+  A foreign key in {@link DbSchemaTable}.
+- **DbSchemaIndex** _(interface)_ - `interface DbSchemaIndex`
+  An index in {@link DbSchemaTable}.
+- **DbSchemaReport** _(interface)_ - `interface DbSchemaReport`
+  The exposed schema, built only from catalog queries the engine writes itself.
+- **DbSchemaTable** _(interface)_ - `interface DbSchemaTable`
+  One exposed table or view.
+- **REDACTED_CELL** _(const)_ - `REDACTED_CELL: "[redacted]"`
+  The value a masked cell carries.
+- **ShapeRowsOptions** _(interface)_ - `interface ShapeRowsOptions`
+  Options for {@link shapeRows}.
+- **SqliteDatabaseLike** _(interface)_ - `interface SqliteDatabaseLike`
+  The structural slice of `bun:sqlite`'s `Database` this package needs.
+- **SqliteGate** _(type)_ - `type SqliteGate = | { readonly ok: true; readonly query: string } | { readonly ok: false readonly reason: "empty" | "multiple" | "not-read" | "unexposed" readonly text: string readonly relation?: string }`
+  The outcome of {@link gateSqliteStatement}. A refusal's `text` is the message `run_query` returns.
+- **SqliteQueryOptions** _(interface)_ - `interface SqliteQueryOptions`
+  Options for {@link querySqlite} and {@link explainSqlite}.
+- **SqliteSchemaOptions** _(interface)_ - `interface SqliteSchemaOptions`
+  Options for {@link readSqliteSchema}.
+- **boundedSqliteQuery** _(function)_ - `boundedSqliteQuery: (query: string, maxRows: number) => string`
+  Wrap a gated query so SQLite materializes at most one row beyond `maxRows`.
+- **countSqliteQuery** _(function)_ - `countSqliteQuery: (query: string) => string`
+  Wrap a gated query to count its rows (re-executes it).
+- **dbRefusal** _(function)_ - `dbRefusal: (code: DbRefusalCode, message: string) => DbRefusal`
+  Build a {@link DbRefusal} for `code` with its fix and docs anchor.
+- **explainSqlite** _(function)_ - `explainSqlite: (db: Pick<Database, "prepare">, sql: string, options: Pick<SqliteQueryOptions, "exclude" | "maxResultBytes">) => DbPlan | DbRefusal`
+  `EXPLAIN QUERY PLAN` for one statement, after the same gates as {@link querySqlite}.
+- **fitToBytes** _(function)_ - `fitToBytes: <T>(count: number, build: (shown: number) => T, maxBytes: number) => { readonly value: T; readonly serialized: string; readonly shown: number; } | undefined`
+  Serialize `build(shown)` for the largest `shown <= count` (halving from `count`) whose JSON fits `maxBytes`. `undefined` when even `build(0)` does not fit.
+- **gateSqliteStatement** _(function)_ - `gateSqliteStatement: (input: string, exposed: (relation: string) => boolean) => SqliteGate`
+  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN` exposed. Returns the statement without its terminator, ready to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an alia…
+- **isDbRefusal** _(function)_ - `isDbRefusal: (value: unknown) => value is DbRefusal`
+  True for a value {@link dbRefusal} built.
+- **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>`
+  Open a SQLite file read-only: the `readonly` flag plus `PRAGMA query_only = ON`.
+- **querySqlite** _(function)_ - `querySqlite: (db: Pick<Database, "prepare">, sql: string, options: SqliteQueryOptions) => DbRows | DbRefusal`
+  Run one read-only query: the statement gates, the check that every table its bytecode opens is exposed (every table and view minus `exclude`), the refusal of any column `redaction.column` masks that the bytecode reads in any form, then at most `maxRows + 1` rows through {@link shapeRows}. Synchrono…
+- **readSqliteSchema** _(function)_ - `readSqliteSchema: (db: Pick<Database, "prepare">, options?: SqliteSchemaOptions) => DbSchemaReport | DbRefusal`
+  Describe the exposed tables and views from SQLite's own catalog (`sqlite_master` and the `pragma_*` table functions, each bound by parameter): columns, primary key, foreign keys, indexes, and a row count per table.
+- **resolveSqliteFile** _(function)_ - `resolveSqliteFile: (root: string, file: string, allowFiles?: readonly string[]) => string | DbRefusal`
+  Resolve a database file against the project root. The file must exist and its real path (symlinks followed) must sit inside the root's real path, unless `allowFiles` names it.
+- **shapeRows** _(function)_ - `shapeRows: (columns: readonly string[], rows: readonly (readonly unknown[])[], options: ShapeRowsOptions) => DbRows`
+  Cap, mask and normalize rows fetched as arrays (at most `maxRows + 1`, so truncation is known without counting). The byte cap halves the row count until the JSON fits.
+- **sqliteRelations** _(function)_ - `sqliteRelations: (db: Pick<Database, "prepare">, exclude?: readonly string[]) => { readonly all: ReadonlySet<string>; readonly exposed: ReadonlySet<string>; }`
+  The tables and views of a SQLite database, lowercased: all of them, and those not excluded.
+- **toJsonCell** _(function)_ - `toJsonCell: (value: unknown, redaction?: DbRedaction, depth?: number) => unknown`
+  One database value as JSON: bytes become `<n bytes>`, a bigint outside the safe range a string, a date an ISO string, a non-finite number a string. Strings go through `redaction.text`, and a key inside a JSON value that `redaction.column` matches is masked.
+- **unexposedPlanRelation** _(function)_ - `unexposedPlanRelation: (planRows: readonly { readonly detail?: unknown; }[], exposed: (relation: string) => boolean) => string | undefined`
+  The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed.
+
+### `@nifrajs/mcp-db/postgres`
+
+- **ConnectPostgresOptions** _(interface)_ - `interface ConnectPostgresOptions`
+  Options for {@link connectPostgres}.
+- **PgConnection** _(interface)_ - `interface PgConnection`
+  One connection reserved from the pool (`Bun.SQL`'s `ReservedSQL`, structurally).
+- **PgQuery** _(interface)_ - `interface PgQuery`
+  A pending query: awaitable for object rows, or `.values()` for array rows (checked by readers).
+- **PostgresClient** _(interface)_ - `interface PostgresClient`
+  A Postgres client (`Bun.SQL`, structurally): the engine reserves one connection per call.
+- **PostgresQueryOptions** _(interface)_ - `interface PostgresQueryOptions`
+  Options for {@link queryPostgres}.
+- **PostgresRoleReport** _(interface)_ - `interface PostgresRoleReport`
+  What the role gate and extension gate read about the connected role.
+- **PostgresRoleSql** _(interface)_ - `interface PostgresRoleSql`
+  The SQL that creates a read-only role for this database, for the developer to run themselves.
+- **PostgresRoleSqlOptions** _(interface)_ - `interface PostgresRoleSqlOptions`
+  Options for {@link postgresRoleSql}.
+- **PostgresSchemaOptions** _(interface)_ - `interface PostgresSchemaOptions`
+  Options for {@link readPostgresSchema}.
+- **PostgresScope** _(interface)_ - `interface PostgresScope`
+  Which relations a query may read.
+- **PostgresTarget** _(interface)_ - `interface PostgresTarget`
+  Where to connect, parsed from a `postgres://` URL.
+- **connectPostgres** _(function)_ - `connectPostgres: (target: PostgresTarget, options: ConnectPostgresOptions) => PostgresClient | DbRefusal`
+  Open a one-connection `Bun.SQL` client for `target` after the host gate. Every session starts read-only with `standard_conforming_strings` on (the statement tokenizer reads strings that way).
+- **explainPostgres** _(function)_ - `explainPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions & { readonly analyze?: boolean; }) => Promise<DbPlan | DbRefusal>`
+  `EXPLAIN (FORMAT JSON)` for one query, after the same layers as {@link queryPostgres}.
+- **inspectPostgresRole** _(function)_ - `inspectPostgresRole: (client: PostgresClient, options: { readonly timeoutMs: number; }) => Promise<PostgresRoleReport | DbRefusal>`
+  Read the connected role's privileges, in a read-only transaction.
+- **isLocalPostgresHost** _(function)_ - `isLocalPostgresHost: (host: string) => boolean`
+  True for `localhost`, `*.localhost`, 127.0.0.0/8 and `::1` (also as an IPv4-mapped address).
+- **lintPostgresStatement** _(function)_ - `lintPostgresStatement: (sql: string) => DbRefusal | undefined`
+  Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function.
+- **parsePostgresUrl** _(function)_ - `parsePostgresUrl: (url: string) => PostgresTarget | DbRefusal`
+  Parse a `postgres://` (or `postgresql://`) URL. Only the host, port, user, password, database and `sslmode` are read - any other parameter (`options=-c ...` included) is ignored, so a URL cannot switch off the read-only session settings.
+- **postgresHostRefusal** _(function)_ - `postgresHostRefusal: (target: PostgresTarget, allowHosts?: readonly string[]) => DbRefusal | undefined`
+  Refuse a TCP host that is neither local nor named in `allowHosts`.
+- **postgresRoleRefusal** _(function)_ - `postgresRoleRefusal: (report: PostgresRoleReport, options?: { readonly allowExtensions?: readonly string[]; }) => DbRefusal | undefined`
+  The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}.
+- **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
+  Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data` on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would override a…
+- **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
+  Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name is masked as well.
+- **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`
+  Describe the readable tables and views in the allowed schemas from `pg_catalog`, with queries this module writes (no caller SQL runs), so it works on any role: columns, primary keys, foreign keys, indexes and the planner's row estimate.
 
 ## @nifrajs/middleware
 
@@ -3664,7 +3997,7 @@ _No named exports (side-effect entrypoint)._
 - **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
   Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
-  Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
+  Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => IdentityPlugin`
   Journal every capability effect on the routes below it, and declare the evidence that says so.
 - **etag** _(function)_ - `etag: (options?: ETagOptions) => import("@nifrajs/core").IdentityPlugin<never>`
@@ -3674,7 +4007,7 @@ _No named exports (side-effect entrypoint)._
 - **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware`
   Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ - `ipRestriction: (options: IpRestrictionOptions) => Middleware`
-  IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. Configure `clientIp`, `trustedProxies`, or a trusted single-IP `header`; unconfigured X-Forwarded-For is never trusted.
+  IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. By default the caller is the server-resolved `platform.clientIp` (socket peer, or the app's `clientIp` trust declaration); `clientIp`, `trustedProxies`, or a trusted single-IP `header` override it. Unconfigured …
 - **jwk** _(function)_ - `jwk: (key: JwtVerificationKey) => JwtKeyResolver`
 - **jwks** _(function)_ - `jwks: (options: JwksOptions) => JwtKeyResolver`
 - **jwt** _(function)_ - `jwt: <C extends JwtClaims = JwtClaims>(options: JwtOptions) => JwtPlugin<C>`
@@ -3778,10 +4111,14 @@ _No named exports (side-effect entrypoint)._
 - **ObservationLink** _(interface)_ - `interface ObservationLink`
   A non-parent causal relationship to a span in another trace (the OTel `Link` model).
 - **ObservationParent** _(interface)_ - `interface ObservationParent`
+- **ObservationScope** _(type)_ - `type ObservationScope = <T>(trace: ObservationContext, run: () => T) => T`
+  Runs `run` with a span active in an ambient context (OpenTelemetry's, for one), so code that only sees that context - a pg or undici instrumentation - nests under the span. `otelBridge().scope` from `@nifrajs/otel/sdk-bridge` is one.
 - **OtlpExporter** _(interface)_ - `interface OtlpExporter`
 - **OtlpExporterOptions** _(interface)_ - `interface OtlpExporterOptions`
 - **ParsedTraceparent** _(interface)_ - `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
+- **SpanKind** _(type)_ - `type SpanKind = "server" | "client" | "producer" | "consumer" | "internal"`
+  The OTel span kind. A span without one is exported as `server`, the kind of the request spans that predate this field.
 - **SpanStatus** _(type)_ - `type SpanStatus = "unset" | "ok" | "error"`
   The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an OTel `Span` when bridged - but nothing here depends on the OTel SDK. You supply an {@link ObservationAdap…
 - **StartObservation** _(interface)_ - `interface StartObservation`
@@ -3812,12 +4149,51 @@ _No named exports (side-effect entrypoint)._
 - **tracing** _(function)_ - `tracing: (options?: TracingOptions) => ContextPlugin<TracingContext>`
   Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a server span, and ends it on response with the status + HTTP attributes. Idempotent.
 
+### `@nifrajs/otel/cache`
+
+- **CacheKeyAttribute** _(type)_ - `type CacheKeyAttribute = "prefix" | "none" | ((key: string) => string | undefined)`
+  What of a key (or an invalidated tag) a span carries: - `"prefix"` (default): the leading token before the first `:`, exported as `nifra.cache.key_prefix` only when it matches `^[a-z][a-z0-9_-]{0,31}$` - `user:42` gives `user`, a key with no `:` gives nothing; - `"none"`: nothing; - a function: its…
+- **CacheTracingEvent** _(interface)_ - `interface CacheTracingEvent`
+  The `CacheEvent` of `@nifrajs/cache`, declared structurally so this package does not depend on it.
+- **CacheTracingObserver** _(type)_ - `type CacheTracingObserver = (event: CacheTracingEvent) => void`
+  Pass as `createCache({ observer })`.
+- **CacheTracingOptions** _(interface)_ - `interface CacheTracingOptions`
+- **cacheTracing** _(function)_ - `cacheTracing: (options?: CacheTracingOptions) => CacheTracingObserver`
+  Spans for cache operations on views bound with `for(context)`. A bound operation becomes a child of the context's trace; an operation on the unbound cache, or under a context with no trace, is not traced. A stale `wrap` that starts a background refresh gets a separate `cache revalidate` span in its…
+
 ### `@nifrajs/otel/effects`
 
 - **EffectTracingOptions** _(interface)_ - `interface EffectTracingOptions`
 - **EffectTracingPlugin** _(interface)_ - `interface EffectTracingPlugin`
 - **effectTracing** _(function)_ - `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
   Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
+
+### `@nifrajs/otel/events`
+
+- **EventConsumerContext** _(interface)_ - `interface EventConsumerContext`
+  What the wrapped handler receives next to the envelope: the consumer span's trace context.
+- **EventTracingOptions** _(interface)_ - `interface EventTracingOptions`
+- **TracedEventConsumer** _(type)_ - `type TracedEventConsumer<Value> = ( input: unknown, parent?: ObservationContext, ) => Promise<TracedEventResult<Value>>`
+  The traced consumer. `parent` is an ambient trace (`c.trace` in a webhook route), if there is one.
+- **TracedEventEnvelope** _(interface)_ - `interface TracedEventEnvelope`
+  The envelope fields a consumer span reads. `EventEnvelope` from `@nifrajs/events` has them.
+- **TracedEventResult** _(type)_ - `type TracedEventResult<Value> = | { readonly success: true; readonly value: Value } | { readonly success: false; readonly issueCount: number }`
+- **TracedEventSource** _(interface)_ - `interface TracedEventSource<Envelope extends TracedEventEnvelope>`
+  An event contract or a registry from `@nifrajs/events`, declared structurally: anything whose `parse(input)` never throws and reports success with an envelope, or failure with `issues` (a contract) or a `reason` (a registry).
+- **traceEventConsumer** _(function)_ - `traceEventConsumer: <Envelope extends TracedEventEnvelope, Result>(source: TracedEventSource<Envelope>, handler: (envelope: Envelope, context: EventConsumerContext) => Result, options?: EventTracingOptions) => TracedEve…`
+  Wrap an event consumer so each envelope is one `process <type>` span (kind consumer), linked to the producer's span through `causalitySpanLink(envelope.causality)`. With a `parent`, the span is that span's child; otherwise it starts its own trace. Attributes: `nifra.event.type`, `nifra.event.versio…
+
+### `@nifrajs/otel/jobs`
+
+- **JobTracingEnqueueInfo** _(interface)_ - `interface JobTracingEnqueueInfo`
+  `JobEnqueueInfo` from `@nifrajs/jobs`, declared structurally so this package does not depend on it.
+- **JobTracingInstrument** _(interface)_ - `interface JobTracingInstrument`
+  Structurally a `QueueInstrument` from `@nifrajs/jobs`: pass it as `createQueue({ instrument })`.
+- **JobTracingOptions** _(interface)_ - `interface JobTracingOptions`
+- **JobTracingRunInfo** _(interface)_ - `interface JobTracingRunInfo`
+  `JobRunInfo` from `@nifrajs/jobs`, declared structurally.
+- **jobTracing** _(function)_ - `jobTracing: (options?: JobTracingOptions) => JobTracingInstrument`
+  The queue instrument. Span names are `send <job name>` (kind producer) and `process <job name>` (kind consumer), with `messaging.system = "nifra.jobs"`, `messaging.operation.type`/`.name`, `messaging.destination.name` (the job name) and `messaging.message.id`. A process span also carries `nifra.job…
 
 ### `@nifrajs/otel/metrics`
 
@@ -3834,6 +4210,23 @@ _No named exports (side-effect entrypoint)._
   Create a standalone registry to register custom app metrics on, shared into `metrics({ registry })`.
 - **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => IdentityPlugin`
   Enable RED metrics + a `/metrics` Prometheus endpoint. Records `nifra_http_requests_total`, `nifra_http_request_duration_seconds`, and `nifra_http_requests_in_flight`, labeled by method, matched route template, and status. Apply once (named-plugin dedupe).
+
+### `@nifrajs/otel/sdk-bridge`
+
+- **OtelApi** _(interface)_ - `interface OtelApi`
+  The part of `@opentelemetry/api` the bridge uses: pass `import * as api from "@opentelemetry/api"`.
+- **OtelBridge** _(interface)_ - `interface OtelBridge`
+- **OtelBridgeOptions** _(interface)_ - `interface OtelBridgeOptions`
+- **OtelIdGenerator** _(interface)_ - `interface OtelIdGenerator`
+  The SDK's `IdGenerator`.
+- **OtelSpan** _(interface)_ - `interface OtelSpan`
+  The part of an OTel `Span` the bridge uses. Every `Span` from `@opentelemetry/api` has it.
+- **OtelSpanContext** _(interface)_ - `interface OtelSpanContext`
+  The OTel `SpanContext` shape.
+- **OtelTracer** _(interface)_ - `interface OtelTracer`
+  The part of an OTel `Tracer` the bridge uses.
+- **otelBridge** _(function)_ - `otelBridge: (options: OtelBridgeOptions) => OtelBridge`
+  Build the bridge. See {@link OtelBridge} for what each part does.
 
 ## @nifrajs/pi
 
@@ -3911,6 +4304,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/schema`
 
+- **DeferredValue** _(interface)_ - `interface DeferredValue<T>`
+  A value `defer()` from `@nifrajs/web` marked to stream in after the page shell.
 - **ImportOpenAPIOptions** _(interface)_ - `interface ImportOpenAPIOptions`
 - **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory`
 - **ImportedRoute** _(interface)_ - `interface ImportedRoute`
@@ -3945,6 +4340,14 @@ _No named exports (side-effect entrypoint)._
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
+
+### `@nifrajs/schema/form`
+
+- **FileOptions** _(interface)_ - `interface FileOptions`
+- **FormOptions** _(interface)_ - `interface FormOptions`
+  The multipart limits (`maxFields`, `maxFiles`, `maxFieldBytes`, `maxFileBytes`) bound what the body may carry before any of it is validated; a request over one is answered `413`.
+- **t** _(const)_ - `t: { file: (options?: FileOptions) => NifraSchema<TUnsafe<File>>; form: <P extends Props>(props: P, options?: FormOptions) => NifraSchema<FormShape<P>>; string: (options?: import("@sinclair/typebox").StringOptions) => N…`
+  `t` from `@nifrajs/schema`, plus the two constructors a `multipart/form-data` body needs.
 
 ### `@nifrajs/schema/openapi`
 
@@ -3994,7 +4397,7 @@ _No named exports (side-effect entrypoint)._
 - **StorageData** _(type)_ - `type StorageData = Uint8Array | ArrayBuffer | string`
   Accepted `put` payloads - normalized to bytes by each adapter.
 - **StorageKeyError** _(class)_ - `class StorageKeyError`
-  Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave - absolute paths, `..` traversal, NUL bytes, and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key i…
+  Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave - absolute paths, `..` traversal, NUL bytes, backslashes (Windows traversal), and empty or `.` segments (aliases on a file system). Enforced by…
 - **StorageListPage** _(interface)_ - `interface StorageListPage`
   One page of keys from stores that expose cursor-based listing.
 - **StorageListPageOptions** _(interface)_ - `interface StorageListPageOptions`
@@ -4199,7 +4602,8 @@ _No named exports (side-effect entrypoint)._
 - **httpToolAdapter** _(function)_ - `httpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
   Exercise the Web adapter while returning the same normalized result shape as direct calls.
 - **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
-- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
+- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: (options?: { readonly traceparent?: boolean; }) => AdapterCertificationProfile<CertifiableJobStore>`
+  The job-store profile. `traceparent: true` adds the optional `traceparent-roundtrip` capability: the trace context given to `enqueue` comes back on every lease, including after a retry. A store without it still runs jobs; traced runs just lose their link to the producer.
 - **mcpToolAdapter** _(function)_ - `mcpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
 - **modelGatewayCertificationProfile** _(const)_ - `modelGatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
 - **parseRubricVerdict** _(function)_ - `parseRubricVerdict: (rubric: RubricSpec, value: unknown) => RubricVerdict`
@@ -4281,7 +4685,8 @@ _No named exports (side-effect entrypoint)._
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
-- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
+- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: (options?: { readonly traceparent?: boolean; }) => AdapterCertificationProfile<CertifiableJobStore>`
+  The job-store profile. `traceparent: true` adds the optional `traceparent-roundtrip` capability: the trace context given to `enqueue` comes back on every lease, including after a retry. A store without it still runs jobs; traced runs just lose their link to the producer.
 - **runtimeAdapterCertificationProfile** _(function)_ - `runtimeAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableRuntimeAdapter>`
 - **storageAdapterCertificationProfile** _(function)_ - `storageAdapterCertificationProfile: (options?: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean; }) => AdapterCertificationProfile<CertifiableStorageAdapter>`
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
@@ -4344,6 +4749,12 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/uploads
 
+### `@nifrajs/uploads`
+
+- **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]`
+  Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and outside a `type/*` wildcard that covers one of them) can never match, so check a configured allow-list against it up front instead of rejecting every upload at request time.
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 32`
+  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `av…
 - **FileType** _(interface)_ - `interface FileType`
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
 - **ImageReencoder** _(interface)_ - `interface ImageReencoder`
@@ -4364,6 +4775,17 @@ _No named exports (side-effect entrypoint)._
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`
   Verify a URL produced by {@link signDownloadUrl}: signature (constant-time) + not expired.
 
+### `@nifrajs/uploads/detect`
+
+- **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]`
+  Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and outside a `type/*` wildcard that covers one of them) can never match, so check a configured allow-list against it up front instead of rejecting every upload at request time.
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 32`
+  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `av…
+- **FileType** _(interface)_ - `interface FileType`
+  Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
+- **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`
+  Detect a file's type from its magic bytes, or `null` if unrecognized.
+
 ## @nifrajs/web
 
 ### `@nifrajs/web`
@@ -4374,6 +4796,8 @@ _No named exports (side-effect entrypoint)._
   A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a `status(...)` render, or a hand-rolled `Response` - all passed straight through) or data, surfaced to the page comp…
 - **BOUNDARY_GLOBAL** _(const)_ - `BOUNDARY_GLOBAL: "__NIFRA_BOUNDARIES__"`
   Dynamic-boundary states for hydration; absent when a route declares no boundaries.
+- **BackendOnly** _(type)_ - `type BackendOnly<T> = T & { readonly [BACKEND_ONLY_BRAND]?: never }`
+  Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `BackendOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is n…
 - **Blocker** _(interface)_ - `interface Blocker`
   A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ - `interface BlockerController`
@@ -4403,6 +4827,10 @@ _No named exports (side-effect entrypoint)._
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
   A cached SSR response - the bytes + metadata a {@link CacheStore} persists.
+- **CdnPurgeOutcome** _(interface)_ - `interface CdnPurgeOutcome`
+  What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused.
+- **CdnPurgeTarget** _(interface)_ - `interface CdnPurgeTarget`
+  A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one.
 - **ClientAction** _(type)_ - `type ClientAction = ( args: ClientActionArgs, ) => ClientActionResult | undefined | Promise<ClientActionResult | undefined>`
   A client-only action wrapper; it never replaces the server action.
 - **ClientActionArgs** _(interface)_ - `interface ClientActionArgs`
@@ -4420,8 +4848,13 @@ _No named exports (side-effect entrypoint)._
 - **ClientRouter** _(interface)_ - `interface ClientRouter`
   The agnostic router store consumed by per-adapter Router bindings.
 - **ClientRouterOptions** _(interface)_ - `interface ClientRouterOptions`
+- **CreateCspPolicyOptions** _(interface)_ - `interface CreateCspPolicyOptions`
 - **CreateNonceResolverOptions** _(interface)_ - `interface CreateNonceResolverOptions<Env = unknown>`
 - **CreateWebAppOptions** _(interface)_ - `interface CreateWebAppOptions<Env = unknown>`
+- **CspHeaderContext** _(interface)_ - `interface CspHeaderContext`
+  What {@link CreateCspPolicyOptions.header} receives for one document.
+- **CspPolicy** _(interface)_ - `interface CspPolicy`
+  A hash-based Content-Security-Policy for nifra documents - see {@link createCspPolicy}. Opaque: pass it to `createWebApp({ csp })` or `renderPage({ csp })`.
 - **CssLoadingMode** _(type)_ - `type CssLoadingMode = "blocking" | "deferred"`
   How framework-owned stylesheets are made active during the first document load.
 - **DATA_GLOBAL** _(const)_ - `DATA_GLOBAL: "__NIFRA_DATA__"`
@@ -4460,6 +4893,8 @@ _No named exports (side-effect entrypoint)._
 - **GenerateServerManifestOptions** _(interface)_ - `interface GenerateServerManifestOptions`
 - **GetStaticPaths** _(type)_ - `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
+- **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
+  `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -4469,6 +4904,8 @@ _No named exports (side-effect entrypoint)._
 - **ISROptions** _(interface)_ - `interface ISROptions`
 - **ISRPlatform** _(interface)_ - `interface ISRPlatform`
   Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget.
+- **ISRQuery** _(type)_ - `type ISRQuery = "bypass" | "all" | readonly string[]`
+  Which query parameters an ISR key carries - see {@link ISROptions.query}.
 - **ISR_REVALIDATE_HEADER** _(const)_ - `ISR_REVALIDATE_HEADER: "x-nifra-isr-revalidate"`
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…
 - **ISR_REVALIDATE_TAGS_HEADER** _(const)_ - `ISR_REVALIDATE_TAGS_HEADER: "x-nifra-isr-tags"`
@@ -4499,8 +4936,14 @@ _No named exports (side-effect entrypoint)._
   A route's optional data loader: params/request in, data out.
 - **LoaderContext** _(interface)_ - `interface LoaderContext`
   Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core).
+- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
+  Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
+- **LoadingEntry** _(interface)_ - `interface LoadingEntry`
+  A `_loading` page: what the page slot shows while a client navigation loads.
 - **Manifest** _(interface)_ - `interface Manifest`
   The full route manifest.
+- **MatchChain** _(interface)_ - `interface MatchChain`
+  The modules a render stacks, as `useMatches` needs them: each one's id and `handle` export, outermost layout first and the page (or status page) last. Built by the server for SSR and by the generated client entry per route, from the same manifest, so both sides report the same matches.
 - **MemoryCacheStore** _(class)_ - `class MemoryCacheStore`
   In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read page survives…
 - **MemoryCacheStoreOptions** _(interface)_ - `interface MemoryCacheStoreOptions`
@@ -4513,6 +4956,8 @@ _No named exports (side-effect entrypoint)._
   One managed `<meta>` tag. Standard attributes and inert `data-*` metadata only.
 - **MetaInput** _(type)_ - `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
   A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs - it's resolved server-side from the request and matches the client's `location.origin`.
+- **MiddlewareOutcome** _(type)_ - `type MiddlewareOutcome = undefined | Response | ResponseResult`
+  What a {@link RouteMiddleware} answers with: nothing, to let the request through, or a response.
 - **MountRouterOptions** _(interface)_ - `interface MountRouterOptions`
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
 - **MutationCallbacks** _(interface)_ - `interface MutationCallbacks<TData, TVariables>`
@@ -4543,12 +4988,18 @@ _No named exports (side-effect entrypoint)._
   Context supplied to the optional Content-Security-Policy header callback.
 - **NonceResolver** _(interface)_ - `interface NonceResolver<Env = unknown>`
   A request-aware nonce resolver. It is callable so existing `createWebApp({ nonce })` code can pass it directly. When created with a `header` callback, `createWebApp` also installs its response hook automatically and applies that callback's CSP value to the same request that received the nonce.
+- **NotFoundEntry** _(interface)_ - `interface NotFoundEntry`
+  A `_404` page below the routes root.
+- **NotFoundScope** _(interface)_ - `interface NotFoundScope`
+  One URL pattern a nested `_404` answers when no route matches it.
 - **OpenGraphInput** _(interface)_ - `interface OpenGraphInput`
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`
   Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
 - **PendingBoundary** _(interface)_ - `interface PendingBoundary`
   A dynamic load that has started but is not part of the initial render barrier.
+- **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
+  When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
 - **PreviewEndpointOptions** _(interface)_ - `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
 - **PublicDirCache** _(interface)_ - `interface PublicDirCache`
@@ -4589,14 +5040,22 @@ _No named exports (side-effect entrypoint)._
 - **RenderPageOptions** _(interface)_ - `interface RenderPageOptions`
 - **RenderProps** _(interface)_ - `interface RenderProps`
   The data handed to a route component.
+- **RenderStreamOptions** _(interface)_ - `interface RenderStreamOptions`
+  Per-document options for {@link RenderAdapter.renderToStream}.
 - **RenderedPage** _(interface)_ - `interface RenderedPage`
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`
   The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and …
+- **RevalidateTags** _(type)_ - `type RevalidateTags = | readonly string[] | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]`
+  A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. The function is declared as a method so a route may annotate its own params (`{ params: { id: string } }`).
+- **RevalidateTagsInput** _(interface)_ - `interface RevalidateTagsInput`
+  What a `revalidateTags` function is given: the URL and route params only, both already public.
 - **RouteEntry** _(interface)_ - `interface RouteEntry`
   One matched route: pattern, nested layout ids (outermost → innermost), source file, loader.
 - **RouteMatch** _(interface)_ - `interface RouteMatch`
   A URL matched against the manifest patterns: which route + its extracted params.
+- **RouteMiddleware** _(type)_ - `type RouteMiddleware<Ctx = LoaderContext> = ( ctx: Ctx, ) => MiddlewareOutcome | Promise<MiddlewareOutcome>`
+  The `middleware` export of a `_layout.backend.ts` file. It runs on the server before the layouts, loaders and action of every route in its directory and below - on a document request, a client navigation and a form post alike - and before a nested `_404` there. Middleware higher in the tree runs fi…
 - **RouteModule** _(interface)_ - `interface RouteModule`
   A route module - the default component + optional loader / action / meta.
 - **RoutePattern** _(interface)_ - `interface RoutePattern`
@@ -4606,9 +5065,7 @@ _No named exports (side-effect entrypoint)._
 - **RouterState** _(interface)_ - `interface RouterState`
   The router's observable state. A new object is published on every transition.
 - **SERVER_FN_MODULE** _(const)_ - `SERVER_FN_MODULE: RegExp`
-  Modules whose exports become client stubs. Mirrors the `.server` convention's shape.
-- **SERVER_ONLY_MODULE** _(const)_ - `SERVER_ONLY_MODULE: RegExp`
-  Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
+  Modules whose exports become client stubs: `todos.fn.ts`, `x.fn.mjs`, or the extensionless `foo.fn`.
 - **STATUS_HEADER** _(const)_ - `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
 - **SanitizedHtml** _(type)_ - `type SanitizedHtml = TrustedHtml & { readonly [SANITIZED_HTML_BRAND]: "sanitized-html" }`
@@ -4617,8 +5074,10 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
-- **ServerOnly** _(type)_ - `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
-  Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
+- **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
+  A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+- **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
+  One client navigation, as a layout's {@link ShouldRevalidate} sees it.
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
   Loads a module through the dev server's module graph rather than the runtime's resolver.
 - **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static" readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
@@ -4641,6 +5100,8 @@ _No named exports (side-effect entrypoint)._
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
   Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch.
 - **TrustedHtml** _(type)_ - `type TrustedHtml = string & { readonly [TRUSTED_HTML_BRAND]: "trusted-html" }`
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **UnsafeScriptDescriptor** _(interface)_ - `interface UnsafeScriptDescriptor`
   Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
 - **assertCssLoadingCompatible** _(function)_ - `assertCssLoadingCompatible: (cssCodeSplit: boolean, cssLoading: CssLoadingMode) => void`
@@ -4654,10 +5115,12 @@ _No named exports (side-effect entrypoint)._
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
   Stable mode label for adapter registries and diagnostics.
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
-  Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
+  Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware` files are special; othe…
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
+- **createCspPolicy** _(function)_ - `createCspPolicy: (options: CreateCspPolicyOptions) => CspPolicy`
+  Create a hash-based Content-Security-Policy for nifra documents, so a page can carry a strict CSP and still be cached.
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
@@ -4693,12 +5156,16 @@ _No named exports (side-effect entrypoint)._
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
+- **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization, an explicit `public`. The one rule b…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, or tampered cookie returns `false`.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
+- **nifraScriptHashes** _(function)_ - `nifraScriptHashes: (adapter: RenderAdapter) => Promise<readonly string[]>`
+  The `'sha256-…'` sources for the constant inline scripts nifra writes into a document rendered with `adapter`: the pre-hydration form guard and the adapter's hydration head. For a CSP set outside the app (a proxy, a CDN rule); {@link createCspPolicy} computes the same list itself.
 - **normalizeCssLoading** _(function)_ - `normalizeCssLoading: (value: unknown) => CssLoadingMode`
   Runtime validation for JavaScript callers, generated manifests, and hand-authored integrations.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
@@ -4726,8 +5193,8 @@ _No named exports (side-effect entrypoint)._
   Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic and intercepting boundaries remain unresolved. Values are cached by boundary object identity in the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per request. A r…
 - **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
-- **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
-  An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body. Th…
+- **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
+  An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
 - **sanitizeHtml** _(function)_ - `sanitizeHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
   Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.
 - **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
@@ -4744,8 +5211,8 @@ _No named exports (side-effect entrypoint)._
   Build a static-file handler for `dir`.
 - **setBlockerController** _(function)_ - `setBlockerController: (controller: BlockerController | undefined) => void`
   Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for app use.
-- **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
-  Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for app use.
+- **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined, router?: ClientRouter) => void`
+  Register (or clear, with `undefined`) the browser navigate and its router - called by `installHistory`. Not for app use.
 - **setSsrModuleLoader** _(function)_ - `setSsrModuleLoader: (load: SsrModuleLoader | undefined) => void`
   Publish or clear the dev server's SSR module loader.
 - **ssrModuleLoader** _(function)_ - `ssrModuleLoader: () => SsrModuleLoader | undefined`
@@ -4763,9 +5230,13 @@ _No named exports (side-effect entrypoint)._
 - **withISR** _(function)_ - `withISR: (app: ISRApp, options: ISROptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from {@link CacheStore} when fresh, served **stale while a fresh copy regenerates in the background** (`platform.waitUntil` on edge), or rendered + stored on a miss. Framework-agnostic (it caches the rendered byte…
 
+### `@nifrajs/web/backend-only`
+
+_No named exports (side-effect entrypoint)._
+
 ### `@nifrajs/web/build`
 
-- **BUILD_TARGETS** _(const)_ - `BUILD_TARGETS: readonly ["bun", "node", "deno", "cf-pages", "vercel", "static"]`
+- **BUILD_TARGETS** _(const)_ - `BUILD_TARGETS: readonly ["bun", "node", "deno", "cloudflare", "vercel", "static"]`
   A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server).
 - **BuildClientOptions** _(interface)_ - `interface BuildClientOptions`
 - **BuildManifest** _(interface)_ - `interface BuildManifest`
@@ -4794,12 +5265,22 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/server-only"`
-  The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`).
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"]`
+  The `createWebApp` options a generated server entry can import from the app's framework module.
+- **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
+  The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
+- **SecretExemption** _(interface)_ - `interface SecretExemption`
+  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+- **SecretRule** _(type)_ - `type SecretRule`
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
 - **ServerBuildTargetPlan** _(interface)_ - `interface ServerBuildTargetPlan`
+- **ServerEntryClientIp** _(type)_ - `type ServerEntryClientIp = "platform"`
+  Where `c.clientIp` comes from in a generated server entry. Left out (the default), an edge target has no caller address at all and a self-hosting target uses the socket peer. `"platform"` also trusts the header an edge target's platform overwrites at its edge (see {@link PLATFORM_CLIENT_IP_HEADERS}…
+- **ServerEntryOption** _(type)_ - `type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]`
+- **ServerEntryOptionImports** _(type)_ - `type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>`
+  Each importable option mapped to the specifier of the module that exports it.
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
 - **SizeReport** _(interface)_ - `interface SizeReport`
@@ -4820,7 +5301,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
-  Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
+  Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
 - **copyPublicDir** _(function)_ - `copyPublicDir: (from: string, to: string) => Promise<string[]>`
   Copy `from` into `to`, returning the URL paths copied (sorted).
 - **dataFileFor** _(function)_ - `dataFileFor: (pattern: string) => string`
@@ -4828,7 +5309,7 @@ _No named exports (side-effect entrypoint)._
 - **detectNodeBuiltinsInClient** _(function)_ - `detectNodeBuiltinsInClient: (graph: ClientModuleGraph) => ReadonlyArray<NodeBuiltinFinding>`
   Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output chunk, returning a sorted, deduped list of {@link NodeBuiltinFinding}s. Three graph facts combine so the report is precise AND actionable: 1. **What the user wrote** - only builtins imported by a NON-`nod…
 - **detectServerOnlyInClient** _(function)_ - `detectServerOnlyInClient: (graph: ClientModuleGraph) => ReadonlyArray<ServerOnlyFinding>`
-  Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME graph…
+  Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect `import "@nifrajs/web/backend-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME grap…
 - **diffManifestRoutes** _(function)_ - `diffManifestRoutes: (manifestFiles: readonly string[], discoveredFiles: readonly string[]) => ManifestDrift`
   Diff the route files a committed server-manifest imports against the files freshly discovered in `routes/`. Returns the `missing` (in routes/, not in manifest - stale manifest) and `extra` (in manifest, gone from routes/ - dangling import) sets. Empty arrays ⇒ in sync. Pure - the caller supplies bo…
 - **formatBytes** _(function)_ - `formatBytes: (bytes: number) => string`
@@ -4839,7 +5320,7 @@ _No named exports (side-effect entrypoint)._
   The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean.
 - **formatServerOnlyLeak** _(function)_ - `formatServerOnlyLeak: (findings: ReadonlyArray<ServerOnlyFinding>) => string | undefined`
   The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean.
-- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly title?: string; readonly publicFiles?: readonly strin…`
+- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly optionImports?: ServerEntryOptionImports; readonly ti…`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ - `htmlFileFor: (pattern: string) => string`
   Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`.
@@ -4847,6 +5328,8 @@ _No named exports (side-effect entrypoint)._
   A type guard narrowing an arbitrary string to a {@link BuildTarget}.
 - **isManifestInSync** _(function)_ - `isManifestInSync: (drift: ManifestDrift) => boolean`
   True when a drift report is clean (no missing + no extra routes).
+- **parseBuildTarget** _(function)_ - `parseBuildTarget: (value: string, label?: string) => BuildTarget`
+  `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`).
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
 - **parseManifestCssLoading** _(function)_ - `parseManifestCssLoading: (source: string) => CssLoadingMode | undefined`
@@ -4871,10 +5354,9 @@ _No named exports (side-effect entrypoint)._
   Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does …
 - **serverFnStubPlugin** _(const)_ - `serverFnStubPlugin: () => BunPlugin`
   Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes the server mounted, so the function bodies - and everything they import - never reach a browser.
-- **serverOnlyEmptyPlugin** _(const)_ - `serverOnlyEmptyPlugin: () => BunPlugin`
-  Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`, `auth.server.ts`, …) is server-only - empty it in the browser bundle so its (possibly `node:` / native / Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any na…
 - **svelteDedupePlugin** _(const)_ - `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy - the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…
+- **zoneGuardPlugin** _(function)_ - `zoneGuardPlugin: (options: ZoneGuardOptions) => BunPlugin`
 
 ### `@nifrajs/web/build-vite`
 
@@ -4890,6 +5372,49 @@ _No named exports (side-effect entrypoint)._
   Build a full deploy dir for `target` using the Vite/Rollup pipeline - the escape hatch for apps that need a Vite-only transform in production. Identical output shape to {@link import ("./build.ts").buildTarget} (same deploy dir, same server entry, same prerender + size report), because both delegat…
 - **viteBundler** _(const)_ - `viteBundler: Bundler`
   The Vite build STRATEGY - plugged into `buildTargetWith`. `plugins` arriving through the shared orchestrator are the app's Vite plugins (the escape hatch's whole reason), cast to Vite's plugin type.
+
+### `@nifrajs/web/cdn`
+
+- **CDN_BROWSER_CACHE_CONTROL** _(const)_ - `CDN_BROWSER_CACHE_CONTROL: "public, max-age=0, must-revalidate"`
+  What browsers are told about a page the CDN may store: revalidate every time.
+- **CdnCacheInput** _(interface)_ - `interface CdnCacheInput`
+  What a cacheable page tells the CDN: its tags and how long the CDN may serve it.
+- **CdnProvider** _(interface)_ - `interface CdnProvider`
+  A CDN nifra can tag pages for and purge. Build one with {@link defineCdnProvider}.
+- **CdnProviderDefinition** _(interface)_ - `interface CdnProviderDefinition`
+  What a provider file supplies; {@link defineCdnProvider} adds the queue.
+- **CdnPurgeError** _(interface)_ - `interface CdnPurgeError`
+  A purge that did not go through, as reported to {@link PurgeQueueOptions.onError}.
+- **CdnPurgeOutcome** _(interface)_ - `interface CdnPurgeOutcome`
+  What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused.
+- **CdnPurgeTarget** _(interface)_ - `interface CdnPurgeTarget`
+  A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one.
+- **CloudflareWorkersCacheOptions** _(interface)_ - `interface CloudflareWorkersCacheOptions`
+- **CloudflareZoneOptions** _(interface)_ - `interface CloudflareZoneOptions`
+- **FastlyOptions** _(interface)_ - `interface FastlyOptions`
+- **InvalidateResult** _(interface)_ - `interface InvalidateResult`
+- **InvalidatorOptions** _(interface)_ - `interface InvalidatorOptions`
+- **PurgeAttempt** _(type)_ - `type PurgeAttempt`
+  One purge API call's result. A refusal is `retryable` when sending it again may succeed.
+- **PurgeQueueOptions** _(interface)_ - `interface PurgeQueueOptions`
+- **VercelOptions** _(type)_ - `type VercelOptions`
+- **WithCdnOptions** _(interface)_ - `interface WithCdnOptions`
+- **WorkersCacheLike** _(interface)_ - `interface WorkersCacheLike`
+  The Worker's cache binding: `import { cache } from "cloudflare:workers"`, or `ctx.cache`.
+- **cloudflareWorkersCache** _(function)_ - `cloudflareWorkersCache: (options: CloudflareWorkersCacheOptions) => CdnProvider`
+  Workers Cache in front of the Worker serving the app. Purges are scoped to the calling entrypoint.
+- **cloudflareZone** _(function)_ - `cloudflareZone: (options: CloudflareZoneOptions) => CdnProvider`
+  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.
+- **createInvalidator** _(function)_ - `createInvalidator: (options: InvalidatorOptions) => { invalidate(target: { readonly tags?: readonly string[]; readonly paths?: readonly string[]; }, platform?: ISRPlatform): Promise<InvalidateResult>; }`
+  Purge pages after a mutation, from app code: `await invalidate({ tags: ["product:42"] })`. The origin store goes first, so a CDN refetch cannot repopulate from a stale origin entry. At most 32 tags and 100 paths a call.
+- **defineCdnProvider** _(function)_ - `defineCdnProvider: (definition: CdnProviderDefinition, options?: PurgeQueueOptions) => CdnProvider`
+  A {@link CdnProvider} from a provider's API calls, with the purge queue in front: tags arriving within `debounceMs` go out together, chunked to the provider's per-call limit and sent one call at a time; a 429 or 5xx is retried with capped exponential backoff that honors `Retry-After`. A `purge` res…
+- **fastly** _(function)_ - `fastly: (options: FastlyOptions) => CdnProvider`
+- **pathTag** _(function)_ - `pathTag: (path: string) => Promise<string>`
+  The tag every page a CDN stores carries for its own path, so a path purge works on CDNs that only purge by tag. It hashes the normalized pathname alone: the query and the host stay out, so one purge reaches every query variant and needs no knowledge of the public origin. Two hosts serving the same …
+- **vercel** _(function)_ - `vercel: (options: VercelOptions) => CdnProvider`
+- **withCdn** _(function)_ - `withCdn: (app: ISRApp | Handler, options: WithCdnOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
+  Wrap `app` (a `createWebApp` app or a `withISR` handler) so a CDN stores exactly the pages a shared cache may serve to anyone, tagged for purging, for as long as the route's `revalidate` allows. Non-HTML responses (assets, JSON, navigation data) pass through with the app's own headers.
 
 ### `@nifrajs/web/client`
 
@@ -4943,6 +5468,8 @@ _No named exports (side-effect entrypoint)._
 
 - **CLIENT_ENTRY_PATH** _(const)_ - `CLIENT_ENTRY_PATH: "/__nifra/client.js"`
   The stable URL every SSR'd page points its client entry at.
+- **DevAppHooks** _(interface)_ - `interface DevAppHooks`
+  What a dev server hands `createApp` so the app reports into the session.
 - **DevServer** _(interface)_ - `interface DevServer`
 - **DevServerOptions** _(interface)_ - `interface DevServerOptions`
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
@@ -4960,6 +5487,86 @@ _No named exports (side-effect entrypoint)._
 - **writeDevFiles** _(function)_ - `writeDevFiles: (options: WriteDevFilesOptions) => void`
   Generate the client entry + the HTML route that carries it.
 
+### `@nifrajs/web/dev-feed`
+
+- **CaptureSink** _(interface)_ - `interface CaptureSink`
+- **CoreLogEntry** _(interface)_ - `interface CoreLogEntry`
+- **DEFAULT_DEV_FEED_LIMITS** _(const)_ - `DEFAULT_DEV_FEED_LIMITS: DevFeedLimits`
+- **DEV_ERROR_CATEGORIES** _(const)_ - `DEV_ERROR_CATEGORIES: readonly DevErrorCategory[]`
+- **DEV_FEED_HEADER** _(const)_ - `DEV_FEED_HEADER: "x-nifra-dev-feed"`
+  Response header marking a body as dev-feed JSON (so a tool can tell it from an app route).
+- **DEV_FEED_PATHS** _(const)_ - `DEV_FEED_PATHS: Readonly<{ identity: "/__nifra/dev"; errors: "/__nifra/errors"; logs: "/__nifra/logs"; requests: "/__nifra/requests"; clientEvent: "/__nifra/client-event"; indicator: "/__nifra/dev-indicator.js"; }>`
+  The dev server's agent-facing endpoints. All live under `/__nifra/`, which no route can produce.
+- **DEV_FEED_SCHEMA** _(const)_ - `DEV_FEED_SCHEMA: 1`
+  Version of the HTTP + record contract between a dev server and the tools that read it.
+- **DEV_LOG_LEVELS** _(const)_ - `DEV_LOG_LEVELS: readonly DevLogLevel[]`
+- **DEV_REQUEST_ID_HEADER** _(const)_ - `DEV_REQUEST_ID_HEADER: "x-nifra-request-id"`
+  Response header naming the request id every entry recorded during that request carries.
+- **DEV_SERVER_FILES** _(const)_ - `DEV_SERVER_FILES: RegExp`
+  Every file the feed writes (record, its temp file, log, rotated log): what a file watcher skips. A RegExp, not a glob: a glob's `**` does not cross a dot-directory such as the project's own path.
+- **DEV_SERVER_LOG_FILE** _(const)_ - `DEV_SERVER_LOG_FILE: ".nifra/dev-server.log"`
+- **DEV_SERVER_RECORD_FILE** _(const)_ - `DEV_SERVER_RECORD_FILE: ".nifra/dev-server.json"`
+  Discovery record and persisted log, relative to the project root. `.nifra/` is gitignored.
+- **DEV_TOKEN_HEADER** _(const)_ - `DEV_TOKEN_HEADER: "x-nifra-dev-token"`
+  Request header carrying the agent token from the discovery record.
+- **DevEntrySource** _(type)_ - `type DevEntrySource = "server" | "browser"`
+- **DevErrorCategory** _(type)_ - `type DevErrorCategory`
+- **DevErrorEntry** _(interface)_ - `interface DevErrorEntry`
+- **DevErrorsQuery** _(interface)_ - `interface DevErrorsQuery`
+- **DevErrorsResult** _(interface)_ - `interface DevErrorsResult`
+- **DevFeed** _(interface)_ - `interface DevFeed`
+- **DevFeedLimits** _(interface)_ - `interface DevFeedLimits`
+- **DevFeedOptions** _(interface)_ - `interface DevFeedOptions`
+- **DevLogEntry** _(interface)_ - `interface DevLogEntry`
+- **DevLogLevel** _(type)_ - `type DevLogLevel = "debug" | "info" | "log" | "warn" | "error"`
+- **DevLogsQuery** _(interface)_ - `interface DevLogsQuery`
+- **DevLogsResult** _(interface)_ - `interface DevLogsResult`
+- **DevPipeline** _(type)_ - `type DevPipeline = "bun" | "vite"`
+- **DevRequestContext** _(interface)_ - `interface DevRequestContext`
+- **DevRequestTrace** _(interface)_ - `interface DevRequestTrace`
+- **DevRequestsQuery** _(interface)_ - `interface DevRequestsQuery`
+- **DevRequestsResult** _(interface)_ - `interface DevRequestsResult`
+- **DevServerIdentity** _(interface)_ - `interface DevServerIdentity`
+  The identity a dev server reports at {@link DEV_FEED_PATHS.identity}.
+- **DevServerRecord** _(interface)_ - `interface DevServerRecord`
+  What a running dev server writes to {@link DEV_SERVER_RECORD_FILE} so tools can find it.
+- **ErrorMeta** _(interface)_ - `interface ErrorMeta`
+- **LogMeta** _(interface)_ - `interface LogMeta`
+- **captureInto** _(function)_ - `captureInto: (feed: DevFeed) => () => void`
+  Record the process's console and stream output into `feed`: every line as a log entry, and core's `unhandled request error` line additionally as an `api` error with a full Diagnostic. The one sink both dev servers and `nifra_run` use. Returns the detach function.
+- **createDevFeed** _(function)_ - `createDevFeed: (options: DevFeedOptions) => DevFeed`
+  Create the store a dev server records into.
+- **createDevToken** _(function)_ - `createDevToken: () => string`
+  A fresh 256-bit token.
+- **currentDevRequest** _(function)_ - `currentDevRequest: () => DevRequestContext | undefined`
+  The request being handled on this async path, if any.
+- **errorFromCoreLog** _(function)_ - `errorFromCoreLog: (entry: CoreLogEntry) => Error | undefined`
+  The thrown error core's `unhandled request error` log line describes, rebuilt for a Diagnostic.
+- **formatConsoleArgs** _(function)_ - `formatConsoleArgs: (args: readonly unknown[]) => string`
+  Format console arguments the way the console itself would, without color.
+- **installCapture** _(function)_ - `installCapture: (sink: CaptureSink) => () => void`
+  Tee the process's console and stdout/stderr into `sink`, leaving the real output untouched. Global and reference-counted: several dev servers (tests start many) share one patch, and the originals come back when the last sink detaches. Returns the detach function.
+- **isDevErrorCategory** _(function)_ - `isDevErrorCategory: (value: unknown) => value is DevErrorCategory`
+  Narrow a string to a {@link DevErrorCategory}.
+- **isDevLogLevel** _(function)_ - `isDevLogLevel: (value: unknown) => value is DevLogLevel`
+  Narrow a string to a {@link DevLogLevel}.
+- **isProcessAlive** _(function)_ - `isProcessAlive: (pid: number) => boolean`
+  Whether a process with `pid` exists (EPERM means it exists but is not ours).
+- **parseCoreLogLine** _(function)_ - `parseCoreLogLine: (line: string) => CoreLogEntry | undefined`
+  Parse a line core's default JSON logger wrote, or undefined for anything else.
+- **readDevServerRecord** _(function)_ - `readDevServerRecord: (root: string) => DevServerRecord | undefined`
+  The record at `root`, or undefined when absent or malformed. Says nothing about liveness.
+- **readPersistedFeed** _(function)_ - `readPersistedFeed: (root: string, limit?: number) => { readonly errors: DevErrorEntry[]; readonly logs: DevLogEntry[]; }`
+  The persisted record of a dev server that may no longer be running: newest last.
+- **recordDevCrash** _(function)_ - `recordDevCrash: (root: string, exitCode: number | null, stderrTail: string) => void`
+  Record a dev server process that died, from the process that supervised it (`nifra dev` re-execs the Bun pipeline and pipes the child's stderr). The child's own monitor never sees an unhandled rejection on Bun, and a native crash print bypasses the console, so the supervisor's view of stderr is the…
+- **removeDevServerRecord** _(function)_ - `removeDevServerRecord: (root: string, token: string) => void`
+  Remove the record only while it is still this server's: a newer server may have replaced it.
+- **runWithDevRequest** _(function)_ - `runWithDevRequest: <T>(ctx: DevRequestContext, fn: () => T) => T`
+  Run `fn` as the handling of one request: entries recorded inside it carry `ctx.requestId`.
+- **writeDevServerRecord** _(function)_ - `writeDevServerRecord: (root: string, record: DevServerRecord) => void`
+  Write the record atomically (temp file + rename) and owner-only.
+
 ### `@nifrajs/web/diagnostic`
 
 - **BuildDiagnosticOptions** _(interface)_ - `interface BuildDiagnosticOptions`
@@ -4971,6 +5578,12 @@ _No named exports (side-effect entrypoint)._
   The structured failure. Serialisable as-is to JSON for the agent surfaces.
 - **DiagnosticFrame** _(interface)_ - `interface DiagnosticFrame`
   One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located.
+- **FixOption** _(interface)_ - `interface FixOption`
+  One labeled way to fix a recognised failure.
+- **FixPrompt** _(interface)_ - `interface FixPrompt`
+- **FixPromptContext** _(interface)_ - `interface FixPromptContext`
+- **FixPromptSurface** _(type)_ - `type FixPromptSurface = "overlay" | "indicator" | "cli" | "docs"`
+  Where the prompt is shown; it decides how the agent is told to reproduce and verify.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
@@ -4979,12 +5592,37 @@ _No named exports (side-effect entrypoint)._
   Build a source codeframe: `radius` lines either side of `line`, each tagged with its 1-based number and whether it is the offending line. Returns undefined if the source can't be read or the line is out of range - a diagnostic without a codeframe is still useful, so this never throws.
 - **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic`
   Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
-- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; }`
+- **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
+  The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
+- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[] | undefined; }`
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
+- **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
+  One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
+- **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
+  True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
   Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
+- **promptPath** _(function)_ - `promptPath: (file: string, root: string | undefined) => string`
+  A path a reader of the prompt may see: project-relative, package-relative, or a base name.
 - **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`
   The first frame that points at the user's own source - what the codeframe should show.
+
+### `@nifrajs/web/diagnostic-prompt`
+
+- **FixPrompt** _(interface)_ - `interface FixPrompt`
+- **FixPromptContext** _(interface)_ - `interface FixPromptContext`
+- **FixPromptSurface** _(type)_ - `type FixPromptSurface = "overlay" | "indicator" | "cli" | "docs"`
+  Where the prompt is shown; it decides how the agent is told to reproduce and verify.
+- **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
+  The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
+- **catalogFixPrompts** _(function)_ - `catalogFixPrompts: (code: string) => readonly FixPrompt[]`
+  The prompts for a catalog code with no failure in hand (the error codes page): the agent looks the newest entry up in the dev feed instead of being given its message and location.
+- **diagnosticHeadline** _(function)_ - `diagnosticHeadline: (diagnostic: Diagnostic) => string`
+  The error's first line as a person reads it: `TypeError: x is undefined`, never the bare message.
+- **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
+  One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
+- **promptPath** _(function)_ - `promptPath: (file: string, root: string | undefined) => string`
+  A path a reader of the prompt may see: project-relative, package-relative, or a base name.
 
 ### `@nifrajs/web/fn`
 
@@ -5128,8 +5766,12 @@ _No named exports (side-effect entrypoint)._
 - **DEV_ROUTES_ENV** _(const)_ - `DEV_ROUTES_ENV: "NIFRA_DEV_ROUTES"`
 - **PluginBuilder** _(type)_ - `type PluginBuilder = Parameters<BunPlugin["setup"]>[0]`
   The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it.
+- **RawSourceMap** _(interface)_ - `interface RawSourceMap`
+  A source map as its v3 JSON object.
 - **StylesheetEmitter** _(interface)_ - `interface StylesheetEmitter`
   Records compiled CSS and wires it into the client bundle through a virtual `?<namespace>` module - the idiom the Vue plugin established (`?vue-css`). Register one per plugin `setup`; call `emit` per file to stash its CSS and get back the `import` line to append to the JS module.
+- **concatSourceMaps** _(function)_ - `concatSourceMaps: (parts: readonly { readonly code: string; readonly map?: RawSourceMap | undefined; }[]) => RawSourceMap`
+  One map over parts joined with no separator, each part either mapped by its own map or unmapped (generated glue). Sources are merged by name.
 - **createStylesheetEmitter** _(function)_ - `createStylesheetEmitter: (build: PluginBuilder, namespace: string) => StylesheetEmitter`
   Wire the virtual-CSS-module handlers onto `build` for `namespace`, returning an {@link StylesheetEmitter}. The `namespace` must be a plain identifier (letters/`-`); it's used verbatim as the import suffix and the Bun namespace. Only the `"dom"` build should emit CSS - the `"ssr"` build ships no sty…
 - **devHotComponent** _(function)_ - `devHotComponent: (path: string) => boolean`
@@ -5148,6 +5790,8 @@ _No named exports (side-effect entrypoint)._
   Load an optional peer compiler at build time, throwing a consistent, actionable install-hint error if it's absent - the `@vue/compiler-sfc` peer pattern, centralized. Build-time only, so the dynamic `import` (which keeps the peer out of the package's hard dependencies) is correct here.
 - **rewriteSsrImports** _(function)_ - `rewriteSsrImports: (contents: string, path: string, generate: "dom" | "ssr") => string`
   Re-key the app-owned imports of a module a **server-side** plugin just compiled. A plugin that claims a file extension is the only code that sees that file's source, so it is the only place its imports can be versioned; without this call every component in that language stays on the code it had at …
+- **withDevSourceMap** _(function)_ - `withDevSourceMap: (code: string, map: RawSourceMap | undefined, path: string, generate: "dom" | "ssr") => string`
+  A compiled module carrying its map back to the file it came from, during a dev server only. The client half gets it inline: Bun's bundler keeps a plugin's output as the bundle map's source, and the dev server's frame mapper follows the inline map from there. The SSR half goes in the process registr…
 
 ### `@nifrajs/web/plugins/postcss`
 
@@ -5190,6 +5834,8 @@ _No named exports (side-effect entrypoint)._
 
 - **SVG_COMPONENT_FILTER** _(const)_ - `SVG_COMPONENT_FILTER: RegExp`
   The Bun `onLoad` filter every adapter's SVG-component plugin matches: `*.svg?component`.
+- **SvgMarkupRules** _(interface)_ - `interface SvgMarkupRules`
+  How a framework's template must spell an SVG file's text and names, for {@link svgTemplateMarkup}.
 - **SvgOptimizer** _(interface)_ - `interface SvgOptimizer`
   The subset of the `svgo` API this plugin uses (structural, so no hard dependency on its types).
 - **SvgPluginOptions** _(interface)_ - `interface SvgPluginOptions`
@@ -5200,15 +5846,31 @@ _No named exports (side-effect entrypoint)._
   The SVG-as-component Bun plugin (React/Preact). `generate` is accepted for parity with the other plugin pairs; the emitted component is the same on `"dom"` and `"ssr"`.
 - **svgComponentSource** _(function)_ - `svgComponentSource: (xml: string, options?: SvgToJsxOptions) => string`
   Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic).
+- **svgTemplateMarkup** _(function)_ - `svgTemplateMarkup: (xml: string, rules: SvgMarkupRules) => string`
+  An SVG file's markup rewritten for a framework template: one `<svg>` root, its text and attribute values put through `rules` so none of it reads as template syntax. Markup a well-formed SVG cannot hold is refused rather than passed on - a brace, a bare name or an unquoted value in a tag, content af…
 - **svgToJsx** _(function)_ - `svgToJsx: (xml: string, options?: SvgToJsxOptions) => string`
   Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root.
 
 ### `@nifrajs/web/plugins/vite-leak-guard`
 
+- **AssetUrlGuardPlugin** _(interface)_ - `interface AssetUrlGuardPlugin`
+  The minimal Vite plugin shape {@link viteAssetUrlGuard} returns.
+- **BareBuiltinPlugin** _(interface)_ - `interface BareBuiltinPlugin`
+  The minimal Vite plugin shape {@link viteBareBuiltinExternal} returns.
+- **LeakGuardOptions** _(interface)_ - `interface LeakGuardOptions`
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
-- **viteLeakGuard** _(function)_ - `viteLeakGuard: () => LeakGuardPlugin`
-  A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client bundle - the same two guards, and the same error messages, as nifra's Bun production build.
+- **LeakGuardSecretOptions** _(interface)_ - `interface LeakGuardSecretOptions`
+- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" >`
+  What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
+- **viteAssetUrlGuard** _(function)_ - `viteAssetUrlGuard: (options?: ServerZoneGuardOptions) => AssetUrlGuardPlugin`
+  Keep server files out of a Vite client build's assets. A `new URL("./x", import.meta.url)` makes Vite copy the file it names into the output, or inline it into the chunk as a `data:` URL when it is small - no module and no import edge, so {@link viteLeakGuard}'s graph never sees it. This refuses a …
+- **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
+  Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the import builds, does nothing in the browser, and no longer names the module. This plugin externalizes i…
+- **viteLeakGuard** _(function)_ - `viteLeakGuard: (options?: LeakGuardOptions) => LeakGuardPlugin`
+  A Vite/Rollup plugin that fails the build when anything the zones keep on the server reaches the client bundle, with the same checks and messages as nifra's Bun build: every module classified, the graph evidence complete, every emitted file traced back to it, and the `node:` and `backend-only` guar…
+- **viteServerZoneGuard** _(function)_ - `viteServerZoneGuard: (options?: ServerZoneGuardOptions) => LeakGuardPlugin`
+  The server build's half of the zone rules, with the same checks and message as nifra's Bun server build: every first-party module zoned, backend code never importing frontend code, shared code importing only shared code. It records the refusal in `leak` for the same reason the client guard does.
 
 ### `@nifrajs/web/plugins/vite-server-fn`
 
@@ -5216,19 +5878,6 @@ _No named exports (side-effect entrypoint)._
   The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
 - **viteServerFnStub** _(function)_ - `viteServerFnStub: () => ServerFnStubPlugin`
   Replace every `*.fn` module with its client stubs.
-
-### `@nifrajs/web/plugins/vite-server-only`
-
-- **SERVER_ONLY_MODULE** _(const)_ - `SERVER_ONLY_MODULE: RegExp`
-  Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
-- **SERVER_ONLY_REPLACEMENT** _(const)_ - `SERVER_ONLY_REPLACEMENT: "module.exports = new Proxy({}, { get: () => undefined })"`
-  The replacement body for an emptied module. A Proxy rather than `export {}` so any named OR default import resolves to `undefined` instead of failing the bundle with a missing-export error - the client degrades at the call site it wrote, not at link time in a file it never named.
-- **ServerOnlyEmptyPlugin** _(interface)_ - `interface ServerOnlyEmptyPlugin`
-  The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
-- **viteServerOnlyEmpty** _(function)_ - `viteServerOnlyEmpty: () => ServerOnlyEmptyPlugin`
-  Empty every `*.server` module in the client build.
-- **viteServerOnlyReplacement** _(function)_ - `viteServerOnlyReplacement: (source: string) => string`
-  Vite dev serves native ESM, so the Bun/CommonJS proxy above is invalid there. Emit inert ESM bindings derived from the source's public names while discarding the implementation and imports. An unsupported exotic export fails closed at ESM link time; server code is never served as fallback.
 
 ### `@nifrajs/web/pwa-manifest`
 
@@ -5249,6 +5898,10 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/route-manifest`
 
+- **BACKEND_ROUTE_EXPORTS** _(const)_ - `BACKEND_ROUTE_EXPORTS: ReadonlySet<string>`
+  Exports only the server or the build reads. They live in the route's `x.backend.ts`.
+- **FRONTEND_ROUTE_EXPORTS** _(const)_ - `FRONTEND_ROUTE_EXPORTS: ReadonlySet<string>`
+  Exports the browser runs or reads. They live in a route's frontend file, which ships whole.
 - **RenderMode** _(type)_ - `type RenderMode = "static" | "isr" | "ssr"`
   How a route produces its HTML.
 - **RouteCapability** _(type)_ - `type RouteCapability = "server" | "revalidation"`
@@ -5259,16 +5912,33 @@ _No named exports (side-effect entrypoint)._
   A route whose declaration the chosen target cannot honour, and what actually happens if it ships.
 - **RouteManifestEntry** _(interface)_ - `interface RouteManifestEntry`
   One route's resolved behaviour.
+- **ShadowedPage** _(interface)_ - `interface ShadowedPage`
+  A page file whose URL pattern sits under a mount.
 - **buildRouteManifest** _(function)_ - `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly string[]>>; readonly capabilities?: readonly RouteCapability[]; }) => Promise<RouteM…`
   Build the route manifest for a discovered app, optionally resolved against a deploy target.
 - **deriveRouteEntry** _(function)_ - `deriveRouteEntry: (id: string, pattern: string, module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "revalidateTags" | "hydrate">, prerenderedPaths?: readonly string[]) => RouteManifestEntry`
   Derive one route's behaviour from its module exports.
+- **formatShadowedPages** _(function)_ - `formatShadowedPages: (pages: readonly ShadowedPage[]) => string`
+  The message every surface reports shadowed pages with.
+- **normalizeMountPath** _(function)_ - `normalizeMountPath: (path: string) => string | undefined`
+  Normalize a mount path the way the server's mount table does: drop a trailing `/*` and a trailing `/`, keep `/` for a root mount. `undefined` for a path the server would refuse (not absolute, a query or hash, a param or an inner wildcard) - the mount itself reports that.
 - **renderRouteManifest** _(function)_ - `renderRouteManifest: (manifest: RouteManifest) => string`
   Render the manifest as a readable report - the `nifra routes --modes` output.
+- **shadowedPages** _(function)_ - `shadowedPages: (manifest: Pick<Manifest, "routes" | "notFounds">, mountPaths: readonly string[]) => readonly ShadowedPage[]`
+  The page routes and nested `_404` scopes that sit under one of `mountPaths`, in manifest order. Paths are normalized here; one the server would refuse is skipped.
 
-### `@nifrajs/web/server-only`
+### `@nifrajs/web/route-types`
 
-_No named exports (side-effect entrypoint)._
+- **ROUTE_TYPES_DIR** _(const)_ - `ROUTE_TYPES_DIR: ".nifra/types"`
+  Where the generated types live, relative to the app root.
+- **RouteTypesOptions** _(interface)_ - `interface RouteTypesOptions`
+- **RouteTypesResult** _(interface)_ - `interface RouteTypesResult`
+- **routeTypeFiles** _(function)_ - `routeTypeFiles: (options: RouteTypesOptions) => ReadonlyMap<string, string>`
+  Every generated types file for the app, by absolute path.
+- **staleRouteTypes** _(function)_ - `staleRouteTypes: (options: RouteTypesOptions) => readonly string[]`
+  Generated files missing or different on disk, and files on disk the app no longer generates.
+- **writeRouteTypes** _(function)_ - `writeRouteTypes: (options: RouteTypesOptions) => RouteTypesResult`
+  Bring `.nifra/types` up to date with the app's routes. Unchanged files are left alone, so an editor watching them sees only real changes. Owns the directory: anything else in it is removed.
 
 ### `@nifrajs/web/service-worker`
 
@@ -5280,8 +5950,19 @@ _No named exports (side-effect entrypoint)._
 - **serviceWorkerRegistration** _(function)_ - `serviceWorkerRegistration: (scriptUrl?: string) => string`
   The registration snippet, for a `<script>` in your document shell.
 
+### `@nifrajs/web/vitals`
+
+- **ReportWebVitalsOptions** _(interface)_ - `interface ReportWebVitalsOptions`
+  How {@link reportWebVitals} reports.
+- **WebVitalsMetric** _(type)_ - `type WebVitalsMetric`
+  One measurement from `web-vitals` - `name` is `"LCP"`, `"INP"`, `"CLS"`, `"FCP"` or `"TTFB"`, with its `value`, `rating` (`"good"`, `"needs-improvement"` or `"poor"`), `delta` since the last report and an `id` unique to the measurement - plus the route it belongs to.
+- **reportWebVitals** _(function)_ - `reportWebVitals: (report: (metric: WebVitalsMetric) => void, options?: ReportWebVitalsOptions) => () => void`
+  Report the page's Core Web Vitals to `report`, each with the route it belongs to. A metric is reported once its value is final - FCP and TTFB as soon as they are known, LCP at the first interaction or when the page is hidden, CLS and INP when the page is hidden - unless `reportAllChanges` asks for …
+
 ### `@nifrajs/web/vite`
 
+- **DevAppHooks** _(interface)_ - `interface DevAppHooks`
+  What a dev server hands `createApp` so the app reports into the session.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **ViteDevServer** _(interface)_ - `interface ViteDevServer`
@@ -5294,6 +5975,48 @@ _No named exports (side-effect entrypoint)._
   Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under rolldown-vite - the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid key: Expected never but received "jsx"` on `nifra dev`.
 - **pipeWebBodyToNode** _(function)_ - `pipeWebBodyToNode: (body: ReadableStream<Uint8Array> | null, res: NodeResLike) => Promise<void>`
   Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g. `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk a…
+
+### `@nifrajs/web/zones`
+
+- **BACKEND_ONLY_MARKER** _(const)_ - `BACKEND_ONLY_MARKER: "@nifrajs/web/backend-only"`
+  The nifra marker a module imports to refuse the browser outright.
+- **BROWSER_ZONES** _(const)_ - `BROWSER_ZONES: ReadonlySet<Zone>`
+  Zones whose code may ship to a browser. `fn` is listed because its stub is what ships.
+- **Classification** _(type)_ - `type Classification`
+- **PackageEnvironment** _(type)_ - `type PackageEnvironment = "frontend" | "backend" | "shared" | "library"`
+- **ROUTE_BACKEND_FILE** _(const)_ - `ROUTE_BACKEND_FILE: RegExp`
+  A route's backend half: `x.backend.ts`. Script extensions only; JSX belongs to the frontend half.
+- **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
+  Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
+- **SecretExemption** _(interface)_ - `interface SecretExemption`
+  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+- **SecretFinding** _(interface)_ - `interface SecretFinding`
+- **SecretRule** _(type)_ - `type SecretRule`
+- **SecretScanFile** _(interface)_ - `interface SecretScanFile`
+- **SecretScanInput** _(interface)_ - `interface SecretScanInput`
+- **Zone** _(type)_ - `type Zone`
+- **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
+- **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
+- **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined`
+  Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver entry is recognized by the import as written (`specifier`) or by the file's path in the package.
+- **createZoneClassifier** _(function)_ - `createZoneClassifier: (options: ZoneClassifierOptions) => ZoneClassifier`
+  Create a classifier for one app. Cheap to create; it caches per file and per package directory, so build plugins and dev servers keep one for the life of a build or a session.
+- **importAllowed** _(function)_ - `importAllowed: (from: Zone, to: Zone) => boolean`
+  Whether a module in `from` may import (with a value import) a module in `to`.
+- **importRuleMessage** _(function)_ - `importRuleMessage: (fromFile: string, from: Zone, toFile: string, to: Zone) => string`
+  The message for an import {@link importAllowed} refuses.
+- **isSensitiveFieldName** _(function)_ - `isSensitiveFieldName: (name: string) => boolean`
+  A field name that usually holds a credential or personal identifier.
+- **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`
+  The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
+- **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`
+  The denial reason for a file's private environment reads.
+- **publicScanFiles** _(function)_ - `publicScanFiles: (dir: string, label: string) => SecretScanFile[]`
+  Every file under a `public/` directory, named as the app sees it (`public/robots.txt`).
+- **scanForSecrets** _(function)_ - `scanForSecrets: (input: SecretScanInput) => SecretFinding[]`
+  Scan what a build publishes. Sources are scanned first: a match there is reported at its source location, and the same text in an emitted file (where names are hashed) is not reported again, exempted or not.
+- **specifierPackage** _(function)_ - `specifierPackage: (specifier: string) => string | undefined`
+  The package name a bare specifier names, or `undefined` for a relative path, a builtin, a subpath import (`#x`) or a bundler-virtual id.
 
 ## @nifrajs/web-preact
 
@@ -5346,10 +6069,14 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-preact/i18n`
 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on `locale`/`messages`, so switching locale rebuilds it and re-renders consumers.
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by catalog identi…
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: ComponentChildren) => ComponentChildren>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => ComponentChildren`
+  The message at `key` with its tags rendered by `tags`, as Preact nodes - no HTML, no `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is…
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-preact/image`
 
@@ -5376,9 +6103,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **RenderPropsContext** _(const)_ - `RenderPropsContext: import("preact").Context<RenderProps | undefined>`
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
+- **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismatch.
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
@@ -5395,7 +6127,7 @@ _No named exports (side-effect entrypoint)._
 
 - **AuthSession** _(interface)_ - `interface AuthSession`
 - **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode`
-  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads.
+  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new `initialSession` (a loader re-run on navigation) replaces the session, as a remount would.
 - **AuthSessionProviderProps** _(interface)_ - `interface AuthSessionProviderProps`
 - **AuthStatus** _(type)_ - `type AuthStatus = "loading" | "authenticated" | "unauthenticated"`
 - **Session** _(interface)_ - `interface Session`
@@ -5448,10 +6180,14 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-react/i18n`
 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => ReactNode`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on `locale`/`messages`, so switching locale rebuilds it and re-renders consumers.
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by catalog identi…
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: ReactNode) => ReactNode>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => ReactNode`
+  The message at `key` with its tags rendered by `tags`, as React nodes - no HTML, no `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is …
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-react/image`
 
@@ -5503,7 +6239,7 @@ _No named exports (side-effect entrypoint)._
 - **Link** _(const)_ - `Link: import("react").ForwardRefExoticComponent<LinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
   A client-navigating anchor. Renders a real `<a href={to}>` (so it's a working link before hydration and for right-click / open-in-new-tab), and on a plain left-click navigates through the router instead of a full reload. Calling `navigate` + `preventDefault` here means `installHistory`'s document-l…
 - **LinkProps** _(interface)_ - `interface LinkProps`
-  {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`.
+  {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and `prefetch`.
 - **Location** _(interface)_ - `interface Location`
   The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches the router state / server, so exposing a live hash would hydration-mismatch; read `window.location.hash` directly (in an effect) if you truly need it.
 - **NavLink** _(const)_ - `NavLink: import("react").ForwardRefExoticComponent<NavLinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
@@ -5520,6 +6256,8 @@ _No named exports (side-effect entrypoint)._
   {@link Navigate} props: the destination `to` and whether to `replace` the history entry.
 - **Navigation** _(interface)_ - `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
+- **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
+  When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
 - **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
@@ -5527,10 +6265,14 @@ _No named exports (side-effect entrypoint)._
   The value forms `setSearchParams` accepts.
 - **SetSearchParams** _(type)_ - `type SetSearchParams = ( next: SearchParamsInit | ((prev: URLSearchParams) => SearchParamsInit), options?: NavigateOptions, ) => void`
   Set the query string. Accepts a `URLSearchParams`, a record, a raw string, or an updater of the current params; navigates to the same pathname with the new query (push, or replace via options).
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (a `<Link>`/anchor c…
 - **useLocation** _(function)_ - `useLocation: () => Location`
   The current {@link Location} (`pathname`/`search`/`hash`), derived from the router context.
+- **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
+  The rendered chain, outermost layout first and the page last: each module's `id`, the URL `pathname` it wraps, its `params` and loader `data`, and its `handle` export. The same list on the server and in the browser, so a layout can render breadcrumbs or read a flag the page exports:
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` …
 - **useNavigation** _(function)_ - `useNavigation: () => Navigation`
@@ -5550,8 +6292,6 @@ _No named exports (side-effect entrypoint)._
 
 - **solidAdapter** _(const)_ - `solidAdapter: RenderAdapter`
   The Solid server render adapter - pass to
-- **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
-  Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
 
 ### `@nifrajs/web-solid/await`
 
@@ -5595,10 +6335,14 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-solid/i18n`
 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on `locale`/`messages`, so switching locale rebuilds it.
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it.
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: JSX.Element) => JSX.Element>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => JSX.Element`
+  The message at `key` with its tags rendered by `tags`, as Solid nodes - no HTML, no `innerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a `<br>`, and …
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
 ### `@nifrajs/web-solid/image`
 
@@ -5613,8 +6357,13 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-solid/mdx-runtime`
 
-- **useMDXComponents** _(function)_ - `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => unknown>`
+- **useMDXComponents** _(function)_ - `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => JSX.Element>`
   Returns the intrinsic-element → Solid-component map MDX content uses. Merge in your own overrides by passing `components` to the MDX content component (they take precedence).
+
+### `@nifrajs/web-solid/plugin`
+
+- **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
+  Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
 
 ### `@nifrajs/web-solid/query`
 
@@ -5635,9 +6384,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **RenderPropsContext** _(const)_ - `RenderPropsContext: Context<RenderProps | undefined>`
 - **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
+- **useMatches** _(function)_ - `useMatches: () => Accessor<readonly UIMatch[]>`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydratio…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
@@ -5654,7 +6408,6 @@ _No named exports (side-effect entrypoint)._
 
 - **svelteAdapter** _(const)_ - `svelteAdapter: RenderAdapter`
   The Svelte server render adapter - pass to
-- **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
 
 ### `@nifrajs/web-svelte/client`
 
@@ -5691,8 +6444,17 @@ _No named exports (side-effect entrypoint)._
 - **I18nProvider** _(const)_ - `I18nProvider: Component<I18nProviderProps, {}, string>`
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
   Hand-written types for `I18nProvider.svelte` (consumers resolve these via the `./i18n` re-export).
+- **Rich** _(const)_ - `Rich: Component<RichProps, {}, string>`
+- **RichChunks** _(type)_ - `type RichChunks<R> = readonly (string | R)[]`
+  A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order. Adjacent text is merged.
+- **RichProps** _(interface)_ - `interface RichProps`
+  Hand-written types for `Rich.svelte` (consumers resolve these via the `./i18n` re-export).
+- **RichTags** _(type)_ - `type RichTags<R> = Readonly<Record<string, (chunks: RichChunks<R>) => R>>`
+  Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s.
+- **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>) => (string | R)[]`
+  The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution, `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no catalog has returns `[key]`.
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
 ### `@nifrajs/web-svelte/mdx`
 
@@ -5724,8 +6486,12 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
+- **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as an accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismat…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
@@ -5806,10 +6572,14 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Messages>; required: true; }; }>, () => import("vue").VNode<i…`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Recomputes when `locale`/`messages` change, so a locale switch re-renders consumers. Renders its default slot.
+- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Translation>; required: true; }; fallback: { type: PropType<N…`
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes when any of them changes, so a locale switch re-renders consumers. Renders its default slot.
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: VNodeChild) => VNodeChild>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => VNodeChild`
+  The message at `key` with its tags rendered by `tags`, as Vue vnodes - no HTML, no `v-html`. `"Read the <link>terms</link>"` with `{ link: (content) => h("a", { href: "/terms" }, [content]) }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a `<br>`, a…
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-vue/image`
 
@@ -5843,10 +6613,16 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **RenderPropsProvider** _(const)_ - `RenderPropsProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererEl…`
+  The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot.
 - **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
   The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
+- **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive ref. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mis…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
@@ -5879,6 +6655,7 @@ _No named exports (side-effect entrypoint)._
 - **DefineAgentCapabilityOptions** _(type)_ - `type DefineAgentCapabilityOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1, State>`
 - **ExecutePredictedOptions** _(interface)_ - `interface ExecutePredictedOptions`
 - **PredictedExecutionResult** _(interface)_ - `interface PredictedExecutionResult<Output, State>`
+- **PredictionCommitOptions** _(interface)_ - `interface PredictionCommitOptions`
 - **PredictionPatchOperation** _(type)_ - `type PredictionPatchOperation = | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown } | { readonly op: "remove"; readonly path: string }`
   The safe RFC 6902 subset accepted for speculative UI updates.
 - **PredictionStore** _(interface)_ - `interface PredictionStore<State>`
@@ -5927,16 +6704,21 @@ _No named exports (side-effect entrypoint)._
 ## create-nifra
 
 - **AGENTS_MD_PATH** _(const)_ - `AGENTS_MD_PATH: "AGENTS.md"`
+- **AGENT_POINTERS** _(const)_ - `AGENT_POINTERS: readonly { readonly path: string; readonly content: () => string; }[]`
+  Every agent's pointer to `AGENTS.md`, in the order they are written and reported.
 - **AgentFileSpec** _(interface)_ - `interface AgentFileSpec`
   Identifies a generated agent-discovery file: where it goes (relative to the project root) and how to produce its content. `merge` is for files that augment an existing one (AGENTS.md) rather than own it.
 - **CLAUDE_MD_PATH** _(const)_ - `CLAUDE_MD_PATH: "CLAUDE.md"`
+- **COPILOT_INSTRUCTIONS_PATH** _(const)_ - `COPILOT_INSTRUCTIONS_PATH: ".github/copilot-instructions.md"`
 - **CURSOR_MCP_JSON_PATH** _(const)_ - `CURSOR_MCP_JSON_PATH: ".cursor/mcp.json"`
+- **CURSOR_RULE_PATH** _(const)_ - `CURSOR_RULE_PATH: ".cursor/rules/nifra.mdc"`
+- **GEMINI_MD_PATH** _(const)_ - `GEMINI_MD_PATH: "GEMINI.md"`
 - **MCP_CLI_VERSION** _(const)_ - `MCP_CLI_VERSION: string`
   The `@nifrajs/cli` version the launch command pins to - DERIVED at load time from this package's own `version`, never hardcoded. `fixed` changeset versioning ([["@nifrajs/*", "create-nifra", "nifra"]] in `.changeset/config.json`) bumps `create-nifra` and `@nifrajs/cli` in lockstep, so `create-nifra…
 - **MCP_CONFIG** _(const)_ - `MCP_CONFIG: McpConfig`
   The one canonical MCP config object both registries serialize - the anti-drift seam.
 - **MCP_JSON_PATH** _(const)_ - `MCP_JSON_PATH: ".mcp.json"`
-  The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends a section to it.
+  The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it.
 - **MCP_SERVER_ARGS** _(const)_ - `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
 - **MCP_SERVER_COMMAND** _(const)_ - `MCP_SERVER_COMMAND: "bunx"`
   The MCP launch command, shared by `.mcp.json` and `.cursor/mcp.json`. See the module header for why the package is named explicitly rather than relying on the bare `nifra` bin.
@@ -5944,10 +6726,20 @@ _No named exports (side-effect entrypoint)._
   Claude Code / Cursor MCP config shape: a map of server name → launch config.
 - **McpServerConfig** _(interface)_ - `interface McpServerConfig`
   The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config.
+- **STRUCTURE_HEADING** _(const)_ - `STRUCTURE_HEADING: "## Project structure"`
+  The heading `nifra init-agents` looks for before appending {@link agentsStructureSection}.
 - **agentsMcpSection** _(function)_ - `agentsMcpSection: () => string`
   The "## MCP server" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer. Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.
+- **agentsStructureSection** _(function)_ - `agentsStructureSection: () => string`
+  The "## Project structure" section of a web app's `AGENTS.md`: the zones the build enforces. Shared so a scaffolded app and one `nifra init-agents` retrofits teach the same rules.
 - **claudeMd** _(function)_ - `claudeMd: () => string`
-  `CLAUDE.md` - Claude Code reads this automatically. It is deliberately NOT a copy of `AGENTS.md`: a short preamble that (1) tells Claude this project ships a nifra MCP, registered in `.mcp.json`, and to PREFER it, and (2) pulls in the full cookbook with Claude Code's `@file` import directive on its…
+  `CLAUDE.md`: Claude Code expands the `@AGENTS.md` import in place.
+- **copilotInstructions** _(function)_ - `copilotInstructions: () => string`
+  `.github/copilot-instructions.md`: Copilot has no import syntax, so this names the file.
+- **cursorRule** _(function)_ - `cursorRule: () => string`
+  `.cursor/rules/nifra.mdc`: an always-applied Cursor rule; `@AGENTS.md` attaches the file.
+- **geminiMd** _(function)_ - `geminiMd: () => string`
+  `GEMINI.md`: Gemini CLI expands `@./AGENTS.md` imports in its context files.
 - **mcpJson** _(function)_ - `mcpJson: () => string`
   Serialize the canonical MCP config as the JSON written to `.mcp.json` and `.cursor/mcp.json`. Trailing newline so the file is POSIX-clean and diffs don't flag a missing EOL.
 
@@ -5995,16 +6787,20 @@ _No named exports (side-effect entrypoint)._
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+  Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
 - **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
 - **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
+- **ListenTlsOptions** _(interface)_ - `interface ListenTlsOptions`
+  TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM, as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -6039,7 +6835,8 @@ _No named exports (side-effect entrypoint)._
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
   A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
@@ -6047,6 +6844,8 @@ _No named exports (side-effect entrypoint)._
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **PluginTypeCollapsed** _(interface)_ - `interface PluginTypeCollapsed`
   What {@link definePlugin} returns when its `apply` argument never pinned the input server type - the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+- **PrefixRegistry** _(type)_ - `type PrefixRegistry<Prefix extends string, R extends Registry> = { [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path] }`
+  Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried unchanged: a prefix is static text, so it adds no params and cannot change any route's contract.
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -6059,6 +6858,8 @@ _No named exports (side-effect entrypoint)._
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
+  The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseBodyReplacement** _(interface)_ - `interface ResponseBodyReplacement`
@@ -6084,6 +6885,8 @@ _No named exports (side-effect entrypoint)._
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
   Build a {@link RouteInfo} from a route's path, schema, and handler output type.
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **RoutePatternOverlapLimitError** _(class)_ - `class RoutePatternOverlapLimitError`
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
@@ -6121,7 +6924,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "3.5.0"`
+- **VERSION** _(const)_ - `VERSION: "4.0.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -6161,8 +6964,10 @@ _No named exports (side-effect entrypoint)._
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
+- **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
+  The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
-  Return a deterministic path accepted by both compiled patterns, or `undefined` when their path languages are disjoint.
+  Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`

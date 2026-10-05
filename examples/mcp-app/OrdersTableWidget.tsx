@@ -2,7 +2,7 @@
  * The orders widget authored as a React component (MCP Apps via `@nifrajs/mcp/react`). It receives the
  * tool's `structuredContent` as props; `reactWidget` bundles it for the browser and re-renders it on every
  * push over the bridge. This file is referenced by PATH from backend.ts (never imported there), so the
- * backend stays JSX-free and the root typechecker ignores this component.
+ * backend stays JSX-free; this component is type-checked by its own `tsconfig.json` beside it.
  */
 import { useMemo, useState } from "react"
 

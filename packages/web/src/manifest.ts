@@ -5,8 +5,36 @@
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
 import { routePatternOverlap } from "@nifrajs/core"
-import type { StandardSchemaV1 } from "@nifrajs/core/server"
+import { paramConstraint } from "@nifrajs/core/pattern"
+import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
+import { guardChannel, outputGuard } from "./internal/output-guard.ts"
+import type { RevalidateTags } from "./isr.ts"
+
+/**
+ * Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route
+ * handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that
+ * settles later throws.
+ */
+export interface LoaderResponseControls {
+  /**
+   * Headers for the rendered document (`cache-control`, `x-robots-tag`, `link`, ...). A layout's
+   * headers are applied first, then the page's, then the action's, so the most specific writer wins a
+   * name. They are not applied to a redirect, a status page, an error page, or a navigation data
+   * response. `content-type`, `set-cookie`, `location`, transport headers, and the `x-nifra-` prefix
+   * are refused.
+   */
+  readonly headers: Record<string, string>
+  /**
+   * Queue a `Set-Cookie`, with the same secure defaults as `c.set.cookie`
+   * (`HttpOnly; Secure; SameSite=Lax; Path=/`). The cookie rides every outcome - the document, a
+   * navigation data response, a redirect, a status or error page - and makes the response
+   * `cache-control: private, no-store`.
+   */
+  cookie(name: string, value: string, options?: CookieOptions): void
+  /** Queue a cookie deletion. Match the `path`/`domain` the cookie was set with. */
+  deleteCookie(name: string, options?: Pick<CookieOptions, "path" | "domain">): void
+}
 
 /** Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed
  * per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core). */
@@ -25,10 +53,65 @@ export interface LoaderContext {
    * declares one - failing closed to the schema's defaults - else the raw parsed query. Typed per-route
    * via `@nifrajs/client`'s `LoaderArgs<Api, Env, Search>`. */
   readonly search: Record<string, unknown>
+  /** Response headers and cookies for this page request. */
+  readonly set: LoaderResponseControls
 }
 
 /** A route's optional data loader: params/request in, data out. */
 export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
+
+/**
+ * The `middleware` export of a `_layout.backend.ts` file. It runs on the server before the layouts, loaders and
+ * action of every route in its directory and below - on a document request, a client navigation and a
+ * form post alike - and before a nested `_404` there. Middleware higher in the tree runs first.
+ *
+ * - Return nothing to let the request through.
+ * - Return or throw a `redirect()`, a status such as `notFound()`, or a `Response` to answer with it:
+ *   nothing below the middleware runs.
+ * - `ctx.set` adds headers and cookies as a loader's does. A layout's or the page's header of the same
+ *   name wins.
+ * - `ctx.params` holds the params of the directory's own URL prefix, as a layout's loader sees them.
+ *
+ * It does not run for a prerendered page, an ISR cache hit, a mounted API or a static file. For
+ * middleware on every request, export `use` from `backend/framework.ts`. Pass a typed context to type
+ * `ctx.api` and `ctx.env`: `RouteMiddleware<LoaderArgs<typeof app, Env>>`.
+ */
+export type RouteMiddleware<Ctx = LoaderContext> = (
+  ctx: Ctx,
+) => MiddlewareOutcome | Promise<MiddlewareOutcome>
+
+/** What a {@link RouteMiddleware} answers with: nothing, to let the request through, or a response. */
+export type MiddlewareOutcome = undefined | Response | ResponseResult
+
+/** One client navigation, as a layout's {@link ShouldRevalidate} sees it. */
+export interface ShouldRevalidateArgs {
+  /** The URL the client is leaving. */
+  readonly currentUrl: URL
+  /** The URL being loaded. */
+  readonly nextUrl: URL
+  /** Every route param of the page being left - not only the ones the layout owns. */
+  readonly currentParams: Readonly<Record<string, string>>
+  /** Every route param of the page being loaded. */
+  readonly nextParams: Readonly<Record<string, string>>
+  /** The answer without the hook: `true` when a param the layout owns or the query changed. */
+  readonly defaultShouldRevalidate: boolean
+}
+
+/**
+ * A layout's say over whether its loader runs again on a client navigation. Export it from a
+ * `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+ *
+ * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser
+ *   already holds its data. A document request, the revalidation after an action, and
+ *   `router.invalidate()` always run the loader.
+ * - Return `false` to keep the data the browser has; any other value runs the loader. Return
+ *   `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.
+ * - Must be synchronous: a returned promise is not `false`, so the loader runs.
+ * - Never asked for a `gate` layout, which runs on every request.
+ * - A page's loader runs on every navigation and a page's `shouldRevalidate` is not read. Query keys
+ *   a page's loader never uses belong in its `searchClientKeys`.
+ */
+export type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean
 
 /**
  * A route's optional mutation, run on POST. Shares the loader context (params/request/api);
@@ -73,8 +156,9 @@ export type ClientAction = (
 export interface ClientRouteHooks {
   readonly clientLoader?: ClientLoader
   readonly clientAction?: ClientAction
-  /** Neutral boundary descriptors needed for soft-navigation interception; no server loader crosses. */
-  readonly boundaries?: readonly BoundaryDescriptor[]
+  /** Neutral boundary descriptors needed for soft-navigation interception. A boundary's loader lives in
+   * the route's backend half, so the browser never learns whether one exists. */
+  readonly boundaries?: ReadonlyArray<Omit<BoundaryDescriptor, "hasLoad">>
 }
 
 /**
@@ -235,12 +319,24 @@ export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
   readonly action?: Action
+  /**
+   * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the
+   * loader returns data. Keys it does not declare are dropped before the page renders; a declared
+   * field of the wrong shape fails the request with a 500 naming the field's path.
+   */
+  readonly loaderOutput?: StandardSchemaV1
+  /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */
+  readonly actionOutput?: StandardSchemaV1
   /** Optional client-only loader. It runs after hydration and on client navigations. */
   readonly clientLoader?: ClientLoader
   /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
   readonly clientAction?: ClientAction
-  /** Named async boundaries owned by this route. The adapter renders their neutral state seam. */
+  /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A
+   * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend
+   * file declares only how it renders. */
   readonly boundaries?: readonly BoundaryRegistration[]
+  /** Backend half only: each boundary's server loader, keyed by boundary name. */
+  readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>
   /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +
    * validated against it (failing closed to the schema's defaults on invalid input); type it into the
    * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */
@@ -259,6 +355,30 @@ export interface RouteModule {
    * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.
    */
   readonly hydrate?: boolean
+  /**
+   * `false` renders this route's component in the browser only. The server still matches the route,
+   * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the
+   * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser
+   * hydrates against that, then renders the component. For a component that cannot render on a
+   * server: one that reads `window` or a browser-only API while it renders.
+   *
+   * The module itself is still imported on the server, for its loader and options - so an import
+   * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the
+   * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.
+   */
+  readonly ssr?: boolean
+  /**
+   * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates
+   * before the component takes over - a skeleton, a spinner. Receives the same props as the
+   * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.
+   */
+  readonly HydrateFallback?: unknown
+  /**
+   * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout
+   * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from
+   * the module on the server and in the browser, so it must be the same value on both.
+   */
+  readonly handle?: unknown
   /**
    * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`
    * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build
@@ -279,8 +399,12 @@ export interface RouteModule {
    * list the client parses to refetch - so the two channels never alias.)
    */
   readonly revalidate?: number
-  /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */
-  readonly revalidateTags?: readonly string[]
+  /**
+   * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or
+   * a function of the route's params and URL (`({ params }) => [\`product:${params.id}\`]`) for tags
+   * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.
+   */
+  readonly revalidateTags?: RevalidateTags
   /**
    * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script
    * type="module">` in the document tail. Loaded **regardless of `hydrate`** - pair with
@@ -288,6 +412,13 @@ export interface RouteModule {
    * interactivity through `<Island>` markers + `mountIslands` enhancers instead.
    */
   readonly islandScripts?: readonly string[]
+}
+
+/** A boundary's server loader, declared in the route's backend half under `boundaryLoaders`. */
+export interface BoundaryLoaderEntry {
+  readonly load: NonNullable<BoundaryRegistration["load"]>
+  /** The boundary data's output schema. Required whenever `load` returns data. */
+  readonly output?: StandardSchemaV1
 }
 
 /** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
@@ -298,7 +429,11 @@ export interface RouteModule {
  * (`meta`/`link`) concatenate outermost→innermost→page; scalars (`title`) are nearest-wins (the page
  * overrides an inner layout, which overrides an outer one). See `mergeHeads` in `@nifrajs/web`. */
 export interface LayoutEntry {
+  /** The frontend half: the file the browser bundle imports. */
   readonly file: string
+  /** The backend half (`x.backend.ts`), when the file has one. Server-only: never in a client bundle. */
+  readonly backend?: string
+  /** Both halves, merged and checked. */
   readonly load: () => Promise<RouteModule>
 }
 
@@ -317,12 +452,63 @@ export interface RouteEntry {
    * Optional only so hand-built test manifests may omit it.
    */
   readonly layoutParams?: ReadonlyArray<readonly string[]>
+  /** `_middleware` ids in this route's ancestor chain (outermost → innermost), run before its
+   * layouts. Absent ⇒ none. */
+  readonly middlewareIds?: readonly string[]
+  /** Param names each middleware in {@link middlewareIds} sees, aligned by index: the params of its
+   * directory's URL prefix, as {@link layoutParams} holds them for a layout. */
+  readonly middlewareParams?: ReadonlyArray<readonly string[]>
   /** `_error` boundary ids in this route's ancestor chain (outermost → innermost). The last is the
    * **nearest** boundary, rendered when the route's loader throws. Always set by `buildManifest`
    * (optional only so hand-built test manifests may omit it); absent/empty ⇒ no boundary (error 500s). */
   readonly errorIds?: readonly string[]
+  /** Nested `_404` page ids in this route's ancestor chain (outermost → innermost); the root `_404`
+   * is not listed. The last is the **nearest**, rendered when the route's loader answers
+   * `notFound()`. Absent ⇒ the root `_404`. */
+  readonly notFoundIds?: readonly string[]
+  /** `_loading` page ids in this route's ancestor chain (outermost → innermost). A client navigation
+   * to the route shows the innermost one whose layouts are already on screen. Absent ⇒ none. */
+  readonly loadingIds?: readonly string[]
+  /** The frontend half: the file the browser bundle imports. */
   readonly file: string
+  /** The backend half (`x.backend.ts`), when the route has one. Server-only. */
+  readonly backend?: string
+  /** Both halves, merged and checked. */
   readonly load: () => Promise<RouteModule>
+}
+
+/** One URL pattern a nested `_404` answers when no route matches it. */
+export interface NotFoundScope {
+  /** The directory's URL prefix (`/admin`) or everything beneath it (`/admin/*`). */
+  readonly pattern: string
+  /** Param names each layout in {@link NotFoundEntry.layoutIds} owns on this pattern, by index. */
+  readonly layoutParams: ReadonlyArray<readonly string[]>
+  /** Param names each middleware in {@link NotFoundEntry.middlewareIds} sees on this pattern, by
+   * index. Absent when the page has no middleware. */
+  readonly middlewareParams?: ReadonlyArray<readonly string[]>
+}
+
+/** A `_404` page below the routes root. */
+export interface NotFoundEntry extends LayoutEntry {
+  /** Layouts at or above the page's directory (outermost → innermost) - the ones it renders inside. */
+  readonly layoutIds: readonly string[]
+  /** `_error` boundaries at or above the page's directory (outermost → innermost). */
+  readonly errorIds: readonly string[]
+  /** `_middleware` ids at or above the page's directory (outermost → innermost). Absent ⇒ none. */
+  readonly middlewareIds?: readonly string[]
+  /**
+   * The URL patterns this page answers when no route matches. Empty when the directory is a
+   * catch-all, or when a `_404` in a directory above it answers the same URLs - the page is then
+   * reached only by `notFound()` from a route beneath it.
+   */
+  readonly scopes: readonly NotFoundScope[]
+}
+
+/** A `_loading` page: what the page slot shows while a client navigation loads. */
+export interface LoadingEntry extends LayoutEntry {
+  /** Layouts at or above the page's directory (outermost → innermost). The page shows only while
+   * every one of them is on screen, so it never renders outside a layout above it. */
+  readonly layoutIds: readonly string[]
 }
 
 /** The full route manifest. */
@@ -332,12 +518,33 @@ export interface Manifest {
   /** Per-segment `_error` boundary components, keyed by id (`_error`, `a/_error`, …). Always set by
    * `buildManifest` (optional only so hand-built test manifests may omit it). */
   readonly errors?: Readonly<Record<string, LayoutEntry>>
+  /** The `_404` at the routes root: unmatched URLs and `notFound()` wherever no nested one applies. */
   readonly notFound?: LayoutEntry
+  /**
+   * `_404` pages below the routes root, keyed by id (`admin/_404`, …). Each answers `notFound()` from
+   * the routes beneath its directory and the unmatched URLs under that directory's URL prefix, and
+   * renders inside the layouts at or above it. Absent when the app has none.
+   */
+  readonly notFounds?: Readonly<Record<string, NotFoundEntry>>
   /** Per-status terminal pages from `_<status>.tsx` at the routes root (`_410`, `_451`, …), keyed by
    * the status as a string. Rendered by a loader's `gone()` / `statusPage(n)`; a status with no page
    * falls back to `_404`, and then to plain text. `_404` itself stays on {@link notFound} - it is
    * reached by unmatched paths too, which these are not. */
   readonly statusPages?: Readonly<Record<string, LayoutEntry>>
+  /**
+   * `_loading` pages, keyed by id (`_loading`, `admin/_loading`, …). A client navigation that is
+   * still loading after a short delay shows the target route's nearest one in the page slot, inside
+   * the layouts the two pages share. Browser-only: the server never renders one. Absent when the app
+   * has none.
+   */
+  readonly loadings?: Readonly<Record<string, LoadingEntry>>
+  /**
+   * Middleware candidates, keyed by id (`_middleware`, `admin/_middleware`, …): one per directory
+   * with a `_layout.backend.ts`, whose `middleware` export each loads as `default` (`undefined` when
+   * that file exports none). Server-only: the client build never imports one. Absent when no
+   * directory has a layout backend half.
+   */
+  readonly middlewares?: Readonly<Record<string, LayoutEntry>>
 }
 
 // `.svelte` and `.vue` routes are supported too: their `default` export is the component and
@@ -357,13 +564,211 @@ const GROUP = /^\(.+\)$/
 // thing. Restricted to 3 digits so `_401k` or `_4` is treated as an ordinary underscore-prefixed
 // file (ignored) rather than silently becoming a status page.
 const STATUS_PAGE = /^_[1-5][0-9][0-9]$/
+// The retired `_middleware.ts`. Discovery still collects it, so that it fails loudly rather than
+// silently stopping guarding anything.
+const MIDDLEWARE_FILE = /^_middleware\.(?:ts|js)$/
+// A route's backend half: `x.backend.ts` beside `x.tsx`. Script extensions only - JSX renders, and
+// rendering belongs to the frontend half.
+const ROUTE_BACKEND = /\.backend\.(?:[cm]?[jt]s)$/
+// A zone or retired suffix on a route file (`x.backend.tsx`) would otherwise become a URL segment.
+const SUFFIXED_ROUTE = /\.(?:backend|frontend|shared|fn|server)$/
 
 const stripExt = (file: string): string => file.replace(ROUTE_EXT, "")
 const baseName = (file: string): string => file.slice(file.lastIndexOf("/") + 1)
+
+/** Whether a routes-relative path is a retired `_middleware` module. Discovery collects it only so
+ * that {@link buildManifest} can refuse it with the migration. */
+export const isMiddlewareFile = (file: string): boolean => MIDDLEWARE_FILE.test(baseName(file))
+
+/** Whether a routes-relative path is a route's backend half (`x.backend.ts`). */
+export const isRouteBackendFile = (file: string): boolean => ROUTE_BACKEND.test(baseName(file))
+
+/** The backend half a frontend route file pairs with: `blog/[slug].tsx` -> `blog/[slug].backend.ts`. */
+export const backendFileFor = (file: string): string => `${stripExt(file)}.backend.ts`
+
+/** Exports the browser runs or reads. They live in a route's frontend file, which ships whole. */
+export const FRONTEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
+  "default",
+  "meta",
+  "handle",
+  "HydrateFallback",
+  "searchSchema",
+  "searchClientKeys",
+  "clientLoader",
+  "clientAction",
+  "boundaries",
+  "ssr",
+])
+
+/** Exports only the server or the build reads. They live in the route's `x.backend.ts`. */
+export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
+  "loader",
+  "action",
+  "loaderOutput",
+  "actionOutput",
+  "boundaryLoaders",
+  "getStaticPaths",
+  "prerender",
+  "revalidate",
+  "revalidateTags",
+  "hydrate",
+  "islandScripts",
+  "middleware",
+  "gate",
+  "shouldRevalidate",
+])
+
+const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)
+
+/** The frontend export names a backend-only name was found under, for the move-it message. */
+function assertFrontendHalf(file: string, front: Readonly<Record<string, unknown>>): void {
+  for (const name of Object.keys(front)) {
+    if (BACKEND_ROUTE_EXPORTS.has(name)) {
+      throw routeError(
+        `"${file}" exports "${name}", which runs on the server only. Move it to "${backendFileFor(file)}": a route's frontend file ships to the browser whole (\`nifra migrate layout\` splits every route of an app)`,
+      )
+    }
+  }
+  const boundaries = front.boundaries
+  if (Array.isArray(boundaries)) {
+    for (const boundary of boundaries as ReadonlyArray<{ name?: unknown; load?: unknown }>) {
+      if (boundary?.load !== undefined) {
+        throw routeError(
+          `boundary "${String(boundary.name)}" in "${file}" declares its load function in the frontend file. Move it to boundaryLoaders["${String(boundary.name)}"].load in "${backendFileFor(file)}"`,
+        )
+      }
+    }
+  }
+}
+
+function assertBackendHalf(
+  file: string,
+  backend: string,
+  back: Readonly<Record<string, unknown>>,
+  allowMiddleware: boolean,
+): void {
+  for (const name of Object.keys(back)) {
+    if (name === "middleware" && !allowMiddleware) {
+      throw routeError(
+        `"${backend}" exports "middleware", which only a directory's _layout.backend.ts may export`,
+      )
+    }
+    if (BACKEND_ROUTE_EXPORTS.has(name)) continue
+    throw routeError(
+      FRONTEND_ROUTE_EXPORTS.has(name)
+        ? `"${backend}" exports "${name}", which the browser needs. Move it to "${file}"`
+        : `"${backend}" exports "${name}", which nifra does not read from a backend half. It may export only: ${[...BACKEND_ROUTE_EXPORTS].join(", ")}`,
+    )
+  }
+}
+
+// One merged module per (frontend namespace, backend namespace) pair. A runtime caches each module,
+// so a page served many times merges once; a dev re-import yields new namespaces and a fresh merge.
+const mergedHalves = new WeakMap<
+  object,
+  { readonly back: object | undefined; readonly module: RouteModule }
+>()
+
+/**
+ * Merge a route's two halves into the one {@link RouteModule} the server runs, refusing any export on
+ * the wrong side. The checks run on every server, dev and production alike, so a misplaced `loader`
+ * fails the first request to its route even before a client build has looked at it.
+ */
+export function mergeRouteHalves(
+  file: string,
+  front: RouteModule,
+  backend: string | undefined,
+  back: Readonly<Record<string, unknown>> | undefined,
+): RouteModule {
+  const cached = mergedHalves.get(front)
+  if (cached !== undefined && cached.back === back) return cached.module
+  assertFrontendHalf(file, front as unknown as Readonly<Record<string, unknown>>)
+  if (back === undefined || backend === undefined) {
+    mergedHalves.set(front, { back, module: front })
+    return front
+  }
+  assertBackendHalf(file, backend, back, stripExt(baseName(file)) === "_layout")
+  const {
+    middleware: _middleware,
+    boundaryLoaders,
+    loader,
+    action,
+    loaderOutput,
+    actionOutput,
+    ...server
+  } = back
+  const guarded: { loader?: unknown; action?: unknown } = {}
+  for (const [name, fn, schema, schemaName] of [
+    ["loader", loader, loaderOutput, "loaderOutput"],
+    ["action", action, actionOutput, "actionOutput"],
+  ] as const) {
+    if (fn === undefined) {
+      if (schema !== undefined) {
+        throw routeError(`"${backend}" exports ${schemaName} but no ${name} for it to describe`)
+      }
+      continue
+    }
+    if (typeof fn !== "function")
+      throw routeError(`"${backend}" exports a ${name} that is not a function`)
+    guarded[name] = guardChannel(fn as (...args: unknown[]) => unknown, {
+      label: `the ${name} of "${file}"`,
+      guard: schema === undefined ? undefined : outputGuard(schema, `"${backend}"`, schemaName),
+      missing: `export const ${schemaName} = t.object({ ... }) from "${backend}"`,
+      revalidate: name === "action",
+    })
+  }
+  let boundaries = front.boundaries
+  if (boundaryLoaders !== undefined) {
+    if (typeof boundaryLoaders !== "object" || boundaryLoaders === null) {
+      throw routeError(`"${backend}" exports boundaryLoaders that is not an object of loaders`)
+    }
+    const loaders = boundaryLoaders as Readonly<
+      Record<string, { readonly load?: unknown; readonly output?: unknown }>
+    >
+    const declared = new Set((front.boundaries ?? []).map((boundary) => boundary.name))
+    for (const [name, entry] of Object.entries(loaders)) {
+      if (!declared.has(name)) {
+        throw routeError(
+          `"${backend}" has boundaryLoaders["${name}"], but "${file}" declares no boundary named "${name}"`,
+        )
+      }
+      if (typeof entry?.load !== "function") {
+        throw routeError(`boundaryLoaders["${name}"].load in "${backend}" must be a function`)
+      }
+    }
+    boundaries = front.boundaries?.map((boundary) => {
+      const entry = loaders[boundary.name]
+      if (entry === undefined) return boundary
+      const key = `boundaryLoaders["${boundary.name}"]`
+      const load = guardChannel(entry.load as (...args: unknown[]) => unknown, {
+        label: `${key} of "${backend}"`,
+        guard:
+          entry.output === undefined
+            ? undefined
+            : outputGuard(entry.output, `"${backend}"`, `${key}.output`),
+        missing: `${key}.output in "${backend}"`,
+      })
+      return { ...boundary, load } as BoundaryRegistration
+    })
+  }
+  const module = {
+    ...front,
+    ...server,
+    ...guarded,
+    ...(boundaries === undefined ? {} : { boundaries }),
+  } as RouteModule
+  mergedHalves.set(front, { back, module })
+  return module
+}
 const dirOf = (file: string): string =>
   file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ""
 const layoutIdFor = (dir: string): string => (dir === "" ? "_layout" : `${dir}/_layout`)
 const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_error`)
+const notFoundIdFor = (dir: string): string => `${dir}/_404`
+const loadingIdFor = (dir: string): string => (dir === "" ? "_loading" : `${dir}/_loading`)
+const middlewareIdFor = (dir: string): string => (dir === "" ? "_middleware" : `${dir}/_middleware`)
+const isDirAtOrAbove = (dir: string, other: string): boolean =>
+  dir === "" || dir === other || other.startsWith(`${dir}/`)
 
 /**
  * Derive **every** nifra router pattern a route file maps to (relative to the routes dir):
@@ -388,6 +793,9 @@ const FILE_PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
  * sitemaps, and static-site URL parity (`post-[id].html`) all put a variable INSIDE a filename, and
  * `stripExt` already reduces `[inKey].txt.tsx` to `[inKey].txt` - `robots.txt.tsx` proves literal
  * dots survive into a segment, so this was only ever a parser gap.
+ *
+ * A `{...}` group straight after a marker that the router would read as a param constraint
+ * (`[id]{a|b}`) is rejected too: see the check below.
  *
  * `[[optional]]` and `[...catchAll]` are **rejected** inside a mixed segment rather than given a
  * meaning. There is no sensible absent form for `/[[locale]]-feed.xml` - `/-feed.xml` and dropping
@@ -424,6 +832,13 @@ function mixedFileSegment(seg: string, file: string): string | undefined {
     }
     pattern += `${seg.slice(cursor, marker.index)}:${inner}`
     cursor = (marker.index ?? 0) + marker[0].length
+    // The router reads `:name{...}` as a constraint on the param. A file name is not the place for
+    // one: links, prerendered paths and hydration all rebuild a URL from the pattern by name.
+    if (paramConstraint(seg.slice(cursor)) !== undefined) {
+      throw new Error(
+        `[nifra/web] a param constraint cannot be written in a route file name: "${file}" (segment "${seg}"). Check the value in the route's loader instead, or rename the file so "[${inner}]" is not followed by a "{...}" group.`,
+      )
+    }
   }
   return pattern + seg.slice(cursor)
 }
@@ -553,6 +968,14 @@ function paramsInPrefix(pattern: string, count: number): string[] {
   return names
 }
 
+/** The params each directory in `dirs` owns on one expanded pattern - see {@link paramsInPrefix}. */
+const paramsOwnedBy = (
+  dirs: readonly string[],
+  pattern: string,
+  depths: readonly number[],
+): string[][] =>
+  dirs.map((dir) => paramsInPrefix(pattern, depths[dir === "" ? 0 : dir.split("/").length] ?? 0))
+
 const ancestorDirs = (file: string): string[] => {
   const dirs = [""]
   const dir = dirOf(file)
@@ -568,8 +991,8 @@ const ancestorDirs = (file: string): string[] => {
 /**
  * Build a manifest from route file paths (relative to the routes dir) + an `importer` that
  * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
- * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other
- * `_`-prefixed files are ignored (private/colocated, never routed).
+ * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware`
+ * files are special; other `_`-prefixed files are ignored (private/colocated, never routed).
  */
 export function buildManifest(
   files: readonly string[],
@@ -580,26 +1003,105 @@ export function buildManifest(
   const errorDirs = new Set<string>()
   const errors: Record<string, LayoutEntry> = {}
   let notFound: LayoutEntry | undefined
+  const notFoundFiles = new Map<string, string>()
   const statusPages: Record<string, LayoutEntry> = {}
+  const loadingFiles = new Map<string, string>()
+  const middlewareFiles = new Map<string, string>()
   const routeFiles: string[] = []
 
+  // Pair each frontend file with its `x.backend.ts`. A backend half is never a route of its own.
+  const backendByStem = new Map<string, string>()
+  const frontendFiles: string[] = []
   for (const file of files) {
+    if (isMiddlewareFile(file)) {
+      throw routeError(
+        `"${file}" is retired: export \`middleware\` from "${dirOf(file) === "" ? "" : `${dirOf(file)}/`}_layout.backend.ts" instead (\`nifra migrate layout\` moves it)`,
+      )
+    }
+    if (!isRouteBackendFile(file)) {
+      frontendFiles.push(file)
+      continue
+    }
+    const stem = file.replace(ROUTE_BACKEND, "")
+    const other = backendByStem.get(stem)
+    if (other !== undefined) {
+      throw routeError(`two backend halves for one route: "${other}" and "${file}"; keep one`)
+    }
+    backendByStem.set(stem, file)
+  }
+  const pairedBackends = new Set<string>()
+  const frontendStems = new Map<string, string>()
+  const halves = (
+    file: string,
+  ): { readonly backend?: string; readonly load: () => Promise<RouteModule> } => {
+    const backend = backendByStem.get(stripExt(file))
+    const loadFront = importer(file)
+    if (backend === undefined) {
+      return {
+        load: () =>
+          loadFront().then((front) => mergeRouteHalves(file, front, undefined, undefined)),
+      }
+    }
+    pairedBackends.add(backend)
+    const loadBack = importer(backend)
+    return {
+      backend,
+      load: () =>
+        Promise.all([loadFront(), loadBack()]).then(([front, back]) =>
+          mergeRouteHalves(
+            file,
+            front,
+            backend,
+            back as unknown as Readonly<Record<string, unknown>>,
+          ),
+        ),
+    }
+  }
+
+  // Every `_layout.backend.ts` is a middleware candidate for its directory, with or without a
+  // frontend layout beside it; one exporting no `middleware` resolves to `undefined` and is skipped.
+  for (const [stem, backend] of backendByStem) {
+    if (baseName(stem) !== "_layout") continue
+    middlewareFiles.set(dirOf(backend), backend)
+    pairedBackends.add(backend)
+  }
+
+  for (const file of frontendFiles) {
     const stem = stripExt(baseName(file))
+    const twin = frontendStems.get(stripExt(file))
+    if (twin !== undefined) {
+      throw routeError(`two frontend files for one route: "${twin}" and "${file}"; keep one`)
+    }
+    frontendStems.set(stripExt(file), file)
+    if (SUFFIXED_ROUTE.test(stem)) {
+      throw routeError(
+        `"${file}" is a route file with a zone suffix. A route's backend half is a script file ("${stem}.ts"), and other zoned code belongs outside routes/`,
+      )
+    }
+    if (stem === "_middleware") {
+      throw routeError(
+        `"${file}" is retired: export \`middleware\` from "${dirOf(file) === "" ? "" : `${dirOf(file)}/`}_layout.backend.ts" instead (\`nifra migrate layout\` moves it)`,
+      )
+    }
     if (stem === "_layout") {
       const dir = dirOf(file)
       layoutDirs.add(dir)
-      layouts[layoutIdFor(dir)] = { file, load: importer(file) }
+      layouts[layoutIdFor(dir)] = { file, ...halves(file) }
     } else if (stem === "_error") {
       const dir = dirOf(file)
       errorDirs.add(dir)
-      errors[errorIdFor(dir)] = { file, load: importer(file) }
+      errors[errorIdFor(dir)] = { file, ...halves(file) }
     } else if (stem === "_404") {
-      notFound = { file, load: importer(file) }
+      const dir = dirOf(file)
+      notFoundFiles.set(dir, file)
+      if (dir === "") notFound = { file, ...halves(file) }
+    } else if (stem === "_loading") {
+      loadingFiles.set(dirOf(file), file)
     } else if (STATUS_PAGE.test(stem) && dirOf(file) === "") {
       // `_410.tsx`, `_451.tsx`, … at the routes root. Root-only: unlike `_error`, these are not
       // resolved per segment - a terminal status is a property of the outcome, not of where in the
       // tree the route lives, and a per-segment variant would need a precedence rule nobody asked for.
-      statusPages[stem.slice(1)] = { file, load: importer(file) }
+      statusPages[stem.slice(1)] = { file, ...halves(file) }
     } else if (!stem.startsWith("_")) {
       routeFiles.push(file)
     }
@@ -612,8 +1114,15 @@ export function buildManifest(
     const layoutDirsForFile = dirs.filter((dir) => layoutDirs.has(dir))
     const layoutIds = layoutDirsForFile.map(layoutIdFor)
     const errorIds = dirs.filter((dir) => errorDirs.has(dir)).map(errorIdFor)
+    const notFoundIds = dirs
+      .filter((dir) => dir !== "" && notFoundFiles.has(dir))
+      .map(notFoundIdFor)
+    const loadingIds = dirs.filter((dir) => loadingFiles.has(dir)).map(loadingIdFor)
+    const middlewareDirsForFile = dirs.filter((dir) => middlewareFiles.has(dir))
+    const middlewareIds = middlewareDirsForFile.map(middlewareIdFor)
     const id = stripExt(file)
-    const load = importer(file) // one lazy loader per file, shared by its (possibly expanded) patterns
+    // One lazy loader per file, shared by its (possibly expanded) patterns.
+    const { backend, load } = halves(file)
     // An optional `[[x]]` segment expands a file into multiple patterns, all pointing at the same
     // module (same id/load/layout chain). Distinct patterns ⇒ no match ambiguity (different lengths).
     for (const { pattern, depths } of filePathToRoutes(file)) {
@@ -632,18 +1141,152 @@ export function buildManifest(
         }
       }
       byPattern.set(pattern, file)
-      const layoutParams = layoutDirsForFile.map((dir) =>
-        paramsInPrefix(pattern, depths[dir === "" ? 0 : dir.split("/").length] ?? 0),
-      )
-      routes.push({ id, pattern, layoutIds, layoutParams, errorIds, file, load })
+      routes.push({
+        id,
+        pattern,
+        layoutIds,
+        layoutParams: paramsOwnedBy(layoutDirsForFile, pattern, depths),
+        ...(middlewareIds.length > 0
+          ? {
+              middlewareIds,
+              middlewareParams: paramsOwnedBy(middlewareDirsForFile, pattern, depths),
+            }
+          : {}),
+        errorIds,
+        ...(notFoundIds.length > 0 ? { notFoundIds } : {}),
+        ...(loadingIds.length > 0 ? { loadingIds } : {}),
+        file,
+        ...(backend === undefined ? {} : { backend }),
+        load,
+      })
     }
+  }
+
+  // Nested `_404` pages. Each answers the unmatched URLs under its directory's URL prefix; when two
+  // directories share a prefix (a route group adds no segment), the one that contains the others
+  // answers, and with no such directory the choice would be arbitrary - so it is a boot error.
+  const scopeOwners = new Map<string, string[]>()
+  const scopesByDir = new Map<string, Array<NotFoundScope & { readonly shape: string }>>()
+  for (const dir of notFoundFiles.keys()) {
+    const layoutDirsForDir = ancestorDirs(`${dir}/_404`).filter((d) => layoutDirs.has(d))
+    const middlewareDirsForDir = ancestorDirs(`${dir}/_404`).filter((d) => middlewareFiles.has(d))
+    const scopes: Array<NotFoundScope & { readonly shape: string }> = []
+    const forms =
+      dir === "" ? [{ pattern: "/", depths: [0] }] : filePathToRoutes(`${dir}/index.tsx`)
+    for (const { pattern: prefix, depths } of forms) {
+      // A catch-all directory already matches everything beneath it: nothing there is unmatched.
+      if (/(?:^|\/)\*[^/]*$/.test(prefix)) continue
+      const layoutParams = paramsOwnedBy(layoutDirsForDir, prefix, depths)
+      const middlewareParams =
+        middlewareDirsForDir.length === 0
+          ? undefined
+          : paramsOwnedBy(middlewareDirsForDir, prefix, depths)
+      for (const pattern of prefix === "/" ? ["/*"] : [prefix, `${prefix}/*`]) {
+        // Two directories answer the same URLs when their patterns differ only in param names.
+        const shape = pattern.replace(/([:*])[A-Za-z_][A-Za-z0-9_]*/g, "$1")
+        if (scopes.some((scope) => scope.shape === shape)) continue
+        scopes.push({
+          pattern,
+          layoutParams,
+          ...(middlewareParams === undefined ? {} : { middlewareParams }),
+          shape,
+        })
+        const owners = scopeOwners.get(shape)
+        if (owners === undefined) scopeOwners.set(shape, [dir])
+        else owners.push(dir)
+      }
+    }
+    scopesByDir.set(dir, scopes)
+  }
+  const ownerOf = new Map<string, string>()
+  for (const [shape, dirs] of scopeOwners) {
+    const owner = dirs.find((dir) => dirs.every((other) => isDirAtOrAbove(dir, other)))
+    if (owner === undefined) {
+      const [first, second] = dirs as [string, string]
+      throw new Error(
+        `[nifra/web] ambiguous _404: "${notFoundFiles.get(first)}" and "${notFoundFiles.get(second)}" both answer unmatched URLs under "${shape.replace(/\/?\*$/, "") || "/"}"; keep one, or add a _404 in a directory that contains both`,
+      )
+    }
+    ownerOf.set(shape, owner)
+  }
+  const notFounds: Record<string, NotFoundEntry> = {}
+  for (const [dir, file] of notFoundFiles) {
+    if (dir === "") continue
+    const dirs = ancestorDirs(file)
+    const middlewareIds = dirs.filter((d) => middlewareFiles.has(d)).map(middlewareIdFor)
+    notFounds[notFoundIdFor(dir)] = {
+      file,
+      ...halves(file),
+      layoutIds: dirs.filter((d) => layoutDirs.has(d)).map(layoutIdFor),
+      errorIds: dirs.filter((d) => errorDirs.has(d)).map(errorIdFor),
+      ...(middlewareIds.length > 0 ? { middlewareIds } : {}),
+      scopes: (scopesByDir.get(dir) ?? [])
+        .filter((scope) => ownerOf.get(scope.shape) === dir)
+        .map(({ pattern, layoutParams, middlewareParams }) => ({
+          pattern,
+          layoutParams,
+          ...(middlewareParams === undefined ? {} : { middlewareParams }),
+        })),
+    }
+  }
+
+  const loadings: Record<string, LoadingEntry> = {}
+  for (const [dir, file] of loadingFiles) {
+    const backend = backendByStem.get(stripExt(file))
+    if (backend !== undefined) {
+      throw routeError(
+        `"${backend}" pairs with a _loading page, which renders in the browser only and has no backend half`,
+      )
+    }
+    loadings[loadingIdFor(dir)] = {
+      file,
+      load: () =>
+        importer(file)().then((front) => mergeRouteHalves(file, front, undefined, undefined)),
+      layoutIds: ancestorDirs(file)
+        .filter((d) => layoutDirs.has(d))
+        .map(layoutIdFor),
+    }
+  }
+
+  const middlewares: Record<string, LayoutEntry> = {}
+  for (const [dir, backend] of middlewareFiles) {
+    const loadBack = importer(backend)
+    const layout = layoutDirs.has(dir) ? layouts[layoutIdFor(dir)]?.file : undefined
+    middlewares[middlewareIdFor(dir)] = {
+      file: backend,
+      load: () =>
+        loadBack().then((module) => {
+          const back = module as unknown as Readonly<Record<string, unknown>>
+          // Without a frontend layout there is no layout data to load: middleware is all it may hold.
+          if (layout === undefined) {
+            for (const name of Object.keys(back)) {
+              if (name !== "middleware") {
+                throw routeError(
+                  `"${backend}" exports "${name}", but its directory has no _layout frontend file, so it may export only middleware`,
+                )
+              }
+            }
+          }
+          return { default: back.middleware } as RouteModule
+        }),
+    }
+  }
+
+  for (const backend of backendByStem.values()) {
+    if (pairedBackends.has(backend)) continue
+    throw routeError(
+      `"${backend}" has no frontend half. A backend half pairs with the file that renders its page ("${backend.replace(ROUTE_BACKEND, "")}.tsx" or another route extension); an endpoint with no page is a route in backend/app.ts`,
+    )
   }
 
   const base: Manifest = {
     routes,
     layouts,
     errors,
+    ...(Object.keys(notFounds).length > 0 ? { notFounds } : {}),
     ...(Object.keys(statusPages).length > 0 ? { statusPages } : {}),
+    ...(Object.keys(loadings).length > 0 ? { loadings } : {}),
+    ...(Object.keys(middlewares).length > 0 ? { middlewares } : {}),
   }
   return notFound === undefined ? base : { ...base, notFound }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { server } from "../src/index.ts"
+import { replacedRequestOf, server } from "../src/index.ts"
 
 describe("onRequest request rewrite", () => {
   test("can replace the request before routing", async () => {
@@ -31,6 +31,38 @@ describe("onRequest request rewrite", () => {
     )
     expect(res.headers.get("x-seen-method")).toBe("PUT")
     expect(await res.json()).toEqual({ method: "PUT", body: { ok: true } })
+  })
+
+  test("a response hook walks back from the rewritten request to the one each hook saw", async () => {
+    const seen: Request[] = []
+    let lineage: Request[] = []
+    const app = server()
+      .onRequest((req) => {
+        seen.push(req)
+        return undefined
+      })
+      .onRequest(async (req) => {
+        seen.push(req)
+        return new Request(req, { method: "PUT" })
+      })
+      .onRequest((req) => {
+        seen.push(req)
+        return new Request(req, { headers: { "x-step": "3" } })
+      })
+      .onResponse((res, req) => {
+        lineage = [req]
+        for (let r = replacedRequestOf(req); r !== undefined; r = replacedRequestOf(r)) {
+          lineage.push(r)
+        }
+        return res
+      })
+      .put("/echo", () => ({ ok: true }))
+    const original = new Request("http://x/echo", { method: "POST" })
+    expect((await app.fetch(original)).status).toBe(200)
+    expect(lineage).toHaveLength(3)
+    expect(lineage[2]).toBe(original)
+    expect(lineage[1]).toBe(seen[2])
+    expect(lineage.at(-1)).toBe(seen[0])
   })
 
   test("preserves the original Web Request identity when no hook rewrites it", async () => {

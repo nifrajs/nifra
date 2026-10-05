@@ -25,6 +25,41 @@ describe("requestId", () => {
     expect(res.headers.get("x-request-id")).toBe("trace-42")
   })
 
+  test("replaces an inbound id that is not a plain visible-ASCII token, on every lane", async () => {
+    const headerOf = (outcome: Awaited<ReturnType<ReturnType<typeof server>["resolveNode"]>>) =>
+      outcome.kind === "response"
+        ? outcome.response.headers.get("x-request-id")
+        : outcome.kind === "json"
+          ? outcome.headers?.["x-request-id"]
+          : undefined
+    for (const bad of ["\u001b[31mred", "a b", "x".repeat(201), "caf\u00e9"]) {
+      const web = server()
+        .use(requestId({ generate: () => "fresh" }))
+        .get("/", (c) => ({ id: c.requestId }))
+      const sent = { headers: { "x-request-id": bad } }
+      const res = await web.fetch(new Request("http://x/", sent))
+      expect({ bad, body: await res.json() }).toEqual({ bad, body: { id: "fresh" } })
+      expect(res.headers.get("x-request-id")).toBe("fresh")
+      expect(
+        (await web.fetch(new Request("http://x/nope", sent))).headers.get("x-request-id"),
+      ).toBe("fresh")
+
+      const node = server()
+        .use(nodeDirect())
+        .use(requestId({ generate: () => "fresh" }))
+        .get("/", (c) => ({ id: c.requestId }))
+      expect(headerOf(await node.resolveNode(new Request("http://x/", sent)))).toBe("fresh")
+      expect(headerOf(await node.resolveNode(new Request("http://x/nope", sent)))).toBe("fresh")
+    }
+    const custom = server()
+      .use(requestId({ accept: (id) => id.startsWith("ok-") }))
+      .get("/", (c) => ({ id: c.requestId }))
+    const kept = await custom.fetch(
+      new Request("http://x/", { headers: { "x-request-id": "ok-1" } }),
+    )
+    expect(await kept.json()).toEqual({ id: "ok-1" })
+  })
+
   test("honors a custom header + generator", async () => {
     let n = 0
     const app = server()

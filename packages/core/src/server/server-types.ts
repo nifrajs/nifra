@@ -5,7 +5,7 @@
  */
 import type { CapabilityUseEvent } from "../internal/capability-runtime.ts"
 import type { AssuranceEvidence } from "../internal/route-assurance.ts"
-import type { Method } from "../router/router.ts"
+import type { RouteMethod } from "../router/router.ts"
 import type { ClientIpTrust } from "./client-ip.ts"
 import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
@@ -192,6 +192,13 @@ export interface MountOptions<Env = unknown> {
   readonly priority?: number
   /** For safe replayable methods only, try the next matching mount when this one returns 404. */
   readonly fallbackOn?: 404
+  /**
+   * Why this child is not analyzed, for a handler whose effects nifra cannot follow (a closure from
+   * another package). Capability assurance lists a mount with a reason as a known gap; a mount
+   * without one fails it, since its routes are invisible. A nifra `server()` belongs in `merge()`,
+   * where its routes are analyzed.
+   */
+  readonly opaque?: string
 }
 
 /** Options for a legacy fetch-handler mount. */
@@ -202,6 +209,8 @@ export interface MountFetchOptions {
   readonly priority?: number
   /** For safe replayable methods only, try the next matching legacy mount when it returns 404. */
   readonly fallbackOn?: 404
+  /** Why this handler is not analyzed - see {@link MountOptions.opaque}. */
+  readonly opaque?: string
 }
 
 /** A callback awaited after the Bun server has drained and stopped. */
@@ -231,7 +240,7 @@ export interface ToolAnnotations {
  * (e.g. `toOpenAPI`) enumerate routes after registration.
  */
 export interface RouteDescriptor {
-  readonly method: Method
+  readonly method: RouteMethod
   readonly path: string
   readonly schema: RouteSchema | undefined
   /** Runtime response-contract mode captured when this route was registered. */
@@ -277,6 +286,19 @@ export interface McpPromptDescriptor {
   readonly description: string
   readonly arguments?: readonly PromptArgument[]
   readonly handler: (args: Record<string, string>) => MaybePromise<readonly PromptMessage[]>
+}
+
+/**
+ * TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM,
+ * as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
+ */
+export interface ListenTlsOptions {
+  /** The certificate chain, PEM. */
+  readonly cert: string | Uint8Array
+  /** The private key, PEM. */
+  readonly key: string | Uint8Array
+  /** The passphrase of an encrypted `key`. */
+  readonly passphrase?: string
 }
 
 /**

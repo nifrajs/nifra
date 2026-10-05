@@ -1,7 +1,5 @@
-import { formatRps, MULTIPLIERS, ssrFrameworkRps, ssrRps } from "../../data/benchmarks"
-import { postMeta } from "../../meta"
-
-export const hydrate = false
+import { formatRps, MULTIPLIERS, ssrFrameworkRps, ssrRps } from "../../shared/data/benchmarks"
+import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
   "nextjs-alternatives-2026",

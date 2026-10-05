@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setSystemTime, spyOn, test } from "bun:test"
 import {
   createClientRouter,
   createMatcher,
@@ -183,7 +183,7 @@ describe("createClientRouter", () => {
       fetchData: async (_path, target) => ({ authorizedId: target.params.id }),
       routeHooks: {
         index: {
-          boundaries: [{ name: "userModal", mode: { intercept: "/users/:id" }, hasLoad: true }],
+          boundaries: [{ name: "userModal", mode: { intercept: "/users/:id" } }],
         },
       },
     })
@@ -464,6 +464,85 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("navigate follows a redirect to another route, moving pendingPath to the target", async () => {
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async (path, m) => {
+        if (path === "/users/1")
+          throw Object.assign(new Error("moved"), { redirectTo: "/users/2?from=1" })
+        return { id: m.params.id }
+      },
+    })
+    const pendingPaths: Array<string | undefined> = []
+    r.subscribe(() => pendingPaths.push(r.snapshot().pendingPath))
+    await r.navigate("/users/1")
+    expect(r.snapshot()).toMatchObject({
+      routeId: "user",
+      params: { id: "2" },
+      path: "/users/2?from=1",
+      data: { id: "2" },
+      pending: false,
+    })
+    expect(pendingPaths).toEqual(["/users/1", "/users/2?from=1", undefined])
+  })
+
+  test("a redirect loop stops after 20 redirects with its target", async () => {
+    let loads = 0
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async () => {
+        loads++
+        throw Object.assign(new Error("moved"), { redirectTo: "/users/1" })
+      },
+    })
+    const failure = await r.navigate("/users/1").catch((error: unknown) => error)
+    expect((failure as { redirectTo?: string }).redirectTo).toBe("/users/1")
+    expect(loads).toBe(21)
+    expect(r.snapshot()).toMatchObject({ path: "/", pending: false })
+  })
+
+  test("a redirect out of the app rejects with its target", async () => {
+    for (const target of [
+      "https://id.example/auth",
+      "//evil.example/x",
+      "/users/2#bio",
+      "/nowhere",
+    ]) {
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async () => {
+          throw Object.assign(new Error("moved"), { redirectTo: target })
+        },
+      })
+      const failure = await r.navigate("/users/1").catch((error: unknown) => error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe(target)
+    }
+  })
+
+  test("the default fetchData fails a redirected navigation with its target, keeping the old page", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
+      new Response(null, {
+        status: 204,
+        headers: { "x-nifra-redirect": "/login?next=%2Fusers%2F1" },
+      })) as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial })
+      const failure = await r.navigate("/users/1").then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("/login?next=%2Fusers%2F1")
+      expect(r.snapshot()).toMatchObject({ path: initial.path, pending: false })
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("the default fetchData parses an x-ndjson body into data with deferred markers", async () => {
     const realFetch = globalThis.fetch
     // A deferred route streams NDJSON: line 1 (critical + placeholder) then the resolution line.
@@ -532,6 +611,64 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("default fetchData reads a handed-over list URL once and uses it like the inline list", async () => {
+    const calls: string[] = []
+    Reflect.set(globalThis, "__NIFRA_PRERENDERED__", "/__nifra/prerendered.json?v=list")
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: string | URL | Request) => {
+          const url = String(input)
+          calls.push(url)
+          if (url.startsWith("/__nifra/prerendered.json")) return Response.json(["/users/9"])
+          return Response.json({ id: url.endsWith("/_data.json") ? "static" : "dynamic" })
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.navigate("/users/9")
+      expect(r.snapshot().data).toEqual({ id: "static" })
+      await r.navigate("/users/10")
+      expect(r.snapshot().data).toEqual({ id: "dynamic" })
+      expect(calls).toEqual([
+        "/__nifra/prerendered.json?v=list",
+        "/users/9/_data.json",
+        "/users/10",
+      ])
+    } finally {
+      fetchSpy.mockRestore()
+      Reflect.deleteProperty(globalThis, "__NIFRA_PRERENDERED__")
+    }
+  })
+
+  test("default fetchData stays on the dynamic path when the handed-over list fails", async () => {
+    const calls: string[] = []
+    Reflect.set(globalThis, "__NIFRA_PRERENDERED__", "/__nifra/prerendered.json?v=broken")
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: string | URL | Request) => {
+          const url = String(input)
+          calls.push(url)
+          if (url.startsWith("/__nifra/prerendered.json")) {
+            return new Response("down", { status: 500 })
+          }
+          return Response.json({ id: "dynamic" })
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.navigate("/users/9")
+      expect(r.snapshot().data).toEqual({ id: "dynamic" })
+      expect(calls).toEqual(["/__nifra/prerendered.json?v=broken", "/users/9"])
+    } finally {
+      fetchSpy.mockRestore()
+      Reflect.deleteProperty(globalThis, "__NIFRA_PRERENDERED__")
+    }
+  })
+
   test("prefetch warms the cache without publishing; navigate reuses it one-shot (no refetch)", async () => {
     let fetches = 0
     const r = createClientRouter({
@@ -588,6 +725,40 @@ describe("createClientRouter", () => {
     expect(fetches).toBe(13)
     await r.navigate("/users/11") // still cached → no refetch
     expect(fetches).toBe(13)
+  })
+
+  test("a prefetch older than 30 seconds is not used, and prefetching again replaces it", async () => {
+    // A link warmed as it scrolled into view can be clicked long after: that click loads it again.
+    let fetches = 0
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async (_p, m) => {
+        fetches++
+        return { id: m.params.id, fetch: fetches }
+      },
+    })
+    try {
+      setSystemTime(new Date("2026-10-01T00:00:00Z"))
+      await r.prefetch("/users/7")
+      setSystemTime(new Date("2026-10-01T00:00:29Z"))
+      await r.prefetch("/users/7") // still fresh → no-op
+      expect(fetches).toBe(1)
+      setSystemTime(new Date("2026-10-01T00:00:31Z"))
+      await r.navigate("/users/7") // stale → the navigation fetches
+      expect(fetches).toBe(2)
+      expect(r.snapshot().data).toEqual({ id: "7", fetch: 2 })
+
+      await r.prefetch("/users/8")
+      setSystemTime(new Date("2026-10-01T00:01:10Z"))
+      await r.prefetch("/users/8") // stale → warmed again
+      expect(fetches).toBe(4)
+      await r.navigate("/users/8") // the fresh copy is used
+      expect(fetches).toBe(4)
+      expect(r.snapshot().data).toEqual({ id: "8", fetch: 4 })
+    } finally {
+      setSystemTime()
+    }
   })
 
   test("submit posts the action in data mode, then revalidates the active loader", async () => {
@@ -750,6 +921,117 @@ describe("createClientRouter", () => {
         actionData: undefined,
         pending: false,
       })
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("an action redirect loads the target's whole chain unless revalidate is false", async () => {
+    const realFetch = globalThis.fetch
+    const retainHints: Array<string | null> = []
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return new Response(null, { status: 204, headers: { "x-nifra-redirect": "/users/9" } })
+      }
+      retainHints.push(new Headers(init?.headers).get("x-nifra-retain"))
+      return Response.json({ v: 1, data: { id: "9" }, layoutData: [{ shell: "fresh" }] })
+    }) as typeof fetch
+    const start: RouterState = { ...initial, layoutData: [{ shell: "old" }] }
+    try {
+      const r = createClientRouter({ patterns, initial: start })
+      await r.submit("/", new URLSearchParams())
+      // No retain hint: the action may have changed what the layout shows.
+      expect(retainHints).toEqual([null])
+      expect(r.snapshot().layoutData).toEqual([{ shell: "fresh" }])
+
+      const kept = createClientRouter({ patterns, initial: start })
+      await kept.submit("/", new URLSearchParams(), { revalidate: false })
+      expect(retainHints).toEqual([null, "0"])
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("an action redirect the router cannot follow rejects with its target", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(null, {
+        status: 204,
+        headers: { "x-nifra-redirect": "https://id.example/auth" },
+      })) as unknown as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+      const failure = await r.submit("/", new URLSearchParams()).catch((error: unknown) => error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("https://id.example/auth")
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("an action redirect to a script URL names the current page, never the script", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(null, {
+        status: 204,
+        headers: { "x-nifra-redirect": "javascript:alert(document.domain)" },
+      })) as unknown as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+      const failure = await r.submit("/", new URLSearchParams()).catch((error: unknown) => error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("/")
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("once the action ran, a failure names the page to load instead of posting again", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () => Response.json({ saved: true })) as unknown as typeof fetch
+    const start: RouterState = {
+      ...initial,
+      routeId: "user",
+      params: { id: "1" },
+      path: "/users/1",
+      layoutData: [1],
+    }
+    try {
+      const failing = createClientRouter({
+        patterns,
+        initial: start,
+        fetchData: async () => {
+          throw new Error("offline")
+        },
+      })
+      const failure = await failing
+        .submit("/users/1", new URLSearchParams())
+        .catch((e: unknown) => e)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("/users/1")
+      expect(failing.snapshot()).toMatchObject({
+        path: "/users/1",
+        layoutData: [1],
+        pending: false,
+      })
+
+      // A navigation that supersedes the reload owns the page: the submit settles quietly.
+      const loads: Array<() => void> = []
+      const superseded = createClientRouter({
+        patterns,
+        initial: start,
+        fetchData: (_path, _match, signal) =>
+          new Promise((resolve, reject) => {
+            loads.push(() => resolve({}))
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            )
+          }),
+      })
+      const submitting = superseded.submit("/users/1", new URLSearchParams())
+      while (loads.length === 0) await Bun.sleep(1)
+      const navigating = superseded.navigate("/")
+      while (loads.length === 1) await Bun.sleep(1)
+      loads[1]?.()
+      await navigating
+      await expect(submitting).resolves.toBeUndefined()
     } finally {
       globalThis.fetch = realFetch
     }

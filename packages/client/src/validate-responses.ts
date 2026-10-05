@@ -15,7 +15,14 @@
 
 import { type Method, Router } from "@nifrajs/core/router"
 import { formatStandardIssues } from "@nifrajs/core/schema"
-import type { FetchFn } from "./client.ts"
+import type { Platform } from "@nifrajs/core/server"
+
+/** The in-process bridge: the client's `fetch(url, init)` shape, plus the calling request's platform. */
+export type PlatformFetchFn = (
+  input: string,
+  init?: RequestInit,
+  platform?: Platform,
+) => Promise<Response>
 
 /** The slice of a Standard Schema this wrapper runs. */
 interface SchemaLike {
@@ -66,7 +73,7 @@ export class ResponseContractViolation extends Error {
  * Wrap the in-process bridge so every response is checked against its route's declared contract.
  * Throws at wrap time when the app cannot enumerate routes - a misconfiguration, not a soft skip.
  */
-export function withResponseValidation(app: unknown, bridge: FetchFn): FetchFn {
+export function withResponseValidation(app: unknown, bridge: PlatformFetchFn): PlatformFetchFn {
   const routesOf = (app as Partial<RouteIntrospectable>).routes
   if (typeof routesOf !== "function") {
     throw new Error(
@@ -79,8 +86,8 @@ export function withResponseValidation(app: unknown, bridge: FetchFn): FetchFn {
     router.add(route.method as Method, route.path, route.schema)
   }
 
-  return async (url, init) => {
-    const response = await bridge(url, init)
+  return async (url, init, platform) => {
+    const response = await bridge(url, init, platform)
     const method = (init?.method ?? "GET").toUpperCase()
     const status = response.status
     if (method === "HEAD" || status === 204 || status === 205) return response

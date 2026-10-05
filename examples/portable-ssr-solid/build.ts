@@ -4,7 +4,7 @@
 // resolve it on Node. One bundle per runtime.
 //   bun run build && bun run examples/portable-ssr-solid/build.ts
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 

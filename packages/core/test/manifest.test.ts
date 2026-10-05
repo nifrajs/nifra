@@ -43,6 +43,16 @@ async function manifest(source: unknown) {
 }
 
 describe("signed versioned Nifra manifest", () => {
+  test("routes are ordered by code unit, so the bytes do not depend on the locale", async () => {
+    const app = server()
+      .get("/a_b", () => "x")
+      .get("/a", () => "x")
+      .get("/B", () => "x")
+      .get("/a-b", () => "x")
+    const manifest = await buildNifraManifest({ source: app })
+    expect(manifest.routes.map((route) => route.path)).toEqual(["/B", "/a", "/a-b", "/a_b"])
+  })
+
   test("emission is deterministic across route registration and object-key order", async () => {
     const a = server()
       .post(
@@ -245,6 +255,44 @@ describe("signed versioned Nifra manifest", () => {
       expect.objectContaining({ section: "classification", severity: "breaking" }),
     )
     expect(diff.hasBreaking).toBe(true)
+  })
+
+  test("a new route's capabilities and sensitive data are expanded risk, like the same change to an old one", () => {
+    const empty = { manifestVersion: 1 as const, contentHash: "0".repeat(64), routes: [] }
+    const charge = {
+      method: "POST",
+      path: "/charge",
+      capabilities: {
+        declared: ["payments.charge"],
+        evidenced: ["payments.charge"],
+        unproven: [],
+        covered: true,
+      },
+      classification: { max: "secret" as const, fields: { "/token": "secret" as const } },
+    }
+    const added = diffNifraManifests(empty, { ...empty, routes: [charge] })
+    expect(added.hasBreaking).toBe(true)
+    expect(added.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ section: "route", severity: "compatible" }),
+        expect.objectContaining({
+          severity: "breaking",
+          message: "declared capability added payments.charge",
+        }),
+        expect.objectContaining({
+          severity: "breaking",
+          message: "response classification changed from unclassified to secret",
+        }),
+      ]),
+    )
+    // A new route that declares nothing and returns public data is only an added route.
+    const health = {
+      method: "GET",
+      path: "/health",
+      classification: { max: "public" as const, fields: {} },
+    }
+    const plain = diffNifraManifests(empty, { ...empty, routes: [health] })
+    expect(plain.hasBreaking).toBe(false)
   })
 
   test("governance diff exposes assurance loss, capability expansion, and field sensitivity", () => {

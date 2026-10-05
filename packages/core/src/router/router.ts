@@ -3,19 +3,35 @@ import {
   type CompiledRoutePattern,
   compareMixedPartsSpecificity,
   compileRoutePattern,
+  constrainedParts,
   type MixedPart,
-  mixedSegmentSource,
+  type MixedSegmentShape,
+  matchMixedSegment,
+  mixedSegmentShape,
 } from "./pattern.ts"
 
-/** HTTP methods the router accepts. */
+/** The standard HTTP methods: the ones with a builder on the server and a call on the typed client. */
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const
 
 export type Method = (typeof METHODS)[number]
 
-const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
+/**
+ * A method a route is registered under: a standard {@link Method}, or another token that
+ * {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
+ */
+export type RouteMethod = Method | (string & {})
 
-function isMethod(value: string): value is Method {
-  return METHOD_SET.has(value)
+// A method token is 1-32 characters of `A-Z`, `0-9` and `-`, starting with a letter. TRACE, CONNECT
+// and TRACK are left out: TRACE (and its alias TRACK) asks a server to echo the request back,
+// headers included, and CONNECT asks for a tunnel. Neither is something a route handler answers.
+const REGISTRABLE_METHOD = /^(?!(TRAC[EK]|CONNECT)$)[A-Z][A-Z\d-]{0,31}$/
+
+/**
+ * Whether a route can be registered under `method` - one of {@link METHODS}, or another uppercase
+ * token such as `PROPFIND`. `TRACE`, `CONNECT` and `TRACK` never are.
+ */
+export function isRegistrableMethod(method: string): boolean {
+  return REGISTRABLE_METHOD.test(method)
 }
 
 const SLASH = 47
@@ -92,18 +108,26 @@ interface RouteNode<T> {
 }
 
 interface MixedChild<T> {
-  /** Anchored matcher for ONE segment, with a capture group per parameter. */
-  readonly regex: RegExp
   /**
-   * How many values this segment pushes. A mixed segment pushes N, not one, so a failed branch must
-   * pop exactly N to keep `paramValues` aligned with `paramNames`.
+   * What a request segment is matched against: one pass, whatever the segment holds.
+   *
+   * It has one entry more than the segment has parameters. A match pushes a value per parameter -
+   * N values, not one - so a failed branch must pop exactly `shape.length - 1` to keep `paramValues`
+   * aligned with `paramNames`.
    */
-  readonly arity: number
-  /** Parsed shape used by the same total specificity comparator as the browser router. */
+  readonly shape: MixedSegmentShape
+  /** Parsed parts used by the same total specificity comparator as the browser router. */
   readonly parts: readonly MixedPart[]
+  /** `parts` when a parameter has a constraint to test after the scan, else `undefined`. */
+  readonly checked: readonly MixedPart[] | undefined
   readonly node: RouteNode<T>
-  /** The pattern source, so re-registering the same shape reuses its node. */
-  readonly source: string
+  /**
+   * The segment as one string, so re-registering the same one reuses its node: each literal and each
+   * parameter's constraint, tagged by kind. Joined on `/`, the one character neither can hold, so
+   * two different segments never share a key. Parameter names are left out: they do not decide what
+   * a segment matches.
+   */
+  readonly key: string
 }
 
 function createNode<T>(): RouteNode<T> {
@@ -162,19 +186,19 @@ function matchNode<T>(
   const mixedChildren = node.mixedChildren
   if (mixedChildren !== undefined && seg.length > 0) {
     for (const child of mixedChildren) {
-      const matched = child.regex.exec(seg)
-      if (matched === null) continue
-      // Push left-to-right, matching the order `paramNames` was built in.
-      for (let i = 1; i <= child.arity; i++) paramValues.push(matched[i] as string)
+      // Pushes this segment's captures left-to-right, matching the order `paramNames` was built in,
+      // and pushes nothing on a miss - a value that fails its constraint is a miss. One pass over
+      // the segment whatever the shape: see the scanner.
+      if (!matchMixedSegment(child.shape, seg, paramValues, child.checked)) continue
       if (isLast) {
         if (child.node.terminal !== undefined) return child.node.terminal
       } else {
         const found = matchNode(child.node, path, end + 1, len, paramValues)
         if (found !== undefined) return found
       }
-      // Backtrack: a mixed segment pushed `arity` values, not one, so unwind exactly that many or
-      // every later param reads a value belonging to an abandoned branch.
-      for (let i = 0; i < child.arity; i++) paramValues.pop()
+      // Backtrack: a mixed segment pushed a value per parameter, not a single one, so unwind exactly
+      // that many or every later param reads a value belonging to an abandoned branch.
+      for (let i = 1; i < child.shape.length; i++) paramValues.pop()
     }
   }
 
@@ -220,43 +244,39 @@ function resolve<T>(
   params: Record<string, string>,
 ): RouterMatch<T> {
   if (terminal.staticMatches !== undefined && params === EMPTY_PARAMS) {
-    // Real requests arrive pre-uppercased (HTTP methods are canonically uppercase; every runtime and
-    // client normalizes this) - try the cache under the raw method first so that overwhelmingly common
-    // case skips `toUpperCase()` entirely, matching the same already-uppercase fast path
-    // `resolveDirect` takes below. Falls back to the uppercase key (computed once) for a lowercase or
-    // mixed-case caller, so behavior is unchanged - only the common case gets cheaper.
     const direct = terminal.staticMatches.get(method)
     if (direct !== undefined) return direct
-    const upper = method.toUpperCase()
-    const cached = upper === method ? undefined : terminal.staticMatches.get(upper)
-    if (cached !== undefined) return cached
+    // Only a hit is cached, and only under a method the terminal serves, so the cache is bounded by
+    // the registered methods and an arbitrary request token never grows it.
     const cacheable =
-      terminal.handlers.has(upper) || (upper === "HEAD" && terminal.handlers.has("GET"))
+      terminal.handlers.has(method) || (method === "HEAD" && terminal.handlers.has("GET"))
     if (!cacheable) return resolveDirect(terminal, method, params)
 
     const res = resolveDirect(terminal, method, params)
-    terminal.staticMatches.set(upper, res)
+    terminal.staticMatches.set(method, res)
     return res
   }
   return resolveDirect(terminal, method, params)
 }
 
+/**
+ * Method tokens are case-sensitive (RFC 9110 §9.1), and this compares them exactly. A request whose
+ * token differs from a registered method only in case is a different method and answers 405. Folding
+ * case here would run a handler under a method string that a case-sensitive method check elsewhere -
+ * a CSRF guard, a body limit, a user hook comparing `c.req.method` - does not recognise, so the two
+ * would disagree about whether the request mutates.
+ */
 function resolveDirect<T>(
   terminal: Terminal<T>,
   method: string,
   params: Record<string, string>,
 ): RouterMatch<T> {
-  if (terminal.handlers.has(method)) {
-    return { found: true, payload: terminal.handlers.get(method)!, params }
-  }
-  const upper = method.toUpperCase()
-  if (upper !== method && terminal.handlers.has(upper)) {
-    return { found: true, payload: terminal.handlers.get(upper)!, params }
-  }
+  const payload = terminal.handlers.get(method)
+  if (payload !== undefined) return { found: true, payload, params }
   // RFC 9110 §9.3.2: HEAD is GET without the body. A route registered for GET answers HEAD with
   // the GET handler; the serving runtime strips the body, so status + headers mirror GET exactly.
-  // An explicitly registered HEAD handler takes precedence via the has() checks above.
-  if (upper === "HEAD") {
+  // An explicitly registered HEAD handler takes precedence via the lookup above.
+  if (method === "HEAD") {
     const get = terminal.handlers.get("GET")
     if (get !== undefined) return { found: true, payload: get, params }
   }
@@ -301,13 +321,15 @@ export class Router<T> {
    * Register a payload for `method` + `path`. Throws {@link RouteConfigError}
    * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting
    * parameter names for the same path shape.
+   *
+   * One call is one route. A `?` in the pattern is literal text here: optional parameters
+   * (`/users/:id?`) are expanded by the caller, which adds each pattern `expandOptionalParams`
+   * (`@nifrajs/core/pattern`) gives for it.
    */
-  add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void {
+  add(method: string, pattern: string | CompiledRoutePattern, payload: T): void {
     DYNAMIC_MATCH_CACHES.delete(this)
     const upper = method.toUpperCase()
-    // The `Method` parameter type is the compile-time guard; this re-checks at
-    // runtime for JS callers and dynamically-computed methods.
-    if (!isMethod(upper)) {
+    if (!isRegistrableMethod(upper)) {
       throw new RouteConfigError("INVALID_METHOD", `unsupported HTTP method "${method}"`)
     }
     const compiled = typeof pattern === "string" ? compileRoutePattern(pattern) : pattern
@@ -324,16 +346,19 @@ export class Router<T> {
         node.wildcardChild ??= createNode<T>()
         node = node.wildcardChild
       } else if (segment.kind === "mixed") {
-        const source = mixedSegmentSource(segment.parts)
+        const parts = segment.parts
+        const key = parts
+          .map((part) => (part.t === "lit" ? `L${part.v}` : `P${part.c?.key ?? ""}`))
+          .join("/")
         node.mixedChildren ??= []
-        let child = node.mixedChildren.find((entry) => entry.source === source)
+        let child = node.mixedChildren.find((entry) => entry.key === key)
         if (child === undefined) {
           child = {
-            regex: new RegExp(`^${source}$`),
-            arity: segment.parts.reduce((n, part) => (part.t === "param" ? n + 1 : n), 0),
-            parts: segment.parts,
+            shape: mixedSegmentShape(parts),
+            parts,
+            checked: constrainedParts(parts),
             node: createNode<T>(),
-            source,
+            key,
           }
           node.mixedChildren.push(child)
           // Most literal text first. Registration order must not decide which of `/:id.txt` and
@@ -388,8 +413,8 @@ export class Router<T> {
   }
 
   /**
-   * Resolve `method` + `path`. Tolerant of a missing leading slash and of
-   * method casing. Never throws.
+   * Resolve `method` + `path`. Tolerant of a missing leading slash. The method is compared exactly:
+   * tokens are case-sensitive, so `get` does not reach a `GET` route. Never throws.
    */
   find(method: string, path: string): RouterMatch<T> {
     const len = path.length

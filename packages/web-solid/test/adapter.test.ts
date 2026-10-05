@@ -2,7 +2,8 @@ import { expect, test } from "bun:test"
 import { unlinkSync } from "node:fs"
 import { assertRenderAdapterConformance, renderPageResult } from "@nifrajs/web"
 import { createComponent, createResource, Suspense } from "solid-js"
-import { solidAdapter, solidBunPlugin } from "../src/index.ts"
+import { solidAdapter } from "../src/index.ts"
+import { solidBunPlugin } from "../src/plugin.ts"
 
 test("solidAdapter conforms to the executable RenderAdapter interface", async () => {
   const layout = (marker: string) => (props: { children: unknown }) => [marker, props.children]
@@ -50,6 +51,31 @@ test("renderToStream streams a Suspense boundary: fallback bytes precede the res
   const html = await new Response(stream).text()
   expect(html).toContain("RESOLVED") // the resolved content streamed in
   expect(html.indexOf("FALLBACK")).toBeLessThan(html.indexOf("RESOLVED")) // fallback streamed first
+})
+
+test("renderToStream stamps the nonce on every script Solid streams for a resource", async () => {
+  const Slow = () => {
+    const [r] = createResource(
+      () => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)),
+    )
+    return r()
+  }
+  const App = () =>
+    createComponent(Suspense, {
+      get fallback() {
+        return "FALLBACK"
+      },
+      get children() {
+        return createComponent(Slow, {})
+      },
+    })
+  const read = async (options?: { nonce: string }) =>
+    new Response(await solidAdapter.renderToStream([App], { data: null }, options)).text()
+  const nonced = await read({ nonce: "n0nce" })
+  const scripts = nonced.match(/<script\b[^>]*>/gi) ?? []
+  expect(scripts.length).toBeGreaterThan(0) // the resource + boundary scripts were streamed
+  for (const tag of scripts) expect(tag).toContain('nonce="n0nce"')
+  expect(await read()).not.toContain("nonce=")
 })
 
 test("hydrationHead returns Solid's hydration bootstrap (the _$HY registry)", () => {

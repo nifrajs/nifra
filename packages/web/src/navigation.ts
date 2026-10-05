@@ -12,6 +12,7 @@
  * native `<a href>` full-page navigation - progressive enhancement, no throw.
  */
 
+import type { ClientRouter } from "./router.ts"
 import { serializeSearch } from "./search.ts"
 
 /** Options for a programmatic navigation. */
@@ -103,20 +104,42 @@ export function resolveNavigate(
 }
 
 /**
+ * When a link warms its route's chunk and loader data ahead of a click. Set it with the
+ * `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins):
+ * - `intent` (the default) - on hover or keyboard focus.
+ * - `viewport` - once the link scrolls into view.
+ * - `render` - as soon as a page shows the link.
+ * - `none` - never; the route loads when the link is followed.
+ *
+ * A warmed route is used by a click within 30 seconds; after that the click loads it again.
+ */
+export type PrefetchMode = "intent" | "viewport" | "render" | "none"
+
+/**
  * A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to
  * (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1`
  * forward), matching the browser's `history.go`. Registered by `installHistory`.
  */
 export type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void
 
-// The active browser navigate (set by `installHistory`, cleared on teardown). Module-scoped: one app
-// per page; absent on the server and before hydration.
+// The active browser navigate and the router behind it (set by `installHistory`, cleared on
+// teardown). Module-scoped: one app per page; absent on the server and before hydration.
 let browserNavigate: BrowserNavigate | undefined
+let browserRouter: ClientRouter | undefined
 
-/** Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for
- * app use. */
-export function setBrowserNavigate(navigate: BrowserNavigate | undefined): void {
+/** Register (or clear, with `undefined`) the browser navigate and its router - called by
+ * `installHistory`. Not for app use. */
+export function setBrowserNavigate(
+  navigate: BrowserNavigate | undefined,
+  router?: ClientRouter,
+): void {
   browserNavigate = navigate
+  browserRouter = router
+}
+
+/** The mounted client router, or `undefined` on the server / before `installHistory` has run. */
+export function getBrowserRouter(): ClientRouter | undefined {
+  return browserRouter
 }
 
 /** The active browser navigate, or `undefined` on the server / before `installHistory` has run. A

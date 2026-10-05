@@ -48,7 +48,7 @@ describe("build-plan contract", () => {
   })
 
   test("plans target output shape before the bundler runs", () => {
-    expect(planBuildTarget("cf-pages", "/tmp/dist/site")).toMatchObject({
+    expect(planBuildTarget("cloudflare", "/tmp/dist/site")).toMatchObject({
       kind: "server",
       serverTarget: "browser",
       outputFile: "_worker.js",

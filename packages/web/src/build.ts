@@ -5,12 +5,13 @@
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import {
   dirname,
   join,
   basename as pathBasename,
+  posix,
   relative,
   resolve as resolvePath,
   sep,
@@ -30,6 +31,7 @@ import {
   detectServerOnlyInClient,
   formatNodeBuiltinLeak,
   formatServerOnlyLeak,
+  parseBuildTarget,
   parseManifestClientEntry,
   parseManifestCssLoading,
   parseManifestRouteStyles,
@@ -48,16 +50,42 @@ import {
   assertIdentityParity,
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
+import { privateEnvCheck } from "./internal/private-env.ts"
+import { publicUrlPath } from "./internal/public-url.ts"
+import {
+  assertNoSecrets,
+  buildEnvironment,
+  emittedScanFiles,
+  formatSecretFindings,
+  graphScanInput,
+  originName,
+  publicScanFiles,
+  type SecretExemption,
+  scanForSecrets,
+  textOf,
+} from "./internal/secret-scan.ts"
 import {
   generateServerFnStub,
   SERVER_FN_MODULE,
-  SERVER_ONLY_MODULE,
-  SERVER_ONLY_REPLACEMENT,
   serverFnNamespace,
 } from "./internal/server-boundary.ts"
+import { formatUnsupportedBuiltins, unsupportedBuiltins } from "./internal/target-compat.ts"
+import {
+  accountEmittedFiles,
+  bunModuleSource,
+  type EmittedFile,
+  formatClientGraphVerdict,
+  formatServerGraphVerdict,
+  formatUnaccountedOutput,
+  verifyClientGraph,
+  verifyServerGraph,
+} from "./internal/zone-graph.ts"
+import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
+import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
-import { fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
+import { CONTENT_TYPES, IMMUTABLE, ONE_DAY } from "./public-dir.ts"
+import { createZoneClassifier } from "./zones.ts"
 
 export * from "./build-plan.ts"
 
@@ -82,6 +110,8 @@ interface BunMetafile {
   >
 }
 
+// The secret scan every client build, `public/` copy and prerender runs.
+export type { SecretExemption, SecretRule } from "./internal/secret-scan.ts"
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
 // run after `buildClient`.
 export {
@@ -135,6 +165,12 @@ export interface BuildClientOptions {
    * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to
    * `process.env`) at build time. */
   readonly publicEnvPrefix?: string
+  /**
+   * Reviewed false positives of the secret scan, which fails the build when a bundle, source map or
+   * `public/` file carries what looks like a credential or the value of a non-public environment
+   * variable. Each names its rule, its file (or, for an environment value, its variable) and a reason.
+   */
+  readonly secretExemptions?: readonly SecretExemption[]
 }
 
 /**
@@ -157,22 +193,6 @@ export function publicEnvDefines(
     }
   }
   return defines
-}
-
-/**
- * Percent-encode one path segment exactly the way a browser encodes it into a request URL.
- *
- * NOT `encodeURIComponent`. That escapes the sub-delimiters `, @ + = & ; $`, which a browser sends raw -
- * so a file named `report,2026.csv` would be recorded as `/report%2C2026.csv` while the request arrives
- * as `/report,2026.csv`, the allowlist lookup misses, and the file 404s in production only. `encodeURI`
- * agrees with `URL.pathname` on every character except `?` and `#`, which terminate a path and so must
- * be escaped explicitly here.
- */
-function encodePathSegment(segment: string): string {
-  return encodeURI(segment).replace(
-    /[?#]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-  )
 }
 
 /**
@@ -247,7 +267,7 @@ function collapsibleDirs(
 }
 
 /**
- * Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
+ * Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
  *
  * `exclude` is what Pages serves straight from the CDN instead of invoking the worker, so naming every
  * public file is ideal - and impossible past ~99 of them. A `public/` of icons, fonts and share images
@@ -334,7 +354,7 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
     const target = join(to, rel)
     await mkdir(join(target, ".."), { recursive: true })
     await cp(candidateReal, target)
-    copied.push(`/${rel.split(sep).map(encodePathSegment).join("/")}`)
+    copied.push(publicUrlPath(rel))
   }
   return copied.sort()
 }
@@ -411,6 +431,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // layered after these in the `define` object). `Bun` may be absent under non-Bun typecheck - guard it.
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
+  const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
   // Keep the generated source beside the project, not inside `outDir`: module resolution starts at the
   // importing file, so an absolute `--out /tmp/deploy` must still resolve the app's dependencies.
   // A unique directory also avoids clobbering a user file or colliding with parallel builds.
@@ -432,6 +453,10 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       ...routeManifest.routes.map((r) => r.file),
       ...Object.values(routeManifest.layouts).map((l) => l.file),
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
+      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
+      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
+      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
+      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -440,12 +465,14 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // entry→CSS link for per-route splitting: keyed by the unique source path, so it survives
   // same-basename collisions (`index.tsx` + `blog/index.tsx`) that a filename match can't. Not yet in
   // `@types/bun`'s `BuildConfig`, so spread it in (spread props skip the excess-property check).
-  const buildExtras = { metafile: true }
+  const buildExtras = { metafile: true, throw: false }
+  const classifier = createZoneClassifier({ appRoot: root, routesDir, generatedFiles: [entryFile] })
+  const refused = new Map<string, string>()
+  // No `outdir`: the bundle stays in memory until the graph proves it holds browser code only.
   const result = await (async () => {
     try {
       return await Bun.build({
         entrypoints: [entryFile, ...routeFiles.map(resolve)],
-        outdir: outDir,
         target: "browser",
         naming: "[name]-[hash].[ext]",
         publicPath,
@@ -456,11 +483,16 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
         ...buildExtras,
         minify: options.minify ?? true,
         plugins: [
+          // First, so it sees every file before another plugin's `onLoad` claims it.
+          zoneGuardPlugin({
+            appRoot: root,
+            classifier,
+            onDenied: (file, reason) => refused.set(file, reason),
+          }),
           ...declaredSingleCopyPlugins(root),
           reactDedupePlugin(routesDir),
           preactDedupePlugin(routesDir),
           svelteDedupePlugin(routesDir),
-          serverOnlyEmptyPlugin(),
           serverFnStubPlugin(),
           ...(options.plugins ?? []),
         ],
@@ -468,10 +500,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
         // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
         // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
         // the build mode (React's prod/dev branch); each PUBLIC_* var resolves to its baked VALUE; every
-        // other `process.env.X` becomes undefined (the bare `process.env` → `({})` fallback - so secrets
-        // never leak). Callers can override any of these via `options.define` (layered last).
+        // other `process.env.X` becomes undefined (the bare `process.env` → `{}` fallback - so secrets
+        // never leak). Callers can override any of these via `options.define` (layered last). The value
+        // must be JSON: Bun inlines anything else (`({})`) as a string literal.
         define: {
-          "process.env": "({})",
+          "process.env": "{}",
           "process.env.NODE_ENV": JSON.stringify(mode),
           ...publicDefines,
           ...options.define,
@@ -481,40 +514,125 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       rmSync(entryDir, { recursive: true, force: true })
     }
   })()
+  const cwd = process.cwd()
+  const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
   if (!result.success) {
+    // A refused file can be what broke the build (a backend module importing a server-only built-in),
+    // so the refusal is the error to show, not the bundler's symptom.
+    const verdict =
+      refused.size > 0 && clientMeta !== undefined
+        ? formatClientGraphVerdict(
+            verifyClientGraph(fromBunMetafile(clientMeta), {
+              classifier,
+              sourceOf: bunModuleSource(cwd),
+              privateEnv,
+              refused: new Set(refused.keys()),
+            }),
+          )
+        : undefined
+    if (verdict !== undefined) throw new Error(verdict)
+    if (refused.size > 0) throw new Error(formatRefusedFiles(refused, root))
     throw new Error(
       `[nifra/web] client build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
     )
   }
 
-  // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes
-  // a browser polyfill) but breaks/leaks at runtime. Fail the build with a named, actionable error
-  // instead - caught at build time, not by a confused user in the browser. Graph-based (the metafile's
-  // per-output `inputs`), so it can't false-positive on a `"node:..."` string literal and survives
-  // minification. Only the client build runs this; the server build's `node:` imports are legitimate.
-  const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
-  const clientGraph = fromBunMetafile(clientMeta)
+  const emitted: EmittedFile[] = await Promise.all(
+    result.outputs.map(async (out): Promise<EmittedFile> => {
+      if (out.kind === "sourcemap") return { name: out.path, kind: "map", text: await out.text() }
+      if (out.kind === "asset") {
+        if (out.path.endsWith(".css"))
+          return { name: out.path, kind: "css", text: await out.text() }
+        const text = textOf(new Uint8Array(await out.arrayBuffer()))
+        return { name: out.path, kind: "asset", ...(text === undefined ? {} : { text }) }
+      }
+      return { name: out.path, kind: "code", text: await out.text() }
+    }),
+  )
+  const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath)
+  const verdict = verifyClientGraph(clientGraph, {
+    classifier,
+    sourceOf: bunModuleSource(cwd),
+    privateEnv,
+    refused: new Set(refused.keys()),
+  })
+  // Two independent records of one fact: a file the plugin refused that the graph never shows means the
+  // graph is missing evidence, and the build cannot prove anything else about it either.
+  const reported = new Set(verdict.leaks.map((leak) => resolvePath(root, leak.module)))
+  const unseen = [...refused.keys()].filter((file) => !reported.has(file))
+  const graphMessage = formatClientGraphVerdict(
+    unseen.length === 0
+      ? verdict
+      : {
+          ...verdict,
+          gaps: [
+            ...verdict.gaps,
+            ...unseen.map(
+              (file) => `${file} was refused while loading but is missing from the graph`,
+            ),
+          ],
+        },
+  )
+  if (graphMessage !== undefined) throw new Error(graphMessage)
   // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes a
   // browser polyfill) but breaks/leaks at runtime. Fail with the chain (entry → … → builtin), through the
   // SHARED formatter so the Vite pipeline's identical guard reads byte-for-byte the same.
   const nodeBuiltinLeak = formatNodeBuiltinLeak(detectNodeBuiltinsInClient(clientGraph))
   if (nodeBuiltinLeak !== undefined) throw new Error(nodeBuiltinLeak)
 
-  // §3.3/§5.1: a module that opted into the `server-only` marker yet reached a CLIENT chunk - catches
-  // pure-server logic (a secret, a server-only API call) carrying no `node:` import and not named
-  // `*.server`, so neither other guard fires. Same shared formatter as above.
+  // A module that imports the `backend-only` marker yet reached a client chunk: library code the zones
+  // cannot place on a side by path alone. Same shared formatter as the Vite pipeline.
   const serverOnlyLeak = formatServerOnlyLeak(detectServerOnlyInClient(clientGraph))
   if (serverOnlyLeak !== undefined) throw new Error(serverOnlyLeak)
 
+  const unaccounted = formatUnaccountedOutput(
+    accountEmittedFiles(emitted, clientGraph, {
+      classifier,
+      sourceOf: bunModuleSource(cwd),
+      outDir: resolvePath(outDir),
+    }),
+  )
+  if (unaccounted !== undefined) throw new Error(unaccounted)
+
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const { sources, originsOf } = graphScanInput(clientGraph, bunModuleSource(cwd), classifier)
+  const secrets = formatSecretFindings(
+    scanForSecrets({
+      sources,
+      artifacts: [
+        ...emitted.flatMap((file) => {
+          if (file.text === undefined) return []
+          const name = file.name.replace(/^\.\//, "")
+          return emittedScanFiles(name, file.text, originsOf(name))
+        }),
+        ...(publicDir !== undefined && existsSync(publicDir)
+          ? publicScanFiles(publicDir, originName(root, resolvePath(publicDir)))
+          : []),
+      ],
+      env: buildEnv,
+      publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+      ...(options.secretExemptions ? { exemptions: options.secretExemptions } : {}),
+    }),
+  )
+  if (secrets !== undefined) throw new Error(secrets)
+
+  const outputs = await Promise.all(
+    result.outputs.map(async (out) => {
+      const path = join(outDir, out.path)
+      await Bun.write(path, out)
+      return { kind: out.kind, path }
+    }),
+  )
+
   // Rename any chunk whose basename isn't URL-safe (dynamic-route files become `[slug]-hash.js`) and
   // rewrite the references - otherwise the lazy import 404s and the route silently never hydrates.
-  const renamed = sanitizeOutputNames(result.outputs)
+  const renamed = sanitizeOutputNames(outputs)
   const toUrl = (path: string): string =>
     `${publicPath}${renamed.get(basename(path)) ?? basename(path)}`
   // Entry-point outputs come back in entrypoint order: [bootstrap, ...routeFiles]. Map each route file
   // to its chunk URL by that order (guarded against drift), then a route's chunks = its layout chain +
   // own file.
-  const entryPoints = result.outputs.filter((o) => o.kind === "entry-point")
+  const entryPoints = outputs.filter((o) => o.kind === "entry-point")
   const bootstrap = entryPoints[0]
   if (bootstrap === undefined) throw new Error("[nifra/web] build produced no entry-point output")
   if (entryPoints.length !== routeFiles.length + 1) {
@@ -553,7 +671,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // per-route `cssBundle` outputs follow. Dropping those per-route outputs (the old `aggregate`-only
   // shape) left them in `manifest.assets` but not `css`, so a route-scoped stylesheet normalized to
   // `asset:css` and tripped the module-graph parity contract - a bundler-dependent divergence.
-  const cssAssets = result.outputs.filter((o) => o.kind === "asset" && o.path.endsWith(".css"))
+  const cssAssets = outputs.filter((o) => o.kind === "asset" && o.path.endsWith(".css"))
   const css: readonly string[] = [
     ...cssAssets.filter((o) => cssNameOf(o.path) === bootstrapName),
     ...cssAssets.filter((o) => cssNameOf(o.path) !== bootstrapName),
@@ -565,7 +683,6 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // same-basename collisions (`index.tsx` + `blog/index.tsx`) that a filename match can't. A page then
   // links only its layout chain + own CSS (deduped); an empty array means the page needs no CSS at all.
   // Absent (→ aggregate fallback) only if Bun emits no metafile/cssBundle - never silently incomplete.
-  const cwd = process.cwd()
   const cssByEntry = new Map<string, string>()
   for (const out of Object.values(clientMeta?.outputs ?? {})) {
     if (out.entryPoint !== undefined && out.cssBundle !== undefined) {
@@ -585,24 +702,35 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
   const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== resolvePath(entryFile))
   if (css.length > 0 && routeCssEntries.length > 0) {
+    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
+    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
+    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
     for (const route of routeManifest.routes) {
       routeStyles[route.id] = stylesFor([
         ...route.layoutIds.map((id) => routeManifest.layouts[id]?.file ?? ""),
         route.file,
+        ...loadingFiles,
       ])
     }
-    if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    if (routeManifest.notFound) {
+      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
+    }
+    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
+      routeStyles[id] = stylesFor([
+        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
+        page.file,
+      ])
+    }
   }
 
   // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
   // apps have none) and must not fail the build.
-  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const manifest: BuildManifest = {
     entry: toUrl(bootstrap.path),
-    assets: result.outputs.map((o) => toUrl(o.path)),
+    assets: outputs.map((o) => toUrl(o.path)),
     routes,
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
     ...(css.length > 0 ? { css } : {}),
@@ -661,6 +789,14 @@ export interface BuildServerOptions {
    * - on Cloudflare, ship them with wrangler's `no_bundle` + `find_additional_modules` + an ESModule
    * `rule` (Node/Deno import the chunks natively). Eager (one self-contained file) stays the default. */
   readonly lazy?: boolean
+  /** The app root the zone rules classify against (default: the directory holding `routesDir`). */
+  readonly root?: string
+  /** Modules a build tool wrote or names as an entry (the adapter module a generated entry imports).
+   * Like `serverEntry` and the generated manifest, they may import both halves of a route. */
+  readonly generatedFiles?: readonly string[]
+  /** The public-env prefix the app's browser code may read (default `"PUBLIC_"`). Shared code in
+   * the server bundle is held to it too. */
+  readonly publicEnvPrefix?: string
 }
 
 /** The built worker bundle - point your `wrangler.toml`'s `main` at `worker`. */
@@ -751,12 +887,55 @@ const SVELTE_DEDUPE_PATTERN = dedupePolicyFor("svelte").bunPattern ?? /^svelte($
  * fixed subpath list), Svelte has many internal subpaths, so each matched import is resolved dynamically.
  * `svelte/compiler` (build-time only, not in the bundle) doesn't match the filter and is left alone. No-op
  * when Svelte isn't used / isn't resolvable from `from`.
+ *
+ * Svelte is NOT condition-agnostic, unlike React and Preact: its bare entry maps `browser` to the client
+ * runtime and `default` to the server one. `Bun.resolveSync` answers for the process running the build -
+ * a server runtime - so pinning its answer put the SERVER entry into a browser bundle, where `hydrate`
+ * throws and the page never becomes interactive. For a browser bundle the package is therefore pinned by
+ * DIRECTORY and its export map is read with the bundle's own conditions.
  */
 export const svelteDedupePlugin = (from: string): BunPlugin => ({
   name: "nifra-svelte-dedupe",
   setup(build) {
+    // Absent when the plugin runs as a runtime plugin rather than inside `Bun.build`; a build with no
+    // `target` is a browser build (Bun's default).
+    const config = (
+      build as { config?: { target?: string; conditions?: string | readonly string[] } }
+    ).config
+    const browser = config !== undefined && (config.target ?? "browser") === "browser"
+    const conditions = new Set<string>([
+      "browser",
+      "import",
+      ...(typeof config?.conditions === "string"
+        ? [config.conditions]
+        : (config?.conditions ?? [])),
+    ])
+    // The pinned copy's export map, read once. `null` when Svelte is not resolvable from the app root.
+    let pinned: { readonly root: string; readonly map: Record<string, unknown> } | null | undefined
+    const pin = (): { readonly root: string; readonly map: Record<string, unknown> } | null => {
+      if (pinned !== undefined) return pinned
+      try {
+        const manifest = Bun.resolveSync("svelte/package.json", from)
+        const map = (JSON.parse(readFileSync(manifest, "utf8")) as { exports?: unknown }).exports
+        pinned =
+          typeof map === "object" && map !== null
+            ? { root: dirname(manifest), map: map as Record<string, unknown> }
+            : null
+      } catch {
+        pinned = null
+      }
+      return pinned
+    }
     build.onResolve({ filter: SVELTE_DEDUPE_PATTERN }, (args) => {
       try {
+        if (browser) {
+          const copy = pin()
+          const target =
+            copy === null
+              ? undefined
+              : exportTarget(copy.map[`.${args.path.slice("svelte".length)}`], conditions)
+          if (copy !== null && target !== undefined) return { path: join(copy.root, target) }
+        }
         return { path: Bun.resolveSync(args.path, from) }
       } catch {
         return undefined // not resolvable from the app root - leave Bun's default resolution
@@ -764,6 +943,19 @@ export const svelteDedupePlugin = (from: string): BunPlugin => ({
     })
   },
 })
+
+/** Walk one `exports` entry the way a resolver does: the first key, in the package's own order, that is
+ * an active condition (or `default`) wins. */
+function exportTarget(entry: unknown, conditions: ReadonlySet<string>): string | undefined {
+  if (typeof entry === "string") return entry
+  if (typeof entry !== "object" || entry === null) return undefined
+  for (const [key, value] of Object.entries(entry)) {
+    if (key !== "default" && !conditions.has(key)) continue
+    const target = exportTarget(value, conditions)
+    if (target !== undefined) return target
+  }
+  return undefined
+}
 
 /**
  * The app's declared single-copy rule, applied to the bundle.
@@ -781,33 +973,60 @@ const declaredSingleCopyPlugins = (root: string): readonly BunPlugin[] =>
   readSingleCopyDeclaration(root) === undefined ? [] : [declaredSingleCopyPlugin({ cwd: root })]
 
 /**
- * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,
- * `auth.server.ts`, …) is server-only - empty it in the browser bundle so its (possibly `node:` / native /
- * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default
- * import resolves to `undefined` rather than a "missing export" bundle error (verified), and the real
- * import subtree is gone. The complement to the node-builtin guard: when a server-only import is co-located
- * in a route file (so it can't be tree-shaken out and the guard fails loud), moving it into a `*.server`
- * module is the fix. CLIENT-only - buildServer keeps the real module, which runs server-side.
+ * Give each output chunk the specifiers its emitted code imports. Bun's metafile does not record them
+ * (its output `imports` stay empty even for an external the code keeps), so they are read from the code.
+ * A specifier under `publicPath` or relative to the chunk is mapped back to the output it names.
  */
-export const serverOnlyEmptyPlugin = (): BunPlugin => ({
-  name: "nifra-server-only-empty",
-  setup(build) {
-    build.onLoad({ filter: SERVER_ONLY_MODULE }, () => ({
-      contents: SERVER_ONLY_REPLACEMENT,
-      loader: "js",
-    }))
-  },
-})
+function withEmittedImports(
+  graph: ClientModuleGraph,
+  emitted: readonly EmittedFile[],
+  publicPath?: string,
+): ClientModuleGraph {
+  const scanner = new Bun.Transpiler({ loader: "js" })
+  const imports = new Map<string, string[]>()
+  for (const file of emitted) {
+    if (file.kind !== "code" || file.text === undefined) {
+      imports.set(posix.normalize(file.name), [])
+      continue
+    }
+    imports.set(
+      posix.normalize(file.name),
+      scanner.scanImports(file.text).map(({ path }) => {
+        if (publicPath !== undefined && path.startsWith(publicPath))
+          return path.slice(publicPath.length)
+        if (path.startsWith("./") || path.startsWith("../"))
+          return posix.join(posix.dirname(posix.normalize(file.name)), path)
+        return path
+      }),
+    )
+  }
+  const chunks: Record<string, ClientModuleGraph["chunks"][string]> = {}
+  // A chunk with no emitted file keeps no `imports`, which the verifiers treat as missing evidence.
+  for (const [path, chunk] of Object.entries(graph.chunks)) {
+    const kept = imports.get(posix.normalize(path))
+    chunks[path] = kept === undefined ? chunk : { ...chunk, imports: kept }
+  }
+  return { ...graph, chunks }
+}
+
+/** Refusals the bundler stopped on before it produced a graph, so without import chains. */
+function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string): string {
+  const lines = [...refused].map(([file, reason]) => {
+    const rel = relative(root, file).replaceAll("\\", "/")
+    return `  - ${rel.startsWith("..") ? file : rel}: ${reason}`
+  })
+  return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
+}
+
+export { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 
 /**
  * Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes
  * the server mounted, so the function bodies - and everything they import - never reach a browser.
  *
- * The sibling of {@link serverOnlyEmptyPlugin}, and a deliberate contrast: a `*.server` module is
- * EMPTIED because nothing may call it from the client, while a `*.fn` module is REPLACED because the
- * client is supposed to call it, just over HTTP. The generation itself is in
- * `internal/server-boundary.ts` so the Vite pipeline emits identical stubs from the same code; two
- * hand-written copies would be a client that works in dev and 404s in production.
+ * The generation itself is in `internal/server-boundary.ts` so the Vite pipeline emits identical stubs
+ * from the same code; two hand-written copies would be a client that works in dev and 404s in
+ * production.
  *
  * CLIENT-only. The server build keeps the real module, which is what `serverFunctions()` mounts.
  */
@@ -886,6 +1105,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     entrypoints: [serverEntry],
     outdir: outDir,
     target,
+    metafile: true,
     conditions: [...conditions],
     define: {
       ...(options.define ?? { "process.env.NODE_ENV": '"production"' }),
@@ -915,6 +1135,48 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
       `[nifra/web] server build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
     )
   }
+  // Named as the metafile names outputs: relative to `outdir`.
+  const nameOf = (path: string): string => relative(outDir, path).replaceAll("\\", "/")
+  const emitted = await Promise.all(
+    result.outputs.map(
+      async (out): Promise<EmittedFile> =>
+        out.kind === "sourcemap" || out.kind === "asset"
+          ? { name: nameOf(out.path), kind: out.kind === "sourcemap" ? "map" : "asset" }
+          : { name: nameOf(out.path), kind: "code", text: await out.text() },
+    ),
+  )
+  const serverGraph = withEmittedImports(
+    fromBunMetafile((result as unknown as { metafile?: BunMetafile }).metafile),
+    emitted,
+  )
+  const appRoot = resolvePath(options.root ?? dirname(routesDir))
+  const classifier = createZoneClassifier({
+    appRoot,
+    routesDir,
+    generatedFiles: [
+      serverEntry,
+      join(entryDir, manifestFile),
+      ...(options.generatedFiles ?? []),
+    ].map((file) => resolvePath(file)),
+  })
+  const sourceOf = bunModuleSource(process.cwd())
+  const labelOf = (id: string): string => {
+    const source = sourceOf(id)
+    return source.kind === "file" ? relative(appRoot, source.file).replaceAll("\\", "/") : id
+  }
+  const refusal =
+    formatServerGraphVerdict(
+      verifyServerGraph(serverGraph, {
+        classifier,
+        sourceOf,
+        privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
+      }),
+    ) ?? formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf), target)
+  if (refusal !== undefined) {
+    // Bun wrote the bundle already; a refused build leaves nothing a deploy step could pick up.
+    for (const output of result.outputs) rmSync(output.path, { force: true })
+    throw new Error(refusal)
+  }
   const entryOutput = result.outputs.find((o) => o.kind === "entry-point")
   if (entryOutput === undefined) {
     throw new Error("[nifra/web] server build produced no entry-point output")
@@ -931,12 +1193,37 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
 // …) - so we GENERATE it here (per target) instead of asking each app to ship five near-identical files.
 // ===================================================================================================
 
+/** The `createWebApp` options a generated server entry can import from the app's framework module. */
+export const SERVER_ENTRY_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
+/** Each importable option mapped to the specifier of the module that exports it. */
+export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>
+
+/**
+ * Where `c.clientIp` comes from in a generated server entry. Left out (the default), an edge target has
+ * no caller address at all and a self-hosting target uses the socket peer. `"platform"` also trusts the
+ * header an edge target's platform overwrites at its edge (see {@link PLATFORM_CLIENT_IP_HEADERS}); it
+ * changes nothing on a self-hosting target, whose socket peer is already the platform's answer.
+ */
+export type ServerEntryClientIp = "platform"
+
+/**
+ * The header each edge platform sets to the caller's address, replacing any value the client sent.
+ * That replacement is the whole trust: the same bundle served without the platform's edge in front
+ * (`wrangler pages dev`, a self-hosted workerd) hands the header straight from the client, which is
+ * why it is only believed on an explicit `clientIp: "platform"`.
+ */
+const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>> = {
+  cloudflare: "cf-connecting-ip",
+  vercel: "x-real-ip",
+}
+
 /**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
  * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires
  * the right host:
- *   - `cf-pages` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
+ *   - `cloudflare` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
  *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.
  *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those
  *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).
@@ -953,19 +1240,42 @@ export function generateServerEntry(options: {
   /** Import specifier for the module exporting `use`, or `undefined`. Must resolve to the
    * same edge-safe module as `adapterImport`. */
   readonly useImport?: string
+  /** `createWebApp` options to import by name, each mapped to the specifier of the edge-safe module
+   * that exports it. */
+  readonly optionImports?: ServerEntryOptionImports
   /** Document `<title>` passed to `createWebApp`. */
   readonly title?: string
   /** Encoded root-relative public file paths copied into the deploy directory. */
   readonly publicFiles?: readonly string[]
+  /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
+  readonly clientIp?: ServerEntryClientIp
 }): string {
   const {
     target,
     adapterImport,
     backendImport,
     useImport,
+    optionImports = {},
     title = "nifra",
     publicFiles = [],
+    clientIp,
   } = options
+  if (clientIp !== undefined && clientIp !== "platform") {
+    throw new Error(
+      `[nifra/web] generateServerEntry: clientIp must be "platform" or left out, got ${JSON.stringify(clientIp)}`,
+    )
+  }
+  const clientIpHeader = clientIp === "platform" ? PLATFORM_CLIENT_IP_HEADERS[target] : undefined
+  // Identifiers come only from the fixed list, never from the caller's keys, so generated code names
+  // nothing the list does not.
+  const importedOptions = SERVER_ENTRY_OPTIONS.filter((name) => optionImports[name] !== undefined)
+  const optionModules = new Map<string, string[]>()
+  for (const name of importedOptions) {
+    const from = optionImports[name] as string
+    const names = optionModules.get(from)
+    if (names === undefined) optionModules.set(from, [name])
+    else names.push(name)
+  }
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
@@ -973,21 +1283,24 @@ export function generateServerEntry(options: {
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
   if (useImport !== undefined) lines.push(`import { use } from ${JSON.stringify(useImport)}`)
+  for (const [from, names] of optionModules) {
+    lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(from)}`)
+  }
   if (backendImport !== undefined) {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
   lines.push(
     'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
   )
-  // cf-pages/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
-  const usesToFetch = target === "cf-pages" || target === "vercel" || target === "deno"
-  if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
+  // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
+  if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   lines.push(
     "",
     "const app = createWebApp({",
     "  adapter,",
     ...(useImport !== undefined ? ["  use,"] : []),
+    ...importedOptions.map((name) => `  ${name},`),
     "  manifest,",
     "  clientEntry,",
     "  styles,",
@@ -995,11 +1308,15 @@ export function generateServerEntry(options: {
     "  cssLoading,",
     ...(backendImport !== undefined ? ["  api: inProcessClient(backend),"] : []),
     `  title: ${JSON.stringify(title)},`,
+    // Core's own `{ header }` trust, so the mounted backend and every loader see the derived caller.
+    ...(clientIpHeader !== undefined
+      ? [`  server: { clientIp: { header: ${JSON.stringify(clientIpHeader)} } },`]
+      : []),
     "})",
     "",
   )
 
-  if (target === "cf-pages") {
+  if (target === "cloudflare") {
     // Cloudflare Pages advanced mode: `_routes.json` keeps static paths off the worker entirely, and
     // everything else falls through to this handler (SSR).
     //
@@ -1049,22 +1366,34 @@ export function generateServerEntry(options: {
     '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
     "  return segments.every(safe) ? '.' + pathname : undefined",
     "}",
-    'const TYPES = { js: "text/javascript", css: "text/css", map: "application/json" }',
+    // The type table and cache policy `servePublicDir` uses. Without a known type, Bun answers a file
+    // as an `application/octet-stream` attachment, which a browser downloads instead of showing.
+    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
+    "const staticHeaders = (pathname: string): Record<string, string> => ({",
+    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
+    `  "cache-control": pathname.startsWith("/assets/") ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
+    '  "x-content-type-options": "nosniff",',
+    "})",
   )
+  // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
+  // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
+  const markFramed =
+    '(req as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true'
   if (target === "bun") {
     lines.push(
       "const server = Bun.serve({",
       "  port: Number(Bun.env.PORT ?? 3000),",
-      "  async fetch(req) {",
+      "  async fetch(req, server) {",
       "    const { pathname } = new URL(req.url)",
       "    const filePath = staticPath(pathname)",
       "    if (filePath !== undefined) {",
       "      const file = Bun.file(new URL(filePath, STATIC_ROOT))",
       '      if (!(await file.exists())) return new Response("not found", { status: 404 })',
-      '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
-      '      return new Response(file, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+      "      return new Response(file, { headers: staticHeaders(pathname) })",
       "    }",
-      "    return app.fetch(req)",
+      `    ${markFramed}`,
+      "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
+      "    return app.fetch(req, { get clientIp() { return server.requestIP(req)?.address } })",
       "  },",
       "})",
       // The `${...}` here is literal OUTPUT (a template in the GENERATED file), not a template in this
@@ -1078,19 +1407,18 @@ export function generateServerEntry(options: {
       'import { readFile } from "node:fs/promises"',
       "await serve(",
       "  {",
-      "    async fetch(req) {",
+      "    async fetch(req, platform) {",
       "      const { pathname } = new URL(req.url)",
       "      const filePath = staticPath(pathname)",
       "      if (filePath !== undefined) {",
       "        try {",
       "          const body = await readFile(new URL(filePath, STATIC_ROOT))",
-      '          const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
-      '          return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+      "          return new Response(body, { headers: staticHeaders(pathname) })",
       "        } catch {",
       '          return new Response("not found", { status: 404 })',
       "        }",
       "      }",
-      "      return app.fetch(req)",
+      "      return app.fetch(req, platform)",
       "    },",
       "  },",
       "  { port: Number(process.env.PORT ?? 3000) },",
@@ -1100,22 +1428,21 @@ export function generateServerEntry(options: {
   }
   // deno
   lines.push(
-    "const handler = toFetchHandler(app)",
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req) => {',
+    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req, info) => {',
     "  const { pathname } = new URL(req.url)",
     "  const filePath = staticPath(pathname)",
     "  if (filePath !== undefined) {",
     "    try {",
     "      // @ts-ignore - Deno.readFile is present on the Deno runtime.",
     "      const body = await Deno.readFile(new URL(filePath, STATIC_ROOT))",
-    '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
-    '      return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+    "      return new Response(body, { headers: staticHeaders(pathname) })",
     "    } catch {",
     '      return new Response("not found", { status: 404 })',
     "    }",
     "  }",
-    "  return handler.fetch(req)",
+    `  ${markFramed}`,
+    "  return app.fetch(req, { clientIp: info.remoteAddr.hostname })",
     "})",
   )
   return `${lines.join("\n")}\n`
@@ -1155,6 +1482,9 @@ export interface BuildTargetOptions {
    * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe
    * module as `adapterImport`. */
   readonly useImport?: string
+  /** `createWebApp` options the server entry imports by name (`apiPrefix`, `mounts`, `csp`, ...), each
+   * mapped to the specifier (resolvable from `workDir`) of the same edge-safe module as `adapterImport`. */
+  readonly optionImports?: ServerEntryOptionImports
   /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the
    * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same
    * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known
@@ -1173,6 +1503,8 @@ export interface BuildTargetOptions {
   readonly publicDir?: string | false
   /** Prefix of environment variables allowed into the client bundle (default `"PUBLIC_"`). */
   readonly publicEnvPrefix?: string
+  /** Reviewed false positives of the secret scan over the bundle, `public/` and prerendered pages. */
+  readonly secretExemptions?: readonly SecretExemption[]
   /**
    * Vite-only CSS output policy. `false` emits one aggregate stylesheet. The native Bun build does not
    * support this switch and fails closed if it is supplied instead of silently ignoring it.
@@ -1187,6 +1519,9 @@ export interface BuildTargetOptions {
   readonly cssLoading?: CssLoadingMode
   /** Document `<title>` for the generated server entry. */
   readonly title?: string
+  /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by
+   * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */
+  readonly clientIp?: ServerEntryClientIp
 }
 
 /** Minimal app surface `buildTarget`'s static path needs - a fetch handler (a built `createWebApp`). */
@@ -1214,15 +1549,13 @@ export interface BuildTargetResult {
  * `<outDir>/assets/*`, then per target:
  *   - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+
  *     `_data.json`); needs `prerenderApp`. No server.
- *   - `cf-pages`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.
- *   - `vercel`: a `.vercel/output`-shaped function isn't emitted here - `vercel` emits the bundled edge
- *     entry as `<outDir>/index.js` (the CLI's docs point at `vercel`'s Build Output wrapper). [see note]
+ *   - `cloudflare`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.
+ *   - `vercel`: Vercel's Build Output API v3 - `config.json`, the client bundle and public files under
+ *     `static/`, and the edge function at `functions/index.func/index.js`; `vercel deploy --prebuilt`
+ *     uploads it as it is when `outDir` is `.vercel/output`.
  *   - `deno`/`node`/`bun`: the self-hosting server bundle (`server.js`) next to the assets.
  * The server entry is GENERATED (`generateServerEntry`) and bundled (`buildServer`); the app supplies
  * only adapter/backend/routes. Returns the manifest + a size report. Throws on any build failure.
- *
- * Note: the heavier platform wrappers (`.vercel/output` v3 layout, wrangler ISR `find_additional_modules`)
- * remain app-owned scripts; this command targets the common single-bundle deploys. See the CLI docs.
  */
 /** The default (Bun) strategy - `buildClient`/`buildServer` from this module. */
 export const bunBundler: Bundler = {
@@ -1243,6 +1576,7 @@ export const bunBundler: Bundler = {
       ...(input.cssCodeSplit !== undefined ? { cssCodeSplit } : {}),
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
     })
   },
   buildServer: (input) =>
@@ -1257,6 +1591,9 @@ export const bunBundler: Bundler = {
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
+      ...(input.root !== undefined ? { root: input.root } : {}),
+      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
+      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
     }),
 }
 
@@ -1284,15 +1621,16 @@ export async function buildTargetWith(
     options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
-  const targetPlan = planBuildTarget(target, outDir)
+  const targetPlan = planBuildTarget(parseBuildTarget(target), outDir)
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
-  const assetsDir = `${outDir}/assets`
+  const staticRoot = targetPlan.staticDir === "" ? outDir : `${outDir}/${targetPlan.staticDir}`
+  const assetsDir = `${staticRoot}/assets`
   mkdirSync(assetsDir, { recursive: true })
   mkdirSync(workDir, { recursive: true })
 
-  // (1) Client bundle → <outDir>/assets/* (every target ships the same hashed client bundle).
+  // (1) Client bundle → <static root>/assets/* (every target ships the same hashed client bundle).
   let client = await bundler.buildClient({
     routesDir,
     outDir: assetsDir,
@@ -1302,6 +1640,9 @@ export async function buildTargetWith(
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
     publicDir: false,
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+    ...(options.secretExemptions !== undefined
+      ? { secretExemptions: options.secretExemptions }
+      : {}),
     ...(requestedCssCodeSplit !== undefined ? { cssCodeSplit: requestedCssCodeSplit } : {}),
     ...(requestedCssLoading !== undefined ? { cssLoading: requestedCssLoading } : {}),
     root: resolvePath(dirname(routesDir)),
@@ -1316,8 +1657,21 @@ export async function buildTargetWith(
     options.publicDir === false
       ? undefined
       : resolvePath(options.publicDir ?? join(dirname(routesDir), "public"))
+  const secretScan = {
+    env: buildEnvironment(),
+    publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+    ...(options.secretExemptions !== undefined ? { exemptions: options.secretExemptions } : {}),
+  }
+  if (publicDir !== undefined && existsSync(publicDir)) {
+    assertNoSecrets({
+      ...secretScan,
+      artifacts: publicScanFiles(publicDir, originName(dirname(routesDir), publicDir)),
+    })
+  }
   const publicFiles =
-    publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
+    publicDir !== undefined && existsSync(publicDir)
+      ? await copyPublicDir(publicDir, staticRoot)
+      : []
   if (publicFiles.length > 0) {
     client = { ...client, publicFiles }
   }
@@ -1343,6 +1697,7 @@ export async function buildTargetWith(
       app,
       routes: manifest.routes,
       outDir,
+      secrets: secretScan,
     })
     if (result.prerendered.length === 0) {
       // A static build that renders nothing is almost always a misconfig (no `prerender = true` / no
@@ -1375,9 +1730,11 @@ export async function buildTargetWith(
       target,
       adapterImport: options.adapterImport,
       ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
+      ...(options.optionImports !== undefined ? { optionImports: options.optionImports } : {}),
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
+      ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
     }),
   )
   const { worker } = await bundler.buildServer({
@@ -1396,11 +1753,13 @@ export async function buildTargetWith(
         ? { cssLoading: requestedCssLoading }
         : {}),
     root: resolvePath(dirname(routesDir)),
+    generatedFiles: [resolvePath(workDir, options.adapterImport)],
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
   })
 
   // (3) Assemble the deploy dir for the target.
   const { cpSync } = await import("node:fs")
-  if (targetPlan.target === "cf-pages") {
+  if (targetPlan.target === "cloudflare") {
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
     // The app's real patterns, so a directory is only collapsed into a glob once the route table
     // proves nothing can be served beneath it.
@@ -1422,7 +1781,18 @@ export async function buildTargetWith(
       )
     }
   } else if (targetPlan.target === "vercel") {
+    const fn = dirname(`${outDir}/${targetPlan.outputFile}`)
+    mkdirSync(fn, { recursive: true })
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
+    writeFileSync(
+      `${fn}/.vc-config.json`,
+      `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
+    )
+    // Files the build wrote are served first; every other path is the SSR function's.
+    writeFileSync(
+      `${outDir}/config.json`,
+      `${JSON.stringify({ version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] }, null, 2)}\n`,
+    )
   } else {
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
   }

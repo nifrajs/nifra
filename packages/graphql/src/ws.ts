@@ -16,6 +16,7 @@
 import type { NifraWebSocket, WebSocketContext, WebSocketHandler } from "@nifrajs/core/ws"
 import {
   type DocumentNode,
+  type ExecutionResult,
   execute,
   GraphQLError,
   type GraphQLSchema,
@@ -149,10 +150,18 @@ function maskWsError(error: unknown): unknown {
   }
 }
 
-function maskWsFrame(message: string): string {
+/**
+ * A frame graphql-ws sends, execution errors masked. A `complete` or `error` frame ends its operation,
+ * so the id stops counting against `maxSubscriptions`: a client is not expected to complete an
+ * operation the server already ended.
+ */
+function outboundFrame(message: string, subscriptions: Set<string>): string {
   try {
     const parsed = recordOf(JSON.parse(message))
     if (parsed === undefined) return message
+    if ((parsed.type === "complete" || parsed.type === "error") && typeof parsed.id === "string") {
+      subscriptions.delete(parsed.id)
+    }
     if (parsed.type === "next") {
       const payload = recordOf(parsed.payload)
       if (payload !== undefined && Array.isArray(payload.errors)) {
@@ -171,11 +180,21 @@ function maskWsFrame(message: string): string {
   return message
 }
 
-async function withWsTimeout<T>(work: T | Promise<T>, timeoutMs: number): Promise<T> {
+/**
+ * A timeout is that operation's error result. graphql-ws does not catch a rejected execute or
+ * subscribe, so a rejection would end the whole socket instead of the one operation.
+ */
+async function withWsTimeout<T>(
+  work: T | Promise<T>,
+  timeoutMs: number,
+): Promise<T | ExecutionResult> {
   if (!(work instanceof Promise) || timeoutMs === 0) return work
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new GraphQLError("Execution timed out.")), timeoutMs)
+  const timeout = new Promise<ExecutionResult>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ errors: [new GraphQLError("Execution timed out.")] }),
+      timeoutMs,
+    )
   })
   try {
     return await Promise.race([work, timeout])
@@ -220,10 +239,14 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
     subscribe: subscribeWithTimeout,
     onConnect: options.onConnect
       ? async (ctx: GraphqlWsContext<Record<string, unknown>, { request: Request }>) => {
-          return await options.onConnect?.(
-            ctx.connectionParams as ConnectionInitMessage["payload"],
-            ctx.extra.request,
-          )
+          try {
+            return await options.onConnect?.(
+              ctx.connectionParams as ConnectionInitMessage["payload"],
+              ctx.extra.request,
+            )
+          } catch {
+            return false
+          }
         }
       : undefined,
     context: options.context
@@ -245,7 +268,7 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
         {
           protocol,
           send: async (data: string) => {
-            ws.send(maskWsFrame(data))
+            ws.send(outboundFrame(data, ws.data.subscriptions))
           },
           close: (code: number, reason: string) => {
             ws.close(code, reason)
@@ -257,7 +280,15 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
         { request: ws.data.request },
       )
       ws.data.closed = closed
-      ws.data.dispatch = (message: string) => onFrame?.(message)
+      ws.data.dispatch = async (message: string) => {
+        try {
+          await onFrame?.(message)
+        } catch {
+          // graphql-ws leaves a failed frame (a throwing context builder, say) to its socket adapter.
+          // Unhandled, the rejection would end a Bun or Node process; the protocol closes one socket.
+          ws.close(4500, "Internal server error")
+        }
+      }
     },
 
     message(ws: NifraWebSocket<GraphqlWsConnection>, data: string | Uint8Array): void {
@@ -302,7 +333,8 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
 
     close(ws: NifraWebSocket<GraphqlWsConnection>, code: number, reason: string): void {
       ws.data.subscriptions.clear()
-      void ws.data.closed?.(code, reason)
+      // The socket is gone: a failing iterator return() or onClose hook has no one left to answer.
+      void Promise.resolve(ws.data.closed?.(code, reason)).catch(() => {})
     },
   }
 }

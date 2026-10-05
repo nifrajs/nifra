@@ -1,17 +1,19 @@
 /**
- * `nifra_scaffold` - turn a URL path into the correct `routes/` file (the convention an agent most often
- * gets wrong) + a minimal, contract-correct stub. The mapping is the inverse of @nifrajs/web's
- * `filePathToPatterns`: `:id`/`[id]` → `[id]`, `*rest`/`[...rest]` → `[...rest]`, `[[lang]]` optional,
- * `/` → `index`. The framework (→ file extension) comes from the project's `clientModule`.
+ * `nifra_scaffold` - turn a URL path into the correct `routes/` files (the convention an agent most often
+ * gets wrong) + a minimal, contract-correct route pair: the page, and its `.backend.ts` half holding the
+ * loader and its output schema. The mapping is the inverse of @nifrajs/web's `filePathToPatterns`:
+ * `:id`/`[id]` → `[id]`, `*rest`/`[...rest]` → `[...rest]`, `[[lang]]` optional, `/` → `index`. The
+ * framework (→ file extension) comes from the project's `clientModule`.
  *
  * Page stubs are emitted for the JSX family (react/preact/solid - one shared, verified shape) and
  * for vanilla (a zero-runtime `html` page carrying the golden island pattern); for vue/svelte we
- * return the correct PATH + the route-module contract and point at `nifra_example` for the body,
- * rather than hand-writing an SFC we can't typecheck here.
+ * return the correct PATHS, the backend half and the route contract, and point at `nifra_example` for
+ * the page body, rather than hand-writing an SFC we can't typecheck here.
  */
 
 import { lstat, mkdir, realpath, writeFile } from "node:fs/promises"
-import { dirname, resolve, sep } from "node:path"
+import { basename, dirname, resolve, sep } from "node:path"
+import { paramConstraint } from "@nifrajs/core/pattern"
 
 export type Framework = "react" | "preact" | "solid" | "vue" | "svelte" | "vanilla"
 
@@ -52,6 +54,12 @@ function assertSafeRouteSegment(segment: string, urlPath: string): void {
       `invalid route segment in ${JSON.stringify(urlPath)}: ${JSON.stringify(segment)}`,
     )
   }
+  const brace = segment.indexOf("{")
+  if (segment.startsWith(":") && brace > 0 && paramConstraint(segment.slice(brace)) !== undefined) {
+    throw new Error(
+      `a param constraint cannot be written in a route file name: ${JSON.stringify(segment)} in ${JSON.stringify(urlPath)}. Scaffold the page without it and check the value in the route's loader.`,
+    )
+  }
   const fileSegment = segmentToFile(segment)
   if (
     fileSegment === "." ||
@@ -83,25 +91,69 @@ export function routePathToFile(urlPath: string, ext: string): string {
   return `routes/${segments.map(segmentToFile).join("/")}.${ext}`
 }
 
-const ROUTE_CONTRACT = `A route module may export:
-- \`export default function Page(props: { data: LoaderData<typeof loader> }) { … }\` - the page component.
-- \`export async function loader({ params, request, api }: LoaderArgs<typeof backend>) { … }\` - server-only; data for SSR. Reach the backend via \`api\` (typed) / DB via the backend, NEVER a top-level server-only import.
-- \`export async function action({ request, api }: ActionArgs<typeof backend>) { … }\` - server-only; handles the form POST.
-- \`export const meta = { title, meta:[…] }\` - head tags.
-Path params are typed on \`params\`.`
+const ROUTE_CONTRACT = `A route is two files:
+- The page, \`routes/x.<ext>\` - ships to the browser: \`export default function Page({ data }: Route.ComponentProps)\` and \`export const meta = { title, meta: […] }\`. It never imports backend code.
+- Its backend half, \`routes/x.backend.ts\` - never reaches the browser: \`export const loaderOutput = t.object({…})\` with \`export async function loader({ params, api }: Route.LoaderArgs)\` (data for SSR - only what the schema declares is sent), \`actionOutput\` with \`action\` (the form POST), and \`hydrate\`, \`islandScripts\`, \`revalidate\`, \`middleware\`. Reach the backend through the typed \`api\`.
+Both import \`type { Route } from "./+types/<name>"\`, which \`nifra dev\`, \`nifra build\`, \`nifra check\` and \`nifra types\` generate. Path params are typed on \`params\`.`
 
-function jsxStub(file: string, params: string[]): string {
-  const paramsNote =
-    params.length > 0 ? `params.${params.join(", params.")}` : "no path params on this route"
-  const loaderLine =
-    params.length > 0
-      ? `// export async function loader({ params, api }: LoaderArgs<typeof backend>) { return { /* fetch by ${params[0]} */ } }`
-      : `// export async function loader({ api }: LoaderArgs<typeof backend>) { return {} }`
-  return `// ${file} - server-only loader/action allowed; never top-level-import server-only code (DB/secrets).
-// Available here: ${paramsNote}. Fetch data in a loader via the typed \`api\`; see nifra_example("loader").
-${loaderLine}
-export default function Page() {
-  return <main>TODO: ${file}</main>
+interface RouteParam {
+  readonly name: string
+  readonly optional: boolean
+}
+
+/** Param names a route file declares, for the stubs. */
+function paramsOf(file: string): RouteParam[] {
+  const out: RouteParam[] = []
+  for (const m of file.matchAll(/(\[)?\[(?:\.\.\.)?([A-Za-z_][A-Za-z0-9_]*)\]/g))
+    out.push({ name: m[2] as string, optional: m[1] !== undefined })
+  return out
+}
+
+/** `./+types/<name>` for a route file: the generated module both halves import `Route` from. */
+const typesOf = (file: string): string => `./+types/${basename(file).replace(/\.[^.]+$/, "")}`
+
+/** `routes/users/[id].tsx` → `routes/users/[id].backend.ts`. */
+export const backendFileOf = (file: string): string => file.replace(/\.[^./]+$/, ".backend.ts")
+
+/** The page's backend half: its loader, and the schema that bounds what the loader sends. */
+function backendStub(file: string, params: readonly RouteParam[], vanilla: boolean): string {
+  const last = params.at(-1)
+  const loader =
+    last === undefined
+      ? `export async function loader(_args: Route.LoaderArgs) {
+  // Load through the typed backend client, \`api\` in these args; see nifra_example("loader").
+  return { title: "TODO" }
+}`
+      : `export async function loader({ params }: Route.LoaderArgs) {
+  // Load by params.${last.name} through the typed backend client, \`api\` in these args; see nifra_example("loader").
+  return { title: \`TODO: \${params.${last.name}${last.optional ? ' ?? ""' : ""}}\` }
+}`
+  const vanillaExports = vanilla
+    ? `
+
+// No client framework to hydrate with - vanilla routes are documents, not hydrated apps.
+export const hydrate = false
+
+// The built URL of each island enhancer this page renders a marker for (./<name>.client.ts).
+// export const islandScripts = []`
+    : ""
+  return `// ${backendFileOf(file)} - the server half of ${file}; it never reaches the browser.
+import { t } from "@nifrajs/schema"
+import type { Route } from "${typesOf(file)}"
+
+// Only what this schema declares is sent to the page.
+export const loaderOutput = t.object({ title: t.string() })
+
+${loader}${vanillaExports}
+`
+}
+
+function jsxStub(file: string): string {
+  return `// ${file} - the page; it ships to the browser. Its data comes from ${basename(backendFileOf(file))}.
+import type { Route } from "${typesOf(file)}"
+
+export default function Page({ data }: Route.ComponentProps) {
+  return <main>{data.title}</main>
 }
 `
 }
@@ -113,29 +165,20 @@ export default function Page() {
  * returns its cleanup (the one thing NF-C020 checks), wired through `mountIslands`. Interactivity is
  * added by uncommenting and writing the companion `<name>.client.ts`, never by turning on hydration.
  */
-function vanillaStub(file: string, params: string[]): string {
-  const paramsNote =
-    params.length > 0 ? `params.${params.join(", params.")}` : "no path params on this route"
-  const loaderLine =
-    params.length > 0
-      ? `// export async function loader({ params, api }: LoaderArgs<typeof backend>) { return { /* fetch by ${params[0]} */ } }`
-      : `// export async function loader({ api }: LoaderArgs<typeof backend>) { return {} }`
-  return `// ${file} - @nifrajs/web-vanilla route. Server-rendered HTML, ZERO framework runtime.
-// Available here: ${paramsNote}. Fetch data in a loader via the typed \`api\`; see nifra_example("loader").
+function vanillaStub(file: string): string {
+  return `// ${file} - @nifrajs/web-vanilla page. Server-rendered HTML, ZERO framework runtime; its data,
+// and \`hydrate = false\`, live in ${basename(backendFileOf(file))}.
 import { html } from "@nifrajs/web-vanilla"
+import type { Route } from "${typesOf(file)}"
 
-// No client framework to hydrate with - vanilla routes are documents, not hydrated apps.
-export const hydrate = false
-
-${loaderLine}
-
-export default function Page() {
-  return html\`<main><h1>TODO: ${file}</h1></main>\`
+export default function Page({ data }: Route.ComponentProps) {
+  return html\`<main><h1>\${data.title}</h1></main>\`
 }
 
 // --- Add interactivity the AI-safe way (islands), NOT hydration ---------------------------------
 // 1. Render a marker in the page above:  html\`<nifra-island data-id="counter" data-props=\${JSON.stringify({ start: 0 })}></nifra-island>\`
-// 2. Wire the route to its enhancer bundle:  export const islandScripts = [/* built URL of ./counter.client.ts */]
+// 2. Wire the route to its enhancer bundle, in ${basename(backendFileOf(file))}:
+//    export const islandScripts = [/* built URL of ./counter.client.ts */]
 // 3. Write ./counter.client.ts as an imperative enhancer that ALWAYS returns its cleanup:
 //
 //    import { defineIsland, mountIslands } from "@nifrajs/web/islands"
@@ -164,32 +207,20 @@ export default function Page() {
  * The page body is a valid, typecheckable static document; interactivity is added by writing the
  * companion client shown, never by turning on hydration.
  */
-function nanoStub(file: string, params: string[]): string {
-  const paramsNote =
-    params.length > 0 ? `params.${params.join(", params.")}` : "no path params on this route"
-  const loaderLine =
-    params.length > 0
-      ? `// export async function loader({ params, api }: LoaderArgs<typeof backend>) { return { /* seed by ${params[0]} */ } }`
-      : `// export async function loader({ api }: LoaderArgs<typeof backend>) { return {} }`
-  return `// ${file} - @nifrajs/web-vanilla route + a nano island (explicit reactivity, zero VDOM).
-// Available here: ${paramsNote}. Seed data in a loader via the typed \`api\`; see nifra_example("loader").
+function nanoStub(file: string): string {
+  return `// ${file} - @nifrajs/web-vanilla page + a nano island (explicit reactivity, zero VDOM). The
+// document is static and the nano client below owns all interactivity; \`hydrate = false\` and the
+// island's \`islandScripts\` URL live in ${basename(backendFileOf(file))}.
 import { html } from "@nifrajs/web-vanilla"
+import type { Route } from "${typesOf(file)}"
 
-// The document is static; the nano client below owns all interactivity. No hydration.
-export const hydrate = false
-
-${loaderLine}
-
-export default function Page() {
+export default function Page({ data }: Route.ComponentProps) {
   // The island marker: data-props is the initial state the client reads on mount.
   return html\`<main>
-    <h1>Todos</h1>
+    <h1>\${data.title}</h1>
     <nifra-island data-id="todos" data-props=\${JSON.stringify({ items: [] })}></nifra-island>
   </main>\`
 }
-
-// Wire the route to the built URL of ./todos.client.ts (the nano enhancer below).
-// export const islandScripts = [/* built URL of ./todos.client.ts */]
 
 // --- ./todos.client.ts - the golden nano pattern (write this as a companion file) -----------------
 //
@@ -234,17 +265,13 @@ export default function Page() {
 `
 }
 
-/** Param names a route file declares, for the stub's notes. */
-function paramsOf(file: string): string[] {
-  const out: string[] = []
-  for (const m of file.matchAll(/\[(?:\.\.\.)?([A-Za-z_][A-Za-z0-9_]*)\]/g))
-    out.push(m[1] as string)
-  return out
-}
-
 export interface ScaffoldResult {
+  /** The page file. */
   readonly file: string
+  /** The page stub, when there is a verified one for the framework. */
   readonly content?: string
+  /** The page's backend half - framework-independent, so always present. */
+  readonly backend: { readonly file: string; readonly content: string }
   readonly note: string
 }
 
@@ -253,8 +280,9 @@ export interface ScaffoldWriteResult extends ScaffoldResult {
   readonly reason?: string
 }
 
-/** Scaffold a page route for `urlPath` under the project's `framework`. Returns the correct file path
- * always; a ready-to-write stub for the JSX family, contract guidance otherwise. */
+/** Scaffold a page route for `urlPath` under the project's `framework`. Returns the correct file paths
+ * and the backend half always; a ready-to-write page stub for the JSX family and vanilla, contract
+ * guidance otherwise. */
 export function scaffoldRoute(
   urlPath: string,
   framework: Framework,
@@ -263,32 +291,40 @@ export function scaffoldRoute(
   const ext = EXT[framework]
   const file = routePathToFile(urlPath, ext)
   const params = paramsOf(file)
+  const backend = {
+    file: backendFileOf(file),
+    content: backendStub(file, params, framework === "vanilla"),
+  }
   // `stateful` is vanilla-only: it swaps the static island stub for the nano golden pattern. Asking
   // for it on a JSX/SFC framework is a no-op on the flavour (those lanes have their own reactivity).
   if (framework === "vanilla" && variant === "stateful") {
     return {
       file,
-      content: nanoStub(file, params),
-      note: `Create ${file} as a zero-runtime @nifrajs/web-vanilla route with a nano island. ${ROUTE_CONTRACT}\nThe stub embeds the golden nano client (signal + computed(fn,[deps]) + keyed bindList + collected cleanups); write it as the companion .client.ts. \`nifra check\` runs NF-C021/C022/C023 over it; nifra_docs("nano") is the full cookbook.`,
+      content: nanoStub(file),
+      backend,
+      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route with a nano island. ${ROUTE_CONTRACT}\nThe stub embeds the golden nano client (signal + computed(fn,[deps]) + keyed bindList + collected cleanups); write it as the companion .client.ts. \`nifra check\` runs NF-C021/C022/C023 over it; nifra_docs("nano") is the full cookbook.`,
     }
   }
   if (framework === "react" || framework === "preact" || framework === "solid") {
     return {
       file,
-      content: jsxStub(file, params),
-      note: `Create ${file}. ${ROUTE_CONTRACT}\nIf the rendered page misbehaves (hydration warning, a value that stops updating), call nifra_frontend { adapter: "${framework}" } for the cause + fix.`,
+      content: jsxStub(file),
+      backend,
+      note: `Create ${file} and ${backend.file}. ${ROUTE_CONTRACT}\nIf the rendered page misbehaves (hydration warning, a value that stops updating), call nifra_frontend { adapter: "${framework}" } for the cause + fix.`,
     }
   }
   if (framework === "vanilla") {
     return {
       file,
-      content: vanillaStub(file, params),
-      note: `Create ${file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook. For explicit local state (a list a human edits), scaffold with variant "stateful" to get the nano pattern instead.`,
+      content: vanillaStub(file),
+      backend,
+      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook. For explicit local state (a list a human edits), scaffold with variant "stateful" to get the nano pattern instead.`,
     }
   }
   return {
     file,
-    note: `Create ${file} as a ${framework} route module. ${ROUTE_CONTRACT}\nFor the ${framework} page body, call nifra_example (it ships verified ${framework} snippets) rather than guessing the SFC shape. If a value stops updating the template, call nifra_frontend { adapter: "${framework}" } for the ${framework} reactivity-loss fix.`,
+    backend,
+    note: `Create ${file} as a ${framework} route module, and ${backend.file} from the stub below. ${ROUTE_CONTRACT}\nFor the ${framework} page body, call nifra_example (it ships verified ${framework} snippets) rather than guessing the SFC shape. If a value stops updating the template, call nifra_frontend { adapter: "${framework}" } for the ${framework} reactivity-loss fix.`,
   }
 }
 
@@ -333,9 +369,11 @@ async function assertNoSymlinkedAncestors(root: string, target: string): Promise
   }
 }
 
-/** Write a scaffolded route stub when the framework has a verified ready-to-write body. The write is
- * intentionally conservative: it refuses non-JSX stubs (where we only return contract guidance) and
- * uses `wx`, so an agent cannot overwrite user work by accident. */
+/** Write a scaffolded route pair when the framework has a verified ready-to-write page body. The write
+ * is intentionally conservative: it refuses frameworks where we only return contract guidance (a
+ * backend half alone is a build error), refuses when either file exists, and uses `wx`, so an agent
+ * cannot overwrite user work by accident. It then generates the route's `./+types` module, so both
+ * halves typecheck at once. */
 export async function writeScaffoldRoute(
   cwd: string,
   urlPath: string,
@@ -350,22 +388,35 @@ export async function writeScaffoldRoute(
       reason: "no verified ready-to-write stub for this framework; use nifra_example for the body",
     }
   }
-  const target = resolveInsideRoutes(cwd, result.file)
-  await assertNoSymlinkedAncestors(cwd, target)
-  await mkdir(dirname(target), { recursive: true })
-  await assertNoSymlinkedAncestors(cwd, target)
-  try {
-    await writeFile(target, result.content, { flag: "wx" })
-  } catch (err) {
-    if (err && typeof err === "object" && (err as { code?: string }).code === "EEXIST") {
-      return { ...result, written: false, reason: `file already exists: ${result.file}` }
+  const files = [
+    { file: result.file, content: result.content },
+    { file: result.backend.file, content: result.backend.content },
+  ]
+  const targets = files.map(({ file }) => resolveInsideRoutes(cwd, file))
+  for (const target of targets) await assertNoSymlinkedAncestors(cwd, target)
+  for (const [i, target] of targets.entries()) {
+    if ((await lstat(target).catch(() => undefined)) !== undefined) {
+      return { ...result, written: false, reason: `file already exists: ${files[i]?.file}` }
     }
-    throw err
   }
+  await mkdir(dirname(targets[0] as string), { recursive: true })
+  for (const target of targets) await assertNoSymlinkedAncestors(cwd, target)
+  for (const [i, target] of targets.entries()) {
+    try {
+      await writeFile(target, files[i]?.content ?? "", { flag: "wx" })
+    } catch (err) {
+      if (err && typeof err === "object" && (err as { code?: string }).code === "EEXIST") {
+        return { ...result, written: false, reason: `file already exists: ${files[i]?.file}` }
+      }
+      throw err
+    }
+  }
+  const { refreshRouteTypes } = await import("./route-types.ts")
+  refreshRouteTypes(cwd, () => {})
   return { ...result, written: true }
 }
 
-/** Render the tool result as markdown - the file path, the stub (if any), and the contract note. */
+/** Render the tool result as markdown - the file paths, the stubs (if any), and the contract note. */
 export function renderScaffold(
   urlPath: string,
   framework: Framework,
@@ -377,6 +428,7 @@ export function renderScaffold(
   } catch (err) {
     return `Cannot scaffold ${JSON.stringify(urlPath)}: ${err instanceof Error ? err.message : String(err)}`
   }
-  const stub = r.content ? `\n\n\`\`\`${EXT[framework]}\n${r.content}\`\`\`` : ""
-  return `# Scaffold route \`${urlPath}\` (${framework})\n\n**File:** \`${r.file}\`\n\n${r.note}${stub}`
+  const page = r.content ? `\n\n\`${r.file}\`:\n\n\`\`\`${EXT[framework]}\n${r.content}\`\`\`` : ""
+  const backend = `\n\n\`${r.backend.file}\`:\n\n\`\`\`ts\n${r.backend.content}\`\`\``
+  return `# Scaffold route \`${urlPath}\` (${framework})\n\n**Files:** \`${r.file}\` + \`${r.backend.file}\`\n\n${r.note}${page}${backend}`
 }

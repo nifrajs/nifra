@@ -9,6 +9,8 @@ import { readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { scriptKindOf } from "./internal/script-kind.ts"
 import type { SourceFacts } from "./internal/source-facts.ts"
 import {
   loadProjectTypeScript,
@@ -52,21 +54,67 @@ const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
  * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */
 const normalizeProjectPath = (path: string): string => path.replaceAll("\\", "/")
 
-// A file under `routes/` - a page module bundled for the browser, where a server-only import is unsafe.
-const ROUTE_FILE = /(^|\/)routes\//
+// Browser code by path, mirroring `@nifrajs/web/zones`: a suffix decides first, then the folder. A
+// route's backend half (`x.backend.ts`), `backend/` and `*.fn.ts` run on the server only.
+const BACKEND_SUFFIX = /\.backend\.[cm]?[jt]sx?$/
+const BROWSER_SUFFIX = /\.(?:frontend|shared)\.[^/]+$/
+const BROWSER_FOLDER = /(^|\/)(?:routes|frontend|shared)\//
+const BACKEND_FOLDER = /(^|\/)backend\//
+const SERVER_FN_FILE = /\.fn\.[cm]?[jt]sx?$/
+
+/** Whether a project file is browser code: a route's frontend half, `frontend/` or `shared/`. Pure. */
+export function isBrowserSource(file: string): boolean {
+  const path = normalizeProjectPath(file)
+  if (BACKEND_SUFFIX.test(path) || SERVER_FN_FILE.test(path)) return false
+  if (BROWSER_SUFFIX.test(path)) return true
+  return BROWSER_FOLDER.test(path) && !BACKEND_FOLDER.test(path)
+}
+
+/** Whether a resolved module is backend code a browser import may not reach (a `*.fn.ts` module ships
+ * as its generated stub, so it is not). A legacy `*.server` module counts: the build refuses it. */
+function isBackendModule(file: string): boolean {
+  const path = normalizeProjectPath(file)
+  if (SERVER_FN_FILE.test(path)) return false
+  return (
+    BACKEND_SUFFIX.test(path) ||
+    LEGACY_SERVER_FILE.test(path) ||
+    (BACKEND_FOLDER.test(path) && !BROWSER_SUFFIX.test(path))
+  )
+}
 
 // Module specifiers that must never be VALUE-imported into a route module: node:/bun: builtins, common
 // DB drivers/ORМ server entrypoints, and the conventional `./db` module the scaffold generates.
 const SERVER_ONLY =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b|^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
 
-// A static, non-type import with a string specifier. `import type …` is erased at build, so it's safe
-// and skipped. Dynamic `import(…)` (the correct way to lazy-load server code in a loader) has `(` right
-// after `import`, so `import\s+` never matches it.
-const STATIC_IMPORT = /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?['"]([^'"]+)['"]/g
+// A static, non-type import with a string specifier, or a re-export (`export … from "x"`), which
+// pulls its module into the bundle the same way. `import type …` and `export type …` are erased at
+// build, so they're safe and skipped. Dynamic `import(…)` has `(` right after `import`, so `import\s+`
+// never matches it; it is read by DYNAMIC_IMPORT below.
+// The clause between the keyword and `from` is spelled out (a default binding, then `* as ns` or a
+// `{ … }` list) rather than scanned lazily: a lazy scan restarts at every `export const` line and is
+// quadratic on a long semicolon-free module.
+const STATIC_IMPORT =
+  /\b(?:import\s*(?!type\b)(?:(?:[\w$]+\s*,?\s*)?(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)?from\s*)?|export\s*(?!type\b)(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)from\s*)['"]([^'"]+)['"]/g
+// A dynamic `import("x")` whose specifier is one string literal. The client build bundles its target
+// as a lazy chunk, so it reaches the browser bundle like a static import does - also from inside a
+// loader, which ships with the route module. A computed specifier cannot be followed and is skipped.
+const DYNAMIC_IMPORT = /(?<![\w$.])import\s*\(\s*(["'`])([^"'`$\\\r\n]+)\1\s*[,)]/g
+// Without a parser: `typeof import("x")` and `import("x").Name` are type positions, erased at build.
+// A runtime `import("x")` is a promise, so the only members read straight off it are its methods.
+const TYPE_QUERY_BEFORE = /\btypeof\s*$/
+const TYPE_QUALIFIER_AFTER = /^\s*\.\s*(?!(?:then|catch|finally)\b)[A-Za-z_$]/
 
 const ROUTE_REGISTRATION_DQ = /\.([A-Za-z]+)\s*\(\s*"((?:\\.|[^"\\])*)"/g
 const ROUTE_REGISTRATION_SQ = /\.([A-Za-z]+)\s*\(\s*'((?:\\.|[^'\\])*)'/g
+// `all("/path", ...)` and `method("PURGE", "/path", ...)` / `method(["GET", "PURGE"], "/path", ...)`
+// from `@nifrajs/core/methods`. They are free function calls, so the member-call patterns above do
+// not see them.
+const METHODS_SUBPATH = "@nifrajs/core/methods"
+const ALL_ROUTES = /(?<![\w$.])all\s*\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')/g
+const METHOD_ROUTES =
+  /(?<![\w$.])method\s*\(\s*(\[[^\]]*\]|"[^"\\]*"|'[^'\\]*')\s*,\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')/g
+const METHOD_NAME_LITERAL = /(["'])([A-Za-z][A-Za-z0-9-]{0,31})\1/g
 export const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 export interface StaticRouteFinding extends SourceFinding {
@@ -521,7 +569,64 @@ export function scanStaticRouteText(
   return [
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
+    ...(code.includes(METHODS_SUBPATH) ? scanMethodRoutes(file, content, code, facts) : []),
   ].sort(bySite)
+}
+
+/** Routes from `all()` and `method()`, one per literal method name; a computed name is not guessed. */
+function scanMethodRoutes(
+  file: string,
+  content: string,
+  code: string,
+  facts?: SourceFacts,
+): StaticRouteFinding[] {
+  const out: StaticRouteFinding[] = []
+  const lines = content.split("\n")
+  const collect = (
+    index: number,
+    callee: string,
+    pathIndex: number,
+    rawPath: string | undefined,
+    quote: string,
+    methods: readonly string[],
+  ): void => {
+    const path = parseQuotedLiteral(`${quote}${rawPath ?? ""}${quote}`)
+    if (path === undefined || !path.startsWith("/") || path.startsWith("//")) return
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      // Same contract as a member-call registration: a parsed source is authoritative, an
+      // unparseable one keeps the lexical finding.
+      if (
+        source !== undefined &&
+        facts.isFunctionRouteCallAt(source, index, callee, pathIndex, path) !== true
+      )
+        return
+    }
+    const line = lineAt(content, index)
+    const snippet = (lines[line - 1] ?? "").trim()
+    for (const method of methods) out.push({ file, line, snippet, method, path })
+  }
+
+  ALL_ROUTES.lastIndex = 0
+  for (let m = ALL_ROUTES.exec(code); m !== null; m = ALL_ROUTES.exec(code)) {
+    const double = m[1] !== undefined
+    collect(m.index, "all", 0, double ? m[1] : m[2], double ? '"' : "'", [...HTTP_VERBS])
+  }
+  METHOD_ROUTES.lastIndex = 0
+  for (let m = METHOD_ROUTES.exec(code); m !== null; m = METHOD_ROUTES.exec(code)) {
+    const names = new Set<string>()
+    METHOD_NAME_LITERAL.lastIndex = 0
+    for (
+      let name = METHOD_NAME_LITERAL.exec(m[1] ?? "");
+      name !== null;
+      name = METHOD_NAME_LITERAL.exec(m[1] ?? "")
+    ) {
+      names.add((name[2] ?? "").toUpperCase())
+    }
+    const double = m[2] !== undefined
+    collect(m.index, "method", 1, double ? m[2] : m[3], double ? '"' : "'", [...names])
+  }
+  return out
 }
 
 /**
@@ -704,8 +809,15 @@ function parseSqlSource(
   file: string,
   content: string,
 ): TSApi.SourceFile | undefined {
-  const kind = /\.[cm]?tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+  const kind = scriptKindOf(ts, file)
+  let source: TSApi.SourceFile
+  try {
+    source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+  } catch {
+    // TypeScript 7 parses only the files its session preloaded; an imported module outside that set
+    // proves no constant, like one that does not parse.
+    return undefined
+  }
   const parseDiagnostics = (
     source as TSApi.SourceFile & { readonly parseDiagnostics?: readonly TSApi.Diagnostic[] }
   ).parseDiagnostics
@@ -1394,6 +1506,18 @@ export const REMOVED_IMPORTS: ReadonlyArray<{
       'import from "@nifrajs/core/budget" - the package folded into core and npm `latest` is still 1.13.0, so a `^2` range resolves to nothing',
   },
   {
+    specifier: "@nifrajs/web/server-only",
+    since: "4.0",
+    replacement:
+      'import "@nifrajs/web/backend-only" - and keep backend code under backend/ or in a route\'s x.backend.ts, where no browser build reaches it',
+  },
+  {
+    specifier: "@nifrajs/web/plugins/vite-server-only",
+    since: "4.0",
+    replacement:
+      "nothing - buildClientVite and the Vite dev server enforce the frontend/backend zones themselves; for a hand-built Vite config use viteLeakGuard from @nifrajs/web/plugins/vite-leak-guard",
+  },
+  {
     specifier: "@nifrajs/core/ws",
     since: "2.0",
     sideEffectOnly: true,
@@ -1411,12 +1535,13 @@ function isSideEffectImport(content: string, index: number): boolean {
   return /^import\s*["'`]/.test(content.slice(index, index + 32))
 }
 
-/** Flag an import of a specifier that no longer exists. Pure; matches the exact specifier or a subpath
- * of it, so `@nifrajs/budget/x` is caught alongside `@nifrajs/budget`. */
+/** Flag an import of a specifier that no longer exists, or of a name that moved to a subpath
+ * ({@link MOVED_EXPORTS}). Pure; matches the exact specifier or a subpath of it, so `@nifrajs/budget/x`
+ * is caught alongside `@nifrajs/budget`. */
 export function scanRemovedImports(file: string, content: string): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  for (const edge of staticImportEdges(content)) {
+  for (const edge of importEdges(content)) {
     const removed = REMOVED_IMPORTS.find(
       (entry) =>
         edge.specifier === entry.specifier || edge.specifier.startsWith(`${entry.specifier}/`),
@@ -1426,35 +1551,113 @@ export function scanRemovedImports(file: string, content: string): SourceFinding
     const line = lineAt(content, edge.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
+  // A moved name's snippet is the whole statement on one line: the rule re-reads the site from it.
+  for (const site of movedExportSites(content)) {
+    const snippet = content.slice(site.index, site.end).replace(/\s+/g, " ")
+    out.push({ file, line: lineAt(content, site.index), snippet })
+  }
   return out
 }
 
-/** Scan a route module for top-level server-only imports. Returns `[]` for non-route files (only
- * `routes/` modules are browser-bundled, so a server-only import elsewhere is fine). Each finding carries
- * the offending `specifier` so the diagnostic can render the `routeFile → specifier` chain. Pure. */
+/**
+ * Named exports that left a module for one of its subpaths, and where they went.
+ *
+ * Unlike a removed specifier, a moved name does fail the typecheck - but that error names neither the
+ * new home nor a fix. Listing it here gives the diagnostic both, and `nifra fix --code NF-C005`
+ * rewrites the import ({@link rewriteMovedExports}).
+ */
+export const MOVED_EXPORTS: ReadonlyArray<{
+  readonly from: string
+  readonly names: readonly string[]
+  readonly to: string
+}> = [
+  // Compiler plugins sit on their own subpath so the adapter root, which every server and edge bundle
+  // links, never pulls in build-time code.
+  { from: "@nifrajs/web-solid", names: ["solidBunPlugin"], to: "@nifrajs/web-solid/plugin" },
+  { from: "@nifrajs/web-svelte", names: ["svelteBunPlugin"], to: "@nifrajs/web-svelte/plugin" },
+]
+
+/** `import { a, b as c } from "x"` and `export { a } from "x"` - the forms a moved name is reached by.
+ * `import type` / `export type` never match, so a type-only import is left to tsc as elsewhere here. */
+const NAMED_FROM = /\b(import|export)\s*\{([^{}]*)\}\s*from\s*(["'])([^"'\n]+)\3;?/g
+
+export interface MovedExportSite {
+  /** Statement span in the scanned source, `end` exclusive (a trailing `;` included). */
+  readonly index: number
+  readonly end: number
+  readonly keyword: string
+  readonly quote: string
+  readonly from: string
+  readonly to: string
+  /** Binding texts as written (`a`, `a as b`), split by whether they move. */
+  readonly kept: readonly string[]
+  readonly moved: readonly string[]
+}
+
+/** Every import/re-export statement naming a {@link MOVED_EXPORTS} binding, in source order. Pure. */
+export function movedExportSites(content: string): MovedExportSite[] {
+  const positions = codePositionMask(content)
+  const sites: MovedExportSite[] = []
+  const re = new RegExp(NAMED_FROM.source, NAMED_FROM.flags)
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    if (positions[m.index] === " ") continue
+    const entry = MOVED_EXPORTS.find((candidate) => candidate.from === m?.[4])
+    if (entry === undefined) continue
+    const bindings = (m[2] ?? "")
+      .split(",")
+      .map((binding) => binding.trim())
+      .filter((binding) => binding !== "")
+    const moves = (binding: string): boolean =>
+      !binding.startsWith("type ") && entry.names.includes(binding.split(/\s+/)[0] ?? "")
+    const moved = bindings.filter(moves)
+    if (moved.length === 0) continue
+    sites.push({
+      index: m.index,
+      end: m.index + m[0].length,
+      keyword: m[1] ?? "import",
+      quote: m[3] ?? '"',
+      from: entry.from,
+      to: entry.to,
+      kept: bindings.filter((binding) => !moves(binding)),
+      moved,
+    })
+  }
+  return sites
+}
+
+/** Point every moved binding at the module it moved to, leaving the rest of its statement in place.
+ * Returns `content` unchanged when nothing moved, so applying it twice is a no-op. Pure. */
+export function rewriteMovedExports(content: string): string {
+  let out = content
+  for (const site of movedExportSites(content).reverse()) {
+    const semicolon = content[site.end - 1] === ";" ? ";" : ""
+    const statement = (bindings: readonly string[], from: string): string =>
+      `${site.keyword} { ${bindings.join(", ")} } from ${site.quote}${from}${site.quote}${semicolon}`
+    const replacement =
+      site.kept.length === 0
+        ? statement(site.moved, site.to)
+        : `${statement(site.kept, site.from)}\n${statement(site.moved, site.to)}`
+    out = out.slice(0, site.index) + replacement + out.slice(site.end)
+  }
+  return out
+}
+
+/** Scan a browser module for server-only imports, static or a literal dynamic `import()`. Returns `[]`
+ * for server code ({@link isBrowserSource}), where a server-only import is fine. Each finding carries
+ * the offending `specifier` so the diagnostic can render the `file → specifier` chain. Pure. */
 export function scanServerOnlyImports(
   file: string,
   content: string,
   facts?: SourceFacts,
 ): ServerImportFinding[] {
-  if (!ROUTE_FILE.test(file)) return []
+  if (!isBrowserSource(file)) return []
   const out: ServerImportFinding[] = []
   const lines = content.split("\n")
-  const code = stripComments(content)
-  const positions = codePositionMask(content)
-  STATIC_IMPORT.lastIndex = 0
-  for (let m = STATIC_IMPORT.exec(code); m !== null; m = STATIC_IMPORT.exec(code)) {
-    if (positions[m.index] === " ") continue
-    const specifier = m[1] ?? ""
+  // Inline `import { type X } from "…"` is erased just like `import type` and is not an edge; a parse
+  // failure keeps the lexical edge so the security rule fails closed.
+  for (const { specifier, index } of importEdges(content, facts, file)) {
     if (!SERVER_ONLY.test(specifier)) continue
-    if (facts !== undefined) {
-      const source = facts.parse(file, content)
-      // Inline `import { type X } from "…"` is erased just like `import type`; don't call it a
-      // runtime leak. A parse failure keeps the old lexical finding so the security rule fails closed.
-      if (source !== undefined && facts.isValueImportAt(source, m.index, specifier) === false)
-        continue
-    }
-    const line = lineAt(content, m.index)
+    const line = lineAt(content, index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), specifier })
   }
   return out
@@ -1475,11 +1678,11 @@ export function scanServerOnlyImports(
 // as SERVER_ONLY, minus the relative `../db` arm - a relative `db` module IS local source we resolve.)
 const SERVER_ONLY_SINK =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b/
-// The `.server` convention: a module named `*.server.ts(x)` is server-only (the client build empties it).
-const SERVER_MODULE_FILE = /\.server(\.[cm]?[jt]sx?)?$/
-// The explicit poison-import marker (`@nifrajs/web/server-only`) - a module opting into the client-leak
-// guard. A resolved file whose source carries this side-effect import is a server-only sink.
-const SERVER_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/server-only["']/
+// The retired `*.server` convention. Builds refuse such a module in browser code rather than empty it.
+const LEGACY_SERVER_FILE = /\.server(\.[cm]?[jt]sx?)?$/
+// The explicit poison-import marker (`@nifrajs/web/backend-only`, or its retired `server-only` name) - a
+// module opting into the client-leak guard. A resolved file carrying this side-effect import is a sink.
+const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|server)-only["']/
 // Depth/visited caps keep the walk linear + cycle-safe. A route's server-only dependency sits within a
 // few hops in practice; the bound stops a pathological graph from blowing up the per-file scan.
 const TRANSITIVE_MAX_DEPTH = 8
@@ -1504,11 +1707,11 @@ function staticImportEdges(
   content: string,
   facts?: SourceFacts,
   file?: string,
+  positions: string = codePositionMask(content),
 ): Array<{ specifier: string; index: number }> {
   const edges: Array<{ specifier: string; index: number }> = []
   const re = staticImportRegex()
   const code = stripComments(content)
-  const positions = codePositionMask(content)
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     if (positions[m.index] === " ") continue
     if (m[1] === undefined) continue
@@ -1525,6 +1728,68 @@ function staticImportEdges(
  * Mirrors {@link STATIC_IMPORT}, so `import type` + dynamic `import()` are already excluded. Pure. */
 export function parseStaticImports(content: string, facts?: SourceFacts, file?: string): string[] {
   return staticImportEdges(content, facts, file).map((e) => e.specifier)
+}
+
+/** The literal dynamic `import("x")` calls in executable code, skipping type positions. With `facts`
+ * the parser decides; without it (or when it cannot tell) the lexical rule does. Pure. */
+function dynamicImportEdges(
+  content: string,
+  facts?: SourceFacts,
+  file?: string,
+  positions: string = codePositionMask(content),
+): Array<{ specifier: string; index: number }> {
+  const edges: Array<{ specifier: string; index: number }> = []
+  const re = new RegExp(DYNAMIC_IMPORT.source, DYNAMIC_IMPORT.flags)
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    if (positions[m.index] === " ") continue // inside a comment or a string
+    const specifier = m[2]
+    if (specifier === undefined) continue
+    const source =
+      facts !== undefined && file !== undefined ? facts.parse(file, content) : undefined
+    const verdict =
+      source === undefined || facts === undefined
+        ? undefined
+        : facts.isDynamicImportAt(source, m.index, specifier)
+    if (verdict === false) continue
+    if (verdict === undefined) {
+      if (TYPE_QUERY_BEFORE.test(content.slice(Math.max(0, m.index - 16), m.index))) continue
+      const end = m.index + m[0].length
+      if (m[0].endsWith(")") && TYPE_QUALIFIER_AFTER.test(content.slice(end, end + 64))) continue
+    }
+    edges.push({ specifier, index: m.index })
+  }
+  return edges
+}
+
+/** Every import a module's runtime code makes - static and literal dynamic - in source order. Pure. */
+function importEdges(
+  content: string,
+  facts?: SourceFacts,
+  file?: string,
+): Array<{ specifier: string; index: number }> {
+  // Without an `import(` there is nothing for the dynamic pass to find; skip its regex.
+  const positions = codePositionMask(content)
+  const edges = staticImportEdges(content, facts, file, positions)
+  if (!content.includes("import(") && !/import\s+\(/.test(content)) return edges
+  return [...edges, ...dynamicImportEdges(content, facts, file, positions)].sort(
+    (a, b) => a.index - b.index,
+  )
+}
+
+/** The runtime imports of a module with the line each sits on, in source order. Pure. */
+export function importSites(
+  content: string,
+  file?: string,
+): Array<{ readonly specifier: string; readonly line: number }> {
+  return importEdges(content, undefined, file).map(({ specifier, index }) => ({
+    specifier,
+    line: lineAt(content, index),
+  }))
+}
+
+/** The specifiers {@link importEdges} finds, static and literal dynamic, in source order. Pure. */
+export function parseImports(content: string, facts?: SourceFacts, file?: string): string[] {
+  return importEdges(content, facts, file).map((e) => e.specifier)
 }
 
 /** The server-only SINK an import specifier names directly (a `node:`/`bun:` builtin or a known
@@ -1555,10 +1820,11 @@ export type ModuleReader = (absPath: string) => string | undefined
 /**
  * BFS the LOCAL module graph from a route file for the SHORTEST import chain that reaches a server-only
  * sink, returning `[routeFile, …as-written specifiers…, sink]` or `undefined` if none is reachable. A
- * node's outgoing edges are its static imports; an edge is followed only when it's a RELATIVE specifier
+ * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when it's a RELATIVE specifier
  * that `resolve` maps to a readable local file (so the walk never descends into node_modules or chases an
  * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
- * `*.server` / `server-only`-marked dependency terminates the chain. Bounded by depth + a visited set, so
+ * `server-only`-marked dependency terminates the chain; a `*.server` dependency is never entered, since
+ * the client build empties it. Bounded by depth + a visited set, so
  * it's linear and cycle-free. `routeFile`/`routeContent` seed the walk; `resolve`/`read` supply the graph
  * - pure given those, so it's unit-testable with a fake graph.
  */
@@ -1584,7 +1850,7 @@ export function walkServerOnlyChain(
     const next: Node[] = []
     for (const node of frontier) {
       if (node.depth >= TRANSITIVE_MAX_DEPTH) continue
-      for (const spec of parseStaticImports(node.content, facts, node.abs)) {
+      for (const spec of parseImports(node.content, facts, node.abs)) {
         // (a) A by-name sink (builtin / known server-only pkg) → the chain ends here (shortest first,
         // since BFS reaches the nearest sink before any deeper one).
         const sink = directSinkSpecifier(spec)
@@ -1594,13 +1860,14 @@ export function walkServerOnlyChain(
         if (!isRelativeSpecifier(spec)) continue
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
-        // (c) A resolved `*.server` module is a server-only sink by the `.server` convention - the chain
-        // ends at it (named by the as-written specifier).
-        if (SERVER_MODULE_FILE.test(abs)) return [...node.chain, spec]
+        // (c) Backend code is a sink: the browser build refuses it. A `*.fn.ts` module ships as its
+        // generated stub, so its imports never reach the browser and the walk does not enter it.
+        if (isBackendModule(abs)) return [...node.chain, spec]
+        if (SERVER_FN_FILE.test(abs)) continue
         const content = read(abs)
         if (content === undefined) continue // unreadable → can't walk; treat as a leaf
-        // (d) A resolved module that opts into the `server-only` marker is a sink too.
-        if (SERVER_ONLY_MARKER_IMPORT.test(content)) return [...node.chain, spec]
+        // (d) A resolved module that opts into the `backend-only` marker is a sink too.
+        if (BACKEND_ONLY_MARKER_IMPORT.test(content)) return [...node.chain, spec]
         if (visited >= TRANSITIVE_MAX_VISITED) continue
         visited++
         seen.add(abs)
@@ -1627,14 +1894,14 @@ export function resolveServerOnlyChains(
   read: ModuleReader,
   facts?: SourceFacts,
 ): TransitiveServerImportFinding[] {
-  if (!ROUTE_FILE.test(file)) return []
+  if (!isBrowserSource(file)) return []
   const lines = content.split("\n")
   const out: TransitiveServerImportFinding[] = []
   const flaggedSpecifiers = new Set<string>()
   // Collect the route's import edges up front (fresh-regex scan) so the per-edge logic below can call
   // the REENTRANT transitive walk without corrupting a shared regex's `lastIndex` (the walk also scans
   // imports). Driving `STATIC_IMPORT.exec` here directly would restart this loop forever.
-  for (const { specifier, index } of staticImportEdges(content, facts, file)) {
+  for (const { specifier, index } of importEdges(content, facts, file)) {
     if (flaggedSpecifiers.has(specifier)) continue
     const line = lineAt(content, index)
     const snippet = (lines[line - 1] ?? "").trim()
@@ -1659,15 +1926,16 @@ export function resolveServerOnlyChains(
         }
         continue
       }
-      // The `.server` / marker sink can be the first hop itself.
-      if (SERVER_MODULE_FILE.test(abs)) {
+      // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
+      if (isBackendModule(abs)) {
         flaggedSpecifiers.add(specifier)
         out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
         continue
       }
+      if (SERVER_FN_FILE.test(abs)) continue
       const depContent = read(abs)
       if (depContent === undefined) continue
-      if (SERVER_ONLY_MARKER_IMPORT.test(depContent)) {
+      if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
         flaggedSpecifiers.add(specifier)
         out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
         continue
@@ -1797,14 +2065,15 @@ export async function walkSource(
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
-  for (const rel of rels) {
+  // Glob order is the filesystem's, so findings would come out in a different order on each platform.
+  for (const rel of rels.sort(codeUnitOrder)) {
     if (ignored.has(rel)) continue
     visit(rel, await Bun.file(join(cwd, rel)).text())
   }
 }
 
 const bySite = (a: SourceFinding, b: SourceFinding): number =>
-  a.file.localeCompare(b.file) || a.line - b.line
+  codeUnitOrder(a.file, b.file) || a.line - b.line
 
 /** Collect own-API `fetch()` findings across the project. */
 export async function scanProject(cwd: string): Promise<SourceFinding[]> {
@@ -1824,8 +2093,11 @@ const GENERATED_MARKER = "GENERATED by @nifrajs/web generateServerManifest"
 // The first route-import specifier's prefix up to `routes/` (e.g. `./`, `../`, `./src/`) - used to
 // locate the routes dir relative to the manifest, and to strip to route-relative keys.
 const ROUTES_PREFIX = /["'](\.{1,2}(?:\/[^"'/]+)*?\/routes\/)[^"']+["']/
-// Route file extensions discovery recognises (mirrors `@nifrajs/web/fs`'s filter).
+// The files route discovery collects (mirrors `@nifrajs/web/fs`'s filter): route files by extension,
+// each route's backend half, and `_middleware` modules.
 const ROUTE_FILE_EXT = /\.(tsx|jsx|svelte|vue|mdx)$/
+const ROUTE_BACKEND_HALF = /\.backend\.(?:[cm]?[jt]s)$/
+const MIDDLEWARE_FILE = /(?:^|\/)_middleware\.(?:ts|js)$/
 
 export interface ManifestDriftFinding {
   /** The committed server-manifest file (relative to cwd). */
@@ -1864,10 +2136,14 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
     let discovered: string[]
     try {
       discovered = (
-        await Array.fromAsync(new Glob("**/*.{tsx,jsx,svelte,vue,mdx}").scan({ cwd: routesDir }))
+        await Array.fromAsync(
+          new Glob("**/*.{tsx,jsx,svelte,vue,mdx,ts,js}").scan({ cwd: routesDir }),
+        )
       )
         .map((f) => f.replaceAll("\\", "/"))
-        .filter((f) => ROUTE_FILE_EXT.test(f))
+        .filter(
+          (f) => ROUTE_FILE_EXT.test(f) || ROUTE_BACKEND_HALF.test(f) || MIDDLEWARE_FILE.test(f),
+        )
     } catch {
       continue // routes dir gone/unreadable - not a drift we can assess
     }
@@ -1876,5 +2152,5 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
       findings.push({ file: rel, missing: drift.missing, extra: drift.extra })
     }
   }
-  return findings.sort((a, b) => a.file.localeCompare(b.file))
+  return findings.sort((a, b) => codeUnitOrder(a.file, b.file))
 }

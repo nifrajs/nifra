@@ -25,7 +25,7 @@ Typed WebMCP site tools and predictive UI contracts for Nifra.
 - **AgentSurfaceDescriptor** _(interface)_ - `interface AgentSurfaceDescriptor`
 - **AgentSurfacePrediction** _(interface)_ - `interface AgentSurfacePrediction`
 
-_…and 30 more - see [`api-reference.md`](../../api-reference.md#nifrajswebmcp) for the complete list._
+_…and 31 more - see [`api-reference.md`](../../api-reference.md#nifrajswebmcp) for the complete list._
 
 ## Footguns
 

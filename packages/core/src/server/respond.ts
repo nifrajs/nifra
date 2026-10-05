@@ -52,6 +52,7 @@ const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
  */
 export function buildStaticResponseHeaders(
   record: Readonly<Record<string, string>>,
+  inherited?: Readonly<Record<string, string>>,
 ): StaticResponseHeaders {
   const frozen = Object.freeze({ ...record })
   const jsonHeaders = new Headers({ ...frozen, "content-type": JSON_CONTENT_TYPE })
@@ -61,6 +62,7 @@ export function buildStaticResponseHeaders(
     entries: Object.freeze(Object.entries(frozen)),
     jsonHeaders,
     jsonInit200: { status: 200, headers: jsonHeaders },
+    inherited,
     responseJsonInit200: () => {
       responseJson ??= {
         status: 200,
@@ -138,7 +140,9 @@ function applyStaticDefaults(headers: Headers, statics: StaticResponseHeaders): 
   const entries = statics.entries
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]!
-    if (!headers.has(entry[0])) headers.set(entry[0], entry[1])
+    // Absent, or still an enclosing scope's value rather than one the request set: this one applies.
+    if (headers.get(entry[0]) === (statics.inherited?.[entry[0]] ?? null))
+      headers.set(entry[0], entry[1])
   }
 }
 
@@ -555,8 +559,15 @@ export function appendCookiesToResponse(response: Response, set: CtxSet): Respon
   // returned Response - otherwise the canonical set-session-then-redirect pattern would silently drop
   // the cookie. (Other `c.set` fields stay the returned Response's own concern.)
   const cookies = set._cookies
-  if (cookies !== undefined && cookies.length > 0) {
+  if (cookies === undefined || cookies.length === 0) return response
+  try {
     for (const cookie of cookies) response.headers.append("set-cookie", cookie)
+    return response
+  } catch {
+    // Guarded `Headers` (`Response.redirect()`, a raw `fetch()` result) reject every write, so the
+    // first append throws with nothing applied and the cookies land on a mutable copy instead.
+    const clone = new Response(response.body, response)
+    for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
+    return stamped(clone)
   }
-  return response
 }

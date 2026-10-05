@@ -1,8 +1,4 @@
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/security-comparison",
@@ -227,7 +223,7 @@ export default function SecurityComparison() {
             </tr>
             <tr>
               <td>Rate limiting</td>
-              <td>B forced-decision ctor</td>
+              <td>B unspoofable default key</td>
               <td>3</td>
               <td>O</td>
               <td>3</td>
@@ -436,13 +432,14 @@ export default function SecurityComparison() {
 
       <h3>Rate limiting, IP trust, load shedding</h3>
       <p>
-        The rate limiter&rsquo;s constructor refuses to run until you choose a key source, so the
-        &ldquo;trust proxy = spoofable keys&rdquo; footgun is a construction-time error;{" "}
+        The rate limiter keys on the caller IP the server resolved, never on a client-sent header, so
+        the &ldquo;trust proxy = spoofable keys&rdquo; footgun has no default path; with no resolvable
+        IP it fails closed instead of sharing one bucket.{" "}
         <code>X-Forwarded-For</code> is ignored at the default and counted from the right only when you
         declare trusted proxies. <code>c.clientIp</code> is the socket peer unless you pass an explicit
         trust config, and short chains fail closed. Admission sheds on live capacity evidence
         (in-flight count plus event-loop lag). Fastify&rsquo;s under-pressure is the only peer for load
-        shedding; nothing else in the field forces the key decision or fails closed on IP trust.
+        shedding; nothing else in the field defaults to an unspoofable key or fails closed on IP trust.
       </p>
 
       <h2>Beyond parity - what none of the four ship</h2>

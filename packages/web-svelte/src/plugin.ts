@@ -4,6 +4,7 @@ import {
   normalizeFilePath,
   portablePath,
   rewriteSsrImports,
+  withDevSourceMap,
 } from "@nifrajs/web/plugins/kit"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
@@ -91,15 +92,29 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
           dev,
           hmr: dev && generate === "dom" && devHotComponent(path),
         })
+        const map = { ...js.map, version: 3 }
         if (generate === "dom" && css?.code) {
           cssByPath.set(portablePath(path), css.code)
           // Import the virtual style module so the bundler pulls the scoped CSS into the app stylesheet.
           return {
-            contents: `${js.code}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
+            contents: withDevSourceMap(
+              `${js.code}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
+              map,
+              path,
+              generate,
+            ),
             loader: "js",
           }
         }
-        return { contents: rewriteSsrImports(js.code, path, generate), loader: "js" }
+        return {
+          contents: withDevSourceMap(
+            rewriteSsrImports(js.code, path, generate),
+            map,
+            path,
+            generate,
+          ),
+          loader: "js",
+        }
       })
       // Virtual CSS module: `<file>.svelte?svelte-css` → the compiled scoped stylesheet (css loader).
       build.onResolve({ filter: /\?svelte-css$/ }, (args) => ({

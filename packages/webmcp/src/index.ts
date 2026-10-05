@@ -472,6 +472,15 @@ export type PredictionStoreResult<State> = {
   readonly snapshot: PredictionStoreSnapshot<State>
 }
 
+export interface PredictionCommitOptions {
+  /**
+   * The capability's reconciliation policy. With `"accept-server-state"`, the server's state becomes
+   * the authoritative base even when the prediction conflicted with a newer commit: the server has
+   * applied the call, so the latest response wins and the outcome is `committed`.
+   */
+  readonly reconciliation?: ReconciliationMode
+}
+
 export interface PredictionStore<State> {
   readonly snapshot: () => PredictionStoreSnapshot<State>
   readonly predict: (
@@ -483,6 +492,7 @@ export interface PredictionStore<State> {
     predictionId: string,
     authoritative: AgentSurfaceAuthoritativeState<State>,
     now?: number,
+    options?: PredictionCommitOptions,
   ) => PredictionStoreResult<State>
   readonly rollback: (predictionId: string) => PredictionStoreResult<State>
   readonly expire: (now?: number) => readonly string[]
@@ -623,13 +633,17 @@ export function createPredictionStore<State>(
     predictionId: string,
     nextAuthoritative: AgentSurfaceAuthoritativeState<State>,
     now = Date.now(),
+    options: PredictionCommitOptions = {},
   ): PredictionStoreResult<State> => {
     validateIdentifier(predictionId, "prediction id")
+    const acceptServerState = options.reconciliation === "accept-server-state"
     const stored = active.get(predictionId)
     const current = snapshot()
     if (stored === undefined) {
       if (conflicted.delete(predictionId))
-        return { outcome: "conflicted", predictionId, snapshot: current }
+        return acceptServerState
+          ? adopt(predictionId, nextAuthoritative)
+          : { outcome: "conflicted", predictionId, snapshot: current }
       return { outcome: "missing", predictionId, snapshot: current }
     }
     if (stored.prediction.expiresAt !== undefined && stored.prediction.expiresAt <= now) {
@@ -638,13 +652,21 @@ export function createPredictionStore<State>(
       emit({ type: "expired", predictionId, snapshot: expired })
       return { outcome: "expired", predictionId, snapshot: expired }
     }
-    if (stored.prediction.baseVersion !== authoritative.version) {
+    if (stored.prediction.baseVersion !== authoritative.version && !acceptServerState) {
       removeActive(predictionId)
       rememberConflict(predictionId)
       const conflicted = snapshot()
       emit({ type: "conflicted", predictionId, snapshot: conflicted })
       return { outcome: "conflicted", predictionId, snapshot: conflicted }
     }
+    return adopt(predictionId, nextAuthoritative)
+  }
+
+  /** Make the server's state the authoritative base, replaying the predictions still based on it. */
+  const adopt = (
+    predictionId: string,
+    nextAuthoritative: AgentSurfaceAuthoritativeState<State>,
+  ): PredictionStoreResult<State> => {
     validateVersion(nextAuthoritative.version)
     const nextState = cloneValue(nextAuthoritative.state, "authoritative state")
     removeActive(predictionId)
@@ -780,7 +802,9 @@ export async function executePredicted<Input, Output, State>(
     const rolledBack = store.rollback(predictionId)
     return { outcome: "rolled-back", predictionId, prediction, tool, snapshot: rolledBack.snapshot }
   }
-  const committed = store.commit(predictionId, authoritative, now())
+  const committed = store.commit(predictionId, authoritative, now(), {
+    reconciliation: capability.surface.reconciliation,
+  })
   return {
     outcome:
       committed.outcome === "committed"

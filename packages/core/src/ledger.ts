@@ -145,13 +145,16 @@ const ERROR_CODE = /^[a-z][a-z0-9_.-]{0,63}$/
 const DIGEST_HEX = /^[0-9a-f]{64}$/
 
 function printableToken(value: string, maxLength: number): boolean {
-  if (value.length === 0 || value.length > maxLength) return false
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) return false
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index)
     if (code < 33 || code > 126) return false
   }
   return true
 }
+
+// `RegExp.test` stringifies its argument, so a check on a token's shape must first check it is a string.
+const validDigest = (value: string): boolean => typeof value === "string" && DIGEST_HEX.test(value)
 
 function validateCost(cost: EffectCost): EffectCost {
   if (Object(cost) !== cost || Array.isArray(cost)) {
@@ -181,7 +184,7 @@ export function normalizeEffectMetadata(input: EffectMetadata): EffectMetadata {
   if (input.target !== undefined && !printableToken(input.target, TARGET_MAX_LENGTH)) {
     throw new TypeError("effect ledger: invalid target")
   }
-  if (input.digest !== undefined && !DIGEST_HEX.test(input.digest)) {
+  if (input.digest !== undefined && !validDigest(input.digest)) {
     throw new TypeError("effect ledger: invalid digest")
   }
   return Object.freeze({
@@ -236,7 +239,7 @@ class BoundedRequestLedger implements RequestLedger {
   append(input: EffectEntryInput): EffectEntry {
     if (this.sealResult !== undefined) throw new EffectLedgerSealedError()
     if (this.items.length >= this.maxEntries) throw new EffectLedgerOverflowError(this.maxEntries)
-    if (!validCapabilityId(input.capability)) {
+    if (typeof input.capability !== "string" || !validCapabilityId(input.capability)) {
       throw new TypeError(`effect ledger: invalid capability ${JSON.stringify(input.capability)}`)
     }
     const phase = input.phase ?? "intent"
@@ -249,10 +252,13 @@ class BoundedRequestLedger implements RequestLedger {
     if (input.target !== undefined && !printableToken(input.target, TARGET_MAX_LENGTH)) {
       throw new TypeError("effect ledger: invalid target")
     }
-    if (input.digest !== undefined && !DIGEST_HEX.test(input.digest)) {
+    if (input.digest !== undefined && !validDigest(input.digest)) {
       throw new TypeError("effect ledger: invalid digest")
     }
-    if (input.error !== undefined && !ERROR_CODE.test(input.error.code)) {
+    if (
+      input.error !== undefined &&
+      (typeof input.error?.code !== "string" || !ERROR_CODE.test(input.error.code))
+    ) {
       throw new TypeError("effect ledger: error code must be a bounded lowercase token")
     }
     // Only the known token fields are copied - a stray `payload`-like property never survives append.

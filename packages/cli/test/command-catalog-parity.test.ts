@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import {
   bindCommandArgv,
   commandCatalog,
+  commandMcpInputSchema,
   commandMcpName,
   commandSpecs,
   envelopeCommandOutput,
@@ -27,6 +28,8 @@ test("the stable catalog is the public command allowlist", () => {
     "doctor",
     "fix",
     "migrate",
+    "target",
+    "types",
     "snapshot",
     "diff",
     "contracts",
@@ -36,6 +39,14 @@ test("the stable catalog is the public command allowlist", () => {
     "replay",
     "smoke",
     "port",
+    "i18n",
+    "errors",
+    "logs",
+    "cdn-check",
+    "db-schema",
+    "db-query",
+    "db-role",
+    "db-audit",
   ])
   expect(names).not.toContain("verify")
 })
@@ -53,7 +64,7 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
     if (entry.transports.includes("mcp")) {
       expect(tool).toBeDefined()
       expect(tool?.description).toBe(entry.summary)
-      expect(tool?.inputSchema).toEqual(entry.inputSchema)
+      expect(tool?.inputSchema).toEqual(commandMcpInputSchema(entry))
       const adapted = toMcpTool(entry, {
         cwd: "/fake",
         loadAppCached: async () => {
@@ -61,7 +72,7 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
         },
       })
       expect(adapted.name).toBe(tool!.name)
-      expect(adapted.inputSchema).toEqual(entry.inputSchema)
+      expect(adapted.inputSchema).toEqual(commandMcpInputSchema(entry))
     } else {
       expect(tool).toBeUndefined()
     }

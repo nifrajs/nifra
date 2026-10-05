@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { bindScope, type IslandScope } from "../src/bind.ts"
 import { type Signal, signal } from "../src/signals.ts"
-import { FakeElement, FakeRoot } from "./_fake-dom.ts"
+import { FakeElement, FakeHost, FakeRoot } from "./_fake-dom.ts"
 
 const scopeOf = (
   signals: Record<string, Signal<unknown>>,
@@ -47,6 +47,39 @@ describe("bindScope - the closed attribute set", () => {
     expect(el.getAttribute("aria-expanded")).toBe("3")
     expanded.set(false)
     expect(el.getAttribute("aria-expanded")).toBeNull()
+  })
+
+  test("attr: never binds an event handler or srcdoc, whatever the markup asks for", () => {
+    const query = signal<unknown>("document.title='PWNED'")
+    const el = new FakeElement({
+      "data-bind-attr": "ontoggle:query,ONCLICK:query,srcdoc:query,title:query",
+    })
+    bindScope(new FakeRoot([el]), scopeOf({ query }))
+    expect(el.getAttribute("ontoggle")).toBeNull()
+    expect(el.getAttribute("ONCLICK")).toBeNull()
+    expect(el.getAttribute("srcdoc")).toBeNull()
+    expect(el.getAttribute("title")).toBe("document.title='PWNED'")
+  })
+
+  test("attr: a URL attribute takes http(s), mailto, tel and relative URLs, never a script URL", () => {
+    const link = signal<unknown>("https://example.com/a")
+    const el = new FakeElement({ "data-bind-attr": "href:link" })
+    bindScope(new FakeRoot([el]), scopeOf({ link }))
+    expect(el.getAttribute("href")).toBe("https://example.com/a")
+    for (const safe of ["/docs?x=1", "#top", "page.html", "mailto:a@b.c", "./a:b"]) {
+      link.set(safe)
+      expect(el.getAttribute("href")).toBe(safe)
+    }
+    for (const unsafe of [
+      " javascript:alert(1)",
+      "JavaScript:alert(1)",
+      "java\tscript:x",
+      "data:text/html,x",
+      "vbscript:x",
+    ]) {
+      link.set(unsafe)
+      expect(el.getAttribute("href")).toBeNull()
+    }
   })
 
   test("value: two-way - signal → input, input event → signal, no caret-jumping rewrite", () => {
@@ -97,5 +130,28 @@ describe("bindScope - the closed attribute set", () => {
     const el = new FakeElement({ "data-bind-class": ":broken,noColon,is-ok:ok" })
     bindScope(new FakeRoot([el]), scopeOf({ ok: ok as Signal<unknown> }))
     expect([...el.classes]).toEqual(["is-ok"])
+  })
+})
+
+describe("bindScope - ignored subtrees", () => {
+  test("nothing inside data-island-ignore binds a handler or a signal", () => {
+    let saves = 0
+    const label = signal<unknown>("secret")
+    const own = new FakeElement({ "data-bind-on": "click:save" })
+    const userButton = new FakeElement({ "data-bind-on": "click:save" })
+    const userText = new FakeElement({ "data-bind-text": "label" })
+    const ignoredItself = new FakeElement({
+      "data-bind-on": "click:save",
+      "data-island-ignore": "",
+    })
+    const host = new FakeHost({ "data-island": "comments" }, [
+      own,
+      new FakeHost({ "data-island-ignore": "" }, [userButton, userText]),
+      ignoredItself,
+    ])
+    bindScope(host, scopeOf({ label }, { save: () => saves++ }))
+    for (const el of [own, userButton, ignoredItself]) el.dispatch("click")
+    expect(saves).toBe(1)
+    expect(userText.textContent).toBeNull()
   })
 })

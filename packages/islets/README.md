@@ -1,11 +1,11 @@
 # @nifrajs/islets
 
-Fine-grained signals + declarative DOM bindings for islands - **interactivity in ~1.4 KB gz**, no
+Fine-grained signals + declarative DOM bindings for islands - **interactivity in ~2 KB gz**, no
 framework runtime. The client companion to `@nifrajs/web-vanilla`: the server renders real HTML
 (zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
-The full island bundle is about 1.4 KB gzipped and has a size test that keeps it under 2 KB. Use
+The full island bundle is just under 2 KB gzipped, and a size test keeps it there. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
 ## Server side (any adapter - `@nifrajs/web-vanilla` shown)
@@ -44,13 +44,28 @@ mountIslands() // idempotent - safe to call again after soft navigation
 | `data-bind-text="sig"` | `textContent ← String(sig())` |
 | `data-bind-show="sig"` | `hidden ← !sig()` |
 | `data-bind-class="active:isOpen,b:sigB"` | `classList.toggle` per pair |
-| `data-bind-attr="aria-expanded:isOpen"` | `setAttribute`; `false`/`null`/`undefined` removes |
+| `data-bind-attr="aria-expanded:isOpen"` | `setAttribute`; `false`/`null`/`undefined` removes. Never an `on*` handler or `srcdoc`; `href`/`src`/`action` and other URL attributes take only http(s), mailto, tel or relative URLs |
 | `data-bind-value="query"` | two-way `<input>`/`<select>`/`<textarea>` (`input` event) |
 | `data-bind-on="click:inc,submit:save"` | `addEventListener` per pair |
 
 Values are signal/handler **names** resolved in the island's scope - never evaluated code, so
 markup cannot inject behavior. Unknown names warn once and skip; the server-rendered content
 stays as-is (progressive enhancement never throws).
+
+Render user-supplied HTML (comments, rich text) inside an element marked `data-island-ignore`.
+Nothing in it binds or mounts: a sanitizer that keeps `data-*` attributes cannot let that markup
+reach the island's handlers or signals, or mount an island of its own.
+
+```html
+<section data-island="comments">
+  <button data-bind-on="click:save">Save</button>
+  <div data-island-ignore>${sanitizedCommentHtml}</div>
+</section>
+```
+
+Islands may nest. A binding belongs to its nearest island, so an outer island never binds inside a
+nested island. The nested host element itself is the outer island's markup: the outer island may
+bind it, for example to show or hide the nested island.
 
 ## Signals
 

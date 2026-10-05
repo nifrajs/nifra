@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/types-first",
@@ -100,8 +96,8 @@ export default function TypesFirst() {
 
       <h2>Runtime validation</h2>
       <p>
-        Attach the schema to a route. Path params, query, and body are validated at the runtime
-        boundary <em>before</em> your handler runs - invalid input is rejected with a 422, so the
+        Attach the schema to a route. Path params, query, headers, cookies, and body are validated at
+        the runtime boundary <em>before</em> your handler runs - invalid input is rejected with a 422, so the
         handler only ever sees well-formed data.
       </p>
       <CodeBlock code={ROUTE} lang="ts" />

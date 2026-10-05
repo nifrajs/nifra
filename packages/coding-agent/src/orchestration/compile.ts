@@ -19,7 +19,11 @@ import type {
   RunPlan,
 } from "@nifrajs/agent-protocol"
 import { parseRunPlan } from "@nifrajs/agent-protocol"
-import { BoundedSubagentRunner } from "../subagents.ts"
+import {
+  BoundedSubagentRunner,
+  type SubagentAbandonment,
+  type SubagentAbandonmentLedger,
+} from "../subagents.ts"
 import type { WorkflowContext, WorkflowStep } from "../workflows.ts"
 import { type CatalogStep, type StepCatalog, type StepRunContext, stepVersion } from "./catalog.ts"
 import { deriveNodeEffectKey } from "./effect-key.ts"
@@ -48,6 +52,8 @@ export interface OrchestrationLimits {
   readonly maxChildren?: number
   /** Capability authority ceiling. `undefined` grants all; otherwise a step's needs must be a subset. */
   readonly allowedCapabilities?: readonly string[]
+  /** Refuse a subagent node while this many abandoned subagent executors still run. Default: no bound. */
+  readonly maxAbandonedSubagents?: number
 }
 
 const DEFAULT_MAX_NODES = 256
@@ -69,6 +75,10 @@ export interface CompileOptions {
   onNodeEffect?(nodeId: string, key: NodeEffectKey): void
   /** Called for each artifact ref a node produces through its port. */
   collectArtifact?(nodeId: string, ref: ArtifactRef): void
+  /** Called when a subagent node's run returns while its executor, which ignored the abort, keeps running. */
+  onSubagentAbandoned?(nodeId: string, abandonment: SubagentAbandonment): void
+  /** Where abandoned subagent executors are counted for `maxAbandonedSubagents`. Default: one per compile. */
+  readonly subagentAbandonment?: SubagentAbandonmentLedger
 }
 
 /**
@@ -101,7 +111,11 @@ export function compileRunPlanLayers(
     throw new CompileError(`plan has ${total} nodes over the ${maxNodes} ceiling`, "E_MAX_NODES")
 
   const layers = layerTopLevel(plan.nodes)
-  return layers.map((layer) => compileLayer(layer, options, 1))
+  const wired: CompileOptions =
+    options.subagentAbandonment === undefined
+      ? { ...options, subagentAbandonment: { abandoned: 0 } }
+      : options
+  return layers.map((layer) => compileLayer(layer, wired, 1))
 }
 
 /** Recursive node count over the whole tree. */
@@ -364,6 +378,18 @@ async function runSubagent(
     signal: wf.signal,
     ...(options.limits?.allowedCapabilities !== undefined
       ? { allowedCapabilities: options.limits.allowedCapabilities }
+      : {}),
+    ...(options.limits?.maxAbandonedSubagents !== undefined
+      ? { maxAbandoned: options.limits.maxAbandonedSubagents }
+      : {}),
+    ...(options.subagentAbandonment !== undefined
+      ? { abandonment: options.subagentAbandonment }
+      : {}),
+    ...(options.onSubagentAbandoned !== undefined
+      ? {
+          onAbandoned: (abandonment: SubagentAbandonment) =>
+            options.onSubagentAbandoned?.(node.id, abandonment),
+        }
       : {}),
   })
   const spec = await step.spec!(context)

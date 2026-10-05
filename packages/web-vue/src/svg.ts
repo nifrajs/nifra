@@ -11,15 +11,22 @@
  */
 
 import { normalizeFilePath } from "@nifrajs/web/plugins/kit"
-import { SVG_COMPONENT_FILTER, stripSvgPreamble } from "@nifrajs/web/plugins/svg"
+import { SVG_COMPONENT_FILTER, svgTemplateMarkup } from "@nifrajs/web/plugins/svg"
 import type { BunPlugin } from "bun"
 import { compileVue } from "./plugin.ts"
 
 /** Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`). */
 export function svgToVueSfc(xml: string): string {
-  const cleaned = stripSvgPreamble(xml)
-  // An (empty) <script> is required by compileScript; the single-root <svg> inherits caller attrs.
-  return `<script>export default {}</script>\n<template>${cleaned}</template>\n`
+  const cleaned = svgTemplateMarkup(xml, {
+    text: (text, cdata) => (cdata ? `<![CDATA[${text}]]>` : text),
+  })
+  // A `template` tag anywhere, even in a CDATA section, could end the SFC block and open another.
+  if (/<\/?template\b/i.test(cleaned)) {
+    throw new Error("[nifra/web-vue] an SVG component's markup cannot hold a <template> tag")
+  }
+  // v-pre: the markup is SVG, never template syntax - no {{ }}, no :bound or v- attributes. The
+  // single-root <svg> still inherits the caller's attrs. compileScript needs the (empty) <script>.
+  return `<script>export default {}</script>\n<template>${cleaned.replace(/^<svg\b/, "<svg v-pre")}</template>\n`
 }
 
 /** The Vue SVG-component plugin. `generate` selects Vue's client/SSR render, matching `vueBunPlugin`. */

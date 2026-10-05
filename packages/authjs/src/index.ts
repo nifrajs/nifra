@@ -11,7 +11,7 @@
  * const auth = {
  *   providers: [GitHub({ clientId: process.env.GITHUB_ID! })],
  *   secret: process.env.AUTH_SECRET,
- *   trustHost: true, // or AUTH_URL behind a proxy - see AuthJSOptions.authUrl
+ *   trustHost: true, // or a canonical origin: AuthJSOptions.authUrl / AUTH_URL
  * }
  *
  * export const app = server()
@@ -24,7 +24,7 @@
  * same way `@nifrajs/web-react/i18n` wraps `@nifrajs/i18n`).
  */
 
-import type { AuthConfig } from "@auth/core"
+import type { AuthConfig, setEnvDefaults } from "@auth/core"
 import type { Session } from "@auth/core/types"
 import type { AnyServer, Platform, ResponseResult } from "@nifrajs/core/server"
 import { defineIdentityPlugin, isSameOriginPath, status } from "@nifrajs/core/server"
@@ -37,9 +37,10 @@ export type AuthJSConfig = Omit<AuthConfig, "raw">
 export interface AuthJSOptions {
   /** Mount path for Auth.js routes. Defaults to `config.basePath`, then `"/api/auth"`. */
   readonly basePath?: string
-  /** Public origin for deployments behind a proxy (e.g. `"https://app.example.com"`).
-   * When set, Auth.js URLs are rewritten onto it. Forwarded headers are ignored for this
-   * canonical origin. */
+  /** Public origin (e.g. `"https://app.example.com"`); falls back to the `AUTH_URL` variable.
+   * Every request is rewritten onto it, so Auth.js trusts it and neither the Host header nor
+   * forwarded headers can replace it. Without one, Auth.js trusts the Host header only when
+   * `trustHost` (or `AUTH_TRUST_HOST`) says so, or outside production. */
   readonly authUrl?: string
   /** Trust proxy-provided `x-forwarded-*` headers when `authUrl` is absent. Default `false`.
    * Enable only when the deployment strips and replaces those headers at a trusted proxy. */
@@ -97,6 +98,71 @@ function canonicalPublicOrigin(value: string): string {
   return url.origin
 }
 
+/** What Auth.js reads its documented variables from (`AUTH_URL`, `AUTH_TRUST_HOST`, `NODE_ENV`,
+ * `AUTH_<PROVIDER>_ID`, ...): the platform bindings, then the process environment. */
+function authEnv(bindings: unknown): Record<string, unknown> {
+  const bound = typeof bindings === "object" && bindings !== null ? bindings : undefined
+  const processEnv = typeof process === "undefined" ? undefined : process.env
+  return new Proxy(
+    {},
+    {
+      get: (_target, key) => {
+        if (typeof key !== "string") return undefined
+        if (bound !== undefined && Object.hasOwn(bound, key)) return Reflect.get(bound, key)
+        return processEnv?.[key]
+      },
+    },
+  )
+}
+
+/** The origin of the documented `AUTH_URL` (or `NEXTAUTH_URL`), which may carry a path. */
+function envOrigin(env: Record<string, unknown>): string | undefined {
+  const value = env.AUTH_URL ?? env.NEXTAUTH_URL
+  if (value === undefined || value === "") return undefined
+  let url: URL
+  try {
+    url = new URL(String(value))
+  } catch {
+    throw new Error("[nifra/authjs] AUTH_URL must be an absolute http(s) URL")
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("[nifra/authjs] AUTH_URL must be an absolute http(s) URL")
+  }
+  return url.origin
+}
+
+function normalizeBasePath(value: string | undefined): string {
+  let base = value ?? "/api/auth"
+  while (base.endsWith("/")) base = base.slice(0, -1)
+  return base === "" ? "/api/auth" : base
+}
+
+/**
+ * The config Auth.js runs with - never the caller's object, which `setEnvDefaults` would mutate.
+ * `basePath` is always explicit: core applies no default of its own here, and an unset basePath
+ * answers every action (even `/csrf`) with a flat 400.
+ */
+function activeConfig(
+  config: AuthJSConfig,
+  basePath: string,
+  secret: string | string[],
+  origin: string | undefined,
+  env: Record<string, unknown>,
+  applyEnvDefaults: typeof setEnvDefaults,
+): AuthConfig {
+  const active: AuthConfig = {
+    ...config,
+    basePath,
+    secret: typeof secret === "string" ? secret : [...secret],
+  }
+  // A request is rewritten onto a configured origin, so its Host header names nothing. Without
+  // one, trusting the Host header is Auth.js's own rule: `trustHost`, `AUTH_TRUST_HOST`, or a
+  // `NODE_ENV` other than production.
+  if (origin !== undefined) active.trustHost ??= true
+  applyEnvDefaults(env, active, true)
+  return active
+}
+
 /** Remove proxy routing metadata so Auth.js cannot derive a URL from attacker-controlled headers. */
 function sanitizePublicRequest(req: Request, url: string, host: string): Request {
   const rewritten = new Request(url, req)
@@ -108,40 +174,37 @@ function sanitizePublicRequest(req: Request, url: string, host: string): Request
   return rewritten
 }
 
-/** Rewrite a request onto the public origin, preserving method/headers/body. */
-function rewriteUrl(req: Request, authUrl: string): Request {
-  const source = new URL(req.url)
-  const target = new URL(authUrl)
-  source.protocol = target.protocol
-  source.host = target.host
-  return sanitizePublicRequest(req, source.href, target.host)
-}
-
-/** Derive the public request URL, trusting forwarded headers only with an explicit opt-in. */
-function publicRequest(req: Request, authUrl: string | undefined, trustProxy: boolean): Request {
-  if (authUrl !== undefined) return rewriteUrl(req, authUrl)
-  if (!trustProxy) {
-    const url = new URL(req.url)
-    return sanitizePublicRequest(req, url.href, url.host)
+/** Derive the public request URL: the configured origin, else the request's own, with forwarded
+ * headers trusted only on an explicit opt-in. */
+function publicUrl(req: Request, origin: string | undefined, trustProxy: boolean): URL {
+  const url = new URL(req.url)
+  if (origin !== undefined) {
+    const target = new URL(origin)
+    url.protocol = target.protocol
+    url.host = target.host
+    return url
   }
+  if (!trustProxy) return url
   const proto = req.headers.get("x-forwarded-proto")
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host")
-  if (proto === null && host === null) {
-    const url = new URL(req.url)
-    return sanitizePublicRequest(req, url.href, url.host)
-  }
-  const url = new URL(req.url)
+  if (proto === null && host === null) return url
+  const forwarded = new URL(req.url)
   try {
     if (proto !== null) {
       const protocol = proto.endsWith(":") ? proto : `${proto}:`
       if (protocol !== "http:" && protocol !== "https:") throw new Error("invalid proxy protocol")
-      url.protocol = protocol
+      forwarded.protocol = protocol
     }
-    if (host !== null) url.host = host
+    if (host !== null) forwarded.host = host
   } catch {
-    const fallback = new URL(req.url)
-    return sanitizePublicRequest(req, fallback.href, fallback.host)
+    return url
   }
+  return forwarded
+}
+
+/** Rewrite a request onto its public URL, preserving method/headers/body. */
+function publicRequest(req: Request, origin: string | undefined, trustProxy: boolean): Request {
+  const url = publicUrl(req, origin, trustProxy)
   return sanitizePublicRequest(req, url.href, url.host)
 }
 
@@ -154,9 +217,7 @@ function publicRequest(req: Request, authUrl: string | undefined, trustProxy: bo
  * Idempotent (named `"authjs"` - applying twice mounts once).
  */
 export function authjs(config: AuthJSConfig, options: AuthJSOptions = {}) {
-  let base = options.basePath ?? config.basePath ?? "/api/auth"
-  while (base.endsWith("/")) base = base.slice(0, -1)
-  if (base === "") base = "/api/auth"
+  const base = normalizeBasePath(options.basePath ?? config.basePath)
   const pattern = `${base}/*`
   const publicOrigin =
     options.authUrl === undefined ? undefined : canonicalPublicOrigin(options.authUrl)
@@ -177,17 +238,16 @@ export function authjs(config: AuthJSConfig, options: AuthJSOptions = {}) {
           if (secret === undefined) {
             return status(500, { ok: false, error: "auth_misconfigured" })
           }
-          // Never mutate the caller's config - `setEnvDefaults` fills Auth.js-computed defaults.
-          // `basePath` is always set explicitly: core does not apply its own default here, and an
-          // unset basePath answers every action (even `/csrf`) with a flat 400.
-          const { Auth, setEnvDefaults } = await import("@auth/core")
-          const active = {
-            ...config,
-            basePath: base,
-            secret: typeof secret === "string" ? secret : [...secret],
+          const env = authEnv(c.env)
+          let origin: string | undefined
+          try {
+            origin = publicOrigin ?? envOrigin(env)
+          } catch {
+            return status(500, { ok: false, error: "auth_misconfigured" })
           }
-          setEnvDefaults({ AUTH_SECRET: secret }, active)
-          return Auth(publicRequest(c.req, publicOrigin, options.trustProxy === true), active)
+          const { Auth, setEnvDefaults } = await import("@auth/core")
+          const active = activeConfig(config, base, secret, origin, env, setEnvDefaults)
+          return Auth(publicRequest(c.req, origin, options.trustProxy === true), active)
         },
       )
     }
@@ -195,8 +255,11 @@ export function authjs(config: AuthJSConfig, options: AuthJSOptions = {}) {
   })
 }
 
-/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. */
-export interface AuthGuardOptions {
+/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON.
+ * Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on
+ * the origin and path the mount serves it from. */
+export interface AuthGuardOptions
+  extends Pick<AuthJSOptions, "basePath" | "authUrl" | "trustProxy"> {
   readonly redirectTo?: string
   /** Secret override for this call. */
   readonly secret?: string | string[]
@@ -232,13 +295,16 @@ export async function getSession(
   if (secret === undefined) {
     throw new Error("[nifra/authjs] getSession needs config.secret, options.secret, or AUTH_SECRET")
   }
-  const { Auth } = await import("@auth/core")
-  // Like the mount: core applies no basePath default itself, so set it explicitly.
-  const active = { basePath: "/api/auth", ...config, secret }
-  const cookie = req.headers.get("cookie") ?? ""
-  const url = new URL(req.url)
-  const sessionReq = new Request(`${url.origin}${active.basePath ?? "/api/auth"}/session`, {
-    headers: { cookie },
+  const env = authEnv(options.env)
+  const origin =
+    options.authUrl === undefined ? envOrigin(env) : canonicalPublicOrigin(options.authUrl)
+  const base = normalizeBasePath(options.basePath ?? config.basePath)
+  const { Auth, setEnvDefaults } = await import("@auth/core")
+  const active = activeConfig(config, base, secret, origin, env, setEnvDefaults)
+  // Read where the mount serves it: the public origin's scheme picks the `__Secure-` cookie names.
+  const url = publicUrl(req, origin, options.trustProxy === true)
+  const sessionReq = new Request(`${url.origin}${base}/session`, {
+    headers: { cookie: req.headers.get("cookie") ?? "" },
   })
   const response = await Auth(sessionReq, active)
   if (!response.ok) return null

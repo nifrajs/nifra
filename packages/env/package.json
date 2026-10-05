@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/env",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Typed, validated environment variables for nifra - define a schema, get a frozen typed object, fail loud at boot listing every problem. Coercing helpers (number/port/boolean/url/enum) + any Standard Schema. Dependency-free, edge-safe.",
   "keywords": [
     "bun",
@@ -13,6 +13,9 @@
     "validation"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

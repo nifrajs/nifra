@@ -3,24 +3,26 @@
  *
  * Bun's dev-server bundling (`Bun.serve` HTML imports) accepts plugins ONLY through bunfig's
  * `[serve.static] plugins` - there is no programmatic option (upstream ask: oven-sh/bun#36830), and
- * a runtime `Bun.plugin()` never reaches it. Without a plugin there, a `*.fn` server-function module
- * would ship to the browser WHOLE (body, DB handles, secrets) instead of as the RPC stub the
- * production client build emits, and a `*.server` module would ship instead of being emptied.
+ * a runtime `Bun.plugin()` never reaches it. Without a plugin there, a `*.fn` server-function
+ * module would ship to the browser WHOLE (body, DB handles, secrets) instead of as the RPC stub the
+ * production client build emits, and backend code a browser module imports would be served instead
+ * of refused.
  *
  * The same channel is the only way an app's OWN `clientPlugins` (SFC compilers and the like) can reach
  * that bundler: the CLI holds them as plugin OBJECTS, and bunfig accepts only module paths - so the
  * generated module re-imports the app's config and composes them in.
  *
  * So the CLI generates, under `.nifra/dev-bun/`:
- *   - `boundary-plugin.ts` - default-exports one plugin composing the SAME `serverFnStubPlugin` +
- *     `serverOnlyEmptyPlugin` + CSS Modules transform the production build uses (imported from
- *     `@nifrajs/web`, resolved from the app - identical transforms, not re-implementations), plus the
- *     app's own `clientPlugins`;
+ *   - `boundary-plugin.ts` - default-exports one plugin composing the SAME `zoneGuardPlugin` +
+ *     `serverFnStubPlugin` + CSS Modules transform the production build uses (imported from
+ *     `@nifrajs/web`, resolved from the app - identical transforms, not re-implementations), plus
+ * the     app's own `clientPlugins`;
  *   - `bunfig.toml` - the app's ENTIRE bunfig carried over verbatim (jsx, loaders, defines, install
- *     settings - dropping any of them would give dev a different Bun than the app configured), with
- *     `[serve.static] plugins` merged to put the boundary plugin first and path-bearing entries
- *     (`preload`, plugin paths) re-rooted at the app, because bunfig resolves relative entries
- *     against the CONFIG file's directory;
+ *     settings - dropping any of them would give dev a different Bun than the app configured), except
+ *     that `[serve.static] plugins` names only the boundary plugin, which composes the app's own
+ *     entries last, in their order; path-bearing entries (`preload`, plugin paths) are re-rooted at
+ *     the app, because bunfig resolves relative entries against the CONFIG file's directory; and
+ *     the config's `define` is layered over both `[define]` and `[serve.static] define`;
  *   - `launch-token` - a per-launch random value (see below).
  *
  * `dev --bun` then re-execs itself once with `--config=<generated>` (bunfig is read at process
@@ -106,33 +108,68 @@ export function serializeBunfig(data: BunfigData): string {
   return `${lines.join("\n")}\n`
 }
 
-/** Render the generated bunfig: the user's config carried whole, with the boundary plugin prepended
- * to `[serve.static] plugins` and path-bearing entries (`preload`, plugin paths) re-rooted at the
- * APP - bunfig resolves relative entries against the config file's own directory, which is
- * `.nifra/dev-bun/`. */
+/** A bunfig entry that names a file, re-rooted at the APP: bunfig resolves a relative entry against
+ * the config file's own directory, which for the generated config is `.nifra/dev-bun/`. */
+const resolveEntry = (entry: unknown, appRoot: string): unknown =>
+  typeof entry === "string" && entry.startsWith(".") ? resolve(appRoot, entry) : entry
+
+/** The app's own `[serve.static] plugins`, re-rooted at the app, for the boundary module to compose. */
+export function userServePlugins(user: BunfigData, appRoot: string): string[] {
+  const serve = isTable(user.serve) ? user.serve : {}
+  const serveStatic = isTable(serve.static) ? serve.static : {}
+  const plugins = Array.isArray(serveStatic.plugins) ? serveStatic.plugins : []
+  return plugins.map((entry, i) => {
+    const resolved = resolveEntry(entry, appRoot)
+    if (typeof resolved !== "string") {
+      throw new Error(`[nifra] bunfig field \`serve.static.plugins[${i}]\` must be a module path`)
+    }
+    return resolved
+  })
+}
+
+/** Render the generated bunfig: the user's config carried whole, with `[serve.static] plugins` naming
+ * only the boundary plugin (it composes the app's own entries, see {@link userServePlugins}),
+ * `preload` re-rooted at the APP, and the config's `define` added to both halves. */
 export function renderDevBunfig(
   boundaryPluginPath: string,
   user: BunfigData,
   appRoot: string,
+  define: Readonly<Record<string, string>> = {},
 ): string {
-  const resolveEntry = (entry: unknown): unknown =>
-    typeof entry === "string" && entry.startsWith(".") ? resolve(appRoot, entry) : entry
   const data: BunfigData = structuredClone(user)
   if (data.preload !== undefined) {
     const entries = Array.isArray(data.preload) ? data.preload : [data.preload]
-    data.preload = entries.map(resolveEntry)
+    data.preload = entries.map((entry) => resolveEntry(entry, appRoot))
   }
   const serve = isTable(data.serve) ? data.serve : {}
   data.serve = serve
   const serveStatic = isTable(serve.static) ? serve.static : {}
   serve.static = serveStatic
-  const existing = Array.isArray(serveStatic.plugins) ? serveStatic.plugins : []
-  serveStatic.plugins = [boundaryPluginPath, ...existing.map(resolveEntry)]
+  serveStatic.plugins = [boundaryPluginPath]
+  if (Object.keys(define).length > 0) {
+    for (const [key, value] of Object.entries(define)) {
+      if (typeof value !== "string") {
+        throw new Error(
+          `[nifra] \`define\` entry \`${key}\` must be a string of source code, such as "true" or ` +
+            `'"text"' - it replaces the name in the bundle as written.`,
+        )
+      }
+    }
+    // `nifra build` applies `define` to the client and the server bundle. In dev the two halves read
+    // different keys: the runtime SSR runs in honours only top-level `[define]`, Bun's dev-server
+    // bundler only `[serve.static] define`. Layered last, so a clash resolves the way production does.
+    data.define = Object.assign(isTable(data.define) ? data.define : {}, define)
+    serveStatic.define = Object.assign(
+      isTable(serveStatic.define) ? serveStatic.define : {},
+      define,
+    )
+  }
   return (
     "# Generated by `nifra dev --bun` - do not edit. Regenerated on every dev start.\n" +
     "# The app's own bunfig is carried over verbatim; [serve.static] plugins additionally deliver\n" +
-    "# the client-boundary plugins (server-fn stubs, server-only emptying) to Bun's dev-server\n" +
-    "# bundler, which only accepts plugins via this channel (oven-sh/bun#36830).\n" +
+    "# the client-boundary plugins (zone guard, server-fn stubs) to Bun's dev-server\n" +
+    "# bundler, which only accepts plugins via this channel (oven-sh/bun#36830). The app's\n" +
+    "# config `define` is added to [define] (SSR) and [serve.static] define (client).\n" +
     serializeBunfig(data)
   )
 }
@@ -151,13 +188,22 @@ function relativeSpecifier(fromDir: string, target: string): string {
  * The `@nifrajs/*` specifiers are bare so they resolve from the APP's install (the module lives under
  * the app's `.nifra/`), keeping dev transforms byte-identical to production's.
  *
- * `configPath` is the app's `nifra.config.ts` (or `framework.ts`). Importing it here is the only way an
- * app's `clientPlugins` can reach Bun's dev-server bundler at all: that bundler takes plugins as module
- * PATHS via bunfig, never as the plugin objects the CLI already holds in memory. Without this an app
- * whose transforms live in `clientPlugins` had no working Bun dev loop - its client would be bundled
- * with the transform silently missing. `setup` is async because `clientPlugins` may be a thunk.
+ * `configPath` is the app's `nifra.config.ts` (or `backend/framework.ts`). Importing it here is the
+ * only way an app's `clientPlugins` can reach Bun's dev-server bundler at all: that bundler takes
+ * plugins as module PATHS via bunfig, never as the plugin objects the CLI already holds in memory.
+ * Without this an app whose transforms live in `clientPlugins` had no working Bun dev loop - its
+ * client would be bundled with the transform silently missing. `setup` is async because
+ * `clientPlugins` may be a thunk.
+ *
+ * `servePlugins` are the app's own bunfig `[serve.static] plugins`, composed last and in order rather
+ * than listed beside this module, so that every plugin reaching the bundler registers through
+ * `reserveDevSpecifiers` (see `@nifrajs/web/internal/dev-reserved`).
  */
-export function renderBoundaryPluginModule(configPath?: string, pluginDir?: string): string {
+export function renderBoundaryPluginModule(
+  configPath?: string,
+  pluginDir?: string,
+  servePlugins: readonly string[] = [],
+): string {
   const appImport =
     configPath !== undefined && pluginDir !== undefined
       ? `import * as appConfig from ${tomlString(relativeSpecifier(pluginDir, configPath))}\n`
@@ -168,25 +214,49 @@ export function renderBoundaryPluginModule(configPath?: string, pluginDir?: stri
       : `    // The app's OWN client transforms (SFC compilers etc.). \`clientPlugins\` may be a thunk.
     const field = appConfig.clientPlugins
     const appPlugins = (typeof field === "function" ? await field() : field) ?? []
-    for (const p of appPlugins) await p.setup(build)
+    for (const p of appPlugins) await p.setup(guarded)
+`
+  const serveSetup =
+    servePlugins.length === 0
+      ? ""
+      : `    // The app's own bunfig [serve.static] plugins, as Bun would load them, in their order.
+    for (const specifier of ${JSON.stringify(servePlugins)}) {
+      const plugin = (await import(specifier)).default
+      if (typeof plugin?.setup !== "function") {
+        throw new TypeError(\`[nifra] bunfig.toml [serve.static] plugin "\${specifier}" does not default-export a bundler plugin\`)
+      }
+      await plugin.setup(guarded)
+    }
 `
   return `// Generated by \`nifra dev\` (Bun pipeline) - do not edit. Regenerated on every dev start.
-import { serverFnStubPlugin, serverOnlyEmptyPlugin } from "@nifrajs/web/build"
+import { serverFnStubPlugin, zoneGuardPlugin } from "@nifrajs/web/build"
+import { reserveDevSpecifiers } from "@nifrajs/web/internal/dev-reserved"
 import { cssModulesBunPlugin } from "@nifrajs/web/plugins/css-modules"
 ${appImport}
+// This module lives at <app>/.nifra/dev-bun/, so the app root is two directories up.
+const zones = zoneGuardPlugin({
+  appRoot: Bun.fileURLToPath(new URL("../../", import.meta.url)),${
+    appImport === ""
+      ? ""
+      : `
+  ...(typeof appConfig.publicEnvPrefix === "string" ? { publicEnvPrefix: appConfig.publicEnvPrefix } : {}),`
+  }
+})
 const fn = serverFnStubPlugin()
-const serverOnly = serverOnlyEmptyPlugin()
 const cssModules = cssModulesBunPlugin("dom")
 
 export default {
   name: "nifra-dev-boundary",
   async setup(build) {
-    // Boundary first: an app plugin must never get to transform a module that the boundary is about to
-    // empty or stub, or the transform decides what ships instead of the boundary.
-    serverOnly.setup(build)
-    fn.setup(build)
-    cssModules.setup(build)
-${appSetup}  },
+    // Every plugin below registers through this view: a resolve filter matching the dev entry script
+    // or Bun's built-in React refresh runtime breaks the page even when its handler declines.
+    const guarded = reserveDevSpecifiers(build)
+    // Boundary first: an app plugin must never get to transform a module that the boundary is about
+    // to refuse or stub, or the transform decides what ships instead of the boundary.
+    zones.setup(guarded)
+    fn.setup(guarded)
+    cssModules.setup(guarded)
+${appSetup}${serveSetup}  },
 }
 `
 }
@@ -201,20 +271,26 @@ const TOKEN_FILE = "launch-token"
 
 /** Write the generated config for an app; returns the bunfig path to re-exec with and the fresh
  * launch token to pass in the child's environment. `configPath` (the app's `nifra.config.ts` /
- * `framework.ts`) is what lets the app's own `clientPlugins` reach Bun's dev-server bundler. */
+ * `backend/framework.ts`) is what lets the app's own `clientPlugins` reach Bun's dev-server
+ * bundler; `define` is the config's own. */
 export async function writeBunDevConfig(
   appRoot: string,
   configPath?: string,
+  define?: Readonly<Record<string, string>>,
 ): Promise<BunDevConfig> {
   const dir = resolve(appRoot, ".nifra", "dev-bun")
   mkdirSync(dir, { recursive: true })
   const pluginPath = resolve(dir, "boundary-plugin.ts")
-  writeFileSync(pluginPath, renderBoundaryPluginModule(configPath, dir))
   const userToml = await Bun.file(resolve(appRoot, "bunfig.toml"))
     .text()
     .catch(() => undefined)
+  const user = parseUserBunfig(userToml)
+  writeFileSync(
+    pluginPath,
+    renderBoundaryPluginModule(configPath, dir, userServePlugins(user, appRoot)),
+  )
   const bunfigPath = resolve(dir, "bunfig.toml")
-  writeFileSync(bunfigPath, renderDevBunfig(pluginPath, parseUserBunfig(userToml), appRoot))
+  writeFileSync(bunfigPath, renderDevBunfig(pluginPath, user, appRoot, define))
   const launchToken = crypto.randomUUID()
   writeFileSync(resolve(dir, TOKEN_FILE), launchToken)
   return { bunfigPath, launchToken }

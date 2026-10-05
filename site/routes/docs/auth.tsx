@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/auth",
@@ -11,26 +7,27 @@ export const meta = docsMeta(
   "Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.",
 )
 
-const BETTERAUTH = `// doc-check: skip - needs the third-party `better-auth` package + your `db`; install it to run this.
-// auth.ts - your configured Better Auth instance (database, providers, …):
+const BETTERAUTH = `// doc-check: skip - needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
+// backend/auth.ts - your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
 
-// server.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
+// backend/app.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
 import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
-const app = server()
+export const backend = server()
   .use(betterAuth(auth))                                       // sign-in/up/out, OAuth, 2FA, session…
   .get("/me", async (c) => (await requireSession(auth, c.req)).user)  // typed; 401 when signed out
 
-// In a loader/action, read the session from the raw Request:
-export async function loader({ request }) {
+// routes/account.backend.ts - a loader or action reads the session from the raw Request:
+export const loaderOutput = t.object({ user: t.object({ id: t.string(), name: t.string() }) })
+export async function loader({ request }: Route.LoaderArgs) {
   const session = await getSession(auth, request)              // { user, session } | null - typed
   const { user } = await requireSession(auth, request, { redirectTo: "/login" })  // or guard it
   return { user }
 }`
 
 const AUTHJS = `// doc-check: skip - needs \`@auth/core\` providers + AUTH_SECRET; install them to run this.
-// auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
+// backend/auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
 import { authjs, getSession, requireAuthUser } from "@nifrajs/authjs"
 import GitHub from "@auth/core/providers/github"
 export const authConfig = {
@@ -39,13 +36,14 @@ export const authConfig = {
   trustHost: true, // or authUrl behind a proxy
 }
 
-// server.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
-export const app = server()
+// backend/app.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
+export const backend = server()
   .use(authjs(authConfig))                                     // sign-in, OAuth callbacks, session…
   .get("/me", async (c) => ({ user: (await getSession(c.req, authConfig))?.user ?? null }))
 
-// Guard it - or read it in a loader from the raw Request:
-export async function loader({ request }) {
+// routes/account.backend.ts - guard it, or read it in a loader from the raw Request:
+export const loaderOutput = t.object({ user: t.object({ name: t.string() }) })
+export async function loader({ request }: Route.LoaderArgs) {
   const user = await requireAuthUser(request, authConfig, { redirectTo: "/login" })
   return { user }
 }
@@ -55,8 +53,8 @@ export async function loader({ request }) {
 // await createAuthClient().signIn("github")
 // import { AuthSessionProvider, useAuthSession } from "@nifrajs/web-react/auth"`
 
-const SETUP = `// auth.ts - one session manager. LAZY so a route module can import it without shipping it to the
-// browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.
+const SETUP = `// backend/auth.ts - one session manager, created on first use so the secret is read at request time.
+// Store mode keeps data server-side; cookie mode (no store) is stateless.
 import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
 let manager: ReturnType<typeof createSessions> | undefined
@@ -66,7 +64,7 @@ export const getSessions = () => (manager ??= createSessions({
   // cookie: { secure: false },                 // local http dev only
 }))`
 
-const LOGIN = `// server.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
+const LOGIN = `// backend/app.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
 const sessions = getSessions()
 app.use(csrf())                                          // Origin check on unsafe methods
 
@@ -83,18 +81,18 @@ app.post("/api/login", async (c) => {
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
   return redirect("/login")
-})
+})`
 
-createWebApp({ /* … */ api: sessions })                  // inject the manager into loaders as ctx.api`
+const GUARD = `// routes/account.backend.ts - a protected route's loader reads the session and redirects when absent.
+import { requireUser } from "@nifrajs/auth"
+import { t } from "@nifrajs/schema"
+import { getSessions } from "../backend/auth"   // backend code: a backend half imports it directly
+import type { Route } from "./+types/account"
 
-const GUARD = `// doc-check: skip - fragment: \`api\` is the session manager createWebApp injected (see setup above).
-// A protected route's loader - reads the session and redirects when absent.
-import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a route module
-
-export async function loader({ request, api }) {
-  const sessions = api                       // the manager injected via createWebApp's \`api\`
-  const session = await sessions.read(request)
-  // requireUser throws a 302 to /login when there's no session; Nifra returns the thrown Response.
+export const loaderOutput = t.object({ userId: t.string() })
+export async function loader({ request }: Route.LoaderArgs) {
+  const session = await getSessions().read(request)
+  // requireUser throws a 302 to /login when there's no session, and the loader stops there.
   const userId = requireUser(session, "userId", { redirectTo: "/login" })
   return { userId }
 }`
@@ -147,8 +145,12 @@ export default function Auth() {
       <p>
         Secrets resolve per request - explicit <code>secret</code>, then the <code>AUTH_SECRET</code>{" "}
         platform binding (edge-safe), then <code>process.env</code> - and a missing secret fails loud
-        instead of signing with nothing. Behind a proxy, pass <code>authUrl</code> (or{" "}
-        <code>trustHost</code>) so redirects and cookies use the public origin.
+        instead of signing with nothing. Auth.js builds sign-in links, redirects and cookies from
+        the request's origin, so in production it trusts the <code>Host</code> header only when
+        told to: pass <code>authUrl</code> (or set <code>AUTH_URL</code>), which every request is
+        rewritten onto, or set <code>trustHost</code> when a proxy you control fixes the host. Give{" "}
+        <code>getSession</code> and <code>requireAuthUser</code> the same <code>authUrl</code>,{" "}
+        <code>trustProxy</code> and <code>basePath</code> as the mount.
       </p>
 
       <h2 id="sessions">Set up a session manager</h2>
@@ -174,19 +176,21 @@ export default function Auth() {
         <code>requireSession</code> / <code>requireUser</code> throw a <code>status(...)</code> render
         (a 302 to <code>redirectTo</code>, or a 401) when the session is missing - Nifra renders a
         thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
-        a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes.
+        a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes. To guard
+        every page under a directory, run the same check in the <code>middleware</code> export of that
+        directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
 
-      <h2 id="server-only">⚠️ Never import server-only code into a route module</h2>
+      <h2 id="server-only">Session code stays in the backend</h2>
       <p>
-        A route's <code>loader</code> runs only on the server, but its module is <b>also bundled for the
-        browser</b> (for the component) - and the loader is <b>not</b> stripped from that bundle. So a
-        top-level <code>import</code> of the session manager (or a DB client, or anything touching{" "}
-        <code>process.env</code>) would ship server code to the client and crash hydration. Reach server
-        resources through <code>ctx.api</code> / <code>ctx.env</code> instead (inject them via{" "}
-        <code>createWebApp</code>) - exactly how the manager is passed as <code>api</code> above.{" "}
-        <code>requireUser</code> is fine to import: it only builds a <code>Response</code>, no secrets.
+        The session manager, an auth instance and their secrets live in <code>backend/</code>, and only
+        backend code imports them: a route's <code>.backend.ts</code> half, <code>backend/app.ts</code>.
+        A page or a <code>frontend/</code> component that imported <code>backend/auth.ts</code> fails
+        the build with the import chain that reached it, so a secret cannot ride into the browser
+        bundle. A page that needs the user reads it from its loader data, which{" "}
+        <code>loaderOutput</code> narrows to the fields it declares - see{" "}
+        <a href="/docs/structure">Project structure</a>.
       </p>
 
       <h2>CSRF</h2>
@@ -223,29 +227,34 @@ export default function Auth() {
       <h2>Rate Limiting on Login</h2>
       <p>
         The rate-limit middleware (<code>@nifrajs/middleware</code>) protects against brute-force by enforcing
-        IP-based buckets. <b>Critical:</b> if your app is behind a reverse proxy (CDN, load balancer), you{" "}
-        <b>must</b> configure <code>trustedProxies</code> so the middleware reads the real client IP from{" "}
-        <code>X-Forwarded-For</code> instead of the proxy's IP (which would cause all users to share a rate
-        limit):
+        per-caller buckets keyed by <code>c.clientIp</code> - the socket peer by default. <b>Critical:</b> if
+        your app is behind a reverse proxy (CDN, load balancer), declare it with the server's{" "}
+        <code>clientIp</code> option so the caller is read from the forwarding chain instead of the proxy's
+        own address (which would put all users in one bucket). Never key on a raw{" "}
+        <code>X-Forwarded-For</code> value: a client writes whatever it likes there and gets a fresh bucket
+        per request.
       </p>
       <CodeBlock
-        code={`app.use(
-  rateLimit({
-    key: (c) => "login:" + c.req.header("x-forwarded-for") ?? c.req.header("cf-connecting-ip") ?? c.ip,
-    limit: 5,      // 5 attempts
-    window: 15 * 60 * 1000,  // per 15 minutes
-    onExceeded: (c) => new Response("Too many login attempts", { status: 429 }),
-  }),
-)
-.post("/login", …)`}
+        code={`import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimit } from "@nifrajs/middleware"
+
+// One reverse proxy you operate appends the caller to X-Forwarded-For. Behind a CDN that overwrites
+// a single header instead, declare { header: "<that header>" }.
+const app = server({ clientIp: { trustedHops: 1 } })
+  .use(
+    rateLimit({
+      store: new MemoryStore(), // use a shared store (Redis, etc.) in production
+      max: 5, // 5 attempts
+      windowMs: 15 * 60 * 1000, // per 15 minutes
+    }),
+  )
+  .post("/login", …)`}
         lang="ts"
       />
       <p>
-        Without <code>trustedProxies</code> configured correctly, the middleware will fall back to the
-        proxy's IP address, and your entire user base will share a single rate-limit bucket - defeating
-        the protection. Check your proxy's documentation for how it sets{" "}
-        <code>X-Forwarded-For</code> (Cloudflare uses <code>cf-connecting-ip</code>, AWS ALB/NLB use{" "}
-        <code>x-forwarded-for</code>).
+        Declare only hops you actually run: a directly reachable app with <code>trustedHops</code> set lets
+        a client forge the forwarded address. Check your proxy's documentation for the header it sets
+        (Cloudflare sets <code>cf-connecting-ip</code>; AWS ALB appends to <code>x-forwarded-for</code>).
       </p>
     </div>
   )

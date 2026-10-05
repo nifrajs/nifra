@@ -1,5 +1,8 @@
 import { basename as pathBasename } from "node:path"
 import type { CssLoadingMode } from "./css-contract.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { isBareNodeBuiltin } from "./internal/node-builtins.ts"
+import type { SecretExemption } from "./internal/secret-scan.ts"
 import type { ClientModuleGraph } from "./module-graph.ts"
 
 export interface BuildManifest {
@@ -51,12 +54,22 @@ export interface ServerBuild {
 // ===================================================================================================
 
 /** A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server). */
-export const BUILD_TARGETS = ["bun", "node", "deno", "cf-pages", "vercel", "static"] as const
+export const BUILD_TARGETS = ["bun", "node", "deno", "cloudflare", "vercel", "static"] as const
 export type BuildTarget = (typeof BUILD_TARGETS)[number]
 
 /** A type guard narrowing an arbitrary string to a {@link BuildTarget}. */
 export function isBuildTarget(value: string): value is BuildTarget {
   return (BUILD_TARGETS as readonly string[]).includes(value)
+}
+
+/** `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`). */
+export function parseBuildTarget(value: string, label = "target"): BuildTarget {
+  if (isBuildTarget(value)) return value
+  throw new Error(
+    value === "cf-pages"
+      ? `[nifra] the ${label} "cf-pages" is now "cloudflare"`
+      : `[nifra] unknown ${label} "${value}". Valid: ${BUILD_TARGETS.join(", ")}`,
+  )
 }
 
 export type ServerBuildTarget = "browser" | "node" | "bun"
@@ -66,6 +79,7 @@ export interface StaticBuildTargetPlan {
   readonly kind: "static"
   readonly serverTarget: undefined
   readonly outputFile: undefined
+  readonly staticDir: ""
   readonly run: string
 }
 
@@ -73,8 +87,10 @@ export interface ServerBuildTargetPlan {
   readonly target: Exclude<BuildTarget, "static">
   readonly kind: "server"
   readonly serverTarget: ServerBuildTarget
-  /** The worker's final filename inside the assembled deploy directory. */
-  readonly outputFile: "_worker.js" | "index.js" | "server.js"
+  /** The worker's final path inside the assembled deploy directory. */
+  readonly outputFile: "_worker.js" | "functions/index.func/index.js" | "server.js"
+  /** Where the host serves static files from, relative to the deploy directory (`""` = its root). */
+  readonly staticDir: "" | "static"
   readonly run: string
 }
 
@@ -106,15 +122,17 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
       kind: "static",
       serverTarget: undefined,
       outputFile: undefined,
+      staticDir: "",
       run: `static site → ${outDir} (serve the directory with any static host)`,
     }
   }
-  if (target === "cf-pages") {
+  if (target === "cloudflare") {
     return {
       target,
       kind: "server",
       serverTarget: "browser",
       outputFile: "_worker.js",
+      staticDir: "",
       run: `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${finalPathSegment(outDir)})`,
     }
   }
@@ -123,8 +141,10 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
       target,
       kind: "server",
       serverTarget: "browser",
-      outputFile: "index.js",
-      run: `Vercel edge function → ${outDir}/index.js (wrap with your vercel.json or Build Output API)`,
+      // Vercel's Build Output API: `vercel deploy --prebuilt` uploads this tree as it is.
+      outputFile: "functions/index.func/index.js",
+      staticDir: "static",
+      run: `Vercel (Build Output API) → ${outDir} (deploy: vercel deploy --prebuilt)`,
     }
   }
   return {
@@ -132,6 +152,7 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
     kind: "server",
     serverTarget: target === "node" ? "node" : target === "bun" ? "bun" : "browser",
     outputFile: "server.js",
+    staticDir: "",
     run: `${target} server → ${outDir} (run: ${target === "node" ? "node" : target} ${finalPathSegment(outDir)}/server.js)`,
   }
 }
@@ -161,6 +182,8 @@ export interface Bundler {
     readonly cssLoading?: CssLoadingMode
     /** Project root (Vite needs it; the Bun strategy ignores it). */
     readonly root?: string
+    /** Reviewed false positives of the secret scan. */
+    readonly secretExemptions?: readonly SecretExemption[]
   }): Promise<BuildManifest>
   /** Build the server worker → the shared {@link ServerBuild}. */
   buildServer(input: {
@@ -178,12 +201,17 @@ export interface Bundler {
     /** CSS activation policy to bake into the generated server manifest. */
     readonly cssLoading?: CssLoadingMode
     readonly root?: string
+    /** Modules the zone rules treat as generated: the adapter module the generated entry imports. */
+    readonly generatedFiles?: readonly string[]
+    /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
+    readonly publicEnvPrefix?: string
   }): Promise<ServerBuild>
 }
 
 interface GraphImport {
   readonly path?: string
   readonly original?: string
+  readonly external?: boolean
 }
 
 interface GraphInput {
@@ -195,7 +223,11 @@ const basename = (path: string): string => pathBasename(path)
 const nodeBuiltinOf = (im: GraphImport): string | undefined => {
   if (im.original?.startsWith("node:")) return im.original
   if (im.path?.startsWith("node:")) return im.path
-  return undefined
+  // A bare built-in only counts when the bundler left it external: a bundled `fs` resolved to an
+  // installed package (or a polyfill keyed `node:fs`) is handled above or is not a built-in at all.
+  // Labeled with the prefix, so `fs/promises` reads the same from either bundler.
+  const spec = im.external === true ? (im.original ?? im.path) : undefined
+  return spec !== undefined && isBareNodeBuiltin(spec) ? `node:${spec}` : undefined
 }
 
 /** One `node:`-builtin-in-the-client finding: the offending builtin, the emitted chunk it landed in,
@@ -302,29 +334,43 @@ export function detectNodeBuiltinsInClient(
     chains.set(builtin, chain)
     return chain
   }
+  // (1b) Builtins the bundler left EXTERNAL: the import ships in the importer's chunk but the module
+  // is in no output, so (2) can't find it as a chunk member. Bun does this for a dynamic
+  // `import("node:fs")` in a browser build; the browser then fails to load it.
+  const externalsOf = new Map<string, string[]>()
+  for (const [inputKey, input] of Object.entries(inputs)) {
+    if (inputKey.startsWith("node:")) continue
+    for (const im of input.imports ?? []) {
+      if (im.external !== true) continue
+      const builtin = nodeBuiltinOf(im)
+      if (builtin === undefined) continue
+      const list = externalsOf.get(inputKey) ?? []
+      if (!list.includes(builtin)) list.push(builtin)
+      externalsOf.set(inputKey, list)
+    }
+  }
   // (2) Locate which emitted chunk each user-imported builtin reached, via the per-output `inputs`.
   const findings = new Map<string, NodeBuiltinFinding>()
+  const report = (builtin: string, outputPath: string): void => {
+    const chunk = basename(outputPath)
+    findings.set(`${builtin}\0${chunk}`, { builtin, chunk, chain: chainFor(builtin) })
+  }
   for (const [outputPath, output] of Object.entries(graph.chunks)) {
     for (const inputKey of output.modules) {
-      if (!userImported.has(inputKey)) continue
-      const chunk = basename(outputPath)
-      findings.set(`${inputKey}\0${chunk}`, {
-        builtin: inputKey,
-        chunk,
-        chain: chainFor(inputKey),
-      })
+      if (userImported.has(inputKey)) report(inputKey, outputPath)
+      for (const builtin of externalsOf.get(inputKey) ?? []) report(builtin, outputPath)
     }
   }
   return [...findings.values()].sort((a, b) =>
-    a.builtin === b.builtin ? a.chunk.localeCompare(b.chunk) : a.builtin.localeCompare(b.builtin),
+    a.builtin === b.builtin ? codeUnitOrder(a.chunk, b.chunk) : codeUnitOrder(a.builtin, b.builtin),
   )
 }
 
 // ---------------------------------------------------------------------------------------------------
-// `server-only` poison-import guard (§3.3/§5.1). The complement to the `.server` convention + the
+// `backend-only` poison-import guard (§3.3/§5.1). The complement to the zones + the
 // node-builtin guard: a module of PURE server logic with NO `node:` import (a secret-bearing constant,
 // a server-only API call) that an author wants to FAIL LOUD if it reaches the client opts in with a
-// side-effect `import "@nifrajs/web/server-only"` (Next's `import "server-only"`). On the SERVER build
+// side-effect `import "@nifrajs/web/backend-only"` (Next's `import "server-only"`). On the SERVER build
 // the marker is an empty no-op; the CLIENT build detects - via the SAME Bun metafile graph the
 // node-builtin guard walks - any module that imports the marker AND lands in a client chunk, and fails
 // the build with the import chain. Graph-based (never the emitted text), so it survives minification.
@@ -332,18 +378,18 @@ export function detectNodeBuiltinsInClient(
 
 /** The marker specifier an author imports to opt a module into the client-leak guard. Matched on the
  * import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed,
- * before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`). */
-export const SERVER_ONLY_MARKER = "@nifrajs/web/server-only"
+ * before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`). */
+export const SERVER_ONLY_MARKER = "@nifrajs/web/backend-only"
 
 const isServerOnlyMarkerImport = (im: GraphImport): boolean => {
   if (im.original === SERVER_ONLY_MARKER) return true
-  return im.path !== undefined && /(^|\/)server-only\.[cm]?[jt]s$/.test(im.path)
+  return im.path !== undefined && /(^|\/)backend-only\.[cm]?[jt]s$/.test(im.path)
 }
 
-/** True when an INPUT graph key is the marker module file itself (`…/server-only.{ts,js}` under web).
+/** True when an INPUT graph key is the marker module file itself (`…/backend-only.{ts,js}` under web).
  * Excluded from the "marked" set - the marker is the import target, not an opt-in module. */
 const isServerOnlyMarkerModule = (inputKey: string): boolean =>
-  /(^|\/)server-only\.[cm]?[jt]s$/.test(inputKey)
+  /(^|\/)backend-only\.[cm]?[jt]s$/.test(inputKey)
 
 /** One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import
  * chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import
@@ -398,7 +444,7 @@ function shortestServerOnlyChain(
 ): string[] {
   // The label for the marked module's tail: its as-written specifier (filled when we cross the edge
   // that reaches it) suffixed with `(marked server-only)`; the entry case uses the entry key itself.
-  const tail = (label: string): string => `${label} (marked server-only)`
+  const tail = (label: string): string => `${label} (marked backend-only)`
   // An entry that is ITSELF the marked module - the chain is just that one node.
   if (entryInputs.includes(markedModule)) return [tail(markedModule)]
   const seen = new Set(entryInputs)
@@ -427,7 +473,7 @@ function shortestServerOnlyChain(
 
 /**
  * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect
- * `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped
+ * `import "@nifrajs/web/backend-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped
  * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME
  * graph facts - which inputs import the marker (the "marked" modules), which chunk each landed in (the
  * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF
@@ -466,17 +512,28 @@ export function detectServerOnlyInClient(
   }
   // (2) Locate which emitted chunk each marked module reached, via the per-output `inputs`.
   const findings = new Map<string, ServerOnlyFinding>()
+  const placed = new Set<string>()
   for (const [outputPath, output] of Object.entries(graph.chunks)) {
     for (const inputKey of output.modules) {
       if (!marked.has(inputKey)) continue
       const chunk = basename(outputPath)
+      placed.add(inputKey)
       findings.set(`${inputKey}\0${chunk}`, { chunk, chain: chainFor(inputKey) })
     }
+  }
+  // A marked module the build loaded but no chunk lists: the bundler inlined what it exports (a
+  // constant ships without its module) or dropped it. The import crossed the boundary either way.
+  for (const inputKey of marked) {
+    if (placed.has(inputKey)) continue
+    findings.set(`${inputKey}\0`, {
+      chunk: "none, inlined or shaken out",
+      chain: chainFor(inputKey),
+    })
   }
   return [...findings.values()].sort((a, b) => {
     const am = a.chain[a.chain.length - 1] ?? ""
     const bm = b.chain[b.chain.length - 1] ?? ""
-    return am === bm ? a.chunk.localeCompare(b.chunk) : am.localeCompare(bm)
+    return am === bm ? codeUnitOrder(a.chunk, b.chunk) : codeUnitOrder(am, bm)
   })
 }
 
@@ -498,9 +555,8 @@ export function formatNodeBuiltinLeak(
       : `  - ${finding.builtin} reached the client bundle via ${finding.chunk}`,
   )
   return (
-    `[nifra/web] Node built-in(s) in the client bundle - move them behind a server-only path ` +
-    `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
-    `top level):\n${lines.join("\n")}`
+    `[nifra/web] Node built-in(s) in the client bundle - built-ins run on the server only: import ` +
+    `them in a route's backend half (x.backend.ts) or under backend/, never in browser code:\n${lines.join("\n")}`
   )
 }
 
@@ -511,14 +567,13 @@ export function formatServerOnlyLeak(
   if (findings.length === 0) return undefined
   const lines = findings.map((finding) =>
     finding.chain.length > 1
-      ? `  - server-only module reached the client bundle via ${finding.chain.join(" → ")} (chunk: ${finding.chunk})`
-      : `  - server-only module reached the client bundle via ${finding.chunk}`,
+      ? `  - backend-only module reached the client bundle via ${finding.chain.join(" → ")} (chunk: ${finding.chunk})`
+      : `  - backend-only module reached the client bundle via ${finding.chunk}`,
   )
   return (
-    `[nifra/web] server-only module(s) in the client bundle - a module marked ` +
-    `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it behind a server-only path ` +
-    `(reach it via a loader/action, or rename it \`*.server.ts\`), so its server logic never ships ` +
-    `to the client:\n${lines.join("\n")}`
+    `[nifra/web] backend-only module(s) in the client bundle - a module marked ` +
+    `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it under backend/ and reach it ` +
+    `from a route's backend half (x.backend.ts) or a *.fn.ts server function:\n${lines.join("\n")}`
   )
 }
 
@@ -555,7 +610,7 @@ export interface SizeReport {
  */
 export function aggregateSizeReport(chunks: readonly ChunkSize[]): SizeReport {
   const sorted = [...chunks].sort(
-    (a, b) => b.gzip - a.gzip || b.bytes - a.bytes || a.name.localeCompare(b.name),
+    (a, b) => b.gzip - a.gzip || b.bytes - a.bytes || codeUnitOrder(a.name, b.name),
   )
   let totalBytes = 0
   let totalGzip = 0

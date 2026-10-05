@@ -5,14 +5,17 @@ import {
   canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   createMemoryIdempotencyStore,
+  DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
   IDEMPOTENT_REPLAY_HEADER,
+  type IdempotencyBeginInput,
+  type IdempotencyStore,
   MemoryIdempotencyStore,
   responseFromStored,
   serializeResponse,
   validIdempotencyKey,
 } from "../src/idempotency.ts"
 import { idempotency, markIdempotencySafeToRetry } from "../src/idempotency-plugin.ts"
-import { server } from "../src/index.ts"
+import { authenticated, rejected, server } from "../src/index.ts"
 import {
   beginRequestEffectTracking,
   markBeaconEffectBegan,
@@ -23,6 +26,36 @@ import {
   requestEffectScope,
 } from "../src/internal/effect-execution.ts"
 import { createIdempotencyRuntime } from "../src/server/idempotency-lane.ts"
+
+/** A POST whose length-less body is still producing when a cap trips: its last chunk is never
+ * pulled. */
+function overCapPost(url: string, headers: Record<string, string> = {}): Request {
+  let sent = 0
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers,
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ >= 2) return controller.close()
+        controller.enqueue(new Uint8Array(65_536).fill(32))
+      },
+    }),
+    duplex: "half",
+  }
+  return new Request(url, init)
+}
+
+/** Resolves with the response, or with "no response" once `ms` pass without one. */
+function within(
+  ms: number,
+  response: Promise<Response> | Response,
+): Promise<Response | "no response"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"no response">((resolve) => {
+    timer = setTimeout(() => resolve("no response"), ms)
+  })
+  return Promise.race([Promise.resolve(response), deadline]).finally(() => clearTimeout(timer))
+}
 
 const post = (body: unknown, key?: string, extra?: Record<string, string>): Request =>
   new Request("http://test/pay", {
@@ -168,6 +201,55 @@ describe("MemoryIdempotencyStore", () => {
     const store = new MemoryIdempotencyStore({ maxEntries: 1 })
     expect(begin(store, "a", "fp", 1000).state).toBe("new")
     expect(begin(store, "b", "fp", 1000).state).toBe("capacity")
+  })
+
+  test("a namespace bound keeps one namespace from using up the store", () => {
+    let now = 0
+    const store = new MemoryIdempotencyStore({
+      maxEntries: 10,
+      maxEntriesPerNamespace: 2,
+      now: () => now,
+    })
+    const first = begin(store, "1", "fp", 1000, "tenant-a")
+    expect(begin(store, "2", "fp", 1000, "tenant-a").state).toBe("new")
+    expect(begin(store, "3", "fp", 1000, "tenant-a").state).toBe("capacity")
+    expect(begin(store, "1", "fp", 1000, "tenant-b").state).toBe("new")
+    if (first.state !== "new") throw new Error("expected a reservation")
+    expect(store.abandon({ namespace: "tenant-a", key: "1", reservation: first.reservation })).toBe(
+      true,
+    )
+    expect(begin(store, "3", "fp", 1000, "tenant-a").state).toBe("new")
+    expect(begin(store, "4", "fp", 1000, "tenant-a").state).toBe("capacity")
+    now = 1000
+    expect(begin(store, "4", "fp", 1000, "tenant-a").state).toBe("new")
+    expect(() => new MemoryIdempotencyStore({ maxEntriesPerNamespace: 0 })).toThrow(
+      /maxEntriesPerNamespace/,
+    )
+  })
+
+  test("a pending reservation lapses after its lease unless renewed, and completes for ttlMs", () => {
+    let now = 0
+    const store = new MemoryIdempotencyStore({ now: () => now })
+    const input = { namespace: "global", key: "k1", fingerprint: "fp", ttlMs: 1000 }
+    const first = store.begin({ ...input, pendingTtlMs: 100 })
+    if (first.state !== "new") throw new Error("expected a reservation")
+    const owner = { namespace: "global", key: "k1", reservation: first.reservation }
+    now = 80
+    expect(store.renew({ ...owner, ttlMs: 100 })).toBe(true)
+    now = 150
+    expect(store.begin(input).state).toBe("in-flight")
+    now = 181
+    expect(store.renew({ ...owner, ttlMs: 100 })).toBe(false)
+    const second = store.begin({ ...input, pendingTtlMs: 100 })
+    if (second.state !== "new") throw new Error("expected the lapsed key to be reserved again")
+    const response = { status: 200, headers: [], body: "" }
+    expect(store.complete({ ...owner, response })).toBe(false)
+    expect(
+      store.complete({ namespace: "global", key: "k1", reservation: second.reservation, response }),
+    ).toBe(true)
+    expect(store.renew({ ...owner, reservation: second.reservation, ttlMs: 100 })).toBe(false)
+    now = 1100
+    expect(store.begin(input).state).toBe("replay")
   })
 })
 
@@ -477,6 +559,72 @@ describe("server({ idempotency }) - request path", () => {
     expect(runs).toBe(1)
   })
 
+  test("a handler's refusal with no owned effect releases its key", async () => {
+    const store = new MemoryIdempotencyStore()
+    let runs = 0
+    const app = server()
+      .use(idempotency({ store }))
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
+        runs += 1
+        if (c.req.headers.get("authorization") !== "Bearer good")
+          return c.json({ error: "unauthorized" }, 401)
+        if (c.req.headers.get("x-hold") === "1") {
+          markEffectExecuting(c)
+          return c.json({ error: "conflict" }, 409)
+        }
+        return { paid: true }
+      })
+    for (let i = 0; i < 3; i++)
+      expect((await app.fetch(post({ amount: 1 }, `anonymous-${i}`))).status).toBe(401)
+    expect(store.size).toBe(0)
+    expect((await app.fetch(post({ amount: 1 }, "k"))).status).toBe(401)
+    const paid = await app.fetch(post({ amount: 1 }, "k", { authorization: "Bearer good" }))
+    expect(paid.status).toBe(200)
+    expect(paid.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBeNull()
+    expect(store.size).toBe(1)
+    // Once an owned effect began, even a refusal is the key's answer.
+    const held = { authorization: "Bearer good", "x-hold": "1" }
+    expect((await app.fetch(post({ amount: 2 }, "held", held))).status).toBe(409)
+    const replay = await app.fetch(post({ amount: 2 }, "held", held))
+    expect(replay.status).toBe(409)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(6)
+  })
+
+  test("a response body that fails while being stored never leaves its key in progress", async () => {
+    let runs = 0
+    const broken = () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("upstream broke"))
+          },
+        }),
+      )
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
+        runs += 1
+        if (c.req.headers.get("x-effect") === "1") markEffectExecuting(c)
+        return broken()
+      })
+    const outcome = (request: Request) =>
+      Promise.resolve(app.fetch(request)).then(
+        (response) => response.status,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      )
+    // No owned effect began: the key is released, so the retry runs again.
+    expect(await outcome(post({ amount: 1 }, "free"))).toBe("upstream broke")
+    expect(await outcome(post({ amount: 1 }, "free"))).toBe("upstream broke")
+    expect(runs).toBe(2)
+    // An owned effect began: the key keeps a terminal 500 that the retry replays.
+    expect(await outcome(post({ amount: 1 }, "owned", { "x-effect": "1" }))).toBe(500)
+    const replay = await app.fetch(post({ amount: 1 }, "owned", { "x-effect": "1" }))
+    expect(replay.status).toBe(500)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(3)
+  })
+
   test("an explicit no-effect outcome releases a resolved 5xx for a safe retry", async () => {
     let runs = 0
     const app = server()
@@ -553,6 +701,74 @@ describe("server({ idempotency }) - request path", () => {
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
     expect(await (await app.fetch(request("b"))).json()).toEqual({ run: 2 })
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
+  })
+
+  test("a namespace resolver does not hold up the 413 for a length-less body over the cap", async () => {
+    const app = server({ maxBodyBytes: 1024 })
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: () => "tenant:a" } }, () => ({
+        ok: true,
+      }))
+    const response = await within(
+      2000,
+      app.fetch(
+        overCapPost("http://test/pay", {
+          "content-type": "application/json",
+          "idempotency-key": "key-1",
+        }),
+      ),
+    )
+    expect(response === "no response" ? response : response.status).toBe(413)
+  })
+
+  test("a request rejected before its handler runs releases its key instead of storing it", async () => {
+    const store = new MemoryIdempotencyStore({ maxEntries: 2 })
+    let runs = 0
+    const named = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value: unknown) =>
+          typeof value === "object" && value !== null && "name" in value
+            ? { value }
+            : { issues: [{ message: "name is required" }] },
+      },
+    } as const
+    const app = server()
+      .authenticate({
+        id: "bearer",
+        mode: "sync",
+        run: (input) =>
+          input.headers.get("authorization") === "Bearer good"
+            ? authenticated({ userId: "u1" })
+            : rejected(),
+      })
+      .use(idempotency({ store }))
+      .post(
+        "/pay",
+        {
+          body: named,
+          idempotency: {
+            scope: "request",
+            namespace: (request) =>
+              request.headers.get("authorization") === "Bearer good"
+                ? "principal:u1"
+                : "principal:anonymous",
+          },
+        },
+        () => ({ run: ++runs }),
+      )
+    const order = (key: string, body: unknown, authorization?: string) =>
+      post(body, key, authorization === undefined ? {} : { authorization })
+    for (let i = 0; i < 5; i++) {
+      expect((await app.fetch(order(`anonymous-${i}`, { name: "x" }))).status).toBe(401)
+    }
+    expect((await app.fetch(order("bad-body", { nope: 1 }, "Bearer good"))).status).toBe(422)
+    expect(store.size).toBe(0)
+    const fresh = await app.fetch(order("bad-body", { name: "x" }, "Bearer good"))
+    expect(fresh.status).toBe(200)
+    expect(await fresh.json()).toEqual({ run: 1 })
+    expect(store.size).toBe(1)
   })
 
   test("registration rejects invalid TTL/header configuration and idempotent SSE", () => {
@@ -699,6 +915,168 @@ describe("server({ idempotency }) - request path", () => {
     expect(replay.status).toBe(507)
     expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(runs).toBe(1)
+  })
+
+  test("a key whose process stopped renewing frees after the pending lease, not the replay TTL", async () => {
+    let now = 1_000_000
+    const store = new MemoryIdempotencyStore({ now: () => now })
+    let runs = 0
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const route = (block: boolean) =>
+      server()
+        .use(idempotency())
+        .post(
+          "/pay",
+          { idempotency: { scope: "request", namespace: "public:pay", store } },
+          async () => {
+            runs++
+            if (block) {
+              entered()
+              await gate
+            }
+            return { ok: true }
+          },
+        )
+    // The first process reserves the key and never gets to renew it, as if it died mid-handler.
+    const stalled = route(true).fetch(post({ amount: 1 }, "crash"))
+    await started
+    const survivor = route(false)
+    expect((await survivor.fetch(post({ amount: 1 }, "crash"))).status).toBe(409)
+    now += DEFAULT_IDEMPOTENCY_PENDING_TTL_MS + 1
+    expect((await survivor.fetch(post({ amount: 1 }, "crash"))).status).toBe(200)
+    expect(runs).toBe(2)
+    release()
+    const late = await stalled
+    expect(late.status).toBe(503)
+    expect(await late.json()).toMatchObject({ error: "idempotency_reservation_lost" })
+  })
+
+  test("the lease is renewed while the handler runs and stops once it settles", async () => {
+    // The store's clock moves only when the test moves it, so a stalled event loop delays a
+    // renewal without letting the lease lapse; the heartbeat itself still runs on real timers.
+    let now = 1_000_000
+    const memory = new MemoryIdempotencyStore({ now: () => now })
+    const renewals: number[] = []
+    let renewed = (): void => {}
+    const store: IdempotencyStore = {
+      begin: (input) => memory.begin(input),
+      complete: (input) => memory.complete(input),
+      abandon: (input) => memory.abandon(input),
+      renew: (input) => {
+        renewals.push(input.ttlMs)
+        const kept = memory.renew(input)
+        renewed()
+        return kept
+      },
+    }
+    let runs = 0
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        { idempotency: { scope: "request", namespace: "public:pay", store, pendingTtlMs: 300 } },
+        async () => {
+          runs++
+          entered()
+          await gate
+          return { ok: true }
+        },
+      )
+    const first = app.fetch(post({ amount: 1 }, "slow"))
+    await started
+    for (let step = 0; step < 2; step++) {
+      now += 200
+      await new Promise<void>((resolve) => {
+        renewed = resolve
+      })
+    }
+    // Past the 300ms lease: only the renewals keep a duplicate from running the handler again.
+    expect((await app.fetch(post({ amount: 1 }, "slow"))).status).toBe(409)
+    release()
+    expect((await first).status).toBe(200)
+    expect(runs).toBe(1)
+    expect(renewals.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(renewals)).toEqual(new Set([300]))
+    const settled = renewals.length
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(renewals.length).toBe(settled)
+  })
+
+  test("a renewal that fails lets the lease lapse, which completion reports", async () => {
+    const memory = new MemoryIdempotencyStore()
+    let attempts = 0
+    const store: IdempotencyStore = {
+      begin: (input) => memory.begin(input),
+      complete: (input) => memory.complete(input),
+      abandon: (input) => memory.abandon(input),
+      renew: () => {
+        attempts++
+        throw new Error("store unreachable")
+      },
+    }
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        { idempotency: { scope: "request", namespace: "public:pay", store, pendingTtlMs: 30 } },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 120))
+          return { ok: true }
+        },
+      )
+    const res = await app.fetch(post({ amount: 1 }, "flaky"))
+    expect(attempts).toBeGreaterThanOrEqual(1)
+    expect(res.status).toBe(503)
+    expect(await res.json()).toMatchObject({ error: "idempotency_reservation_lost" })
+  })
+
+  test("a store without renew() holds a pending key for ttlMs, and pendingTtlMs on it is refused", async () => {
+    const memory = new MemoryIdempotencyStore()
+    const begun: IdempotencyBeginInput[] = []
+    const store: IdempotencyStore = {
+      begin: (input) => {
+        begun.push(input)
+        return memory.begin(input)
+      },
+      complete: (input) => memory.complete(input),
+      abandon: (input) => memory.abandon(input),
+    }
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay", store } }, () => ({
+        ok: true,
+      }))
+    expect((await app.fetch(post({ amount: 1 }, "plain"))).status).toBe(200)
+    expect(begun[0]?.pendingTtlMs).toBeUndefined()
+    const declare = (pendingTtlMs: number, target: IdempotencyStore) => () =>
+      server()
+        .use(idempotency())
+        .post(
+          "/pay",
+          {
+            idempotency: { scope: "request", namespace: "public:pay", store: target, pendingTtlMs },
+          },
+          () => ({ ok: true }),
+        )
+    expect(declare(30_000, store)).toThrow(/pendingTtlMs .* on a store that implements renew\(\)/)
+    expect(declare(0, memory)).toThrow(/pendingTtlMs must be a positive integer/)
+    expect(declare(1.5, memory)).toThrow(/pendingTtlMs must be a positive integer/)
+    expect(declare(30_000, memory)).not.toThrow()
   })
 
   test("an injected store receives the completed response", async () => {

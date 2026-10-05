@@ -41,6 +41,91 @@ const CORS_BASE: Record<string, string> = {
 }
 
 /**
+ * Same host, and an Origin scheme equal to or stronger than the request URL's: an `https:` page may reach
+ * an `http:` URL (a TLS-terminating proxy in front of the server), never the reverse. Mirrors core's
+ * `isSameOriginRequest`; inlined because `@nifrajs/core` is an optional peer of this transport.
+ */
+function isSameOrigin(origin: string, request: Request): boolean {
+  try {
+    const from = new URL(origin)
+    const own = new URL(request.url)
+    if (from.host !== own.host) return false
+    if (from.protocol === "https:") return own.protocol === "https:" || own.protocol === "http:"
+    if (from.protocol === "http:") return own.protocol === "http:"
+    return false
+  } catch {
+    return false
+  }
+}
+
+interface HostAuthority {
+  readonly hostname: string
+  readonly port?: string
+}
+
+/** Parse a bare `host[:port]` authority without accepting userinfo, paths, whitespace, or fragments. */
+function parseHostAuthority(value: string): HostAuthority | undefined {
+  if (value.length === 0 || /[\r\n\s@/?#]/.test(value)) return undefined
+  let hostname: string
+  let port: string | undefined
+  if (value.startsWith("[")) {
+    const close = value.indexOf("]")
+    if (close === -1) return undefined
+    const address = value.slice(1, close)
+    if (address.length === 0 || !/^[0-9a-f:.%]+$/i.test(address)) return undefined
+    hostname = `[${address.toLowerCase()}]`
+    const rest = value.slice(close + 1)
+    if (rest !== "") {
+      if (!rest.startsWith(":")) return undefined
+      port = rest.slice(1)
+    }
+  } else {
+    const colon = value.indexOf(":")
+    if (colon === -1) {
+      hostname = value.toLowerCase()
+    } else {
+      if (value.indexOf(":", colon + 1) !== -1) return undefined
+      hostname = value.slice(0, colon).toLowerCase()
+      port = value.slice(colon + 1)
+    }
+    if (hostname.length === 0 || !/^[a-z0-9.-]+$/.test(hostname)) return undefined
+  }
+  if (port !== undefined) {
+    if (!/^\d{1,5}$/.test(port)) return undefined
+    const numeric = Number(port)
+    if (!Number.isSafeInteger(numeric) || numeric > 65_535) return undefined
+    port = String(numeric)
+  }
+  return port === undefined ? { hostname } : { hostname, port }
+}
+
+function defaultPort(protocol: string): string | undefined {
+  if (protocol === "http:") return "80"
+  if (protocol === "https:") return "443"
+  return undefined
+}
+
+/**
+ * The Host guard. Prefer the inbound Host header: an adapter may deliberately build `request.url`
+ * with a canonical authority, but that must not hide the attacker-controlled Host this guard exists
+ * to check. An allowlist entry without a port matches any port; one with a port matches the effective
+ * port (so `localhost:80` matches an HTTP URL whose canonical form omits `:80`).
+ */
+function hostAllowed(request: Request, allowedHosts: readonly string[] | undefined): boolean {
+  if (allowedHosts === undefined) return true
+  const url = new URL(request.url)
+  const actual = parseHostAuthority(request.headers.get("host") ?? url.host)
+  if (actual === undefined) return false
+  const actualPort = actual.port ?? defaultPort(url.protocol)
+  for (const value of allowedHosts) {
+    const candidate = parseHostAuthority(value)
+    if (candidate === undefined || candidate.hostname !== actual.hostname) continue
+    if (candidate.port === undefined || candidate.port === actualPort) return true
+  }
+  return false
+}
+
+/**
  * Resolve the CORS/Origin headers for one request against the host's `allowedOrigins` policy, or `null`
  * when the request's `Origin` is present but not allowed - the caller then answers 403, per the
  * Streamable-HTTP DNS-rebinding rule ("Servers MUST validate the `Origin` header ... respond with 403").
@@ -53,12 +138,12 @@ function corsFor(
 ): Record<string, string> | null {
   if (allowAnyOrigin) return { ...CORS_BASE, "access-control-allow-origin": "*" }
   const origin = request.headers.get("origin")
-  // A caller with no Origin (curl, server-to-server) can't mount a DNS-rebinding attack - allow it.
+  // No Origin: curl, server-to-server, or a same-origin browser GET. `allowedHosts` covers the last one.
   if (origin === null) return { ...CORS_BASE, vary: "Origin" }
   if (allowedOrigins?.includes(origin)) {
     return { ...CORS_BASE, "access-control-allow-origin": origin, vary: "Origin" }
   }
-  if (allowedOrigins === undefined && origin === new URL(request.url).origin) {
+  if (allowedOrigins === undefined && isSameOrigin(origin, request)) {
     return { ...CORS_BASE, "access-control-allow-origin": origin, vary: "Origin" }
   }
   return null
@@ -100,6 +185,13 @@ export interface McpHttpOptions {
   readonly allowAnyOrigin?: boolean
   /** Origin allowlist for the DNS-rebinding guard. When set, only exact origins are accepted. */
   readonly allowedOrigins?: readonly string[]
+  /**
+   * Host allowlist - the DNS-rebinding guard for a server on localhost or a private network. A rebound
+   * page reaches the server under the attacker's hostname with a matching Origin, so the Origin check
+   * alone cannot stop it. Entries are `host[:port]`; without a port they match any port. Every request,
+   * with or without an Origin, whose Host is not listed gets 403. Example: `["localhost", "127.0.0.1"]`.
+   */
+  readonly allowedHosts?: readonly string[]
   /**
    * Shared request registry for one authenticated MCP session. Pass the same state to the
    * request that starts a tool call and its `notifications/cancelled` request. Do not share one
@@ -377,6 +469,9 @@ export async function respondMcpHttp(
   assertByteLimit(maxBodyBytes)
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
   assertResponseLimit(maxResponseBytes)
+  if (!hostAllowed(request, options.allowedHosts)) {
+    return Response.json(rpcError(null, -32600, "host not allowed"), { status: 403 })
+  }
   const cors = corsFor(request, options.allowedOrigins, options.allowAnyOrigin === true)
   if (cors === null) {
     // Origin present but not allowlisted: reject before the body is ever read (DNS-rebinding guard). No

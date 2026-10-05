@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { describePipeline } from "../src/pipeline-guard.ts"
 import { collectPipelineReport } from "../src/pipeline-report.ts"
 
@@ -9,7 +9,10 @@ import { collectPipelineReport } from "../src/pipeline-report.ts"
 async function report(files: Record<string, string>) {
   const dir = await mkdtemp(join(tmpdir(), "nifra-pipeline-"))
   try {
-    for (const [name, source] of Object.entries(files)) await writeFile(join(dir, name), source)
+    for (const [name, source] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, name)), { recursive: true })
+      await writeFile(join(dir, name), source)
+    }
     return await collectPipelineReport(dir)
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -75,12 +78,12 @@ export const vitePlugins = []
     expect(r.certain).toBe(false)
   })
 
-  test("framework.ts is read when there is no nifra.config.ts", async () => {
+  test("backend/framework.ts is read when there is no nifra.config.ts", async () => {
     const r = await report({
-      "framework.ts": `import { reactAdapter } from "@nifrajs/web-react"\nexport const adapter = reactAdapter\n`,
+      "backend/framework.ts": `import { reactAdapter } from "@nifrajs/web-react"\nexport const adapter = reactAdapter\n`,
     })
     expect(r.ran).toBe(true)
-    expect(r.configFile).toBe("framework.ts")
+    expect(r.configFile).toBe("backend/framework.ts")
   })
 
   test("a directory that is not a nifra app reports nothing rather than throwing", async () => {
@@ -143,35 +146,35 @@ export const clientPlugins = [
 })
 
 describe("adapter-entry: the dev toolchain bundled into the production server", () => {
-  test("a Vite plugin imported by framework.ts is an error", async () => {
+  test("a Vite plugin imported by backend/framework.ts is an error", async () => {
     const r = await report({
-      "framework.ts": `import { svelte } from "@sveltejs/vite-plugin-svelte"
+      "backend/framework.ts": `import { svelte } from "@sveltejs/vite-plugin-svelte"
 import { svelteAdapter } from "@nifrajs/web-svelte"
 export const adapter = svelteAdapter
 export const vitePlugins = [svelte()]
 `,
-      "nifra.config.ts": `export { adapter, vitePlugins } from "./framework.ts"\n`,
+      "nifra.config.ts": `export { adapter, vitePlugins } from "./backend/framework.ts"\n`,
     })
     const f = r.findings.find((x) => x.rule === "adapter-entry")
     expect(f?.severity).toBe("error")
-    expect(f?.file).toBe("framework.ts")
+    expect(f?.file).toBe("backend/framework.ts")
     expect(f?.message).toContain("fails at startup")
     expect(f?.fix).toContain("nifra.config.ts")
   })
 
   test("the split config is clean: the toolchain stays where only the CLI imports it", async () => {
     const r = await report({
-      "framework.ts": `import { svelteAdapter } from "@nifrajs/web-svelte"\nexport const adapter = svelteAdapter\n`,
+      "backend/framework.ts": `import { svelteAdapter } from "@nifrajs/web-svelte"\nexport const adapter = svelteAdapter\n`,
       "nifra.config.ts": `import { svelte } from "@sveltejs/vite-plugin-svelte"
-export { adapter } from "./framework.ts"
+export { adapter } from "./backend/framework.ts"
 export const vitePlugins = [svelte()]
 `,
     })
-    expect(r.adapterEntry).toBe("framework.ts")
+    expect(r.adapterEntry).toBe("backend/framework.ts")
     expect(r.findings.filter((f) => f.rule === "adapter-entry")).toEqual([])
   })
 
-  test("with no framework.ts the config itself is the entry, and its imports ship", async () => {
+  test("with no backend/framework.ts the config itself is the entry, and its imports ship", async () => {
     const r = await report({
       "nifra.config.ts": `import { svelte } from "@sveltejs/vite-plugin-svelte"
 import { svelteAdapter } from "@nifrajs/web-svelte"
@@ -181,12 +184,12 @@ export const vitePlugins = [svelte()]
     })
     const f = r.findings.find((x) => x.rule === "adapter-entry")
     expect(f?.file).toBe("nifra.config.ts")
-    expect(f?.fix).toContain("framework.ts")
+    expect(f?.fix).toContain("backend/framework.ts")
   })
 
   test("a type-only toolchain import costs nothing at runtime and is not reported", async () => {
     const r = await report({
-      "framework.ts": `import type { Plugin } from "vite"
+      "backend/framework.ts": `import type { Plugin } from "vite"
 import { svelteAdapter } from "@nifrajs/web-svelte"
 export const adapter = svelteAdapter
 export type P = Plugin

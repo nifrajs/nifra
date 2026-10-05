@@ -303,7 +303,7 @@ describe("responseHeaders() - lane retention", () => {
     const app = server()
       .responseHeaders(DECLARED)
       .get("/json", () => ({ ok: true }))
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/json`)
       expect(res.headers.get("x-frame-options")).toBe("DENY")
@@ -515,11 +515,31 @@ describe("responseHeaders() - refusals", () => {
 
   test("declaring after listen() is refused like every other configuration call", () => {
     const app = server().get("/", () => ({ ok: true }))
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       expect(() => app.responseHeaders({ "x-a": "1" })).toThrow(/sealed/)
     } finally {
       running.stop()
     }
+  })
+})
+
+describe("response header views", () => {
+  test("only a real header answers - never a property every object inherits", async () => {
+    const seen: unknown[][] = []
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(responseObserver())
+      .onResponseHeaders((headers: ResponseHeadersView) => {
+        seen.push([headers.has("constructor"), headers.get("constructor"), headers.get("toString")])
+      })
+      .get("/json", () => ({ ok: true }))
+    await app.fetch(new Request("http://x/json"))
+    const outcome = await app.resolveNode(new Request("http://x/json"))
+    expect(outcome.kind === "response" ? outcome.response.status : outcome.status).toBe(200)
+    expect(seen).toEqual([
+      [false, null, null],
+      [false, null, null],
+    ])
   })
 })

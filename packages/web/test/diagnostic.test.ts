@@ -4,6 +4,7 @@ import {
   buildDiagnostic,
   classify,
   DIAGNOSTIC_CATALOG,
+  isHydrationMismatch,
   parseFrames,
   type SourceReader,
   topUserFrame,
@@ -94,8 +95,15 @@ test("buildCodeframe falls back to the filesystem reader for a missing file (no 
 })
 
 test("classify recognises the seeded failure shapes and falls back to unhandled", () => {
-  expect(classify("Error", "server-only module(s) in the client bundle: ...").code).toBe(
-    "NIFRA_SERVER_ONLY_IN_CLIENT",
+  expect(classify("Error", "backend-only module(s) in the client bundle: ...").code).toBe(
+    "NIFRA_BACKEND_ONLY_IN_CLIENT",
+  )
+  expect(
+    classify("Error", "[nifra/web] the browser build reached code that may not ship to a browser:")
+      .code,
+  ).toBe("NIFRA_BACKEND_IN_CLIENT")
+  expect(classify("Error", "[nifra] backend/db.ts may not reach the browser: x").code).toBe(
+    "NIFRA_BACKEND_IN_CLIENT",
   )
   expect(classify("Error", "Node built-in(s) in the client bundle").code).toBe(
     "NIFRA_NODE_BUILTIN_IN_CLIENT",
@@ -116,9 +124,9 @@ test("every catalog entry carries a cause, fix, and docs anchor", () => {
 })
 
 test("buildDiagnostic resolves a recognised error end to end with a codeframe", () => {
-  const err = new Error("server-only module(s) in the client bundle: /app/secrets.ts")
+  const err = new Error("backend-only module(s) in the client bundle: /app/secrets.ts")
   err.stack = [
-    "Error: server-only module(s) in the client bundle: /app/secrets.ts",
+    "Error: backend-only module(s) in the client bundle: /app/secrets.ts",
     "    at loader (/app/node_modules/@nifrajs/web/dist/build.js:1:1)",
     "    at handler (/app/routes/index.tsx:3:9)",
   ].join("\n")
@@ -127,12 +135,12 @@ test("buildDiagnostic resolves a recognised error end to end with a codeframe", 
     root: "/app",
     read: reader,
   })
-  expect(diag.code).toBe("NIFRA_SERVER_ONLY_IN_CLIENT")
+  expect(diag.code).toBe("NIFRA_BACKEND_ONLY_IN_CLIENT")
   expect(diag.request).toEqual({ method: "GET", url: "/" })
   expect(diag.codeframe?.file).toBe("/app/routes/index.tsx")
   expect(diag.codeframe?.line).toBe(3)
-  expect(diag.fix).toContain("server-only")
-  expect(diag.docsAnchor).toBe("errors#server-only-in-client")
+  expect(diag.fix).toContain("backend/")
+  expect(diag.docsAnchor).toBe("errors#backend-only-in-client")
 })
 
 test("buildDiagnostic tolerates a non-Error throw and a stackless error", () => {
@@ -147,4 +155,22 @@ test("buildDiagnostic tolerates a non-Error throw and a stackless error", () => 
   expect(diag.message).toBe("no frames here")
   expect(diag.codeframe).toBeUndefined()
   expect(diag.frames).toEqual([])
+})
+
+test("hydration reports from each framework classify, and a flag name that only mentions one does not", () => {
+  for (const message of [
+    "Hydration failed because the server rendered text didn't match the client.",
+    "[Vue warn]: Hydration text content mismatch on <p#rendered>",
+    "Hydration completed but contains mismatches.",
+    "[svelte] hydration_mismatch\nHydration failed because the initial UI does not match",
+    "[svelte] hydration_html_changed\nThe value of an `{@html ...}` block changed between server and client renders",
+    "Unable to find DOM nodes for hydration key: 0-0-1",
+  ]) {
+    expect(isHydrationMismatch(message)).toBe(true)
+  }
+  expect(
+    isHydrationMismatch(
+      "Feature flags __VUE_OPTIONS_API__, __VUE_PROD_DEVTOOLS__, __VUE_PROD_HYDRATION_MISMATCH_DETAILS__ are not explicitly defined.",
+    ),
+  ).toBe(false)
 })

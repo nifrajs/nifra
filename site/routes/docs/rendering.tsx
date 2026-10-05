@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/rendering",
@@ -11,34 +7,58 @@ export const meta = docsMeta(
   "Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.",
 )
 
-const PROGRESSIVE = `import { defer } from "@nifrajs/web"
+const PROGRESSIVE = `// routes/products/[id].backend.ts
+import { t } from "@nifrajs/schema"
+import { defer } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
 
-export async function loader({ api }: LoaderArgs<typeof app>) {
+const Review = t.object({ author: t.string(), body: t.string() })
+declare function loadReviews(productId: string): Promise<{ author: string; body: string }[]>
+
+// A deferred value is held to the same output contract as the rest of the data.
+export const loaderOutput = t.object({
+  product: t.object({ name: t.string() }),
+  reviews: t.deferred(t.array(Review)),
+})
+
+export async function loader({ api, params }: Route.LoaderArgs) {
+  const product = await api.products({ id: params.id }).get()
   return {
-    product: (await api.products.get()).data, // critical: rendered in the first shell
-    reviews: defer(api.reviews.get()),        // non-critical: streamed when ready
+    product: { name: product.ok ? product.data.name : "" }, // critical: in the first shell
+    reviews: defer(loadReviews(params.id)),                  // non-critical: streamed when ready
   }
-}
+}`
 
-export default function Product(props: { data: LoaderData<typeof loader> }) {
+const PROGRESSIVE_PAGE = `// routes/products/[id].tsx
+import type { Route } from "./+types/[id]"
+
+export default function Product({ data }: Route.ComponentProps) {
   return (
     <>
-      <ProductSummary product={props.data.product} />
-      <Await resolve={props.data.reviews} fallback={<p>Loading reviews…</p>}>
+      <ProductSummary product={data.product} />
+      <Await resolve={data.reviews} fallback={<p>Loading reviews…</p>}>
         {(reviews) => <Reviews items={reviews} />}
       </Await>
     </>
   )
 }`
 
-const PRERENDER = `// A static route: render it to a static index.html at build time.
+const PRERENDER = `// routes/blog/index.backend.ts - a static route: render it to index.html at build time.
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
+
 export const prerender = true
 
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  return { posts: (await api.posts.get()).data } // runs at BUILD (no per-request secrets)
+export const loaderOutput = t.object({
+  posts: t.array(t.object({ slug: t.string(), title: t.string() })),
+})
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.posts.get() // runs at BUILD (no per-request secrets)
+  return { posts: res.ok ? res.data : [] }
 }`
 
-const STATIC_PATHS = `// A dynamic route (/posts/:slug): enumerate which pages to prerender.
+const STATIC_PATHS = `// routes/posts/[slug].backend.ts - a dynamic route: enumerate which pages to prerender.
 export async function getStaticPaths(): Promise<StaticPaths> {
   const slugs = await loadAllSlugs()
   return {
@@ -76,7 +96,7 @@ const store = new MemoryCacheStore() // dev / single-instance only
 const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
 Bun.serve({ fetch: (req) => isr(req) })`
 
-const REVALIDATE = `// A per-route freshness window (seconds) - overrides the wrapper default.
+const REVALIDATE = `// routes/pricing.backend.ts - a per-route freshness window (seconds), overriding the wrapper's.
 export const revalidate = 300 // this page is fresh for 5 min, then regenerates on the next hit`
 
 const KV = `// doc-check: skip - Workers entry: \`Env\`/\`ExecutionContext\` globals + your \`app\` from server.ts.
@@ -100,6 +120,27 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \\
   -H 'x-nifra-revalidate-token: $REVALIDATE_SECRET'
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)`
 
+const TAGS = `// routes/products/[id].backend.ts - tags per page, from the route's params (never from loader data).
+export const revalidate = 300
+export const revalidateTags = ({ params }: { params: { id: string } }) => [\`product:\${params.id}\`, "catalog"]`
+
+const CDN = `// doc-check: skip - server entry: your \`app\`, \`store\` and env vars.
+import { withISR } from "@nifrajs/web"
+import { cloudflareZone, withCdn } from "@nifrajs/web/cdn"
+import { revalidateEndpoint } from "@nifrajs/web"
+
+const cdn = cloudflareZone({ zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN })
+// The CDN stores the pages ISR would, tagged, for the route's \`revalidate\`; browsers revalidate.
+const handler = withCdn(withISR(app, { store, revalidate: 60, now: () => Date.now() }), { provider: cdn })
+// One purge reaches the origin store first, then the CDN: 200 done, 202 queued, 502 refused.
+const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cdn })`
+
+const CDN_PURGE = `# Several paths and tags in one call (at most 100 paths and 32 tags).
+curl -X POST https://example.com/__nifra/revalidate \\
+  -H "x-nifra-revalidate-token: $REVALIDATE_SECRET" -H 'content-type: application/json' \\
+  -d '{ "paths": ["/products/42"], "tags": ["catalog"] }'
+# → { "revalidated": ["/products/42"], "revalidatedTags": ["catalog"], "cdn": "accepted" }`
+
 const DRAFT = `// doc-check: skip - fragment spanning three files: your \`app\`, \`env\`, \`redirect\`, and route \`slug\`.
 // 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
 //    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
@@ -111,9 +152,9 @@ app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 
-// 2. Loaders branch on ctx.draft to load unpublished content.
-export async function loader({ api, draft }: LoaderArgs<typeof app>) {
-  return { post: (await api.posts.get({ query: { slug, includeDrafts: draft } })).data }
+// 2. Loaders (in a route's .backend.ts) branch on draft to load unpublished content.
+export async function loader({ api, draft, params }: Route.LoaderArgs) {
+  return { post: (await api.posts.get({ query: { slug: params.slug, includeDrafts: draft } })).data }
 }
 
 // 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.
@@ -132,6 +173,21 @@ export default fontFace({
 // a root layout - preload the file so it downloads WITH the document (not after CSS parse):
 import { fontPreload } from "@nifrajs/web"
 export const meta = { link: [fontPreload({ href: "/fonts/inter-var.woff2" })] }`
+
+const VITALS = `import { reportWebVitals, type WebVitalsMetric } from "@nifrajs/web/vitals"
+
+function send(metric: WebVitalsMetric): void {
+  // name: "LCP" | "INP" | "CLS" | "FCP" | "TTFB"; route: the matched route's id, e.g. "users/[id]"
+  const { name, value, rating, id, route } = metric
+  const body = JSON.stringify({ name, value, rating, id, route })
+  void fetch("/api/vitals", { method: "POST", body, keepalive: true }) // survives the page closing
+}
+
+// Call it from the root layout's mount effect; the stop function it returns is the cleanup.
+//   React, Preact: useEffect(() => reportVitals(), [])
+//   Svelte: onMount(reportVitals)    Solid: onMount(() => onCleanup(reportVitals()))
+//   Vue: onMounted(() => (stop = reportVitals())), onUnmounted(() => stop())
+export const reportVitals = () => reportWebVitals(send, { softNavigations: true })`
 
 export default function Rendering() {
   return (
@@ -152,7 +208,8 @@ export default function Rendering() {
         fetch. The same protocol works for actions and soft navigations, including NDJSON on the client
         side.
       </p>
-      <CodeBlock code={PROGRESSIVE} />
+      <CodeBlock code={PROGRESSIVE} lang="ts" />
+      <CodeBlock code={PROGRESSIVE_PAGE} />
       <p>
         This is request-time progressive SSR/partial rendering. It is distinct from build-time SSG:
         the shell is not a precomputed PPR artifact, and deferred values remain request-scoped.
@@ -160,8 +217,8 @@ export default function Rendering() {
 
       <h2>SSG - prerender at build</h2>
       <p>
-        Opt a static route into prerendering with <code>export const prerender = true</code>. Its
-        loader runs at <i>build</i> time (build-safe data only - no per-request cookies or secrets),
+        Opt a static route into prerendering with <code>export const prerender = true</code> in its{" "}
+        <code>.backend.ts</code>. Its loader runs at <i>build</i> time (build-safe data only - no per-request cookies or secrets),
         and the route is baked to a static <code>index.html</code> plus a <code>_data.json</code> the
         client fetches on soft-navigation.
       </p>
@@ -192,8 +249,19 @@ export default function Rendering() {
       </p>
       <CodeBlock code={ISR} />
       <p>
-        Set a route's freshness with <code>export const revalidate</code> (seconds) - Nifra emits it as
-        the <code>x-nifra-isr-revalidate</code> header, which the wrapper reads to set that page's TTL.
+        Entries are keyed by origin and path. A request with a query string skips the cache by
+        default - rendered fresh, never stored - so <code>?a=1</code>, <code>?a=2</code>, ... can't
+        each store a page. To cache a paginated or sorted list, name the parameters:{" "}
+        <code>query: ["page", "sort"]</code> keys on those in any order, and a request carrying any
+        other parameter still skips. <code>query: "all"</code> keys on the whole query string. Give{" "}
+        <code>revalidateEndpoint</code> the same <code>query</code> so purges match.
+      </p>
+      <p>
+        Set a route's freshness with <code>export const revalidate</code> (seconds) in its{" "}
+        <code>.backend.ts</code> - Nifra hands it to the wrapper as
+        the <code>x-nifra-isr-revalidate</code> header, which sets that page's TTL. That header and
+        the route's tags exist only while a wrapper reads them: an app nothing wraps never sends
+        them, and <code>withISR</code> removes them from every response it returns.
       </p>
       <CodeBlock code={REVALIDATE} />
 
@@ -217,6 +285,65 @@ export default function Rendering() {
         <code>401</code>, a missing or relative path is <code>400</code>.
       </p>
       <CodeBlock code={PURGE} />
+      <p>
+        <code>revalidateTags</code> names what a purge by tag reaches. A list tags every page of the
+        route alike; a function of the route's params and URL tags each page on its own. Tags travel to
+        the CDN and to anyone reading the origin, so build them from params, never from loader data.
+      </p>
+      <CodeBlock code={TAGS} />
+
+      <h2>A CDN in front</h2>
+      <p>
+        <code>withCdn</code> from <code>@nifrajs/web/cdn</code> lets a CDN serve your pages near the
+        visitor and purges it by tag. On every page a shared cache may hold (the same rule ISR caches
+        by: a <code>GET</code> 200 HTML document with no <code>Set-Cookie</code>, no{" "}
+        <code>private</code> or <code>no-store</code>, and an explicit <code>public</code> when the
+        request carries a cookie), it sets the CDN's tag header (the route's tags plus one for the
+        page's path) and the CDN's TTL from the route's <code>revalidate</code>. Browsers get{" "}
+        <code>max-age=0, must-revalidate</code>, because a purge reaches the CDN, never a browser.
+        Every other HTML response is marked no-store for the CDN, drafts included. Over{" "}
+        <code>withISR</code>, the CDN is only given the freshness the page has left.
+      </p>
+      <CodeBlock code={CDN} />
+      <ul>
+        <li>
+          <b>Cloudflare zone</b> (<code>cloudflareZone</code>): needs a Cache Rule that makes HTML
+          eligible for cache, and, because the zone cache ignores <code>Vary</code>, that bypasses the
+          cache when the request has an <code>x-nifra-data</code> header (soft navigations fetch the
+          page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+          out as one call.
+        </li>
+        <li>
+          <b>Workers Cache</b> (<code>cloudflareWorkersCache</code>): for an app deployed as a Worker
+          with <code>[cache] enabled = true</code>. Pass <code>cache</code> from{" "}
+          <code>cloudflare:workers</code>. It keys by path, not host, so a Worker serving different
+          content per hostname must not use it. Local <code>wrangler dev</code> does not run it.
+        </li>
+        <li>
+          <b>Vercel</b> (<code>vercel</code>): pass <code>invalidateByTag</code> from{" "}
+          <code>@vercel/functions</code> inside a Vercel Function, or a token and project id for the
+          REST API. Purges mark pages stale by default; <code>mode: "delete"</code> drops them.
+        </li>
+        <li>
+          <b>Fastly</b> (<code>fastly</code>): <code>Surrogate-Key</code> and soft purge by default.
+        </li>
+      </ul>
+      <p>
+        A purge is sent after the origin store is purged, coalesced for 250 ms, chunked to the
+        provider's per-call limit, and retried on 429 or 5xx honoring <code>Retry-After</code>. The
+        endpoint never reports a purge that did not happen: <code>202</code> while it is queued,{" "}
+        <code>502</code> with <code>retryable</code> when the CDN refused it. After a mutation in app
+        code, <code>createInvalidator(&#123; store, cdn, origin &#125;).invalidate(&#123; tags &#125;)</code>{" "}
+        does the same. Staleness compounds: a page can be up to the CDN's{" "}
+        <code>stale-while-revalidate</code> older than ISR's own window.
+      </p>
+      <p>
+        After a deploy, <code>nifra cdn-check https://example.com/products/42</code> requests the page
+        twice and once as a soft navigation. It reports whether the second request came from the CDN's
+        cache, and fails when nifra's internal headers reach the visitor or when a soft navigation is
+        answered with the cached document.
+      </p>
+      <CodeBlock code={CDN_PURGE} />
 
       <h2>Draft / preview mode</h2>
       <p>
@@ -241,6 +368,24 @@ export default function Rendering() {
         file downloads with the document instead of waiting on CSS parse.
       </p>
       <CodeBlock code={FONTS} />
+
+      <h2>Web vitals from real users</h2>
+      <p>
+        <code>reportWebVitals</code> from <code>@nifrajs/web/vitals</code> reports the Core Web Vitals
+        your users' browsers measure (LCP, INP, CLS, plus FCP and TTFB), using Google's{" "}
+        <code>web-vitals</code> - install it with <code>bun add web-vitals</code>. Each metric arrives
+        once its value is final, with the id of the route it belongs to (the id{" "}
+        <code>useMatches</code> reports), so the numbers group by route instead of by URL.
+      </p>
+      <CodeBlock code={VITALS} lang="ts" />
+      <p>
+        With <code>softNavigations: true</code>, a client-side navigation counts as a page view of its
+        own where the browser can measure one (Chromium 151 and later), and its metrics carry the route
+        it navigated to; the first page's metrics then settle at the first navigation. Other browsers
+        report the whole visit as one page. <code>reportAllChanges: true</code> reports every change to
+        a metric instead of its final value - aggregate those with <code>delta</code> or{" "}
+        <code>id</code>.
+      </p>
 
       <h2>Which one?</h2>
       <p>

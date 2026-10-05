@@ -147,6 +147,25 @@ test("buildManifest rejects duplicate routes at boot", () => {
   )
 })
 
+test("a route file name cannot carry a param constraint", () => {
+  for (const file of [
+    "users/[id]{[0-9]+}.tsx",
+    "img/[kind]{thumb|full}.tsx",
+    "f/[name].[ext]{png|jpg}.tsx",
+    "c/[code]{[A-Z]{2}}/edit.tsx",
+  ]) {
+    expect(() => filePathToPattern(file)).toThrow(
+      /a param constraint cannot be written in a route file name/,
+    )
+    expect(() => buildManifest([file], fakeImporter)).toThrow(
+      /Check the value in the route's loader/,
+    )
+  }
+  // Braces the router reads as plain text are an ordinary part-literal segment.
+  expect(filePathToPattern("x/[id]{int}.tsx")).toBe("/x/:id{int}")
+  expect(filePathToPattern("x/{a|b}-[id].tsx")).toBe("/x/{a|b}-:id")
+})
+
 test("buildManifest rejects overlapping route patterns at boot", () => {
   expect(() => buildManifest(["users/[id].tsx", "users/me.tsx"], fakeImporter)).toThrow(
     /overlapping routes.*users\/\[id\]\.tsx.*\/users\/:id.*users\/me\.tsx.*\/users\/me/,

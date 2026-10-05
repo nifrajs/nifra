@@ -161,12 +161,16 @@ export async function runNifraReview(options: ReviewOptions): Promise<ReviewExec
   }
 }
 
-/** Run an existing Nifra gate without importing the large framework CLI into the agent runtime. */
+/**
+ * Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+ * `check` and `assure` are `nifra` commands; `test` is the project's own suite, run with `bun test`
+ * by the Bun this agent runs on.
+ */
 export async function runNifraVerification(
   name: "check" | "assure" | "test",
   options: VerificationOptions,
 ): Promise<VerificationResult> {
-  const command = options.command ?? "nifra"
+  const command = options.command ?? (name === "test" ? process.execPath : "nifra")
   const commandArgs = options.commandArgs ?? []
   const args = name === "test" ? ["test"] : [name, "--json"]
   const proc = Bun.spawn([command, ...commandArgs, ...args], {

@@ -129,3 +129,37 @@ describe("Middleware bundle (object form) still works", () => {
     expect(res.headers.get("x-mw")).toBe("1")
   })
 })
+
+describe("plugin dedupe keys by name", () => {
+  test("a separately built plugin with an applied name is skipped, so dependents share one copy", async () => {
+    let applied = 0
+    const make = () =>
+      defineContextPlugin<{ n: number }>("counted", (a) => {
+        applied++
+        return a.derive(() => ({ n: applied }))
+      })
+    server().use(make()).use(make())
+    expect(applied).toBe(1)
+  })
+
+  test("a guard named per instance applies again, before later routes and inside a group", async () => {
+    let instances = 0
+    const guard = (allow: string): Middleware => ({
+      name: `guard#${++instances}`,
+      beforeHandle: (c) =>
+        c.req.headers.get("x-role") === allow || c.req.headers.get("x-role") === "admin"
+          ? undefined
+          : new Response("denied", { status: 403 }),
+    })
+    const app = server()
+      .use(guard("user"))
+      .get("/me", () => "me")
+      .use(guard("admin"))
+      .get("/admin", () => "admin")
+      .group("/team", (g) => g.use(guard("admin")).get("/", () => "team"))
+    const asUser = { headers: { "x-role": "user" } }
+    expect((await app.fetch(new Request("http://h/me", asUser))).status).toBe(200)
+    expect((await app.fetch(new Request("http://h/admin", asUser))).status).toBe(403)
+    expect((await app.fetch(new Request("http://h/team", asUser))).status).toBe(403)
+  })
+})

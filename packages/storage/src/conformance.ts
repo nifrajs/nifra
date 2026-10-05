@@ -29,6 +29,20 @@ const fail = (check: string, message: string, cause?: unknown): never => {
 
 const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
 
+// Every shape the key contract refuses (`assertSafeKey`). An adapter that refuses the obvious
+// `../escape` and nothing else would still let a nested `..`, an absolute key, or a backslash through.
+const UNSAFE_KEYS = [
+  "../escape",
+  "nifra-conformance/../../escape",
+  "/nifra-conformance/absolute",
+  "nifra-conformance\\..\\escape",
+  "nifra-conformance/nul\0",
+  "",
+  "nifra-conformance//empty-segment",
+  "nifra-conformance/./dot-segment",
+  "nifra-conformance/trailing/",
+]
+
 const hasPaging = (storage: StorageAdapter): storage is PagedStorageAdapter =>
   typeof (storage as PagedStorageAdapter).listPage === "function"
 
@@ -104,11 +118,11 @@ export async function assertStorageAdapterConformance(
       fail("list limit", "limit was not respected")
     }
 
-    const unsafeCalls: Array<readonly [string, () => Promise<unknown>]> = [
-      ["put", () => storage.put("../escape", "x")],
-      ["get", () => storage.get("../escape")],
-      ["delete", () => storage.delete("../escape")],
-      ["exists", () => storage.exists("../escape")],
+    const unsafeCalls: Array<readonly [string, (key: string) => Promise<unknown>]> = [
+      ["put", (key) => storage.put(key, "x")],
+      ["get", (key) => storage.get(key)],
+      ["delete", (key) => storage.delete(key)],
+      ["exists", (key) => storage.exists(key)],
     ]
     if (hasPaging(storage)) {
       const paged = storage
@@ -163,10 +177,10 @@ export async function assertStorageAdapterConformance(
       await movable.delete(moved)
 
       unsafeCalls.push(
-        ["copy source", () => movable.copy("../escape", copied)],
-        ["copy destination", () => movable.copy(c, "../escape")],
-        ["move source", () => movable.move("../escape", moved)],
-        ["move destination", () => movable.move(c, "../escape")],
+        ["copy source", (key) => movable.copy(key, copied)],
+        ["copy destination", (key) => movable.copy(c, key)],
+        ["move source", (key) => movable.move(key, moved)],
+        ["move destination", (key) => movable.move(c, key)],
       )
     }
 
@@ -184,15 +198,17 @@ export async function assertStorageAdapterConformance(
           fail("presign", `${operation} presign returned an already-expired URL`)
         }
       }
-      unsafeCalls.push(["presign", () => presignable.presign("../escape", "get")])
+      unsafeCalls.push(["presign", (key) => presignable.presign(key, "get")])
     }
 
-    for (const [method, call] of unsafeCalls) {
-      try {
-        await call()
-        fail("key safety", `${method} accepted a traversal key`)
-      } catch (error) {
-        if (error instanceof StorageAdapterConformanceError) throw error
+    for (const key of UNSAFE_KEYS) {
+      for (const [method, call] of unsafeCalls) {
+        try {
+          await call(key)
+          fail("key safety", `${method} accepted the unsafe key ${JSON.stringify(key)}`)
+        } catch (error) {
+          if (error instanceof StorageAdapterConformanceError) throw error
+        }
       }
     }
 

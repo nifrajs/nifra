@@ -1,0 +1,10 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+or {
+  TsAsExpression(ty=$type),
+  TsTypeAssertionExpression(ty=$type)
+} as $assertion where {
+  $type <: not r"const",
+  register_diagnostic(span=$assertion, message="This type assertion states no invariant. Write the checked invariant as the reason of a biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion comment on the line above.", severity="info")
+}

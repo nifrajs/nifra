@@ -21,7 +21,8 @@ function scaffold(files: Record<string, string>): { root: string; routesDir: str
     mkdirSync(join(p, ".."), { recursive: true })
     writeFileSync(p, content)
   }
-  writeFileSync(join(root, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(root, "frontend"), { recursive: true })
+  writeFileSync(join(root, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
   return { root, routesDir: join(root, "routes") }
 }
 
@@ -30,16 +31,17 @@ const build = (root: string, routesDir: string) =>
     root,
     routesDir,
     outDir: join(root, "dist", "assets"),
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     minify: false,
   })
 
 test("emits entry + per-route chunks + CSS, all under the /assets/ public path", async () => {
   const { root, routesDir } = scaffold({
     "routes/_layout.tsx": "export default function Layout() { return null }\n",
-    "routes/index.tsx": 'import "../app.css"\nexport default function Index() { return null }\n',
+    "routes/index.tsx":
+      'import "../frontend/app.css"\nexport default function Index() { return null }\n',
     "routes/about.tsx": "export default function About() { return null }\n",
-    "app.css": "body { color: rebeccapurple }\n",
+    "frontend/app.css": "body { color: rebeccapurple }\n",
   })
   const manifest = await build(root, routesDir)
 
@@ -66,18 +68,20 @@ test("emits entry + per-route chunks + CSS, all under the /assets/ public path",
 
 test("cssCodeSplit false records one standalone aggregate CSS asset and falls back from route styles", async () => {
   const { root, routesDir } = scaffold({
-    "routes/_layout.tsx": 'import "../app.css"\nexport default function Layout() { return null }\n',
-    "routes/index.tsx": 'import "../route.css"\nexport default function Index() { return null }\n',
+    "routes/_layout.tsx":
+      'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
+    "routes/index.tsx":
+      'import "../frontend/route.css"\nexport default function Index() { return null }\n',
     "routes/about.tsx": "export default function About() { return null }\n",
-    "app.css": "body { color: rebeccapurple }\n",
-    "route.css": ".route { color: tomato }\n",
+    "frontend/app.css": "body { color: rebeccapurple }\n",
+    "frontend/route.css": ".route { color: tomato }\n",
   })
   const outDir = join(root, "dist", "assets")
   const manifest = await buildClientVite({
     root,
     routesDir,
     outDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     cssCodeSplit: false,
     cssLoading: "deferred",
     publicDir: false,
@@ -107,17 +111,65 @@ test("cssCodeSplit false records one standalone aggregate CSS asset and falls ba
   expect(diskManifest.cssLoading).toBe("deferred")
 }, 60_000)
 
+test("a nested _404 is built for its stylesheet: the layouts around it, then its own", async () => {
+  const { root, routesDir } = scaffold({
+    "routes/_layout.tsx":
+      'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
+    "routes/index.tsx": "export default function Index() { return null }\n",
+    "routes/admin/_layout.tsx": "export default function Admin() { return null }\n",
+    "routes/admin/index.tsx": "export default function AdminIndex() { return null }\n",
+    "routes/admin/_404.tsx":
+      'import "../../frontend/missing.css"\nexport default function Missing() { return null }\n',
+    "frontend/app.css": "body { color: rebeccapurple }\n",
+    "frontend/missing.css": ".missing { color: tomato }\n",
+  })
+  const manifest = await build(root, routesDir)
+
+  const styles = manifest.routeStyles?.["admin/_404"] ?? []
+  expect(styles).toHaveLength(2)
+  expect(styles[0]).toBe(manifest.routeStyles?.index?.[0] as string)
+  for (const url of styles) expect(manifest.css).toContain(url)
+  // It is not a page the client navigates to, so it has no chunk list.
+  expect(Object.keys(manifest.routes).sort()).toEqual(["admin/index", "index"])
+}, 60_000)
+
+test("a _loading page is built as a lazy chunk, and its stylesheet ships with the app's", async () => {
+  const { root, routesDir } = scaffold({
+    "routes/_layout.tsx":
+      'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
+    "routes/index.tsx": "export default function Index() { return null }\n",
+    "routes/admin/index.tsx": "export default function AdminIndex() { return null }\n",
+    "routes/admin/_loading.tsx":
+      'import "../../frontend/skeleton.css"\nexport default function Skeleton() { return "loading-marker" }\n',
+    "frontend/app.css": "body { color: rebeccapurple }\n",
+    "frontend/skeleton.css": ".skeleton { color: tomato }\n",
+  })
+  const manifest = await build(root, routesDir)
+  const read = (url: string): string =>
+    readFileSync(join(root, "dist", "assets", url.slice(url.lastIndexOf("/") + 1)), "utf8")
+
+  // It is not a page the client navigates to, so it has no chunk list of its own.
+  expect(Object.keys(manifest.routes).sort()).toEqual(["admin/index", "index"])
+  const scripts = manifest.assets.filter((url) => url.endsWith(".js"))
+  // Its own chunk: the bootstrap imports it only when a navigation needs it.
+  const chunk = scripts.find((url) => read(url).includes("loading-marker"))
+  expect(chunk).toBeDefined()
+  expect(chunk).not.toBe(manifest.entry)
+  expect((manifest.css ?? []).some((url) => read(url).includes(".skeleton"))).toBe(true)
+}, 60_000)
+
 test("rejects deferred loading when Vite CSS remains split", async () => {
   const { root, routesDir } = scaffold({
-    "routes/index.tsx": 'import "../app.css"\nexport default function Index() { return null }\n',
-    "app.css": "body { color: rebeccapurple }\n",
+    "routes/index.tsx":
+      'import "../frontend/app.css"\nexport default function Index() { return null }\n',
+    "frontend/app.css": "body { color: rebeccapurple }\n",
   })
   await expect(
     buildClientVite({
       root,
       routesDir,
       outDir: join(root, "dist", "assets"),
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       cssLoading: "deferred",
       minify: false,
     }),
@@ -133,7 +185,7 @@ test("writes manifest.json to outDir and the real chunk files exist on disk", as
     root,
     routesDir,
     outDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     minify: false,
   })
   expect(existsSync(join(outDir, "manifest.json"))).toBe(true)
@@ -151,6 +203,19 @@ test("a node: builtin in a route fails the Vite client build with the shared gua
   })
   const promise = build(root, routesDir)
   await expect(promise).rejects.toThrow(/node:crypto reached the client bundle/)
+}, 60_000)
+
+test("a web worker that reaches backend code fails the Vite client build naming it", async () => {
+  const { root, routesDir } = scaffold({
+    "backend/db.ts": 'export const query = "SELECT secret"\n',
+    "frontend/worker.ts": 'import { query } from "../backend/db.ts"\npostMessage(query)\n',
+    "routes/index.tsx":
+      'export const start = () => new Worker(new URL("../frontend/worker.ts", import.meta.url), { type: "module" })\n' +
+      "export default function Index() { return null }\n",
+  })
+  await expect(build(root, routesDir)).rejects.toThrow(
+    "backend/db.ts: it is backend code\n      via frontend/worker.ts → backend/db.ts",
+  )
 }, 60_000)
 
 test("same-basename routes get distinct chunks (index.tsx + blog/index.tsx)", async () => {
@@ -174,9 +239,14 @@ test("bakes in PUBLIC_* values without exposing unprefixed secrets", async () =>
   process.env[publicName] = "vite-public-value"
   process.env[secretName] = "vite-private-value"
   try {
+    // App code reading a private variable fails the build; third-party code is not checked, so the
+    // define layer is what keeps its private reads out of the bundle.
     const { root, routesDir } = scaffold({
-      "routes/index.tsx": `export const visible = process.env.${publicName}
-        export const hidden = process.env.${secretName}
+      "node_modules/env-reader/package.json":
+        '{ "name": "env-reader", "type": "module", "main": "index.js" }',
+      "node_modules/env-reader/index.js": `export const hidden = process.env.${secretName}\n`,
+      "routes/index.tsx": `export { hidden } from "env-reader"
+        export const visible = process.env.${publicName}
         export default function Index() { return null }\n`,
     })
     const outDir = join(root, "dist", "assets")
@@ -184,7 +254,7 @@ test("bakes in PUBLIC_* values without exposing unprefixed secrets", async () =>
       root,
       routesDir,
       outDir,
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       minify: false,
     })
     const js = [...new Bun.Glob("*.js").scanSync({ cwd: outDir })]
@@ -209,8 +279,11 @@ test("configured publicEnvPrefix disables Vite's independent VITE_* exposure", a
   process.env[viteSecretName] = "vite-prefix-bypass-secret"
   try {
     const { root, routesDir } = scaffold({
-      "routes/index.tsx": `export const visible = import.meta.env.${publicName}
-        export const hidden = import.meta.env.${viteSecretName}
+      "node_modules/env-reader/package.json":
+        '{ "name": "env-reader", "type": "module", "main": "index.js" }',
+      "node_modules/env-reader/index.js": `export const hidden = import.meta.env.${viteSecretName}\n`,
+      "routes/index.tsx": `export { hidden } from "env-reader"
+        export const visible = import.meta.env.${publicName}
         export default function Index() { return null }\n`,
     })
     const outDir = join(root, "dist", "assets")
@@ -218,7 +291,7 @@ test("configured publicEnvPrefix disables Vite's independent VITE_* exposure", a
       root,
       routesDir,
       outDir,
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       publicEnvPrefix: "NIFRA_PUBLIC_",
       minify: false,
     })
@@ -256,14 +329,14 @@ test("concurrent production and development builds observe their own NODE_ENV", 
       root: production.root,
       routesDir: production.routesDir,
       outDir: join(production.root, "dist", "assets"),
-      clientModule: join(production.root, "client-stub.ts"),
+      clientModule: join(production.root, "frontend/client-stub.ts"),
       vitePlugins: [observer("production")],
     }),
     buildClientVite({
       root: development.root,
       routesDir: development.routesDir,
       outDir: join(development.root, "dist", "assets"),
-      clientModule: join(development.root, "client-stub.ts"),
+      clientModule: join(development.root, "frontend/client-stub.ts"),
       vitePlugins: [observer("development")],
       minify: false,
     }),
@@ -272,3 +345,14 @@ test("concurrent production and development builds observe their own NODE_ENV", 
   expect(seen.sort()).toEqual(["development:development", "production:production"])
   expect(process.env.NODE_ENV).toBe(ambient)
 }, 120_000)
+
+test("browser code reading a private environment variable fails the build", async () => {
+  const { root, routesDir } = scaffold({
+    "shared/config.ts": "export const db = process.env.DATABASE_URL\n",
+    "routes/index.tsx":
+      'import { db } from "../shared/config.ts"\nexport default () => [db, import.meta.env.PUBLIC_API]\n',
+  })
+  await expect(build(root, routesDir)).rejects.toThrow(
+    "shared/config.ts: it reads private environment variable process.env.DATABASE_URL",
+  )
+})

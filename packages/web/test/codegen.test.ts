@@ -2,12 +2,19 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { t } from "@nifrajs/schema"
 import ts from "typescript"
+import { type BuildServerOptions, buildServer } from "../src/build.ts"
+import { createMatcher } from "../src/client.ts"
 import {
   buildManifest,
+  createWebApp,
   generateClientEntry,
   generateRouteSearchTypes,
   generateServerManifest,
+  notFound,
+  type RenderAdapter,
+  ROUTE_GLOBAL,
   type RouteModule,
 } from "../src/index.ts"
 
@@ -66,7 +73,17 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
-  expect(code).toContain("mountRouter({ router, routes: chains, searchSchemas, container: root })")
+  // The view is the router itself unless the first page is an `ssr = false` one (client-only.test.ts).
+  expect(code).toContain("let view = router")
+  expect(code).toContain(
+    "mountRouter({ router: view, routes: chains, searchSchemas, matchChains, container: root })",
+  )
+  // `useMatches`: the layout ids come from the manifest (status pages have none), the handles from the
+  // loaded modules, in the same order as the chain the server renders.
+  expect(code).toContain('const layoutIdsOf = {"index":["_layout"],"users/[id]":["_layout"]}')
+  expect(code).toContain(
+    "matchChains[id] = { ids: [...(layoutIdsOf[id] ?? []), id], handles: mods.map((m) => m.handle) }",
+  )
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
@@ -136,7 +153,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
     clientEntry: "/assets/entry-abc123.js",
   })
   expect(code).toContain('import { buildManifest, type RouteModule } from "@nifrajs/web"')
-  expect(code).toContain("const modules: Record<string, RouteModule> = {")
+  expect(code).toContain("const modules: Record<string, object> = {")
   // STATIC `import * as` per unique file (5) - including dedicated terminal status pages.
   expect(code.match(/^import \* as m\d+ from /gm)?.length).toBe(5)
   // Files are sorted: _404 (m0), _410 (m1), _layout (m2), index (m3), users/[id] (m4). Import specifiers
@@ -154,7 +171,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   // Rebuilt via the SAME pure logic discoverRoutes feeds (patterns + layout chains match exactly).
   expect(code).toContain(
-    "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
+    "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file] as RouteModule))",
   )
   // The whole point: NO dynamic-path import, NO fs (unlike the client entry / discoverRoutes).
   expect(code).not.toContain("import(")
@@ -171,7 +188,7 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   // LAZY loaders: `() => import("./routes/x")` (static specifier → one chunk per route). The specifier
   // is EXTENSIONLESS so the manifest typechecks under a bare `tsc`; the map KEY keeps its `.tsx`.
   expect(code).toContain('"index.tsx": () => import("./routes/index"),')
-  expect(code).toContain("const loaders: Record<string, () => Promise<RouteModule>> = {")
+  expect(code).toContain("const loaders: Record<string, () => Promise<object>> = {")
   expect(code).toContain('"users/[id].tsx": () => import("./routes/users/[id]"),')
   expect(code.match(/=> import\("\.\/routes\//g)?.length).toBe(4)
   // No source extension survives in an import specifier (TS5097 under a plain tsc).
@@ -180,10 +197,46 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   expect(code).not.toContain("import * as m")
   // Built from the per-file loaders; clientEntry still baked; still fs-free.
   expect(code).toContain(
-    "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
+    "export const manifest = buildManifest(Object.keys(loaders), (file) => loaders[file] as () => Promise<RouteModule>)",
   )
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   expect(code).not.toContain('"node:fs"')
+})
+
+test("generateServerManifest refuses a missing clientEntry instead of baking undefined", () => {
+  const m = buildManifest(["index.tsx"], importer)
+  const resolve = (file: string) => `./routes/${file}`
+  for (const clientEntry of [undefined, null, 42]) {
+    expect(() =>
+      generateServerManifest(m, { resolve, clientEntry: clientEntry as unknown as string }),
+    ).toThrow(
+      /needs clientEntry .* got (undefined|null|number); check the option is spelled clientEntry/,
+    )
+  }
+  // "" is an app with no client script, not a missing option.
+  expect(generateServerManifest(m, { resolve, clientEntry: "" })).toContain(
+    'export const clientEntry = ""',
+  )
+})
+
+test("buildServer fails the build when clientEntry is misspelled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-build-server-client-entry-"))
+  try {
+    await mkdir(join(root, "routes"))
+    await writeFile(join(root, "routes/index.tsx"), "export default () => null\n")
+    await writeFile(join(root, "worker.ts"), "export default {}\n")
+    const options = {
+      routesDir: join(root, "routes"),
+      serverEntry: join(root, "worker.ts"),
+      outDir: join(root, "dist"),
+      client: "/assets/entry.js",
+    }
+    await expect(buildServer(options as unknown as BuildServerOptions)).rejects.toThrow(
+      /needs clientEntry .* got undefined/,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 // biome-ignore format: keep the existing compact test body while adding an explicit heavy-test timeout.
@@ -196,7 +249,21 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
       join(routesDir, "index.tsx"),
       "export default function Index() { return null }\n",
     )
-    const manifest = buildManifest(["index.tsx"], importer)
+    // A backend half has no `default`, and a typed `meta` narrows its data: neither namespace is a
+    // `RouteModule` to a strict tsc, which the generated table must not claim.
+    await writeFile(
+      join(routesDir, "index.backend.ts"),
+      "export function loader() { return { n: 1 } }\n",
+    )
+    await writeFile(
+      join(routesDir, "post.tsx"),
+      [
+        "export function meta({ data }: { data: { title: string } }) { return { title: data.title } }",
+        "export default function Post() { return null }",
+        "",
+      ].join("\n"),
+    )
+    const manifest = buildManifest(["index.tsx", "index.backend.ts", "post.tsx"], importer)
     // NOTE: `allowImportingTsExtensions` is deliberately NOT set - the generated manifest must typecheck
     // under a bare consumer tsconfig. It used to emit `.tsx` import specifiers (TS5097 without the flag);
     // extensionless specifiers resolve to the source file under any `moduleResolution` and need no flag.
@@ -204,6 +271,7 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
       baseUrl: process.cwd(),
       jsx: ts.JsxEmit.ReactJSX,
       ignoreDeprecations: "6.0",
+      noUncheckedIndexedAccess: true,
       module: ts.ModuleKind.ESNext,
       moduleResolution: ts.ModuleResolutionKind.Bundler,
       noEmit: true,
@@ -264,4 +332,112 @@ test("generateRouteSearchTypes targets a custom module when asked", () => {
   const m = buildManifest(["index.tsx"], importer)
   const code = generateRouteSearchTypes(m, { resolve: (f) => `./${f}`, module: "@my/router" })
   expect(code).toContain('declare module "@my/router" {')
+})
+
+/**
+ * Run the generated entry's initial-route choice - the real emitted lines, not a copy - for a URL and
+ * the route id the server injected. The slice is asserted, not assumed: if the lines move or the
+ * `initial` fields change shape, this throws instead of silently testing nothing.
+ */
+const initialRoute = (
+  entry: string,
+  pathname: string,
+  serverRoute: string | undefined,
+): { readonly routeId: string; readonly params: Record<string, string> } => {
+  const lines = entry.split("\n")
+  const start = lines.findIndex((line) => line.startsWith("const patterns = ["))
+  const end = lines.findIndex((line) => line.startsWith("const terminal = "))
+  const fields = lines.filter((line) => /^ {2}(routeId|params): /.test(line))
+  if (start === -1 || end <= start || fields.length !== 2) {
+    throw new Error("the generated entry's initial-route choice moved - update this test with it")
+  }
+  const body = `${lines.slice(start, end + 1).join("\n")}\nreturn {\n${fields.join("\n")}\n}`
+  return new Function("createMatcher", "location", "window", body)(
+    createMatcher,
+    { pathname },
+    serverRoute === undefined ? {} : { [ROUTE_GLOBAL]: serverRoute },
+  )
+}
+
+test("a server-rendered status page outranks a URL that also matches a route pattern", () => {
+  const entry = generateClientEntry(
+    buildManifest(["index.tsx", "learn/[slug].tsx", "_404.tsx", "_410.tsx"], importer),
+    { clientModule: "@nifrajs/web-solid/client", resolve: (file) => `/routes/${file}` },
+  )
+  // notFound() from the loader: the URL still matches `learn/[slug]`, but the server rendered _404.
+  expect(initialRoute(entry, "/learn/bad-slug", "_404")).toEqual({ routeId: "_404", params: {} })
+  expect(initialRoute(entry, "/learn/gone", "_410")).toEqual({ routeId: "_410", params: {} })
+  // An ordinary route keeps the URL match (params decoded client-side).
+  expect(initialRoute(entry, "/learn/intro", "learn/[slug]")).toEqual({
+    routeId: "learn/[slug]",
+    params: { slug: "intro" },
+  })
+  // No pattern matches: the injected id is the only answer, as before.
+  expect(initialRoute(entry, "/nope/deeper", "_404")).toEqual({ routeId: "_404", params: {} })
+  // No injected id at all (a caller-rendered document): the URL match still wins.
+  expect(initialRoute(entry, "/learn/intro", undefined).routeId).toBe("learn/[slug]")
+})
+
+test("a routable `_`-prefixed id is not mistaken for a terminal status page", () => {
+  const entry = generateClientEntry(buildManifest(["_admin/[id].tsx", "_404.tsx"], importer), {
+    clientModule: "@nifrajs/web-solid/client",
+    resolve: (file) => `/routes/${file}`,
+  })
+  expect(initialRoute(entry, "/_admin/7", "_admin/[id]")).toEqual({
+    routeId: "_admin/[id]",
+    params: { id: "7" },
+  })
+})
+
+test("a loader's notFound() hydrates the _404 the server rendered, not the matched route", async () => {
+  // Both sides, end to end: the server's injected route id feeds the client's initial-route choice.
+  const manifest = buildManifest(
+    ["learn/[slug].tsx", "learn/[slug].backend.ts", "_404.tsx"],
+    (file) => async (): Promise<RouteModule> =>
+      file === "learn/[slug].tsx"
+        ? { default: "learn" }
+        : file === "learn/[slug].backend.ts"
+          ? ({
+              loader: ({ params }: { params: Record<string, string> }) =>
+                params.slug === "intro" ? { title: "Intro" } : notFound(),
+              loaderOutput: t.object({ title: t.string() }),
+            } as unknown as RouteModule)
+          : { default: "the-404-page" },
+  )
+  const stub: RenderAdapter = {
+    renderToStream: (_chain, props) =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`<p>${JSON.stringify(props.data)}</p>`))
+          c.close()
+        },
+      }),
+    hydrationHead: () => "",
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const entry = generateClientEntry(manifest, {
+    clientModule: "@nifrajs/web-solid/client",
+    resolve: (file) => `/routes/${file}`,
+  })
+  const served = async (path: string) => {
+    const res = await app.fetch(new Request(`http://x${path}`))
+    const html = await res.text()
+    const injected = new RegExp(`"${ROUTE_GLOBAL}":("[^"]*")`).exec(html)
+    if (injected === null) throw new Error(`no route id injected:\n${html.slice(0, 400)}`)
+    return { status: res.status, route: JSON.parse(injected[1] as string) as string }
+  }
+
+  const missing = await served("/learn/bad-slug")
+  expect(missing).toEqual({ status: 404, route: "_404" })
+  expect(initialRoute(entry, "/learn/bad-slug", missing.route)).toEqual({
+    routeId: "_404",
+    params: {},
+  })
+
+  const found = await served("/learn/intro")
+  expect(found).toEqual({ status: 200, route: "learn/[slug]" })
+  expect(initialRoute(entry, "/learn/intro", found.route)).toEqual({
+    routeId: "learn/[slug]",
+    params: { slug: "intro" },
+  })
 })

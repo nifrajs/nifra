@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/node",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Run a nifra app on Node's http server - a Request<->stream adapter with a graceful stop().",
   "keywords": [
     "bun",
@@ -14,6 +14,9 @@
     "server"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

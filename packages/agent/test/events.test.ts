@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { createAgentEvidenceStream, createMemoryAgentEvidenceLog } from "../src/events.ts"
+import {
+  createAgentEvidenceStream,
+  createMemoryAgentEvidenceLog,
+  scopeAgentEvidenceLog,
+} from "../src/events.ts"
 import type { AgentStepEvidence } from "../src/index.ts"
 
 const evidence = (seq: number): AgentStepEvidence => ({
@@ -39,6 +43,19 @@ describe("agent evidence stream", () => {
 })
 
 describe("memory agent evidence log", () => {
+  test("a scoped view keeps each owner's turns apart, whatever the owner spells", async () => {
+    const log = createMemoryAgentEvidenceLog()
+    const alice = scopeAgentEvidenceLog(log, "alice")
+    await alice.open("turn-1").step(evidence(1))
+    await alice.finish("turn-1", "alice's")
+
+    expect(await scopeAgentEvidenceLog(log, "bob").replay("turn-1", 0)).toBeUndefined()
+    expect(await scopeAgentEvidenceLog(log, "alice/turn-1").replay("turn-1", 0)).toBeUndefined()
+    expect(await log.replay("turn-1", 0)).toBeUndefined()
+    expect(await (await alice.replay("turn-1", 0))?.result).toBe("alice's")
+    expect(() => scopeAgentEvidenceLog(log, "")).toThrow(TypeError)
+  })
+
   test("replays evidence after a seq cursor and resolves the stored result", async () => {
     const log = createMemoryAgentEvidenceLog()
     const port = log.open("turn-1")
@@ -94,5 +111,21 @@ describe("memory agent evidence log", () => {
     expect(await log.replay("b", 0)).toBeDefined()
     expect(await log.replay("c", 0)).toBeDefined()
     expect(() => createMemoryAgentEvidenceLog({ maxTurns: 0 })).toThrow(RangeError)
+  })
+
+  test("eviction prefers a finished turn and ends a running turn's rejoined replays", async () => {
+    const log = createMemoryAgentEvidenceLog({ maxTurns: 2 })
+    log.open("running")
+    log.open("done")
+    await log.finish("done", "ok")
+    log.open("next")
+    expect(await log.replay("done", 0)).toBeUndefined()
+
+    const replay = await log.replay("running", 0)
+    if (replay === undefined || replay.live === undefined) throw new Error("expected live replay")
+    log.open("last")
+    expect(await log.replay("running", 0)).toBeUndefined()
+    expect(await replay.live.next()).toEqual({ done: true, value: undefined })
+    expect(await replay.result).toBeUndefined()
   })
 })

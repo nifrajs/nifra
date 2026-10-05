@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { join } from "node:path"
+import { renderToString } from "solid-js/web"
 import { solidMdxBunPlugin } from "../src/mdx.ts"
 import { useMDXComponents } from "../src/mdx-runtime.ts"
 
@@ -24,6 +25,13 @@ test("mdx-runtime maps Markdown intrinsics to Solid components", () => {
   }
   // Invoking one yields a Solid component result (createComponent(<Dynamic>, …)) - doesn't throw.
   expect(c.h1!({ children: "x" })).toBeDefined()
+})
+
+test("a component prop in MDX content cannot swap the element a tag renders", () => {
+  const paragraph = useMDXComponents().p!
+  const html = renderToString(() => paragraph({ component: "script", children: "x" }))
+  expect(html).toStartWith("<p")
+  expect(html).not.toContain("<script")
 })
 
 // Compiling `.mdx` → a Solid component happens in two stages (MDX → JSX → babel-preset-solid). This

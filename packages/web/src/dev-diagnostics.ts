@@ -8,8 +8,34 @@
  *
  * Vite once shipped without the `/__nifra/last-error` endpoint at all - the drift this module prevents.
  */
+import { relative } from "node:path"
 import { renderDiagnosticOverlay } from "./dev-error.ts"
-import { buildDiagnostic, type Diagnostic, LAST_ERROR_PATH } from "./diagnostic.ts"
+import { buildDiagnostic, type Diagnostic, fixPrompts, LAST_ERROR_PATH } from "./diagnostic.ts"
+import { browserDenial, createZoneClassifier } from "./zones.ts"
+
+const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
+
+/**
+ * Whether a codeframe may show `file` (the canonical path it would read) to a browser: source in a
+ * browser zone. A page reports its own stack frames, so it can name any path: data files and the dev
+ * server's own `.nifra/` files (the discovery record holds the agent token) never qualify.
+ */
+export function createSourceGate(root: string): (file: string) => boolean {
+  const zones = createZoneClassifier({ appRoot: root })
+  return (file) => {
+    if (!CODEFRAME_SOURCE.test(file)) return false
+    if ((relative(zones.appRoot, file).split(/[\\/]/)[0] ?? "").startsWith(".nifra")) return false
+    return browserDenial(zones.classify(file)) === undefined
+  }
+}
+
+/** A failure as the dev feed recorded it: the entry and request let its agent prompt name a check. */
+export interface CapturedFailure {
+  readonly diagnostic: Diagnostic
+  readonly entry?: { readonly id: string; readonly seq: number } | undefined
+  readonly requestId?: string | undefined
+  readonly category?: string | undefined
+}
 
 export interface DevDiagnostics {
   /** True when a request path targets the structured last-error endpoint. */
@@ -20,12 +46,36 @@ export interface DevDiagnostics {
   /** Capture a thrown SSR failure: store it for the endpoint and return the overlay HTML. The overlay a
    * person sees and the JSON an agent reads come from this one Diagnostic, so they can never disagree. */
   capture(err: unknown, request: { readonly method: string; readonly url: string }): string
+  /** The overlay HTML for a failure the feed already recorded, which also becomes the last error. */
+  show(captured: CapturedFailure): string
 }
 
 /** One diagnostics surface per dev server. `root` is the resolved project root; it scopes the codeframe
- * to the project (see buildDiagnostic). Both dev servers resolve a concrete root before calling this. */
-export function createDevDiagnostics(root: string): DevDiagnostics {
+ * to the project (see buildDiagnostic). Both dev servers resolve a concrete root before calling this.
+ * `build` replaces the default Diagnostic builder: the dev session passes one that also records the
+ * failure in its feed (redacted), so the overlay, this endpoint and the feed show the same object. */
+export function createDevDiagnostics(
+  root: string,
+  build?: (
+    err: unknown,
+    request: { readonly method: string; readonly url: string },
+  ) => CapturedFailure,
+): DevDiagnostics {
   let last: Diagnostic | undefined
+  const showSource = createSourceGate(root)
+  const show = (captured: CapturedFailure): string => {
+    last = captured.diagnostic
+    return renderDiagnosticOverlay(
+      last,
+      fixPrompts(last, {
+        surface: "overlay",
+        root,
+        entry: captured.entry,
+        requestId: captured.requestId,
+        category: captured.category ?? "ssr",
+      }),
+    )
+  }
   return {
     isLastErrorPath: (pathname) => pathname === LAST_ERROR_PATH,
     lastError: () => ({
@@ -39,9 +89,12 @@ export function createDevDiagnostics(root: string): DevDiagnostics {
         "x-nifra-diagnostic": "true",
       },
     }),
-    capture: (err, request) => {
-      last = buildDiagnostic(err, { root, request })
-      return renderDiagnosticOverlay(last)
-    },
+    capture: (err, request) =>
+      show(
+        build?.(err, request) ?? {
+          diagnostic: buildDiagnostic(err, { root, request, showSource }),
+        },
+      ),
+    show,
   }
 }

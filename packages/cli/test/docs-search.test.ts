@@ -32,6 +32,14 @@ describe("splitSections", () => {
 })
 
 describe("searchSections", () => {
+  test("a camelCase heading matches its whole word as well as its parts", () => {
+    const sections = splitSections(DOC)
+    const top = searchSections(sections, "websocket", 1)[0]
+    expect(top?.heading).toBe("WebSockets")
+    // The heading hit is what ranks it: body mentions alone score below any heading match.
+    expect(top?.score).toBeGreaterThan(26 + 5 + 8)
+  })
+
   test("heading hits outrank body mentions", () => {
     const sections = splitSections(DOC)
     const top = searchSections(sections, "isr revalidate", 2)

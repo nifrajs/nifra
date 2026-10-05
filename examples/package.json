@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/examples",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "type": "module",
   "private": true,
   "description": "Runnable, type-checked examples for nifra. Not published.",
@@ -13,9 +13,9 @@
     "routing-react:start": "bun run routing-react/server.ts",
     "hmr-react:dev": "bun run hmr-react/dev.ts",
     "hmr-preact:dev": "bun run hmr-preact/dev.ts",
-    "hmr-vue:dev": "bun --preload hmr-vue/ssr-preload.ts hmr-vue/dev.ts",
-    "hmr-solid:dev": "bun --preload hmr-solid/ssr-preload.ts hmr-solid/dev.ts",
-    "hmr-svelte:dev": "bun --preload hmr-svelte/ssr-preload.ts hmr-svelte/dev.ts",
+    "hmr-vue:dev": "bun run hmr-vue/dev.ts",
+    "hmr-solid:dev": "bun run hmr-solid/dev.ts",
+    "hmr-svelte:dev": "bun run hmr-svelte/dev.ts",
     "cli-react:dev": "cd cli-react && nifra dev",
     "cli-react:build": "cd cli-react && nifra build",
     "cli-react:start": "cd cli-react && nifra start",
@@ -62,5 +62,11 @@
     "vite": "^8.2.1",
     "vite-plugin-solid": "^2.10.0",
     "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "svelte-check": "^4.7.6",
+    "vue-tsc": "^3.3.12"
   }
 }

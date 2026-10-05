@@ -41,6 +41,14 @@ export {
   RenderAdapterConformanceError,
   type RenderAdapterConformanceFixture,
 } from "./conformance.ts"
+// Hash-based CSP: a document carries a nonce only when it needs one, so a CSP page stays cacheable.
+export {
+  type CreateCspPolicyOptions,
+  type CspHeaderContext,
+  type CspPolicy,
+  createCspPolicy,
+  nifraScriptHashes,
+} from "./csp.ts"
 export {
   assertCssLoadingCompatible,
   type CssLoadingMode,
@@ -102,21 +110,17 @@ export {
   unsafeInlineScript,
 } from "./internal/render-document.ts"
 export {
+  type BackendOnly,
   DEFAULT_DEV_PORT,
   PRE_HYDRATION_GUARD,
-  type ServerOnly,
 } from "./internal/runtime-contract.ts"
 /**
- * The two file-name conventions that decide what never reaches a browser: a `*.server` module is
- * EMPTIED in the client build, a `*.fn` module is REPLACED with client stubs.
- *
- * Exported because more than the bundlers need them. `nifra dev --bun` cannot transform (Bun's dev
- * bundler takes no plugins) so it must REFUSE instead, and a refusal driven by its own hand-written
- * glob drifts from the transform - which is how `.fn.mts` came to be stubbed by both build pipelines
- * and waved through by the guard that exists to stop it leaking. Anything deciding "is this module
- * server-only" should import the matcher rather than re-encode it.
+ * The `*.fn` server-function convention: the browser build REPLACES such a module with client stubs.
+ * Exported so anything deciding "is this a server-function module" imports the matcher instead of
+ * re-encoding it - a hand-written glob drifts from the transform, which is how `.fn.mts` was once
+ * stubbed by both build pipelines and waved through by the guard meant to stop it leaking.
  */
-export { SERVER_FN_MODULE, SERVER_ONLY_MODULE } from "./internal/server-boundary.ts"
+export { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
 export {
   type CreateWebAppOptions,
   createWebApp,
@@ -128,18 +132,24 @@ export {
 export {
   type CachedResponse,
   type CacheStore,
+  type CdnPurgeOutcome,
+  type CdnPurgeTarget,
   ISR_REVALIDATE_HEADER,
   ISR_REVALIDATE_TAGS_HEADER,
   ISR_STATUS_HEADER,
   type ISRApp,
   type ISROptions,
   type ISRPlatform,
+  type ISRQuery,
+  isCacheablePage,
   KVCacheStore,
   type KVCacheStoreOptions,
   type KVNamespaceLike,
   MemoryCacheStore,
   type MemoryCacheStoreOptions,
   type RevalidateEndpointOptions,
+  type RevalidateTags,
+  type RevalidateTagsInput,
   revalidateEndpoint,
   withISR,
 } from "./isr.ts"
@@ -163,14 +173,22 @@ export {
   type LinkDescriptor,
   type Loader,
   type LoaderContext,
+  type LoaderResponseControls,
+  type LoadingEntry,
   type Manifest,
   type Meta,
   type MetaArgs,
   type MetaDescriptor,
   type MetaInput,
+  type MiddlewareOutcome,
+  type NotFoundEntry,
+  type NotFoundScope,
   type RouteEntry,
+  type RouteMiddleware,
   type RouteModule,
   type ScriptDescriptor,
+  type ShouldRevalidate,
+  type ShouldRevalidateArgs,
   type StaticPath,
   type StaticPaths,
   type StaticRoutes,
@@ -191,6 +209,7 @@ export {
   type NavigateOptions,
   type NavigateSearchOf,
   type NavigateTargetInput,
+  type PrefetchMode,
   type RouteSearch,
   registerBlocker,
   resolveNavigate,
@@ -237,14 +256,18 @@ export {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
+  HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
+  type MatchChain,
   type RenderAdapter,
   type RenderProps,
+  type RenderStreamOptions,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
   type SsrModuleLoader,
   setSsrModuleLoader,
   ssrModuleLoader,
+  type UIMatch,
 } from "./render-seam.ts"
 // Agnostic client-side router core (pure + DOM-free) - consumed by per-adapter Router bindings.
 // `DATA_HEADER` marks a navigation's data-only GET; `createWebApp` answers it with loader JSON.

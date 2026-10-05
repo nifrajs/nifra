@@ -189,6 +189,196 @@ describe("NF-C024 overlapping route registration", () => {
   })
 })
 
+describe("optional route params", () => {
+  test("NF-C024 reads a trailing optional run as every path it serves", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users", () => ({}))', '  .get("/users/:id?", () => ({}))']),
+    )
+    const overlaps = findings.filter((f) => f.code === "NF-C024")
+    expect(overlaps).toHaveLength(1)
+    expect(overlaps[0]?.message).toContain("witness path: /users")
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("NF-C024 stays quiet for a disjoint optional route", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/teams", () => ({}))', '  .get("/users/:id?", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("NF-C019 still reports the same optional route registered twice", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id?", () => ({}))', '  .get("/users/:id?", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C019")).toHaveLength(1)
+  })
+})
+
+describe("param constraints in the overlap rule", () => {
+  test("NF-C024 stays quiet when a constraint keeps two routes apart", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/me", () => ({}))',
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+        '  .get("/img/:kind{thumb|full}", () => ({}))',
+        '  .get("/img/:name{[0-9]+}", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("NF-C024 reports a constrained route beside one that serves the same request", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id{[0-9]+}", () => ({}))', '  .get("/users/:name", () => ({}))']),
+    )
+    const found = findings.filter((f) => f.code === "NF-C024")
+    expect(found).toHaveLength(1)
+    expect(found[0]?.message).toMatch(/\/users\/[0-9]+/)
+  })
+
+  test("NF-C019 reports the same constrained route registered twice", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C019")).toHaveLength(1)
+  })
+
+  test("NF-C024 reports two spellings of one constraint", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+        '  .get("/users/:id{\\\\d+}", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
+})
+
+describe("NF-C026 param followed by an unsupported modifier", () => {
+  test("supported optional params and ordinary params are quiet", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id?", () => ({}))',
+        '  .get("/d/:year?/:month?", () => ({}))',
+        '  .get("/files/:name.json", () => ({}))',
+        '  .get("/assets/*path", () => ({}))',
+        '  .get("/:lang?", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("a supported param constraint is quiet, alone, in a segment, and optional", async () => {
+    const source = backend([
+      '  .get("/users/:id{[0-9]+}", () => ({}))',
+      '  .get("/codes/:code{[A-Z]{2,3}}", () => ({}))',
+      '  .get("/pins/:pin{\\\\d{4}}", () => ({}))',
+      '  .get("/img/:kind{thumb|full}", () => ({}))',
+      '  .get("/f/:name.:ext{png|jpg}", () => ({}))',
+      '  .get("/d/:y{[0-9]{4}}-:m{[0-9]{2}}", () => ({}))',
+      '  .get("/orgs/:org{[a-z]+}/users/:id{[0-9]+}", () => ({}))',
+      '  .get("/o/:page{[0-9]+}?", () => ({}))',
+    ])
+    // Every route is read, so the quiet result is about the routes and not about a skipped scan.
+    expect(scanStaticRouteText("backend.ts", source).map((route) => route.path)).toContain(
+      "/pins/:pin{\\d{4}}",
+    )
+    expect(scanStaticRouteText("backend.ts", source)).toHaveLength(8)
+    const findings = await scan("backend.ts", source)
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("braces that are not a supported constraint are reported as literal text", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/a/:id{int}", () => ({}))',
+        '  .get("/b/:id{[0-9]+|[a-z]+}", () => ({}))',
+        '  .get("/c/:id{.+}", () => ({}))',
+        '  .get("/d/:id{[0-9]{0}}", () => ({}))',
+        '  .get("/e/:id{}", () => ({}))',
+      ]),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(5)
+    expect(found[0]?.message).toContain("'{' after ':id'")
+    expect(found[0]?.message).toContain(":id{[0-9]+}")
+    expect(found[0]?.message).toContain(":ext{png|jpg}")
+  })
+
+  test("a modifier after a constraint is reported, and so is one on a later param", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/a/:id{[0-9]+}?/posts", () => ({}))',
+        '  .get("/b/:id{[0-9]+}+", () => ({}))',
+        '  .get("/c/:id{[0-9]+}/:rest*", () => ({}))',
+        '  .get("/d/:id{[0-9]+}{[a-z]+}", () => ({}))',
+      ]),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(4)
+    expect(found[0]?.message).toContain("GET /a/:id{[0-9]+}?/posts")
+  })
+
+  test("a `?` that is not a trailing whole segment is a warning that names the dead route", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id?/posts", () => ({}))', '  .get("/x/v-:id?", () => ({}))']),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(2)
+    expect(found.every((f) => f.severity === "warn")).toBe(true)
+    expect(found[0]?.message).toContain("GET /users/:id?/posts")
+    expect(found[0]?.message).toContain("'?' after ':id' is matched as literal text")
+    expect(found[0]?.message).toContain("cannot be reached")
+    expect(found[0]?.verify).toBe("nifra check --lints-only")
+  })
+
+  test("modifiers other routers accept are reported once per route", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/a/:id+", () => ({}))',
+        '  .get("/b/:id*", () => ({}))',
+        '  .get("/c/:id{int}", () => ({}))',
+        '  .get("/d/:id([0-9]+)", () => ({}))',
+        '  .get("/e/:id<int>", () => ({}))',
+        '  .get("/f/:a+/:b+", () => ({}))',
+      ]),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(6)
+    expect(found[0]?.message).toContain("'+' after ':id'")
+    expect(found[0]?.message).not.toContain("cannot be reached")
+  })
+
+  test("a required param before the optional run is still checked", async () => {
+    const findings = await scan("backend.ts", backend(['  .get("/a/:x+/:y?", () => ({}))']))
+    expect(findings.filter((f) => f.code === "NF-C026")).toHaveLength(1)
+  })
+
+  test("supports a route-local suppression pragma", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(["  // nifra-expect param-modifier", '  .get("/math/:a+", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+})
+
 test("route rules are total over malformed project facts", async () => {
   const facts = projectFacts("x", "")
   const findings = await runRuleRegistry(
@@ -203,4 +393,69 @@ test("route rules are total over malformed project facts", async () => {
     routeRules,
   )
   expect(findings).toEqual([])
+})
+
+describe("routes registered by all() and method()", () => {
+  const withMethods = (lines: string[]): string =>
+    [
+      'import { server } from "@nifrajs/core"',
+      'import { all, method } from "@nifrajs/core/methods"',
+      "const app = server()",
+      ...lines,
+    ].join("\n")
+
+  test("a path rule reports an all() call once, not once per method", async () => {
+    const findings = await scan(
+      "backend.ts",
+      withMethods(['  .use(all("/api/delete", handler))', '  .use(all("/u/:id+", handler))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C018")).toHaveLength(1)
+    expect(findings.filter((f) => f.code === "NF-C026")).toHaveLength(1)
+  })
+
+  test("NF-C019 reports a method already registered on the path, once per call", async () => {
+    const findings = await scan(
+      "backend.ts",
+      withMethods(['  .get("/echo", handler)', '  .use(all("/echo", handler))']),
+    )
+    const dupes = findings.filter((f) => f.code === "NF-C019")
+    expect(dupes).toHaveLength(1)
+    expect(dupes[0]?.message).toContain("GET /echo")
+
+    const twice = await scan(
+      "backend.ts",
+      withMethods(['  .use(all("/echo", handler))', '  .use(all("/echo", handler))']),
+    )
+    expect(twice.filter((f) => f.code === "NF-C019")).toHaveLength(1)
+  })
+
+  test("NF-C019 sees a custom method registered twice and leaves distinct ones alone", async () => {
+    const dupes = await scan(
+      "backend.ts",
+      withMethods([
+        '  .use(method("PURGE", "/cache/:key", handler))',
+        '  .use(method(["purge", "REPORT"], "/cache/:key", handler))',
+      ]),
+    )
+    const found = dupes.filter((f) => f.code === "NF-C019")
+    expect(found).toHaveLength(1)
+    expect(found[0]?.message).toContain("PURGE /cache/:key")
+
+    const distinct = await scan(
+      "backend.ts",
+      withMethods([
+        '  .use(method("PURGE", "/cache/:key", handler))',
+        '  .use(method("REPORT", "/cache/:key", handler))',
+      ]),
+    )
+    expect(distinct.filter((f) => f.code === "NF-C019")).toEqual([])
+  })
+
+  test("NF-C024 reports an overlap with an all() route once per pair of calls", async () => {
+    const findings = await scan(
+      "backend.ts",
+      withMethods(['  .use(all("/items/:id", handler))', '  .use(all("/items/new", handler))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
 })

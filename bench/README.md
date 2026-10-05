@@ -62,3 +62,11 @@ The mixed-route worst-case matrix also runs correctness probes before count-boun
 Node section includes Nifra, Elysia, and Fastify on the same route graph, body/query workload,
 dynamic headers, hook behavior, and direct Node ingress. Comparisons below five percent require
 confirmation on the Linux performance rig before being treated as a release claim.
+
+`bench/otel/` measures the tracing seams. `cache-wrap.ts` is the in-process `cache.wrap()` fresh-hit
+path with no observer, a no-op observer, and `cacheTracing()` unbound and bound; set
+`NIFRA_CACHE_BASELINE` to another checkout's `packages/cache/src/index.ts` to add that copy as a
+baseline row. `bridge-fetch.ts` (Bun or Node) is the in-process `app.fetch()` cost of the OTel SDK
+bridge's `around()` plugin, and `bridge-http.ts` runs the same comparison over TCP with count-bounded
+`oha` on Bun and Node. Node loads the built dist: run `bun run build && bun run
+scripts/link-for-node.ts` first.

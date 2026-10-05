@@ -66,7 +66,10 @@ export function mountIslands(
       ? rootOrOptions
       : (rootOrOptions.root ?? (document as unknown as BindableRoot))
   const disposers: Array<() => void> = []
-  for (const host of root.querySelectorAll("[data-island]") as Iterable<IslandHost>) {
+  // An island inside a `data-island-ignore` element (user HTML) is never mounted.
+  for (const host of root.querySelectorAll(
+    "[data-island]:not([data-island-ignore],[data-island-ignore] *)",
+  ) as Iterable<IslandHost>) {
     if (host.getAttribute("data-island-mounted") !== null) continue
     const name = host.getAttribute("data-island") ?? ""
     const setup = registry.get(name)
@@ -78,10 +81,8 @@ export function mountIslands(
     const strategy: IslandStrategy | undefined =
       strategyAttr === "idle" || strategyAttr === "visible" || strategyAttr === "load"
         ? strategyAttr
-        : strategyAttr === "media" &&
-            media !== null &&
-            media.length > 0 &&
-            media.length <= MAX_MEDIA_QUERY_LENGTH
+        : // scheduleTrigger leaves an empty or oversized media query inert.
+          strategyAttr === "media" && media !== null
           ? { media }
           : strategyAttr === null
             ? "load"

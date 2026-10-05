@@ -53,6 +53,26 @@ server({ maxBodyBytes: 256_000, protoPoisoning: "strip" })
 | --- | --- | --- |
 | `maxBodyBytes` | `1_000_000` | body-size cap before a `413`, matching core |
 | `protoPoisoning` | `"reject"` | `__proto__` policy for JSON bodies: `"reject"` \| `"strip"` \| `"ignore"`, matching core |
+| `notFound` | the default `404` body | answers a request no route matched; build it with `notFound(handler)` |
+
+### A not-found handler
+
+```ts
+import { notFound, server } from "@nifrajs/edge"
+
+const app = server({
+  notFound: notFound(({ pathname, header }) => {
+    if (header("accept")?.includes("text/html")) {
+      return new Response("<h1>Nothing here</h1>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })
+    }
+    return undefined // keep the default { ok: false, error: "not_found" }
+  }),
+})
+```
+
+The rules are the full Server's, imported rather than restated: the handler runs for a `404` only (a wrong method stays a `405`), it is given the request line and headers but never the body, a `2xx` answer is sent as a `404`, and `undefined` keeps the default body. `pathname` is the path as sent, not percent-decoded - escape it before writing it into HTML. A throw or a value that is not a `Response` is the same flat `500` a route's fault is; there is no logger and no request timeout here, so bound any I/O the handler does. An app that does not import `notFound` ships none of it.
 
 ## Security
 
@@ -63,7 +83,7 @@ The body trust boundary is on by default and imported from `@nifrajs/core` - the
 | Streaming byte cap | a length-less (chunked) body is drained under `maxBodyBytes`; once over, the stream is **cancelled** and rejected `413` - it is never buffered whole |
 | Content-Length pre-reject | a declared length over `maxBodyBytes` is `413` before a byte is read; a malformed length is `400` |
 | Prototype-pollution guard | an own `__proto__` key (or a poisoning-shaped `constructor.prototype`) in a JSON body is rejected (`"reject"`, default) or removed (`"strip"`) before it reaches your handler |
-| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415` |
+| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415`. A route whose body is a `t.form` (or a `multipartBody` schema) reads `multipart/form-data` under the same cap, with its own field and file limits, and a `bodyParser` schema reads the media types it names |
 
 Rejection envelopes are byte-for-byte the full Server's.
 

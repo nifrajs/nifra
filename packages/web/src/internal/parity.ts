@@ -6,7 +6,7 @@
  * manifest normalization so those callers cannot quietly grow separate rules.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { lstat, realpath, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
@@ -17,7 +17,10 @@ import {
   type SingleCopyRegistration,
 } from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
+import { withoutComments } from "./html-spans.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
+import { publicUrlPath } from "./public-url.ts"
 
 const DEPENDENCY_FIELDS = [
   "dependencies",
@@ -39,6 +42,13 @@ export interface IdentityParityCopy {
    */
   readonly absolutePath?: string
   readonly importers: readonly string[]
+  /**
+   * Symlinks an importer reached this copy through that point outside the install that owns the
+   * importer, display-relative - a link another project planted (a sibling app's `node_modules`
+   * linked into a shared package). Removing it lets the importer resolve its own install's copy.
+   * Absent when no such link was crossed.
+   */
+  readonly links?: readonly string[]
 }
 
 export type IdentityParityCause = "version-skew" | "duplicate-path"
@@ -78,6 +88,11 @@ export interface IdentityParityFinding {
    * workspace, and at least one copy sits outside that subdirectory.
    */
   readonly scope?: string
+  /**
+   * Where a copy came from when an importer reached it through a symlink pointing outside its own
+   * install: each link and its target, and the fix (remove the link). Absent when no copy was.
+   */
+  readonly provenance?: string
   /**
    * The copies exist but the app declared this package single-copy, so the resolver collapses them
    * before anything loads. Reported, never fatal - see `SingleCopyCoverage`.
@@ -279,8 +294,10 @@ const hasStylesheetImport = (source: string): boolean => {
 }
 /** A single-file-component `<style>` block (Svelte/Vue). The bundler extracts these into the app
  * stylesheet even though no `import "...css"` statement exists, so the dev contract must count them
- * or a scoped-style component would look style-free next to a production manifest that carries css. */
-const SFC_STYLE = /<style[\s>]/i
+ * or a scoped-style component would look style-free next to a production manifest that carries css.
+ * A `<style>` inside markup or an expression is not a block, which is why the match is anchored to a
+ * line start; one in an HTML comment is prose, so comments are removed before it runs. */
+const SFC_STYLE = /^<style[\s>]/im
 const isSingleFileComponent = (file: string): boolean =>
   file.endsWith(".svelte") || file.endsWith(".vue")
 
@@ -484,21 +501,53 @@ const workspaceImporters = async (
   return { importers, truncated }
 }
 
+/**
+ * The symlink under `dir/node_modules` an import of `parts` crossed to reach `resolved`, when the copy
+ * sits outside `boundary` - the install that owns the importer. Package-manager store links (bun's
+ * `.bun/`, pnpm's `.pnpm/`, a workspace package linked to the root store) stay inside it and are not
+ * reported; a link another project planted, or a `bun link` into a global directory, is.
+ */
+const foreignLink = (
+  dir: string,
+  parts: readonly string[],
+  boundary: string,
+  resolved: string,
+): string | undefined => {
+  if (pathInside(boundary, resolved)) return undefined
+  const realBoundary = realpathOrSelf(boundary)
+  if (pathInside(realBoundary, resolved)) return undefined
+  let segment = join(dir, "node_modules")
+  for (let index = 0; ; index++) {
+    const info = lstatSync(segment, { throwIfNoEntry: false })
+    if (info === undefined) return undefined
+    if (info.isSymbolicLink() && !pathInside(realBoundary, realpathOrSelf(segment))) return segment
+    const next = parts[index]
+    if (next === undefined) return undefined
+    segment = join(segment, next)
+  }
+}
+
 export const resolvedInstalledCopy = async (
   importer: string,
   boundary: string,
   name: string,
-): Promise<{ readonly path: string; readonly version: string } | undefined> => {
+): Promise<
+  { readonly path: string; readonly version: string; readonly link?: string } | undefined
+> => {
   const parts = name.split("/")
   for (let dir = importer; ; dir = dirname(dir)) {
     const packageDir = join(dir, "node_modules", ...parts)
     const meta = await readJson(join(packageDir, "package.json"))
     if (meta !== undefined) {
       try {
+        const path = await realpath(packageDir)
+        // Boundary "" (doctor's stale-dist scan, workspace-link) asks only where the copy is.
+        const link = boundary === "" ? undefined : foreignLink(dir, parts, boundary, path)
         return {
-          path: await realpath(packageDir),
+          path,
           version:
             typeof meta.version === "string" && meta.version.length > 0 ? meta.version : "unknown",
+          ...(link === undefined ? {} : { link }),
         }
       } catch {
         return undefined
@@ -604,7 +653,7 @@ const describeTopology = (
     const root = installRootOf(path)
     counts.set(root, (counts.get(root) ?? 0) + 1)
   }
-  const roots = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const roots = [...counts.entries()].sort(([a], [b]) => codeUnitOrder(a, b))
   const breakdown = roots
     .map(([root, count]) => `${count} under ${displayPath(base, root)}`)
     .join(", ")
@@ -644,8 +693,22 @@ const describeScope = (
   return `${outside.length} of these copies ${outside.length === 1 ? "is" : "are"} outside ${here}, so this fails every build in the workspace, including apps that never import the package. The scan is anchored on the workspace on purpose: a copy reached through a workspace-linked dependency cannot be seen from ${here} alone, and scoping to it would miss the case this check exists for. Fix the copies where they live, or declare the package single-copy.`
 }
 
-const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
-  dependencyNames(pkg).filter(isIdentitySensitivePackage).sort()
+/**
+ * The dependencies of `pkg` the scan compares across copies: the built-in identity-sensitive set plus
+ * every package the app declared single-copy. A declaration is a claim that one copy loads, so a
+ * declared package gets the same scrutiny as react - otherwise a version skew in it would be enforced
+ * at load time (the resolver refuses to redirect it) and never reported here. The match is core's
+ * `matchesSingleCopyDeclaration`, the one the resolver uses, so check and enforcement cover one set.
+ */
+const identityTargets = (
+  pkg: Record<string, unknown>,
+  declared: readonly string[],
+): readonly string[] =>
+  dependencyNames(pkg)
+    .filter(
+      (name) => isIdentitySensitivePackage(name) || matchesSingleCopyDeclaration(declared, name),
+    )
+    .sort()
 
 /** version-skew is a range problem: one reinstall from the root collapses it. */
 const VERSION_SKEW_REMEDIATION =
@@ -657,6 +720,14 @@ const duplicatePathRemediation = (name: string): string =>
   `Deduplicate so ${name} resolves to a single physical path, or declare it single-copy: add "nifra": { "singleCopy": ["${name}"] } to package.json and preload "${SINGLE_COPY_REGISTER_SPECIFIER}" from bunfig.toml. nifra then rewrites every duplicate to this app's copy - at one version only, so align ranges first if the copies ever differ.`
 const identityRemediation = (cause: IdentityParityCause, name: string): string =>
   cause === "version-skew" ? VERSION_SKEW_REMEDIATION : duplicatePathRemediation(name)
+
+/** Name each planted link, its target, and the fix, for a finding whose copies were reached that way. */
+const describeProvenance = (copies: readonly IdentityParityCopy[]): string | undefined => {
+  const lines = copies.flatMap((copy) => (copy.links ?? []).map((link) => `${link} → ${copy.path}`))
+  if (lines.length === 0) return undefined
+  const one = lines.length === 1
+  return `reached through ${one ? "a symlink" : "symlinks"} that ${one ? "points" : "point"} outside the importer's install: ${lines.join(", ")}. Unless the importer declares ${one ? "it" : "them"} as a \`link:\` dependency, ${one ? "the link was" : "the links were"} planted by hand, by another project, or by \`bun link\` - remove ${one ? "it" : "them"} and reinstall there, so the importer resolves its own install's copy.`
+}
 
 /** What is left to do about a duplicate the declaration already covers. */
 const deduplicatedRemediation = (registration: SingleCopyRegistration): string =>
@@ -695,22 +766,31 @@ export async function collectIdentityParity(
   const scanRoot = workspace.root
   const scanPackage = workspace.package
   const { importers, truncated } = await workspaceImporters(scanRoot, scanPackage)
-  const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
+  const byPackage = new Map<
+    string,
+    Map<string, { version: string; importers: Set<string>; links: Set<string> }>
+  >()
   const record = (
     name: string,
-    copy: { readonly path: string; readonly version: string },
+    copy: { readonly path: string; readonly version: string; readonly link?: string },
     importer: string,
   ): void => {
     const copies = byPackage.get(name) ?? new Map()
-    const entry = copies.get(copy.path) ?? { version: copy.version, importers: new Set<string>() }
+    const entry = copies.get(copy.path) ?? {
+      version: copy.version,
+      importers: new Set<string>(),
+      links: new Set<string>(),
+    }
     entry.importers.add(importer)
+    if (copy.link !== undefined) entry.links.add(displayPath(requestedRoot, copy.link))
     copies.set(copy.path, entry)
     byPackage.set(name, copies)
   }
 
+  const singleCopy = singleCopyCoverage(requestedRoot, scanRoot)
   const targets = new Set<string>()
   for (const importer of importers) {
-    for (const name of identityTargets(importer.package)) {
+    for (const name of identityTargets(importer.package, singleCopy.declared)) {
       if (importer.package.name === name) continue
       targets.add(name)
       const copy = await resolvedInstalledCopy(importer.root, scanRoot, name)
@@ -732,7 +812,7 @@ export async function collectIdentityParity(
     const boundary = await linkedRepoBoundary(linkedRoot)
     const linkedTargets = new Set([
       ...targets,
-      ...(linkedPackage === undefined ? [] : identityTargets(linkedPackage)),
+      ...(linkedPackage === undefined ? [] : identityTargets(linkedPackage, singleCopy.declared)),
     ])
     for (const name of linkedTargets) {
       if (linkedPackage?.name === name) continue
@@ -741,21 +821,24 @@ export async function collectIdentityParity(
     }
   }
 
-  const singleCopy = singleCopyCoverage(requestedRoot, scanRoot)
   const findings: IdentityParityFinding[] = []
   const deduplicated: IdentityParityFinding[] = []
-  for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => codeUnitOrder(a, b))) {
     if (copies.size < 2) continue
     const absolutePaths = [...copies.keys()].sort()
     const resolvedCopies = [...copies.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([path, copy]) => ({
-        version: copy.version,
-        path: displayPath(requestedRoot, path),
-        absolutePath: path,
-        importers: [...copy.importers].sort(),
-      }))
+      .sort(([a], [b]) => codeUnitOrder(a, b))
+      .map(
+        ([path, copy]): IdentityParityCopy => ({
+          version: copy.version,
+          path: displayPath(requestedRoot, path),
+          absolutePath: path,
+          importers: [...copy.importers].sort(),
+          ...(copy.links.size === 0 ? {} : { links: [...copy.links].sort() }),
+        }),
+      )
     const topology = describeTopology(requestedRoot, scanRoot, absolutePaths)
+    const provenance = describeProvenance(resolvedCopies)
     const scope = describeScope(requestedRoot, scanRoot, absolutePaths)
     const versions = [...new Set(resolvedCopies.map((copy) => copy.version))].sort()
     const cause: IdentityParityCause = versions.length > 1 ? "version-skew" : "duplicate-path"
@@ -780,6 +863,7 @@ export async function collectIdentityParity(
         : identityRemediation(cause, name),
       ...(topology === undefined ? {} : { topology }),
       ...(scope === undefined ? {} : { scope }),
+      ...(provenance === undefined ? {} : { provenance }),
       deduplicated: covered,
     }
     ;(covered ? deduplicated : findings).push(finding)
@@ -804,7 +888,8 @@ export function formatIdentityParityFindings(findings: readonly IdentityParityFi
           .map((copy) => copy.path)
           .join(", ")}` +
         (finding.topology === undefined ? "" : `\n  topology: ${finding.topology}`) +
-        (finding.scope === undefined ? "" : `\n  scope: ${finding.scope}`),
+        (finding.scope === undefined ? "" : `\n  scope: ${finding.scope}`) +
+        (finding.provenance === undefined ? "" : `\n  links: ${finding.provenance}`),
     )
     .join("\n")
 }
@@ -904,15 +989,21 @@ export function logicalStaticAssets(manifest: BuildManifestLike): readonly strin
   return [...logical].sort()
 }
 
+/**
+ * The one order parity puts route ids in, on both sides. Code-unit order, not `localeCompare`: the
+ * two disagree on `_` against `[` (`[lang]` sorts before `_404` by code unit, after it by locale), so
+ * a dev side sorted one way and a build side sorted the other failed the equality check for every app
+ * with a `_404` and a dynamic route. Code-unit order is also locale-independent, so the verdict cannot
+ * change with the machine running the build.
+ */
+export const compareRouteIds = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
 export function normalizeBuildManifest(manifest: BuildManifestLike): ParityManifest {
+  const routes = Object.entries(manifest.routes).sort(([a], [b]) => compareRouteIds(a, b))
   return {
     moduleGraph: {
-      routes: Object.keys(manifest.routes).sort(),
-      routeChunks: Object.fromEntries(
-        Object.entries(manifest.routes)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([route, chunks]) => [route, chunks.length]),
-      ),
+      routes: routes.map(([route]) => route),
+      routeChunks: Object.fromEntries(routes.map(([route, chunks]) => [route, chunks.length])),
       // Allowlist, not denylist: the dev/prod module-graph contract is the JavaScript module graph
       // only. `js:entry` and `js:route:<id>:<n>` are the roles dev can reconstruct from source. Which
       // *non-JS* files a bundler emits (svg, woff2, an extracted stylesheet) is an output detail, not
@@ -928,7 +1019,7 @@ export function normalizeBuildManifest(manifest: BuildManifestLike): ParityManif
 
 export function createDevelopmentParityManifest(input: DevelopmentParityInput): ParityManifest {
   const routes = Object.fromEntries(
-    Object.entries(input.routes).sort(([a], [b]) => a.localeCompare(b)),
+    Object.entries(input.routes).sort(([a], [b]) => compareRouteIds(a, b)),
   )
   const publicFiles = [...input.publicFiles].sort()
   return {
@@ -951,10 +1042,11 @@ const sourceFilesUnder = (root: string): readonly string[] => {
   const files: string[] = []
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
+      // Dot-directories hold tool output (.wrangler, .vercel, .svelte-kit), whose bundles quote css
+      // imports the app never makes.
       if (
-        ["node_modules", "dist", "dist-node", "build", ".git", ".nifra", "coverage"].includes(
-          entry.name,
-        )
+        entry.name.startsWith(".") ||
+        ["node_modules", "dist", "dist-node", "build", "coverage"].includes(entry.name)
       )
         continue
       const path = join(current, entry.name)
@@ -974,7 +1066,7 @@ const publicFilesUnder = (publicDir: string | false | undefined): readonly strin
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const path = join(current, entry.name)
       if (entry.isDirectory()) walk(path)
-      else if (entry.isFile()) files.push(`/${relative(root, path).split(sep).join("/")}`)
+      else if (entry.isFile()) files.push(publicUrlPath(relative(root, path)))
     }
   }
   walk(root)
@@ -994,7 +1086,10 @@ export function collectDevelopmentParityInput(
   const sourceRoot = dirname(resolve(routesDir))
   const css = sourceFilesUnder(sourceRoot).some((file) => {
     const content = readFileSync(file, "utf8")
-    return hasStylesheetImport(content) || (isSingleFileComponent(file) && SFC_STYLE.test(content))
+    return (
+      hasStylesheetImport(content) ||
+      (isSingleFileComponent(file) && SFC_STYLE.test(withoutComments(content)))
+    )
   })
     ? ["css:present"]
     : []
@@ -1079,9 +1174,28 @@ function explainParityDifference(
       parts.push(
         `chunks only in development=${JSON.stringify(assets.onlyDevelopment)} only in production=${JSON.stringify(assets.onlyProduction)}`,
       )
+    const counts = Object.keys(dev.routeChunks).filter(
+      (route) =>
+        Object.hasOwn(prod.routeChunks, route) &&
+        dev.routeChunks[route] !== prod.routeChunks[route],
+    )
+    if (counts.length > 0)
+      parts.push(
+        `route chunk counts differ: ${counts.map((route) => `${route} development=${dev.routeChunks[route]} production=${prod.routeChunks[route]}`).join(", ")}`,
+      )
+    // Same members, same counts: what is left is order. Name the field, because an ordering
+    // disagreement is a parity bug, not an app defect, and reads nothing like a missing chunk.
+    if (parts.length === 0 && !equal(dev.routes, prod.routes))
+      parts.push(
+        `route order differs: development=${JSON.stringify(dev.routes)} production=${JSON.stringify(prod.routes)}`,
+      )
+    if (parts.length === 0 && !equal(dev.emittedAssets, prod.emittedAssets))
+      parts.push(
+        `chunk order differs: development=${JSON.stringify(dev.emittedAssets)} production=${JSON.stringify(prod.emittedAssets)}`,
+      )
     if (parts.length === 0)
       parts.push(
-        `route chunk counts differ: development=${JSON.stringify(dev.routeChunks)} production=${JSON.stringify(prod.routeChunks)}`,
+        `route chunk order differs: development=${JSON.stringify(dev.routeChunks)} production=${JSON.stringify(prod.routeChunks)}`,
       )
     return `module-graph: ${parts.join("; ")}`
   }

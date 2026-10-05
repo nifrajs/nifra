@@ -9,14 +9,10 @@
  * the devtools console), and it never leaves the browser.
  */
 
-import { client } from "@nifrajs/client"
 import { server } from "@nifrajs/core/server"
 import { type RunResult, runApp } from "@nifrajs/runner"
 import { t } from "@nifrajs/schema"
-import type { backend } from "../backend"
 import { decodeState, encodeState, readShareHash, shareHash } from "./share-codec"
-
-const api = client<typeof backend>("/api")
 
 interface Preset {
   readonly label: string
@@ -122,6 +118,24 @@ function load(preset: Preset, code: HTMLTextAreaElement, reqs: HTMLTextAreaEleme
   reqs.value = preset.requests
 }
 
+/** Keep the folded "Requests" row honest about what Run will send. */
+function syncRequestCount(reqs: HTMLTextAreaElement): void {
+  const label = $<HTMLElement>("#play-requests-count")
+  if (!label) return
+  try {
+    const parsed: unknown = JSON.parse(reqs.value)
+    label.textContent = Array.isArray(parsed) ? `${parsed.length} sent on Run` : "not an array"
+  } catch {
+    label.textContent = "invalid JSON"
+  }
+}
+
+/** A request error points at a folded panel - open it so the fix is in view. */
+function revealRequests(): void {
+  const box = $<HTMLDetailsElement>("#play-requests-box")
+  if (box) box.open = true
+}
+
 async function run(
   code: HTMLTextAreaElement,
   reqs: HTMLTextAreaElement,
@@ -139,9 +153,13 @@ async function run(
     try {
       requests = JSON.parse(reqs.value)
     } catch {
+      revealRequests()
       throw new Error("Requests must be valid JSON (an array of { method?, path, body? }).")
     }
-    if (!Array.isArray(requests)) throw new Error("Requests must be a JSON array.")
+    if (!Array.isArray(requests)) {
+      revealRequests()
+      throw new Error("Requests must be a JSON array.")
+    }
 
     const results = await runApp(
       app as { fetch(r: Request): Response | Promise<Response> },
@@ -209,71 +227,12 @@ async function init(): Promise<void> {
   }
   code.addEventListener("keydown", runHotkey)
   reqs.addEventListener("keydown", runHotkey)
+  reqs.addEventListener("input", () => syncRequestCount(reqs))
 
   const shareBtn = $<HTMLButtonElement>("#play-share")
   const shareMsg = $<HTMLElement>("#play-share-msg")
   shareBtn?.addEventListener("click", () => {
     void share(code, reqs, shareMsg)
-  })
-
-  // ---- AI Copilot Chat Wiring ----
-  const aiForm = $<HTMLFormElement>("#play-ai-form")
-  const aiInput = $<HTMLInputElement>("#play-ai-input")
-  const aiMessages = $<HTMLElement>("#play-ai-messages")
-
-  const appendMsg = (role: "user" | "assistant" | "system", text: string): void => {
-    if (!aiMessages) return
-    const msg = el("div", `play-ai-msg ${role}`)
-    msg.textContent = text
-    aiMessages.appendChild(msg)
-    aiMessages.scrollTop = aiMessages.scrollHeight
-  }
-
-  aiForm?.addEventListener("submit", async (e) => {
-    e.preventDefault()
-    if (!aiInput?.value.trim() || !aiMessages) return
-    const promptText = aiInput.value.trim()
-    aiInput.value = ""
-
-    appendMsg("user", promptText)
-
-    const loading = el("div", "play-ai-msg assistant", "Nifra Copilot is thinking...")
-    aiMessages.appendChild(loading)
-    aiMessages.scrollTop = aiMessages.scrollHeight
-
-    try {
-      const res = await api.playground.chat.post({ prompt: promptText })
-      loading.remove()
-
-      if (res.ok) {
-        const data = res.data
-        appendMsg("assistant", data.message)
-        if (data.code) {
-          code.value = data.code
-        }
-        if (data.requests) {
-          reqs.value = data.requests
-        }
-        // Remove active class from examples since we replaced code
-        for (const other of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
-          other.classList.remove("active")
-        }
-        // Copilot output is untrusted editor content; require the user to review it and click Run.
-      } else if (res.error.error === "network_error") {
-        appendMsg(
-          "assistant",
-          "Could not connect to the backend. Please check your network connection.",
-        )
-      } else {
-        appendMsg("assistant", "Sorry, I encountered an error communicating with the chat service.")
-      }
-    } catch (_err) {
-      loading.remove()
-      appendMsg(
-        "assistant",
-        "Could not connect to the backend. Please check your network connection.",
-      )
-    }
   })
 
   for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
@@ -285,6 +244,7 @@ async function init(): Promise<void> {
         other.classList.toggle("active", other === btn)
       }
       load(preset, code, reqs)
+      syncRequestCount(reqs)
       void run(code, reqs, out)
     })
   }
@@ -295,6 +255,7 @@ async function init(): Promise<void> {
   if (restored) {
     code.value = restored.code
     reqs.value = restored.requests
+    syncRequestCount(reqs)
     for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
       btn.classList.remove("active") // custom code - no preset is active
     }

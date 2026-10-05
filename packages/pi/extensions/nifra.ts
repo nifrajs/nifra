@@ -27,21 +27,27 @@ export default function registerNifraTools(pi: {
   ): Promise<{ readonly stdout?: string; readonly stderr?: string; readonly code: number }>
 }) {
   const parameters = { type: "object", properties: {}, additionalProperties: false }
-  const register = (name: string, label: string, description: string, args: readonly string[]) => {
+  const register = (
+    name: string,
+    label: string,
+    description: string,
+    args: readonly string[],
+    command = "nifra",
+  ) => {
     pi.registerTool({
       name,
       label,
       description,
       parameters,
       execute: async (_toolCallId, _input, signal) => {
-        const result = await pi.exec("nifra", args, { cwd: process.cwd(), signal })
+        const result = await pi.exec(command, args, { cwd: process.cwd(), signal })
         const text =
           result.stdout ||
           result.stderr ||
-          (result.code === 0 ? "ok" : `nifra exited with code ${result.code}`)
+          (result.code === 0 ? "ok" : `${command} exited with code ${result.code}`)
         return {
           content: [{ type: "text", text }],
-          details: { code: result.code, command: ["nifra", ...args].join(" ") },
+          details: { code: result.code, command: [command, ...args].join(" ") },
         }
       },
     })
@@ -64,5 +70,5 @@ export default function registerNifraTools(pi: {
     "Run Nifra capability assurance and return structured diagnostics.",
     ["assure", "--json"],
   )
-  register("nifra_test", "Nifra test", "Run the configured Nifra test command.", ["test"])
+  register("nifra_test", "Nifra test", "Run the project's tests with `bun test`.", ["test"], "bun")
 }

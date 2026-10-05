@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/dev",
@@ -12,7 +8,7 @@ export const meta = docsMeta(
 )
 
 const BUN_DEV = `// doc-check: skip - fragment: routesDir/outDir/clientModule/createApp are your app's dev config.
-// dev.ts - Bun-native HMR, no Vite in the process
+// backend/dev-server.ts - Bun-native HMR, no Vite in the process
 import { createDevServer } from "@nifrajs/web/dev"
 // Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
 // changed module graph - with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
@@ -20,18 +16,19 @@ import { createDevServer } from "@nifrajs/web/dev"
 // caller, pass the production CSS Modules plugin through your own bunfig (nifra dev --bun does it for you).
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })`
 
-const VITE_DEV = `// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
-// dev.ts - state-preserving HMR for supported UI adapters
+const VITE_DEV = `// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./app; install it to run this.
+// backend/dev-server.ts - state-preserving HMR for supported UI adapters
 import react from "@vitejs/plugin-react"            // your framework's official Vite plugin
 import { createWebApp } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./app"
 
-const routesDir = \`\${import.meta.dir}/routes\`
+const root = \`\${import.meta.dir}/..\`
+const routesDir = \`\${root}/routes\`
 const server = await createViteDevServer({
-  root: import.meta.dir,
+  root,
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
@@ -45,15 +42,17 @@ const server = await createViteDevServer({
     }),
 })`
 
-const BOUNDARY = `// routes/index.tsx - NOT a Fast Refresh boundary (exports loader/meta), so a save
+const BOUNDARY = `// routes/index.tsx - NOT a Fast Refresh boundary (exports meta beside the page), so a save
 //                     here does a clean full reload. Keep the view in a child component:
+import { Counter } from "../frontend/counter"
+import type { Route } from "./+types/index"
+
 export const meta = { title: "Home" }
-export async function loader({ api }) { /* … */ }
-export default function Home(props) {
-  return <Counter message={props.data.message} />   // ← edit Counter.tsx for state-preserving HMR
+export default function Home({ data }: Route.ComponentProps) {
+  return <Counter message={data.message} />   // ← edit counter.tsx for state-preserving HMR
 }
 
-// components/Counter.tsx - component-only module → a Fast Refresh boundary. Editing this file's
+// frontend/counter.tsx - component-only module → a Fast Refresh boundary. Editing this file's
 // JSX hot-swaps it with useState/useReducer state PRESERVED (no reload).
 import { useState } from "react"
 export function Counter(props: { message: string }) {
@@ -90,14 +89,22 @@ export const cssLoading = "deferred"
 const VITE_PROD = `// vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
 // Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
 // production bundler stays Bun (buildClient), which is faster and Bun-native.
-import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
+import {
+  viteAssetUrlGuard,
+  viteBareBuiltinExternal,
+  viteLeakGuard,
+} from "@nifrajs/web/plugins/vite-leak-guard"
 
 export default {
+  // Keeps a bare built-in (\`fs/promises\`) named instead of an empty stub, so the guard sees it.
+  // viteAssetUrlGuard refuses a new URL("../backend/x.ts", import.meta.url) - a file Vite would copy or
+  // inline with no import for the graph guard to see. Last, after any framework plugin.
+  plugins: [viteBareBuiltinExternal(), viteAssetUrlGuard()],
   build: {
-    // The SAME two client-leak guards Nifra's Bun build runs - server-only code or a node: builtin
-    // reaching the browser fails the build, with the identical error message. A second production
-    // pipeline must not ship without them.
-    rollupOptions: { plugins: [viteLeakGuard()] },
+    // The SAME client-leak guards Nifra's Bun build runs - backend code (a route's .backend.ts half,
+    // backend/) or a node: builtin reaching the browser fails the build, with the identical message. A second production
+    // pipeline must not ship without them. \`node:\` stays external so the guard can name it.
+    rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
   },
 }`
 
@@ -357,9 +364,10 @@ export default function Dev() {
       <h2>The Fast Refresh boundary rule</h2>
       <p>
         React Fast Refresh (and the other frameworks' equivalents) only hot-swap a module when{" "}
-        <em>every</em> export is a component. Nifra route files co-locate <code>loader</code>,{" "}
-        <code>action</code>, and <code>meta</code> next to the component - so a route file isn't a
-        refresh boundary, and saving it does a clean full reload. Keep the view in a child component
+        <em>every</em> export is a component. A Nifra page exports <code>meta</code> (and{" "}
+        <code>handle</code>, <code>searchSchema</code>, ...) next to the component - so a page file
+        isn't a refresh boundary, and saving it does a clean full reload. Its <code>loader</code> and{" "}
+        <code>action</code> live in the <code>.backend.ts</code> half, which the browser never loads. Keep the view in a child component
         and edits hot-swap with state intact.
       </p>
       <CodeBlock code={BOUNDARY} />
@@ -375,6 +383,29 @@ export default function Dev() {
         It is off outside development by default, refuses remote connections unless you allow them, and
         caps both the buffered event count and the number of live connections - a dev tool that streams
         request internals has to be closed by default rather than merely quiet in production.
+      </p>
+
+      <h2>What the agent sees</h2>
+      <p>
+        Both pipelines record every request, server and browser error, and console line into one feed,
+        each tagged with the id the response carries in <code>x-nifra-request-id</code>. A coding agent
+        reads it through <code>nifra_errors</code>, <code>nifra_logs</code> and{" "}
+        <code>nifra_inspect</code>, and you can read it with <code>nifra errors</code> and{" "}
+        <code>nifra logs</code>. Pages get a small inline script that reports browser errors and
+        hydration mismatches back to the dev server; the dev server writes <code>.nifra/dev-server.json</code>{" "}
+        so the tools can find it. See <a href="/docs/agents">coding agents</a>.
+      </p>
+      <p>
+        When a page reports an error, a badge appears in its corner. It lists that page's errors with
+        their code, message, codeframe and fix, and a <strong>Copy prompt</strong> button per fix hands
+        a coding agent the error, one fix and the steps to check it worked (the{" "}
+        <a href="/docs/errors">error codes</a> page has the same prompts). The badge lives in a closed
+        shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
+        by its exact URL, or through <code>'strict-dynamic'</code>. A page that never errors never
+        fetches it. Turn it off for one run with <code>nifra dev --no-indicator</code>, for every run
+        with <code>export const dev = {"{"} indicator: false {"}"}</code> in <code>nifra.config.ts</code>,
+        or with <code>indicator: false</code> on <code>createDevServer</code>; the errors still reach
+        the feed.
       </p>
 
       <h2>Containers & sandboxes</h2>
@@ -412,7 +443,8 @@ export default function Dev() {
         programmatically, and a runtime <code>Bun.plugin</code> never reaches it (upstream ask:
         oven-sh/bun#36830). So <code>nifra dev --bun</code> generates a config under{" "}
         <code>.nifra/dev-bun/</code> carrying the <em>same</em> production boundary plugins, merges
-        your own bunfig's <code>[serve.static] plugins</code> and <code>preload</code> entries, and
+        your own bunfig's <code>[serve.static] plugins</code> and <code>preload</code> entries, adds
+        the <code>define</code> from <code>nifra.config.ts</code> to the client bundle and to SSR, and
         re-launches itself once with <code>--config=</code> pointing at it. Same stubs as{" "}
         <code>nifra build</code>, byte for byte - one implementation, three pipelines.
       </p>
@@ -432,10 +464,11 @@ export default function Dev() {
         <code>nifra build</code>): faster, Bun-native, and the profile Nifra is tuned for. If an app
         genuinely needs a <strong>Vite-only transform</strong> with no Bun equivalent, you can run a
         Vite/Rollup production client build instead - but it must carry the same client-leak guards the
-        Bun build enforces, or a second pipeline becomes a way for server-only code to reach the
-        browser unnoticed. Add <code>viteLeakGuard()</code>: it runs the <em>same</em> detection and
+        Bun build enforces, or a second pipeline becomes a way for backend code to reach the browser
+        unnoticed. Add <code>viteLeakGuard()</code>: it runs the <em>same</em> detection and
         emits the <em>same</em> error as the Bun build (one implementation, adapted to Rollup's graph),
-        so <code>node:</code> builtins and <code>server-only</code> modules fail the build either way.
+        so a refused import - a <code>node:</code> builtin, <code>backend/</code>, a route's{" "}
+        <code>.backend.ts</code> half - fails the build either way.
       </p>
       <CodeBlock code={VITE_PROD} />
       <p>

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { fixedBackoff } from "../src/backoff.ts"
 import { createQueue, JobError, JobValidationError } from "../src/index.ts"
-import type { StandardSchemaV1 } from "../src/types.ts"
+import { MemoryJobStore } from "../src/memory-store.ts"
+import type { JobStore, StandardSchemaV1, StoredJob } from "../src/types.ts"
 
 /** A mutable injectable clock so retry/backoff/delay tests are deterministic (no real timers). */
 function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number) => void } {
@@ -180,5 +181,67 @@ describe("createQueue - worker lifecycle (real timers)", () => {
     expect(finished).toBe(true)
     expect(worker.running).toBe(false)
     expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+})
+
+describe("worker polling survives a failing store", () => {
+  test("without onPollError a failed poll is logged, and stop() waits out the failing round", async () => {
+    const memory = new MemoryJobStore()
+    const leasing = deferred()
+    const gate = Promise.withResolvers<StoredJob[]>()
+    const store: JobStore = {
+      enqueue: (job) => memory.enqueue(job),
+      lease: () => {
+        leasing.resolve()
+        return gate.promise
+      },
+      complete: (id) => memory.complete(id),
+      retry: (id, runAt) => memory.retry(id, runAt),
+      deadLetter: (id, error) => memory.deadLetter(id, error),
+      counts: () => memory.counts(),
+    }
+    const logged: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => {
+      logged.push(args)
+    }
+    try {
+      const worker = createQueue({ store }).start({ pollIntervalMs: 5 })
+      await leasing.promise
+      const stopping = worker.stop()
+      gate.reject(new Error("db connection reset"))
+      await stopping
+      expect(worker.running).toBe(false)
+      expect(logged.some((args) => String(args[1]).includes("db connection reset"))).toBe(true)
+    } finally {
+      console.error = original
+    }
+  })
+
+  test("a lease that throws is reported to onPollError and the next poll still runs jobs", async () => {
+    class FlakyStore extends MemoryJobStore {
+      failures = 1
+      override lease(now: number, limit: number, leaseMs: number) {
+        if (this.failures > 0) {
+          this.failures--
+          throw new Error("db connection reset")
+        }
+        return super.lease(now, limit, leaseMs)
+      }
+    }
+    const q = createQueue({ store: new FlakyStore() })
+    const ran = deferred()
+    const send = q.define("send", {
+      handler() {
+        ran.resolve()
+      },
+    })
+    await send.enqueue({})
+    const reported: unknown[] = []
+    const worker = q.start({ pollIntervalMs: 5, onPollError: (error) => reported.push(error) })
+    await ran.promise
+    await worker.stop()
+    expect(reported).toHaveLength(1)
+    expect(String(reported[0])).toContain("db connection reset")
   })
 })

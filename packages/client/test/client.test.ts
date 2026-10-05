@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Result, Treaty } from "@nifrajs/client"
-import { client, testClient } from "@nifrajs/client"
+import { client, inProcessClient, testClient } from "@nifrajs/client"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 
@@ -81,10 +81,10 @@ type RawClient = {
 
 let instance: ReturnType<typeof app.listen>
 let api: Treaty<App>
-const url = (): string => `http://localhost:${instance.port}`
+const url = (): string => `http://127.0.0.1:${instance.port}`
 
 beforeAll(() => {
-  instance = app.listen(0)
+  instance = app.listen(0, { hostname: "127.0.0.1" })
   api = client<App>(url())
 })
 afterAll(() => {
@@ -260,6 +260,20 @@ describe("testClient", () => {
     const missing = await untyped.nope.get()
     expect(missing.ok).toBe(false)
   })
+
+  test("calls arrive from 127.0.0.1, so middleware keyed on the client address runs as it would behind a listener", async () => {
+    const app = server().get("/ip", (c) => ({ ip: c.clientIp ?? null }))
+    const local = await testClient<typeof app>(app).ip.get()
+    expect(local.ok && local.data).toEqual({ ip: "127.0.0.1" })
+    const remote = await testClient<typeof app>(app, { clientIp: "203.0.113.9" }).ip.get()
+    expect(remote.ok && remote.data).toEqual({ ip: "203.0.113.9" })
+  })
+
+  test("inProcessClient carries no address of its own: a call made for a remote user never looks local", async () => {
+    const app = server().get("/ip", (c) => ({ ip: c.clientIp ?? null }))
+    const res = await inProcessClient<typeof app>(app).ip.get()
+    expect(res.ok && res.data).toEqual({ ip: null })
+  })
 })
 
 describe("collision escape - reserved-named segments via a call on the parent node", () => {
@@ -300,5 +314,52 @@ describe("collision escape - reserved-named segments via a call on the parent no
     const viaDot = await api.api.remove.post()
     expect(viaCall.ok && viaCall.data).toEqual({ removed: true })
     expect(viaDot.ok && viaDot.data).toEqual({ removed: true })
+  })
+})
+
+describe("mixed segments - part literal, part parameter", () => {
+  const app = server()
+    .get("/files/:name.json", (c) => ({ json: c.params.name }))
+    .get("/files/:name.csv", (c) => ({ csv: c.params.name }))
+    .get("/files/index.json", () => ({ index: true }))
+    .get("/files/:id", (c) => ({ plain: c.params.id }))
+    .get("/post-:id", (c) => ({ post: c.params.id }))
+    .get("/post-:id/comments", (c) => ({ commentsOf: c.params.id }))
+    .get("/v:major.:minor", (c) => ({ major: c.params.major, minor: c.params.minor }))
+    .get("/img/:id{[0-9]+}.png", (c) => ({ img: c.params.id }))
+  const api = testClient<typeof app>(app)
+
+  test("the segment is sent as written and the server reads the param out of it", async () => {
+    const json = await api.files("report.json").get()
+    expect(json.ok && json.data).toEqual({ json: "report" })
+    const csv = await api.files("report.csv").get()
+    expect(csv.ok && csv.data).toEqual({ csv: "report" })
+    const post = await api("post-42").get()
+    expect(post.ok && post.data).toEqual({ post: "42" })
+    const comments = await api("post-42").comments.get()
+    expect(comments.ok && comments.data).toEqual({ commentsOf: "42" })
+    const version = await api("v1.2").get()
+    expect(version.ok && version.data).toEqual({ major: "1", minor: "2" })
+  })
+
+  test("a static sibling and a whole-segment param at the same position keep their own calls", async () => {
+    const index = await api.files("index.json").get()
+    expect(index.ok && index.data).toEqual({ index: true })
+    const plain = await api.files({ id: "7" }).get()
+    expect(plain.ok && plain.data).toEqual({ plain: "7" })
+  })
+
+  test("the value is one encoded segment: a slash in it never adds a path level", async () => {
+    const stem = "a/b c"
+    const nested = await api.files(`${stem}.json`).get()
+    expect(nested.ok && nested.data).toEqual({ json: "a/b c" })
+  })
+
+  test("a constraint is enforced by the server, not the client", async () => {
+    const img = await api.img("7.png").get()
+    expect(img.ok && img.data).toEqual({ img: "7" })
+    const refused = await api.img("x.png").get()
+    expect(refused.ok).toBe(false)
+    expect(refused.status).toBe(404)
   })
 })

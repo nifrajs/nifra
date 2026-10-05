@@ -168,6 +168,16 @@ describe("transformCssModule - at-rules, nesting, and non-selector contexts", ()
   const kf = (css: string, name = "spin"): string =>
     new RegExp(`@(?:-\\w+-)?keyframes (${name}_[0-9a-f]{8})`).exec(css)?.[1] ?? ""
 
+  test("a vendor-prefixed or comment-led animation declaration is scoped too", () => {
+    const { css } = transformCssModule(
+      "@keyframes spin { to { opacity: 1 } }\n.a { -webkit-animation: spin 1s }\n.b { /* slow */ animation: spin 3s }",
+      "/r/x.module.css",
+    )
+    const name = kf(css)
+    expect(css).toContain(`-webkit-animation: ${name} 1s`)
+    expect(css).toContain(`/* slow */ animation: ${name} 3s`)
+  })
+
   test("@keyframes name + its animation-name reference are scoped to the SAME name", () => {
     const { css } = transformCssModule(
       ".box { animation-name: spin } @keyframes spin { from { opacity: 0 } to { opacity: 1 } }",

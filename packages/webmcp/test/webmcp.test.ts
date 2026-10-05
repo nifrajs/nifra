@@ -333,6 +333,75 @@ describe("prediction store", () => {
     expect(failed.snapshot.activePredictionIds).toEqual([])
   })
 
+  test("concurrent calls under accept-server-state end on the latest server state", async () => {
+    let server = 0
+    interface Counter {
+      readonly count: number
+    }
+    const gate = () => {
+      let enter!: () => void
+      let release!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { entered, enter, released, release }
+    }
+    let gates: ReturnType<typeof gate>[] = []
+    const counter = (
+      reconciliation: "accept-server-state" | "manual",
+    ): AgentCapability<{ turn: number }, Counter, Counter> =>
+      defineAgentCapability({
+        name: "counter.increment",
+        description: "Increment the counter.",
+        input: t.object({ turn: t.number() }),
+        output: t.object({ count: t.number() }),
+        reconciliation,
+        execute: async ({ turn }) => {
+          gates[turn]?.enter()
+          await gates[turn]?.released
+          server += 1
+          return { count: server }
+        },
+        predict: ({ snapshot, version }) => ({
+          baseVersion: version,
+          patch: [{ op: "replace", path: "/count", value: snapshot.count + 1 }],
+        }),
+        reconcile: ({ output }) => ({
+          state: { count: output.count },
+          version: `v${output.count}`,
+        }),
+      })
+    const race = async (reconciliation: "accept-server-state" | "manual") => {
+      server = 0
+      const early = gate()
+      const late = gate()
+      gates = [early, late]
+      const store = createPredictionStore<Counter>({ state: { count: 0 }, version: "v0" })
+      const capability = counter(reconciliation)
+      const first = executePredicted(capability, { turn: 0 }, store)
+      const second = executePredicted(capability, { turn: 1 }, store)
+      // Both predictions are in the store once both executions have started. The gates, not
+      // timer order, then let the first call finish before the second.
+      await Promise.all([early.entered, late.entered])
+      early.release()
+      const firstOutcome = (await first).outcome
+      late.release()
+      const secondOutcome = (await second).outcome
+      return { outcomes: [firstOutcome, secondOutcome], snapshot: store.snapshot() }
+    }
+
+    const accepted = await race("accept-server-state")
+    expect(accepted.outcomes).toEqual(["committed", "committed"])
+    expect(accepted.snapshot).toMatchObject({ state: { count: 2 }, version: "v2" })
+    // Manual reconciliation keeps reporting the conflict and leaves the base to the application.
+    const manual = await race("manual")
+    expect(manual.outcomes).toEqual(["committed", "conflicted"])
+    expect(manual.snapshot).toMatchObject({ state: { count: 1 }, version: "v1" })
+  })
+
   test("rolls back a prediction when execution is cancelled after it becomes visible", async () => {
     let release!: (value: { version: string }) => void
     let started = false

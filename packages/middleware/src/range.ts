@@ -62,11 +62,14 @@ function ifRangeMatches(value: string | null, options: RangeResponseOptions): bo
   if (value === null) return true
   const item = value.trim()
   if (options.etag !== undefined) return !item.startsWith("W/") && item === options.etag
+  // A date validator must match Last-Modified exactly (RFC 9110 section 13.1.5), not merely be later:
+  // a representation replaced by one with an older timestamp would otherwise splice foreign bytes
+  // into a resumed download.
   if (options.lastModified === undefined) return false
   const time = Date.parse(item)
   return (
     Number.isFinite(time) &&
-    Math.floor(time / 1000) >= Math.floor(options.lastModified.getTime() / 1000)
+    Math.floor(time / 1000) === Math.floor(options.lastModified.getTime() / 1000)
   )
 }
 

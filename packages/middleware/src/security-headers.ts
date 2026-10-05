@@ -36,6 +36,10 @@ export interface SecurityHeadersOptions {
  * Every value is fixed at construction, so these are declared statically rather than written by a
  * response hook: an app whose response middleware is only this keeps the fused native lanes. A route
  * that sets one of these names itself keeps its own value.
+ *
+ * A group can apply its own configuration over the app's: `group.use(securityHeaders({ ... }))`
+ * replaces the app's value of each header it sets, on the group's routes only. Applying the same
+ * configuration twice is a no-op.
  */
 export function securityHeaders(options: SecurityHeadersOptions = {}): Middleware {
   const frameOptions = options.frameOptions ?? "DENY"
@@ -72,7 +76,9 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
 
   return withRouteAssurance<Middleware>(
     {
-      name: "security-headers",
+      // The configuration is part of the name: the same one applied twice dedupes, while a group's
+      // different configuration applies over its parent's instead of being skipped as a repeat.
+      name: `security-headers:${JSON.stringify(declared)}`,
       responseHeaders: declared,
     },
     {

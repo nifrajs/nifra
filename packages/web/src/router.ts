@@ -10,6 +10,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
+import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
 
 /**
@@ -24,6 +25,10 @@ export const DATA_HEADER = "x-nifra-data"
  * `<path>/_data.json` (a CDN file - no worker round-trip) instead of the dynamic header-GET.
  */
 export const PRERENDERED_GLOBAL = "__NIFRA_PRERENDERED__"
+
+/** Where `createWebApp` serves a prerendered set too large to inline; the global then holds this URL
+ * plus a `?v=` content version, so the browser may cache it for good. */
+export const PRERENDERED_LIST_PATH = "/__nifra/prerendered.json"
 
 /**
  * Response header a data-mode action POST uses to convey a redirect (`redirect(...)`) to the
@@ -138,8 +143,9 @@ export interface RouterState {
   readonly actionData?: unknown
   /** True while a navigation or submit is in flight (drives loading UI). */
   readonly pending: boolean
-  /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a
-   * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */
+  /** The path a navigation or a submit's redirect is loading while `pending`; a redirect the router
+   * follows moves it to the target. Lets a `NavLink` know whether its own `to` is the one loading;
+   * `undefined` when idle. */
   readonly pendingPath?: string | undefined
   /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */
   readonly submission?: Submission
@@ -197,8 +203,10 @@ export type FetchRouteData = (
 
 /** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */
 export interface SubmitOptions {
-  /** Re-run the active route's loader after the action settles (default `true`). Set `false` to
-   * keep the current `data` and rely on the action's `actionData` alone. */
+  /** Re-run the active route's loaders after the action settles (default `true`). Set `false` to
+   * keep the current `data` and rely on the action's `actionData` alone. When the action redirects,
+   * the target's layouts all re-run by default; with `false` it keeps the layout data an ordinary
+   * navigation would. */
   readonly revalidate?: boolean
 }
 
@@ -238,7 +246,11 @@ export interface ClientRouter {
   snapshot: () => RouterState
   /** Subscribe to transitions; returns an unsubscribe fn. */
   subscribe: (listener: () => void) => () => void
-  /** Navigate to a path: match → fetch loader data → publish. No-op for an unmatched path. */
+  /**
+   * Navigate to a path: match → fetch loader data → publish. No-op for an unmatched path. A loader
+   * redirect to another route is followed; one that leaves the app (another origin, a `#fragment`, no
+   * route) rejects with its target as `redirectTo`.
+   */
   navigate: (path: string) => Promise<void>
   /**
    * Submit an action (POST `body` to `action` in data mode): a redirect becomes a client
@@ -246,7 +258,8 @@ export interface ClientRouter {
    * loader is revalidated so the mutation is reflected. Pass `{ revalidate: false }` to SKIP that
    * revalidation - keep the current `data` and just publish the action's `actionData` (useful when
    * the action already returned everything that changed, saving the extra round-trip). A redirect
-   * always loads its target regardless. Rejects on failure (caller falls back).
+   * always loads its target regardless. Rejects on failure (caller falls back); once the action has
+   * run, the rejection's `redirectTo` names the page to load instead of posting again.
    */
   submit: (
     action: string,
@@ -319,6 +332,10 @@ export interface MountRouterOptions {
    * `ctx.search`/`RenderProps.search`. Omitted by callers with no typed search (tests, a hand-built mount)
    * ⇒ every route sees the raw parsed query. */
   readonly searchSchemas?: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>>
+  /** routeId → the ids and `handle` exports `useMatches` reports for that chain; built by
+   * `generateClientEntry` as each route's modules load. The mount hands the current route's entry to
+   * the render as `RenderProps.matchChain`. Omitted ⇒ `useMatches` returns an empty list. */
+  readonly matchChains?: Readonly<Record<string, MatchChain>>
   /** Hydration container (opaque - the adapter casts it to its DOM element type). */
   readonly container: unknown
 }
@@ -356,11 +373,45 @@ const prerenderedSetOf = (paths: object): ReadonlySet<unknown> => {
   return set
 }
 
+// A handed-over URL is fetched once: the global then holds the pending list every navigation shares.
+// A failed fetch leaves navigations on the dynamic path, which is always correct.
+const prerenderedOf = (): unknown => {
+  const handed = Reflect.get(globalThis, PRERENDERED_GLOBAL)
+  if (typeof handed !== "string") return handed
+  const list = fetch(handed)
+    .then((res) => (res.ok ? res.json() : undefined))
+    .catch(() => undefined)
+  Reflect.set(globalThis, PRERENDERED_GLOBAL, list)
+  return list
+}
+
+/**
+ * The page to load as a document, when that is why a navigation or submit rejected. Only an `http:` or
+ * `https:` target: the caller hands it to `location`, which runs a `javascript:` URL in this page,
+ * where the same target in a real redirect's `Location` never runs.
+ */
+export const redirectOf = (error: unknown): string | undefined => {
+  const to = (error as { redirectTo?: unknown } | null | undefined)?.redirectTo
+  return typeof to === "string" && /^https?:$/.test(targetUrl(to)?.protocol ?? "") ? to : undefined
+}
+
+/** A redirect target resolved against a placeholder origin, or `undefined` when it does not parse. */
+const targetUrl = (to: string): URL | undefined => {
+  try {
+    return new URL(to, "http://n.invalid")
+  } catch {
+    return undefined
+  }
+}
+
+const redirected = (to: string): Error =>
+  Object.assign(new Error(`[nifra/web] redirected to ${to}`), { redirectTo: to })
+
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
-  const prerendered = (globalThis as { [PRERENDERED_GLOBAL]?: unknown })[PRERENDERED_GLOBAL]
+  const prerendered = await prerenderedOf()
   if (Array.isArray(prerendered)) {
     const query = path.indexOf("?")
     const hash = path.indexOf("#")
@@ -379,6 +430,8 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     headers.set(NAV_FROM_HEADER, navigation.from)
   }
   const res = await fetch(path, { headers, signal: signal ?? null })
+  const redirectTo = res.headers.get(REDIRECT_HEADER)
+  if (redirectTo !== null) throw redirected(redirectTo)
   const status = Number(res.headers.get(STATUS_HEADER))
   if (Number.isInteger(status) && status >= 400 && status <= 599) {
     return { v: 1, data: null, status } satisfies RouteDataEnvelope
@@ -411,6 +464,8 @@ const isClientActionResult = (value: unknown): value is ClientActionResult =>
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
   const fetchData = options.fetchData ?? defaultFetchData
+  // Start a handed-over list's fetch now, so the first navigation rarely waits for it.
+  if (fetchData === defaultFetchData) prerenderedOf()
   // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
   // to it as routes load), so a same-route nav always sees the current route's keys.
   const searchClientKeys = options.searchClientKeys ?? {}
@@ -426,7 +481,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     sourceRouteId: string,
     path: string,
     target: RouteMatch,
-  ): BoundaryDescriptor | undefined => {
+  ): Omit<BoundaryDescriptor, "hasLoad"> | undefined => {
     const boundaries = routeHooks[sourceRouteId]?.boundaries ?? []
     const pathname = pathnameOf(path)
     for (const boundary of boundaries) {
@@ -473,8 +528,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     path: string,
     match: { routeId: string; params: Record<string, string> },
     signal?: AbortSignal,
-    retainFrom?: { readonly path: string; readonly layoutData: readonly unknown[] },
+    // Offer the server the layout data on screen: it re-runs whichever of those loaders it must.
+    keepLayouts?: boolean,
   ): Promise<LoadedRouteData> => {
+    const retainFrom = keepLayouts
+      ? state.layoutData && { path: state.path, layoutData: state.layoutData }
+      : undefined
     const retain = retainFrom?.layoutData.map((_, index) => index) ?? []
     const payload = await fetchData(
       path,
@@ -621,11 +680,17 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     if (listeners.size === 0) return
     for (const listener of [...listeners]) listener()
   }
-  // Bounded one-shot prefetch cache (path → loader data) + an in-flight guard so hover spam
-  // doesn't double-fetch. Consumed (and dropped) by the next navigate to that path.
+  // Bounded one-shot prefetch cache (path → loader data, and when it arrived) + an in-flight guard so
+  // hover spam doesn't double-fetch. Consumed (and dropped) by the next navigate to that path - while
+  // fresh: a link warmed as it scrolled into view can be clicked minutes later.
   const MAX_PREFETCH = 10
-  const prefetched = new Map<string, LoadedRouteData>()
+  const PREFETCH_MAX_AGE_MS = 30_000
+  const prefetched = new Map<string, readonly [LoadedRouteData, number]>()
   const inflight = new Set<string>()
+  const freshPrefetch = (path: string): LoadedRouteData | undefined => {
+    const held = prefetched.get(path)
+    return held !== undefined && Date.now() - held[1] < PREFETCH_MAX_AGE_MS ? held[0] : undefined
+  }
   // Keyed data cache (path → latest loader data + freshness). Written on every published data
   // (navigate/submit), read by `invalidate` (+ targeted revalidation and fetchers in later F16
   // increments). Bounded - evict the oldest-inserted past the cap (route data is small; this just
@@ -683,6 +748,56 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // Aborts the in-flight navigation's fetch + deferred stream when a newer navigation supersedes it
   // (so a superseded route's NDJSON stream stops reading instead of draining in the background).
   let navAbort: AbortController | undefined
+
+  // The route path an in-app redirect target leads to. Undefined when the browser has to load it: another
+  // origin, a `#fragment` to scroll to, or no route.
+  const appRedirect = (to: string | undefined): readonly [string, RouteMatch] | undefined => {
+    if (to === undefined || !to.startsWith("/") || to.includes("#")) return undefined
+    const url = targetUrl(to)
+    if (url?.host !== "n.invalid") return undefined // `//host`, `/\host`, unparseable
+    const path = url.pathname + url.search
+    const target = match(path)
+    return target === null ? undefined : [path, target]
+  }
+
+  // Load `path` for the navigation or submit `mine`, following the redirects its loaders answer with
+  // while they stay in the app (20 at most, as a browser allows).
+  const loadFollowing = async (
+    mine: number,
+    path: string,
+    target: RouteMatch,
+    signal: AbortSignal,
+    keepLayouts: boolean,
+    usePrefetch: boolean,
+  ): Promise<readonly [string, RouteMatch, LoadedRouteData]> => {
+    let current: readonly [string, RouteMatch] = [path, target]
+    for (let hops = 0; ; hops++) {
+      const [at, route] = current
+      if (mine === generation && state.pendingPath !== at) {
+        state = { ...state, pendingPath: at }
+        emit()
+      }
+      await loadModule?.(route.routeId)
+      // Prefetched server data is one-shot; a clientLoader still runs over it without another request.
+      const prefetchedData = usePrefetch ? freshPrefetch(at) : undefined
+      if (usePrefetch) prefetched.delete(at)
+      try {
+        const loaded = await applyClientLoader(
+          at,
+          route,
+          signal,
+          () => loadRouteData(at, route, signal, keepLayouts),
+          prefetchedData,
+        )
+        if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
+        return [at, route, loaded]
+      } catch (error) {
+        const next = hops < 20 ? appRedirect(redirectOf(error)) : undefined
+        if (next === undefined) throw error
+        current = next
+      }
+    }
+  }
 
   // Refetch the active route + republish, single-flight via the shared `generation`. Shared by `invalidate`
   // and targeted revalidation. Rejects if the fetch fails (clearing its own `pending` first).
@@ -890,35 +1005,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       state = { ...state, pending: true, pendingPath: path }
       emit()
       try {
-        // Load the route chunk before invoking a client loader. A route without a client loader still
-        // uses the same server-data path; a route with one gets a lazy `serverLoader()` thunk.
-        await loadModule?.(matched.routeId)
-        // Use prefetched server data when present (one-shot - drop it); clientLoader still runs over
-        // that cached result without causing another network request.
-        const hit = prefetched.has(path)
-        const prefetchedData = hit ? (prefetched.get(path) as LoadedRouteData) : undefined
-        if (hit) prefetched.delete(path)
-        const loaded = await applyClientLoader(
-          path,
-          matched,
-          ac.signal,
-          () =>
-            loadRouteData(
-              path,
-              matched,
-              ac.signal,
-              state.layoutData === undefined
-                ? undefined
-                : { path: state.path, layoutData: state.layoutData },
-            ),
-          prefetchedData,
-        )
-        if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
+        const [to, target, loaded] = await loadFollowing(mine, path, matched, ac.signal, true, true)
         if (mine !== generation) return // a newer navigation superseded this one - drop the stale result
-        cachePut(path, loaded) // keep the keyed cache coherent with what we publish
+        cachePut(to, loaded) // keep the keyed cache coherent with what we publish
         const interception =
           loaded.terminalRouteId === undefined
-            ? interceptionFor(state.routeId, path, matched)
+            ? interceptionFor(state.routeId, to, target)
             : undefined
         if (interception !== undefined) {
           // The target's ordinary data request has already completed (including its server authz and
@@ -927,7 +1019,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           // this branch, so an unauthorized/missing target cannot become a modal.
           state = {
             ...state,
-            path,
+            path: to,
             boundaries: {
               ...(state.boundaries ?? {}),
               [interception.name]: {
@@ -946,9 +1038,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           return
         }
         state = {
-          routeId: loaded.terminalRouteId ?? matched.routeId,
-          params: loaded.terminalRouteId === undefined ? matched.params : {},
-          path,
+          routeId: loaded.terminalRouteId ?? target.routeId,
+          params: loaded.terminalRouteId === undefined ? target.params : {},
+          path: to,
           data: loaded.data,
           layoutData: loaded.layoutData,
           ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
@@ -983,6 +1075,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         ...(body instanceof FormData ? { submission: { action, formData: body } } : {}),
       }
       emit()
+      // Once the action has run, falling back to posting the form again would run it twice.
+      let posted = false
+      let landing: string | undefined
       try {
         const prepared = await prepareClientAction(action, body, ac.signal)
         if (Object.hasOwn(prepared, "optimisticData")) {
@@ -995,30 +1090,30 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           headers: { [DATA_HEADER]: "1" },
         })
         if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
+        posted = true
         const redirectTo = res.headers.get(REDIRECT_HEADER)
         if (redirectTo !== null) {
           // The action redirected (Post/Redirect/Get) - treat it as a client navigation.
-          const target = match(redirectTo)
-          if (target === null)
-            throw new Error(`[nifra/web] action redirect off-route: ${redirectTo}`)
-          await loadModule?.(target.routeId)
-          const loaded = await applyClientLoader(redirectTo, target, ac.signal, () =>
-            loadRouteData(
-              redirectTo,
-              target,
-              ac.signal,
-              state.layoutData === undefined
-                ? undefined
-                : { path: state.path, layoutData: state.layoutData },
-            ),
+          const next = appRedirect(redirectTo)
+          if (next === undefined) throw redirected(redirectTo)
+          landing = next[0]
+          // The action may have changed what any layout shows, so the target loads its whole chain,
+          // the same as the non-redirect revalidation below. `revalidate: false` keeps layout data
+          // the server agrees is unchanged, like an ordinary navigation.
+          const [to, target, loaded] = await loadFollowing(
+            mine,
+            next[0],
+            next[1],
+            ac.signal,
+            opts?.revalidate === false,
+            false,
           )
-          if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
           if (mine !== generation) return
-          cachePut(redirectTo, loaded)
+          cachePut(to, loaded)
           state = {
             routeId: loaded.terminalRouteId ?? target.routeId,
             params: loaded.terminalRouteId === undefined ? target.params : {},
-            path: redirectTo,
+            path: to,
             data: loaded.data,
             layoutData: loaded.layoutData,
             ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
@@ -1071,19 +1166,23 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         await refreshMounted(changed, true)
       } catch (err) {
         if (mine === generation) {
-          // Revert: clear `submission` (the optimistic view vanishes) leaving `data` untouched, so the
-          // pre-submit data shows through.
+          // Revert: clear `submission` (the optimistic view vanishes) leaving the data untouched, so the
+          // pre-submit page shows through.
           state = {
             routeId: state.routeId,
             params: state.params,
             path: state.path,
             data: state.data,
+            layoutData: state.layoutData,
+            ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
             actionData: previousActionData,
             pending: false,
           }
           emit()
         }
-        throw err
+        if (!posted) throw err
+        if (mine !== generation) return // a newer navigation or submit owns the page
+        throw redirectOf(err) === undefined ? redirected(landing ?? state.path) : err
       }
     },
     hydrate,
@@ -1101,7 +1200,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       await Promise.all(jobs)
     },
     prefetch: async (path) => {
-      if (prefetched.has(path) || inflight.has(path)) return
+      if (inflight.has(path) || freshPrefetch(path) !== undefined) return
       const matched = match(path)
       if (matched === null) return
       inflight.add(path)
@@ -1112,11 +1211,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           loadModule?.(matched.routeId),
           loadRouteData(path, matched),
         ])
+        prefetched.delete(path) // a stale entry re-enters as the newest
         if (prefetched.size >= MAX_PREFETCH) {
           const oldest = prefetched.keys().next().value
           if (oldest !== undefined) prefetched.delete(oldest)
         }
-        prefetched.set(path, loaded)
+        prefetched.set(path, [loaded, Date.now()])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {

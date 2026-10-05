@@ -13,16 +13,22 @@ import type {
   CapabilityExplainCommandResult,
   CapabilitySnapshotCommandResult,
 } from "./capabilities-tool.ts"
+import { cdnCheckSpec } from "./cdn-check.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
+import { dbAuditSpec, dbQuerySpec, dbRoleSpec, dbSchemaSpec } from "./db-tool.ts"
+import { errorsSpec, logsSpec } from "./dev-feed-tool.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
+import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
 import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
+import type { LayoutMigrationResult } from "./migrate-layout.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
+import type { RouteTypesReport } from "./route-types.ts"
 import type { SmokeReport } from "./smoke.ts"
 import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
@@ -80,6 +86,11 @@ export interface CommandSpec<Input, Output> {
   readonly transports: readonly CommandTransport[]
   readonly stability: CommandStability
   readonly argv?: CommandArgvBinding<Input>
+  /**
+   * Input fields only the CLI may set: MCP neither advertises nor accepts them. For a field that acts
+   * with the operator's own credentials, such as a signing key, which an agent must not invoke.
+   */
+  readonly cliOnlyFields?: readonly string[]
   readonly run: (input: Input, ctx: CommandCtx) => Promise<Output>
   readonly render: (out: Output, input?: Input) => readonly string[]
   readonly success?: (out: Output, input: Input) => boolean
@@ -96,6 +107,8 @@ export interface CommandCatalogEntry {
   readonly outputVersion: number
   readonly transports: readonly CommandTransport[]
   readonly stability: CommandStability
+  /** {@link CommandSpec.cliOnlyFields}: present in `inputSchema`, absent from the MCP tool's. */
+  readonly cliOnlyFields: readonly string[]
 }
 
 function freezeJson<T>(value: T): T {
@@ -117,6 +130,20 @@ export function toCommandCatalogEntry<Input, Output>(
     outputVersion: spec.output.version,
     transports: Object.freeze([...spec.transports]),
     stability: spec.stability,
+    cliOnlyFields: Object.freeze([...(spec.cliOnlyFields ?? [])]),
+  })
+}
+
+/** The input schema a command's MCP tool advertises: its catalog schema without CLI-only fields. */
+export function commandMcpInputSchema(entry: CommandCatalogEntry): CommandJsonSchema {
+  const properties = entry.inputSchema.properties
+  if (entry.cliOnlyFields.length === 0 || typeof properties !== "object" || properties === null)
+    return entry.inputSchema
+  return freezeJson({
+    ...entry.inputSchema,
+    properties: Object.fromEntries(
+      Object.entries(properties).filter(([key]) => !entry.cliOnlyFields.includes(key)),
+    ),
   })
 }
 
@@ -325,10 +352,34 @@ interface FixInput {
   readonly dir?: string | undefined
 }
 
+/** `migrate layout`, or `migrate --from tailwind --to stylex`; the parser admits only those two. */
 interface MigrateInput {
-  readonly from: "tailwind"
-  readonly to: "stylex"
+  readonly kind?: "layout" | undefined
+  readonly from?: "tailwind" | undefined
+  readonly to?: "stylex" | undefined
   readonly write?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface TargetInput {
+  readonly target?: string | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface TargetOutput {
+  readonly ok: boolean
+  readonly target: string
+  /** The target before this run, when it switched one; `undefined` when none was declared. */
+  readonly previous?: string | undefined
+  readonly changed: boolean
+  /** What `nifra build` now emits, and how it deploys. */
+  readonly run: string
+}
+
+interface TypesInput {
+  readonly check?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -384,6 +435,14 @@ interface SmokeInput {
   readonly dir?: string | undefined
 }
 
+interface I18nInput {
+  readonly action: "check"
+  readonly entry?: string | undefined
+  readonly json?: boolean | undefined
+  readonly strict?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
 interface CheckCommandOutput extends CheckResult {}
 interface AssureCommandOutput {
   readonly report?: unknown
@@ -414,7 +473,9 @@ interface FixCommandOutput {
   readonly failed: readonly { readonly code: string; readonly reason: string }[]
   readonly diagnostics: readonly unknown[]
 }
-interface MigrateCommandOutput extends StylexMigrationResult {}
+type MigrateCommandOutput =
+  | (StylexMigrationResult & { readonly kind?: undefined })
+  | (LayoutMigrationResult & { readonly kind: "layout" })
 interface SnapshotCommandOutput {
   readonly ok: true
   readonly file: string
@@ -658,26 +719,53 @@ const FIX_SCHEMA = input<FixInput>(
 )
 
 const MIGRATE_SCHEMA = input<MigrateInput>(
-  objectSchema(
-    {
-      from: { type: "string", enum: ["tailwind"] },
-      to: { type: "string", enum: ["stylex"] },
-      write: { type: "boolean" },
-      json: { type: "boolean" },
-      dir: { type: "string" },
-    },
-    ["from", "to"],
-  ),
+  objectSchema({
+    kind: { type: "string", enum: ["layout"] },
+    from: { type: "string", enum: ["tailwind"] },
+    to: { type: "string", enum: ["stylex"] },
+    write: { type: "boolean" },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
   (value) => {
     const raw = withDir(record(value))
+    const flags = {
+      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+    const kind = optionalString(raw.kind, "kind")
+    if (kind !== undefined) {
+      if (kind !== "layout")
+        throw new TypeError("the migration must be `layout` (or --from tailwind --to stylex)")
+      return { kind, ...flags }
+    }
     const from = optionalString(raw.from, "from")
     const to = optionalString(raw.to, "to")
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
     if (to !== "stylex") throw new TypeError("to must be stylex")
+    return { from, to, ...flags }
+  },
+)
+
+const TARGET_SCHEMA = input<TargetInput>(
+  objectSchema({ target: { type: "string" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  (value) => {
+    const raw = withDir(record(value))
+    const target = optionalString(raw.target, "target")
     return {
-      from,
-      to,
-      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+      ...(target === undefined ? {} : { target }),
+    }
+  },
+)
+
+const TYPES_SCHEMA = input<TypesInput>(
+  objectSchema({ check: { type: "boolean" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  (value) => {
+    const raw = withDir(record(value))
+    return {
+      ...parseBooleanFlags(raw, ["check", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -812,6 +900,35 @@ const SMOKE_SCHEMA = input<SmokeInput>(
     return {
       fixture: optionalString(raw.fixture, "fixture"),
       ...parseBooleanFlags(raw, ["inProcess", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const I18N_SCHEMA = input<I18nInput>(
+  objectSchema(
+    {
+      action: { type: "string", enum: ["check"] },
+      entry: { type: "string" },
+      json: { type: "boolean" },
+      strict: { type: "boolean" },
+      dir: { type: "string" },
+    },
+    ["action"],
+  ),
+  (value) => {
+    const raw = withDir(record(value))
+    if (raw.action !== "check") {
+      throw new TypeError(
+        raw.action === undefined
+          ? "i18n needs an action: nifra i18n check [entry]"
+          : `unknown i18n action: ${String(raw.action)} (the one action is check)`,
+      )
+    }
+    return {
+      action: "check",
+      entry: optionalString(raw.entry, "entry"),
+      ...parseBooleanFlags(raw, ["json", "strict"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1022,6 +1139,8 @@ const manifestSpec: CommandSpec<ManifestInput, ManifestEmitCommandResult | DiffC
   output: output({ type: "object" }),
   transports: ["cli", "mcp"],
   stability: "stable",
+  // The signer is the operator's KMS/HSM callback; an agent signing its own manifest defeats it.
+  cliOnlyFields: ["sign"],
   argv: {
     positionals: ["action", "before", "after"],
     flags: [
@@ -1163,7 +1282,10 @@ const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
     ],
   },
   async run(value, ctx) {
-    const app = await loadAppFor(ctx)
+    const app =
+      ctx.loadApp !== undefined
+        ? await ctx.loadApp()
+        : await import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
     const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
     const format = value.format ?? "json"
     return {
@@ -1279,12 +1401,14 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
 
 const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
   name: "migrate",
-  summary: "Migrate safe static Tailwind className utilities to native StyleX props.",
+  summary:
+    "Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.",
   input: MIGRATE_SCHEMA,
   output: output({
     type: "object",
     properties: {
       ok: { type: "boolean" },
+      kind: { type: "string" },
       from: { type: "string" },
       to: { type: "string" },
       write: { type: "boolean" },
@@ -1293,12 +1417,16 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       written: { type: "array" },
       issues: { type: "array" },
       files: { type: "array" },
+      splits: { type: "array" },
+      moves: { type: "array" },
+      rewritten: { type: "array" },
     },
-    required: ["ok", "from", "to", "write", "scanned", "changed", "written", "issues", "files"],
+    required: ["ok", "write", "issues"],
   }),
   transports: ["cli"],
   stability: "stable",
   argv: {
+    positionals: ["kind"],
     flags: [
       { name: "from", field: "from", type: "string" },
       { name: "to", field: "to", type: "string" },
@@ -1308,27 +1436,142 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
     ],
   },
   async run(value, ctx) {
+    const dir = resolve(ctx.cwd, value.dir ?? ".")
+    const write = value.write === undefined ? {} : { write: value.write }
+    if (value.kind === "layout") {
+      const { migrateLayout } = await import("./migrate-layout.ts")
+      return { kind: "layout" as const, ...(await migrateLayout(dir, write)) }
+    }
     const { migrateTailwindToStylex } = await import("./stylex-migrate.ts")
-    return migrateTailwindToStylex(resolve(ctx.cwd, value.dir ?? "."), {
-      ...(value.write === undefined ? {} : { write: value.write }),
-    })
+    return migrateTailwindToStylex(dir, write)
+  },
+  render: (out) => {
+    if (out.kind === "layout") {
+      return [
+        out.ok
+          ? `✓ ${out.splits.length} route file${out.splits.length === 1 ? "" : "s"} split, ${out.moves.length} file${out.moves.length === 1 ? "" : "s"} moved`
+          : `⚠ ${out.issues.length} issue${out.issues.length === 1 ? "" : "s"} need a decision; everything else is planned`,
+        ...out.splits.map(
+          (split) => `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})`,
+        ),
+        ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
+        ...out.rewritten.map((file) => `  edit  ${file} (imports)`),
+        ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
+        ...(out.write ? [] : ["  dry run: pass --write to apply"]),
+      ]
+    }
+    return [
+      out.ok
+        ? `✓ migrated ${out.changed.length} file${out.changed.length === 1 ? "" : "s"}`
+        : `⚠ migrated ${out.changed.length} safe file${out.changed.length === 1 ? "" : "s"}; ${out.issues.length} manual issue${out.issues.length === 1 ? "" : "s"} remain`,
+      `  scanned ${out.scanned} source file${out.scanned === 1 ? "" : "s"}`,
+      ...(out.write
+        ? [`  wrote ${out.written.length} file${out.written.length === 1 ? "" : "s"}`]
+        : out.changed.length > 0
+          ? ["  dry run: pass --write to apply the safe changes"]
+          : []),
+      ...out.issues
+        .slice(0, 30)
+        .map((issue) => `  ${issue.file}:${issue.line} ${issue.token} — ${issue.reason}`),
+      ...(out.issues.length > 30
+        ? [`  … ${out.issues.length - 30} more issue${out.issues.length - 30 === 1 ? "" : "s"}`]
+        : []),
+    ]
+  },
+  success: (out) => out.ok,
+}
+
+const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
+  name: "target",
+  summary:
+    "Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.",
+  input: TARGET_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      target: { type: "string" },
+      previous: { type: "string" },
+      changed: { type: "boolean" },
+      run: { type: "string" },
+    },
+    required: ["ok", "target", "changed", "run"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    positionals: ["target"],
+    flags: [
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const dir = resolve(ctx.cwd, value.dir ?? ".")
+    const { parseBuildTarget, planBuildTarget } = await import("@nifrajs/web/build")
+    const { readConfigTarget, writeConfigTarget } = await import("./config-target.ts")
+    const current = readConfigTarget(dir)
+    const target = parseBuildTarget(
+      value.target ?? current ?? "bun",
+      value.target === undefined ? "target in nifra.config.ts" : "target",
+    )
+    const changed = value.target !== undefined && value.target !== current
+    if (changed) writeConfigTarget(dir, target)
+    return {
+      ok: true,
+      target,
+      ...(changed && current !== undefined ? { previous: current } : {}),
+      changed,
+      run: planBuildTarget(target, "dist").run,
+    }
   },
   render: (out) => [
-    out.ok
-      ? `✓ migrated ${out.changed.length} file${out.changed.length === 1 ? "" : "s"}`
-      : `⚠ migrated ${out.changed.length} safe file${out.changed.length === 1 ? "" : "s"}; ${out.issues.length} manual issue${out.issues.length === 1 ? "" : "s"} remain`,
-    `  scanned ${out.scanned} source file${out.scanned === 1 ? "" : "s"}`,
-    ...(out.write
-      ? [`  wrote ${out.written.length} file${out.written.length === 1 ? "" : "s"}`]
-      : out.changed.length > 0
-        ? ["  dry run: pass --write to apply the safe changes"]
-        : []),
-    ...out.issues
-      .slice(0, 30)
-      .map((issue) => `  ${issue.file}:${issue.line} ${issue.token} — ${issue.reason}`),
-    ...(out.issues.length > 30
-      ? [`  … ${out.issues.length - 30} more issue${out.issues.length - 30 === 1 ? "" : "s"}`]
-      : []),
+    out.changed
+      ? `✓ target: ${out.target}${out.previous === undefined ? "" : ` (was ${out.previous})`}`
+      : `target: ${out.target}`,
+    `  nifra build → ${out.run}`,
+  ],
+  success: (out) => out.ok,
+}
+
+const typesSpec: CommandSpec<TypesInput, RouteTypesReport> = {
+  name: "types",
+  summary:
+    "Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.",
+  input: TYPES_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      check: { type: "boolean" },
+      written: { type: "array" },
+      removed: { type: "array" },
+      stale: { type: "array" },
+      tsconfig: { type: "string" },
+    },
+    required: ["ok", "check", "written", "removed", "stale"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "check", field: "check", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const { routeTypes } = await import("./route-types.ts")
+    return routeTypes(resolve(ctx.cwd, value.dir ?? "."), { check: value.check === true })
+  },
+  render: (out) => [
+    out.check
+      ? out.ok
+        ? "✓ route types are up to date"
+        : `✖ ${out.stale.length} route type file${out.stale.length === 1 ? " is" : "s are"} stale - run \`nifra types\``
+      : `✓ route types: ${out.written.length} written, ${out.removed.length} removed`,
+    ...out.stale.map((file) => `  stale ${file}`),
+    ...(out.tsconfig === undefined ? [] : [`  ⚠ ${out.tsconfig}`]),
   ],
   success: (out) => out.ok,
 }
@@ -1577,7 +1820,7 @@ const portSpec: CommandSpec<PortInput, PortResult> = {
       return [
         report,
         "",
-        "[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cf-pages|vercel>.",
+        "[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cloudflare|vercel>.",
       ]
     return [report]
   },
@@ -1588,6 +1831,33 @@ const portSpec: CommandSpec<PortInput, PortResult> = {
     return out.json.blocked.length === 0
   },
   json: (out) => out.json,
+}
+
+// CLI only: it imports app code (the catalogs), which a long-lived MCP server process would cache.
+const i18nSpec: CommandSpec<I18nInput, I18nCheckOutput> = {
+  name: "i18n",
+  summary:
+    "Check i18n catalogs (imports the module exporting `locales` and `catalogs`): coverage, missing and unused keys, ICU syntax, placeholder and tag parity, plural cases, script purity, untranslated messages.",
+  input: I18N_SCHEMA,
+  output: output({ type: "object" }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    positionals: ["action", "entry"],
+    flags: [
+      { name: "json", field: "json", type: "boolean" },
+      { name: "strict", field: "strict", type: "boolean" },
+    ],
+  },
+  async run(value, ctx) {
+    const { runI18nCheck } = await import("./i18n-check.ts")
+    return runI18nCheck(value.dir === undefined ? ctx.cwd : resolve(ctx.cwd, value.dir), {
+      entry: value.entry,
+    })
+  },
+  render: (out) => renderI18nCheck(out),
+  success: (out, input) => i18nCheckPassed(out, input.strict === true),
+  json: (out) => out,
 }
 
 export const commandSpecs = Object.freeze([
@@ -1603,6 +1873,8 @@ export const commandSpecs = Object.freeze([
   doctorSpec,
   fixSpec,
   migrateSpec,
+  targetSpec,
+  typesSpec,
   snapshotSpec,
   diffSpec,
   contractsSpec,
@@ -1612,6 +1884,14 @@ export const commandSpecs = Object.freeze([
   replaySpec,
   smokeSpec,
   portSpec,
+  i18nSpec,
+  errorsSpec,
+  logsSpec,
+  cdnCheckSpec,
+  dbSchemaSpec,
+  dbQuerySpec,
+  dbRoleSpec,
+  dbAuditSpec,
 ] as const)
 
 const commandByName = new Map(commandSpecs.map((spec) => [spec.name, spec]))

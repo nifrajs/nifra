@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { I18nProvider, useT } from "../src/i18n.ts"
+import { I18nProvider, rich, useT } from "../src/i18n.ts"
 
 const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
@@ -44,4 +44,70 @@ describe("@nifrajs/web-react/i18n", () => {
       /within an <I18nProvider>/,
     )
   })
+
+  test("fallback, onMissing and numberingSystem reach the formatter", () => {
+    const missing: string[] = []
+    const onMissing = (key: string) => missing.push(key)
+    function Page() {
+      const { t } = useT()
+      return createElement(
+        "p",
+        null,
+        `${t("own")}|${t("greeting", { name: "Ada", n: 12 })}|${t("gone")}`,
+      )
+    }
+    const html = renderToStaticMarkup(
+      createElement(
+        I18nProvider,
+        {
+          locale: "hi",
+          messages: { own: "अपना" },
+          fallback: [messages],
+          numberingSystem: "deva",
+          onMissing,
+        },
+        createElement(Page),
+      ),
+    )
+    expect(html).toContain("अपना|Hi Ada - १२ messages|gone")
+    expect(missing).toEqual(["gone"])
+  })
+})
+
+const richMessages = {
+  terms: "Read the <link>terms and <b>all</b> rules</link>,<br/>{name}! <em>x</em>",
+}
+
+function Terms() {
+  const t = useT()
+  return createElement(
+    "p",
+    null,
+    rich(
+      t,
+      "terms",
+      {
+        link: (content) => createElement("a", { href: "/terms" }, content),
+        b: (content) => createElement("strong", null, content),
+      },
+      { name: "<b>Ada</b>" },
+    ),
+  )
+}
+
+test("rich() renders tags as elements, values as text, and asks React for no keys", () => {
+  const errors: unknown[] = []
+  const original = console.error
+  console.error = (...args: unknown[]) => errors.push(args)
+  try {
+    const html = renderToStaticMarkup(
+      createElement(I18nProvider, { locale: "en", messages: richMessages }, createElement(Terms)),
+    )
+    expect(html).toBe(
+      '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br/>&lt;b&gt;Ada&lt;/b&gt;! x</p>',
+    )
+  } finally {
+    console.error = original
+  }
+  expect(errors).toEqual([])
 })

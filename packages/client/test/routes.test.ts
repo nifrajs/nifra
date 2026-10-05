@@ -8,7 +8,11 @@ import {
   inProcessClient,
   type LoaderArgs,
   type LoaderData,
+  type LoaderResponseControls,
 } from "../src/index.ts"
+
+// A loader called directly (no page request) still needs its response controls.
+const set: LoaderResponseControls = { headers: {}, cookie() {}, deleteCookie() {} }
 
 const backend = server().get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
 const api = inProcessClient(backend)
@@ -45,6 +49,7 @@ test("inProcessClient + a typed loader resolve data in-process (no network)", as
     api,
     env: undefined,
     draft: false,
+    set,
     search: {},
   })
   expect(data).toEqual({ user: { id: "7", name: "Ada" } })
@@ -114,6 +119,7 @@ test("an action with ActionArgs runs in-process and returns its data branch", as
     api,
     env: undefined,
     draft: false,
+    set,
     search: {},
   })
   expect(data).toEqual({ ok: true, name: "Ada" })
@@ -126,3 +132,21 @@ const _aok: _AData = { ok: true, name: "Ada" }
 const _abad: _AData = new Response()
 void _aok
 void _abad
+
+// An action mixing a revalidate wrapper (structurally @nifrajs/web's `revalidate()`) with plain returns
+// unwraps the wrapper branch alone.
+async function actMixed({ request }: ActionArgs<typeof backend>) {
+  const body = await request.formData()
+  if (body.get("bump"))
+    return { __nifraRevalidate: ["/todos"] as const, data: { ok: true as const } }
+  return { ok: false as const, error: "rejected" as const }
+}
+type _MixedData = ActionData<typeof actMixed>
+const _mok: _MixedData = { ok: true }
+const _mfail: _MixedData = { ok: false, error: "rejected" }
+// @ts-expect-error the wrapper itself never reaches the page
+const _mwrapped: _MixedData = { __nifraRevalidate: ["/todos"], data: { ok: true } }
+void _mok
+void _mfail
+void _mwrapped
+void actMixed

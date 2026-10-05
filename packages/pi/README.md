@@ -14,6 +14,12 @@ public-API bridge is still loaded for interactive Pi use. Set
 commands, or `reloadCommand: "rpc"` for one that provides a top-level reload
 command. Set `enableReloadBridge: false` when supplying a custom bridge.
 
+Pi runs with a filtered environment: `PATH`, `HOME`, locale and terminal
+variables, plus the model-provider credentials Pi reads (such as
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and the AWS and Google
+Cloud credential variables). Other parent variables stay out. Pass `env` to add
+variables, or map a name to `undefined` to withhold it.
+
 Set `enableNifraTools: true` to load the separately packaged Pi extension with
 `nifra_context`, `nifra_check`, `nifra_assure`, and `nifra_test` tools. The
 default is off so embedding Pi stays minimal.

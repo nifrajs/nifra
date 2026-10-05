@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { isAbsolute, join } from "node:path"
-import { solidBunPlugin } from "../src/index.ts"
+import { solidBunPlugin } from "../src/plugin.ts"
 
 /**
  * Hot-patching wiring belongs to a dev server and must never reach a production bundle.

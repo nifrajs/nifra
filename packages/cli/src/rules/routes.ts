@@ -1,5 +1,6 @@
 import { RESERVED_KEY_READOUT, reservedKeyFor } from "@nifrajs/client"
 import { RoutePatternOverlapLimitError, routePatternOverlap } from "@nifrajs/core"
+import { expandOptionalParams, paramConstraint } from "@nifrajs/core/pattern"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -25,6 +26,7 @@ import type { CheckRule, RuleContext } from "./index.ts"
 /** Opt-out pragma for a route deliberately served only to NON-typed-client consumers. */
 const RESERVED_SEGMENT_PRAGMA = "nifra-expect reserved-segment"
 const ROUTE_OVERLAP_PRAGMA = "nifra-expect route-overlap"
+const PARAM_MODIFIER_PRAGMA = "nifra-expect param-modifier"
 
 interface StaticRouteFact {
   readonly file: string
@@ -52,6 +54,17 @@ function routeFacts(ctx: RuleContext): StaticRouteFact[] {
   return out
 }
 
+/** One fact per registration site, so `all()` or `method([...])` reports its path once, not per method. */
+function pathSites(routes: readonly StaticRouteFact[]): StaticRouteFact[] {
+  const seen = new Set<string>()
+  return routes.filter((route) => {
+    const site = `${route.file}\n${route.line}\n${route.path}`
+    if (seen.has(site)) return false
+    seen.add(site)
+    return true
+  })
+}
+
 /**
  * The typed escape spelling for a colliding segment, e.g. `/api/delete` + `delete` →
  * `api("delete").post()` shown as the chain up to the collision. Best-effort readability: earlier
@@ -69,7 +82,7 @@ export const reservedSegmentRule: CheckRule = {
   async scan(ctx) {
     const findings: Diagnostic[] = []
     const linesByFile = new Map<string, readonly string[]>()
-    for (const route of routeFacts(ctx)) {
+    for (const route of pathSites(routeFacts(ctx))) {
       for (const segment of route.path.split("/")) {
         if (segment === "") continue
         const collision = reservedKeyFor(segment)
@@ -114,6 +127,9 @@ export const duplicateRouteRule: CheckRule = {
   async scan(ctx) {
     const findings: Diagnostic[] = []
     const byFile = new Map<string, Map<string, StaticRouteFact>>()
+    // Two calls that each register several methods collide once per shared method; that is one
+    // pair of lines to fix, so it is reported once.
+    const reported = new Set<string>()
     for (const route of routeFacts(ctx)) {
       let seen = byFile.get(route.file)
       if (seen === undefined) {
@@ -126,6 +142,9 @@ export const duplicateRouteRule: CheckRule = {
         seen.set(key, route)
         continue
       }
+      const pair = `${route.file}\n${route.line}\n${first.line}\n${route.path}`
+      if (reported.has(pair)) continue
+      reported.add(pair)
       findings.push(
         diagnostic({
           code: "NF-C019",
@@ -160,6 +179,8 @@ export const overlappingRouteRule: CheckRule = {
       else routes.push(route)
     }
 
+    // As in NF-C019: two multi-method calls overlap once per shared method, reported once.
+    const reported = new Set<string>()
     for (const [file, routes] of byFile) {
       const lines = (): readonly string[] => {
         let value = linesByFile.get(file)
@@ -206,6 +227,9 @@ export const overlappingRouteRule: CheckRule = {
             continue
           }
           if (witness === undefined) continue
+          const pair = `${file}\n${later.line}\n${later.path}\n${earlier.line}\n${earlier.path}`
+          if (reported.has(pair)) break
+          reported.add(pair)
 
           findings.push(
             diagnostic({
@@ -231,8 +255,68 @@ export const overlappingRouteRule: CheckRule = {
   },
 }
 
+/** A param name directly followed by a character other routers read as a modifier. */
+const PARAM_MODIFIER = /:[A-Za-z_][A-Za-z0-9_]*[?*+{(<]/g
+
+/**
+ * The first param in `path` whose modifier the router reads as literal text. A `{...}` group the
+ * router reads as a constraint (`:id{[0-9]+}`, `:ext{png|jpg}`) is syntax, so it is passed over.
+ */
+function literalModifier(path: string): string | undefined {
+  PARAM_MODIFIER.lastIndex = 0
+  for (let found = PARAM_MODIFIER.exec(path); found !== null; found = PARAM_MODIFIER.exec(path)) {
+    const text = found[0]
+    if (!text.endsWith("{")) return text
+    const constraint = paramConstraint(path.slice(PARAM_MODIFIER.lastIndex - 1))
+    if (constraint === undefined) return text
+    const end = PARAM_MODIFIER.lastIndex + constraint.source.length + 1
+    // A modifier after the constraint is literal text like any other (`:id{[0-9]+}?/posts`).
+    if ("?*+{(<".includes(path[end] ?? "/")) return path.slice(found.index, end + 1)
+    PARAM_MODIFIER.lastIndex = end
+  }
+  return undefined
+}
+
+/**
+ * NF-C026: a param followed by `?`, `*`, `+`, `{`, `(` or `<` that the router reads as literal text
+ * (`/users/:id?/posts`, `/users/:id{int}`). Only a trailing `?` run and a valid `{...}` are syntax.
+ */
+export const paramModifierRule: CheckRule = {
+  code: "NF-C026",
+  title: "Route param followed by an unsupported modifier",
+  async scan(ctx) {
+    const findings: Diagnostic[] = []
+    const linesByFile = new Map<string, readonly string[]>()
+    for (const route of pathSites(routeFacts(ctx))) {
+      const forms = expandOptionalParams(route.path)
+      const text = literalModifier(forms[forms.length - 1] ?? route.path)
+      if (text === undefined) continue
+      let lines = linesByFile.get(route.file)
+      if (lines === undefined) {
+        lines = (ctx.project.source.read(route.file) ?? "").split("\n")
+        linesByFile.set(route.file, lines)
+      }
+      if (commentBlockHasMarker(lines, route.line, PARAM_MODIFIER_PRAGMA)) continue
+      const character = text[text.length - 1]!
+      findings.push(
+        diagnostic({
+          code: "NF-C026",
+          severity: "warn",
+          file: route.file,
+          line: route.line,
+          message: `${route.method} ${route.path} - '${character}' after '${text.slice(0, -1)}' is matched as literal text, not as a param modifier${character === "?" ? "; a request path never contains '?', so this route cannot be reached" : ""}. Optional params are supported as the trailing whole segments of a path (\`/users/:id?\`, \`/d/:year?/:month?\`), and a constraint as one character class with an optional count (\`:id{[0-9]+}\`, \`:code{[A-Z]{2}}\`) or a list of two or more values (\`:ext{png|jpg}\`); for anything else register each path, or mark a deliberate literal with \`// ${PARAM_MODIFIER_PRAGMA}\` above the registration`,
+          evidence: [`${route.method} ${route.path}`, `literal: ${text}`],
+          verify: "nifra check --lints-only",
+        }),
+      )
+    }
+    return findings
+  },
+}
+
 export const routeRules = Object.freeze([
   reservedSegmentRule,
   duplicateRouteRule,
   overlappingRouteRule,
+  paramModifierRule,
 ])

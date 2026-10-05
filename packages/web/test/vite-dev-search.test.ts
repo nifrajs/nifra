@@ -35,7 +35,7 @@ test("useSearch and the loader see the same validated search on a dev SSR render
   root = mkdtempSync(TMP_BASE)
   const routesDir = join(root, "routes")
   mkdirSync(routesDir)
-  linkWorkspacePackages(root, ["web", "web-react"])
+  linkWorkspacePackages(root, ["web", "web-react", "schema"])
   writeFileSync(
     join(routesDir, "shop.tsx"),
     `import { useSearch } from "@nifrajs/web-react/router"
@@ -45,9 +45,6 @@ export const searchSchema = {
     vendor: "test",
     validate: (value) => ({ value: { sku: value?.sku ?? "MISSING" } }),
   },
-}
-export function loader(ctx) {
-  return { loaderSearch: ctx.search }
 }
 export default function Shop({ data }) {
   const search = useSearch()
@@ -59,6 +56,10 @@ export default function Shop({ data }) {
   )
 }
 `,
+  )
+  writeFileSync(
+    join(routesDir, "shop.backend.ts"),
+    'import { t } from "@nifrajs/schema"\nexport const loaderOutput = t.object({ loaderSearch: t.looseObject({}) })\nexport function loader(ctx) {\n  return { loaderSearch: ctx.search }\n}\n',
   )
 
   server = await createViteDevServer({

@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test"
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import {
   buildProjectWorkGraph,
   createEvidenceBundle,
   evaluateBuildFreshness,
+  inspectBuildFreshness,
   queryImpact,
   recordProof,
   type WorkGraphSourceFile,
@@ -21,7 +25,7 @@ const backend = server().post(
 )
 
 const files: readonly WorkGraphSourceFile[] = [
-  { path: "backend.ts", content: 'export const backend = server().post("/orders", ...)' },
+  { path: "backend/app.ts", content: 'export const backend = server().post("/orders", ...)' },
   { path: "routes/orders.ts", content: 'export const route = "/orders"' },
   { path: "routes/orders.test.ts", kind: "test", content: 'test("POST /orders", ...)' },
   { path: "server-manifest.ts", kind: "manifest", content: 'routes: ["/orders"]' },
@@ -80,7 +84,7 @@ describe("verification work graph", () => {
       () => ({ ok: true }),
     )
     const paramFiles: readonly WorkGraphSourceFile[] = [
-      { path: "backend.ts", content: "export const backend = server()" },
+      { path: "backend/app.ts", content: "export const backend = server()" },
       {
         path: "routes/orders-id.test.ts",
         kind: "test",
@@ -127,9 +131,41 @@ describe("verification work graph", () => {
   test("backend changes conservatively impact every reflected route", async () => {
     const result = await buildProjectWorkGraph(
       { source: backend, files, freshness: { ok: true } },
-      { changedFiles: ["backend.ts"] },
+      { changedFiles: ["backend/app.ts"] },
     )
-    expect(queryImpact(result.graph, ["backend.ts"]).impactedRoutes).toEqual(["POST /orders"])
+    expect(queryImpact(result.graph, ["backend/app.ts"]).impactedRoutes).toEqual(["POST /orders"])
+    expect(queryImpact(result.graph, ["backend/db.ts"]).impactedRoutes).toEqual(["POST /orders"])
+    expect(queryImpact(result.graph, ["shared/schema.ts"]).impactedRoutes).toEqual(["POST /orders"])
+  })
+
+  test("an app file the graph does not model still needs proof", async () => {
+    const result = await buildProjectWorkGraph(
+      { source: backend, files, freshness: { ok: true } },
+      { changedFiles: ["routes/removed-page.ts"] },
+    )
+    expect(result.impact.impactedRoutes).toEqual(["POST /orders"])
+    expect(result.impact.impactedNodes).toContain("file:routes/removed-page.ts")
+    expect(result.evidence.stop.done).toBe(false)
+    // A file outside the app's source directories has nothing to prove.
+    expect(queryImpact(result.graph, ["README.md"]).impactedNodes).toEqual([])
+  })
+
+  test("freshness counts framework component and style edits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-work-graph-"))
+    try {
+      await mkdir(join(root, "routes"), { recursive: true })
+      await mkdir(join(root, "dist"), { recursive: true })
+      await writeFile(join(root, "dist", "server.js"), "export {}\n")
+      const built = new Date(Date.now() - 60_000)
+      await utimes(join(root, "dist", "server.js"), built, built)
+      for (const page of ["index.svelte", "about.vue", "post.mdx", "site.css"]) {
+        await writeFile(join(root, "routes", page), "")
+        expect((await inspectBuildFreshness(root)).ok).toBe(false)
+        await utimes(join(root, "routes", page), built, built)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   test("freshness refuses missing and stale builds", () => {

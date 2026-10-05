@@ -1,5 +1,5 @@
 import type { ContractShape, RegistryFor } from "@nifrajs/core/contract"
-import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
+import type { CookieOptions, InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { Treaty, TreatyFromRegistry } from "./treaty.ts"
 
 /**
@@ -10,6 +10,31 @@ import type { Treaty, TreatyFromRegistry } from "./treaty.ts"
 export type ApiProxy<Api> = Api extends ContractShape
   ? TreatyFromRegistry<RegistryFor<Api>>
   : Treaty<Api>
+
+/**
+ * Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route
+ * handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that
+ * settles later throws.
+ */
+export interface LoaderResponseControls {
+  /**
+   * Headers for the rendered document (`cache-control`, `x-robots-tag`, `link`, ...). A layout's
+   * headers are applied first, then the page's, then the action's, so the most specific writer wins a
+   * name. They are not applied to a redirect, a status page, an error page, or a navigation data
+   * response. `content-type`, `set-cookie`, `location`, transport headers, and the `x-nifra-` prefix
+   * are refused.
+   */
+  readonly headers: Record<string, string>
+  /**
+   * Queue a `Set-Cookie`, with the same secure defaults as `c.set.cookie`
+   * (`HttpOnly; Secure; SameSite=Lax; Path=/`). The cookie rides every outcome - the document, a
+   * navigation data response, a redirect, a status or error page - and makes the response
+   * `cache-control: private, no-store`.
+   */
+  cookie(name: string, value: string, options?: CookieOptions): void
+  /** Queue a cookie deletion. Match the `path`/`domain` the cookie was set with. */
+  deleteCookie(name: string, options?: Pick<CookieOptions, "path" | "domain">): void
+}
 
 /**
  * Context a route `loader` receives: the route params, the request, a typed in-process `api` (an
@@ -41,7 +66,52 @@ export interface LoaderArgs<Api, Env = unknown, Search = undefined> {
       ? InferOutput<Search>
       : never
     : Record<string, unknown>
+  /** Response headers and cookies for this page request: `ctx.set.headers["cache-control"] = ...`,
+   * `ctx.set.cookie("theme", "dark")`. */
+  readonly set: LoaderResponseControls
 }
+
+/**
+ * The app's registered types. `nifra types` writes `.nifra/types/register.d.ts`, which fills it in
+ * from `backend/app.ts`, so a route's generated `Route.LoaderArgs` types `api` without the route
+ * importing the backend:
+ *
+ *     declare module "@nifrajs/client" { interface Register { backend: typeof backend } }
+ *
+ * `env` may be registered the same way, for the platform bindings `ctx.env` carries.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: filled in by declaration merging
+export interface Register {}
+
+/** The registered backend (`Register["backend"]`), or `unknown` before one is registered. */
+export type RegisteredBackend = Register extends { readonly backend: infer Backend }
+  ? Backend
+  : unknown
+
+/** The registered platform bindings (`Register["env"]`), or `unknown`. */
+export type RegisteredEnv = Register extends { readonly env: infer Env } ? Env : unknown
+
+/**
+ * What a route module's output schema lets through to the browser: the output type of its `Name`
+ * export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without
+ * one sends no data.
+ */
+export type OutputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S }
+  ? S extends StandardSchemaV1
+    ? InferOutput<S>
+    : never
+  : null
+
+/** The `searchSchema` a route's frontend half declares, or `undefined`. */
+export type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S }
+  ? S
+  : undefined
+
+/** A route's loader or action context: its own `params`, and `api` typed by the registered backend. */
+export type RouteLoaderArgs<Params, Search = undefined> = Omit<
+  LoaderArgs<RegisteredBackend, RegisteredEnv, Search>,
+  "params"
+> & { readonly params: Params }
 
 /** The (awaited) return of a `loader`, for typing a page component's `data` prop. */
 export type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never
@@ -61,9 +131,13 @@ export type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api,
  * stays decoupled from `@nifrajs/web`) and unwrapped to its inner `data` - what the component receives.
  */
 export type ActionData<A> = A extends (...args: never[]) => infer R
-  ? Awaited<R> extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer D }
-    ? Exclude<D, Response>
-    : Exclude<Awaited<R>, Response>
+  ? // `infer D` makes the check distribute, so an action mixing `revalidate(...)` and plain returns
+    // unwraps each branch.
+    Awaited<R> extends infer D
+    ? D extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer W }
+      ? Exclude<W, Response>
+      : Exclude<D, Response>
+    : never
   : never
 
 // Why a type annotation, not a `createRoutes()` factory: a module-level factory call defeats

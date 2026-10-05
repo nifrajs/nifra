@@ -1,0 +1,19 @@
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
+
+type SearchParams = { page: number; q: string }
+
+// The search route's typed contract, in shared/ because both halves read it (hand-rolled Standard
+// Schema, no schema lib needed for the example).
+// Annotated, not `satisfies`: the declared type carries the `types` slot that search inference reads.
+export const searchSchema: StandardSchemaV1<unknown, SearchParams> = {
+  "~standard": {
+    version: 1,
+    vendor: "example",
+    validate(input: unknown) {
+      const raw = (input ?? {}) as { page?: unknown; q?: unknown }
+      const page = typeof raw.page === "number" && Number.isFinite(raw.page) ? raw.page : 1
+      const q = typeof raw.q === "string" ? raw.q : ""
+      return { value: { page, q } }
+    },
+  },
+}

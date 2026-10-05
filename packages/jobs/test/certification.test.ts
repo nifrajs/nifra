@@ -5,11 +5,14 @@ import { MemoryJobStore } from "../src/index.ts"
 test("MemoryJobStore satisfies the portable job-store certification profile", async () => {
   let sequence = 0
   const report = await certifyAdapter({
-    profile: jobStoreCertificationProfile(),
+    profile: jobStoreCertificationProfile({ traceparent: true }),
     adapterId: "nifra-memory-jobs",
     createAdapter: () => new MemoryJobStore({ idFor: () => `cert-${++sequence}` }),
   })
 
   expect(report.ok).toBe(true)
   expect(report.capabilities.every((capability) => capability.status === "passed")).toBe(true)
+  expect(report.capabilities.map((capability) => capability.capability)).toContain(
+    "traceparent-roundtrip",
+  )
 })

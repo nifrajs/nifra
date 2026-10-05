@@ -1,24 +1,27 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import type { Middleware } from "@nifrajs/core/server"
-import { jsonError, type MaybePromise } from "./_utils.ts"
+import type { Middleware, Platform } from "@nifrajs/core/server"
+import { type ParsedIp, parseIp } from "./_ip.ts"
+import { guardName, jsonError, type MaybePromise } from "./_utils.ts"
 
 export type IpMatcher = string | ((ip: string, request: Request) => MaybePromise<boolean>)
 
 export interface IpRestrictionOptions {
   readonly allow?: readonly IpMatcher[]
   readonly deny?: readonly IpMatcher[]
-  /** Preferred extraction hook when the adapter/app knows the peer address. */
-  readonly clientIp?: (request: Request) => MaybePromise<string | null | undefined>
-  /** Trusted proxy count for `X-Forwarded-For` extraction. Default: 0, so XFF is ignored. */
+  /**
+   * Custom extraction hook. Without it (and without `trustedProxies`/`header`), the caller is
+   * `platform.clientIp`: the socket peer, or the app's `clientIp` trust declaration applied to it.
+   */
+  readonly clientIp?: (
+    request: Request,
+    platform?: Platform,
+  ) => MaybePromise<string | null | undefined>
+  /** Trusted proxy count for `X-Forwarded-For` extraction. Default: 0, so XFF is ignored. Prefer the
+   * app-level `server({ clientIp: { trustedHops } })` declaration, which the default honors. */
   readonly trustedProxies?: number
   /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not used unless configured. */
   readonly header?: string
   readonly error?: string
-}
-
-interface ParsedIp {
-  readonly version: 4 | 6
-  readonly value: bigint
 }
 
 interface Range {
@@ -27,71 +30,20 @@ interface Range {
   readonly mask: bigint
 }
 
-function parseIPv4(input: string): bigint | null {
-  const parts = input.split(".")
-  if (parts.length !== 4) return null
-  let out = 0n
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null
-    const n = Number(part)
-    if (n > 255) return null
-    out = (out << 8n) | BigInt(n)
-  }
-  return out
-}
-
-function parseIPv6(input: string): bigint | null {
-  if (input.includes("%")) return null
-  let source = input.toLowerCase()
-  if (source.includes(".")) {
-    const lastColon = source.lastIndexOf(":")
-    if (lastColon < 0) return null
-    const ipv4 = parseIPv4(source.slice(lastColon + 1))
-    if (ipv4 === null) return null
-    const hi = Number((ipv4 >> 16n) & 0xffffn).toString(16)
-    const lo = Number(ipv4 & 0xffffn).toString(16)
-    source = `${source.slice(0, lastColon)}:${hi}:${lo}`
-  }
-
-  const halves = source.split("::")
-  if (halves.length > 2) return null
-  const left = halves[0] === "" ? [] : halves[0]!.split(":")
-  const right = halves.length === 1 || halves[1] === "" ? [] : halves[1]!.split(":")
-  const groups = [...left, ...right]
-  if (groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null
-
-  const missing = 8 - groups.length
-  if (halves.length === 1) {
-    if (missing !== 0) return null
-  } else if (missing < 1) return null
-
-  const expanded =
-    halves.length === 1
-      ? groups
-      : [...left, ...Array.from({ length: missing }, () => "0"), ...right]
-  let out = 0n
-  for (const group of expanded) out = (out << 16n) | BigInt(Number.parseInt(group, 16))
-  return out
-}
-
-function parseIp(input: string): ParsedIp | null {
-  const trimmed = input.trim()
-  const unbracketed =
-    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed
-  const v4 = parseIPv4(unbracketed)
-  if (v4 !== null) return { version: 4, value: v4 }
-  const v6 = parseIPv6(unbracketed)
-  return v6 === null ? null : { version: 6, value: v6 }
-}
-
 function parseRange(input: string): Range {
   const slash = input.indexOf("/")
   const address = slash < 0 ? input : input.slice(0, slash)
   const ip = parseIp(address)
   if (ip === null) throw new Error(`ipRestriction: invalid IP/CIDR ${JSON.stringify(input)}`)
   const bits = ip.version === 4 ? 32 : 128
+  // `::ffff:10.0.0.0/104` is matched as IPv4, so its prefix counts past the 96 mapping bits.
+  const mapped = ip.version === 4 && address.includes(":") ? 96 : 0
   const prefix =
-    slash < 0 ? bits : /^\d+$/.test(input.slice(slash + 1)) ? Number(input.slice(slash + 1)) : -1
+    slash < 0
+      ? bits
+      : /^\d+$/.test(input.slice(slash + 1))
+        ? Number(input.slice(slash + 1)) - mapped
+        : -1
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > bits) {
     throw new Error(`ipRestriction: invalid CIDR prefix ${JSON.stringify(input)}`)
   }
@@ -114,10 +66,20 @@ function xForwardedClient(req: Request, trustedProxies: number): string | null {
 
 async function resolveClientIp(
   req: Request,
+  platform: Platform | undefined,
   options: IpRestrictionOptions,
 ): Promise<string | null> {
-  const custom = await options.clientIp?.(req)
+  const custom = await options.clientIp?.(req, platform)
   if (custom !== undefined && custom !== null) return custom
+  // Explicit proxy options fail closed on their own: falling back to the socket peer there would
+  // judge the proxy's address whenever the forwarded header went missing.
+  if (
+    options.clientIp === undefined &&
+    (options.trustedProxies ?? 0) === 0 &&
+    options.header === undefined
+  ) {
+    return platform?.clientIp || null
+  }
   const fromXff = xForwardedClient(req, options.trustedProxies ?? 0)
   if (fromXff !== null) return fromXff
   if (options.header !== undefined) {
@@ -152,9 +114,10 @@ async function matches(
 }
 
 /**
- * IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. Configure
- * `clientIp`, `trustedProxies`, or a trusted single-IP `header`; unconfigured X-Forwarded-For is never
- * trusted.
+ * IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. By default the
+ * caller is the server-resolved `platform.clientIp` (socket peer, or the app's `clientIp` trust
+ * declaration); `clientIp`, `trustedProxies`, or a trusted single-IP `header` override it. Unconfigured
+ * X-Forwarded-For is never trusted.
  */
 export function ipRestriction(options: IpRestrictionOptions): Middleware {
   const trustedProxies = options.trustedProxies ?? 0
@@ -173,9 +136,9 @@ export function ipRestriction(options: IpRestrictionOptions): Middleware {
 
   return withRouteAssurance<Middleware>(
     {
-      name: "ip-restriction",
-      async onRequest(req) {
-        const ipText = await resolveClientIp(req, options)
+      name: guardName("ip-restriction"),
+      async onRequest(req, platform) {
+        const ipText = await resolveClientIp(req, platform, options)
         if (ipText === null) return jsonError(403, error)
         const ip = parseIp(ipText)
         if (ip === null) return jsonError(403, error)

@@ -28,7 +28,7 @@ import type {
   RouteEntry,
 } from "./route-execution.ts"
 
-export type ProgramValidationKind = "headers" | "params" | "body" | "query"
+export type ProgramValidationKind = "headers" | "cookies" | "params" | "body" | "query"
 
 export type RouteProgramStage =
   | { readonly kind: ProgramValidationKind; readonly schema: StandardSchemaV1 }
@@ -83,25 +83,13 @@ export function compileRouteProgram(input: RouteProgramInput): RouteProgram {
     authStages.length > 0
       ? schema?.validationOrder !== "validate-before-auth"
       : schema?.validationOrder === "auth-before-validation"
-  if (schema?.headers !== undefined) {
-    const stage = { kind: "headers", schema: schema.headers } as const
-    stages.push(stage)
-    validationStages.push(stage)
-  }
-  if (schema?.params !== undefined) {
-    const stage = { kind: "params", schema: schema.params } as const
-    stages.push(stage)
-    validationStages.push(stage)
-  }
-  if (schema?.body !== undefined) {
-    const stage = { kind: "body", schema: schema.body } as const
-    stages.push(stage)
-    validationStages.push(stage)
-  }
-  if (schema?.query !== undefined) {
-    const stage = { kind: "query", schema: schema.query } as const
-    stages.push(stage)
-    validationStages.push(stage)
+  for (const kind of ["headers", "cookies", "params", "body", "query"] as const) {
+    const validator = schema?.[kind]
+    if (validator !== undefined) {
+      const stage = { kind, schema: validator }
+      stages.push(stage)
+      validationStages.push(stage)
+    }
   }
   for (const derive of input.derives) stages.push({ kind: "derive", run: derive })
   for (const before of input.beforeHandle) stages.push({ kind: "before", run: before })

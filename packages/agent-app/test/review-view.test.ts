@@ -205,4 +205,15 @@ describe("content-free review view", () => {
       processStatus: 1,
     })
   })
+
+  test("a host result's report must be a report, not another host result", () => {
+    const unavailable = { status: "unavailable", reasonCode: "invalid-report", processStatus: 0 }
+    const nested = { ok: true, status: 0, report: { ok: true, status: 0, report: report() } }
+    expect(toReviewView(nested)).toMatchObject(unavailable)
+    const failure = { ok: true, status: 0, report: { ok: false, status: 1, errorCode: "timeout" } }
+    expect(toReviewView(failure)).toMatchObject(unavailable)
+    let deep: unknown = report()
+    for (let depth = 0; depth < 300_000; depth++) deep = { ok: true, status: 0, report: deep }
+    expect(toReviewView(deep)).toMatchObject(unavailable)
+  })
 })

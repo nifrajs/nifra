@@ -29,6 +29,21 @@ describe("svgToVueSfc (transform)", () => {
   })
 })
 
+describe("svgToVueSfc keeps the SVG out of Vue template syntax", () => {
+  test("the root carries v-pre, so no {{ }}, :bound or v- attribute compiles", () => {
+    const sfc = svgToVueSfc(
+      '<svg><title>{{ $options }}</title><rect :x="evil" v-html="evil"/></svg>',
+    )
+    expect(sfc).toContain("<template><svg v-pre>")
+  })
+
+  test("refuses a <template> tag, which could end the SFC block, even in a CDATA section", () => {
+    expect(() =>
+      svgToVueSfc("<svg><text><![CDATA[</template><script setup>x()</script>]]></text></svg>"),
+    ).toThrow("cannot hold a <template> tag")
+  })
+})
+
 describe("vueSvgComponentBunPlugin", () => {
   test("compiles a *.svg?component into a Vue component module (real compiler)", async () => {
     const out = await setup("dom")({ path: fixture })

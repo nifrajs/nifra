@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-vanilla",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.",
   "keywords": [
     "bun",
@@ -14,6 +14,9 @@
     "full-stack"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

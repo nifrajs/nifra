@@ -13,7 +13,7 @@ afterEach(() => {
 test("parseFlags defaults to the shared uncommon DEFAULT_DEV_PORT (no flag, no env)", () => {
   delete Bun.env.PORT
   expect(parseFlags([]).port).toBe(DEFAULT_DEV_PORT)
-  expect(parseFlags([]).target).toBe("bun")
+  expect(parseFlags([]).target).toBeUndefined()
   expect(DEFAULT_DEV_PORT).not.toBe(3000) // the whole point: not the colliding default
 })
 
@@ -47,6 +47,11 @@ test("parseFlags parses --allow-duplicate-identity (default off)", () => {
   delete Bun.env.PORT
   expect(parseFlags([]).allowDuplicateIdentity).toBe(false)
   expect(parseFlags(["--allow-duplicate-identity"]).allowDuplicateIdentity).toBe(true)
+})
+
+test("parseFlags parses --no-indicator (default off)", () => {
+  expect(parseFlags([]).noIndicator).toBe(false)
+  expect(parseFlags(["--no-indicator"]).noIndicator).toBe(true)
 })
 
 // Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is

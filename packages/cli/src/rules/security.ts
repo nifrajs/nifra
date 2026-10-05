@@ -1,5 +1,7 @@
 import type * as TSApi from "typescript"
+import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { scriptKindOf } from "../internal/script-kind.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
@@ -42,17 +44,16 @@ function reviewedEvidence(lines: readonly string[], line: number): readonly stri
 
 /**
  * NF-S002 severity by file role. Server-side code compares real secret material - a timing oracle
- * there is exploitable, so it fails the gate. Client-bundled code (route modules, .tsx/.jsx)
+ * there is exploitable, so it fails the gate. Browser code (a route's frontend half, `frontend/`)
  * compares values the client already holds, so the same shape is advisory rather than a gate
- * failure. A server marker beats a client marker (`routes/x.server.ts` is server), and a plain .ts
- * that cannot be classified is treated as server - fail closed.
+ * failure. `shared/` also runs on the server, and a file that cannot be classified is treated as
+ * server - fail closed.
  */
 function secretComparisonSeverity(file: string): "error" | "warn" {
   const path = file.replaceAll("\\", "/")
-  if (/\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
-  if (/(?:^|\/)server\//.test(path) || /(?:^|\/)backend\.[cm]?[tj]s$/.test(path)) return "error"
-  if (/\.[tj]sx$/.test(path) || /(?:^|\/)routes\//.test(path)) return "warn"
-  return "error"
+  if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
+  if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return "error"
+  return "warn"
 }
 
 const CONFIRMATION_NAME =
@@ -80,18 +81,20 @@ function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
 
 /**
  * The operand name to match secret-like patterns against for NF-S002, or undefined when the operand
- * cannot hold runtime secret material. A property access to an uppercase-initial member
+ * cannot hold runtime secret material. A property access to a PascalCase member
  * (`ts.SyntaxKind.PlusToken`, `MediaKind.Audio`) reads an enum/type-constant discriminant, never a
  * secret string or byte buffer, so comparing against it is a kind check a timing oracle does not
- * apply to. Runtime secret fields follow the camelCase convention (`apiToken`, `signature`), so an
- * uppercase-initial member is a safe exclusion. Identifiers stay matched in every case, so an
- * `UPPER_SNAKE` secret constant still surfaces.
+ * apply to. An `UPPER_SNAKE` member is the configuration spelling (`process.env.API_TOKEN`,
+ * `env.WEBHOOK_SECRET`) and stays matched, as does a string-literal element access
+ * (`process.env["API_KEY"]`).
  */
 function secretName(ts: typeof TSApi, node: TSApi.Node): string | undefined {
   if (ts.isPropertyAccessExpression(node)) {
     const member = node.name.text
-    return /^[A-Z]/.test(member) ? undefined : member
+    return /^[A-Z]/.test(member) && !/^[A-Z][A-Z0-9_]*$/.test(member) ? undefined : member
   }
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression))
+    return node.argumentExpression.text
   return nameOf(ts, node)
 }
 
@@ -116,8 +119,7 @@ function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): b
 }
 
 function parse(ts: typeof TSApi, file: string, source: string): TSApi.SourceFile {
-  const kind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
+  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindOf(ts, file))
 }
 
 function parsedFile(
@@ -140,6 +142,101 @@ function parsedFile(
   return parsed
 }
 
+interface SecretComparison {
+  readonly node: TSApi.BinaryExpression
+  readonly left: string | undefined
+  readonly right: string | undefined
+  readonly line: number
+}
+
+function secretComparisons(
+  ts: typeof TSApi,
+  file: string,
+  tree: TSApi.SourceFile,
+): readonly SecretComparison[] {
+  const operators = [
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.EqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken,
+  ]
+  const found: SecretComparison[] = []
+  const visit = (node: TSApi.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      operators.includes(node.operatorToken.kind) &&
+      !isPresenceComparison(ts, node)
+    ) {
+      const left = secretName(ts, node.left)
+      const right = secretName(ts, node.right)
+      if (
+        ((left !== undefined && SECRET.test(left)) ||
+          (right !== undefined && SECRET.test(right))) &&
+        !isClientConfirmationPair(file, left, right)
+      ) {
+        const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+        found.push({ node, left, right, line })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  return found
+}
+
+function timingSafeHelper(file: string): string {
+  const typed = /\.[cm]?tsx?$/.test(file)
+  return [
+    'import { timingSafeEqual as nifraTimingSafeEqualBytes } from "node:crypto"',
+    "",
+    typed
+      ? "function nifraTimingSafeEqual(left: string, right: string): boolean {"
+      : "function nifraTimingSafeEqual(left, right) {",
+    "  const leftBytes = Buffer.from(left)",
+    "  const rightBytes = Buffer.from(right)",
+    "  return leftBytes.length === rightBytes.length && nifraTimingSafeEqualBytes(leftBytes, rightBytes)",
+    "}",
+  ].join("\n")
+}
+
+/**
+ * Rewrite every unreviewed NF-S002 comparison in one file to `nifraTimingSafeEqual(left, right)` and
+ * add the helper once. Sites come from the syntax tree, not a reported line: the helper lands above
+ * them, so a line number a check run reported no longer names the same statement after the first fix.
+ */
+export function rewriteSecretComparisons(ts: typeof TSApi, file: string, source: string): string {
+  const tree = parse(ts, file, source)
+  const lines = tree.text.split("\n")
+  const sites = secretComparisons(ts, file, tree).filter((site) => !hasReview(lines, site.line))
+  // A comparison nested inside another (`(token === a) === flag`) is left for the next run, so every
+  // edit below covers a disjoint range and applying them from the end keeps earlier offsets valid.
+  const outer = sites.filter(
+    ({ node }) =>
+      !sites.some(
+        (other) => other.node !== node && other.node.pos >= node.pos && other.node.end <= node.end,
+      ),
+  )
+  if (outer.length === 0) return source
+  let text = source
+  for (const { node } of outer.toSorted((a, b) => b.node.end - a.node.end)) {
+    const call = `nifraTimingSafeEqual(${node.left.getText(tree)}, ${node.right.getText(tree)})`
+    const negated =
+      node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken
+    text = `${text.slice(0, node.getStart(tree))}${negated ? `!${call}` : call}${text.slice(node.end)}`
+  }
+  if (source.includes("function nifraTimingSafeEqual")) return text
+  // After a shebang and the directive prologue: an import above `"use client"` turns it into a no-op.
+  let at = 0
+  for (const statement of tree.statements) {
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break
+    at = statement.end
+  }
+  if (at === 0 && text.startsWith("#!")) at = text.includes("\n") ? text.indexOf("\n") : text.length
+  const helper = timingSafeHelper(file)
+  return at === 0 ? `${helper}\n\n${text}` : `${text.slice(0, at)}\n\n${helper}\n${text.slice(at)}`
+}
+
 export const secretComparisonRule: CheckRule = {
   code: "NF-S002",
   title: "Non-constant-time secret comparison",
@@ -153,52 +250,30 @@ export const secretComparisonRule: CheckRule = {
       const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
-      const visit = (node: TSApi.Node): void => {
-        if (
-          ts.isBinaryExpression(node) &&
-          [
-            ts.SyntaxKind.EqualsEqualsEqualsToken,
-            ts.SyntaxKind.ExclamationEqualsEqualsToken,
-            ts.SyntaxKind.EqualsEqualsToken,
-            ts.SyntaxKind.ExclamationEqualsToken,
-          ].includes(node.operatorToken.kind) &&
-          !isPresenceComparison(ts, node)
-        ) {
-          const left = secretName(ts, node.left)
-          const right = secretName(ts, node.right)
-          if (
-            ((left !== undefined && SECRET.test(left)) ||
-              (right !== undefined && SECRET.test(right))) &&
-            !isClientConfirmationPair(file, left, right)
-          ) {
-            const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-            const reviewed = hasReview(lines, line)
-            findings.push(
-              diagnostic({
-                code: "NF-S002",
-                severity: reviewed ? "info" : secretComparisonSeverity(file),
-                file,
-                line,
-                message: reviewed
-                  ? "secret comparison is explicitly marked as reviewed"
-                  : "secret-like values must use a length check and timing-safe comparison",
-                evidence: [left ?? right ?? "secret comparison", ...reviewedEvidence(lines, line)],
-                ...(reviewed
-                  ? {}
-                  : {
-                      fix: {
-                        recipe: "security.timing-safe-equal",
-                        command: "nifra fix --code NF-S002",
-                      },
-                    }),
-                verify: "nifra check --lints-only",
-              }),
-            )
-          }
-        }
-        ts.forEachChild(node, visit)
+      for (const { left, right, line } of secretComparisons(ts, file, tree)) {
+        const reviewed = hasReview(lines, line)
+        findings.push(
+          diagnostic({
+            code: "NF-S002",
+            severity: reviewed ? "info" : secretComparisonSeverity(file),
+            file,
+            line,
+            message: reviewed
+              ? "secret comparison is explicitly marked as reviewed"
+              : "secret-like values must use a length check and timing-safe comparison",
+            evidence: [left ?? right ?? "secret comparison", ...reviewedEvidence(lines, line)],
+            ...(reviewed
+              ? {}
+              : {
+                  fix: {
+                    recipe: "security.timing-safe-equal",
+                    command: "nifra fix --code NF-S002",
+                  },
+                }),
+            verify: "nifra check --lints-only",
+          }),
+        )
       }
-      visit(tree)
     }
     return findings
   },
@@ -254,6 +329,30 @@ export const piiLogRule: CheckRule = {
   },
 }
 
+/**
+ * A function's own name, or for an anonymous arrow/function expression the name it is bound to
+ * (`const requireAuth = async () => …`, `{ canEdit: () => … }`), which is how a gate is usually written.
+ */
+function functionName(ts: typeof TSApi, fn: TSApi.Node): string | undefined {
+  if (ts.isFunctionLike(fn) && fn.name !== undefined)
+    return ts.isIdentifier(fn.name) ? fn.name.text : undefined
+  let binding = fn.parent
+  while (
+    binding !== undefined &&
+    (ts.isParenthesizedExpression(binding) ||
+      ts.isAsExpression(binding) ||
+      ts.isSatisfiesExpression(binding))
+  )
+    binding = binding.parent
+  if (
+    binding !== undefined &&
+    (ts.isVariableDeclaration(binding) || ts.isPropertyAssignment(binding)) &&
+    ts.isIdentifier(binding.name)
+  )
+    return binding.name.text
+  return undefined
+}
+
 export const failOpenGateRule: CheckRule = {
   code: "NF-S001",
   title: "Fail-open gate",
@@ -271,10 +370,7 @@ export const failOpenGateRule: CheckRule = {
         if (ts.isCatchClause(node)) {
           let parent: TSApi.Node | undefined = node.parent
           while (parent !== undefined && !ts.isFunctionLike(parent)) parent = parent.parent
-          const name =
-            ts.isFunctionLike(parent) && parent.name && ts.isIdentifier(parent.name)
-              ? parent.name.text
-              : undefined
+          const name = parent === undefined ? undefined : functionName(ts, parent)
           // `can` only names a gate in camelCase (`canEdit`, `canAccess`) - matching it
           // case-insensitively swept in `canonicalize…`, `cancel…`, `candidate…`, none of them
           // authorization decisions. The other roots stay case-insensitive.

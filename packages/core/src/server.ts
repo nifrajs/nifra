@@ -16,7 +16,13 @@ export {
   RoutePatternOverlapLimitError,
   routePatternOverlap,
 } from "./router/overlap.ts"
-export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
+export {
+  METHODS,
+  type Method,
+  type RouteMethod,
+  Router,
+  type RouterMatch,
+} from "./router/router.ts"
 export type {
   InferInput,
   InferOutput,
@@ -43,6 +49,7 @@ export type {
   Params,
   Platform,
   Prettify,
+  RequestPath,
   ResponseControls,
   RouteSchema,
 } from "./server/context.ts"
@@ -88,7 +95,15 @@ export {
   toVercelHandler,
   type VercelHandler,
 } from "./server/platform-adapters.ts"
-export type { Registry, ResponseMapFor, RouteInfo, RouteInfoFor } from "./server/registry.ts"
+export type {
+  JoinRoutePath,
+  PrefixRegistry,
+  Registry,
+  ResponseMapFor,
+  RouteInfo,
+  RouteInfoFor,
+} from "./server/registry.ts"
+export { replacedRequestOf } from "./server/request-lineage.ts"
 export {
   type PlainRender,
   type ResponseResult,
@@ -107,6 +122,7 @@ export {
   defineRouterPlugin,
   type Handler,
   type IdentityPlugin,
+  type ListenTlsOptions,
   type McpPromptDescriptor,
   type McpResourceDescriptor,
   type Middleware,

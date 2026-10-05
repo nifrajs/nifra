@@ -182,7 +182,7 @@ describe("FEATURES capability matrix", () => {
     }
   })
 
-  test("in-memory stores: caveat on bun/node/deno, unsupported on cf-pages/vercel", () => {
+  test("in-memory stores: caveat on bun/node/deno, unsupported on cloudflare/vercel", () => {
     for (const id of [
       "in-memory-session-store",
       "in-memory-isr-cache",
@@ -191,39 +191,39 @@ describe("FEATURES capability matrix", () => {
       expect(FEATURES[id].verdicts.bun).toBe("caveat")
       expect(FEATURES[id].verdicts.node).toBe("caveat")
       expect(FEATURES[id].verdicts.deno).toBe("caveat")
-      expect(FEATURES[id].verdicts["cf-pages"]).toBe("unsupported")
+      expect(FEATURES[id].verdicts["cloudflare"]).toBe("unsupported")
       expect(FEATURES[id].verdicts.vercel).toBe("unsupported")
     }
   })
 
-  test("in-process-cron: ok on bun/node/deno, caveat on cf-pages, unsupported on vercel", () => {
+  test("in-process-cron: ok on bun/node/deno, caveat on cloudflare, unsupported on vercel", () => {
     expect(FEATURES["in-process-cron"].verdicts.bun).toBe("ok")
-    expect(FEATURES["in-process-cron"].verdicts["cf-pages"]).toBe("caveat")
+    expect(FEATURES["in-process-cron"].verdicts["cloudflare"]).toBe("caveat")
     expect(FEATURES["in-process-cron"].verdicts.vercel).toBe("unsupported")
   })
 
-  test("in-process-websocket: ok on bun/node/deno, caveat on cf-pages, unsupported on vercel", () => {
+  test("in-process-websocket: ok on bun/node/deno, caveat on cloudflare, unsupported on vercel", () => {
     expect(FEATURES["in-process-websocket"].verdicts.deno).toBe("ok")
-    expect(FEATURES["in-process-websocket"].verdicts["cf-pages"]).toBe("caveat")
+    expect(FEATURES["in-process-websocket"].verdicts["cloudflare"]).toBe("caveat")
     expect(FEATURES["in-process-websocket"].verdicts.vercel).toBe("unsupported")
   })
 
   test("bun-runtime-api: ok only on bun; deno-runtime-api: ok only on deno", () => {
     expect(FEATURES["bun-runtime-api"].verdicts.bun).toBe("ok")
-    for (const t of ["node", "deno", "cf-pages", "vercel"] as const) {
+    for (const t of ["node", "deno", "cloudflare", "vercel"] as const) {
       expect(FEATURES["bun-runtime-api"].verdicts[t]).toBe("unsupported")
     }
     expect(FEATURES["deno-runtime-api"].verdicts.deno).toBe("ok")
-    for (const t of ["bun", "node", "cf-pages", "vercel"] as const) {
+    for (const t of ["bun", "node", "cloudflare", "vercel"] as const) {
       expect(FEATURES["deno-runtime-api"].verdicts[t]).toBe("unsupported")
     }
   })
 
-  test("node-builtin: ok on bun/node/deno, caveat on cf-pages + vercel", () => {
+  test("node-builtin: ok on bun/node/deno, caveat on cloudflare + vercel", () => {
     expect(FEATURES["node-builtin"].verdicts.bun).toBe("ok")
     expect(FEATURES["node-builtin"].verdicts.node).toBe("ok")
     expect(FEATURES["node-builtin"].verdicts.deno).toBe("ok")
-    expect(FEATURES["node-builtin"].verdicts["cf-pages"]).toBe("caveat")
+    expect(FEATURES["node-builtin"].verdicts["cloudflare"]).toBe("caveat")
     expect(FEATURES["node-builtin"].verdicts.vercel).toBe("caveat")
   })
 })
@@ -296,28 +296,28 @@ describe("collectPortResult - gating + --json shape", () => {
         'import { server } from "@nifrajs/core"\nexport const backend = server().get("/", () => ({ ok: true }))',
     })
     try {
-      const result = await collectPortResult(dir, { target: "cf-pages" })
+      const result = await collectPortResult(dir, { target: "cloudflare" })
       expect(result.json.ok).toBe(true)
       expect(result.json.features).toHaveLength(0)
       expect(result.json.blocked).toHaveLength(0)
-      expect(result.json.target).toBe("cf-pages")
+      expect(result.json.target).toBe("cloudflare")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
   })
 
-  test("Bun.* + in-process cron on cf-pages → blocked (unsupported + caveat respectively)", async () => {
+  test("Bun.* + in-process cron on cloudflare → blocked (unsupported + caveat respectively)", async () => {
     const dir = await makeApp({
       "package.json": JSON.stringify({ name: "app" }),
       "server.ts": "Bun.serve({ port: 3000, fetch: app.fetch })",
       "cron.ts": 'import { createScheduler } from "@nifrajs/cron"\ncreateScheduler().start()',
     })
     try {
-      const result = await collectPortResult(dir, { target: "cf-pages" })
+      const result = await collectPortResult(dir, { target: "cloudflare" })
       const blockedFeatures = result.json.blocked.map((b) => b.feature)
-      // Bun.* is unsupported on cf-pages → always blocks.
+      // Bun.* is unsupported on cloudflare → always blocks.
       expect(blockedFeatures).toContain("bun-runtime-api")
-      // in-process-cron is a CAVEAT on cf-pages → NOT blocked without --strict.
+      // in-process-cron is a CAVEAT on cloudflare → NOT blocked without --strict.
       expect(blockedFeatures).not.toContain("in-process-cron")
       expect(result.json.ok).toBe(false)
     } finally {
@@ -331,11 +331,11 @@ describe("collectPortResult - gating + --json shape", () => {
       "cron.ts": 'import { createScheduler } from "@nifrajs/cron"\ncreateScheduler().start()',
     })
     try {
-      const lenient = await collectPortResult(dir, { target: "cf-pages" })
+      const lenient = await collectPortResult(dir, { target: "cloudflare" })
       expect(lenient.json.blocked).toHaveLength(0)
       expect(lenient.json.ok).toBe(true)
 
-      const strict = await collectPortResult(dir, { target: "cf-pages", strict: true })
+      const strict = await collectPortResult(dir, { target: "cloudflare", strict: true })
       expect(strict.json.blocked.map((b) => b.feature)).toContain("in-process-cron")
       expect(strict.json.ok).toBe(false)
     } finally {
@@ -427,14 +427,14 @@ describe("resolveTarget - flag override + auto-detection", () => {
     }
   })
 
-  test("infers cf-pages from the deploy script and from a bare wrangler.toml", async () => {
+  test("infers cloudflare from the deploy script and from a bare wrangler.toml", async () => {
     const dir1 = await makeApp({
       "package.json": JSON.stringify({ scripts: { deploy: "wrangler pages deploy dist" } }),
     })
     const dir2 = await makeApp({ "package.json": "{}", "wrangler.toml": 'name = "x"' })
     try {
-      expect((await resolveTarget(dir1))?.target).toBe("cf-pages")
-      expect((await resolveTarget(dir2))?.target).toBe("cf-pages")
+      expect((await resolveTarget(dir1))?.target).toBe("cloudflare")
+      expect((await resolveTarget(dir2))?.target).toBe("cloudflare")
       expect((await resolveTarget(dir2))?.source).toBe("wrangler")
     } finally {
       await rm(dir1, { recursive: true, force: true })
@@ -461,7 +461,7 @@ describe("renderReport", () => {
   test("clean app prints the all-targets-portable line", async () => {
     const dir = await makeApp({ "package.json": "{}", "backend.ts": "export const x = 1" })
     try {
-      const result = await collectPortResult(dir, { target: "cf-pages" })
+      const result = await collectPortResult(dir, { target: "cloudflare" })
       const report = renderReport(result, { strict: false })
       expect(report).toContain("portable across all targets")
     } finally {
@@ -475,13 +475,13 @@ describe("renderReport", () => {
       "server.ts": "Bun.serve({})",
     })
     try {
-      const result = await collectPortResult(dir, { target: "cf-pages" })
+      const result = await collectPortResult(dir, { target: "cloudflare" })
       const report = renderReport(result, { strict: false })
       expect(report).toContain("portability matrix")
       expect(report).toContain("legend:")
       expect(report).toContain("Bun.* runtime API")
       expect(report).toContain("server.ts:1")
-      expect(report).toContain("block deploying to cf-pages")
+      expect(report).toContain("block deploying to cloudflare")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

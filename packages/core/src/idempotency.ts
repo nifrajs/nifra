@@ -16,6 +16,9 @@ export type IdempotencyScope = "request" | "durable"
 /** Default retention for a stored idempotent response: 24 hours. */
 export const DEFAULT_IDEMPOTENCY_TTL_MS = 86_400_000
 
+/** Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds. */
+export const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 60_000
+
 /** Canonical request header carrying the client-chosen idempotency key. */
 export const DEFAULT_IDEMPOTENCY_HEADER = "idempotency-key"
 
@@ -80,7 +83,14 @@ export interface IdempotencyEntryKey {
 
 export interface IdempotencyBeginInput extends IdempotencyEntryKey {
   readonly fingerprint: string
+  /** Retention for the completed response. */
   readonly ttlMs: number
+  /**
+   * Lease on a `new` reservation: it lapses after this long unless {@link IdempotencyStore.renew}
+   * extends it, and `complete` then keeps the response for `ttlMs`. Passed only to a store with
+   * `renew`; when absent, the pending reservation holds the key for `ttlMs`.
+   */
+  readonly pendingTtlMs?: number | undefined
 }
 
 export interface IdempotencyCompletionInput extends IdempotencyEntryKey {
@@ -92,6 +102,13 @@ export interface IdempotencyCompletionInput extends IdempotencyEntryKey {
 export interface IdempotencyAbandonInput extends IdempotencyEntryKey {
   /** Opaque ownership token returned by `begin(state:"new")`. */
   readonly reservation: string
+}
+
+export interface IdempotencyRenewInput extends IdempotencyEntryKey {
+  /** Opaque ownership token returned by `begin(state:"new")`. */
+  readonly reservation: string
+  /** The new lease, from now. */
+  readonly ttlMs: number
 }
 
 /**
@@ -115,6 +132,12 @@ export interface IdempotencyStore {
   complete(input: IdempotencyCompletionInput): boolean | Promise<boolean>
   /** Release only the pending reservation owned by `reservation`. */
   abandon(input: IdempotencyAbandonInput): boolean | Promise<boolean>
+  /**
+   * Extend the pending reservation owned by `reservation` to `ttlMs` from now. Returns false when it
+   * is gone, lapsed, or completed. The server calls it while the handler runs, so with it a key
+   * whose process died frees after `pendingTtlMs` instead of `ttlMs`.
+   */
+  renew?(input: IdempotencyRenewInput): boolean | Promise<boolean>
 }
 
 /** A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else. */
@@ -312,6 +335,7 @@ export function responseFromStored(
 }
 
 interface MemoryEntry {
+  readonly namespace: string
   readonly fingerprint: string
   readonly reservation: string
   readonly ttlMs: number
@@ -324,6 +348,11 @@ export interface MemoryIdempotencyStoreOptions {
   readonly now?: () => number
   /** Hard memory bound. At capacity new keys fail closed; completed/pending entries are never evicted early. */
   readonly maxEntries?: number
+  /**
+   * Bound for one namespace, so a single tenant or principal cannot use up `maxEntries` for the
+   * rest: past it, only that namespace's new keys fail closed. Default: no separate bound.
+   */
+  readonly maxEntriesPerNamespace?: number
 }
 
 /**
@@ -334,14 +363,20 @@ export interface MemoryIdempotencyStoreOptions {
 export class MemoryIdempotencyStore implements IdempotencyStore {
   readonly durability = "memory" as const
   private readonly entries = new Map<string, MemoryEntry>()
+  private readonly perNamespace = new Map<string, number>()
   private readonly now: () => number
   private readonly maxEntries: number
+  private readonly maxPerNamespace: number
 
   constructor(options: MemoryIdempotencyStoreOptions = {}) {
     this.now = options.now ?? Date.now
     this.maxEntries = options.maxEntries ?? 10_000
     if (!Number.isInteger(this.maxEntries) || this.maxEntries < 1) {
       throw new RangeError("idempotency: maxEntries must be a positive integer")
+    }
+    this.maxPerNamespace = options.maxEntriesPerNamespace ?? this.maxEntries
+    if (!Number.isInteger(this.maxPerNamespace) || this.maxPerNamespace < 1) {
+      throw new RangeError("idempotency: maxEntriesPerNamespace must be a positive integer")
     }
   }
 
@@ -353,17 +388,19 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
       if (existing.response !== undefined) return { state: "replay", response: existing.response }
       return { state: "in-flight" }
     }
-    if (existing !== undefined) this.entries.delete(storageKey)
-    if (this.entries.size >= this.maxEntries) {
+    if (existing !== undefined) this.drop(storageKey, existing)
+    if (this.full(input.namespace)) {
       this.sweep()
-      if (this.entries.size >= this.maxEntries) return { state: "capacity" }
+      if (this.full(input.namespace)) return { state: "capacity" }
     }
     const reservation = crypto.randomUUID()
+    this.perNamespace.set(input.namespace, (this.perNamespace.get(input.namespace) ?? 0) + 1)
     this.entries.set(storageKey, {
+      namespace: input.namespace,
       fingerprint: input.fingerprint,
       reservation,
       ttlMs: input.ttlMs,
-      expiresAt: this.now() + input.ttlMs,
+      expiresAt: this.now() + (input.pendingTtlMs ?? input.ttlMs),
       response: undefined,
     })
     return { state: "new", reservation }
@@ -374,7 +411,7 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
     const entry = this.entries.get(key)
     if (entry === undefined || entry.reservation !== input.reservation) return false
     if (entry.expiresAt <= this.now()) {
-      this.entries.delete(key)
+      this.drop(key, entry)
       return false
     }
     entry.response = input.response
@@ -386,7 +423,7 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
     const key = this.storageKey(input)
     const entry = this.entries.get(key)
     if (entry !== undefined && entry.expiresAt <= this.now()) {
-      this.entries.delete(key)
+      this.drop(key, entry)
       return false
     }
     // Only drop a still-pending reservation; never evict a completed (replayable) response.
@@ -395,17 +432,30 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
       entry.response === undefined &&
       entry.reservation === input.reservation
     ) {
-      this.entries.delete(key)
+      this.drop(key, entry)
       return true
     }
     return false
+  }
+
+  renew(input: IdempotencyRenewInput): boolean {
+    const entry = this.entries.get(this.storageKey(input))
+    if (
+      entry?.reservation !== input.reservation ||
+      entry.response !== undefined ||
+      entry.expiresAt <= this.now()
+    ) {
+      return false
+    }
+    entry.expiresAt = this.now() + input.ttlMs
+    return true
   }
 
   /** Evict expired entries. Callers may run this on an interval; access-time eviction covers the rest. */
   sweep(): void {
     const now = this.now()
     for (const [key, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.entries.delete(key)
+      if (entry.expiresAt <= now) this.drop(key, entry)
     }
   }
 
@@ -416,6 +466,20 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
 
   private storageKey(input: IdempotencyEntryKey): string {
     return `${input.namespace.length}:${input.namespace}${input.key}`
+  }
+
+  private full(namespace: string): boolean {
+    return (
+      this.entries.size >= this.maxEntries ||
+      (this.perNamespace.get(namespace) ?? 0) >= this.maxPerNamespace
+    )
+  }
+
+  private drop(key: string, entry: MemoryEntry): void {
+    this.entries.delete(key)
+    const left = (this.perNamespace.get(entry.namespace) ?? 1) - 1
+    if (left > 0) this.perNamespace.set(entry.namespace, left)
+    else this.perNamespace.delete(entry.namespace)
   }
 }
 

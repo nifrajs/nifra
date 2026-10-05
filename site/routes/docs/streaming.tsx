@@ -1,9 +1,5 @@
-import { docsMeta } from "../../meta"
-import { CodeBlock } from "../../highlight"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { docsMeta } from "../../shared/meta"
+import { CodeBlock } from "../../shared/highlight"
 
 export const meta = docsMeta(
   "/docs/streaming",
@@ -11,19 +7,34 @@ export const meta = docsMeta(
   "Streaming SSR, Suspense, and defer() in Nifra - on every runtime including the edge.",
 )
 
-const DEFER = `// Send the page shell immediately; stream the slow part in when it resolves.
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  return {
-    user: (await api.users({ id: "7" }).get()).data,   // awaited - in the shell
-    feed: defer(api.feed.get()),                        // deferred - streamed later
-  }
-}
+const DEFER = `// routes/index.backend.ts - send the page shell immediately; stream the slow part when it resolves.
+import { t } from "@nifrajs/schema"
+import { defer } from "@nifrajs/web"
+import type { Route } from "./+types/index"
 
-export default function Page(props: { data: LoaderData<typeof loader> }) {
+declare function loadFeed(userId: string): Promise<string[]>
+
+export const loaderOutput = t.object({
+  name: t.string(),                                   // awaited - in the shell
+  feed: t.deferred(t.array(t.string())),              // deferred - streamed later
+})
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const user = await api.users({ id: "7" }).get()
+  return {
+    name: user.ok ? user.data.name : "",
+    feed: defer(loadFeed("7")),
+  }
+}`
+
+const DEFER_PAGE = `// routes/index.tsx
+import type { Route } from "./+types/index"
+
+export default function Page({ data }: Route.ComponentProps) {
   return (
     <>
-      <h1>{props.data.user?.id}</h1>
-      <Await resolve={props.data.feed} fallback={<p>Loading feed…</p>}>
+      <h1>{data.name}</h1>
+      <Await resolve={data.feed} fallback={<p>Loading feed…</p>}>
         {(feed) => <Feed items={feed} />}
       </Await>
     </>
@@ -65,7 +76,8 @@ export default function Streaming() {
         <code>&lt;Await&gt;</code> (a Suspense boundary). The client receives the shell + a streamed
         resolution, then hydrates - no waterfall, no blank screen.
       </p>
-      <CodeBlock code={DEFER} />
+      <CodeBlock code={DEFER} lang="ts" />
+      <CodeBlock code={DEFER_PAGE} />
 
       <p>
         The same <code>defer()</code> works in actions and across client-side soft navigations (an

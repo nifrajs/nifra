@@ -8,6 +8,11 @@
 
 export type SpanStatus = "unset" | "ok" | "error"
 export type AttributeValue = string | number | boolean
+/**
+ * The OTel span kind. A span without one is exported as `server`, the kind of the request spans that
+ * predate this field.
+ */
+export type SpanKind = "server" | "client" | "producer" | "consumer" | "internal"
 
 /** A non-parent causal relationship to a span in another trace (the OTel `Link` model). */
 export interface ObservationLink {
@@ -26,8 +31,10 @@ export interface NifraSpan {
   readonly parentSpanId?: string
   /** Whether the trace is sampled (the W3C flag). */
   readonly sampled: boolean
-  /** Span name - `"<METHOD> <path>"`. */
+  /** Span name - `"<METHOD> <path>"` for a request. */
   readonly name: string
+  /** OTel span kind. Absent means `server`. */
+  readonly kind?: SpanKind
   /** Wall-clock start (epoch ms). */
   readonly startTime: number
   /** Wall-clock end (epoch ms) - set on completion. */
@@ -92,6 +99,7 @@ export function consoleSpanExporter(
       log(
         JSON.stringify({
           name: span.name,
+          kind: span.kind,
           traceId: span.traceId,
           spanId: span.spanId,
           parentSpanId: span.parentSpanId,

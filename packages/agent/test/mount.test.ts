@@ -199,6 +199,66 @@ describe("mountAgent resumable streams", () => {
     expect(completions).toBe(1)
   })
 
+  test("a client that disconnects mid-run can still replay the run's real result", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const model: AgentModelPort = {
+      complete: async () => {
+        await gate
+        return { kind: "output", value: { answer: "late" } }
+      },
+    }
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(model),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const first = await call(
+      post({ input: { prompt: "hey" }, turnId: "run-gone" }, { accept: "text/event-stream" }),
+    )
+    const reader = first.body!.getReader()
+    await reader.read()
+    await reader.cancel()
+    release()
+    const replay = await call(
+      post(
+        { input: { prompt: "hey" }, turnId: "run-gone" },
+        { accept: "text/event-stream", "last-event-id": "0" },
+      ),
+    )
+    const text = await replay.text()
+    expect(text).toContain("event: result")
+    expect(text).toContain("late")
+  })
+
+  test("without an evidence log a client disconnect cancels the run", async () => {
+    const { app, call } = captureApp()
+    let reached!: (signal: AbortSignal) => void
+    const signalSeen = new Promise<AbortSignal>((resolve) => {
+      reached = resolve
+    })
+    const model: AgentModelPort = {
+      complete: ({ signal }) => {
+        reached(signal)
+        return new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+        })
+      },
+    }
+    mountAgent(app, { agent: definition, ports: ports(model) })
+
+    const res = await call(post({ input: { prompt: "hey" } }, { accept: "text/event-stream" }))
+    const reader = res.body!.getReader()
+    await reader.read()
+    const signal = await signalSeen
+    await reader.cancel()
+    expect(signal.aborted).toBe(true)
+  })
+
   test("rejects an unknown replay and a malformed Last-Event-ID", async () => {
     const { app, call } = captureApp()
     mountAgent(app, {
@@ -225,5 +285,37 @@ describe("mountAgent resumable streams", () => {
       ),
     )
     expect(malformed.status).toBe(400)
+  })
+})
+
+describe("mountAgent evidenceOwner", () => {
+  test("keeps one caller's recorded turns out of another caller's replay and rerun", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: (c) => ports(outputModel({ answer: `for ${c.req.headers.get("x-user")}` }))(c),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      evidenceOwner: (c) => {
+        const user = c.req.headers.get("x-user")
+        if (user === null) throw new Error("unauthenticated")
+        return user
+      },
+    })
+    const turn = (user: string | undefined, lastEventId?: string): Promise<Response> => {
+      const headers: Record<string, string> = { accept: "text/event-stream" }
+      if (user !== undefined) headers["x-user"] = user
+      if (lastEventId !== undefined) headers["last-event-id"] = lastEventId
+      return call(post({ input: { prompt: "hey" }, turnId: "shared-id" }, headers))
+    }
+
+    expect(await (await turn("alice")).text()).toContain("for alice")
+    // Another caller's reconnect finds no turn; a refused owner stops the request before any replay.
+    expect((await turn("bob", "0")).status).toBe(409)
+    expect((await turn(undefined, "0")).status).toBe(400)
+    // Another caller reusing the id records a turn of its own; the owner's replay is unchanged.
+    expect(await (await turn("bob")).text()).toContain("for bob")
+    const replay = await (await turn("alice", "0")).text()
+    expect(replay).toContain("for alice")
+    expect(replay).not.toContain("for bob")
   })
 })

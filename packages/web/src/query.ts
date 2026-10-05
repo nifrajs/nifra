@@ -642,7 +642,7 @@ export function createMutation<TData, TVariables>(
   let mutationFn = fn
   let cbs = callbacks
   let state = IDLE_MUTATION as MutationState<TData, TVariables>
-  let token = 0
+  let latest = 0
   const listeners = new Set<() => void>()
   const emit = (): void => {
     for (const l of listeners) l()
@@ -665,19 +665,19 @@ export function createMutation<TData, TVariables>(
     },
     reset: () => setState(IDLE_MUTATION as MutationState<TData, TVariables>),
     mutate: async (variables) => {
-      const mine = ++token
+      const mine = ++latest
       setState({ status: "pending", data: undefined, error: undefined, variables })
       // Only await a callback when one is actually supplied - an `await undefined` would insert a
       // needless microtask before the mutationFn runs (and complicates single-flight timing).
       if (cbs.onMutate !== undefined) await cbs.onMutate(variables)
       try {
         const data = await mutationFn(variables)
-        if (mine === token) setState({ status: "success", data, error: undefined, variables })
+        if (mine === latest) setState({ status: "success", data, error: undefined, variables })
         if (cbs.onSuccess !== undefined) await cbs.onSuccess(data, variables)
         if (cbs.onSettled !== undefined) await cbs.onSettled(data, undefined, variables)
         return data
       } catch (error) {
-        if (mine === token) setState({ status: "error", data: undefined, error, variables })
+        if (mine === latest) setState({ status: "error", data: undefined, error, variables })
         if (cbs.onError !== undefined) await cbs.onError(error, variables)
         if (cbs.onSettled !== undefined) await cbs.onSettled(undefined, error, variables)
         throw error

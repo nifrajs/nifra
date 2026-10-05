@@ -12,9 +12,12 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
+import { compileRoutePattern, type RoutePatternSegment } from "@nifrajs/core/pattern"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
+import { normalizeMountPath } from "@nifrajs/web/route-manifest"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import type { LoadedApp } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
@@ -102,6 +105,44 @@ function schemaLines(schema: ReflectedRoute["schema"]): string[] {
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
+/** The verbs the typed client has a terminal call for. */
+const TYPED_VERBS: ReadonlySet<string> = new Set([
+  "get",
+  "post",
+  "put",
+  "patch",
+  "delete",
+  "head",
+  "options",
+])
+
+/**
+ * The call a non-static segment adds to the chain, or `undefined` for a static one. The segment is
+ * read by the router's own grammar, so the spelling matches what the typed client accepts:
+ *   - a whole param or a wildcard is called by its name - `:id` and `:id{[0-9]+}` are `({ id })`;
+ *   - a segment that is part literal, part parameter is called with the segment text -
+ *     `:name.json` is ``(`${name}.json`)``.
+ */
+function paramCall(seg: string): string | undefined {
+  let segment: RoutePatternSegment | undefined
+  try {
+    segment = compileRoutePattern(`/${seg}`).segments[0]
+  } catch {
+    return undefined
+  }
+  if (segment === undefined || segment.kind === "static") return undefined
+  if (segment.kind === "param") return `({ ${segment.name} })`
+  if (segment.kind === "wildcard") {
+    return segment.name === "*" ? '({ "*": rest })' : `({ ${segment.name} })`
+  }
+  const [only] = segment.parts
+  if (segment.parts.length === 1 && only?.t === "param") return `({ ${only.name} })`
+  const text = segment.parts
+    .map((part) => (part.t === "lit" ? part.v.replace(/[`\\]|\$\{/g, "\\$&") : `\${${part.name}}`))
+    .join("")
+  return `(\`${text}\`)`
+}
+
 /**
  * The typed-client proxy chain for a path, without the terminal verb call. Shared by `clientCall`
  * and the `nifra routes` collision annotation so both teach exactly one spelling.
@@ -111,10 +152,9 @@ function clientChain(path: string): string {
   if (segs.length === 0) return "api.index"
   let chain = "api"
   for (const seg of segs) {
-    if (seg.startsWith(":") || seg.startsWith("*")) {
-      const name = seg.replace(/^[:*]/, "") || "value"
-      chain += `({ ${name} })`
-    } else if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
+    const call = paramCall(seg)
+    if (call !== undefined) chain += call
+    else if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
     else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
   }
   return chain
@@ -124,7 +164,8 @@ function clientChain(path: string): string {
  * The typed-client call form for a route - the exact `client<typeof app>` proxy chain an agent should
  * write, derived from the same convention `@nifrajs/client` implements (so it never has to read the
  * client tests to learn it): a static segment is a property (`.users`), a path param/wildcard is a call
- * that appends the value (`({ id })`), the root path is `.index`, and the HTTP verb is the terminal call.
+ * that appends the value (`({ id })`), a segment that is part literal, part parameter is a call with
+ * the segment text (``(`${name}.json`)``), the root path is `.index`, and the HTTP verb is the terminal call.
  * Body verbs (POST/PUT/PATCH) take the body first then call-options; other verbs take call-options first -
  * so the `{ query }` argument lands in the right slot for each.
  *
@@ -136,6 +177,9 @@ function clientChain(path: string): string {
 export function clientCall(method: string, path: string, schema: unknown): string {
   const s = schema as { body?: unknown; query?: unknown } | undefined
   const verb = method.toLowerCase()
+  // The typed client has a call for the standard methods only; any other method goes out through
+  // `fetch`, against the route's own path.
+  if (!TYPED_VERBS.has(verb)) return `await fetch(url, { method: ${JSON.stringify(method)} })`
   const chain = clientChain(path)
   const isBodyVerb = verb === "post" || verb === "put" || verb === "patch"
   let call: string
@@ -153,16 +197,18 @@ export function clientCall(method: string, path: string, schema: unknown): strin
 /** Markdown section listing the backend's API routes with their request + response field shapes. */
 export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
-    return "## API routes\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
+    return "## API routes\n\nNo `backend/app.ts` server routes found (this app may be frontend-only)."
   }
   const lines = [...routes]
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
     .flatMap((r) => [
       `- \`${r.method} ${r.path}\``,
       ...schemaLines(r.schema),
-      `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``,
+      TYPED_VERBS.has(r.method.toLowerCase())
+        ? `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``
+        : `    - call: \`${clientCall(r.method, r.path, r.schema)}\` (no typed-client call for this method; \`url\` is the path above)`,
     ])
-  return `## API routes (backend.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
+  return `## API routes (backend/app.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
 }
 
 /** Compact API-routes INDEX for the no-arg `nifra_context` call - `METHOD path` per route, WITHOUT the
@@ -171,12 +217,12 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
  * contract via the `path`/`kind` slice, instead of every schema up front. */
 export function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
-    return "## API routes (backend.ts)\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
+    return "## API routes (backend/app.ts)\n\nNo `backend/app.ts` server routes found (this app may be frontend-only)."
   }
   const lines = [...routes]
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
     .map((r) => `- \`${r.method} ${r.path}\``)
-  return `## API routes (backend.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
+  return `## API routes (backend/app.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
 }
 
 /** Markdown section listing the file-routed pages (URL pattern → source file). */
@@ -185,7 +231,7 @@ export function pageRoutesSection(manifest: Manifest | undefined): string {
     return "## Page routes\n\nNo file routes found under `routes/`."
   }
   const lines = [...manifest.routes]
-    .sort((a, b) => a.pattern.localeCompare(b.pattern))
+    .sort((a, b) => codeUnitOrder(a.pattern, b.pattern))
     .map((r) => `- \`${r.pattern}\` → \`${r.file}\``)
   return `## Page routes (routes/)\n\n${lines.join("\n")}`
 }
@@ -207,9 +253,9 @@ const CONVENTIONS = `## Conventions (summary)
   \`res.data\` from the backend's route types, so the compiler catches any frontend/backend drift. Never
   hand-roll \`fetch\` + ad-hoc response types for an internal API - that's exactly how screens drift. It
   never throws: branch on \`res.ok ? res.data : res.error\`.
-- **Pages:** file-routed under \`routes/\`; \`loader\`/\`action\` are server-only but the module is also bundled
-  for the browser - **never top-level-import server-only code** (DB, secrets, \`process.env\`) into a route
-  file; reach it via \`ctx.api\` / \`ctx.env\`.
+- **Pages:** file-routed under \`routes/\`. A route is two files: \`x.tsx\` (browser) and \`x.backend.ts\`
+  (\`loader\`, \`action\`, \`middleware\`; server only). Server code lives under \`backend/\`, code both sides
+  use under \`shared/\`, components under \`frontend/\`; the browser build refuses backend code outright.
 - \`app.fetch(Request)\` is the universal entry. Full reference: this repo's \`AGENTS.md\`, or \`llms-full.txt\`.`
 
 /** Optional narrowing for {@link describeProject} - a path prefix and/or one section. A filtered
@@ -303,7 +349,7 @@ export function routesToJsonFromEvidence(
     routes = routes.filter((r) => r.path.startsWith(pathPrefix))
   }
   return [...routes]
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
     .map((r) => {
       const s = r.schema
       const body = shape(s?.body)
@@ -373,12 +419,16 @@ export interface RouteTableInput {
   /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `""`
    * disables the auto-mount, so no API route is marked auto-mounted. */
   readonly apiPrefix?: string
+  /** The backend declares its routes without the prefix and is served at `apiPrefix + path`: every API
+   * route is auto-mounted, listed at the path a request uses. */
+  readonly apiStrip?: boolean
 }
 
 /** True when `path` is at or under `prefix` as a path segment boundary (`/api` matches `/api` and
  * `/api/x`, but not `/apiary`). An empty prefix matches nothing (auto-mount disabled). */
 function isUnderPrefix(path: string, prefix: string): boolean {
   if (prefix === "") return false
+  if (prefix === "/") return true
   return path === prefix || path.startsWith(`${prefix}/`)
 }
 
@@ -390,7 +440,14 @@ function isUnderPrefix(path: string, prefix: string): boolean {
  * joined methods, for stable output.
  */
 export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
-  const apiPrefix = input.apiPrefix ?? "/api"
+  const configured = input.apiPrefix ?? "/api"
+  // Read the prefix as the server's mount table does (`/api/` and `/api/*` are `/api`).
+  const apiPrefix = configured === "" ? "" : (normalizeMountPath(configured) ?? configured)
+  const stripped = input.apiStrip === true && apiPrefix !== ""
+  const servedPath = (path: string): string => {
+    if (!stripped || apiPrefix === "/") return path
+    return path === "/" ? apiPrefix : `${apiPrefix}${path}`
+  }
   const rows: RouteTableEntry[] = []
   for (const page of input.pages) {
     const methods = page.hasAction ? ["GET", "POST"] : ["GET"]
@@ -399,11 +456,12 @@ export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
   // Collapse API routes that share a path into one row with all its methods (a REST resource).
   const byPath = new Map<string, { methods: Set<string>; autoMounted: boolean }>()
   for (const r of input.api) {
-    const existing = byPath.get(r.path)
+    const path = servedPath(r.path)
+    const existing = byPath.get(path)
     if (existing === undefined) {
-      byPath.set(r.path, {
+      byPath.set(path, {
         methods: new Set([r.method.toUpperCase()]),
-        autoMounted: isUnderPrefix(r.path, apiPrefix),
+        autoMounted: stripped || isUnderPrefix(r.path, apiPrefix),
       })
     } else existing.methods.add(r.method.toUpperCase())
   }
@@ -417,9 +475,9 @@ export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
   }
   return rows.sort(
     (a, b) =>
-      a.path.localeCompare(b.path) ||
-      a.kind.localeCompare(b.kind) ||
-      a.methods.join(",").localeCompare(b.methods.join(",")),
+      codeUnitOrder(a.path, b.path) ||
+      codeUnitOrder(a.kind, b.kind) ||
+      codeUnitOrder(a.methods.join(","), b.methods.join(",")),
   )
 }
 
@@ -447,7 +505,7 @@ export function clientSpellingFor(
 /** Render the route table as a terse aligned text table (the `nifra routes` default output). Pure. */
 export function renderRouteTable(rows: readonly RouteTableEntry[]): string {
   if (rows.length === 0)
-    return "No routes found (no `routes/` pages and no `backend.ts` API routes)."
+    return "No routes found (no `routes/` pages and no `backend/app.ts` API routes)."
   const display = rows.map((r) => ({
     methods: r.methods.join(", "),
     kind: r.kind,
@@ -543,7 +601,7 @@ function parentPath(path: string): string | undefined {
 /** Build a stable parent/child graph from the public route table. Pure and topology-neutral. */
 export function buildRouteGraph(rows: readonly RouteTableEntry[]): RouteGraph {
   const sorted = [...rows].sort(
-    (a, b) => a.path.localeCompare(b.path) || a.kind.localeCompare(b.kind),
+    (a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.kind, b.kind),
   )
   const nodes: RouteGraphNode[] = [
     { id: "root", kind: "root", path: "/" },
@@ -643,7 +701,12 @@ async function collectRouteTable(app: LoadedApp): Promise<RouteTableEntry[]> {
     }
     pages.push({ pattern: route.pattern, file: route.file, hasAction })
   }
-  const rows = buildRouteTable({ pages, api: backendRoutes(app.backend) })
+  const rows = buildRouteTable({
+    pages,
+    api: backendRoutes(app.backend),
+    ...(app.framework.apiPrefix !== undefined ? { apiPrefix: app.framework.apiPrefix } : {}),
+    ...(app.framework.apiStrip !== undefined ? { apiStrip: app.framework.apiStrip } : {}),
+  })
   return rows
 }
 

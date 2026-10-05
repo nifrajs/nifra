@@ -21,6 +21,7 @@ import {
   type RegisteredCapabilityInterceptor,
   validCapabilityId,
 } from "./internal/capability-runtime.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { effectScopeForContext } from "./internal/effect-execution.ts"
 import { NIFRA_ASSURANCE_IDS } from "./internal/route-assurance.ts"
 import {
@@ -29,7 +30,12 @@ import {
   effectLedgerOf,
   normalizeEffectMetadata,
 } from "./ledger.ts"
-import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
+import {
+  type ReflectedMount,
+  type ReflectedRoute,
+  reflectMounts,
+  reflectRoutes,
+} from "./reflection.ts"
 
 export type {
   AroundCapabilityOptions,
@@ -154,6 +160,8 @@ export interface CapabilityEvidenceSet {
   readonly routes: readonly RouteCapabilityEvidence[]
   /** Optional already-composed route reflection for mounted application surfaces. */
   readonly reflectedRoutes?: readonly ReflectedRoute[]
+  /** The mounts reflection cannot see into, when already composed. Default: `reflectMounts(source)`. */
+  readonly mounts?: readonly ReflectedMount[]
 }
 
 export type CapabilityFindingCode =
@@ -167,6 +175,7 @@ export type CapabilityFindingCode =
   | "forbidden-effect-import"
   | "provenance-truncated"
   | "unmatched-provenance-seam"
+  | "opaque-mount-undeclared"
 
 export interface CapabilityFinding {
   readonly code: CapabilityFindingCode
@@ -188,10 +197,24 @@ export interface AssuredCapabilityRoute {
   readonly classification?: DataClassification
 }
 
+/**
+ * Part of the app that assurance knowingly does not cover: a mount declared `opaque`. Listed so the
+ * report states its own boundary; it never fails the report.
+ */
+export interface CapabilityGap {
+  readonly kind: "opaque-mount"
+  /** The mount prefix with `/*`. */
+  readonly path: string
+  /** The declared reason. */
+  readonly reason: string
+}
+
 export interface CapabilityAssuranceReport {
   readonly ok: boolean
   readonly routes: readonly AssuredCapabilityRoute[]
   readonly findings: readonly CapabilityFinding[]
+  /** Declared known gaps, present when there is at least one. */
+  readonly gaps?: readonly CapabilityGap[]
 }
 
 export interface CapabilitySnapshotRoute {
@@ -209,7 +232,9 @@ export interface CapabilitySnapshot {
   readonly routes: readonly CapabilitySnapshotRoute[]
 }
 
-const SAFE_METHODS = new Set(["GET", "HEAD"])
+// RFC 9110 safe methods nifra can route (it refuses TRACE). CSRF guards skip all three, so a write
+// behind any of them would run without that check.
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
 export { validCapabilityId }
 
@@ -482,10 +507,26 @@ export function evaluateCapabilityAssurance(
       }),
     )
   }
+  // A mount's routes are invisible to reflection, so its effects are unproven. A declared reason
+  // turns that into a stated boundary of the report; an undeclared one is a hole and fails it.
+  const gaps: CapabilityGap[] = []
+  for (const mount of evidenceSet.mounts ?? reflectMounts(source)) {
+    if (mount.opaque !== undefined) {
+      gaps.push(Object.freeze({ kind: "opaque-mount", path: mount.path, reason: mount.opaque }))
+      continue
+    }
+    findings.push({
+      code: "opaque-mount-undeclared",
+      method: "*",
+      path: mount.path,
+      message: `mount ${mount.path} is not analyzed - merge() a nifra server() so its routes are checked, or declare why with { opaque: "<reason>" } on the mount`,
+    })
+  }
   return Object.freeze({
     ok: findings.length === 0,
     routes: Object.freeze(routes),
     findings: Object.freeze(findings),
+    ...(gaps.length > 0 ? { gaps: Object.freeze(gaps) } : {}),
   })
 }
 
@@ -557,13 +598,15 @@ export class CapabilityAdmissionAbortedError extends Error {
   }
 }
 
-/** An interceptor called its one-shot `next()` continuation more than once. */
+/** An interceptor called its one-shot `next()` continuation more than once, or after it returned. */
 export class CapabilityInterceptorProtocolError extends Error {
   constructor(
     public readonly capability: string,
     public readonly effectId: string,
   ) {
-    super(`capability assurance: ${capability} interceptor called next() more than once`)
+    super(
+      `capability assurance: ${capability} interceptor called next() more than once or after it returned`,
+    )
     this.name = "CapabilityInterceptorProtocolError"
   }
 }
@@ -643,22 +686,36 @@ async function runCapabilityInterceptors(
   const registration = registrations[index]
   if (registration === undefined) return
   let nextPromise: Promise<void> | undefined
-  await withInterceptorBound(
-    registration,
-    parentSignal,
-    baseEvent.capability,
-    baseEvent.effectId,
-    async (signal) => {
-      const event = Object.freeze({ ...baseEvent, signal })
-      await registration.interceptor(event, () => {
-        if (nextPromise !== undefined) {
-          throw new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId)
-        }
-        nextPromise = runCapabilityInterceptors(registrations, baseEvent, signal, index + 1)
-        return nextPromise
-      })
-    },
-  )
+  let returned = false
+  try {
+    await withInterceptorBound(
+      registration,
+      parentSignal,
+      baseEvent.capability,
+      baseEvent.effectId,
+      async (signal) => {
+        const event = Object.freeze({ ...baseEvent, signal })
+        await registration.interceptor(event, () => {
+          if (returned) {
+            // The interceptor already returned (a denial) or timed out, so the effect will not run and
+            // neither may the interceptors after it. Handled, since a late caller seldom awaits it.
+            const late = Promise.reject(
+              new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId),
+            )
+            late.catch(() => {})
+            return late
+          }
+          if (nextPromise !== undefined) {
+            throw new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId)
+          }
+          nextPromise = runCapabilityInterceptors(registrations, baseEvent, signal, index + 1)
+          return nextPromise
+        })
+      },
+    )
+  } finally {
+    returned = true
+  }
   if (nextPromise === undefined) {
     throw new CapabilityDeniedError(baseEvent.capability, baseEvent.effectId)
   }
@@ -859,6 +916,6 @@ export function snapshotCapabilities(report: CapabilityAssuranceReport): Capabil
         ...(route.classification !== undefined ? { classification: route.classification } : {}),
       }),
     )
-    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
   return Object.freeze({ nifraCapabilities: 1, routes: Object.freeze(routes) })
 }

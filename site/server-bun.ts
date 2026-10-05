@@ -1,8 +1,8 @@
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
-import { machineSurfaceFor } from "./machine-surfaces"
+import { backend } from "./backend/app"
+import { machineSurfaceFor } from "./backend/machine-surfaces"
 import { clientEntry, manifest } from "./server-manifest"
 
 const app = createWebApp({

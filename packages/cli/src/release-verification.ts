@@ -16,7 +16,8 @@ import {
 } from "./verification-plan.ts"
 
 export type ReleaseVerificationMode = VerificationPlanMode
-export type ReleaseGateStatus = "pass" | "fail" | "skipped"
+/** `undeclared`: the project's package.json has no script for the gate, so it was not run. */
+export type ReleaseGateStatus = "pass" | "fail" | "skipped" | "undeclared"
 
 export interface ReleaseGateResult {
   readonly id: string
@@ -24,6 +25,8 @@ export interface ReleaseGateResult {
   readonly commands: readonly string[]
   readonly exitCode?: number
   readonly message?: string
+  /** The last lines a failed gate's command printed, so a CI log shows why it failed. */
+  readonly output?: string
   readonly remediation: string
 }
 
@@ -33,6 +36,8 @@ export interface ReleaseVerificationResult {
   readonly gates: readonly ReleaseGateResult[]
   /** Release gates intentionally absent from the selected shorter plan. */
   readonly omittedReleaseGateIds: readonly string[]
+  /** Gates a shared runner left out; a local verification runs them. */
+  readonly localGateIds: readonly string[]
 }
 
 export interface ReleaseCommandResult {
@@ -49,6 +54,11 @@ export interface ReleaseCommandSpec {
 
 export interface ReleaseVerificationOptions {
   readonly mode?: ReleaseVerificationMode
+  /**
+   * Leave out the gates the plan keeps off CI (`workflowRequired: false`): timing on a shared
+   * runner swings too far run to run to gate a release on.
+   */
+  readonly sharedRunner?: boolean
   readonly runCommand?: (spec: ReleaseCommandSpec) => Promise<ReleaseCommandResult>
 }
 
@@ -65,6 +75,18 @@ const runBunCommand = async (spec: ReleaseCommandSpec): Promise<ReleaseCommandRe
     new Response(child.stderr).text(),
   ])
   return { exitCode, stdout, stderr }
+}
+
+const OUTPUT_TAIL_LINES = 40
+
+/** The last lines a command printed, stdout before stderr, or undefined when it printed nothing. */
+const outputTail = (result: ReleaseCommandResult): string | undefined => {
+  const printed = [result.stdout, result.stderr]
+    .map((text) => text?.trimEnd() ?? "")
+    .filter((text) => text !== "")
+  return printed.length === 0
+    ? undefined
+    : printed.join("\n").split("\n").slice(-OUTPUT_TAIL_LINES).join("\n")
 }
 
 const parsePackage = (path: string): Record<string, unknown> | undefined => {
@@ -153,7 +175,7 @@ const runGate = async (
     })
     lastExitCode = result.exitCode
     if (result.exitCode !== 0) {
-      return {
+      const failed: Omit<ReleaseGateResult, "output"> & { output?: string } = {
         id: gate.id,
         status: "fail",
         commands: gate.commands.map(commandLabel),
@@ -161,6 +183,9 @@ const runGate = async (
         message: `${commandLabel(args)} exited with code ${result.exitCode}`,
         remediation: gate.remediation,
       }
+      const output = outputTail(result)
+      if (output !== undefined) failed.output = output
+      return failed
     }
   }
   return {
@@ -180,6 +205,23 @@ const skippedGate = (gate: VerificationGateSpec, failedId: string): ReleaseGateR
   remediation: `Fix the ${failedId} gate first, then rerun verification.`,
 })
 
+const undeclaredGate = (gate: VerificationGateSpec, script: string): ReleaseGateResult => ({
+  id: gate.id,
+  status: "undeclared",
+  commands: gate.commands.map(commandLabel),
+  message: `\`${script}\` is not a script in package.json`,
+  remediation: `Declare a \`${script}\` script to run this gate.`,
+})
+
+/** The first `bun run <script>` of a gate that the root package.json does not declare. */
+const undeclaredScript = (
+  gate: VerificationGateSpec,
+  scripts: ReadonlySet<string>,
+): string | undefined =>
+  gate.commands.find(
+    ([verb, script]) => verb === "run" && script !== undefined && !scripts.has(script),
+  )?.[1]
+
 /** Collect the same gate result rendered by the CLI and used by repository scripts. */
 export async function collectReleaseVerification(
   start: string,
@@ -189,12 +231,25 @@ export async function collectReleaseVerification(
   const root = await resolveVerificationRoot(start)
   const runCommand = options.runCommand ?? runBunCommand
   const fixtureRoot = mkdtempSync(join(realpathSync(tmpdir()), "nifra-verify-"))
+  const declared = parsePackage(join(root, "package.json"))?.scripts
+  const scripts = new Set(
+    declared !== null && typeof declared === "object" ? Object.keys(declared) : [],
+  )
+  const plan = gatePlan(mode)
+  const local = options.sharedRunner === true ? plan.filter((gate) => !gate.workflowRequired) : []
   const gates: ReleaseGateResult[] = []
   try {
     let failedId: string | undefined
-    for (const gate of gatePlan(mode)) {
+    for (const gate of plan) {
+      if (local.includes(gate)) continue
       if (failedId !== undefined) {
         gates.push(skippedGate(gate, failedId))
+        continue
+      }
+      // The plan names the nifra repository's own scripts; a project without one has nothing to run.
+      const missing = undeclaredScript(gate, scripts)
+      if (missing !== undefined) {
+        gates.push(undeclaredGate(gate, missing))
         continue
       }
       const result = await runGate(root, gate, runCommand, fixtureRoot)
@@ -205,10 +260,13 @@ export async function collectReleaseVerification(
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
   return {
-    ok: gates.every((gate) => gate.status === "pass"),
+    ok:
+      gates.some((gate) => gate.status === "pass") &&
+      gates.every((gate) => gate.status === "pass" || gate.status === "undeclared"),
     mode,
     gates,
     omittedReleaseGateIds: omittedVerificationGateIds(mode),
+    localGateIds: local.map((gate) => gate.id),
   }
 }
 
@@ -218,13 +276,23 @@ export function renderReleaseVerification(result: ReleaseVerificationResult): st
     const marker = gate.status === "pass" ? "✓" : gate.status === "fail" ? "✗" : "-"
     lines.push(`${marker} ${gate.id}: ${gate.status}`)
     if (gate.message !== undefined) lines.push(`  ${gate.message}`)
-    if (gate.status !== "pass") lines.push(`  fix: ${gate.remediation}`)
+    if (gate.output !== undefined)
+      lines.push(...gate.output.split("\n").map((line) => `  | ${line}`))
+    if (gate.status === "fail" || gate.status === "skipped")
+      lines.push(`  fix: ${gate.remediation}`)
   }
   if (result.omittedReleaseGateIds.length > 0) {
     lines.push(
       "",
       `note: default verification omits release gates: ${result.omittedReleaseGateIds.join(", ")}`,
       "      run `bun run check:release` for the full release gate.",
+    )
+  }
+  if (result.localGateIds.length > 0) {
+    lines.push(
+      "",
+      `note: a shared runner leaves out the timing gates: ${result.localGateIds.join(", ")}`,
+      "      run `bun run check:release` locally for them.",
     )
   }
   lines.push("", result.ok ? "✓ verification passed" : "✗ verification failed")
@@ -246,6 +314,7 @@ if (import.meta.main) {
   const mode: ReleaseVerificationMode = process.argv.includes("--release") ? "release" : "default"
   const ok = await runReleaseVerification(process.cwd(), {
     mode,
+    sharedRunner: process.argv.includes("--shared-runner"),
     json: process.argv.includes("--json"),
   })
   if (!ok) process.exitCode = 1

@@ -83,3 +83,4 @@ dv-*/
 /.pi
 /.playwright-cli
 /vite-split-*.png
+/docs/

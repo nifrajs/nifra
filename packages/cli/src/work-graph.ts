@@ -16,7 +16,9 @@ import {
 } from "@nifrajs/core/evidence"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { digestRoute } from "./contracts.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 export type WorkGraphNodeKind =
   | "route"
@@ -133,8 +135,11 @@ export interface ProjectWorkGraphResult {
   readonly evidence: EvidenceBundle
 }
 
-const SOURCE_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
+// Framework component, content, and style files are app source too: an edit to one makes a build stale.
+const SOURCE_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,svelte,vue,mdx,css}")
 const IGNORED = /(^|\/)(node_modules|dist|build|\.nifra|\.git|\.wrangler|coverage)\//
+const APP_SOURCE_DIR = /^(?:routes|frontend|backend|shared)\//
+const BACKEND_SOURCE_DIR = /^(?:backend|shared)\//
 const MANIFEST_NAMES = new Set([
   "server-manifest.ts",
   "nifra-manifest.json",
@@ -176,13 +181,13 @@ export function evaluateBuildFreshness(input: {
 
 export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness> {
   const sourcePaths: string[] = []
-  for (const name of ["backend.ts", "framework.ts", "nifra.config.ts"]) {
+  for (const name of [BACKEND_APP_FILE, FRAMEWORK_FILE, CONFIG_FILE]) {
     const path = resolve(cwd, name)
     if (existsSync(path)) sourcePaths.push(path)
   }
   for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
     const path = rawPath.replaceAll("\\", "/")
-    if (!IGNORED.test(path) && path.startsWith("routes/")) sourcePaths.push(resolve(cwd, path))
+    if (!IGNORED.test(path) && APP_SOURCE_DIR.test(path)) sourcePaths.push(resolve(cwd, path))
   }
   const sourceTimes = await fileTimes(sourcePaths)
   for (const buildDirName of ["dist", "build"]) {
@@ -215,8 +220,8 @@ export async function collectProjectWorkGraph(
 ): Promise<ProjectWorkGraphResult> {
   const freshness = await inspectBuildFreshness(cwd)
   if (!freshness.ok) throw new StaleBuildError(freshness)
-  const backendPath = resolve(cwd, "backend.ts")
-  if (!existsSync(backendPath)) throw new Error(`[nifra] no backend.ts in ${cwd}`)
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (!existsSync(backendPath)) throw new Error(`[nifra] no ${BACKEND_APP_FILE} in ${cwd}`)
   const loadedValue: unknown = await import(`${backendPath}?nifra-work-graph=${Date.now()}`)
   const loaded = recordOf(loadedValue)
   if (loaded?.backend === undefined)
@@ -290,8 +295,8 @@ export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGr
     })
     for (const file of routeFiles)
       addEdge({ from: `file:${file}`, to: routeId, relation: "implements" })
-    if (routeFiles.length === 0 && sourceFiles.some((file) => file.path === "backend.ts"))
-      addEdge({ from: "file:backend.ts", to: routeId, relation: "implements" })
+    if (routeFiles.length === 0 && sourceFiles.some((file) => file.path === BACKEND_APP_FILE))
+      addEdge({ from: `file:${BACKEND_APP_FILE}`, to: routeId, relation: "implements" })
     for (const [name, schema] of Object.entries(route.schema ?? {})) {
       if (schema === undefined || name === "errors") continue
       const schemaId = `schema:${routeKey}:${name}`
@@ -334,9 +339,9 @@ export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGr
     for (const file of manifestFiles)
       addEdge({ from: `manifest:${file.path}`, to: routeId, relation: "describes" })
   }
-  const sortedNodes = [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id))
+  const sortedNodes = [...nodes.values()].sort((a, b) => codeUnitOrder(a.id, b.id))
   const sortedEdges = edges.sort((a, b) =>
-    `${a.from}\n${a.to}\n${a.relation}`.localeCompare(`${b.from}\n${b.to}\n${b.relation}`),
+    codeUnitOrder(`${a.from}\n${a.to}\n${a.relation}`, `${b.from}\n${b.to}\n${b.relation}`),
   )
   const digest = await digestJson({ nodes: sortedNodes, edges: sortedEdges })
   return Object.freeze({
@@ -353,7 +358,9 @@ export function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): 
     ...new Set(changedFiles.map((file) => file.replace(/^\.\//, "").replaceAll("\\", "/"))),
   ]
   const seeds = new Set<string>()
+  const unmodeled: string[] = []
   for (const file of normalized) {
+    let seeded = false
     for (const node of graph.nodes) {
       if (
         (node.kind === "file" || node.kind === "test" || node.kind === "manifest") &&
@@ -361,11 +368,18 @@ export function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): 
           node.id === `test:${file}` ||
           node.id === `manifest:${file}` ||
           node.files.includes(file))
-      )
+      ) {
         seeds.add(node.id)
+        seeded = true
+      }
     }
+    // An app file the graph does not model (deleted, or a type it does not read) has an unknown
+    // reach, so it stands for itself and impacts every route rather than proving nothing.
+    if (!seeded && APP_SOURCE_DIR.test(file)) unmodeled.push(file)
   }
-  if (normalized.includes("backend.ts"))
+  for (const file of unmodeled) seeds.add(`file:${file}`)
+  // Any backend or shared module can reach every handler through backend/app.ts.
+  if (unmodeled.length > 0 || normalized.some((file) => BACKEND_SOURCE_DIR.test(file)))
     for (const node of graph.nodes) if (node.kind === "route") seeds.add(node.id)
   const impacted = new Set(seeds)
   const queue = [...seeds]
@@ -444,7 +458,7 @@ export function createEvidenceBundle(
   plan: ProofPlan,
   proofs: readonly ProofEvidence[] = [],
 ): EvidenceBundle {
-  const evidence = [...proofs].sort((a, b) => a.id.localeCompare(b.id))
+  const evidence = [...proofs].sort((a, b) => codeUnitOrder(a.id, b.id))
   // Levels are not cumulative (assure does not typecheck), so every planned step needs its own
   // passing proof; a higher-level pass never subsumes a lower one.
   const done =
@@ -581,7 +595,7 @@ function filesForRoute(
   const matches = files
     .filter(
       (file) =>
-        file.path === "backend.ts" ||
+        file.path === BACKEND_APP_FILE ||
         (file.path.startsWith("routes/") && file.content.includes(route.path)),
     )
     .map((file) => file.path)

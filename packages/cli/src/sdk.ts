@@ -3,6 +3,8 @@ import { existsSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import type { JsonSchema } from "@nifrajs/core/reflection"
 import { type OpenAPIDocument, toOpenAPI } from "@nifrajs/schema/openapi"
+import { BACKEND_APP_FILE } from "./app-files.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 export type SdkLanguage = "python" | "go"
 
@@ -40,7 +42,7 @@ interface SchemaRecord {
 
 interface ParameterLike {
   readonly name: string
-  readonly in: "path" | "query" | "header"
+  readonly in: "path" | "query" | "header" | "cookie"
   readonly required: boolean
   readonly schema?: JsonSchema
 }
@@ -84,7 +86,7 @@ const recordOf = (value: unknown): SchemaRecord | undefined =>
 function operations(document: OpenAPIDocument): readonly OperationEntry[] {
   const result: OperationEntry[] = []
   for (const [path, item] of Object.entries(document.paths).sort(([a], [b]) =>
-    a.localeCompare(b),
+    codeUnitOrder(a, b),
   )) {
     for (const method of HTTP_METHODS) {
       const operation = (item as Record<string, unknown>)[method]
@@ -448,7 +450,7 @@ function pythonErrorAliases(
   entries.forEach((entry, index) => {
     const types: string[] = []
     for (const [status, response] of Object.entries(entry.operation.responses ?? {}).sort(
-      ([a], [b]) => a.localeCompare(b),
+      ([a], [b]) => codeUnitOrder(a, b),
     )) {
       if (!ERROR_STATUS.test(status)) continue
       const schema = responseSchema(response)
@@ -685,6 +687,10 @@ function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string
     "        route = path",
     "        for key, value in (path_params or {}).items():",
     '            route = route.replace("{" + key + "}", urllib.parse.quote(str(value), safe=""))',
+    "        # A `.` or `..` segment is a step to another path, never a value: anything between this",
+    "        # client and the server may resolve it, so the call is refused instead of sent elsewhere.",
+    '        if any(segment in (".", "..") for segment in route.split("/")):',
+    "            raise ValueError(\"a path parameter cannot make a '.' or '..' path segment\")",
     "        params = [(key, value) for key, value in (query or {}).items() if value is not None]",
     "        url = self.base_url + route",
     "        if params:",
@@ -813,6 +819,11 @@ const GO_KEYWORDS = new Set([
   "var",
 ])
 
+// encoding/json reads a tag name made only of letters, decimal digits and this punctuation. A key
+// with a quote, backslash, backtick, comma or control character has no struct-tag spelling, and
+// writing it raw would end the tag (or the struct) early.
+const GO_JSON_TAG_NAME = /^[\p{L}\p{Nd}!#$%&()*+\-./:;<=>?@[\]^_{|}~ ]+$/u
+
 function goFieldName(value: string): string {
   const result = pascal(value, "Field")
   return GO_KEYWORDS.has(result.toLowerCase()) ? `${result}Value` : result
@@ -831,6 +842,14 @@ function goModelFields(
   const tag = String.fromCharCode(96)
   const fields: string[] = []
   for (const [jsonName, property] of Object.entries(properties)) {
+    if (!GO_JSON_TAG_NAME.test(jsonName)) {
+      tracker.add(
+        "schema",
+        `model ${name}.${JSON.stringify(jsonName)}`,
+        "property name cannot be spelled as a Go struct tag",
+      )
+      continue
+    }
     let fieldName = goFieldName(jsonName)
     while (used.has(fieldName)) fieldName += "Value"
     used.add(fieldName)
@@ -853,7 +872,8 @@ function goModelFields(
         tag +
         'json:"' +
         jsonName +
-        (required.has(jsonName) ? "" : ",omitempty") +
+        // A bare "-" tag omits the field; "-," names a property that is literally "-".
+        (required.has(jsonName) ? (jsonName === "-" ? "," : "") : ",omitempty") +
         '"' +
         tag,
     )
@@ -893,7 +913,7 @@ function goErrorInfo(
 ): GoErrorInfo | undefined {
   const errors = Object.entries(entry.operation.responses ?? {})
     .filter(([status]) => ERROR_STATUS.test(status))
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => codeUnitOrder(a, b))
   if (errors.length === 0) return undefined
   const operationNameValue = pascal(name, "Request")
   const interfaceName = `${operationNameValue}ErrorBody`
@@ -1193,6 +1213,9 @@ function goSdk(document: OpenAPIDocument, options: SdkRenderOptions): string {
     "func (c *Client) request(method, path string, pathParams map[string]string, query url.Values, body any) (int, []byte, error) {",
     "\troute := path",
     '\tfor key, value := range pathParams { route = strings.ReplaceAll(route, "{"+key+"}", url.PathEscape(value)) }',
+    "\t// A `.` or `..` segment is a step to another path, never a value: anything between this client",
+    "\t// and the server may resolve it, so the call is refused instead of sent elsewhere.",
+    '\tfor _, segment := range strings.Split(route, "/") { if segment == "." || segment == ".." { return 0, nil, fmt.Errorf("a path parameter cannot make a %q or %q path segment", ".", "..") } }',
     "\ttarget := c.BaseURL + route",
     "\tparsed, err := url.Parse(target)",
     "\tif err != nil { return 0, nil, err }",
@@ -1244,7 +1267,7 @@ function unsupportedTransports(backend: unknown): readonly string[] {
   ).routes
   if (typeof routes !== "function") return []
   const result: string[] = []
-  for (const route of routes()) {
+  for (const route of routes.call(backend)) {
     const method = typeof route.method === "string" ? route.method : "?"
     const path = typeof route.path === "string" ? route.path : "?"
     if (route.schema?.sse !== undefined) {
@@ -1254,14 +1277,16 @@ function unsupportedTransports(backend: unknown): readonly string[] {
   return result
 }
 
-/** Load backend.ts, generate an SDK, and write it to the project. */
+/** Load backend/app.ts, generate an SDK, and write it to the project. */
 export async function runSdk(
   cwd: string,
   options: { readonly language: SdkLanguage; readonly out?: string; readonly strict?: boolean },
 ): Promise<void> {
-  const backendPath = resolve(cwd, "backend.ts")
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) {
-    throw new Error(`[nifra] no backend.ts in ${cwd} - SDK generation needs the API contract.`)
+    throw new Error(
+      `[nifra] no ${BACKEND_APP_FILE} in ${cwd} - SDK generation needs the API contract.`,
+    )
   }
   const backend = ((await import(backendPath)) as { backend?: unknown }).backend
   if (backend === undefined) throw new Error(`[nifra] ${backendPath} does not export backend.`)

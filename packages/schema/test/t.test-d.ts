@@ -7,6 +7,7 @@
 import type { Context, InferOutput } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 import type { Equal, Expect } from "@nifrajs/test-utils"
+import { t as formT } from "../src/form.ts"
 import { t } from "../src/index.ts"
 
 const str = t.string()
@@ -33,3 +34,25 @@ export type _BodyFlow = Expect<
 >
 const app = server().post("/users", { body: user }, (c) => c.body)
 export type _App = typeof app
+
+// Files: the `t` of `@nifrajs/schema/form` adds `t.file` (a `File`) and `t.form`, which types text and
+// file fields side by side and is a route's `body` as is. A file schema composes with either `t`.
+const upload = formT.form({
+  title: formT.string(),
+  count: t.integer(),
+  avatar: formT.file({ accept: ["image/png"] }),
+  photos: t.array(formT.file()),
+  cover: formT.optional(formT.file()),
+})
+type Upload = { title: string; count: number; avatar: File; photos: File[]; cover?: File }
+
+export type _File = Expect<Equal<InferOutput<ReturnType<typeof formT.file>>, File>>
+export type _Form = Expect<Equal<InferOutput<typeof upload>, Upload>>
+const uploads = server().post("/uploads", { body: upload }, (c) => c.body.avatar)
+export type _UploadApp = typeof uploads
+export type _FormFlow = Expect<Equal<Context<"/uploads", { body: typeof upload }>["body"], Upload>>
+// The plain `t` carries neither constructor: an app with no uploads ships none of that code.
+// @ts-expect-error - `file` lives on the `t` of `@nifrajs/schema/form`
+export const _noFile = t.file
+// @ts-expect-error - `form` lives on the `t` of `@nifrajs/schema/form`
+export const _noForm = t.form

@@ -1,5 +1,19 @@
 # @nifrajs/storage
 
+## 4.0.0
+
+### Minor Changes
+
+- 135a29a: `FileStorage` works on a host whose umask is `002`, the default for ordinary users on Debian and Ubuntu. The directories it creates are `0755` whatever the umask, and a group-writable directory it still refuses is named in the error, with the fix. A directory under the root is a key prefix, not an object: `exists()` is `false`, `get()` is `null`, and `delete()` does nothing.
+
+  Every adapter now refuses a key with an empty or `.` segment (`a//b`, `./a`, `a/./b`, `a/`). A file system reads such a key as another key, while an object store keeps the two apart.
+
+- 8dd764b: `R2Storage.list()` returns every key (up to `limit`), following R2's cursor past the 1000 keys a single bucket `list()` call returns. Before, it stopped at the first page, so a cleanup that deleted "everything listed" left the rest behind. `R2Storage` also implements `listPage()`, which returns one page of at most 1000 keys and the opaque cursor for the next.
+
+### Patch Changes
+
+- 01d2d56: `assertStorageAdapterConformance` checks every key shape the storage key contract refuses, on every key-taking method: a nested `..` segment, an absolute key, a backslash, a NUL, an empty key, and an empty, `.`, or trailing segment, where it used to try `../escape` alone. An adapter that refuses only some of them fails the `key safety` check with the method and key named.
+
 ## 3.5.0
 
 ## 3.4.0

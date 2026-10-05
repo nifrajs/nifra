@@ -148,6 +148,8 @@ export interface AgentTurnState {
     readonly kind: AgentPendingKind
     readonly tool?: string
     readonly effectId: string
+    /** SHA-256 of the suspended tool input, so a resume must replay that input and no other. */
+    readonly inputDigest?: string
   }
 }
 
@@ -587,6 +589,9 @@ export async function turn<
         kind: pending.kind,
         ...(pending.tool === undefined ? {} : { tool: pending.tool }),
         effectId: pending.effectId,
+        ...(pending.tool !== undefined && Object.hasOwn(pending, "input")
+          ? { inputDigest: await inputDigestOf(pending.input) }
+          : {}),
       },
       evidence,
     })
@@ -960,6 +965,20 @@ async function resumeTool<
     reason: "approval" | "budget" | "model" | "cancelled",
   ) => Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>>,
 ): Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>> {
+  // A resume continues the step this turn suspended on - that tool, that effect, that input. The
+  // continuation travels through the caller, so anything else in it is refused, not run.
+  const pending = state.pending
+  const continuation = resume.continuation
+  if (
+    pending?.tool === undefined ||
+    continuation.tool !== pending.tool ||
+    continuation.effectId !== pending.effectId ||
+    continuation.kind !== pending.kind ||
+    (pending.inputDigest !== undefined &&
+      pending.inputDigest !== (await inputDigestOf(continuation.input)))
+  ) {
+    throw new AgentResumeMismatchError()
+  }
   const tool =
     resume.continuation.tool === undefined
       ? undefined
@@ -976,8 +995,10 @@ async function resumeTool<
       },
       save,
     )
+  // The caller's decision answers only a step that suspended to await one; a step suspended for budget
+  // or cancellation asks the approval port as it would have.
   const approvalPorts: AgentPorts =
-    resume.approval === undefined
+    resume.approval === undefined || pending.kind !== "approval"
       ? ports
       : {
           ...ports,
@@ -1082,6 +1103,31 @@ function withTranscript<Output>(
       evidence: result.evidence,
     },
   }
+}
+
+/** A resume whose continuation is not the step the turn suspended on. */
+export class AgentResumeMismatchError extends Error {
+  override readonly name = "AgentResumeMismatchError"
+  constructor() {
+    super("agent: the resume does not continue the step this turn suspended on")
+  }
+}
+
+async function inputDigestOf(input: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalJson(input))
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([, field]) => field !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${entries.map(([key, field]) => `${JSON.stringify(key)}:${canonicalJson(field)}`).join(",")}}`
+  }
+  return JSON.stringify(value) ?? "null"
 }
 
 function freezeState(state: AgentTurnState): AgentTurnState {

@@ -1,5 +1,96 @@
 # @nifrajs/mcp
 
+## 4.0.0
+
+### Minor Changes
+
+- d4d40a5: feat(mcp): `allowedHosts` DNS-rebinding guard
+
+  `createMcpServer()`, `respondMcpHttp()`, and `serveDatabaseAsMcp()` accept `allowedHosts`. A
+  request whose Host is not listed gets 403, with or without an Origin. Set it for servers on
+  localhost or a private network, where a DNS-rebound page presents a matching Origin. The check reads
+  the inbound `Host` header. Host names compare case-insensitively, an entry without a port matches any
+  port, and an entry with a port matches the effective port, so `localhost:80` admits
+  `http://localhost/`.
+
+  The same-origin default now accepts an `https:` Origin on an `http:` request URL (a TLS-terminating
+  proxy) and still rejects a downgrade.
+
+- 9ccf198: `handleRpc` takes `exposeToolErrors`, which answers a throwing tool with `Tool execution failed: <message>` instead of the bare text. It is off by default, so a remote caller still sees nothing from an error message. `nifra mcp` turns it on for its stdio server, so the local agent sees why a project tool failed, for example the error that stopped the backend from loading.
+
+### Patch Changes
+
+- Updated dependencies [6695a23]
+- Updated dependencies [7b2ff47]
+- Updated dependencies [422248c]
+- Updated dependencies [62115dd]
+- Updated dependencies [dbc91b6]
+- Updated dependencies [d2329f5]
+- Updated dependencies [1eb77df]
+- Updated dependencies [dde125b]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [d7892ea]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [6907cbe]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [a158b74]
+- Updated dependencies [ff25d68]
+  - @nifrajs/agent@4.0.0
+  - @nifrajs/core@4.0.0
+  - @nifrajs/agent-protocol@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

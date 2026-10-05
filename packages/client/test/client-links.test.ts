@@ -157,3 +157,45 @@ describe("client links: default retry backoff", () => {
     expect(elapsed).toBeGreaterThanOrEqual(250) // first-attempt backoff is 300ms + jitter
   })
 })
+
+describe("client links: retry releases what it discards", () => {
+  test("a retried response's body is cancelled, not left holding its connection", async () => {
+    let cancelled = 0
+    let calls = 0
+    const fetch: FetchFn = async () => {
+      calls += 1
+      if (calls > 1) {
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+      }
+      const body = new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>(() => {}),
+        cancel: () => {
+          cancelled += 1
+        },
+      })
+      return new Response(body, { status: 503 })
+    }
+    const res = await mk({ fetch, retry: { attempts: 1, backoff: () => 0 } }).thing.get()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(res.ok).toBe(true)
+    expect(cancelled).toBe(1)
+  })
+
+  test("an abort during the backoff ends the call instead of waiting it out", async () => {
+    let calls = 0
+    const fetch: FetchFn = async (_url, init) => {
+      calls += 1
+      if (init?.signal?.aborted === true) throw new DOMException("aborted", "AbortError")
+      return new Response("{}", { status: 503, headers: { "content-type": "application/json" } })
+    }
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 20)
+    const started = performance.now()
+    const res = await mk({ fetch, retry: { attempts: 3, backoff: () => 5_000 } }).thing.get({
+      signal: controller.signal,
+    })
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(res).toMatchObject({ ok: false, status: 0, error: { error: "network_error" } })
+    expect(calls).toBe(2)
+  })
+})

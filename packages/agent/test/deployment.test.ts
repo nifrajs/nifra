@@ -113,3 +113,68 @@ describe("deployment lifecycle contracts", () => {
     ).toThrow(DeploymentError)
   })
 })
+
+describe("deployment lifecycle ordering", () => {
+  const authority = () => createDeploymentAuthority({ workspaceMaxBytes: 1024 * 1024 })
+
+  test("a cancel during start waits for it and cancels the workload it started", async () => {
+    const cancelled: (string | undefined)[] = []
+    const deployment = new AgentDeployment(
+      {
+        ...referenceAdapter(),
+        start: async ({ deploymentId }) => {
+          await Bun.sleep(20)
+          return { deploymentId, state: "running" as const, handleRef: "workload" }
+        },
+        cancel: ({ deploymentId, handleRef }) => {
+          cancelled.push(handleRef)
+          return { deploymentId, state: "cancelled" as const }
+        },
+      },
+      authority(),
+    )
+    await deployment.prepare({ deploymentId: "run-1" })
+    const starting = deployment.start()
+    await Bun.sleep(1)
+    expect((await deployment.cancel()).state).toBe("cancelled")
+    await starting
+    expect(cancelled).toEqual(["workload"])
+    expect(deployment.lifecycleState).toBe("cancelled")
+    expect(deployment.evidenceRecords.map((item) => item.kind)).toEqual([
+      "prepared",
+      "started",
+      "cancelled",
+    ])
+  })
+
+  test("a start that honors the cancel signal settles as cancelled", async () => {
+    const deployment = new AgentDeployment(
+      {
+        ...referenceAdapter(),
+        start: ({ signal }) =>
+          new Promise((_, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("stopped")), { once: true })
+          }),
+      },
+      authority(),
+    )
+    await deployment.prepare({ deploymentId: "run-2" })
+    const starting = deployment.start()
+    await Bun.sleep(1)
+    expect((await deployment.cancel()).state).toBe("cancelled")
+    await expect(starting).rejects.toMatchObject({ code: "cancelled" })
+    expect(deployment.lifecycleState).toBe("cancelled")
+  })
+
+  test("a refused plan is recorded as failed evidence", async () => {
+    const deployment = new AgentDeployment(referenceAdapter(), authority())
+    await expect(
+      deployment.prepare({ deploymentId: "hostile", hostileCode: true }),
+    ).rejects.toMatchObject({ code: "hostile_code_requires_isolation" })
+    await expect(deployment.prepare({ nope: true })).rejects.toMatchObject({ code: "invalid_plan" })
+    expect(deployment.evidenceRecords.map((item) => item.code)).toEqual([
+      "hostile_code_requires_isolation",
+      "invalid_plan",
+    ])
+  })
+})

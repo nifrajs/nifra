@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/contract",
@@ -18,40 +14,74 @@ interface LoaderContext {
   api:     unknown                 // the in-process backend client createWebApp was given
   env:     unknown                 // platform bindings forwarded from c.env (Workers KV/D1/…)
   draft:   boolean                 // true only when a valid draft cookie is present (draftSecret set)
+  set:     LoaderResponseControls  // response headers + cookies for this page request (see below)
 }
 
-// api + env are typed per-route via @nifrajs/client's LoaderArgs<Api, Env>; the agnostic core
-// keeps them \`unknown\`. Branch on \`draft\` to load unpublished content for preview/editors.`
+// api + env are typed per route by the generated Route.LoaderArgs (./+types/<name>); the agnostic
+// core keeps them \`unknown\`. Branch on \`draft\` to load unpublished content for preview/editors.`
 
-const SIGNATURES = `// routes/users/[id].tsx - a route module's full contract (every export optional but \`default\`).
-// doc-check: skip - full-contract sketch; ctx.api's routes and meta's loader-data shape come from
-// the reader's own backend type, so it can't compile standalone (see the typed examples elsewhere).
-import type { LoaderContext } from "@nifrajs/web"
-
-// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop).
-export async function loader(ctx: LoaderContext) {
-  return { user: await ctx.api.users.get({ id: ctx.params.id }) }
-}
-
-// POST → a mutation. Same context. Return a Response (e.g. a redirect - passed straight
-// through) OR data, which reaches the component as \`actionData\`.
-export async function action(ctx: LoaderContext) {
-  const form = await ctx.request.formData()
-  return { ok: true }
-}
+const SIGNATURES = `// routes/users/[id].tsx - the page: it ships to the browser whole. Only \`default\` is required.
+// doc-check: skip - full-contract sketch across two files; the data shape comes from the reader's
+// own backend, so it can't compile standalone (see the typed examples elsewhere).
+import type { Route } from "./+types/[id]"
 
 // Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
 // recomputes per request (its content can vary with loader data). \`origin\` is the request's
 // scheme+host (server-resolved, matches the client's location.origin) - use it for ABSOLUTE
 // canonical / og:url / og:image URLs without threading siteUrl through loader data.
 export const meta = ({ data, params, origin }) => ({
-  title: \`User \${data.user.name}\`,
-  meta: [{ name: "description", content: data.user.bio }],
+  title: \`User \${data.name}\`,
+  meta: [{ name: "description", content: data.bio }],
   link: [{ rel: "canonical", href: \`\${origin}/users/\${params.id}\` }],
 })
 
-export const hydrate = false   // opt out of full-document hydration (static / island pages)
-export default function User(props) { /* props.data, props.actionData, props.params */ }`
+export default function User({ data, actionData, params }: Route.ComponentProps) { /* … */ }
+
+// routes/users/[id].backend.ts - the server half: it never reaches the browser.
+import { t } from "@nifrajs/schema"
+
+// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop). Only what
+// loaderOutput declares reaches the page as \`data\`.
+export const loaderOutput = t.object({ name: t.string(), bio: t.string() })
+export async function loader({ api, params }: Route.LoaderArgs) {
+  const res = await api.users({ id: params.id }).get()
+  return { name: res.data.name, bio: res.data.bio }
+}
+
+// POST → a mutation. Same context. Return a Response (e.g. a redirect - passed straight
+// through) OR data, which reaches the page as \`actionData\`, bounded by actionOutput.
+export const actionOutput = t.object({ ok: t.boolean() })
+export async function action({ request }: Route.ActionArgs) {
+  const form = await request.formData()
+  return { ok: true }
+}
+
+export const hydrate = false   // opt out of full-document hydration (static / island pages)`
+
+const RESPONSE_CONTROLS = `// routes/account.backend.ts - response headers and cookies, from a loader or an action.
+import { t } from "@nifrajs/schema"
+import { type LoaderContext, redirect } from "@nifrajs/web"
+
+declare function signIn(email: string, password: string): Promise<{ token: string } | null>
+
+export const loaderOutput = t.object({ plan: t.string() })
+export const actionOutput = t.object({ error: t.string() })
+
+export async function loader(ctx: LoaderContext) {
+  // Headers land on the rendered document.
+  ctx.set.headers["cache-control"] = "public, max-age=60"
+  ctx.set.headers["x-robots-tag"] = "noindex"
+  return { plan: "pro" }
+}
+
+export async function action(ctx: LoaderContext) {
+  const form = await ctx.request.formData()
+  const session = await signIn(String(form.get("email")), String(form.get("password")))
+  if (session === null) return { error: "Wrong email or password" }
+  // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.
+  ctx.set.cookie("session", session.token, { maxAge: 60 * 60 * 24 * 7 })
+  throw redirect("/dashboard") // the cookie rides the redirect
+}`
 
 const HEAD_MERGE = `// routes/_layout.tsx - a layout can export \`meta\` too. Its tags are SITEWIDE: they land in
 // the <head> of every page below it - the home for hreflang / preconnect / a section <title>.
@@ -82,19 +112,21 @@ const BOUNDARY = `// What runs WHERE:
 //   SSR of the layout chain        hydration + Fast Refresh (dev)
 //   backend (api, env, draft)      -
 //
-// The client gets the loader's RETURN VALUE (serialized into the document), never the loader
-// itself, the api, or env. So:
-//  1. Never import server-only modules (Bun, a DB client, secrets) at the top level of a route
-//     file - the bundler pulls it into the client chunk and it crashes / leaks. (The build now
-//     FAILS with a named error if a \`node:\` built-in reaches a client chunk - see below.)
+// The client gets the loader's OUTPUT - its return value projected through loaderOutput and
+// serialized into the document - never the loader itself, the api, or env. So:
+//  1. Server code lives in a route's x.backend.ts and in backend/. The page file, frontend/ and
+//     shared/ ship to the browser, and the build FAILS with the import chain if they reach backend
+//     code, a database driver or a \`node:\` built-in (see /docs/structure).
 //  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
 //     same layout-chain head, so sitewide tags persist across navigation - no page-only flash.`
 
 const DUAL_API = `// TWO ways to handle a request - pick by who is calling.
+import { t } from "@nifrajs/schema"
 import type { LoaderContext } from "@nifrajs/web"
 
-// (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
-//     (routes/contact.tsx) - the browser POSTs the route's own URL, Nifra runs \`action\`:
+// (1) A page's own data + mutations → its backend half's exports. A PUBLIC POST is a route ACTION
+//     (routes/contact.backend.ts) - the browser POSTs the route's own URL, Nifra runs \`action\`:
+export const actionOutput = t.object({ ok: t.boolean(), body: t.string() })
 export async function action(ctx: LoaderContext) {
   const form = await ctx.request.formData()        // the browser POSTed this route
   return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render
@@ -102,19 +134,23 @@ export async function action(ctx: LoaderContext) {
 
 // (2) ctx.api is the IN-PROCESS backend client (the inProcessClient(server) the app was given).
 //     It is LOADERS-ONLY: the SSR backend registers GET handlers, so a .post() to ctx.api 405s.
+export const loaderOutput = t.object({ id: t.string() })
 export async function loader(ctx: LoaderContext) {
   // ✅ a GET in-process - no HTTP hop. (A .post() to ctx.api would 405; write an \`action\` instead.)
-  return { id: ctx.params.id }
+  return { id: ctx.params.id ?? "" }
 }
 
 // Rule of thumb: data INTO a page → loader + ctx.api (GET). A mutation FROM the browser
 // (a form/fetch POST) → an \`action\` export on the route. Don't \`inProcessClient(api).post()\`.`
 
-const PARAM_404 = `// routes/users/[id].tsx - plain SSR runs the loader for ANY :id value. \`fallback: "404"\`
+const PARAM_404 = `// routes/users/[id].backend.ts - plain SSR runs the loader for ANY :id value. \`fallback: "404"\`
 // only takes effect under prerender/CDN, so on on-demand SSR you MUST guard and 404 yourself.
+import { t } from "@nifrajs/schema"
 import type { LoaderContext } from "@nifrajs/web"
 
 declare function lookupUser(id: string): Promise<{ id: string } | null>
+
+export const loaderOutput = t.object({ user: t.object({ id: t.string() }) })
 
 export async function loader(ctx: LoaderContext) {
   // ctx.params.id is \`string | undefined\` (an optional segment) - default it before the lookup.
@@ -163,7 +199,8 @@ await buildClient({ routesDir: "./routes", outDir: "./dist", clientModule: "@nif
 
 // 2. Drive the app's own fetch to render each opted-in route → dist/<path>/index.html + _data.json.
 //    Static routes opt in with \`export const prerender = true\`; dynamic routes enumerate concrete
-//    params with \`export const getStaticPaths\` (+ a \`fallback: "ssr" | "404"\`).
+//    params with \`export const getStaticPaths\` (+ a \`fallback: "ssr" | "404"\`) - both in the
+//    route's .backend.ts.
 const { app } = await import("./server")
 const { prerendered } = await prerenderRoutes({
   app,                                       // the built createWebApp (a { fetch } is enough)
@@ -186,11 +223,30 @@ const page = renderPage({
   chain: [null],
   data: null,
   clientEntry: "/assets/client.js",
-  nonce, // reaches the hydration bootstrap, the data script and every island tag
+  nonce, // reaches the hydration bootstrap, streamed scripts and every island tag
   head: {
     script: [{ content: JSON.stringify({ "@type": "Article" }) }], // inert: JSON only
     unsafeScript: [unsafeInlineScript("window.dataLayer = []", { nonce })],
   },
+})`
+
+const CSP_POLICY = `import { createCspPolicy, createWebApp, MemoryCacheStore, withISR } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const manifest: import("@nifrajs/web").Manifest
+
+const csp = createCspPolicy({
+  // \`sources\`: a sha256 hash per constant inline script nifra writes, plus 'nonce-…' only on a
+  // page that needs one - it defer()s, or its meta names the nonce in unsafeInlineScript.
+  header: ({ sources }) => \`default-src 'self'; script-src 'self' \${sources}; object-src 'none'\`,
+})
+const app = createWebApp({ adapter, manifest, clientEntry: "/assets/client.js", csp })
+
+// Every other page is nonce-free, sends the same CSP header each time, and caches.
+export const handler = withISR(app, {
+  store: new MemoryCacheStore(),
+  revalidate: 60,
+  now: () => Date.now(),
 })`
 
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
@@ -257,8 +313,8 @@ const BUILD_OUTPUT = `// buildClient() writes a browser bundle + manifest.json f
 //    build mode; every other \`process.env.X\` becomes undefined - EXCEPT names you opt in with the
 //    PUBLIC_ prefix (Vite/Next convention), which are baked in with their value (see below). No
 //    \`process is not defined\` crash, and no unprefixed (secret) env leaking into the client bundle.
-//  • A \`node:\` built-in in the CLIENT bundle FAILS the build with a named error (move it behind a
-//    loader/action - server-only). It builds via a browser polyfill otherwise, then breaks at runtime.
+//  • A \`node:\` built-in in the CLIENT bundle FAILS the build with a named error (move it into
+//    backend code - a route's .backend.ts or backend/). A browser polyfill would build, then break.
 //  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.`
 
 const REUSABLE_ROUTER = `// A PUBLISHABLE router - contract-first, so its types survive \`.d.ts\` emit for consumers.
@@ -315,18 +371,22 @@ export default function Contract() {
       <h2>LoaderContext</h2>
       <p>
         One context object is passed to every <code>loader</code> and every <code>action</code>. The
-        same five fields, always - <code>params</code>, <code>request</code>, <code>api</code>,{" "}
-        <code>env</code>, and <code>draft</code>.
+        same fields, always - <code>params</code>, <code>request</code>, <code>api</code>,{" "}
+        <code>env</code>, <code>draft</code>, and <code>set</code>.
       </p>
       <CodeBlock code={LOADER_CTX} />
 
       <h2>Loader, action &amp; meta signatures</h2>
       <p>
-        A route module co-locates its data, mutation, head, and view. Only the{" "}
-        <code>default</code> export (the component) is required; <code>loader</code>,{" "}
-        <code>action</code>, <code>meta</code>, and <code>hydrate</code> are all optional. A{" "}
-        <code>loader</code> runs on <strong>GET</strong> and feeds <code>props.data</code>; an{" "}
-        <code>action</code> runs on <strong>POST</strong> and feeds <code>props.actionData</code>.
+        A route is two files. The page (<code>x.tsx</code>) holds the view and its head:{" "}
+        <code>default</code> (required) and <code>meta</code>. Its backend half (
+        <code>x.backend.ts</code>) holds everything that runs only on the server:{" "}
+        <code>loader</code> + <code>loaderOutput</code>, <code>action</code> +{" "}
+        <code>actionOutput</code>, <code>hydrate</code>, <code>prerender</code>,{" "}
+        <code>revalidate</code>. A <code>loader</code> runs on <strong>GET</strong> and feeds{" "}
+        <code>props.data</code>; an <code>action</code> runs on <strong>POST</strong> and feeds{" "}
+        <code>props.actionData</code>. A server-only export in the page file is a build error - see{" "}
+        <a href="/docs/structure">Project structure</a>.
       </p>
       <CodeBlock code={SIGNATURES} />
       <blockquote>
@@ -334,6 +394,92 @@ export default function Contract() {
         <code>status(...)</code> render, or a hand-rolled <code>Response</code> - and it's passed
         through untouched. Any other return is serialized as <code>actionData</code>.
       </blockquote>
+
+      <h2>Response headers &amp; cookies</h2>
+      <p>
+        <code>ctx.set</code> is the page counterpart of a route handler's <code>c.set</code>: a
+        loader or action writes response headers on <code>ctx.set.headers</code> and queues cookies
+        with <code>ctx.set.cookie()</code> / <code>ctx.set.deleteCookie()</code>.
+      </p>
+      <CodeBlock code={RESPONSE_CONTROLS} />
+      <table>
+        <thead>
+          <tr>
+            <th>Outcome</th>
+            <th>Headers</th>
+            <th>Cookies</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Rendered document</td>
+            <td>applied</td>
+            <td>sent</td>
+          </tr>
+          <tr>
+            <td>Navigation data response (a client soft-nav)</td>
+            <td>not applied</td>
+            <td>sent</td>
+          </tr>
+          <tr>
+            <td>
+              <code>redirect()</code>, a status page, an <code>_error</code> page
+            </td>
+            <td>not applied</td>
+            <td>sent</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          <strong>Merge order.</strong> Each loader writes its own header record. They are merged
+          layouts root to leaf, then the page loader, then the action, so the most specific writer
+          wins a name - whichever loader settles first.
+        </li>
+        <li>
+          <strong>Refused names.</strong> <code>content-type</code>, <code>set-cookie</code>,{" "}
+          <code>location</code>, the transport headers (<code>content-length</code>,{" "}
+          <code>transfer-encoding</code>, <code>connection</code>, ...), and the{" "}
+          <code>x-nifra-</code> prefix throw. So does a name that is not an HTTP token and a value
+          with a line break, a control character, or a character outside Latin-1. The request then
+          answers through the <code>_error</code> boundary; the error names the header, never its
+          value.
+        </li>
+        <li>
+          <strong>A cookie makes the response private.</strong> Queueing a cookie through{" "}
+          <code>ctx.set</code> forces <code>cache-control: private, no-store</code> on whatever
+          carries it - the document, a redirect, a status or error page, a hand-built{" "}
+          <code>Response</code> - and the page is not offered to <code>withISR</code>, so a{" "}
+          <code>Set-Cookie</code> never reaches a shared cache. A cookie
+          queued by a middleware on the serving app is outside <code>ctx.set</code>, so set the
+          cache policy for those routes yourself (<code>withISR</code> still refuses to store any
+          response carrying <code>Set-Cookie</code>).
+        </li>
+        <li>
+          <strong>Navigation data responses are never stored.</strong> A soft-nav fetches the same
+          URL as the document with an <code>x-nifra-data</code> request header, so its response is
+          always <code>cache-control: private, no-store</code> with <code>vary: x-nifra-data</code>,
+          and a document that carries loader headers gets <code>x-nifra-data</code> added to its{" "}
+          <code>vary</code>. A CDN that ignores <code>Vary</code> needs <code>x-nifra-data</code> in
+          its cache key when it caches documents.
+        </li>
+        <li>
+          <strong>Write before you return.</strong> The controls close when the loader or action
+          settles. A write from a deferred promise that resolves later throws instead of being
+          dropped.
+        </li>
+        <li>
+          <strong>ISR.</strong> <code>withISR</code> replays a stored page's{" "}
+          <code>x-robots-tag</code>, <code>link</code>, and the other headers on its allowlist; a
+          loader's <code>cache-control: no-store</code> or a <code>vary</code> on a real request
+          header keeps the page out of the store.
+        </li>
+        <li>
+          <strong>Prerender.</strong> A prerendered page is a static file: it is served without the
+          loader's headers or cookies. Set those on the host that serves the file, or keep the route
+          on-demand.
+        </li>
+      </ul>
 
       <h2>Two ways to handle a request</h2>
       <p>
@@ -418,17 +564,32 @@ export default function Contract() {
       </p>
       <p>
         Executable inline code goes through <code>unsafeInlineScript()</code>, which is named after
-        what it is and requires a CSP nonce. Pass the same nonce to <code>renderPage</code> and it
+        what it is and requires a CSP nonce. The code is emitted as written; one that contains{" "}
+        <code>&lt;/script</code> or <code>&lt;!--</code> is refused, since either would end or
+        escape the element. Pass the same nonce to <code>renderPage</code> and it
         reaches every framework-owned script in the document, so a strict{" "}
         <code>script-src 'nonce-…'</code> policy is achievable rather than aspirational:
       </p>
       <CodeBlock code={INLINE_SCRIPT} lang="ts" />
+      <p>
+        A nonce makes every document unique, so a nonce-bearing page is{" "}
+        <code>private, no-store</code> and no shared cache - <code>withISR</code>, a CDN - may store
+        it. Page data never needs one: it rides in an inert{" "}
+        <code>&lt;script type="application/json"&gt;</code> the browser does not execute. To cache
+        pages under a strict policy, give <code>createWebApp</code> a <code>csp</code> instead of a{" "}
+        <code>nonce</code>. A page then carries a nonce only when it has a script specific to this
+        request; the rest are allowed by hash, and <code>nifraScriptHashes(adapter)</code> returns
+        the same list for a policy set at a proxy:
+      </p>
+      <CodeBlock code={CSP_POLICY} lang="ts" />
 
       <h2>The client ↔ server boundary</h2>
       <p>
         Loaders, actions, and head resolution run on the server. The client receives the loader's{" "}
-        <em>return value</em> (serialized into the document), never the loader, the <code>api</code>,
-        or <code>env</code>. Keep server-only imports out of a route file's top level.
+        <em>output</em> - its return value projected through <code>loaderOutput</code> - never the
+        loader, the <code>api</code>, or <code>env</code>. Server code lives in a route's{" "}
+        <code>.backend.ts</code> half and in <code>backend/</code>, and the build refuses a frontend
+        file that reaches it.
       </p>
       <CodeBlock code={BOUNDARY} />
 
@@ -453,8 +614,9 @@ export default function Contract() {
 
       <h2>Static emit (prerender)</h2>
       <p>
-        Opt a static route into SSG with <code>export const prerender = true</code> (or a dynamic
-        route with <code>export const getStaticPaths</code>), then call <code>prerenderRoutes</code> -{" "}
+        Opt a static route into SSG with <code>export const prerender = true</code> in its{" "}
+        <code>.backend.ts</code> (or a dynamic route with <code>export const getStaticPaths</code>),
+        then call <code>prerenderRoutes</code> -{" "}
         a <strong>public</strong> export of <code>@nifrajs/web/build</code>. It drives the app's own{" "}
         <code>fetch</code> to write <code>index.html</code> + <code>_data.json</code> per route;{" "}
         <code>cloudflarePagesRoutes</code> emits the <code>_routes.json</code> for a hybrid CDN +

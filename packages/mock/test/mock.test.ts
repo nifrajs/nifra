@@ -23,6 +23,34 @@ describe("generateMockValue", () => {
     expect(val).toBeLessThanOrEqual(20)
   })
 
+  test("a one-sided numeric bound picks a value on its side", () => {
+    expect(generateMockValue({ type: "integer", minimum: 1900 }, undefined, () => 0)).toBe(1900)
+    expect(generateMockValue({ type: "integer", minimum: 1900 }, undefined, () => 1)).toBe(2000)
+    expect(generateMockValue({ type: "number", maximum: -1 }, undefined, () => 0.5)).toBe(-51)
+    expect(generateMockValue({ type: "integer", exclusiveMinimum: 0 }, undefined, () => 0)).toBe(1)
+  })
+
+  test("exclusive bounds are never reached", () => {
+    const at = (schema: Record<string, unknown>, r: number): unknown =>
+      generateMockValue(schema, undefined, () => r)
+    expect(at({ type: "integer", exclusiveMinimum: 5, maximum: 10 }, 0)).toBe(6)
+    expect(at({ type: "integer", minimum: 5, exclusiveMaximum: 10 }, 1)).toBe(9)
+    expect(
+      at({ type: "integer", minimum: 0, maximum: 20, exclusiveMaximum: 20, multipleOf: 5 }, 1),
+    ).toBe(15)
+    expect(at({ type: "integer", minimum: 5, exclusiveMinimum: 5, maximum: 10 }, 0)).toBe(6)
+    expect(at({ type: "integer", minimum: 7, exclusiveMinimum: 5, maximum: 10 }, 0)).toBe(7)
+    expect(at({ type: "number", exclusiveMinimum: 1000, maximum: 2000 }, 0)).toBeGreaterThan(1000)
+    expect(at({ type: "number", minimum: 0, exclusiveMaximum: 1 }, 1)).toBeLessThan(1)
+    expect(at({ type: "number", minimum: 0.001, maximum: 0.002 }, 0)).toBe(0.001)
+    expect(() => at({ type: "integer", exclusiveMinimum: 5, exclusiveMaximum: 6 }, 0)).toThrow(
+      "No integer exists in range",
+    )
+    expect(() => at({ type: "number", exclusiveMinimum: 1, maximum: 1 }, 0)).toThrow(
+      "Numeric schema has no satisfiable range",
+    )
+  })
+
   test("generates integer values", () => {
     const val = generateMockValue({ type: "integer" }) as number
     expect(Number.isInteger(val)).toBe(true)
@@ -239,6 +267,23 @@ describe("createMockServer", () => {
     const mock = createMockServer(fakeApp)
     const response = await mock.fetch(new Request("http://localhost/files/readme"))
     expect(await response.json()).toBe("param")
+  })
+
+  test("a param constraint picks the route the app would pick", async () => {
+    const fakeApp = {
+      routes: () => [
+        { method: "GET", path: "/users/:name", schema: { response: { const: "name" } } },
+        { method: "GET", path: "/users/:id{[0-9]+}", schema: { response: { const: "numeric" } } },
+        { method: "GET", path: "/img/:kind{thumb|full}", schema: { response: { const: "kind" } } },
+      ],
+    }
+    const mock = createMockServer(fakeApp)
+    const body = async (path: string) =>
+      (await mock.fetch(new Request(`http://localhost${path}`))).json()
+    expect(await body("/users/42")).toBe("numeric")
+    expect(await body("/users/ada")).toBe("name")
+    expect(await body("/img/full")).toBe("kind")
+    expect((await mock.fetch(new Request("http://localhost/img/other"))).status).toBe(404)
   })
 
   test("exposes mockRoutes for inspection", () => {

@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { METHODS, type Middleware } from "@nifrajs/core/server"
-import { jsonError, SAFE_METHODS } from "./_utils.ts"
+import { guardName, jsonError, SAFE_METHODS } from "./_utils.ts"
 
 export interface BodyLimitOptions {
   /** Maximum raw request-body bytes accepted. */
@@ -37,7 +37,7 @@ export function bodyLimit(options: BodyLimitOptions): Middleware {
   const allowLengthless = options.allowLengthless === true
 
   const middleware: Middleware = {
-    name: "body-limit",
+    name: guardName("body-limit"),
     onRequest(req) {
       if (methods !== undefined ? !methods.has(req.method) : SAFE_METHODS.has(req.method)) {
         return undefined

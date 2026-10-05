@@ -2,6 +2,8 @@ import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import {
   base64UrlDecode,
+  bearerToken,
+  guardName,
   jsonError,
   type MaybePromise,
   parseCookies,
@@ -302,7 +304,7 @@ function tokenFromRequest(req: Request, header: string, cookie: string | undefin
   const headerValue = req.headers.get(header)
   if (headerValue !== null) {
     if (header === "authorization") {
-      return headerValue.startsWith("Bearer ") ? headerValue.slice(7).trim() || null : null
+      return bearerToken(headerValue)
     }
     return headerValue.trim() || null
   }
@@ -324,7 +326,7 @@ export function jwt<C extends JwtClaims = JwtClaims>(options: JwtOptions): JwtPl
   const header = (options.header ?? "authorization").toLowerCase()
   const store = new WeakMap<Request, C>()
 
-  const plugin = defineIdentityPlugin("jwt", (app) =>
+  const plugin = defineIdentityPlugin(guardName("jwt"), (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = tokenFromRequest(c.req, header, options.cookie)
       if (token === null) return optional ? undefined : reject(realm)

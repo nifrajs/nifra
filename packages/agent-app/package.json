@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/agent-app",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordered event streaming, and content-free view models over the agent protocol.",
   "keywords": [
     "bun",
@@ -12,6 +12,9 @@
     "sse"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

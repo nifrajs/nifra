@@ -105,6 +105,30 @@ describe("AgentAppClient.send", () => {
     expect(transport.calls.at(-1)?.method).toBe("turn.send")
   })
 
+  test("each turn continues from the last seq the previous turn delivered", async () => {
+    let next = 0
+    class CountingTransport extends FakeTransport {
+      override async *stream(): AsyncIterable<AgentEvent> {
+        for (let i = 0; i < 3; i++) {
+          next += 1
+          yield delta(next, "x")
+        }
+      }
+    }
+    const client = new AgentAppClient(
+      new CountingTransport(() => ({ ok: true, status: 200, value: snapshot() })),
+    )
+    await client.createSession()
+    for (const expected of [
+      [1, 2, 3],
+      [4, 5, 6],
+    ]) {
+      const seen: number[] = []
+      for await (const view of client.send("hi")) seen.push(view.seq)
+      expect(seen).toEqual(expected)
+    }
+  })
+
   test("send before createSession is rejected", async () => {
     const transport = new FakeTransport(() => ({ ok: true, status: 200, value: snapshot() }))
     const client = new AgentAppClient(transport)

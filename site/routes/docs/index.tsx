@@ -1,9 +1,5 @@
-import { docsMeta } from "../../meta"
-import { CodeBlock } from "../../highlight"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { docsMeta } from "../../shared/meta"
+import { CodeBlock } from "../../shared/highlight"
 
 export const meta = docsMeta(
   "/docs",
@@ -26,15 +22,24 @@ const api = client<typeof app>("http://localhost:3000")
 const { data, error } = await api.users({ id: "7" }).get()
 //      ^? { id: string } | undefined`
 
-const LOADER = `// A route's loader runs on the server (in-process during SSR, no network),
-// fully typed against your contract.
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  const res = await api.users({ id: "7" }).get()
-  return { user: res.data }
-}
+const LOADER = `// routes/index.backend.ts - the loader runs on the server (in-process during SSR, no network),
+// fully typed against your contract. This file never reaches the browser.
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
 
-export default function Page(props: { data: LoaderData<typeof loader> }) {
-  return <h1>{props.data.user?.id}</h1>
+// The page receives exactly this shape; anything else the loader returns stays on the server.
+export const loaderOutput = t.object({ id: t.string() })
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.users({ id: "7" }).get()
+  return { id: res.ok ? res.data.id : "unknown" }
+}`
+
+const PAGE = `// routes/index.tsx - the page, typed from loaderOutput.
+import type { Route } from "./+types/index"
+
+export default function Page({ data }: Route.ComponentProps) {
+  return <h1>{data.id}</h1>
 }`
 
 export default function Docs() {
@@ -113,12 +118,15 @@ bun run dev`}</code>
 
       <h2>Loaders &amp; the full stack</h2>
       <p>
-        In the <code>site</code> template, route loaders call your backend in-process during SSR;{" "}
-        <code>actions</code> handle mutations. Add streaming, <code>defer()</code>, optimistic UI,
-        and a keyed query cache as you grow. The data model is framework-agnostic, so the renderer
-        stays replaceable.
+        In the <code>site</code> template, a route is two files: the page, and a{" "}
+        <code>.backend.ts</code> half whose loader calls your backend in-process during SSR and
+        whose <code>actions</code> handle mutations. Only what the loader's output schema declares
+        reaches the browser. Add streaming, <code>defer()</code>, optimistic UI, and a keyed query
+        cache as you grow. The data model is framework-agnostic, so the renderer stays replaceable.
+        See <a href="/docs/structure">Project structure</a> for where code lives.
       </p>
-      <CodeBlock code={LOADER} />
+      <CodeBlock code={LOADER} lang="ts" />
+      <CodeBlock code={PAGE} />
 
       <h2>Deploy anywhere</h2>
       <ul>

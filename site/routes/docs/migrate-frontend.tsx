@@ -1,10 +1,6 @@
-import { MULTIPLIERS } from "../../data/benchmarks"
-import { docsMeta } from "../../meta"
-import { CodeBlock } from "../../highlight"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { MULTIPLIERS } from "../../shared/data/benchmarks"
+import { docsMeta } from "../../shared/meta"
+import { CodeBlock } from "../../shared/highlight"
 
 export const meta = docsMeta(
   "/docs/migrate-frontend",
@@ -23,20 +19,25 @@ export default async function Page({ params }) {
   return <h1>{user.name}</h1>
 }
 
-// Nifra - routes/users/[id].tsx
-export async function loader({ params, api }: LoaderArgs<typeof backend>) {
+// Nifra - routes/users/[id].backend.ts: the loader, which never reaches the browser
+export const loaderOutput = t.object({ name: t.string() })   // the only fields the page receives
+export async function loader({ params, api }: Route.LoaderArgs) {
   const res = await api.users({ id: params.id }).get()   // typed, in-process during SSR
-  return { user: res.data }
+  if (!res.ok) throw notFound()
+  return res.data
 }
-export default function User({ data }: { data: LoaderData<typeof loader> }) {
-  return <h1>{data.user?.name}</h1>
+
+// Nifra - routes/users/[id].tsx: the page
+export default function User({ data }: Route.ComponentProps) {
+  return <h1>{data.name}</h1>
 }`
 
 const SVELTEKIT = `// SvelteKit - +page.server.ts + +page.svelte
 export async function load({ params }) { return { post: await getPost(params.slug) } }
 
-// Nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
-export async function loader({ params }) { return { post: await getPost(params.slug) } }`
+// Nifra - routes/blog/[slug].backend.ts + routes/blog/[slug].svelte
+export const loaderOutput = t.object({ post: t.object({ title: t.string(), html: t.string() }) })
+export async function loader({ params }: Route.LoaderArgs) { return { post: await getPost(params.slug) } }`
 
 export default function MigrateFrontend() {
   return (
@@ -68,7 +69,8 @@ export default function MigrateFrontend() {
           <tr>
             <td>`getServerSideProps` · `load` · `createAsync` · `asyncData`</td>
             <td>
-              <code>export async function loader()</code> - runs on the server, typed into the page
+              <code>export async function loader()</code> in the route's <code>.backend.ts</code>{" "}
+              half - runs on the server, typed into the page through <code>loaderOutput</code>
             </td>
           </tr>
           <tr>
@@ -123,10 +125,10 @@ export default function MigrateFrontend() {
 
       <h2>Svelte / Solid / Vue</h2>
       <p>
-        Identical shape - only the page file's extension and component syntax change. The{" "}
-        <code>loader</code>/<code>action</code>/<code>meta</code> exports are the same on every
-        framework (that's Nifra's render seam). SvelteKit's <code>+page.server.ts</code> load, for
-        example:
+        Identical shape - only the page file's extension and component syntax change. The route's{" "}
+        <code>.backend.ts</code> half (<code>loader</code>, <code>action</code>,{" "}
+        <code>loaderOutput</code>) is the same file on every framework (that's Nifra's render seam).
+        SvelteKit's <code>+page.server.ts</code> maps onto it one to one:
       </p>
       <CodeBlock code={SVELTEKIT} lang="ts" />
 

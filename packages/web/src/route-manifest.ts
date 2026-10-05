@@ -16,7 +16,18 @@
  * target, and reports what the target cannot honour. Pure and fs-free: it takes an already-built
  * `Manifest` so it runs at build time, in `nifra routes`, and in a test with a hand-built manifest.
  */
+
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import type { Manifest, RouteModule } from "./manifest.ts"
+
+export {
+  formatShadowedPages,
+  normalizeMountPath,
+  type ShadowedPage,
+  shadowedPages,
+} from "./internal/mount-shadow.ts"
+/** Which half of a route each export belongs in: the frontend file or its `x.backend.ts`. */
+export { BACKEND_ROUTE_EXPORTS, FRONTEND_ROUTE_EXPORTS } from "./manifest.ts"
 
 /**
  * How a route produces its HTML.
@@ -115,7 +126,8 @@ export function deriveRouteEntry(
     requires: readonly RouteCapability[]
   } = { id, pattern, mode, hydrate: module.hydrate !== false, requires }
   if (mode === "isr" && module.revalidate !== undefined) entry.revalidate = module.revalidate
-  if (mode === "isr" && module.revalidateTags !== undefined) {
+  // A function's tags exist per request; the manifest records only a fixed list.
+  if (mode === "isr" && Array.isArray(module.revalidateTags)) {
     entry.revalidateTags = module.revalidateTags
   }
   if (prerenderedPaths !== undefined) entry.prerenderedPaths = prerenderedPaths
@@ -134,7 +146,7 @@ const TARGET_CAPABILITIES: Readonly<Record<string, readonly RouteCapability[]>> 
   bun: ["server"],
   node: ["server"],
   deno: ["server"],
-  "cf-pages": ["server"],
+  cloudflare: ["server"],
   vercel: ["server"],
   static: [],
 }
@@ -169,7 +181,7 @@ export async function buildRouteManifest(
     const module = (await route.load()) as RouteModule
     entries.push(deriveRouteEntry(route.id, route.pattern, module, options.prerendered?.[route.id]))
   }
-  entries.sort((a, b) => a.pattern.localeCompare(b.pattern))
+  entries.sort((a, b) => codeUnitOrder(a.pattern, b.pattern))
 
   const conflicts: RouteManifestConflict[] = []
   const capabilities =

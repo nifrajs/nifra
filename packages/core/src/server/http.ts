@@ -33,6 +33,40 @@ export function isSameOriginPath(value: string): boolean {
   return true
 }
 
+/**
+ * Whether `method` is a token a route can be registered under: uppercase ASCII letters, digits and
+ * hyphens, a letter first, 1 to 32 characters. That covers every method in the IANA registry.
+ *
+ * Every registered method has this shape and the router compares tokens exactly, so a request whose
+ * token does not have it can never reach a handler. The server uses this to keep such a request away
+ * from everything that runs around routing as well - `onRequest` hooks and mounted handlers - because
+ * those see the raw token, and code that tests `req.method === "POST"` would otherwise read a
+ * differently-cased token as a method it does not guard.
+ */
+export function isRoutableMethod(method: string): boolean {
+  // The common verbs first: a string switch settles them without walking the token, which keeps the
+  // check close to free on the lanes that run it per request.
+  switch (method) {
+    case "GET":
+    case "POST":
+    case "PUT":
+    case "PATCH":
+    case "DELETE":
+    case "HEAD":
+    case "OPTIONS":
+      return true
+  }
+  const length = method.length
+  if (length === 0 || length > 32) return false
+  for (let i = 0; i < length; i++) {
+    const code = method.charCodeAt(i)
+    if (code >= 65 && code <= 90) continue
+    if (i > 0 && (code === 45 || (code >= 48 && code <= 57))) continue
+    return false
+  }
+  return true
+}
+
 /** A uniform JSON error envelope: `{ ok: false, error }` at the given status. */
 export function jsonError(
   status: number,

@@ -9,6 +9,7 @@ import type {
   NifraSpan,
   ObservationAdapter,
   ObservationLink,
+  SpanKind,
   SpanStatus,
 } from "./span.ts"
 import {
@@ -27,6 +28,13 @@ export interface ObservationContext {
   readonly traceparent: string
 }
 
+/**
+ * Runs `run` with a span active in an ambient context (OpenTelemetry's, for one), so code that only
+ * sees that context - a pg or undici instrumentation - nests under the span. `otelBridge().scope` from
+ * `@nifrajs/otel/sdk-bridge` is one.
+ */
+export type ObservationScope = <T>(trace: ObservationContext, run: () => T) => T
+
 export interface ObservationParent {
   readonly traceId: string
   readonly spanId: string
@@ -35,6 +43,8 @@ export interface ObservationParent {
 
 export interface StartObservation {
   readonly name: string
+  /** OTel span kind. Omitted, the span exports as `server`. */
+  readonly kind?: SpanKind
   /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */
   readonly parent?: ObservationParent | null
   /** Inbound W3C header used when `parent` is undefined. */
@@ -42,6 +52,8 @@ export interface StartObservation {
   readonly attributes?: Readonly<Record<string, AttributeValue>>
   /** Non-parent causal relationships, for example an outbox event that resumed this workflow. */
   readonly links?: readonly ObservationLink[]
+  /** Epoch ms the work began, for work recorded after it settled. Default: now. */
+  readonly startTime?: number
 }
 
 export interface EndObservation {
@@ -49,6 +61,8 @@ export interface EndObservation {
   /** Explicit status wins over status-code and recorded-error classification. */
   readonly status?: Exclude<SpanStatus, "unset">
   readonly attributes?: Readonly<Record<string, AttributeValue>>
+  /** Measured duration in ms, for work recorded after it settled. The end time becomes start + duration. */
+  readonly durationMs?: number
 }
 
 export interface ActiveObservation {
@@ -139,7 +153,10 @@ export function createObservationLifecycle(
     const traceId = parent?.traceId ?? newTraceId()
     const spanId = newSpanId()
     const sampled = parent?.sampled ?? true
-    const startTime = clock.wallTime()
+    const startTime =
+      input.startTime !== undefined && Number.isFinite(input.startTime)
+        ? input.startTime
+        : clock.wallTime()
     const monotonicStart = clock.monotonicTime()
     const span: NifraSpan = {
       traceId,
@@ -147,6 +164,7 @@ export function createObservationLifecycle(
       ...(parent === null ? {} : { parentSpanId: parent.spanId }),
       sampled,
       name: input.name,
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
       startTime,
       status: "unset",
       attributes: { ...input.attributes },
@@ -213,8 +231,13 @@ export function createObservationLifecycle(
         if (ended) return span
         ended = true
         Object.assign(span.attributes, endInput.attributes)
-        span.endTime = clock.wallTime()
-        span.durationMs = Math.max(0, clock.monotonicTime() - monotonicStart)
+        if (endInput.durationMs !== undefined && Number.isFinite(endInput.durationMs)) {
+          span.durationMs = Math.max(0, endInput.durationMs)
+          span.endTime = span.startTime + span.durationMs
+        } else {
+          span.endTime = clock.wallTime()
+          span.durationMs = Math.max(0, clock.monotonicTime() - monotonicStart)
+        }
         span.status =
           endInput.status ??
           (endInput.statusCode === undefined

@@ -25,6 +25,7 @@ const external = [
   "@nifrajs/core/pattern",
   "@nifrajs/web",
   "@nifrajs/web/fs",
+  "@nifrajs/web/zones",
 ]
 
 await rm(dist, { recursive: true, force: true })

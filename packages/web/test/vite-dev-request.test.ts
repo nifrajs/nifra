@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { connect } from "node:net"
 import { join } from "node:path"
+import {
+  DEV_FEED_PATHS,
+  DEV_REQUEST_ID_HEADER,
+  DEV_TOKEN_HEADER,
+  readDevServerRecord,
+} from "../src/dev-feed.ts"
+import type { DevAppHooks } from "../src/dev-session.ts"
 import { createViteDevServer, LAST_ERROR_PATH, type ViteDevServer } from "../src/vite.ts"
 
 /**
@@ -11,6 +19,9 @@ import { createViteDevServer, LAST_ERROR_PATH, type ViteDevServer } from "../src
  * overlay that says what broke. Both are invisible to a route-discovery test, which is all this file's
  * sibling covers - it never sends a body and never throws.
  */
+
+/** A JSON body, typed by the caller (`json()` is untyped). */
+const readJson = async <T>(response: Response): Promise<T> => response.json()
 
 const TMP_BASE = `${import.meta.dir}/.tmp-vite-dev-request-`
 let root: string
@@ -32,14 +43,16 @@ afterEach(async () => {
 })
 
 const start = async (
-  fetchImpl: (request: Request) => Response | Promise<Response>,
+  fetchImpl: (request: Request, dev: DevAppHooks) => Response | Promise<Response>,
+  plugins: readonly unknown[] = [],
 ): Promise<string> => {
   server = await createViteDevServer({
     root,
     routesDir,
     clientModule: join(root, "client.ts"),
     port: 0,
-    createApp: () => ({ fetch: fetchImpl }),
+    createApp: (_entry, _load, dev) => ({ fetch: (request) => fetchImpl(request, dev) }),
+    plugins,
   })
   return `http://127.0.0.1:${server.port}`
 }
@@ -92,6 +105,33 @@ test("a throwing app renders the dev overlay, not a blank 500", async () => {
   expect(html).toContain("loader exploded in dev")
 })
 
+test("a page whose render the app answers with a logged JSON 500 shows the overlay, without dev scripts", async () => {
+  // Core catches a throwing render, logs it and answers JSON; a browser loading the page needs the
+  // overlay. It must stay as rendered: the overlay's own CSP admits only its copy script.
+  const origin = await start(() => {
+    process.stderr.write(
+      `${JSON.stringify({
+        level: "error",
+        message: "unhandled request error",
+        method: "GET",
+        path: "/",
+        name: "TypeError",
+        detail: "render exploded under core",
+        stack: "TypeError: render exploded under core\n    at Page (/app/routes/index.tsx:2:3)",
+        time: "now",
+      })}\n`,
+    )
+    return Response.json({ ok: false, error: "internal_error" }, { status: 500 })
+  })
+  const res = await fetch(`${origin}/`, { headers: { accept: "text/html" } })
+  expect(res.status).toBe(500)
+  expect(res.headers.get("content-type")).toContain("text/html")
+  const html = await res.text()
+  expect(html).toContain("render exploded under core")
+  expect(html).not.toContain("/@vite/client")
+  expect(html).not.toContain("data-nifra-dev")
+})
+
 test("the Vite pipeline exposes the same structured last-error endpoint as Bun", async () => {
   const origin = await start(() => {
     throw new Error("vite loader exploded")
@@ -129,6 +169,125 @@ test("an HTML response gets Vite's client injected so HMR can connect", async ()
   expect(html).toContain("/@vite/client")
 })
 
+// Stands in for `@vitejs/plugin-react`'s refresh preamble: an inline module script on every page.
+const preamble = {
+  name: "test-preamble",
+  transformIndexHtml: () => [
+    {
+      tag: "script",
+      attrs: { type: "module" },
+      children: "window.__preamble = 1",
+      injectTo: "head",
+    },
+  ],
+}
+
+const page = (head: string, headers: Record<string, string>) => () =>
+  new Response(`<!doctype html><html><head>${head}</head><body>hi</body></html>`, {
+    headers: { "content-type": "text/html", ...headers },
+  })
+
+/** Every `<script>` / `<style>` start tag in a page (not text inside a script), and its nonce. */
+const tagNonces = (html: string): Array<string | undefined> =>
+  [
+    ...html
+      .replace(/(<script\b[^>]*>)[\s\S]*?<\/script[^>]*>/gi, "$1")
+      .matchAll(/<(?:script|style)\b([^>]*)>/gi),
+  ].map((match) => /\bnonce="([^"]*)"/.exec(match[1] ?? "")?.[1])
+
+test("an HTML page keeps the app's response headers", async () => {
+  // The HTML path rewrites the body for Vite's client, and it used to rebuild the headers from
+  // nothing: a loader's cookie, the CSP, cache-control and vary reached the browser under Bun dev
+  // and were dropped under Vite dev.
+  const origin = await start(() => {
+    const headers = new Headers({
+      "content-type": "text/html",
+      "cache-control": "private, no-store",
+      vary: "cookie",
+      "x-nifra-status": "200",
+      // The app's length, for the body before Vite's client was injected.
+      "content-length": "52",
+    })
+    headers.append("set-cookie", "session=1; Path=/; HttpOnly")
+    headers.append("set-cookie", "theme=dark; Path=/")
+    return new Response("<!doctype html><html><head></head><body>hi</body></html>", { headers })
+  })
+  const res = await fetch(`${origin}/`)
+  expect(res.headers.getSetCookie()).toEqual(["session=1; Path=/; HttpOnly", "theme=dark; Path=/"])
+  expect(res.headers.get("cache-control")).toBe("private, no-store")
+  expect(res.headers.get("vary")).toBe("cookie")
+  expect(res.headers.get("x-nifra-status")).toBe("200")
+  const html = await res.text()
+  expect(html).toContain("/@vite/client")
+  expect(html).toEndWith("</html>")
+})
+
+test("a nonce page: Vite's tags carry the page's nonce, and so may its runtime styles", async () => {
+  const origin = await start(
+    page(`<script nonce="pagenonce">window.__s = "<style>"</script>`, {
+      "content-security-policy":
+        "default-src 'self'; script-src 'self' 'nonce-pagenonce'; object-src 'none'",
+    }),
+    [preamble],
+  )
+  const res = await fetch(`${origin}/`)
+  const html = await res.text()
+  expect(html).toContain("window.__preamble = 1")
+  expect(tagNonces(html).length).toBeGreaterThanOrEqual(3)
+  expect(new Set(tagNonces(html))).toEqual(new Set(["pagenonce"]))
+  // A script body is not markup: the string in it is left as written.
+  expect(html).toContain(`window.__s = "<style>"`)
+  // Vite's client reads this to nonce the <style> it adds for each imported stylesheet.
+  expect(html).toContain(`<meta property="csp-nonce" nonce="pagenonce">`)
+  // script-src already names the nonce; styles fall back to default-src, which now does too.
+  expect(res.headers.get("content-security-policy")).toBe(
+    "default-src 'self' 'nonce-pagenonce'; script-src 'self' 'nonce-pagenonce'; object-src 'none'",
+  )
+})
+
+test("a hash page: Vite's tags get a dev nonce that the policy names", async () => {
+  const origin = await start(
+    page("<script>window.__app = 1</script>", {
+      "content-security-policy": "script-src 'self' 'sha256-abc='; style-src 'self'",
+    }),
+    [preamble],
+  )
+  const res = await fetch(`${origin}/`)
+  const nonces = new Set(tagNonces(await res.text()))
+  expect(nonces.size).toBe(1)
+  const [nonce] = nonces
+  expect(nonce).toMatch(/^[A-Za-z0-9]{16,}$/)
+  expect(res.headers.get("content-security-policy")).toBe(
+    `script-src 'self' 'sha256-abc=' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`,
+  )
+})
+
+test("a directive that already allows inline is left alone", async () => {
+  // A nonce in a directive switches its 'unsafe-inline' off, which would break the app's own inline
+  // styles - and Vite's tags are allowed there already.
+  const origin = await start(
+    page(`<script nonce="p">1</script>`, {
+      "content-security-policy": "script-src 'nonce-p'; style-src 'self' 'unsafe-inline'",
+      "content-security-policy-report-only": "default-src 'self' 'unsafe-inline'",
+    }),
+    [preamble],
+  )
+  const res = await fetch(`${origin}/`)
+  expect(res.headers.get("content-security-policy")).toBe(
+    "script-src 'nonce-p'; style-src 'self' 'unsafe-inline'",
+  )
+  expect(res.headers.get("content-security-policy-report-only")).toBe(
+    "default-src 'self' 'unsafe-inline'",
+  )
+})
+
+test("a page with no CSP gets no nonces", async () => {
+  const origin = await start(page("<script>1</script>", {}), [preamble])
+  const html = await (await fetch(`${origin}/`)).text()
+  expect(tagNonces(html).every((nonce) => nonce === undefined)).toBe(true)
+  expect(html).not.toContain("csp-nonce")
+})
+
 test("a bind failure names the port and leaves nothing running", async () => {
   // Vite is fully up by the time the listen fails - watchers, dep optimizer, its own sockets - and each
   // keeps the event loop alive. Without tearing it down the process prints the diagnosis and then HANGS
@@ -157,3 +316,149 @@ test("a bind failure names the port and leaves nothing running", async () => {
     held.stop(true)
   }
 }, 60_000)
+
+test("the Vite dev server feeds the same agent surface as the Bun one", async () => {
+  const origin = await start((request, dev) => {
+    const path = new URL(request.url).pathname
+    console.warn(`vite saw ${path}`)
+    if (path === "/broken") {
+      dev.onLoaderError(new Error("vite loader failed"), { request, route: "/broken" })
+      return new Response("<html><head></head><body>boundary</body></html>", {
+        status: 500,
+        headers: { "content-type": "text/html" },
+      })
+    }
+    if (path === "/thrown") throw new Error("vite render threw")
+    return Response.json({ ok: true })
+  })
+  const record = readDevServerRecord(root)
+  expect(record?.pipeline).toBe("vite")
+  expect(`http://127.0.0.1:${record?.port}`).toBe(origin)
+  const headers = { [DEV_TOKEN_HEADER]: record?.token ?? "" }
+
+  const api = await fetch(`${origin}/api/ok`)
+  expect(api.headers.get(DEV_REQUEST_ID_HEADER)).toMatch(/^r\d+$/)
+  const broken = await fetch(`${origin}/broken`)
+  const brokenId = broken.headers.get(DEV_REQUEST_ID_HEADER)
+  expect(brokenId).toMatch(/^r\d+$/)
+  await fetch(`${origin}/thrown`)
+
+  const { errors } = await readJson<{
+    errors: Array<{ category: string; requestId?: string; route?: string }>
+  }>(await fetch(`${origin}${DEV_FEED_PATHS.errors}`, { headers }))
+  expect(errors.map((e) => e.category)).toEqual(["page", "ssr"])
+  expect(errors[0]).toEqual(expect.objectContaining({ route: "/broken", requestId: brokenId }))
+  const { logs } = await readJson<{ logs: Array<{ message: string; level: string }> }>(
+    await fetch(`${origin}${DEV_FEED_PATHS.logs}?requestId=${brokenId}`, { headers }),
+  )
+  expect(logs).toContainEqual(
+    expect.objectContaining({ level: "warn", message: "vite saw /broken" }),
+  )
+  expect((await fetch(`${origin}${DEV_FEED_PATHS.requests}`)).status).toBe(401)
+  // Paths under /__nifra/ that are not the session's still reach Vite and the app.
+  expect((await fetch(`${origin}/__nifra/unknown`)).status).toBe(200)
+})
+
+test("the feed's own writes under .nifra/ are not file changes", async () => {
+  let created = 0
+  server = await createViteDevServer({
+    root,
+    routesDir,
+    clientModule: join(root, "client.ts"),
+    port: 0,
+    createApp: () => {
+      created += 1
+      return {
+        fetch: () => {
+          console.error("an error line is persisted at once")
+          return new Response("<html><head></head><body>ok</body></html>", {
+            headers: { "content-type": "text/html" },
+          })
+        },
+      }
+    },
+  })
+  const origin = `http://127.0.0.1:${server.port}`
+  const record = readDevServerRecord(root)
+  const headers = { [DEV_TOKEN_HEADER]: record?.token ?? "" }
+  const generation = async (): Promise<number> =>
+    (
+      await readJson<{ generation: number }>(
+        await fetch(`${origin}${DEV_FEED_PATHS.identity}`, { headers }),
+      )
+    ).generation
+  // FSEvents can report the files written just before the server started a moment late: let them
+  // land first, so the window below holds only the feed's own writes.
+  await Bun.sleep(600)
+  const before = { generation: await generation(), created }
+  for (let i = 0; i < 3; i++) await fetch(`${origin}/`)
+  // Longer than the persistence flush and a watcher's debounce.
+  await Bun.sleep(600)
+  expect(await generation()).toBe(before.generation)
+  expect(created).toBe(before.created)
+})
+
+test("Vite pages carry the browser-capture script, and its batches reach the feed", async () => {
+  const origin = await start(
+    () =>
+      new Response("<!doctype html><html><head><title>t</title></head><body>ok</body></html>", {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "script-src 'nonce-pagenonce'; connect-src 'self'",
+        },
+      }),
+  )
+  const html = await (await fetch(`${origin}/cart`)).text()
+  // Nonced with the page's own nonce, like every tag Vite adds.
+  expect(html).toMatch(/<script nonce="pagenonce" data-nifra-dev>/)
+  const token = /"t":"([^"]+)"/.exec(html)?.[1] ?? ""
+  const post = (body: string): Promise<Response> =>
+    fetch(`${origin}${DEV_FEED_PATHS.clientEvent}`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body,
+    })
+  const sent = await post(
+    JSON.stringify({
+      token,
+      events: [
+        { kind: "error", name: "TypeError", message: "vite page broke", stack: "", page: "/cart" },
+      ],
+    }),
+  )
+  // The page gets back what it just reported, for the issues badge.
+  expect(sent.status).toBe(200)
+  const { issues } = await readJson<{ issues: Array<{ code: string; message: string }> }>(sent)
+  expect(issues).toEqual([
+    expect.objectContaining({ code: "NIFRA_UNHANDLED", message: "TypeError: vite page broke" }),
+  ])
+  const record = readDevServerRecord(root)
+  const { errors } = await readJson<{ errors: Array<{ category: string; page?: string }> }>(
+    await fetch(`${origin}${DEV_FEED_PATHS.errors}`, {
+      headers: { [DEV_TOKEN_HEADER]: record?.token ?? "" },
+    }),
+  )
+  expect(errors).toEqual([expect.objectContaining({ category: "browser", page: "/cart" })])
+  expect((await post(JSON.stringify({ token, events: [], pad: "x".repeat(200_000) }))).status).toBe(
+    413,
+  )
+})
+
+test("a client that aborts a dev-endpoint body mid-upload leaves the server up", async () => {
+  const origin = await start(() => new Response("ok"))
+  const { port } = new URL(origin)
+  await new Promise<void>((resolve, reject) => {
+    const socket = connect(Number(port), "127.0.0.1", () => {
+      socket.write(
+        `POST ${DEV_FEED_PATHS.clientEvent} HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{"token":`,
+      )
+      setTimeout(() => {
+        socket.destroy()
+        resolve()
+      }, 50)
+    })
+    socket.on("error", reject)
+  })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  expect((await fetch(`${origin}${LAST_ERROR_PATH}`)).status).toBe(200)
+})

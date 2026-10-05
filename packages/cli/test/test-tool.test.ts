@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { collectTestResult } from "../src/test-tool.ts"
@@ -26,10 +26,56 @@ describe("collectTestResult", () => {
     }
   })
 
+  test("keeps only the head and tail of a test run that prints without limit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-test-tool-"))
+    try {
+      await mkdir(join(dir, "test"))
+      await writeFile(
+        join(dir, "test/loud.test.ts"),
+        'import { expect, test } from "bun:test"\ntest("loud", () => {\n  const line = "x".repeat(1023)\n  for (let i = 0; i < 2048; i++) console.log(line)\n  expect(1).toBe(1)\n})\n',
+      )
+      const result = await collectTestResult(dir, {
+        pattern: "test/loud.test.ts",
+        timeoutMs: 60_000,
+      })
+      expect(result.ok).toBe(true)
+      expect(result.summary.passed).toBe(1)
+      expect(result.stdout).toMatch(/…\(trimmed more than \d+ bytes\)…/)
+      expect(result.stdout.length).toBeLessThanOrEqual(12_100)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("rejects CLI flags in pattern", async () => {
     const result = await collectTestResult("/tmp", { pattern: "--preload=evil.ts" })
     expect(result.ok).toBe(false)
     expect(result.error).toContain("not a CLI flag")
+  })
+
+  test("runs no test file outside the project, by relative, absolute or symlinked path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-test-tool-"))
+    try {
+      await mkdir(join(dir, "project"))
+      await writeFile(
+        join(dir, "outside.test.ts"),
+        'import { test } from "bun:test"\ntest("outside", () => console.log("RAN-OUTSIDE"))\n',
+      )
+      await symlink(dir, join(dir, "project/escape"))
+      for (const pattern of [
+        "../outside.test.ts",
+        "./../outside.test.ts",
+        join(dir, "outside.test.ts"),
+        "./escape/outside.test.ts",
+      ]) {
+        const result = await collectTestResult(join(dir, "project"), { pattern })
+        expect(result.ok).toBe(false)
+        expect(result.error).toContain("inside the selected project directory")
+        expect(result.stdout + result.stderr).not.toContain("RAN-OUTSIDE")
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   test("cancels an in-flight bun test process", async () => {

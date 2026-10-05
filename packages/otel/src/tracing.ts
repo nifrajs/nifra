@@ -19,6 +19,7 @@ import {
   createObservationLifecycle,
   type ObservationContext,
 } from "./lifecycle.ts"
+import { methodLabel, routeTemplateOf } from "./route-template.ts"
 import { consoleSpanExporter, type ObservationAdapter } from "./span.ts"
 
 /** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */
@@ -115,14 +116,22 @@ export function tracing(options: TracingOptions = {}): ContextPlugin<TracingCont
 
   return defineContextPlugin<TracingContext>("tracing", (app) => {
     for (const stop of stopHooks) app.onStop(stop)
+    const routeOf = routeTemplateOf(app)
     return app
       .derive((c) => {
         const path = pathOf(c.req.url)
+        const method = methodLabel(c.req.method)
+        // Named `{method} {route template}` per the HTTP conventions: the raw path would make every
+        // id its own span name, and carry whatever a path holds into every trace backend's index.
+        const route = routeOf(c.req.method, path)
         const observation = lifecycle.start({
-          name: `${c.req.method} ${path}`,
+          name: `${method === "_OTHER" ? "HTTP" : method}${route === undefined ? "" : ` ${route}`}`,
+          kind: "server",
           traceparent: c.req.headers.get("traceparent"),
           attributes: {
-            "http.request.method": c.req.method,
+            "http.request.method": method,
+            ...(method === "_OTHER" ? { "http.request.method_original": c.req.method } : {}),
+            ...(route === undefined ? {} : { "http.route": route }),
             "url.path": path,
             ...(serviceName === undefined ? {} : { "service.name": serviceName }),
           },

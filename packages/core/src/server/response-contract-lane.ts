@@ -100,30 +100,51 @@ export function checkResponseContract(
   return checkRouteResponseContract({ response: schema }, result, mode)
 }
 
+/** The schema a reply with this status is held to: `response` for 2xx, else `errors[status]`. */
+const schemaFor = (definition: ResponseContractDefinition, code: number) =>
+  code >= 200 && code < 300 ? definition.response : definition.errors?.[code]
+
+/** A `c.json(...)` reply rebuilt around its validated value, keeping its status and headers. */
+function reserialize(reply: Response, value: unknown): Response {
+  const headers = new Headers(reply.headers)
+  headers.delete("content-length")
+  return new Response(JSON.stringify(value), {
+    status: reply.status,
+    statusText: reply.statusText,
+    headers,
+  })
+}
+
 /**
  * Check a route's success or status-specific error payload. Plain `status()` results retain their
- * status while enforcement replaces only the body with the validator's output. Raw `Response`
- * remains an explicit transport escape hatch because inspecting it would consume streams or alter
- * redirects; assurance/static checks must govern that path separately.
+ * status while enforcement replaces only the body with the validator's output. A `c.json(...)`
+ * reply is held to the contract through the value it was built from (`jsonReply`). Any other raw
+ * `Response` remains an explicit transport escape hatch because inspecting it would consume
+ * streams or alter redirects; assurance/static checks must govern that path separately.
  */
 export function checkRouteResponseContract(
   definition: ResponseContractDefinition,
   result: unknown,
   mode: "warn" | "enforce",
+  jsonReply?: { readonly body: unknown },
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   const plain = isResponseResult(result) ? result.plain : undefined
   if (plain !== undefined) {
-    const schema =
-      plain.status >= 200 && plain.status < 300
-        ? definition.response
-        : definition.errors?.[plain.status]
+    const schema = schemaFor(definition, plain.status)
     if (schema === undefined) return { kind: "ok", value: result }
-    return validateContract(schema, plain.body, mode, (value) =>
+    return validateContract(schema, plain.body, result, mode, (value) =>
       status(
         plain.status,
         value,
         plain.headers === undefined ? undefined : { headers: plain.headers },
       ),
+    )
+  }
+  if (jsonReply !== undefined && result instanceof Response) {
+    const schema = schemaFor(definition, result.status)
+    if (schema === undefined) return { kind: "ok", value: result }
+    return validateContract(schema, jsonReply.body, result, mode, (value) =>
+      reserialize(result, value),
     )
   }
 
@@ -134,24 +155,28 @@ export function checkRouteResponseContract(
   if (result instanceof Response || result === undefined) return { kind: "ok", value: result }
   const schema = definition.response
   if (schema === undefined) return { kind: "ok", value: result }
-  return validateContract(schema, result, mode, (value) => value)
+  return validateContract(schema, result, result, mode, (value) => value)
 }
 
+/** Validate `payload`; `served` is what goes out unchanged when nothing is enforced - the whole
+ * `status(...)` result or reply, never just its body. */
 function validateContract(
   schema: StandardSchemaV1,
-  result: unknown,
+  payload: unknown,
+  served: unknown,
   mode: "warn" | "enforce",
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
-  const settled = schema["~standard"].validate(result)
+  const settled = schema["~standard"].validate(payload)
   return settled instanceof Promise
-    ? settled.then((r) => interpret(r, result, mode, replace))
-    : interpret(settled, result, mode, replace)
+    ? settled.then((r) => interpret(r, payload, served, mode, replace))
+    : interpret(settled, payload, served, mode, replace)
 }
 
 function interpret(
   settled: StandardResult<unknown>,
-  result: unknown,
+  payload: unknown,
+  served: unknown,
   mode: "warn" | "enforce",
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome {
@@ -160,16 +185,16 @@ function interpret(
     // `warn` never changes what is served - it reports and gets out of the way, so switching it on can
     // never be the thing that broke production.
     return mode === "warn"
-      ? { kind: "warn", value: result, message }
+      ? { kind: "warn", value: served, message }
       : { kind: "violation", message }
   }
-  const dropped = droppedKeys(result, settled.value)
+  const dropped = droppedKeys(payload, settled.value)
   if (mode === "enforce") return { kind: "ok", value: replace(settled.value) }
   return dropped.length === 0
-    ? { kind: "ok", value: result }
+    ? { kind: "ok", value: served }
     : {
         kind: "warn",
-        value: result,
+        value: served,
         message: `response carries fields its contract does not declare: ${dropped.join(", ")}. They are being sent; \`responseContract: "enforce"\` would strip them.`,
       }
 }
@@ -183,6 +208,7 @@ export interface ResponseContractRuntime {
   check(
     definition: ResponseContractDefinition,
     result: unknown,
+    context?: { readonly jsonReply?: Response | undefined; readonly jsonBody?: unknown },
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
 }
 
@@ -208,7 +234,15 @@ interface ResponseContractInstallable {
 export function responseContract(mode: ResponseContractMode = "warn"): IdentityPlugin {
   const runtime: ResponseContractRuntime = {
     mode,
-    check: (definition, result) => checkRouteResponseContract(definition, result, mode),
+    check: (definition, result, context) =>
+      checkRouteResponseContract(
+        definition,
+        result,
+        mode,
+        result instanceof Response && result === context?.jsonReply
+          ? { body: context.jsonBody }
+          : undefined,
+      ),
   }
   const apply = <S extends AnyServer>(app: S): S => {
     ;(app as unknown as ResponseContractInstallable)[INSTALL_RESPONSE_CONTRACT](runtime)

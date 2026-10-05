@@ -12,6 +12,44 @@ describe("prettyJson()", () => {
     expect(await res.text()).toBe('{\n  "a": 1,\n  "b": {\n    "c": 2\n  }\n}')
   })
 
+  test("re-indents without rewriting a number or a string as written", async () => {
+    const written = '{"id":12345678901234567890,"big":1e400,"neg":-0,"s":"caf\\u00e9 \\/ ok"}'
+    const app = server()
+      .use(prettyJson({ spaces: 2, newline: false }))
+      .get("/", () => new Response(written, { headers: { "content-type": "application/json" } }))
+      .get("/body", (c) => c.text(written, { headers: { "content-type": "application/json" } }))
+    const expected =
+      '{\n  "id": 12345678901234567890,\n  "big": 1e400,\n  "neg": -0,\n  "s": "caf\\u00e9 \\/ ok"\n}'
+    expect(await (await app.fetch(new Request("http://x/"))).text()).toBe(expected)
+    expect(await (await app.fetch(new Request("http://x/body"))).text()).toBe(expected)
+  })
+
+  test("lays out any document exactly as JSON.stringify would", async () => {
+    const documents: unknown[] = [
+      { a: [], b: {}, c: [[], [{}], { d: [1, { e: null }] }], f: 'x,y:{z}[]"' },
+      [1, "two", true, false, null, -1.5e-7, { nested: { deeper: ["\\", "\u2028"] } }],
+      "plain",
+      42,
+      [],
+      {},
+    ]
+    for (const spaces of [0, 2, 4]) {
+      for (const document of documents) {
+        const app = server()
+          .use(prettyJson({ spaces, newline: false }))
+          .get(
+            "/",
+            () =>
+              new Response(JSON.stringify(document, null, 3), {
+                headers: { "content-type": "application/json" },
+              }),
+          )
+        const text = await (await app.fetch(new Request("http://x/"))).text()
+        expect(text).toBe(JSON.stringify(document, null, spaces))
+      }
+    }
+  })
+
   test("supports an explicit query toggle", async () => {
     const app = server()
       .use(prettyJson({ query: "pretty" }))

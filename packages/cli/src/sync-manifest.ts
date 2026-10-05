@@ -12,6 +12,7 @@
 
 import { join } from "node:path"
 import { Glob } from "bun"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
 // The marker `generateServerManifest` writes at the top of the file - so a user file merely named
 // `server-manifest.ts` is never mistaken for a generated one. Mirrors `nifra check`'s drift scan.
@@ -77,7 +78,7 @@ export async function syncServerManifests(cwd: string): Promise<SyncManifestResu
     const drift = diffManifestRoutes(before, after)
     results.push({ file: rel, changed, added: drift.missing, removed: drift.extra })
   }
-  return results.sort((a, b) => a.file.localeCompare(b.file))
+  return results.sort((a, b) => codeUnitOrder(a.file, b.file))
 }
 
 /** CLI entry: sync every generated manifest, print a per-file summary + the client-rebuild caveat. */

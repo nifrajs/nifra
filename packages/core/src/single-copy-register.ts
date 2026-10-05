@@ -18,6 +18,11 @@
  *
  * `nifra check` reads this specifier out of `bunfig.toml` as the proof that the runtime arm is armed,
  * so the string above is a contract rather than a suggestion.
+ *
+ * A declared package that cannot be collapsed (two versions, or a file with no counterpart in the
+ * app's copy) prints one warning per package naming both copies. Set
+ * `"singleCopy": { "packages": [...], "strict": true }` in package.json, or `NIFRA_SINGLE_COPY_STRICT=1`,
+ * to make the preload throw instead.
  */
 import { registerSingleCopy } from "./single-copy"
 

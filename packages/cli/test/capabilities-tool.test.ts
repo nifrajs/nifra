@@ -1,8 +1,9 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
+import { all, method } from "@nifrajs/core/methods"
 import {
   collectCapabilityProjectReport,
   diffCapabilitySnapshots,
@@ -12,7 +13,8 @@ import {
   runCapabilitySnapshot,
   scanEffectImports,
 } from "../src/capabilities-tool.ts"
-import { collectCheckResult } from "../src/check.ts"
+import { collectCheckResult, renderCheckReport } from "../src/check.ts"
+import { collectVerificationLevels } from "../src/levels-tool.ts"
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("nifra-capability-fixtures-")
@@ -49,6 +51,27 @@ describe("effect import scanner", () => {
       `),
     ).toEqual(["app-db/read", "postgres", "app-db/write", "./helper", "app-db/read"])
   })
+
+  test("reads every value clause shape, and a long module in linear time", () => {
+    expect(
+      scanEffectImports(
+        [
+          'import Mixed, { named } from "mixed"',
+          'import Both, * as ns from "both"',
+          'import {\n  a,\n} from "multiline"',
+          'import{min}from"minified"',
+          'export * as all from "star-as"',
+          'export type * from "type-star"',
+        ].join("\n"),
+      ),
+    ).toEqual(["mixed", "both", "multiline", "minified", "star-as"])
+    const long = Array.from({ length: 20_000 }, (_, i) => `export const value${i} = f(${i})`).join(
+      "\n",
+    )
+    const started = performance.now()
+    expect(scanEffectImports(long)).toEqual([])
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe("project provenance firewall", () => {
@@ -80,6 +103,39 @@ describe("project provenance firewall", () => {
         chain: ["backend.ts", "./src/orders.ts", "postgres"],
       }),
     ])
+  })
+
+  test("covers every form of an optional-param route and the routes of all() and method()", async () => {
+    const cwd = join(FIXTURES, "route-forms")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    // Both declared seams are imported somewhere: an unused seam rule is its own finding.
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import { all, method } from "@nifrajs/core/methods"
+       import "app-db/read"
+       export const backend = server()
+         .get("/docs/:lang?/:page?", { capabilities: ["db.read"] }, handler)
+         .use(all("/echo", { capabilities: ["db.read"] }, handler))
+         .use(method(["purge", "GET"], "/cache/:key", { capabilities: ["db.read"] }, handler))`,
+    )
+    const handler = () => ({ ok: true })
+    const app = server()
+      .get("/docs/:lang?/:page?", { capabilities: ["db.read"] }, handler)
+      .use(all("/echo", { capabilities: ["db.read"] }, handler))
+      .use(method(["purge", "GET"], "/cache/:key", { capabilities: ["db.read"] }, handler))
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+
+    // 3 forms of the optional route, 7 methods of all(), 2 named methods.
+    expect(project.report.routes).toHaveLength(12)
+    expect(project.report.routes.filter((route) => !route.covered)).toEqual([])
+    expect(
+      project.report.routes.find(
+        (route) => route.method === "PURGE" && route.path === "/cache/:key",
+      ),
+    ).toMatchObject({ covered: true })
+    expect(project.report).toMatchObject({ ok: true, findings: [] })
   })
 
   test("explicit routeModules cover contract-style registrations", async () => {
@@ -379,5 +435,80 @@ describe("capability lockfile", () => {
     expect(diagnostic?.chain).toEqual(["backend.ts", "./repo.ts", "node:fs"])
     expect(diagnostic?.message).toContain("raw effect bypass")
     expect(result.ok).toBe(false)
+  })
+})
+
+describe("opaque mounts", () => {
+  const project = async (name: string, mountOptions: string): Promise<string> => {
+    const cwd = join(FIXTURES, name)
+    await mkdir(cwd, { recursive: true })
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import "./repo.ts"
+       const betterAuth = { fetch: () => new Response("auth") }
+       export const backend = server()
+         .get("/orders", { capabilities: ["db.read"] }, () => [])
+         .mount({ path: "/api/auth", app: betterAuth${mountOptions} })`,
+    )
+    await writeFile(join(cwd, "repo.ts"), `export const repository = true\n`)
+    await writeFile(
+      join(cwd, "nifra.assurance.ts"),
+      `import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+       import { backend } from "./backend.ts"
+       export default defineAssuranceConfig({
+         source: backend,
+         policy: { rules: [{ name: "all", match: {}, require: [] }] },
+         capabilities: {
+           definitions: [{ id: "db.read", zone: "domain", access: "read" }],
+           provenance: {
+             imports: [{ specifier: "./repo.ts", capabilities: ["db.read"] }],
+             forbiddenImports: [],
+           },
+         },
+       })`,
+    )
+    return cwd
+  }
+
+  test("a declared opaque mount is listed as a known gap and fails nothing", async () => {
+    const cwd = await project("opaque-declared", `, opaque: "better-auth's own handler"`)
+    const gap = {
+      kind: "opaque-mount" as const,
+      path: "/api/auth/*",
+      reason: "better-auth's own handler",
+    }
+
+    const check = await collectCheckResult(cwd, { lintsOnly: true })
+    expect(check.diagnostics.filter((item) => item.rule === "capability-assurance")).toEqual([])
+    expect(check.knownGaps).toEqual([gap])
+    expect(renderCheckReport(check)).toContain(
+      "• known gap, not capability-analyzed: /api/auth/* - better-auth's own handler",
+    )
+
+    expect(await runCapabilitySnapshot(cwd)).toBe(true)
+    const log = spyOn(console, "log").mockImplementation(() => {})
+    let printed: string[]
+    try {
+      expect(await runCapabilityCheck(cwd)).toBe(true)
+      printed = log.mock.calls.map((call) => String(call[0]))
+    } finally {
+      log.mockRestore()
+    }
+    expect(printed).toContain("• known gap, not analyzed: /api/auth/* - better-auth's own handler")
+
+    // The gap is the report's stated boundary, so the capability rung of the ladder still holds.
+    const levels = await collectVerificationLevels(cwd)
+    expect(levels.levels[2]).toMatchObject({ ok: true, reasons: [] })
+  })
+
+  test("an undeclared mount fails capability assurance with the fix", async () => {
+    const cwd = await project("opaque-undeclared", "")
+    const check = await collectCheckResult(cwd, { lintsOnly: true })
+    const diagnostic = check.diagnostics.find((item) => item.rule === "capability-assurance")
+    expect(diagnostic?.message).toContain("mount /api/auth/* is not analyzed")
+    expect(diagnostic?.fix).toContain("opaque")
+    expect(check.ok).toBe(false)
+    expect(check.knownGaps).toBeUndefined()
   })
 })

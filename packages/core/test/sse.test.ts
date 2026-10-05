@@ -99,6 +99,18 @@ describe("sse", () => {
     expect(tornDown).toBe(true)
   })
 
+  test("a body the runtime cancels aborts the producer's signal, even when the request signal never fires", async () => {
+    let aborted = false
+    const res = sse(ctx(), (s) => {
+      s.signal.addEventListener("abort", () => {
+        aborted = true
+      })
+      return new Promise<void>((resolve) => s.signal.addEventListener("abort", () => resolve()))
+    })
+    await res.body?.cancel()
+    expect(aborted).toBe(true)
+  })
+
   test("an already-aborted request never invokes run and closes immediately", async () => {
     const controller = new AbortController()
     controller.abort()

@@ -105,7 +105,7 @@ before(async () => {
 
   const proxy = createProxy({ upstream: `http://127.0.0.1:${originPort}`, transport })
   const app = nifraServer().mountFetch("/", proxy)
-  const handle = await serve(app, { port: 0 })
+  const handle = await serve(app, { hostname: "127.0.0.1", port: 0 })
   proxyPort = handle.port
   stop = () => handle.stop()
 })

@@ -24,6 +24,7 @@ export {
   type ObservationLifecycle,
   type ObservationLifecycleOptions,
   type ObservationParent,
+  type ObservationScope,
   type StartObservation,
 } from "./lifecycle.ts"
 export { type OtlpExporter, type OtlpExporterOptions, otlpExporter } from "./otlp.ts"
@@ -34,6 +35,7 @@ export {
   type NifraSpan,
   type ObservationAdapter,
   type ObservationLink,
+  type SpanKind,
   type SpanStatus,
 } from "./span.ts"
 export {

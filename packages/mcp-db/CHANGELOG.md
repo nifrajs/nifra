@@ -1,5 +1,45 @@
 # @nifrajs/mcp-db
 
+## 4.0.0
+
+### Minor Changes
+
+- d4d40a5: feat(mcp): `allowedHosts` DNS-rebinding guard
+
+  `createMcpServer()`, `respondMcpHttp()`, and `serveDatabaseAsMcp()` accept `allowedHosts`. A
+  request whose Host is not listed gets 403, with or without an Origin. Set it for servers on
+  localhost or a private network, where a DNS-rebound page presents a matching Origin. The check reads
+  the inbound `Host` header. Host names compare case-insensitively, an entry without a port matches any
+  port, and an entry with a port matches the effective port, so `localhost:80` admits
+  `http://localhost/`.
+
+  The same-origin default now accepts an `https:` Origin on an `http:` request URL (a TLS-terminating
+  proxy) and still rejects a downgrade.
+
+- 37dff1d: The read-only SQLite engine is importable on its own from `@nifrajs/mcp-db/engine`.
+
+  - `openReadOnlySqlite` opens a file with the `readonly` flag and `PRAGMA query_only = ON`, and opens a WAL database that no writer has attached yet without making it writable.
+  - `querySqlite`, `explainSqlite` and `readSqliteSchema` take an `exclude` list. A query is one SELECT (or WITH ... SELECT), and every table its compiled statement opens must be exposed, so a view, a CTE or an alias cannot reach an excluded table.
+  - With a `redaction` option, a query that reads a column `redaction.column` matches is refused (`NIFRA_DB_COLUMN_REFUSED`), whether it selects the column under another name, wraps it in an expression, filters on it or reaches it through a view or an index. Results are capped by rows and bytes and JSON-safe (bigints beyond 2^53 as strings, blobs as `<n bytes>`).
+  - Every refusal is a `DbRefusal` with a stable `NIFRA_DB_*` code, a message, a fix and a docs anchor.
+
+  `serveDatabaseAsMcp` behaves as before.
+
+- d4a79de: `@nifrajs/mcp-db/postgres` reads a development Postgres database on `Bun.SQL`, with the result shape and `NIFRA_DB_*` refusal codes of the SQLite engine.
+
+  - `parsePostgresUrl` and `connectPostgres` connect only to loopback, `*.localhost` or a unix socket unless `allowHosts` names the host, and start every session read-only.
+  - `queryPostgres` runs one statement through a tokenizer (one read-only statement, no row locks, no functions that reach outside a query), a `BEGIN READ ONLY` transaction with statement, lock and idle timeouts, a role gate (superusers and server-file or server-program roles are refused), an extension gate (dblink, postgres_fdw, file_fdw and untrusted languages, unless `allowExtensions` names them), a `DECLARE CURSOR` that the server accepts only for SELECT and VALUES, and a plan-level check that every relation, its parent tables and every catalog function in FROM are in `schemas` and outside `exclude`. With `redaction`, a column `redaction.column` matches that any plan expression uses, or a whole row holding one, is refused (`NIFRA_DB_COLUMN_REFUSED`).
+  - `explainPostgres` returns the JSON plan, and with `analyze` executes it inside the same transaction and timeout.
+  - `readPostgresSchema` lists the readable tables and views with columns, keys, indexes and row estimates, and leaves out an excluded table along with the views and child tables that read it.
+  - `postgresRoleSql` writes the SQL for a read-only login role, `pg_read_all_data` on Postgres 14 and later or `GRANT SELECT` per schema with a `REVOKE` per excluded table and partition, and runs none of it.
+
+### Patch Changes
+
+- 0f486f2: Closing a connection from `openReadOnlySqlite` releases the database file right away, instead of when its statements are garbage collected.
+- Updated dependencies [d4d40a5]
+- Updated dependencies [9ccf198]
+  - @nifrajs/mcp@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

@@ -20,19 +20,32 @@
  *   - `nifra_levels`  - the cumulative verification ladder (L0 contract → L4 invariants): what the
  *     project actually proves, and why each level it misses does not hold.
  *   - `nifra_doctor`  - package.json dependency drift detector, with safe local-version auto-fix.
- *   - `nifra_explain` - resolve an error (pasted, or the dev server's last) into a structured
+ *   - `nifra_errors`  - the running dev server's errors (SSR, loader, API, build, browser, hydration,
+ *     crash), each a structured diagnostic tagged with its request; `since` cursors, stale flags.
+ *   - `nifra_logs`    - the dev server's console output, server and browser, tagged by request.
+ *   - `nifra_db_schema` / `nifra_db_query` / `nifra_db_role` - the development database declared as
+ *     `devDatabase` in nifra.config.ts: its schema, one read-only query (or plan) per call in a fresh
+ *     subprocess killed at the deadline, and the SQL for a read-only role. Separate tools, so a client
+ *     can allow reading the schema without allowing queries.
+ *   - `nifra_explain` - resolve an error (pasted, or the dev server's latest) into a structured
  *     diagnostic: stable code, a codeframe in the user's source, and the recognised cause + fix.
  *   - `nifra_inspect` - read the running dev server's recent request traces (method/path/status/
- *     duration/ISR) from the DevTools plugin: what your requests ACTUALLY did, not a guess.
+ *     duration/ISR/errors): what your requests ACTUALLY did, not a guess.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]` (or
  * `["mcp", "<dir>"]` to pin the project directory explicitly). The server does NOT silently trust its
  * spawn directory: the root is resolved via `./mcp-root.ts` (marker walk-up, the client's MCP `roots`,
  * fail-closed tools when no nifra project is found) and announced in `initialize` + on every project
- * tool result. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
+ * tool result. A project that installs its own `@nifrajs/cli` at a different version gets the session
+ * handed to that CLI; when that is impossible the version-sensitive tools refuse rather than answer
+ * for the wrong release (see `./mcp-delegate.ts`). The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
  * standard MCP progress notifications and request cancellation - no SDK dependency, the same
  * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
+ *
+ * This process runs no project code and holds none of the project's `.env`: the config, the backend
+ * and everything they import run in a fresh subprocess per call (`./mcp-isolate.ts`), and a session
+ * whose process Bun started with `.env` values moves to a copy that never loads them (`./cli.ts`).
  */
 
 import { stat } from "node:fs/promises"
@@ -40,7 +53,8 @@ import { resolve } from "node:path"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import type { LoadedApp } from "./load.ts"
-import { detectMonorepo, loadMonorepoApps } from "./load.ts"
+import { loadMonorepoApps } from "./load.ts"
+import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
   createMcpProtocolState,
@@ -56,11 +70,6 @@ import {
   type McpTool,
   rpcError,
 } from "./mcp-protocol.ts"
-import {
-  extractBackendPrompts,
-  extractBackendResources,
-  extractBackendTools,
-} from "./mcp-reflect.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 
 export {
@@ -99,7 +108,14 @@ export {
 } from "./mcp-io.ts"
 export { clientSupportsRoots, guardTools } from "./mcp-root.ts"
 
-import { createCachedAppLoader, projectTools } from "./mcp-exec.ts"
+import { projectTools } from "./mcp-exec.ts"
+import {
+  createAppSurface,
+  detectMonorepoIsolated,
+  type IsolatedSurface,
+  isolateResources,
+  isolateTools,
+} from "./mcp-isolate.ts"
 
 export type { CachedAppLoaderOptions } from "./mcp-exec.ts"
 export {
@@ -115,7 +131,7 @@ export {
   wsHandler,
 } from "./mcp-exec.ts"
 
-import { namespaceForApp, projectFeatures } from "./mcp-context.ts"
+import { namespaceForApp, projectPrompts, projectResources } from "./mcp-context.ts"
 
 export type { CommandMcpToolOptions } from "./mcp-context.ts"
 export {
@@ -127,35 +143,39 @@ export {
   resolveProjectDir,
 } from "./mcp-context.ts"
 
-async function backendFeatures(
-  loader: () => Promise<LoadedApp>,
-  base: McpServerFeatures,
-): Promise<McpServerFeatures> {
-  const resources = [...(base.resources ?? [])]
-  const prompts = [...(base.prompts ?? [])]
-  try {
-    const app = await loader()
-    resources.push(...extractBackendResources(app.backend))
-    prompts.push(...extractBackendPrompts(app.backend))
-  } catch {
-    // Not loadable here (no web config, or the config itself throws). The server still serves.
-  }
-  return { resources, prompts }
-}
+/**
+ * The loader the server builds its tool and resource lists with. It never loads: every handler that
+ * reaches the app runs in a project subprocess (`./mcp-isolate.ts`), so one that tried here fails.
+ */
+const noAppInServer = (): Promise<LoadedApp> =>
+  Promise.reject(
+    new Error("[nifra] the MCP server does not load the app; project code runs in a subprocess"),
+  )
+
+const isolatedToolsByDir = new Map<string, McpTool[]>()
 
 /**
- * The MCP tools the app itself declares via `app.tool(...)`, or none when the app cannot be loaded.
- *
- * Same reasoning as {@link backendFeatures}, on the hotter path: this ran on EVERY JSON-RPC message,
- * so an unloadable project failed `initialize` itself with a `-32603` and the session never opened.
- * An app's own tools are an extension of the built-in set, so their absence must not withdraw the
- * built-ins - a backend-only project still gets docs, examples, types, check, doctor, levels and test.
+ * The project's tools, each forwarded to a project subprocess unless it runs no project code. Built
+ * once per directory: `nifra_run`/`nifra_render` hold their warm worker in the tool, so a list rebuilt
+ * per message started a fresh worker for every `warm: true` call.
  */
-async function appDeclaredTools(loader: () => Promise<LoadedApp>): Promise<McpTool[]> {
-  try {
-    return extractBackendTools((await loader()).backend)
-  } catch {
-    return []
+function isolatedProjectTools(cwd: string): McpTool[] {
+  let tools = isolatedToolsByDir.get(cwd)
+  if (tools === undefined) {
+    tools = isolateTools(cwd, projectTools(cwd, noAppInServer))
+    isolatedToolsByDir.set(cwd, tools)
+  }
+  return tools
+}
+
+/** The project's resources and prompts, with the ones the app declares. */
+function appFeatures(cwd: string, surface: IsolatedSurface): McpServerFeatures {
+  return {
+    resources: [
+      ...isolateResources(cwd, projectResources(cwd, noAppInServer)),
+      ...surface.resources,
+    ],
+    prompts: [...projectPrompts(), ...surface.prompts],
   }
 }
 
@@ -163,42 +183,42 @@ const ROOTS_REQUEST_ID = "nifra:roots/list"
 const MAX_STDIO_MESSAGE_BYTES = 8 * 1024 * 1024
 const STDIO_ENCODER = new TextEncoder()
 
+interface ProjectApp {
+  readonly name: string
+  readonly cwd: string
+  readonly surface: () => Promise<IsolatedSurface>
+}
+
 /** Everything derived from the project root - rebuilt wholesale when the root changes (adoption of a
  * client workspace root), so no per-tool state can keep pointing at the old directory. */
 interface ProjectContext {
-  readonly monorepo: Awaited<ReturnType<typeof detectMonorepo>>
+  /** A monorepo root's apps; `undefined` when the root is one app. */
+  readonly apps: readonly ProjectApp[] | undefined
   readonly features: McpServerFeatures
-  readonly loadAppCached: () => Promise<LoadedApp>
+  readonly surface: () => Promise<IsolatedSurface>
 }
 
 async function createProjectContext(root: string): Promise<ProjectContext> {
-  const monorepo = await detectMonorepo(root)
+  const monorepo = await detectMonorepoIsolated(root)
   if (monorepo) {
-    const appEntries = await loadMonorepoApps(root, monorepo)
+    const apps = (await loadMonorepoApps(root, monorepo)).map(
+      ({ name, cwd }): ProjectApp => ({ name, cwd, surface: createAppSurface(cwd) }),
+    )
     const allResources: McpResource[] = []
     const allPrompts: McpPrompt[] = []
-    for (const { name, cwd: appCwd } of appEntries) {
-      const loader = createCachedAppLoader(appCwd)
-      const ns = namespaceForApp(
-        name,
-        [],
-        await backendFeatures(loader, projectFeatures(appCwd, loader)),
-      )
+    for (const { name, cwd: appCwd, surface } of apps) {
+      const ns = namespaceForApp(name, [], appFeatures(appCwd, await surface()))
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
     return {
-      monorepo,
+      apps,
       features: { resources: allResources, prompts: allPrompts },
-      loadAppCached: createCachedAppLoader(root),
+      surface: createAppSurface(root),
     }
   }
-  const loadAppCached = createCachedAppLoader(root)
-  return {
-    monorepo,
-    features: await backendFeatures(loadAppCached, projectFeatures(root, loadAppCached)),
-    loadAppCached,
-  }
+  const surface = createAppSurface(root)
+  return { apps: undefined, features: appFeatures(root, await surface()), surface }
 }
 
 /**
@@ -217,6 +237,19 @@ export async function runMcpServer(
     throw new Error(`nifra mcp: directory not found: ${requested}`)
   }
   let rootState = await resolveRootState(requested, explicitDir !== undefined)
+  if (rootState.isProject) {
+    // Before anything reads stdin: a hand-off child inherits the descriptor and owns the session.
+    const exitCode = await delegateToProjectCli({
+      cwd,
+      root: rootState.root,
+      version,
+      args: explicitDir === undefined ? [] : [requested],
+    })
+    if (exitCode !== undefined) {
+      process.exitCode = exitCode
+      return
+    }
+  }
   let ctx = await createProjectContext(rootState.root)
   let drift: ToolingDrift | undefined = await detectToolingDrift(rootState.root, version)
   const serverInfo = { name: "nifra", version }
@@ -277,20 +310,27 @@ export async function runMcpServer(
     }
 
     let activeTools: McpTool[]
-    if (ctx.monorepo) {
-      const appEntries = await loadMonorepoApps(rootState.root, ctx.monorepo)
+    if (ctx.apps) {
       const allTools: McpTool[] = []
-      for (const { name, cwd: appCwd } of appEntries) {
-        const loader = createCachedAppLoader(appCwd)
-        const tools = [...projectTools(appCwd, loader), ...(await appDeclaredTools(loader))]
+      for (const { name, cwd: appCwd, surface } of ctx.apps) {
+        const tools = [
+          ...refuseVersionSensitive(isolatedProjectTools(appCwd), drift),
+          ...(await surface()).tools,
+        ]
         const ns = namespaceForApp(name, tools, { resources: [], prompts: [] })
         allTools.push(...ns.tools)
       }
-      activeTools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
+      activeTools = [
+        ...refuseVersionSensitive(
+          docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus),
+          drift,
+        ),
+        ...allTools,
+      ]
     } else {
       activeTools = [
-        ...projectTools(rootState.root, ctx.loadAppCached),
-        ...(await appDeclaredTools(ctx.loadAppCached)),
+        ...refuseVersionSensitive(isolatedProjectTools(rootState.root), drift),
+        ...(await ctx.surface()).tools,
       ]
     }
     const verdict = await rootVerdict(rootState)
@@ -308,6 +348,8 @@ export async function runMcpServer(
     const response = await handleRpc(message, activeTools, serverInfo, features, {
       state,
       sendNotification: send,
+      // The stdio caller is the developer's own agent: a failure it cannot read it cannot fix.
+      exposeToolErrors: true,
     })
     if (response) send(response)
     // Ask for the client's workspace roots once the handshake completes, and again whenever the

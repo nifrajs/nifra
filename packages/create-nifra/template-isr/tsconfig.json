@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
-    "types": ["react", "react-dom"]
+    "types": ["bun", "react", "react-dom"],
+    "rootDirs": [".", "./.nifra/types"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": [
@@ -20,9 +21,9 @@
     ".build",
     ".nifra",
     ".wrangler",
-    "server-manifest.ts",
-    "server.ts",
-    "worker.ts",
+    "backend/server-manifest.ts",
+    "backend/dev-server.ts",
+    "backend/worker.ts",
     "build.ts"
   ]
 }

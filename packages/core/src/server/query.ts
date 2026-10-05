@@ -110,6 +110,55 @@ export function queryObjectOf(search: string): Record<string, QueryValue> {
   return out
 }
 
+/**
+ * `application/json` or an `application/*+json` type, with or without parameters, compared as a media
+ * type rather than searched as a substring. A substring test also matches `text/plain; x=application/json`,
+ * whose essence is `text/plain` - a type a browser sends cross-origin with credentials and no preflight,
+ * so a JSON route would parse a body no CORS policy ever saw.
+ */
+export function isJsonMediaType(contentType: string): boolean {
+  // The spellings common clients send, by exact match.
+  if (
+    contentType === "application/json" ||
+    contentType === "application/json; charset=utf-8" ||
+    contentType === "application/json;charset=UTF-8"
+  ) {
+    return true
+  }
+  // Every other lowercase `application/json` spelling, parameters or not, without slicing or lowercasing.
+  if (contentType.startsWith("application/json")) {
+    let delimiter = 16
+    while (delimiter < contentType.length) {
+      const char = contentType.charCodeAt(delimiter)
+      if (char !== 32 /* SP */ && char !== 9 /* HTAB */) break
+      delimiter++
+    }
+    if (delimiter === contentType.length || contentType.charCodeAt(delimiter) === 59 /* ; */) {
+      return true
+    }
+  }
+  // Lowercase `application/*+json` spellings by the same rules as the parse below, without allocating.
+  if (contentType.startsWith("application/")) {
+    const params = contentType.indexOf(";", 12)
+    let end = params === -1 ? contentType.length : params
+    while (end > 12) {
+      const char = contentType.charCodeAt(end - 1)
+      if (char !== 32 /* SP */ && char !== 9 /* HTAB */) break
+      end--
+    }
+    if (end >= 17 && contentType.startsWith("+json", end - 5)) {
+      const space = contentType.indexOf(" ", 12)
+      if (space === -1 || space >= end) return true
+    }
+  }
+  const semi = contentType.indexOf(";")
+  const essence = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
+  return (
+    essence === "application/json" ||
+    (essence.startsWith("application/") && essence.endsWith("+json") && !essence.includes(" "))
+  )
+}
+
 /** `application/x-www-form-urlencoded`, with or without a charset suffix. */
 export function isUrlEncodedForm(contentType: string): boolean {
   return (

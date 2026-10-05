@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
+import { bodyParser } from "@nifrajs/core/body-parser"
 import { defineContract } from "@nifrajs/core/contract"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import { all, method } from "@nifrajs/core/methods"
 import { t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
 
 // A BYO Standard Schema: validates at runtime but exposes no JSON Schema.
@@ -499,5 +501,277 @@ describe("header schema → header parameters", () => {
       required: true,
       schema: { type: "string" },
     })
+  })
+})
+
+describe("cookie schema → cookie parameters", () => {
+  test("app route emits each declared cookie with its name as written", () => {
+    const doc = toOpenAPI(
+      server().get(
+        "/dashboard",
+        { cookies: t.cookies({ sessionId: t.string(), page: t.optional(t.integer()) }) },
+        (c) => ({ session: c.cookies.sessionId, page: c.cookies.page ?? 1 }),
+      ),
+    )
+    expect(doc.paths["/dashboard"]?.get?.parameters).toEqual([
+      { name: "sessionId", in: "cookie", required: true, schema: { type: "string" } },
+      { name: "page", in: "cookie", required: false, schema: { type: "integer" } },
+    ])
+  })
+
+  test("contract operation emits its cookies schema as cookie parameters", () => {
+    const contract = defineContract({
+      me: {
+        method: "GET",
+        path: "/me",
+        cookies: t.cookies({ session: t.string() }),
+        response: t.object({ ok: t.boolean() }),
+      },
+    })
+    expect(toOpenAPI(contract).paths["/me"]?.get?.parameters).toEqual([
+      { name: "session", in: "cookie", required: true, schema: { type: "string" } },
+    ])
+  })
+})
+
+describe("a body schema with a parser of its own", () => {
+  const Pipeline = t.object({ name: t.string() })
+  const parse = (): unknown => ({ name: "build" })
+  const app = () =>
+    server()
+      .post(
+        "/pipelines",
+        // Declared out of order: the document lists them in one fixed order.
+        { body: bodyParser(Pipeline, { types: ["text/yaml", "application/yaml"], parse }) },
+        (c) => ({ name: c.body.name }),
+      )
+      .post("/plain", { body: Pipeline }, (c) => ({ name: c.body.name }))
+
+  test("each media type it reads is a request content entry with the body schema", () => {
+    const content = toOpenAPI(app()).paths["/pipelines"]?.post?.requestBody?.content
+    expect(Object.keys(content ?? {})).toEqual([
+      "application/json",
+      "application/yaml",
+      "text/yaml",
+    ])
+    const json = content?.["application/json"]?.schema
+    expect(json).toMatchObject({ type: "object", properties: { name: { type: "string" } } })
+    expect(content?.["application/yaml"]?.schema).toEqual(json)
+    expect(content?.["text/yaml"]?.schema).toEqual(json)
+  })
+
+  test("a route without one keeps a single entry", () => {
+    const content = toOpenAPI(app()).paths["/plain"]?.post?.requestBody?.content
+    expect(Object.keys(content ?? {})).toEqual(["application/json"])
+  })
+
+  test("a document built from a stored snapshot is the same document", () => {
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app())))
+    expect(JSON.stringify(toOpenAPIFromEvidence(evidence))).toBe(JSON.stringify(toOpenAPI(app())))
+  })
+})
+
+describe("optional path params", () => {
+  const contract = defineContract({
+    report: {
+      method: "GET",
+      path: "/reports/:year?/:month?",
+      summary: "Reports",
+      response: t.object({ total: t.integer() }),
+    },
+    removeReport: { method: "DELETE", path: "/reports/:year" },
+  })
+  const doc = toOpenAPI(contract)
+
+  test("a contract operation is one operation per concrete path", () => {
+    expect(Object.keys(doc.paths).sort()).toEqual([
+      "/reports",
+      "/reports/{year}",
+      "/reports/{year}/{month}",
+    ])
+    expect(Object.keys(doc.paths["/reports/{year}"] ?? {}).sort()).toEqual(["delete", "get"])
+  })
+
+  test("each path declares only the parameters it has", () => {
+    expect(doc.paths["/reports"]?.get?.parameters).toBeUndefined()
+    expect(doc.paths["/reports/{year}"]?.get?.parameters?.map((p) => p.name)).toEqual(["year"])
+    expect(doc.paths["/reports/{year}/{month}"]?.get?.parameters).toEqual([
+      { name: "year", in: "path", required: true, schema: { type: "string" } },
+      { name: "month", in: "path", required: true, schema: { type: "string" } },
+    ])
+  })
+
+  test("operation ids stay unique: the full path carries the contract name", () => {
+    expect(doc.paths["/reports/{year}/{month}"]?.get?.operationId).toBe("report")
+    expect(doc.paths["/reports/{year}"]?.get?.operationId).toBeUndefined()
+    expect(doc.paths["/reports"]?.get?.operationId).toBeUndefined()
+    const ids = Object.values(doc.paths)
+      .flatMap((item) => Object.values(item))
+      .map((operation) => operation.operationId)
+      .filter((id) => id !== undefined)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test("every path carries the operation's metadata and response", () => {
+    for (const path of ["/reports", "/reports/{year}", "/reports/{year}/{month}"]) {
+      expect(doc.paths[path]?.get?.summary).toBe("Reports")
+      expect(doc.paths[path]?.get?.responses["200"]?.content).toBeDefined()
+    }
+  })
+
+  test("an override reaches a shorter path by METHOD /path and the full one by name", () => {
+    const overridden = toOpenAPI(contract, {
+      operations: { "GET /reports": { summary: "All reports" }, report: { summary: "One month" } },
+    })
+    expect(overridden.paths["/reports"]?.get?.summary).toBe("All reports")
+    expect(overridden.paths["/reports/{year}"]?.get?.summary).toBe("Reports")
+    expect(overridden.paths["/reports/{year}/{month}"]?.get?.summary).toBe("One month")
+  })
+
+  test("an app route reads the same way, and a stored snapshot agrees", () => {
+    const app = server().get("/reports/:year?/:month?", () => ({ total: 1 }))
+    const live = toOpenAPI(app)
+    expect(Object.keys(live.paths).sort()).toEqual([
+      "/reports",
+      "/reports/{year}",
+      "/reports/{year}/{month}",
+    ])
+    expect(live.paths["/reports"]?.get?.parameters).toBeUndefined()
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(JSON.stringify(toOpenAPIFromEvidence(evidence))).toBe(JSON.stringify(live))
+  })
+})
+
+describe("constrained path params", () => {
+  const app = server()
+    .get("/users/:id{[0-9]+}", (c) => ({ id: c.params.id }))
+    .get("/codes/:code{[A-Z]{2,3}}", (c) => ({ code: c.params.code }))
+    .get("/pins/:pin{\\d{4}}", (c) => ({ pin: c.params.pin }))
+    .get("/img/:kind{thumb|full}", (c) => ({ kind: c.params.kind }))
+    .get("/f/:name.:ext{png|jpg}", (c) => ({ name: c.params.name, ext: c.params.ext }))
+    .get("/o/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "" }))
+    .get(
+      "/orders/:id{[0-9]+}",
+      { params: t.object({ id: t.string({ format: "int64" }) }) },
+      (c) => ({ id: c.params.id }),
+    )
+  const doc = toOpenAPI(app)
+
+  test("the path template carries the bare name, never the constraint", () => {
+    expect(Object.keys(doc.paths).sort()).toEqual([
+      "/codes/{code}",
+      "/f/{name}.{ext}",
+      "/img/{kind}",
+      "/o",
+      "/o/{page}",
+      "/orders/{id}",
+      "/pins/{pin}",
+      "/users/{id}",
+    ])
+  })
+
+  test("a character class is a string pattern, a list of values is an enum", () => {
+    expect(doc.paths["/users/{id}"]?.get?.parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[0-9]+$" } },
+    ])
+    expect(doc.paths["/codes/{code}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^[A-Z]{2,3}$",
+    })
+    expect(doc.paths["/pins/{pin}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^\\d{4}$",
+    })
+    expect(doc.paths["/img/{kind}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      enum: ["thumb", "full"],
+    })
+  })
+
+  test("every emitted pattern compiles and accepts what the router accepts", () => {
+    for (const [path, value, other] of [
+      ["/users/{id}", "42", "4a"],
+      ["/codes/{code}", "FRA", "FRAN"],
+      ["/pins/{pin}", "0420", "042"],
+    ] as const) {
+      const schema = doc.paths[path]?.get?.parameters?.[0]?.schema as { pattern: string }
+      const pattern = new RegExp(schema.pattern)
+      expect(pattern.test(value)).toBe(true)
+      expect(pattern.test(other)).toBe(false)
+    }
+  })
+
+  test("a part-literal segment lists each param, constrained or not", () => {
+    expect(doc.paths["/f/{name}.{ext}"]?.get?.parameters).toEqual([
+      { name: "name", in: "path", required: true, schema: { type: "string" } },
+      { name: "ext", in: "path", required: true, schema: { type: "string", enum: ["png", "jpg"] } },
+    ])
+  })
+
+  test("an optional constrained param is a parameter only on the path that has it", () => {
+    expect(doc.paths["/o"]?.get?.parameters).toBeUndefined()
+    expect(doc.paths["/o/{page}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^[0-9]+$",
+    })
+  })
+
+  test("a declared params schema is the parameter's schema", () => {
+    expect(doc.paths["/orders/{id}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      format: "int64",
+    })
+  })
+
+  test("a contract operation and a stored snapshot read the same way", () => {
+    const contract = defineContract({
+      getUser: { method: "GET", path: "/users/:id{[0-9]+}" },
+      image: { method: "GET", path: "/img/:kind{thumb|full}" },
+    })
+    const fromContract = toOpenAPI(contract)
+    expect(fromContract.paths["/users/{id}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^[0-9]+$",
+    })
+    expect(fromContract.paths["/img/{kind}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      enum: ["thumb", "full"],
+    })
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(toOpenAPIFromEvidence(evidence)).toEqual(doc)
+  })
+
+  test("braces that are not a constraint are text after the param, as the router reads them", () => {
+    const literal = toOpenAPI(server().get("/x/:id{int}", () => ({})))
+    expect(Object.keys(literal.paths)).toEqual(["/x/{id}{int}"])
+    expect(literal.paths["/x/{id}{int}"]?.get?.parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "string" } },
+    ])
+  })
+})
+
+describe("routes registered by method name", () => {
+  const app = server()
+    .use(all("/echo", () => ({ ok: true })))
+    .use(method(["PURGE", "DELETE"], "/cache/:key", () => ({ ok: true })))
+    .use(method("PROPFIND", "/dav/*path", () => ({ ok: true })))
+
+  test("every standard method is an operation; a custom method has no place in a path item", () => {
+    const doc = toOpenAPI(app)
+    expect(Object.keys(doc.paths).sort()).toEqual(["/cache/{key}", "/echo"])
+    expect(Object.keys(doc.paths["/echo"] ?? {}).sort()).toEqual([
+      "delete",
+      "get",
+      "head",
+      "options",
+      "patch",
+      "post",
+      "put",
+    ])
+    expect(Object.keys(doc.paths["/cache/{key}"] ?? {})).toEqual(["delete"])
+  })
+
+  test("a stored snapshot produces the same document", () => {
+    expect(toOpenAPIFromEvidence(snapshotProjectEvidence(app))).toEqual(toOpenAPI(app))
   })
 })

@@ -24,6 +24,9 @@ import {
   type RunSnapshot,
 } from "@nifrajs/agent-protocol"
 
+/** Code-unit order, the same in every locale, so a view lists the same ids in the same order everywhere. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
 /** A session reduced to lifecycle and capability facts. The working directory is deliberately omitted. */
 export interface SessionView {
   readonly id: string
@@ -451,9 +454,12 @@ const HANDOFF_STATES: ReadonlySet<string> = new Set([
 const APPROVAL_UI_OPS = ["approve", "deny", "cancel"] as const
 const HANDOFF_UI_OPS = ["assign", "resolve", "cancel"] as const
 
-/** True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed. */
+/**
+ * True once `now` reaches or passes the boundary's expiry, or when either is not a number. A stale
+ * boundary fails every command closed.
+ */
 export function boundaryIsStale(item: BoundaryStateView, now: number): boolean {
-  return now >= item.expiresAt
+  return !(now < item.expiresAt)
 }
 
 /**
@@ -726,6 +732,7 @@ export function toRunStudioView(value: unknown): RunStudioView | undefined {
   if (value.traceRef !== undefined && !studioToken(value.traceRef)) return undefined
   if (value.replayRef !== undefined && !studioToken(value.replayRef)) return undefined
   const nodes: RunStudioNodeView[] = []
+  const seen = new Set<string>()
   for (const raw of value.nodes) {
     if (
       !studioRecord(raw) ||
@@ -746,6 +753,7 @@ export function toRunStudioView(value: unknown): RunStudioView | undefined {
       return undefined
     if (
       !studioToken(raw.nodeId) ||
+      seen.has(raw.nodeId) ||
       !Array.isArray(raw.dependsOn) ||
       !raw.dependsOn.every(studioToken) ||
       typeof raw.state !== "string" ||
@@ -757,6 +765,7 @@ export function toRunStudioView(value: unknown): RunStudioView | undefined {
       typeof raw.recovered !== "boolean"
     )
       return undefined
+    seen.add(raw.nodeId)
     nodes.push(
       Object.freeze({
         nodeId: raw.nodeId,
@@ -770,7 +779,7 @@ export function toRunStudioView(value: unknown): RunStudioView | undefined {
       }),
     )
   }
-  nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId))
+  nodes.sort((a, b) => byCodeUnit(a.nodeId, b.nodeId))
   return Object.freeze({
     runId: value.runId,
     planId: value.planId,
@@ -1270,6 +1279,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
   }
 
   const findings: ReviewViewFinding[] = []
+  const findingById = new Map<string, ReviewViewFinding>()
   for (const raw of value.findings) {
     if (
       !reviewViewRecord(raw) ||
@@ -1279,7 +1289,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
       ) ||
       typeof raw.id !== "string" ||
       !REVIEW_VIEW_ID.test(raw.id) ||
-      findings.some((finding) => finding.id === raw.id) ||
+      findingById.has(raw.id) ||
       typeof raw.check !== "string" ||
       !REVIEW_VIEW_CHECKS.has(raw.check) ||
       typeof raw.code !== "string" ||
@@ -1331,18 +1341,18 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
         return undefined
       fix = Object.freeze({ recipe: raw.fix.recipe })
     }
-    findings.push(
-      Object.freeze({
-        id: raw.id,
-        check: raw.check,
-        code: raw.code,
-        severity: raw.severity as ReviewViewFinding["severity"],
-        category: raw.category,
-        ...(location === undefined ? {} : { location }),
-        evidence: Object.freeze(evidence),
-        ...(fix === undefined ? {} : { fix }),
-      }),
-    )
+    const finding: ReviewViewFinding = Object.freeze({
+      id: raw.id,
+      check: raw.check,
+      code: raw.code,
+      severity: raw.severity as ReviewViewFinding["severity"],
+      category: raw.category,
+      ...(location === undefined ? {} : { location }),
+      evidence: Object.freeze(evidence),
+      ...(fix === undefined ? {} : { fix }),
+    })
+    findings.push(finding)
+    findingById.set(finding.id, finding)
   }
 
   const fixes: Array<ReviewView["fixes"][number]> = []
@@ -1372,7 +1382,6 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
     }
   }
 
-  const findingById = new Map(findings.map((finding) => [finding.id, finding]))
   const referenced = new Set<string>()
   for (const check of checks) {
     const ids = checkFindingIds.get(check.id) ?? []
@@ -1412,8 +1421,8 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
       : "pass"
   if (value.blocking !== expectedBlocking || value.status !== expectedStatus) return undefined
 
-  checks.sort((left, right) => left.id.localeCompare(right.id))
-  findings.sort((left, right) => left.id.localeCompare(right.id))
+  checks.sort((left, right) => byCodeUnit(left.id, right.id))
+  findings.sort((left, right) => byCodeUnit(left.id, right.id))
   return Object.freeze({
     version: 1,
     status: value.status,
@@ -1470,7 +1479,7 @@ export function toReviewView(value: unknown): ReviewView | undefined {
         value.status as number | null,
         value.ok ? "invalid-report" : "unavailable",
       )
-    const report = toReviewView(value.report)
+    const report = reviewViewRecord(value.report) ? parseReviewViewReport(value.report) : undefined
     return report === undefined
       ? reviewUnavailableView(value.status as number | null, "invalid-report")
       : Object.freeze({

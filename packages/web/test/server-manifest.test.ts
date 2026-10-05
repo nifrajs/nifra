@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } from "../src/index.ts"
+import { splitRouteHalves } from "./_route-halves.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> =>
   new ReadableStream({
@@ -24,9 +26,10 @@ test("generateServerManifest's runtime pattern round-trips through createWebApp 
     "users/[id].tsx": { default: "user", loader: (ctx) => ({ id: ctx.params.id }) },
     "_404.tsx": { default: "not-found" },
   }
+  const halves = splitRouteHalves(modules)
   const manifest = buildManifest(
-    Object.keys(modules),
-    (file) => () => Promise.resolve(modules[file] as RouteModule),
+    Object.keys(halves),
+    (file) => () => Promise.resolve(halves[file] as RouteModule),
   )
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
   // index: loader ran, wrapped in the root _layout (chain 2 = [layout, page]) - buildManifest applies
@@ -44,7 +47,7 @@ test("generateServerManifest's runtime pattern round-trips through createWebApp 
 
 test("the lazy runtime pattern round-trips through createWebApp (loaders called on demand)", async () => {
   // Mirror lazy codegen: a per-file loader map (here `() => Promise.resolve(mod)` stands in for
-  // `() => import(...)`), behind the same `(file) => () => loaders[file]()` importer the codegen emits.
+  // `() => import(...)`), behind the same `loaders[file]` importer the codegen emits.
   const loaded: string[] = []
   const make = (mod: RouteModule) => () => {
     loaded.push((mod.default as string) ?? "?")
@@ -52,12 +55,16 @@ test("the lazy runtime pattern round-trips through createWebApp (loaders called 
   }
   const loaders: Record<string, () => Promise<RouteModule>> = {
     "_layout.tsx": make({ default: "layout" }),
-    "index.tsx": make({ default: "home", loader: () => ({ hi: "lazy" }) }),
+    "index.tsx": make({ default: "home" }),
+    "index.backend.ts": make({
+      loader: () => ({ hi: "lazy" }),
+      loaderOutput: t.object({ hi: t.string() }),
+    } as unknown as RouteModule),
     "_404.tsx": make({ default: "nf" }),
   }
   const manifest = buildManifest(
     Object.keys(loaders),
-    (file) => () => loaders[file]?.() as Promise<RouteModule>,
+    (file) => loaders[file] as () => Promise<RouteModule>,
   )
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
   expect(await (await app.fetch(new Request("http://x/"))).text()).toContain(

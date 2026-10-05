@@ -14,7 +14,11 @@
 
 import { toFetchHandler } from "@nifrajs/core/edge"
 import {
+  answerNotFound,
   EMPTY_RESPONSE_CONTROLS,
+  type NotFoundHandler,
+  type NotFoundInput,
+  notFoundInput,
   type ProtoPoisoning,
   plainError,
   plainValidationError,
@@ -25,6 +29,7 @@ import {
   searchOf,
   toResponse,
 } from "@nifrajs/core/edge-kit"
+import { decodeRouteParams, expandOptionalParams } from "@nifrajs/core/pattern"
 import { Router } from "@nifrajs/core/router"
 import type { Method, Params, StandardIssue, StandardSchemaV1 } from "@nifrajs/core/server"
 
@@ -57,12 +62,25 @@ interface RouteEntry {
   readonly handler: EdgeHandler
 }
 
-/** Construction-time options. Both mirror `@nifrajs/core`'s `ServerOptions` defaults. */
+/** Construction-time options. The defaults mirror `@nifrajs/core`'s `ServerOptions`. */
 export interface EdgeOptions {
   /** Maximum request body size in bytes before a `413`. Defaults to 1 MB. */
   readonly maxBodyBytes?: number
   /** Prototype-poisoning policy for JSON bodies. Defaults to `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
+  /** Answers a request no route matched, in place of the default `404` body. Build it with
+   * {@link notFound}: `server({ notFound: notFound(handler) })`. */
+  readonly notFound?: EdgeNotFound
+}
+
+declare const EDGE_NOT_FOUND: unique symbol
+
+/** What {@link notFound} builds for {@link EdgeOptions.notFound}. Opaque: only `notFound()` makes one. */
+export type EdgeNotFound = ((
+  request: Request,
+  pathname: string,
+) => Response | Promise<Response>) & {
+  readonly [EDGE_NOT_FOUND]: true
 }
 
 /** Render a rejection - a `Response` passes through, a plain `ResponseResult` (413 / 415 / 422 / 404
@@ -79,14 +97,16 @@ export class EdgeServer {
   readonly #router = new Router<RouteEntry>()
   readonly #maxBodyBytes: number
   readonly #protoPoisoning: ProtoPoisoning
+  readonly #notFound: EdgeNotFound | undefined
 
   constructor(options: EdgeOptions = {}) {
     this.#maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     this.#protoPoisoning = options.protoPoisoning ?? "reject"
+    this.#notFound = options.notFound
   }
 
   #route(method: Method, path: string, entry: RouteEntry): this {
-    this.#router.add(method, path, entry)
+    for (const form of expandOptionalParams(path)) this.#router.add(method, form, entry)
     return this
   }
 
@@ -165,14 +185,21 @@ export class EdgeServer {
       if (match.reason === "method-not-allowed") {
         return render(plainError(405, "method_not_allowed", { allow: match.allowed.join(", ") }))
       }
-      return render(plainError(404, "not_found"))
+      const notFound = this.#notFound
+      return notFound === undefined
+        ? render(plainError(404, "not_found"))
+        : notFound(request, url.pathname)
     }
+    // Decoded as core decodes them, so a route answers the same on both: `a%20b` is `a b`, and a
+    // malformed escape is a 400 rather than a raw capture.
+    const params = decodeRouteParams(match.params)
+    if (params === null) return render(plainError(400, "malformed_path"))
     const { bodySchema, handler } = match.payload
 
     const dispatch = async (body: unknown): Promise<Response> => {
       const c: EdgeContext = {
         request,
-        params: match.params,
+        params,
         body,
         query: () => queryObjectOf(searchOf(request.url)),
         header: (name) => request.headers.get(name),
@@ -206,8 +233,30 @@ export class EdgeServer {
       },
       render,
       () => render(plainError(400, "invalid_json")),
+      bodySchema,
     )
   }
+}
+
+/**
+ * Answer requests no route matched with a handler of your own: `server({ notFound: notFound(handler) })`.
+ *
+ * The handler runs under the rules of `notFound()` from `@nifrajs/core/not-found`, imported rather
+ * than restated: for a `404` only (a wrong method stays a `405`), with the request line and headers
+ * but never the body; a `2xx` answer is sent as a `404`; `undefined` is the default `404`. There is
+ * no logger here, so a throw or a non-`Response` value is the same plain `500` a route's fault is.
+ * An app that does not import this ships none of it.
+ */
+export function notFound(handler: NotFoundHandler): EdgeNotFound {
+  if (typeof handler !== "function") throw new TypeError("notFound() needs a handler function")
+  const failed = (): Response => render(plainError(500, "internal_error"))
+  return ((request: Request, pathname: string) =>
+    answerNotFound(
+      handler,
+      notFoundInput(request, pathname, undefined),
+      render,
+      failed,
+    )) as EdgeNotFound
 }
 
 /** Create a compact edge server. */
@@ -215,5 +264,5 @@ export function server(options?: EdgeOptions): EdgeServer {
   return new EdgeServer(options)
 }
 
-export type { Method, Params, QueryValue, StandardSchemaV1 }
+export type { Method, NotFoundHandler, NotFoundInput, Params, QueryValue, StandardSchemaV1 }
 export { toFetchHandler }

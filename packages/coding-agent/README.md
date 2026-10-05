@@ -34,13 +34,20 @@ loopback debugger, set `exposeErrorStacks: true` (or pass
 `--expose-error-stacks` to `nifra-agent --rpc`) to include bounded exception
 stacks. This option is rejected for remote binding.
 
+`nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
+`--extensions`. An extension module's top-level code runs as soon as it is
+imported, before its declared `capabilities` are checked, so pass the flag only
+for a repository you trust.
+
 `IsolatedExtensionWorker` is an opt-in process-backed crash-containment seam for
 extensions. It is not a hostile-code sandbox; use OS-level isolation before
 loading code you do not trust.
 
 `NifraBackend` is a small provider port for a future native backend. It accepts
 an injected model implementation and bounded tools without importing a provider
-SDK. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+SDK. The conversation it sends the model is capped by `maxHistoryChars` (default
+1 MiB): past it, whole earlier turns are dropped, oldest first, and the current
+turn is always sent in full. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
 ## At-least-once run dispatch
@@ -61,9 +68,9 @@ its dispatch evidence.
 Legacy `FileSessionStore` files remain supported for explicit local compatibility. Use
 `nifra-agent --migrate-session <id> --migrate-from <legacy-dir> --migrate-to <evidence-dir>` to
 create a separately validated, evidence-only target. The source is left untouched and the command
-does not switch an active configuration pointer; see
-[`docs/agent-platform/protocol-and-session-migration.md`](../../docs/agent-platform/protocol-and-session-migration.md)
-for rollback and protocol compatibility details.
+does not switch an active configuration pointer: after reviewing its report, point the host at the
+new directory yourself. To roll back, point it at the legacy directory again and remove the new
+target; a failed or interrupted migration leaves the active choice unchanged.
 
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
 [`../../llms-full.txt`](../../llms-full.txt).

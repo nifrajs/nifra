@@ -18,7 +18,7 @@ import {
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
-import type { ClientRouter } from "./router.ts"
+import { type ClientRouter, redirectOf } from "./router.ts"
 
 /** Read the nonce carried by the current server-rendered document, if any. */
 export function currentDocumentNonce(): string | undefined {
@@ -233,6 +233,8 @@ export function installHistory(
   let index = (history.state as { nifraIndex?: number } | null)?.nifraIndex ?? 0
   let here = location.pathname + location.search + (location.hash ?? "")
   let reversing = false
+  // The path the router was last seen loading, so a redirect it follows shows up as a change.
+  let expected: string | undefined
   type Registration = {
     readonly shouldBlock: BlockerFunction
     readonly emit: (blocker: Blocker) => void
@@ -368,9 +370,18 @@ export function installHistory(
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     }
     here = url.pathname + url.search + url.hash
+    expected = routePath
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    transition(() => router.navigate(routePath).catch(() => fallback(path)))
+    transition(() => router.navigate(routePath).catch((error) => leave(error, path)))
     settle()
+  }
+
+  // A redirect out of the app replaces the entry it answered, as the browser's own redirect would; any
+  // other failure loads the page as a document.
+  const leave = (error: unknown, path: string): void => {
+    const to = redirectOf(error)
+    if (to === undefined) fallback(path)
+    else location.replace(to)
   }
 
   const go = (path: string, mode: "push" | "replace", state?: unknown): void => {
@@ -397,7 +408,7 @@ export function installHistory(
     }
     go(to, navOptions?.replace === true ? "replace" : "push", navOptions?.state)
   }
-  setBrowserNavigate(navigate)
+  setBrowserNavigate(navigate, router)
 
   // Publish the guard registry through the DOM-free bridge (`@nifrajs/web`'s `registerBlocker`, which an
   // adapter's `useBlocker` calls). One slot, latest registration wins; the unregister clears it only if
@@ -444,12 +455,45 @@ export function installHistory(
     go(href, "push")
   }
 
-  // Hover/focus an in-app link → warm its chunk + data (the store dedupes the spam).
-  const onPrefetch = (event: Event): void => {
-    const href = inAppHref(event.target)
+  // `data-nifra-prefetch` on a link or any ancestor (the nearest wins) says when the link warms its
+  // route's chunk and data: `intent` (the default) on hover or focus, `viewport` once it scrolls into
+  // view, `render` as soon as a page shows it, `none` never.
+  const prefetchModeOf = (el: Element): string | undefined =>
+    (el.closest("[data-nifra-prefetch]") as HTMLElement | null)?.dataset.nifraPrefetch
+
+  // Warm an in-app link's route (the store dedupes the spam). The page on screen has nothing to warm.
+  const warm = (target: EventTarget | null): void => {
+    const href = inAppHref(target)
     if (href === null) return
     const url = new URL(href, location.origin)
-    void router.prefetch(url.pathname + url.search) // warm by path+search; the #hash isn't data
+    const path = url.pathname + url.search // the #hash isn't data
+    if (path !== location.pathname + location.search) void router.prefetch(path)
+  }
+
+  const onPrefetch = (event: Event): void => {
+    const target = event.target
+    if (target instanceof Element && prefetchModeOf(target) !== "none") warm(target)
+  }
+
+  // `viewport` and `render` links are looked for when history is installed (the server-rendered page)
+  // and whenever the router settles (a navigation, a submit's revalidation). A link the page adds in
+  // between warms on intent until the next settle.
+  let inView: IntersectionObserver | undefined
+  const scan = (): void => {
+    inView?.disconnect()
+    for (const anchor of document.querySelectorAll(
+      "a[data-nifra-prefetch],[data-nifra-prefetch] a",
+    )) {
+      const mode = prefetchModeOf(anchor)
+      if (mode === "render") warm(anchor)
+      else if (mode === "viewport") {
+        // Scrolling back into view asks again; the store holds a fresh prefetch, so nothing refetches.
+        inView ??= new IntersectionObserver((entries) => {
+          for (const entry of entries) if (entry.isIntersecting) warm(entry.target)
+        })
+        inView.observe(anchor)
+      }
+    }
   }
 
   // Back/forward: the entry already exists (no push). The URL has ALSO already changed - a popstate can't
@@ -473,9 +517,9 @@ export function installHistory(
     index = newIndex
     here = dest
     pendingScroll = { pos: scrollOf(history.state) }
-    transition(() =>
-      router.navigate(location.pathname + location.search).catch(() => fallback(location.pathname)),
-    )
+    const routePath = location.pathname + location.search
+    expected = routePath
+    transition(() => router.navigate(routePath).catch((error) => leave(error, dest)))
     settle()
   }
 
@@ -497,24 +541,50 @@ export function installHistory(
     event.returnValue = ""
   }
 
+  // The router is loading a page the address bar does not show: a redirect it follows. That replaces the
+  // entry a navigation pushed, or adds one after a form post, as the browser would. A redirect from a
+  // form post back to the page it was on adds nothing.
+  const follow = (path: string): void => {
+    if (path !== location.pathname + location.search) {
+      if (expected === undefined) {
+        history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
+        index += 1
+        history.pushState({ nifraIndex: index }, "", path)
+      } else {
+        history.replaceState(history.state, "", path + location.hash)
+      }
+      here = location.pathname + location.search + location.hash
+      pendingScroll = location.hash !== "" ? { hash: hashId(location.hash) } : { pos: [0, 0] }
+    }
+    expected = path
+  }
+
   // After a navigation settles (content rendered), apply the pending scroll target on the next frame:
   // a fragment's element for a cross-page `#hash`, the saved position for back/forward, else the top.
-  // Skipped for submits (pending).
-  const restoreScroll = (): void => {
-    if (router.snapshot().pending || pendingScroll === null) return
+  // A settle with no navigation (a submit's revalidation) scrolls nothing. Either way the rendered
+  // page is then scanned for links to warm.
+  const settled = (): void => {
+    const { pending, pendingPath } = router.snapshot()
+    if (pending) {
+      if (pendingPath !== undefined && pendingPath !== expected) follow(pendingPath)
+      return
+    }
+    expected = undefined
     const target = pendingScroll
     pendingScroll = null
     requestAnimationFrame(() => {
-      if ("hash" in target) {
+      if (target !== null && "hash" in target) {
         const el = findAnchor(target.hash)
         if (el !== null) el.scrollIntoView()
         else window.scrollTo(0, 0) // fragment not found → top, like a fresh page load
-      } else {
+      } else if (target !== null) {
         window.scrollTo(target.pos[0], target.pos[1])
       }
+      scan()
     })
   }
-  const unsubscribe = router.subscribe(restoreScroll)
+  const unsubscribe = router.subscribe(settled)
+  scan()
 
   document.addEventListener("click", onClick)
   document.addEventListener("pointerover", onPrefetch)
@@ -523,6 +593,7 @@ export function installHistory(
   window.addEventListener("beforeunload", onBeforeUnload)
   return () => {
     unsubscribe()
+    inView?.disconnect()
     setBrowserNavigate(undefined) // stop routing `useNavigate` to a torn-down router
     setBlockerController(undefined) // stop routing `useBlocker` to a torn-down registry
     document.removeEventListener("click", onClick)
@@ -625,8 +696,11 @@ export function installForms(router: ClientRouter): () => void {
     // `data-nifra-revalidate="false"` opts out of the post-action loader revalidation (the action's
     // actionData drives the update); absent or any other value keeps the default revalidation.
     const revalidate = form.dataset.nifraRevalidate !== "false"
-    router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch(() => {
-      form.submit() // data submit failed - fall back to a full-page POST
+    router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch((error) => {
+      const to = redirectOf(error)
+      // The action ran: load the page that shows its result rather than run it again.
+      if (to !== undefined) location.assign(to)
+      else form.submit() // data submit failed - fall back to a full-page POST
     })
   }
   document.addEventListener("submit", onSubmit)

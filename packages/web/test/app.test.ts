@@ -16,6 +16,7 @@ import {
   unsafeInlineScript,
   webProjectEvidence,
 } from "../src/index.ts"
+import { openCacheChannel } from "../src/isr.ts"
 
 // The in-process backend mount target - the symbol-keyed `BackendMount` shape `inProcessClient(app)`
 // returns. Reproduced here so the web test exercises the real `createWebApp` `/api/*` auto-mount
@@ -352,7 +353,7 @@ test("createWebApp matches a catch-all route end-to-end (params.path = the rest)
   expect(html).toContain('chain=1:{"path":"a/b/c.txt"}') // the catch-all captured the full tail
 })
 
-test("createWebApp injects window.__NIFRA_PRERENDERED__ when prerenderedPaths given [SSG P2.4]", async () => {
+test("createWebApp hands over __NIFRA_PRERENDERED__ when prerenderedPaths given [SSG P2.4]", async () => {
   const withSet = createWebApp({
     adapter: stub,
     manifest: fullManifest(),
@@ -360,13 +361,34 @@ test("createWebApp injects window.__NIFRA_PRERENDERED__ when prerenderedPaths gi
     prerenderedPaths: ["/", "/users/1"],
   })
   expect(await (await withSet.fetch(new Request("http://x/"))).text()).toContain(
-    'window.__NIFRA_PRERENDERED__=["/","/users/1"]',
+    '"__NIFRA_PRERENDERED__":["/","/users/1"]',
   )
   // Omitted ⇒ not injected (no bloat for non-SSG apps).
   const without = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
   expect(await (await without.fetch(new Request("http://x/"))).text()).not.toContain(
     "__NIFRA_PRERENDERED__",
   )
+})
+
+test("createWebApp serves a large prerendered set from one versioned URL instead of every page", async () => {
+  const paths = Array.from({ length: 400 }, (_, i) => `/users/${i}`)
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    prerenderedPaths: paths,
+  })
+  const html = await (await app.fetch(new Request("http://x/"))).text()
+  const url = /"__NIFRA_PRERENDERED__":"(\/__nifra\/prerendered\.json\?v=[0-9a-f]{8})"/.exec(
+    html,
+  )?.[1]
+  expect(url).toBeDefined()
+  expect(html).not.toContain('"/users/399"')
+  const listed = await app.fetch(new Request(`http://x${url}`))
+  expect(listed.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+  expect(await listed.json()).toEqual(paths)
+  const bare = await app.fetch(new Request("http://x/__nifra/prerendered.json"))
+  expect(bare.headers.get("cache-control")).toBe("no-cache")
 })
 
 test("createWebApp honors a route module's hydrate=false on document responses", async () => {
@@ -539,6 +561,11 @@ test("a route's `revalidate` rides the x-nifra-isr-revalidate header (ISR P3.3)"
     layouts: {},
   }
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  // Nothing reads the channel yet, so a visitor never sees the route's freshness or tags.
+  const unread = await app.fetch(new Request("http://x/isr"))
+  expect(unread.headers.get("x-nifra-isr-revalidate")).toBeNull()
+  expect(unread.headers.get("x-nifra-isr-tags")).toBeNull()
+  openCacheChannel(app)
   const isr = await app.fetch(new Request("http://x/isr"))
   expect(isr.headers.get("x-nifra-isr-revalidate")).toBe("60") // seconds, distinct channel
   expect(isr.headers.get("x-nifra-isr-tags")).toBe("catalog,products")
@@ -641,7 +668,7 @@ test("createWebApp runs an action on POST and re-renders with actionData + the l
   const html = await res.text()
   expect(html).toContain('chain=1:{"count":1}') // loader re-ran
   expect(html).toContain(':action={"saved":"Ada"}') // action data reached the component
-  expect(html).toContain('window.__NIFRA_ACTION__={"saved":"Ada"}') // serialized so hydration matches
+  expect(html).toContain('"__NIFRA_ACTION__":{"saved":"Ada"}') // serialized so hydration matches
 })
 
 test("a deferred action streams NDJSON on a data-mode submit (critical first, then the deferred)", async () => {
@@ -739,7 +766,7 @@ test("a deferred action streams mid-page on a no-JS full-page POST (placeholder 
   const html = await (await app.fetch(new Request("http://x/", { method: "POST" }))).text()
   // The action result is split like loader data: __NIFRA_ACTION__ carries the placeholder (id 0 - the
   // null loader contributes none), and the value streams in a __nifraResolve script after the body.
-  expect(html).toContain('window.__NIFRA_ACTION__={"recs":{"__nifra_deferred":0}}')
+  expect(html).toContain('"__NIFRA_ACTION__":{"recs":{"__nifra_deferred":0}}')
   expect(html).toContain("window.__nifraResolve(0,")
   expect(html).toContain('["x"]') // the resolved value, streamed (not awaited inline)
 })
@@ -1258,6 +1285,26 @@ test("webProjectEvidence fails closed when a mounted app has no evidence provide
     mounts: [{ path: "/external", app: { fetch: () => Response.json({ ok: true }) } }],
   })
   await expect(webProjectEvidence(app)).rejects.toThrow(/no token-only evidence provider/)
+  await expect(webProjectEvidence(app)).rejects.toThrow(/opaque/)
+})
+
+test("webProjectEvidence lists a mount declared opaque as a known gap instead of failing", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [
+      {
+        path: "/api/auth",
+        app: { fetch: () => Response.json({ ok: true }) },
+        opaque: "better-auth's own handler",
+      },
+    ],
+  })
+  const evidence = await webProjectEvidence(app)
+  expect(evidence.mounts).toEqual([{ path: "/api/auth/*", opaque: "better-auth's own handler" }])
+  // Still served: the reason changes what assurance reports, not what the app answers.
+  expect((await app.fetch(new Request("http://x/api/auth/session"))).status).toBe(200)
 })
 
 test("webProjectEvidence composes wildcard mounts and rejects an API without evidence", async () => {
@@ -1332,4 +1379,57 @@ test("serves both generated machine-readable guidance routes", async () => {
   expect(full.status).toBe(200)
   expect(short.headers.get("content-type")).toContain("text/plain")
   expect(full.headers.get("content-type")).toContain("text/plain")
+})
+
+test("llms.txt lists backend routes only when the backend is served over HTTP", async () => {
+  const backend = server().post("/internal/admin/impersonate", () => ({ ok: true }))
+  // The same backend both ways: its routes are reflected, and the bridge makes it HTTP-mountable.
+  const api = Object.assign(backend, inProcessBridge(backend))
+  const mounted = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  expect(await (await mounted.fetch(new Request("http://x/llms.txt"))).text()).toContain(
+    "/internal/admin/impersonate",
+  )
+  const inProcess = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+    apiPrefix: "",
+  })
+  const text = await (await inProcess.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(text).not.toContain("impersonate")
+  expect(text).toContain("No API routes registered.")
+})
+
+test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt page wins", async () => {
+  const off = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    llmsTxt: false,
+  })
+  expect(
+    (await off.fetch(new Request("http://x/llms.txt"))).headers.get("content-type"),
+  ).not.toContain("text/plain")
+  const own: Manifest = {
+    ...fullManifest(),
+    routes: [
+      ...fullManifest().routes,
+      {
+        id: "llms.txt",
+        pattern: "/llms.txt",
+        layoutIds: [],
+        file: "llms.txt.tsx",
+        load: async () => ({ default: "own" }),
+      },
+    ],
+  }
+  const app = createWebApp({ adapter: stub, manifest: own, clientEntry: "/c.js" })
+  const res = await app.fetch(new Request("http://x/llms.txt"))
+  expect(res.headers.get("content-type")).toContain("text/html")
 })

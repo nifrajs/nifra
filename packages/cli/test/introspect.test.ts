@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
+  apiRoutesSection,
   buildRouteGraph,
   buildRouteTable,
   clientCall,
@@ -118,6 +119,45 @@ describe("clientCall - typed-client call form per route", () => {
     expect(clientCall("GET", "/users/:id", undefined)).toBe("await api.users({ id }).get()")
   })
 
+  test("a constrained param is called by its bare name", () => {
+    expect(clientCall("GET", "/users/:id{[0-9]+}", undefined)).toBe("await api.users({ id }).get()")
+    expect(clientCall("GET", "/img/:kind{thumb|full}/meta", undefined)).toBe(
+      "await api.img({ kind }).meta.get()",
+    )
+    expect(clientCall("GET", "/c/:code{[A-Z]{2}}", undefined)).toBe("await api.c({ code }).get()")
+  })
+
+  test("a segment that is part literal, part parameter is a call with the segment text", () => {
+    // `#{` stands for the placeholder opener, so the expected calls read as they print.
+    const printed = (text: string): string => text.replaceAll("#{", "$" + "{")
+    expect(clientCall("GET", "/files/:name.json", undefined)).toBe(
+      printed("await api.files(`#{name}.json`).get()"),
+    )
+    expect(clientCall("GET", "/post-:id/comments", undefined)).toBe(
+      printed("await api(`post-#{id}`).comments.get()"),
+    )
+    expect(clientCall("GET", "/v:major.:minor", undefined)).toBe(
+      printed("await api(`v#{major}.#{minor}`).get()"),
+    )
+    expect(clientCall("GET", "/img/:id{[0-9]+}.png", undefined)).toBe(
+      printed("await api.img(`#{id}.png`).get()"),
+    )
+    // Text that would end the template or start an expression is escaped.
+    expect(clientCall("GET", "/a`b-:id", undefined)).toBe(printed("await api(`a\\`b-#{id}`).get()"))
+    expect(clientCall("GET", printed("/#{x}-:id"), undefined)).toBe(
+      printed("await api(`\\#{x}-#{id}`).get()"),
+    )
+    // A colon that is literal text is a static segment.
+    expect(clientCall("GET", "/things:batchGet", undefined)).toBe(
+      'await api["things:batchGet"].get()',
+    )
+  })
+
+  test("a wildcard is called by its name, and an unnamed one by `*`", () => {
+    expect(clientCall("GET", "/docs/*rest", undefined)).toBe("await api.docs({ rest }).get()")
+    expect(clientCall("GET", "/assets/*", undefined)).toBe('await api.assets({ "*": rest }).get()')
+  })
+
   test("nested static segments chain as properties", () => {
     expect(clientCall("POST", "/v1/session", { body: { type: "object" } })).toBe(
       "await api.v1.session.post(body)",
@@ -164,6 +204,14 @@ describe("clientCall - typed-client call form per route", () => {
 
   test("casing is preserved, because verbs are intercepted case-insensitively", () => {
     expect(clientCall("POST", "/api/Delete", undefined)).toBe('await api.api("Delete").post()')
+  })
+
+  test("a method the typed client has no call for is sent with fetch", () => {
+    expect(clientCall("PROPFIND", "/dav/*path", undefined)).toBe(
+      'await fetch(url, { method: "PROPFIND" })',
+    )
+    // Never a proxy chain: `.purge()` is not a verb, so it would be read as a path segment.
+    expect(clientCall("PURGE", "/cache/:key", { body: {} })).not.toContain("api.")
   })
 })
 
@@ -230,6 +278,25 @@ describe("routesToJson - structured list_routes / get_route_schema", () => {
       } as RouteJson,
       { method: "GET", path: "/users/:id", call: "await api.users({ id }).get()" } as RouteJson,
     ])
+  })
+
+  test("a custom-method route is listed with a fetch call, in JSON and in the brief", () => {
+    const routes = [
+      { method: "PURGE", path: "/cache/:key" },
+      { method: "GET", path: "/cache/:key" },
+    ]
+    expect(routesToJson(appWith(routes))).toEqual([
+      { method: "GET", path: "/cache/:key", call: "await api.cache({ key }).get()" },
+      { method: "PURGE", path: "/cache/:key", call: 'await fetch(url, { method: "PURGE" })' },
+    ])
+    const brief = apiRoutesSection(routes)
+    expect(brief).toContain("- `PURGE /cache/:key`")
+    expect(brief).toContain(
+      '- call: `await fetch(url, { method: "PURGE" })` (no typed-client call for this method; `url` is the path above)',
+    )
+    expect(brief).toContain(
+      "- call: `await api.cache({ key }).get()` → `{ ok, status, data, error }`",
+    )
   })
 
   test("omits absent shapes (no body/query/response keys when unschematized)", () => {
@@ -384,7 +451,11 @@ describe("describeRoutes (cwd integration)", () => {
       await writeFile(join(routesDir, "index.tsx"), "export default function H() { return null }\n")
       await writeFile(
         join(routesDir, "submit.tsx"),
-        "export default function S() { return null }\nexport const action = async () => ({ ok: true })\n",
+        "export default function S() { return null }\n",
+      )
+      await writeFile(
+        join(routesDir, "submit.backend.ts"),
+        "export const action = async () => ({ ok: true })\n",
       )
       const app: LoadedApp = {
         cwd: dir,

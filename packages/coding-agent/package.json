@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/coding-agent",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Standalone, extensible Nifra coding-agent host and CLI.",
   "keywords": [
     "bun",
@@ -12,6 +12,9 @@
     "workflows"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

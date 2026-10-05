@@ -39,6 +39,28 @@ function makeApp() {
 // The `resolveWebSocketUpgrade` seam - no socket; this is exactly what the @nifrajs/node, @nifrajs/deno, and
 // Workers (toFetchHandler) bridges will call, so testing it here covers all adapters' upgrade logic.
 describe("resolveWebSocketUpgrade", () => {
+  test("a clientIp trust declaration reaches the handshake's onRequest hooks", async () => {
+    const hookSaw: (string | undefined)[] = []
+    const app = server({ clientIp: { header: "x-real-ip" } })
+      .use(websocket())
+      .onRequest((_req, platform) => {
+        hookSaw.push(platform?.clientIp)
+        return platform?.clientIp === "6.6.6.6"
+          ? new Response("denied", { status: 403 })
+          : undefined
+      })
+      .ws("/sock", { upgrade: () => ({}) })
+    const handshake = (ip: string) =>
+      app.resolveWebSocketUpgrade(
+        new Request("http://t/sock", { headers: { upgrade: "websocket", "x-real-ip": ip } }),
+        { clientIp: "127.0.0.1" },
+      )
+    const denied = await handshake("6.6.6.6")
+    expect(denied.kind).toBe("reject")
+    expect((await handshake("1.1.1.1")).kind).toBe("upgrade")
+    expect(hookSaw).toEqual(["6.6.6.6", "1.1.1.1"])
+  })
+
   test("pass when there's no upgrade header", async () => {
     expect((await makeApp().resolveWebSocketUpgrade(new Request("http://t/echo"))).kind).toBe(
       "pass",
@@ -50,6 +72,24 @@ describe("resolveWebSocketUpgrade", () => {
       new Request("http://t/nope", { headers: { upgrade: "websocket" } }),
     )
     expect(out.kind).toBe("pass")
+  })
+
+  test("pass for a non-GET request with an upgrade header, so its HTTP route answers it", async () => {
+    let guardRan = 0
+    const app = server()
+      .use(websocket())
+      .ws("/both", {
+        upgrade: () => {
+          guardRan += 1
+          return {}
+        },
+      })
+      .post("/both", () => ({ posted: true }))
+    const post = () =>
+      new Request("http://t/both", { method: "POST", headers: { upgrade: "websocket" } })
+    expect((await app.resolveWebSocketUpgrade(post())).kind).toBe("pass")
+    expect(guardRan).toBe(0)
+    expect(await (await app.fetch(post())).json()).toEqual({ posted: true })
   })
 
   test("no guard → upgrade with undefined data", async () => {
@@ -169,6 +209,48 @@ describe("resolveWebSocketUpgrade", () => {
     expect(out.kind).toBe("reject")
     if (out.kind === "reject") expect(out.response.status).toBe(500)
   })
+
+  // Deno builds a request's headers only when they are read, and its adapter asks this of every
+  // request.
+  test("a WebSocket-free mount leaves the request's headers unread", async () => {
+    const app = server().mount({
+      path: "/api",
+      app: server().get("/x", () => "x"),
+      stripPrefix: true,
+    })
+    const request = new Request("http://t/api/x")
+    let reads = 0
+    Object.defineProperty(request, "headers", {
+      get: () => {
+        reads += 1
+        return new Headers()
+      },
+    })
+    expect((await app.resolveWebSocketUpgrade(request)).kind).toBe("pass")
+    expect(reads).toBe(0)
+  })
+
+  test("a mounted app that gains a WebSocket route later upgrades", async () => {
+    const child = server()
+    const app = server().mount({ path: "/api", app: child, stripPrefix: true })
+    const upgrade = () => new Request("http://t/api/echo", { headers: { upgrade: "websocket" } })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("pass")
+    child.use(websocket()).ws("/echo", { message: (ws, data) => ws.send(data) })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("upgrade")
+  })
+
+  test("an app with a WebSocket route mounted further down later upgrades", async () => {
+    const inner = server()
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+    const middle = server()
+    const app = server().mount({ path: "/middle", app: middle, stripPrefix: true })
+    const upgrade = () =>
+      new Request("http://t/middle/inner/echo", { headers: { upgrade: "websocket" } })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("pass")
+    middle.mount({ path: "/inner", app: inner, stripPrefix: true })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("upgrade")
+  })
 })
 
 // A real Bun websocket round-trip through app.listen() - the WS-1 MVP.
@@ -197,7 +279,7 @@ describe("app.listen() WebSockets", () => {
   }
 
   test("echo: open → welcome, message → echo", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual([
       "welcome",
       "hi",
@@ -227,21 +309,21 @@ describe("app.listen() WebSockets", () => {
           ws.send(JSON.stringify({ text: 42 }))
         },
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/validated`, [], 1)).toEqual([
       JSON.stringify({ text: "ok" }),
     ])
   })
 
   test("guarded: accepts with a valid token, threading data to ws.data", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/guarded?token=secret`, [], 1)).toEqual([
       "hi secret",
     ])
   })
 
   test("guarded: rejects the upgrade without a token (never opens)", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     const outcome = await new Promise<string>((resolve) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/guarded`)
       let opened = false
@@ -267,7 +349,7 @@ describe("app.listen() WebSockets", () => {
     running = server({ wsMaxPayloadBytes: 8 })
       .use(websocket())
       .ws("/echo", { message: (ws, data) => ws.send(data) })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const closed = await new Promise<number>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/echo`)
       const timer = setTimeout(() => reject(new Error("timeout")), 3000)
@@ -288,13 +370,13 @@ describe("app.listen() WebSockets", () => {
   })
 
   test("a normal HTTP route works alongside WS routes", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     const res = await fetch(`http://127.0.0.1:${running.port}/health`)
     expect(await res.json()).toEqual({ ok: true })
   })
 
   test("binary frames round-trip (Uint8Array normalization)", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     const port = running.port
     const ok = await new Promise<boolean>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${port}/echo`)
@@ -329,7 +411,7 @@ describe("app.listen() WebSockets", () => {
         },
         error: (ws) => ws.send("errored"),
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/boom`, [], 1)).toEqual(["errored"])
   })
 
@@ -342,7 +424,7 @@ describe("app.listen() WebSockets", () => {
           if (m === "leave") ws.unsubscribe("lobby")
         },
       })
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const url = `ws://127.0.0.1:${running.port}/room`
     const a = new WebSocket(url)
     const b = new WebSocket(url)
@@ -398,7 +480,7 @@ describe("app.listen() WebSockets", () => {
         validateSend: true,
         open: (ws) => ws.subscribe("lobby"),
       })
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const c = new WebSocket(`ws://127.0.0.1:${running.port}/room`)
     const msgs: string[] = []
     c.addEventListener("message", (e) => msgs.push(String(e.data)))
@@ -415,6 +497,159 @@ describe("app.listen() WebSockets", () => {
     await Bun.sleep(50) // give any (wrongly) undropped invalid frame time to arrive
     expect(msgs).toEqual([JSON.stringify({ text: "ok" })])
     c.close()
+  })
+
+  // A mounted Nifra app takes part in Bun's WebSocket wiring only while it has a WebSocket route, so
+  // composing one without any - the `api` backend `createWebApp` mounts - needs no runtime.
+  test("a mounted app without WebSocket routes listens without a runtime", async () => {
+    const nested = server().mount({
+      path: "/v1",
+      app: server().get("/y", () => "y"),
+      stripPrefix: true,
+    })
+    running = server()
+      .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
+      .mount({ path: "/nested", app: nested, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/api/x`)).json()).toBe("x")
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/nested/v1/y`)).json()).toBe("y")
+  })
+
+  test("a parent's own WebSocket routes still upgrade beside a WebSocket-free mount", async () => {
+    running = makeApp()
+      .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual([
+      "welcome",
+      "hi",
+    ])
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/api/x`)).json()).toBe("x")
+  })
+
+  // Bun's own broadcast reaches only sockets subscribed through Bun, so a frame sent with the
+  // handle's `publish` arriving shows the app kept native pub/sub.
+  test("native pub/sub stays on beside a WebSocket-free mount", async () => {
+    running = server()
+      .use(websocket())
+      .ws("/room", {
+        open: (ws) => {
+          ws.subscribe("lobby")
+          ws.send("joined")
+        },
+      })
+      .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    const c = new WebSocket(`ws://127.0.0.1:${running.port}/room`)
+    const msgs: string[] = []
+    c.addEventListener("message", (e) => {
+      msgs.push(String(e.data))
+      if (msgs.length === 1) running?.publish?.("lobby", "native")
+    })
+    for (let i = 0; i < 200 && msgs.length < 2; i++) await Bun.sleep(10)
+    c.close()
+    expect(msgs).toEqual(["joined", "native"])
+  })
+
+  // Its sockets would land on this server's Bun topics, beside the parent's own.
+  test("under native pub/sub, a WebSocket route a mounted app gains after listen() does not upgrade", async () => {
+    const child = server()
+    running = makeApp()
+      .mount({ path: "/api", app: child, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    child.use(websocket()).ws("/echo", { open: (ws) => ws.send("child-ready") })
+    const outcome = await new Promise<string>((resolve) => {
+      const c = new WebSocket(`ws://127.0.0.1:${running?.port}/api/echo`)
+      let opened = false
+      const timer = setTimeout(() => resolve(opened ? "opened" : "rejected"), 700)
+      c.addEventListener("open", () => {
+        opened = true
+      })
+      c.addEventListener("error", () => {
+        clearTimeout(timer)
+        resolve("rejected")
+      })
+      c.addEventListener("close", () => {
+        clearTimeout(timer)
+        resolve(opened ? "opened" : "rejected")
+      })
+    })
+    expect(outcome).toBe("rejected")
+  })
+
+  test("listening again after a mounted app gained a WebSocket route upgrades it", async () => {
+    const child = server()
+    const app = makeApp().mount({ path: "/api", app: child, stripPrefix: true })
+    app.listen(0, { hostname: "127.0.0.1" }).stop(true)
+    child.use(websocket()).ws("/echo", { open: (ws) => ws.send("child-ready") })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, [], 1)).toEqual(["child-ready"])
+  })
+
+  test("a mounted child's WebSocket route upgrades through a parent with no runtime", async () => {
+    const child = server()
+      .use(websocket())
+      .ws("/echo", {
+        open: (ws) => ws.send("child-ready"),
+        message: (ws, data) => ws.send(data),
+      })
+    running = server()
+      .mount({ path: "/api", app: child, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, ["ping"], 2)).toEqual([
+      "child-ready",
+      "ping",
+    ])
+  })
+
+  // The runtime is asked for when `listen()` runs, not when the child is mounted.
+  test("a child given its runtime and WebSocket route after the mount upgrades", async () => {
+    const late = server()
+    const parent = server().mount({ path: "/late", app: late, stripPrefix: true })
+    late.use(websocket()).ws("/echo", { open: (ws) => ws.send("late-ready") })
+    running = parent.listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/late/echo`, [], 1)).toEqual(["late-ready"])
+  })
+
+  test("a WebSocket route two mounts down upgrades through the outer app", async () => {
+    const inner = server()
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+    const middle = server().mount({ path: "/inner", app: inner, stripPrefix: true })
+    running = server()
+      .mount({ path: "/middle", app: middle, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/middle/inner/echo`, ["deep"], 1)).toEqual([
+      "deep",
+    ])
+  })
+
+  test("a mounted resolver that names no runtime still needs one", async () => {
+    const inner = server()
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+    // Forwards the resolver but not the runtime seam, so it cannot say whether it takes an upgrade.
+    const wrapped = {
+      fetch: (request: Request) => inner.fetch(request),
+      resolveWebSocketUpgrade: (request: Request) => inner.resolveWebSocketUpgrade(request),
+    }
+    const bare = server().mount({ path: "/api", app: wrapped, stripPrefix: true })
+    expect(() => {
+      running = bare.listen(0, { hostname: "127.0.0.1" })
+    }).toThrow("websocket() runtime")
+    running = server()
+      .use(websocket())
+      .mount({ path: "/api", app: wrapped, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, ["wrapped"], 1)).toEqual([
+      "wrapped",
+    ])
+  })
+
+  test("an app mounted under itself to alias a prefix still listens", async () => {
+    const app = server().get("/x", () => "x")
+    app.mount({ path: "/v1", app, stripPrefix: true })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/v1/x`)).json()).toBe("x")
   })
 })
 
@@ -864,6 +1099,37 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
     expect(opened).toBe(true)
   })
 
+  test("an accepted upgrade enforces wsMaxPayloadBytes on inbound frames", () => {
+    const listeners = new Map<string, (event: { readonly data: unknown }) => void>()
+    const closed: unknown[] = []
+    const received: unknown[] = []
+    const sock = {
+      ...fakeServerSocket(),
+      addEventListener(type: string, listener: (event: { readonly data: unknown }) => void) {
+        listeners.set(type, listener)
+      },
+      close(code?: number) {
+        closed.push(code)
+      },
+    }
+    const handler = toFetchHandler(
+      server({ wsMaxPayloadBytes: 8 })
+        .use(websocket())
+        .ws("/ws", { message: (_ws, data) => void received.push(data) }),
+    )
+    withMockedPair(sock, () => {
+      try {
+        handler.fetch(new Request("http://t/ws", { headers: { upgrade: "websocket" } }), {}, ctx)
+      } catch {
+        // `new Response(null, { status: 101 })` throws off-workerd - expected; accept()+wire already ran.
+      }
+    })
+    listeners.get("message")?.({ data: "short" })
+    listeners.get("message")?.({ data: "x".repeat(20) })
+    expect(received).toEqual(["short"])
+    expect(closed).toEqual([1009])
+  })
+
   // The `webSocketHub` option is the only way `app.publish` reaches every client on Workers: a
   // stateless isolate cannot hold connections, so upgrades have to be handed to one Durable Object.
   // Untested until now, because inside `server.ts` this branch hid inside a 3,200-line file's average.
@@ -1021,6 +1287,125 @@ describe("WS messageSchema (contract-validated messages)", () => {
     ])
   })
 
+  test("a __proto__ key in a frame gets the app's protoPoisoning policy, as a JSON body does", async () => {
+    const passthrough: StandardSchemaV1<unknown, object> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof v === "object" && v !== null
+            ? { value: v }
+            : { issues: [{ message: "expected an object" }] },
+      },
+    }
+    const poisoned = '{"text":"x","__proto__":{"admin":true}}'
+    const run = async (protoPoisoning?: "reject" | "strip" | "ignore") => {
+      const seen: object[] = []
+      const invalid: string[] = []
+      const app = server(protoPoisoning === undefined ? {} : { protoPoisoning })
+        .use(websocket())
+        .ws("/p", {
+          messageSchema: passthrough,
+          message: (_ws, msg) => void seen.push(msg),
+          onInvalidMessage: (_ws, issues) => void invalid.push(issues[0]?.message ?? ""),
+        })
+      const out = await app.resolveWebSocketUpgrade(
+        new Request("http://t/p", { headers: { upgrade: "websocket" } }),
+      )
+      if (out.kind !== "upgrade") throw new Error("expected upgrade")
+      await out.handler.message?.(fakeWs(), poisoned)
+      return { seen, invalid }
+    }
+    expect(await run()).toEqual({ seen: [], invalid: ["invalid JSON"] })
+    const stripped = await run("strip")
+    expect(stripped.invalid).toEqual([])
+    expect(Object.hasOwn(stripped.seen[0] ?? {}, "__proto__")).toBe(false)
+    const ignored = await run("ignore")
+    expect(Object.hasOwn(ignored.seen[0] ?? {}, "__proto__")).toBe(true)
+  })
+
+  test("a transport frame decoding to a cycle is an invalid message, never a walk that never ends", async () => {
+    const { richWireCodec } = await import("../src/transport-codec-rich.ts")
+    const { createTransportCodecRegistry, plainJsonCodec } = await import(
+      "../src/transport-codec.ts"
+    )
+    const passthrough: StandardSchemaV1<unknown, object> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof v === "object" && v !== null
+            ? { value: v }
+            : { issues: [{ message: "expected an object" }] },
+      },
+    }
+    const seen: object[] = []
+    const invalid: string[] = []
+    const app = server()
+      .use(websocket())
+      .ws("/g", {
+        transport: { registry: createTransportCodecRegistry([plainJsonCodec, richWireCodec()]) },
+        messageSchema: passthrough,
+        message: (_ws, msg) => void seen.push(msg),
+        onInvalidMessage: (_ws, issues) => void invalid.push(issues[0]?.message ?? ""),
+      })
+    const out = await app.resolveWebSocketUpgrade(
+      new Request("http://t/g", { headers: { upgrade: "websocket" } }),
+    )
+    if (out.kind !== "upgrade") throw new Error("expected upgrade")
+    const payload = '{"r":{"$w":"ref","i":0},"n":[{"$w":"obj","v":{"self":{"$w":"ref","i":0}}}]}'
+    await out.handler.message?.(fakeWs(), JSON.stringify({ codec: "wire", version: 1, payload }))
+    expect(seen).toEqual([])
+    expect(invalid).toEqual(["invalid JSON"])
+  })
+
+  test("a frame decoding to a RegExp is invalid unless the route accepts patterns", async () => {
+    const { richWireCodec } = await import("../src/transport-codec-rich.ts")
+    const { createTransportCodecRegistry, plainJsonCodec } = await import(
+      "../src/transport-codec.ts"
+    )
+    const passthrough: StandardSchemaV1<unknown, object> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof v === "object" && v !== null
+            ? { value: v }
+            : { issues: [{ message: "expected an object" }] },
+      },
+    }
+    const frame = JSON.stringify({
+      codec: "wire",
+      version: 1,
+      payload: richWireCodec().encode([/^a+$/]),
+    })
+    for (const acceptRegExp of [false, true]) {
+      const seen: unknown[] = []
+      const invalid: string[] = []
+      const app = server()
+        .use(websocket())
+        .ws("/p", {
+          transport: {
+            registry: createTransportCodecRegistry([plainJsonCodec, richWireCodec()]),
+            acceptRegExp,
+          },
+          messageSchema: passthrough,
+          message: (_ws, msg) => void seen.push(msg),
+          onInvalidMessage: (_ws, issues) => void invalid.push(issues[0]?.message ?? ""),
+        })
+      const out = await app.resolveWebSocketUpgrade(
+        new Request("http://t/p", { headers: { upgrade: "websocket" } }),
+      )
+      if (out.kind !== "upgrade") throw new Error("expected upgrade")
+      await out.handler.message?.(fakeWs(), frame)
+      expect({ acceptRegExp, seen, invalid }).toEqual(
+        acceptRegExp
+          ? { acceptRegExp, seen: [[/^a+$/]], invalid: [] }
+          : { acceptRegExp, seen: [], invalid: ["invalid JSON"] },
+      )
+    }
+  })
+
   test("an async schema is awaited before dispatch", async () => {
     const asyncSchema: StandardSchemaV1<unknown, number> = {
       "~standard": {
@@ -1069,7 +1454,7 @@ describe("WS messageSchema (contract-validated messages)", () => {
         message: (ws, msg) => ws.send(`got:${msg.text}`),
         onInvalidMessage: (ws) => ws.send("invalid"),
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const url = `ws://127.0.0.1:${running.port}/echo`
     const send = (frame: string): Promise<string> =>
       new Promise((resolve, reject) => {
@@ -1127,7 +1512,7 @@ describe("server-side socket controls", () => {
         },
         message: (ws) => ws.close(4001, "done"),
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const closed = await new Promise<{ code: number; got: string[] }>((resolve, reject) => {
       const got: string[] = []
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/ctl`)

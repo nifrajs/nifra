@@ -57,6 +57,28 @@ test("an edit below the entry re-evaluates that module and everything importing 
   graph.dispose()
 })
 
+test("an edit behind a tsconfig path alias re-evaluates too", async () => {
+  const dir = `${root}/alias`
+  mkdirSync(`${dir}/components`, { recursive: true })
+  edit(
+    `${dir}/tsconfig.json`,
+    `{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./*"] } } }\n`,
+  )
+  edit(`${dir}/components/Label.ts`, `export const label = "one"\n`)
+  edit(`${dir}/page.ts`, `export { label } from "@/components/Label"\n`)
+
+  const graph = createSsrGraph({ root: dir })
+  ;(await import("bun")).plugin(graph.plugin)
+  const labelOf = async (query: number): Promise<unknown> =>
+    Reflect.get(await import(`${dir}/page.ts?q=${query}`), "label")
+  expect(await labelOf(1)).toBe("one")
+
+  edit(`${dir}/components/Label.ts`, `export const label = "two"\n`)
+  expect(graph.sweep()).toBe(true)
+  expect(await labelOf(2)).toBe("two")
+  graph.dispose()
+})
+
 test("the SSR graph accepts file URLs and Windows URL-path spellings", () => {
   const dir = `${root}/normalization`
   mkdirSync(dir, { recursive: true })

@@ -1,21 +1,79 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/i18n",
   "Nifra - i18n",
-  "Locale negotiation + a tiny ICU message formatter on the platform Intl, framework-agnostic.",
+  "One locale registry, locale-prefixed routing, negotiation and a tiny ICU message formatter on the platform Intl.",
 )
 
-const NEGOTIATE = `// In a loader: resolve the locale + return only that catalog's messages.
-import { negotiateLocale } from "@nifrajs/i18n"
-import { catalogs, locales } from "../catalogs"
+const LOCALES = `// shared/i18n.ts - each locale declared once; routing, alternates and <html lang>/<html dir> read it.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
 
-export async function loader({ request }: { request: Request }) {
+export const locales = defineLocales({
+  default: "en",
+  locales: {
+    en: { hreflang: "en-IN" },
+    hi: { hreflang: "hi-IN" },
+    ur: { tag: "ur-PK", hreflang: "ur" }, // dir "rtl", derived from the tag
+    gu: { draft: true }, // catalogs in progress: never routed, never an alternate
+  },
+})
+export const urls = defineI18nRouting(locales)
+
+urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+locales.chain("hi") // ["hi", "en"] - the catalog fallback order`
+
+const GUARD = `// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
+
+const urls = defineI18nRouting(
+  defineLocales({ default: "en", locales: { en: {}, hi: {}, gu: { draft: true } } }),
+)
+
+export const middleware: RouteMiddleware = (ctx) => {
+  const { pathname, search } = new URL(ctx.request.url)
+  const match = urls.matchSegment(ctx.params.lang, pathname + search)
+  if (match.kind === "not-found") notFound()
+  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  return undefined
+}`
+
+const ALTERNATES = `// routes/[lang]/kundli.tsx - canonical + hreflang links and the document language.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+import type { Meta, MetaArgs } from "@nifrajs/web"
+
+const urls = defineI18nRouting(
+  defineLocales({ default: "en", locales: { en: {}, hi: { hreflang: "hi-IN" }, ur: { tag: "ur-PK" } } }),
+)
+
+export function meta({ params, origin }: MetaArgs): Meta {
+  const lang = params.lang ?? ""
+  const locale = urls.locales.isServed(lang) ? lang : urls.locales.default
+  // Every page of this cluster passes the same locales, so the alternates stay reciprocal.
+  const { canonical, links } = urls.alternates(urls.localizePathname("/kundli", locale), { origin })
+  return {
+    ...urls.locales.documentMeta(locale),
+    link: [
+      { rel: "canonical", href: canonical },
+      ...links.map((link) => ({ rel: "alternate", hreflang: link.hreflang, href: link.href })),
+    ],
+  }
+}`
+
+const NEGOTIATE = `// routes/index.backend.ts - resolve the locale + return only that catalog's messages.
+import { negotiateLocale } from "@nifrajs/i18n"
+import { t } from "@nifrajs/schema"
+import { catalogs, locales } from "../shared/catalogs"
+import type { Route } from "./+types/index"
+
+// A catalog is open-ended, so its schema is the explicit opt-out of the strict default.
+export const loaderOutput = t.object({ locale: t.string(), messages: t.looseObject({}) })
+export async function loader({ request }: Route.LoaderArgs) {
   const locale = negotiateLocale(request, { locales, defaultLocale: "en", queryParam: "lang", cookie: "lang" })
   return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default
 }`
@@ -33,27 +91,120 @@ const app = server().use(localeDetector({
 })).get("/", (c) => c.json({ locale: c.locale, via: c.localeSource }))`
 
 const PROVIDER = `// The page provides the formatter; components read it with useT().
+import { localeCookie } from "@nifrajs/i18n"
 import { I18nProvider, useT } from "@nifrajs/web-react/i18n"
 
 export default function Page({ data }) {
-  return <I18nProvider locale={data.locale} messages={data.messages}><Body/></I18nProvider>
+  // data.fallback: the catalogs locales.chain(locale) names after the page's own, from the loader.
+  return (
+    <I18nProvider locale={data.locale} messages={data.messages} fallback={data.fallback}>
+      <Body />
+    </I18nProvider>
+  )
 }
 
 function Body() {
-  const { t, n, d } = useT()
+  const { t, get, n, d } = useT()
   return <>
-    <p>{t("greeting", { name: "Ada" })}</p>
-    {/* ICU plural with # substitution */}
-    <p>{t("cart", { count: 3 })}</p>            {/* "3 items in your cart" */}
-    <p>{t("price", { amount: n(1299.99, { style: "currency", currency: "EUR" }) })}</p>
+    <p>{t("home.title", { name: "Ada" })}</p>
+    <p>{t("cart", { count: 1200 })}</p>          {/* "1,200 items" - # in the locale's format */}
+    <p>{t("place", { rank: 2 })}</p>             {/* "You finished 2nd" */}
+    <p>{n(1299.99, { style: "currency", currency: "EUR" })}</p>
     <p>{d(Date.now(), { dateStyle: "long" })}</p>
+    <ul>{get("faq")?.map((item) => <li key={item.q}>{item.q}</li>)}</ul>
+    {/* Same cookie name and attributes as localeDetector({ persist: true }) */}
+    <button onClick={() => { document.cookie = localeCookie("locale", "hi"); location.reload() }}>
+      हिन्दी
+    </button>
   </>
 }`
 
-const CATALOG = `// catalogs: plain JSON per locale (ICU strings). Bring your own.
+const RICH = `// shared/messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
+import { rich, useT } from "@nifrajs/web-react/i18n"
+
+function Terms({ name }: { name: string }) {
+  const t = useT()
+  return <p>{rich(t, "terms", {
+    link: (content) => <a href="/terms">{content}</a>,
+    b: (content) => <strong>{content}</strong>,
+  }, { name })}</p>
+}`
+
+const RICH_SVELTE = `<!-- Svelte: each tag is a snippet that renders its content -->
+<script>
+  import { Rich } from "@nifrajs/web-svelte/i18n"
+  let { name } = $props()
+</script>
+
+{#snippet link(content)}<a href="/terms">{@render content()}</a>{/snippet}
+{#snippet b(content)}<strong>{@render content()}</strong>{/snippet}
+<p><Rich key="terms" tags={{ link, b }} vars={{ name }} /></p>`
+
+const CHECK_ENTRY = `// doc-check: skip - imports the app's own catalog files.
+// shared/i18n.ts - the module \`nifra i18n check\` imports.
+import { defineLocales } from "@nifrajs/i18n"
+import en from "./messages/en.json"
+
+export const locales = defineLocales({
+  default: "en",
+  locales: { en: {}, hi: {}, gu: { draft: true } },
+})
 export const catalogs = {
-  en: { greeting: "Hello, {name}!", cart: "{count, plural, =0 {empty} one {# item} other {# items}}" },
-  fr: { greeting: "Bonjour, {name} !", cart: "{count, plural, =0 {vide} one {# article} other {# articles}}" },
+  en,
+  hi: () => import("./messages/hi.json"),
+  gu: () => import("./messages/gu.json"),
+}
+// Keys a check skips: exact, a prefix ending in ".*", or "*".
+export const ignore = { script: ["languages.*"], untranslated: ["brand"] }`
+
+const CHECK_TEST = `// Or as a test, with no CLI: the same checks, pure.
+import { expect, test } from "bun:test"
+import { defineLocales } from "@nifrajs/i18n"
+import { checkCatalogs } from "@nifrajs/i18n/check"
+
+const locales = defineLocales({ default: "en", locales: { en: {}, gu: {} } })
+
+test("catalogs are consistent", () => {
+  const { findings } = checkCatalogs({
+    locales,
+    catalogs: { en: { hi: "Hi {name}" }, gu: { hi: "નમસ્તે {name}" } },
+  })
+  expect(findings.filter((finding) => finding.severity === "error")).toEqual([])
+})`
+
+const CATALOG = `// shared/messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
+import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
+
+export const en = {
+  cart: "{count, plural, =0 {empty} one {# item} other {# items}}",
+  place: "You finished {rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+  home: { title: "Welcome back, {name}" },
+  faq: [{ q: "Is it free?", a: "Yes." }],
+}
+
+// Another locale is partial; a key it lacks falls back to the next catalog.
+export const fr: PartialMessages<typeof en> = {
+  cart: "{count, plural, =0 {vide} one {# article} other {# articles}}",
+}
+
+const t = createFormatter<typeof en>("fr", fr, {
+  fallback: [en],
+  onMissing: (key, locale) => console.warn(\`missing \${locale} translation: \${key}\`),
+  timeZone: "Europe/Paris",
+})
+t.t("cart", { count: 1200 }) // "1 200 articles"
+t.t("home.title", { name: "Ada" }) // "Welcome back, Ada", from en
+const questions = t.get("faq")?.map((item) => item.q)
+console.log(questions)`
+
+const REGISTER = `// doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
+// shared/register.ts - once per app: every t() key, useT() included, and every other catalog is checked.
+import type { en } from "./messages/en"
+
+declare module "@nifrajs/i18n" {
+  interface Register {
+    messages: typeof en
+  }
 }`
 
 export default function I18n() {
@@ -61,10 +212,44 @@ export default function I18n() {
     <div className="prose">
       <h1 className="page">i18n</h1>
       <p className="lead">
-        <code>@nifrajs/i18n</code> is framework-agnostic and dependency-free - locale negotiation plus a
-        tiny ICU message formatter built on the platform <code>Intl</code>. It runs on every runtime;
-        you bring JSON catalogs.
+        <code>@nifrajs/i18n</code> is framework-agnostic and dependency-free - one locale registry,
+        locale-prefixed routing, locale negotiation and a tiny ICU message formatter built on the
+        platform <code>Intl</code>. It runs on every runtime; you bring the catalogs.
       </p>
+
+      <h2>Declare your locales</h2>
+      <p>
+        <code>defineLocales</code> is the one place a locale is declared: its URL segment, the BCP-47
+        tag <code>Intl</code> formats with, the <code>hreflang</code> value search engines match, its
+        writing direction and its own name for a language switcher. Each defaults from the segment, and
+        the direction is derived from the tag (an explicit script, a right-to-left language such as
+        Urdu, Arabic or Hebrew, or the runtime's likely script). A <code>draft</code> locale keeps its
+        catalogs but is never served, so a half-translated language cannot be indexed under its own
+        URL. Bad tags, unsafe segments and two locales sharing an <code>hreflang</code> throw at
+        definition.
+      </p>
+      <CodeBlock code={LOCALES} lang="ts" />
+
+      <h2>Locale-prefixed URLs</h2>
+      <p>
+        <code>@nifrajs/i18n/routing</code> binds the registry to a URL scheme where the locale is the
+        first path segment and the default is unprefixed (or prefixed too, with{" "}
+        <code>prefixDefaultLocale</code>). A <code>[lang]</code> route segment matches any string, so
+        guard it: <code>matchSegment</code> answers not-found for an unknown or draft value and a
+        redirect for the default's prefix or a wrong case, and the <code>middleware</code> export of
+        a <code>_layout.backend.ts</code> in the <code>[lang]</code> directory turns that into a 404 through your <code>_404</code> page or a
+        permanent redirect - on full page loads, client navigations and form posts alike.
+      </p>
+      <CodeBlock code={GUARD} lang="ts" />
+      <p>
+        <code>alternates(path, {`{ origin, locales }`})</code> gives the page's canonical URL and its{" "}
+        <code>hreflang</code> links, built exactly as <code>localizePathname</code> builds them. Without{" "}
+        <code>origin</code> the URLs are root-relative, for a language switcher. A page that exists in
+        only some languages passes those <code>locales</code>; the links come out in registry order, so
+        every page of the cluster lists the same set and search engines accept it. A redirect or link it
+        builds can never start with <code>//</code>.
+      </p>
+      <CodeBlock code={ALTERNATES} lang="ts" />
 
       <h2>Negotiate the locale</h2>
       <p>
@@ -91,26 +276,103 @@ export default function I18n() {
 
       <h2>Format messages</h2>
       <p>
-        <code>createFormatter(locale, messages)</code> → <code>{`{ t, n, d }`}</code>. <code>t</code>
-        handles interpolation (<code>{`{name}`}</code>), <code>plural</code> (with <code>=N</code> exact
-        cases and <code>#</code> → the number) and <code>select</code>, nested - via a hand-written
-        parser + <code>Intl.PluralRules</code>. <code>n</code>/<code>d</code> are memoized
-        <code> Intl.NumberFormat</code>/<code>DateTimeFormat</code>. A missing key returns the key.
+        <code>createFormatter(locale, messages, options)</code> →{" "}
+        <code>{`{ t, get, n, d }`}</code>. <code>t</code> handles interpolation (
+        <code>{`{name}`}</code>), <code>plural</code> (with <code>=N</code> exact cases),{" "}
+        <code>selectordinal</code> (1st, 2nd, 3rd) and <code>select</code>, nested - via a
+        hand-written parser + <code>Intl.PluralRules</code>. Inside a plural, <code>#</code> is the
+        number in the locale's own format. <code>n</code>/<code>d</code> are memoized{" "}
+        <code>Intl.NumberFormat</code>/<code>DateTimeFormat</code>.
       </p>
-      <CodeBlock code={CATALOG} />
+      <p>
+        A catalog can nest: values are messages, lists or blocks, read with dotted keys (
+        <code>t("home.title")</code>); a flat key containing a dot is still found first.{" "}
+        <code>get(key)</code> returns a list or block whole, for an FAQ or a page's copy. A key the
+        catalog lacks is tried in each <code>fallback</code> catalog in order (
+        <code>locales.chain(locale)</code> gives <code>fr-CA</code> → <code>fr</code> → the default);
+        only when none has it does <code>onMissing</code> fire, once per key, and <code>t</code>{" "}
+        return the key. <code>timeZone</code> and <code>numberingSystem</code> set defaults for every{" "}
+        <code>d()</code>, <code>n()</code> and <code>#</code>. Formatters are cached per catalog and
+        options, so pass a stable <code>onMissing</code>.
+      </p>
+      <CodeBlock code={CATALOG} lang="ts" />
+      <p>
+        To type every key once, register the default catalog. A typo in <code>t()</code> is then a
+        compile error everywhere, and other locales' catalogs (typed <code>Translation</code>) are
+        checked against its shape.
+      </p>
+      <CodeBlock code={REGISTER} lang="ts" />
       <p>In React, provide it once and read it with <code>useT()</code>:</p>
       <CodeBlock code={PROVIDER} />
       <p>
-        Both <code>locale</code> and <code>messages</code> are serializable, so SSR renders the
-        negotiated catalog and the client rebuilds the same formatter on hydrate - no mismatch.
-        Switching language re-navigates (a cookie or <code>?lang=</code>); the loader returns the new
-        catalog and the page re-renders.
+        <code>locale</code>, <code>messages</code> and <code>fallback</code> are serializable, so SSR
+        renders the negotiated catalogs and the client rebuilds the same formatter on hydrate - no
+        mismatch. Switching language re-navigates (a cookie or <code>?lang=</code>); the loader returns
+        the new catalog and the page re-renders. <code>localeCookie(name, locale)</code> builds the
+        detector's own cookie for a switcher, so a choice made in the page and one made through{" "}
+        <code>?lang=</code> are the same cookie.
       </p>
+
+      <h2>Rich text</h2>
+      <p>
+        <code>rich(t, key, tags, vars)</code> renders a message's tags with your components, never
+        with HTML. A tag is a bare name - <code>&lt;b&gt;…&lt;/b&gt;</code> or{" "}
+        <code>&lt;icon/&gt;</code>, no attributes - so a translation, whoever or whatever wrote it,
+        decides where emphasis or a link goes, and your handler decides what it is and where it points.
+        A tag with no handler renders its content as plain text, an unclosed or stray marker stays
+        literal text, <code>&lt;br/&gt;</code> is a line break unless you pass <code>br</code>, and
+        interpolated values are always text, so a value containing <code>&lt;b&gt;</code> cannot
+        open a tag. <code>t()</code> is unchanged and returns the markers as written.
+      </p>
+      <CodeBlock code={RICH} />
+      <p>
+        React, Preact, Solid and Vue export <code>rich()</code> from their <code>/i18n</code> entry,
+        returning one node (each handler gets its tag's content as one node too). Svelte has{" "}
+        <code>&lt;Rich&gt;</code>, which takes one snippet per tag:
+      </p>
+      <CodeBlock code={RICH_SVELTE} lang="svelte" />
+      <p>
+        The framework-free form is <code>rich(formatter, key, tags, vars)</code> from{" "}
+        <code>@nifrajs/i18n/rich</code>: it returns the message as an array of strings and whatever your
+        handlers returned, for building any other output.
+      </p>
+
+      <h2>Check your catalogs</h2>
+      <p>
+        <code>nifra i18n check</code> imports the module that exports your <code>locales</code> and{" "}
+        <code>catalogs</code> (unlike <code>nifra check</code>, it runs that code) and checks every
+        catalog the way <code>t()</code> reads it:
+      </p>
+      <ul>
+        <li><b>Coverage</b> per locale, counting messages a regional locale inherits through{" "}
+          <code>chain()</code>; each <b>missing</b> key, and each <b>unused</b> key the default catalog
+          does not have.</li>
+        <li><b>ICU syntax</b>, and <b>placeholder and tag parity</b> with the default message: a
+          translation that drops <code>{`{name}`}</code> or <code>&lt;link&gt;</code> loses it, one that
+          adds a placeholder renders it empty.</li>
+        <li><b>Plural cases</b>: a missing <code>other</code>, and categories the locale's grammar uses
+          (Russian <code>few</code>/<code>many</code>, Arabic <code>zero</code>/<code>two</code>) that a
+          message never states.</li>
+        <li><b>Script purity</b>: letters from a script the locale does not write in - a Telugu sign
+          in a Gujarati word, a Cyrillic <code>е</code> in English - from{" "}
+          <code>Intl.Locale(tag).maximize().script</code>, and, as a warning, words mixing Latin with
+          the locale's script. Latin words (brands, units) stay allowed.</li>
+        <li><b>Untranslated</b> messages identical to the default in another language, as a warning.</li>
+      </ul>
+      <CodeBlock code={CHECK_ENTRY} lang="ts" />
+      <p>
+        It exits 1 on an error, and with <code>--strict</code> on a warning too; <code>--json</code>{" "}
+        prints the result. Draft locales report missing keys as info. The checks themselves are{" "}
+        <code>checkCatalogs()</code> from <code>@nifrajs/i18n/check</code>:
+      </p>
+      <CodeBlock code={CHECK_TEST} lang="ts" />
 
       <h2>Notes</h2>
       <ul>
-        <li>For many locales, load catalogs <b>lazily</b> per request - don't bundle every catalog.</li>
-        <li>The supported ICU subset is interpolation + <code>plural</code>/<code>select</code>; use
+        <li>For many locales, load catalogs <b>lazily</b> per request - don't bundle every catalog. A
+          loader that does <code>{"await import(`../shared/messages/${locale}.ts`)"}</code> ships only the
+          requested locale's table to the page, typed inline tables included.</li>
+        <li>The supported ICU subset is interpolation + <code>plural</code>/<code>selectordinal</code>/<code>select</code>; use
           <code> n()</code>/<code>d()</code> for inline numbers/dates (no <code>{`{n, number}`}</code>
           skeletons). <code>Intl.MessageFormat</code> isn't widely available yet, so this is the
           portable core.</li>

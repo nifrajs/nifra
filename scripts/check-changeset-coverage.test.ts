@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import {
+  changedFiles,
   declaredPackages,
+  lastReleaseCommit,
   publishedPackages,
   uncoveredPackages,
 } from "./check-changeset-coverage.ts"
@@ -14,6 +16,75 @@ import {
  */
 
 const fixture = async (): Promise<string> => await mkdtemp(join(tmpdir(), "changeset-coverage-"))
+
+const git = (root: string, ...args: string[]): string => {
+  const proc = Bun.spawnSync(
+    [
+      "git",
+      "-c",
+      "user.name=nifra",
+      "-c",
+      "user.email=nifra@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "core.hooksPath=/dev/null",
+      ...args,
+    ],
+    { cwd: root, stdout: "pipe", stderr: "pipe" },
+  )
+  if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${proc.stderr.toString()}`)
+  return proc.stdout.toString().trim()
+}
+
+const put = async (root: string, path: string, text: string): Promise<void> => {
+  await mkdir(dirname(join(root, path)), { recursive: true })
+  await writeFile(join(root, path), text)
+}
+
+const commitAll = (root: string, message: string): string => {
+  git(root, "add", "-A")
+  git(root, "commit", "-q", "-m", message)
+  return git(root, "rev-parse", "HEAD")
+}
+
+const repository = async (): Promise<string> => {
+  const root = await fixture()
+  git(root, "init", "-q")
+  return root
+}
+
+describe("release anchor and changed files", () => {
+  test("a commit that only drops a changeset is not a release", async () => {
+    const root = await repository()
+    await put(root, ".changeset/a.md", '---\n"@nifrajs/core": patch\n---\n\nA.\n')
+    await put(root, ".changeset/b.md", '---\n"@nifrajs/core": patch\n---\n\nB.\n')
+    await put(root, "packages/core/CHANGELOG.md", "# @nifrajs/core\n")
+    commitAll(root, "start")
+    await rm(join(root, ".changeset/a.md"))
+    await put(root, "packages/core/CHANGELOG.md", "# @nifrajs/core\n\n## 1.0.1\n\nA.\n")
+    const release = commitAll(root, "version packages")
+    await rm(join(root, ".changeset/b.md"))
+    commitAll(root, "drop a changeset")
+    expect(lastReleaseCommit(root)).toBe(release)
+  })
+
+  test("a file moved out of a package's src counts against the package it left", async () => {
+    const root = await repository()
+    await put(root, "packages/core/src/moved.ts", "export const moved = 1\n".repeat(20))
+    const base = commitAll(root, "start")
+    await mkdir(join(root, "packages/web/src"), { recursive: true })
+    git(root, "mv", "packages/core/src/moved.ts", "packages/web/src/moved.ts")
+    await put(root, "packages/core/src/café.ts", "export const cafe = 1\n")
+    const moved = commitAll(root, "move")
+    expect(changedFiles(base, root)).toEqual(
+      expect.arrayContaining(["packages/core/src/moved.ts", "packages/core/src/café.ts"]),
+    )
+    await mkdir(join(root, "packages/client/src"), { recursive: true })
+    git(root, "mv", "packages/web/src/moved.ts", "packages/client/src/moved.ts")
+    expect(changedFiles(moved, root)).toContain("packages/web/src/moved.ts")
+  })
+})
 
 describe("declaredPackages", () => {
   test("reads every package named in a frontmatter block, quoted or bare", async () => {

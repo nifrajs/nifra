@@ -17,7 +17,13 @@ const tools = [
   }),
 ]
 
-const mcp = createMcpServer({ name: "orders", version: "1.0.0", tools })
+const mcp = createMcpServer({
+  name: "orders",
+  version: "1.0.0",
+  tools,
+  // Local or private-network server: refuse any other Host (DNS rebinding).
+  allowedHosts: ["localhost", "127.0.0.1", "[::1]"],
+})
 ```
 
 Mount `mcp.fetch` at `POST /mcp`. The package also exposes the JSON-RPC protocol and Streamable HTTP
@@ -27,6 +33,11 @@ hosts.
 MCP servers are same-origin for browser clients by default. Set an exact `allowedOrigins` list for
 known cross-origin clients, or set `allowAnyOrigin: true` only for a deliberately public,
 secret-free server. Authentication is still the host application's responsibility.
+
+The Origin check cannot stop DNS rebinding: a rebound page reaches the server under the attacker's
+hostname, so its Origin matches. For a server on localhost or a private network, set `allowedHosts`
+(`host` matches any port, `host:port` one port); every request with an unlisted Host gets 403.
+Unset, any Host is accepted.
 
 Clients that include `text/event-stream` in `Accept` receive progress notifications as they happen,
 followed by the final JSON-RPC response in the same stream. An SSE `GET /mcp` opens a cancellable

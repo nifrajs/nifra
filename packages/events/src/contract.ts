@@ -16,7 +16,7 @@ import {
 
 /** The portable wire shape: identity + versioned type + timestamp + validated payload. */
 export interface EventEnvelope<Payload = unknown> {
-  /** Unique event id (`evt_<uuid>`), stable across redeliveries. */
+  /** Unique event id (`evt_<uuid>`), stable across redeliveries. 1 to 128 characters. */
   readonly id: string
   /** Event type name, e.g. `order.paid`. */
   readonly type: string
@@ -70,10 +70,31 @@ export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV
 }
 
 const TYPE_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/
+/** The causality identity bound, so any id a contract accepts can also name the event's causal node. */
+const MAX_ID_LENGTH = 128
 
 function newId(): string {
   // Web Crypto - available on Bun, Node, Deno, and edge runtimes (nifra targets the edge).
   return `evt_${globalThis.crypto.randomUUID()}`
+}
+
+/** A received value for an issue message. Never throws - a bigint or a cyclic object arrives off a
+ * rich wire codec as readily as a string - and never echoes more than a short preview. */
+function describeReceived(value: unknown): string {
+  switch (typeof value) {
+    case "string":
+      return JSON.stringify(value.length > 64 ? `${value.slice(0, 64)}...` : value)
+    case "bigint":
+      return `${value}n`
+    case "object":
+      return value === null ? "null" : Array.isArray(value) ? "an array" : "an object"
+    case "function":
+      return "a function"
+    case "symbol":
+      return "a symbol"
+    default:
+      return String(value)
+  }
 }
 
 function structuralIssue(message: string, key?: string): StandardIssue {
@@ -118,6 +139,11 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       const validated = validateSync(input)
       if (!validated.ok) throw new EventContractError(type, version, validated.issues)
       const id = options?.id ?? newId()
+      if (typeof id !== "string" || id === "" || id.length > MAX_ID_LENGTH) {
+        throw new TypeError(
+          `event contract ${type}@${version}: id must be 1 to ${MAX_ID_LENGTH} characters`,
+        )
+      }
       let causality: CausalityContext | undefined
       if (options?.causality !== undefined) {
         const parsed = parseCausalityContext(options.causality)
@@ -148,10 +174,12 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       const issues: StandardIssue[] = []
       if (typeof env.id !== "string" || env.id === "")
         issues.push(structuralIssue("missing id", "id"))
+      else if (env.id.length > MAX_ID_LENGTH)
+        issues.push(structuralIssue(`id must be at most ${MAX_ID_LENGTH} characters`, "id"))
       if (env.type !== type) {
         issues.push(
           structuralIssue(
-            `type must be ${JSON.stringify(type)}, got ${JSON.stringify(env.type)}`,
+            `type must be ${JSON.stringify(type)}, got ${describeReceived(env.type)}`,
             "type",
           ),
         )
@@ -159,7 +187,7 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       if (env.version !== version) {
         issues.push(
           structuralIssue(
-            `version must be ${version}, got ${JSON.stringify(env.version)}`,
+            `version must be ${version}, got ${describeReceived(env.version)}`,
             "version",
           ),
         )

@@ -18,6 +18,8 @@ export interface BoundaryRequestCtx {
 /** Build-safe inputs available to a static boundary. It intentionally has no request/session/params API. */
 export interface StaticCtx {
   readonly phase: "build"
+  /** The deployment's origin, when the caller resolving static boundaries knows it. A request never
+   * supplies it: the value is cached for every visitor, and a Host header is the client's to choose. */
   readonly origin?: string
 }
 
@@ -127,17 +129,23 @@ export interface DynamicBoundaryBatch {
 export interface StaticBoundaryCache {
   get(boundary: BoundaryRegistration): Promise<unknown> | undefined
   set(boundary: BoundaryRegistration, value: Promise<unknown>): void
+  /** Drop a value whose load failed, so the next request retries it. */
+  delete?(boundary: BoundaryRegistration): void
 }
 
 export class MemoryStaticBoundaryCache implements StaticBoundaryCache {
-  readonly #values = new WeakMap<object, Promise<unknown>>()
+  readonly #values = new WeakMap<BoundaryRegistration, Promise<unknown>>()
 
   get(boundary: BoundaryRegistration): Promise<unknown> | undefined {
-    return this.#values.get(boundary as object)
+    return this.#values.get(boundary)
   }
 
   set(boundary: BoundaryRegistration, value: Promise<unknown>): void {
-    this.#values.set(boundary as object, value)
+    this.#values.set(boundary, value)
+  }
+
+  delete(boundary: BoundaryRegistration): void {
+    this.#values.delete(boundary)
   }
 }
 
@@ -373,8 +381,13 @@ export async function resolveStaticBoundaries(
       }
       let value = cache.get(boundary)
       if (value === undefined) {
-        value = Promise.resolve().then(() => boundary.load?.(context))
-        cache.set(boundary, value)
+        const loading = Promise.resolve().then(() => boundary.load?.(context))
+        cache.set(boundary, loading)
+        // A failed load is not the boundary's value: the next request loads it again.
+        loading.catch(() => {
+          if (cache.get(boundary) === loading) cache.delete?.(boundary)
+        })
+        value = loading
       }
       try {
         const data = await value

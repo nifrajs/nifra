@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { server, toFetchHandler } from "../src/index.ts"
 import {
   applyTransportCap,
+  drainCapped,
   hasTrustedBodyFraming,
   markTransportCap,
   markTrustedBodyFraming,
@@ -176,6 +177,22 @@ describe("readBoundedBytes - the cap holds on real bytes (GHSA-rv63-4mwf-qqc2 cl
       arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
     }
     expect(await readBoundedBytes(source, CAP)).toEqual({ ok: true, bytes: new Uint8Array(0) })
+  })
+})
+
+describe("drainCapped", () => {
+  test("an oversized stream whose cancel rejects still answers 413", async () => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => controller.enqueue(new Uint8Array(600)),
+      cancel: () => {
+        cancelled = true
+        throw new Error("cancel failed")
+      },
+    })
+    expect(await drainCapped(stream, 1000)).toEqual({ ok: false, status: 413 })
+    await Bun.sleep(0)
+    expect(cancelled).toBe(true)
   })
 })
 

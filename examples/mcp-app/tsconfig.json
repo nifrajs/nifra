@@ -1,0 +1,5 @@
+{
+  // Only the widget: the rest of mcp-app is DOM-free and type-checked by the root program.
+  "extends": "../tsconfig.react.json",
+  "include": ["OrdersTableWidget.tsx"]
+}

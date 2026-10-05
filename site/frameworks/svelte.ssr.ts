@@ -7,7 +7,7 @@
 
 import { svelteAdapter } from "@nifrajs/web-svelte"
 import App from "../../bench/ssr/nifra-svelte/App.svelte"
-import { type CatalogPageData, catalogItems } from "./data.ts"
+import { type CatalogPageData, catalogItems } from "../shared/frameworks/data.ts"
 
 const data: CatalogPageData = { items: catalogItems() }
 

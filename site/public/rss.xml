@@ -6,7 +6,28 @@
     <atom:link href="https://nifra.dev/rss.xml" rel="self" type="application/rss+xml"/>
     <description>Engineering notes from building nifra.</description>
     <language>en</language>
-    <lastBuildDate>Tue, 04 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 30 Sep 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>The 1.1 microseconds Node charged every request</title>
+      <link>https://nifra.dev/blog/node-async-context-deopt</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/node-async-context-deopt</guid>
+      <pubDate>Wed, 30 Sep 2026 00:00:00 GMT</pubDate>
+      <description>A Node HTTP server that first touches AsyncContextFrame after its tick loop is hot pays for it on every tick. How we found it, what ruled out the kernel and the payload, and the one-line fix.</description>
+    </item>
+    <item>
+      <title>We measured Elysia 2's AOT mode before deciding not to copy it</title>
+      <link>https://nifra.dev/blog/elysia-2-aot-measured</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/elysia-2-aot-measured</guid>
+      <pubDate>Wed, 30 Sep 2026 00:00:00 GMT</pubDate>
+      <description>The Elysia 2 beta moves code generation to build time. Steady state, cold start, bundle size, and a deliberately worst-case route, measured against Nifra - with our bias disclosed.</description>
+    </item>
+    <item>
+      <title>Three optimizations we built, measured, and deleted</title>
+      <link>https://nifra.dev/blog/optimizations-we-rejected</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/optimizations-we-rejected</guid>
+      <pubDate>Wed, 30 Sep 2026 00:00:00 GMT</pubDate>
+      <description>A schema-compiled serializer, a text prescan for prototype poisoning, and a single-encode response writer. Each looked like a free win and each lost on the clock.</description>
+    </item>
     <item>
       <title>Choosing a TypeScript API framework in 2026</title>
       <link>https://nifra.dev/blog/typescript-api-framework</link>

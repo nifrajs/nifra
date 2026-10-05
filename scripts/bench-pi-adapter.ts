@@ -70,7 +70,7 @@ else
   )
 
 async function nextLine(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reader: { read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array | undefined }> },
   decoder: TextDecoder,
   getBuffer: () => string,
   setBuffer: (value: string) => void,

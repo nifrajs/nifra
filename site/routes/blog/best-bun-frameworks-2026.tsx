@@ -3,10 +3,8 @@ import {
   httpWorkloadRps,
   percentOf,
   runtimeCeilingPercent,
-} from "../../data/benchmarks"
-import { postMeta } from "../../meta"
-
-export const hydrate = false
+} from "../../shared/data/benchmarks"
+import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
   "best-bun-frameworks-2026",

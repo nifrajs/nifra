@@ -1,7 +1,5 @@
-import { formatRatio, formatRps, httpWorkloadRps } from "../../data/benchmarks"
-import { postMeta } from "../../meta"
-
-export const hydrate = false
+import { formatRatio, formatRps, httpWorkloadRps } from "../../shared/data/benchmarks"
+import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
   "fastify-vs-express",

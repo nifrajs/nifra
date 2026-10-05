@@ -1,5 +1,6 @@
 import { isSameOriginPath, type ResponseResult, status as statusResult } from "@nifrajs/core/server"
 import type { BoundaryRegistration, BoundaryStates } from "../boundary.ts"
+import { type CspPolicy, cspDocumentNonce, cspHeaderValue, prepareCspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
 import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
@@ -13,16 +14,17 @@ import type {
   ScriptDescriptor,
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
-import type { RenderAdapter, RenderProps } from "../render-seam.ts"
+import type { MatchChain, RenderAdapter, RenderProps } from "../render-seam.ts"
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
+  HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
 } from "../render-seam.ts"
-import { PRERENDERED_GLOBAL, REDIRECT_HEADER } from "../router.ts"
+import { PRERENDERED_GLOBAL } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
 import { isStaticMeta, mergeHeads } from "./head-merge.ts"
 import { PRE_HYDRATION_GUARD } from "./runtime-contract.ts"
@@ -53,7 +55,7 @@ const RESPONSE_RESULT = Symbol.for("nifra.response.result")
  * `status(...)` returns. Recognized here rather than imported: core keeps its own predicate internal,
  * and the registry symbol is the contract between them (two copies of core must still agree).
  */
-const isResponseResult = (value: unknown): value is ResponseResult =>
+export const isResponseResult = (value: unknown): value is ResponseResult =>
   typeof value === "object" &&
   value !== null &&
   (value as { readonly [RESPONSE_RESULT]?: unknown })[RESPONSE_RESULT] === true &&
@@ -108,6 +110,9 @@ export interface RenderPageOptions {
   /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches
    * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */
   readonly prerenderedPaths?: readonly string[]
+  /** SSG: the URL of a JSON array of the prerendered paths, handed over in place of
+   * {@link prerenderedPaths} so a large set is fetched once instead of riding in every page. */
+  readonly prerenderedListUrl?: string
   /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`
    * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */
   readonly revalidate?: number
@@ -132,6 +137,8 @@ export interface RenderPageOptions {
   readonly layoutData?: readonly unknown[]
   /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */
   readonly boundaries?: BoundaryStates
+  /** The chain's ids and `handle` exports, forwarded as `RenderProps.matchChain` for `useMatches`. */
+  readonly matchChain?: MatchChain
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
@@ -169,6 +176,12 @@ export interface RenderPageOptions {
    * documents are marked `private, no-store` so a request-specific nonce is never replayed. */
   readonly nonce?: string
   /**
+   * A hash-based Content-Security-Policy from `createCspPolicy`. The document then carries `nonce`
+   * only when it needs one (it defers a value, or a head tag names the nonce); otherwise it renders
+   * nonce-free and cacheable. The policy's header is set on the response either way.
+   */
+  readonly csp?: CspPolicy
+  /**
    * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell
    * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.
    *
@@ -189,13 +202,10 @@ export interface RenderAssemblyCache {
   shellPre?: string
   /** Shell from after the deferred-runtime insertion point through the open `#root` container. */
   shellPost?: string
-  /** Tail opener: the inline script open tag + the route-id global (before the action global). */
+  /** Tail opener: the handover script open tag + the data member's key. */
   tailPre?: string
-  /** Tail mid: the prerendered-paths global (between the action and layout-data globals). */
-  tailMid?: string
-  /** Tail data prefix: the `window.<data global>=` assignment head. */
-  tailData?: string
-  /** Tail from after the serialized data through `</html>`. */
+  /** Tail from after the per-request handover members (the route id, prerendered paths, the handover
+   * close) through `</html>`. */
   tailPost?: string
 }
 
@@ -221,6 +231,12 @@ export function renderPage(options: RenderPageInput): MaybePromise<Response> {
 }
 
 export function renderPageResult(options: RenderPageInput): MaybePromise<RenderedPage> {
+  const { csp } = options
+  if (csp !== undefined) {
+    // The policy hashes the adapter's constant scripts once; only the first document waits for it.
+    const ready = prepareCspPolicy(csp, options.adapter)
+    if (ready !== undefined) return ready.then(() => renderPageResult(options))
+  }
   const {
     adapter,
     chain,
@@ -231,6 +247,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     styles = [],
     cssLoading: requestedCssLoading,
     prerenderedPaths = [],
+    prerenderedListUrl,
     revalidate,
     revalidateTags = [],
     routeId,
@@ -240,22 +257,25 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     rootId = "root",
     hydrate = true,
     islandScripts = [],
-    nonce,
+    nonce: requestedNonce,
     boundaries,
     headers: extraHeaders,
   } = options
   const cssLoading = normalizeCssLoading(requestedCssLoading ?? DEFAULT_CSS_LOADING)
-  if (nonce !== undefined && nonce.trim() === "") {
+  if (requestedNonce !== undefined && requestedNonce.trim() === "") {
     throw new TypeError("[nifra/web] renderPage nonce must be non-empty when provided")
   }
-  const nonceAttr = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`
-  const route = routeId === undefined ? "" : `window.${ROUTE_GLOBAL}=${serializeData(routeId)};`
+  // Each handover entry after the data is `,"<global>":<json>`; the data opens the object, so it always
+  // has a first member and every other entry is a plain suffix.
+  const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serializeData(routeId)}`
   // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
   // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
   const prerendered =
-    prerenderedPaths.length === 0
-      ? ""
-      : `window.${PRERENDERED_GLOBAL}=${serializeData(prerenderedPaths)};`
+    prerenderedListUrl !== undefined
+      ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
+      : prerenderedPaths.length === 0
+        ? ""
+        : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
   // Split deferred values: the component sees markers (id + promise) to `<Await>`; the serialized
   // data carries `{__nifra_deferred: id}` placeholders (promises don't serialize). `actionData` may
   // also `defer()` - split it too, continuing the id space so a single registry settles both. The
@@ -295,21 +315,34 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
           ...(actionSplit ? actionSplit.deferred : []),
           ...(boundarySplit ? boundarySplit.deferred : []),
         ]
+  // Under a CSP policy a document carries a nonce only when it has a script specific to this request:
+  // each settled deferred value streams one, and an executable head tag names the nonce. Every other
+  // document is nonce-free - its inline scripts are the constant ones the policy lists by hash - so its
+  // CSP header is the same on every request and it stays cacheable.
+  const nonce =
+    csp === undefined
+      ? requestedNonce
+      : cspDocumentNonce(
+          csp,
+          adapter,
+          hydrate,
+          allDeferred.length > 0 || headNamesNonce(head),
+          requestedNonce,
+        )
+  const nonceAttr = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`
   // Omitted entirely when no layout has a loader - a page-only app emits exactly what it did before.
   const layoutTail =
     options.layoutData === undefined
       ? ""
-      : `window.${LAYOUT_DATA_GLOBAL}=${serializeData(layoutSplits.map((split) => split.forClient))};`
+      : `,"${LAYOUT_DATA_GLOBAL}":${serializeData(layoutSplits.map((split) => split.forClient))}`
 
   // Only emit the action global when an action actually ran, so plain GET output is unchanged.
   const action =
-    actionSplit === undefined
-      ? ""
-      : `window.${ACTION_GLOBAL}=${serializeData(actionSplit.forClient)};`
+    actionSplit === undefined ? "" : `,"${ACTION_GLOBAL}":${serializeData(actionSplit.forClient)}`
   const boundaryTail =
     boundarySplit === undefined
       ? ""
-      : `window.${BOUNDARY_GLOBAL}=${serializeData(boundarySplit.forClient)};`
+      : `,"${BOUNDARY_GLOBAL}":${serializeData(boundarySplit.forClient)}`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
@@ -321,6 +354,14 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   const slot: RenderAssemblyCache =
     nonce === undefined && options.assemblyCache !== undefined ? options.assemblyCache : {}
   if (slot.shellPre === undefined) {
+    // An empty entry is not "no client": `<script type="module" src="">` resolves to the page URL, so
+    // the browser would load the document itself as a module. Checked here, where the shell is built,
+    // so a cached route pays it once.
+    if (hydrate && (clientEntry === undefined || clientEntry.trim() === "")) {
+      throw new TypeError(
+        "[nifra/web] a hydrating page needs a non-empty clientEntry (the built client entry URL); pass hydrate: false for a page with no client",
+      )
+    }
     // Matched-route chunk preloads, concatenated directly. De-duped against the entry, which is
     // preloaded separately below.
     let preloadLinks = ""
@@ -384,14 +425,11 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     for (const src of islandScripts)
       islandTags += `<script type="module" src="${escapeAttr(src)}"${nonceAttr}></script>`
     if (hydrate) {
-      slot.tailPre = `<script${nonceAttr}>${route}`
-      slot.tailMid = prerendered
-      slot.tailData = `window.${DATA_GLOBAL}=`
-      slot.tailPost = `</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
+      // Inert JSON, never executed: the page state needs no nonce and no hash under any CSP.
+      slot.tailPre = `<script type="application/json" id="${HANDOVER_ID}">{"${DATA_GLOBAL}":`
+      slot.tailPost = `${route}${prerendered}}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
     } else {
       slot.tailPre = ""
-      slot.tailMid = ""
-      slot.tailData = ""
       slot.tailPost = `${islandTags}</body></html>`
     }
   }
@@ -402,10 +440,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
-  // Tail - the loader-data globals + the client module. Module scripts defer (run after parse), so
-  // the data global + every streamed deferred resolution are set before the entry hydrates.
+  // Tail - the page-state handover + the client module. Module scripts defer (run after parse), so
+  // the handover + every streamed deferred resolution are in the document before the entry hydrates.
   const tailHtml = hydrate
-    ? `${slot.tailPre}${action}${slot.tailMid}${layoutTail}${boundaryTail}${slot.tailData}${serializeData(forClient)}${slot.tailPost}`
+    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${slot.tailPost}`
     : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   // Caller-supplied headers (a terminal status page's `cache-control`, say). Applied before the
@@ -426,6 +464,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // also keeps `withISR` from storing a document whose executable scripts carry request-specific
   // authorization to run under the caller's CSP.
   if (nonce !== undefined) headers["cache-control"] = "private, no-store"
+  if (csp !== undefined) {
+    const policy = cspHeaderValue(csp, adapter, nonce)
+    if (policy !== undefined) headers["content-security-policy"] = policy
+  }
   const renderProps: RenderProps = {
     data: forComponent,
     actionData: actionSplit?.forComponent,
@@ -444,6 +486,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     ...(boundarySplit !== undefined
       ? { boundaries: boundarySplit.forComponent as BoundaryStates }
       : {}),
+    ...(options.matchChain !== undefined ? { matchChain: options.matchChain } : {}),
   }
 
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
@@ -476,6 +519,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     tailHtml,
     status,
     headers,
+    nonce,
     nonceAttr,
   ).then((response) => new ResponseRenderedPage(response))
 }
@@ -490,6 +534,7 @@ async function renderStreamedPage(
   tailHtml: string,
   status: number,
   headers: Record<string, string>,
+  nonce: string | undefined,
   nonceAttr: string,
 ): Promise<Response> {
   // Streaming path - required for `defer()` (progressive `<Await>` resolution) and used by any adapter
@@ -500,7 +545,10 @@ async function renderStreamedPage(
   const shell = enc.encode(shellHtml)
   const closeRoot = enc.encode(closeRootHtml)
   const tail = enc.encode(tailHtml)
-  const appStream = await adapter.renderToStream(chain, renderProps)
+  const appStream =
+    nonce === undefined
+      ? await adapter.renderToStream(chain, renderProps)
+      : await adapter.renderToStream(chain, renderProps, { nonce })
   const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
   return new Response(body, { status, headers })
 }
@@ -623,7 +671,7 @@ export interface RedirectOptions {
    * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */
   readonly external?: boolean
   /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to
-   * mutate after the fact - name them here. Cookies still ride `c.set`, as on any other response. */
+   * mutate after the fact - name them here. Cookies queued with `ctx.set.cookie()` still ride it. */
   readonly headers?: Readonly<Record<string, string>>
 }
 
@@ -727,37 +775,6 @@ export function withDuplicateInstanceHint(err: unknown): unknown {
   return augmented
 }
 
-/**
- * An action's control-flow value passes straight through - except a redirect on a client-submit data
- * request: fetch would follow the 3xx into HTML the client can't use, so the redirect rides the
- * X-Nifra-Redirect header on a 204 and the client navigates. One conversion shared by the returned-
- * and thrown- paths, so `return redirect()` and `throw redirect()` agree.
- *
- * Takes either shape: `redirect()` is a plain render, while a hand-rolled `new Response(...)` from an
- * action still arrives as a `Response`. The rewrite stays on the lane its input was on - a plain
- * redirect converts to a plain 204, and never materializes the `Response` it is replacing.
- */
-export function actionResponse(
-  result: Response | ResponseResult,
-  isDataRequest: boolean,
-): Response | ResponseResult {
-  if (!isDataRequest) return result
-  if (isResponseResult(result)) {
-    const plain = result.plain
-    // No `plain` means a carrier that only knows how to build a `Response` (not one of ours) - fall
-    // back rather than guess at its status.
-    if (plain === undefined) return actionResponse(result.toResponse(), isDataRequest)
-    if (plain.status < 300 || plain.status >= 400) return result
-    const location = plain.headers?.location ?? "/"
-    return statusResult(204, undefined, { headers: { [REDIRECT_HEADER]: location } })
-  }
-  if (result.status >= 300 && result.status < 400) {
-    const location = result.headers.get("location") ?? "/"
-    return statusResult(204, undefined, { headers: { [REDIRECT_HEADER]: location } })
-  }
-  return result
-}
-
 /** A loaded layout module. `loader`/`gate` are the layout-loader surface; `meta` predates it. */
 export type LoadedLayoutModules = ReadonlyArray<{
   default: unknown
@@ -765,6 +782,10 @@ export type LoadedLayoutModules = ReadonlyArray<{
   loader?: LayoutLoader
   action?: unknown
   gate?: boolean
+  // Read only when it is a function - see `ShouldRevalidate` in manifest.ts.
+  shouldRevalidate?: unknown
+  // Reported by `useMatches` - see `RouteModule.handle`.
+  handle?: unknown
   // A layout may declare its own `searchSchema`; the route's effective search merges the layout chain's
   // schemas with the page's (page-wins). Present on the raw module already - typed here so it is readable.
   searchSchema?: RouteModule["searchSchema"]
@@ -998,6 +1019,19 @@ function tagAttrs(tag: "meta" | "link", attrs: Readonly<object>): string | null 
 // so a route module that's GC'd takes its entry with it.
 const headTagsCache = new WeakMap<Meta, string>()
 
+// An executable script runs as written, so it is checked rather than escaped: `\u003c` is valid only
+// inside a JS string, and escaping turned `if (a < b)` into a syntax error. What the HTML tokenizer
+// reads as the element's end, or as the start of an escaped section, is refused instead.
+const SCRIPT_BREAKOUT = /<\/script|<!--/i
+
+function assertExecutableScriptContent(content: string): void {
+  if (SCRIPT_BREAKOUT.test(content)) {
+    throw new TypeError(
+      '[nifra/web] an executable inline script cannot contain "</script" or "<!--"; write "<\\/script" or split the string',
+    )
+  }
+}
+
 function assertExecutableScriptType(type: string): void {
   if (!EXECUTABLE_SCRIPT_TYPES.has(type)) {
     throw new TypeError(
@@ -1013,6 +1047,10 @@ function assertExecutableScriptType(type: string): void {
  * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) - parity with
  * the already concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output. Result
  * is memoized only for objects observed as static meta exports (serialized once per route). */
+/** Whether a document head names the CSP nonce: an executable script or a `<link nonce>`. */
+const headNamesNonce = (head: Meta | undefined): boolean =>
+  (head?.unsafeScript?.length ?? 0) > 0 || (head?.link?.some((l) => l.nonce !== undefined) ?? false)
+
 function headTags(head: Meta | undefined, documentNonce?: string): string {
   if (head === undefined) return ""
   // Executable head metadata carries a caller-chosen nonce, so never cache it by object identity. A
@@ -1063,7 +1101,8 @@ function headTags(head: Meta | undefined, documentNonce?: string): string {
           "[nifra/web] executable head scripts must use the same CSP nonce as the document",
         )
       }
-      out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${escapeScriptContent(s.content)}</script>`
+      assertExecutableScriptContent(s.content)
+      out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${s.content}</script>`
     }
   if (cacheable) headTagsCache.set(head, out)
   return out
@@ -1147,6 +1186,7 @@ export function unsafeInlineScript(
   // place a caller is told what it may pass. Failing at the call site names the argument; failing at
   // render names a document.
   assertExecutableScriptType(type)
+  assertExecutableScriptContent(content)
   return {
     unsafe: true,
     type,

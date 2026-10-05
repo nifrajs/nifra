@@ -23,6 +23,11 @@ export interface GraphImport {
   readonly path?: string
   /** The specifier as written in source - the only form that survives an unresolved import. */
   readonly original?: string
+  /** The bundler left this import in the emitted code instead of bundling its target. Bun does this
+   * for a dynamic `import("node:fs")` in a browser build: the import ships, the module does not. */
+  readonly external?: boolean
+  /** A dynamic `import()`. A bundler can drop one in dead code while the module around it ships. */
+  readonly dynamic?: boolean
 }
 
 export interface GraphModule {
@@ -34,6 +39,13 @@ export interface GraphChunk {
   readonly entryPoint?: string
   /** Module ids that landed in this chunk. */
   readonly modules: readonly string[]
+  /** The names this chunk exports, when the bundler reports them (entry chunks). */
+  readonly exports?: readonly string[]
+  /**
+   * What the emitted code itself imports: another output by its key in `chunks`, anything else as
+   * written. Module-level edges cannot say this - a bundler drops some and keeps others.
+   */
+  readonly imports?: readonly string[]
 }
 
 /** What a client build looks like to the guards, whichever bundler produced it. */
@@ -52,12 +64,26 @@ const normalizeModuleId = (id: string): string => id.replaceAll("\\", "/")
 /** The slice of Bun's metafile this seam consumes. Not yet in `@types/bun`; shape per the docs. */
 export interface BunMetafileLike {
   readonly inputs?: Readonly<
-    Record<string, { readonly imports?: ReadonlyArray<{ path?: string; original?: string }> }>
+    Record<
+      string,
+      {
+        readonly imports?: ReadonlyArray<{
+          path?: string
+          original?: string
+          external?: boolean
+          kind?: string
+        }>
+      }
+    >
   >
   readonly outputs?: Readonly<
     Record<
       string,
-      { readonly entryPoint?: string; readonly inputs?: Readonly<Record<string, unknown>> }
+      {
+        readonly entryPoint?: string
+        readonly inputs?: Readonly<Record<string, unknown>>
+        readonly exports?: readonly string[]
+      }
     >
   >
 }
@@ -65,29 +91,37 @@ export interface BunMetafileLike {
 /**
  * Adapt a `Bun.build` metafile to the neutral graph.
  *
- * A total function: an absent or partial metafile yields an empty graph rather than throwing, because
- * a guard that crashes on an unexpected build shape fails the build for the wrong reason. An empty
- * graph reports no findings, which matches the existing behaviour when the metafile is missing.
+ * Fails closed: the graph is the evidence that nothing backend reached the browser, so a build that
+ * produced no metafile, or one without inputs or outputs, is an error rather than an empty graph that
+ * would report nothing.
  */
 export function fromBunMetafile(meta: BunMetafileLike | undefined): ClientModuleGraph {
+  if (meta?.inputs === undefined || meta.outputs === undefined) {
+    throw new Error(
+      "[nifra/web] the client build produced no module graph (metafile), so nifra cannot prove what reached the browser. Refusing to write the bundle",
+    )
+  }
   const modules: Record<string, GraphModule> = {}
-  for (const [rawId, input] of Object.entries(meta?.inputs ?? {})) {
+  for (const [rawId, input] of Object.entries(meta.inputs)) {
     const id = normalizeModuleId(rawId)
     modules[id] = {
       imports: (input.imports ?? []).map((im) => ({
         ...(im.path === undefined ? {} : { path: normalizeModuleId(im.path) }),
         ...(im.original === undefined ? {} : { original: im.original }),
+        ...(im.external === true ? { external: true } : {}),
+        ...(im.kind === "dynamic-import" ? { dynamic: true } : {}),
       })),
     }
   }
   const chunks: Record<string, GraphChunk> = {}
-  for (const [rawPath, output] of Object.entries(meta?.outputs ?? {})) {
+  for (const [rawPath, output] of Object.entries(meta.outputs)) {
     const path = normalizeModuleId(rawPath)
     chunks[path] = {
       ...(output.entryPoint !== undefined
         ? { entryPoint: normalizeModuleId(output.entryPoint) }
         : {}),
       modules: Object.keys(output.inputs ?? {}).map(normalizeModuleId),
+      ...(output.exports !== undefined ? { exports: output.exports } : {}),
     }
   }
   return { modules, chunks }
@@ -105,6 +139,12 @@ export interface RollupChunkLike {
   readonly facadeModuleId?: string | null
   /** Every module id that landed in this chunk. Rollup's `moduleIds`. */
   readonly moduleIds?: readonly string[]
+  /** The names this chunk exports. Rollup's `exports`. */
+  readonly exports?: readonly string[]
+  /** Outputs and externals this chunk imports statically / dynamically. Rollup's `imports` and
+   * `dynamicImports`. */
+  readonly imports?: readonly string[]
+  readonly dynamicImports?: readonly string[]
 }
 export type RollupBundleLike = Readonly<Record<string, RollupChunkLike>>
 
@@ -118,8 +158,8 @@ export type RollupBundleLike = Readonly<Record<string, RollupChunkLike>>
  * guards read the resolved `path` as their fallback (a `node:` prefix, the `server-only` basename), so
  * detection is unaffected; only the human-readable chain shows resolved paths instead of as-written ones.
  *
- * Total, like {@link fromBunMetafile}: an empty bundle yields an empty graph (no findings), never a throw
- * that would fail a build for the wrong reason.
+ * An empty bundle yields an empty graph; the Rollup output always carries its own graph, so there is
+ * no missing-evidence case to fail on here.
  */
 export function fromRollupBundle(
   bundle: RollupBundleLike,
@@ -154,6 +194,10 @@ export function fromRollupBundle(
       // how a non-entry Bun output omits `entryPoint`, so the guards' entry set stays the real entries.
       ...(output.facadeModuleId ? { entryPoint: normalizeModuleId(output.facadeModuleId) } : {}),
       modules: chunkModules,
+      ...(output.exports !== undefined ? { exports: output.exports } : {}),
+      ...(output.imports !== undefined
+        ? { imports: [...output.imports, ...(output.dynamicImports ?? [])] }
+        : {}),
     }
   }
   return { modules, chunks }

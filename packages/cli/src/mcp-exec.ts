@@ -6,17 +6,20 @@
  * replaceable.
  */
 
-import { stat } from "node:fs/promises"
-import { resolve } from "node:path"
+import { type Dirent, realpathSync } from "node:fs"
+import { readdir, stat } from "node:fs/promises"
+import { relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { Glob } from "bun"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import {
   type CommandCatalogEntry,
   type CommandCtx,
   type CommandSpec,
   commandCatalog,
+  commandMcpInputSchema,
   commandMcpName,
   findCommandSpec,
+  toCommandCatalogEntry,
 } from "./command-catalog.ts"
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
@@ -33,9 +36,6 @@ import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
-  LOCAL_TOOL_FETCH_TIMEOUT_MS,
-  notNifraResponse,
-  readBoundedResponse,
   readBoundedStream,
   timeoutMessage,
   validateLocalPort,
@@ -43,6 +43,24 @@ import {
 import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpTool, McpToolContext } from "./mcp-protocol.ts"
 import { loadTypesCorpus } from "./types-search.ts"
+
+const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
+
+/** The files a stack the caller supplies may show a codeframe from: project source, never a dotfile
+ * or anything under a dot directory (`.env`, `.git/`, `.nifra/`). */
+function explainSourceGate(root: string): (file: string) => boolean {
+  // The codeframe reads a native realpath, which expands a Windows short name (`RUNNER~1`); the root
+  // has to be spelled the same way or every file looks like it sits outside it.
+  let base = resolve(root)
+  try {
+    base = realpathSync.native(base)
+  } catch {}
+  return (file) =>
+    CODEFRAME_SOURCE.test(file) &&
+    !relative(base, file)
+      .split(/[\\/]/)
+      .some((segment) => segment.startsWith("."))
+}
 
 /** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
  * dev, `.js` once built). Each runs in a FRESH subprocess per call so the project's current code loads. */
@@ -57,12 +75,21 @@ export function toMcpTool(
   const { cwd } = options
   const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
   const pathFields = ["config", "out", "lockfile", "before", "after", "baseline", "file"] as const
+  const catalogEntry = entry ?? toCommandCatalogEntry(spec)
   return {
-    name: commandMcpName(entry?.name ?? spec.name),
-    description: entry?.summary ?? spec.summary,
-    inputSchema: entry?.inputSchema ?? spec.input.jsonSchema,
+    name: commandMcpName(catalogEntry.name),
+    description: catalogEntry.summary,
+    inputSchema: commandMcpInputSchema(catalogEntry),
     handler: async (args: Record<string, unknown>, context: McpToolContext) => {
       const raw = { ...args }
+      for (const field of catalogEntry.cliOnlyFields) {
+        if (raw[field] !== undefined)
+          return JSON.stringify(
+            { ok: false, error: `${field} is available only from the nifra CLI` },
+            null,
+            2,
+          )
+      }
       const dir = raw.dir
       if (dir !== undefined && typeof dir !== "string") return dirError(undefined)
       const target = resolveProjectDir(cwd, dir as string | undefined)
@@ -138,7 +165,7 @@ export function projectTools(
     {
       name: "nifra_verify",
       description:
-        "Run the shared repository verification plan. Set release=true for the full release plan; the response preserves the declarative gate order and each gate's remediation.",
+        "Run the shared repository verification plan. Set release=true for the full release plan; the response preserves the declarative gate order and each gate's remediation. A gate whose script the project's package.json does not declare is reported as undeclared and not run; the result passes when every gate that ran passed.",
       inputSchema: {
         type: "object",
         properties: {
@@ -243,7 +270,7 @@ export function projectTools(
     {
       name: "nifra_explain",
       description:
-        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure; or pass `port` to fetch the running dev server's most recent SSR failure from `/__nifra/last-error`. Returns the same JSON the dev overlay renders.",
+        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure. With no `error`, returns the running dev server's most recent error of any kind (SSR, loader, API, build, browser, hydration) with its request id - the server is found automatically; `port`/`dir` pick one when several run. nifra_errors lists them all. Returns the same JSON the dev overlay renders.",
       inputSchema: {
         type: "object",
         properties: {
@@ -265,144 +292,119 @@ export function projectTools(
           port: {
             type: "number",
             description:
-              "Instead of a pasted error, fetch the running dev server's most recent SSR failure from this port.",
+              "The dev server's port, when the workspace runs several. Optional: the project's `nifra dev` server is found automatically.",
+          },
+          dir: {
+            type: "string",
+            description: "The app directory, when the workspace runs more than one dev server.",
           },
         },
         additionalProperties: false,
       },
-      handler: async (args) => {
-        const { error, stack, name, port } = args as {
+      handler: async (args, context) => {
+        const { error, stack, name, port, dir } = args as {
           error?: string
           stack?: string
           name?: string
           port?: number
+          dir?: string
         }
         if (error !== undefined || stack !== undefined) {
           const { buildDiagnostic } = await import("@nifrajs/web/diagnostic")
           const e = new Error(error ?? "")
           if (name !== undefined) e.name = name
           if (stack !== undefined) e.stack = stack
-          return JSON.stringify(buildDiagnostic(e, { root: cwd }), null, 2)
+          return JSON.stringify(
+            buildDiagnostic(e, { root: cwd, showSource: explainSourceGate(cwd) }),
+            null,
+            2,
+          )
         }
-        if (port !== undefined) {
-          const validPort = validateLocalPort(port)
-          if (validPort === undefined) {
-            return JSON.stringify(
-              { code: "NIFRA_INVALID_PORT", message: "port must be an integer from 1 to 65535." },
-              null,
-              2,
-            )
-          }
-          const { LAST_ERROR_PATH } = await import("@nifrajs/web/diagnostic")
-          try {
-            const res = await fetch(`http://127.0.0.1:${validPort}${LAST_ERROR_PATH}`, {
-              signal: AbortSignal.timeout(LOCAL_TOOL_FETCH_TIMEOUT_MS),
-            })
-            if (res.headers.get("x-nifra-diagnostic") !== "true")
-              return notNifraResponse("diagnostic")
-            if (!res.ok) {
-              return JSON.stringify(
-                {
-                  code: "NIFRA_NONE",
-                  message: `dev server at :${validPort} returned ${res.status}`,
-                },
-                null,
-                2,
-              )
-            }
-            return await readBoundedResponse(res)
-          } catch (cause) {
-            return JSON.stringify(
-              {
-                code: "NIFRA_NONE",
-                message: `could not reach a nifra dev server at :${validPort} - ${cause instanceof Error ? cause.message : String(cause)}`,
-              },
-              null,
-              2,
-            )
-          }
+        const target = resolveProjectDir(cwd, dir)
+        if (target === null) return dirError(dir)
+        if (port !== undefined && validateLocalPort(port) === undefined) {
+          return JSON.stringify(
+            { code: "NIFRA_INVALID_PORT", message: "port must be an integer from 1 to 65535." },
+            null,
+            2,
+          )
         }
-        return JSON.stringify(
-          {
-            code: "NIFRA_NONE",
-            message:
-              "Pass `error` (and `stack` if available) to explain a failure, or `port` to fetch the dev server's last error.",
-          },
-          null,
-          2,
-        )
-      },
-    },
-    {
-      name: "nifra_inspect",
-      description:
-        "Observe what your requests ACTUALLY did on the running dev server - the recent request traces the DevTools plugin records: `{ method, path, status, durationMs, isrStatus, bodyBytes }` per request. The read no other tool gives you: after nifra_run or a real browser request, call this to SEE the outcome (which route answered, the status, how long, ISR hit/miss) instead of guessing. Pass `port` (the running dev server); narrow with `path` (a path prefix) or `limit` (most recent N). Requires the app to mount `@nifrajs/web`'s `devtools()` plugin (which auto-enables in development).",
-      inputSchema: {
-        type: "object",
-        properties: {
-          port: { type: "number", description: "The running dev server's port." },
-          path: { type: "string", description: "Only traces whose path starts with this prefix." },
-          limit: { type: "number", description: "Return only the most recent N traces." },
-        },
-        required: ["port"],
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const { port, path, limit } = args as { port?: number; path?: string; limit?: number }
-        if (port === undefined) {
+        const { explainLatest } = await import("./dev-feed-tool.ts")
+        try {
+          return JSON.stringify(await explainLatest(target, port, context.signal), null, 2)
+        } catch (cause) {
           return JSON.stringify(
             {
-              events: [],
-              note: "Pass `port` - the running dev server whose request traces to read.",
+              code: "NIFRA_NONE",
+              message: `could not read the dev server's errors - ${cause instanceof Error ? cause.message : String(cause)}`,
             },
             null,
             2,
           )
         }
-        try {
-          const validPort = validateLocalPort(port)
-          if (validPort === undefined) {
-            return JSON.stringify(
-              {
-                events: [],
-                code: "NIFRA_INVALID_PORT",
-                note: "port must be an integer from 1 to 65535.",
-              },
-              null,
-              2,
-            )
-          }
-          const url = new URL(`http://127.0.0.1:${validPort}/_nifra/devtools/state`)
-          if (path !== undefined) url.searchParams.set("path", path)
-          if (limit !== undefined) url.searchParams.set("limit", String(limit))
-          const res = await fetch(url, {
-            signal: AbortSignal.timeout(LOCAL_TOOL_FETCH_TIMEOUT_MS),
-          })
-          if (res.headers.get("x-nifra-devtools") !== "true") return notNifraResponse("DevTools")
-          if (res.status === 404) {
-            return JSON.stringify(
-              {
-                events: [],
-                note: "No DevTools endpoint on that server. Mount `devtools()` from @nifrajs/web and run in development.",
-              },
-              null,
-              2,
-            )
-          }
-          if (!res.ok) {
-            return JSON.stringify(
-              { events: [], note: `DevTools state returned ${res.status}.` },
-              null,
-              2,
-            )
-          }
-          return await readBoundedResponse(res)
-        } catch (cause) {
-          const validPort = validateLocalPort(port)
+      },
+    },
+    {
+      name: "nifra_inspect",
+      description:
+        "Observe what your requests ACTUALLY did on the running dev server: one trace per request, `{ requestId, method, path, status, durationMs, bytes, isr, errorIds, logCount }`. After nifra_run or a real browser request, call this to SEE the outcome (the status, how long, ISR hit/miss, whether it logged or failed) instead of guessing; pass a trace's `requestId` to nifra_errors/nifra_logs for what that request failed with or printed. Every `nifra dev` server keeps these traces and is found automatically; `port`/`dir` pick one when several run. Narrow with `path` (a path prefix), `requestId`, `since` (a cursor from an earlier call) or `limit` (most recent N). An explicit `port` this project did not start falls back to the `@nifrajs/devtools` plugin's traces.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          port: {
+            type: "number",
+            description:
+              "The dev server's port. Optional: the project's server is found automatically.",
+          },
+          path: { type: "string", description: "Only traces whose path starts with this prefix." },
+          requestId: { type: "string", description: "Only the trace with this request id." },
+          since: {
+            type: "number",
+            description: "Only traces after this cursor (the `cursor` an earlier call returned).",
+          },
+          limit: { type: "number", description: "Return only the most recent N traces." },
+          dir: {
+            type: "string",
+            description: "The app directory, when the workspace runs more than one dev server.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        const { port, path, requestId, since, limit, dir } = args as {
+          port?: number
+          path?: string
+          requestId?: string
+          since?: number
+          limit?: number
+          dir?: string
+        }
+        const target = resolveProjectDir(cwd, dir)
+        if (target === null) return dirError(dir)
+        if (port !== undefined && validateLocalPort(port) === undefined) {
           return JSON.stringify(
             {
-              events: [],
-              note: `Could not reach a dev server at :${validPort ?? String(port)} - ${cause instanceof Error ? cause.message : String(cause)}`,
+              requests: [],
+              code: "NIFRA_INVALID_PORT",
+              note: "port must be an integer from 1 to 65535.",
+            },
+            null,
+            2,
+          )
+        }
+        const { inspectRequests } = await import("./dev-feed-tool.ts")
+        try {
+          const result = await inspectRequests(
+            target,
+            { port, path, requestId, since, limit },
+            context.signal,
+          )
+          return JSON.stringify(result, null, 2)
+        } catch (cause) {
+          return JSON.stringify(
+            {
+              requests: [],
+              note: `Could not read the dev server's request traces - ${cause instanceof Error ? cause.message : String(cause)}`,
             },
             null,
             2,
@@ -413,7 +415,7 @@ export function projectTools(
     {
       name: "nifra_openapi",
       description:
-        'Return this project\'s backend OpenAPI 3.1 document generated from backend.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Pass `path` (a route prefix like /api/orders, mirroring nifra_routes) to narrow a large backend to operations under that prefix instead of the whole document. Frontend-only apps return a valid empty paths object.',
+        'Return this project\'s backend OpenAPI 3.1 document generated from backend/app.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Pass `path` (a route prefix like /api/orders, mirroring nifra_routes) to narrow a large backend to operations under that prefix instead of the whole document. Frontend-only apps return a valid empty paths object.',
       inputSchema: {
         type: "object",
         properties: {
@@ -435,7 +437,7 @@ export function projectTools(
     {
       name: "nifra_run",
       description:
-        "Run HTTP requests through this project's backend and return structured results (status, headers, parsed body, and any thrown error). Use it to verify code after editing: by default the backend is re-loaded in a fresh process each call. Pass warm:true to reuse a hot worker while source files are unchanged; it restarts automatically when files change. Each request: { method?, path, body?, headers? }.",
+        "Run HTTP requests through this project's backend and return structured results: status, headers, parsed body, `logs` (what the handler printed, per request, secrets redacted) and `errors` (a Diagnostic with codeframe, cause and fix for a thrown error or the unhandled error behind a bare 500). Use it to verify code after editing: by default the backend is re-loaded in a fresh process each call. Pass warm:true to reuse a hot worker while source files are unchanged; it restarts automatically when files change. Each request: { method?, path, body?, headers? }.",
       inputSchema: {
         type: "object",
         properties: {
@@ -454,7 +456,7 @@ export function projectTools(
           },
           entry: {
             type: "string",
-            description: "Backend entry file (default: backend.ts | app.ts).",
+            description: "Backend entry file (default: backend/app.ts | app.ts).",
           },
           warm: {
             type: "boolean",
@@ -524,7 +526,7 @@ export function projectTools(
           },
           entry: {
             type: "string",
-            description: "Backend entry file (default: backend.ts | app.ts).",
+            description: "Backend entry file (default: backend/app.ts | app.ts).",
           },
         },
         required: ["path"],
@@ -541,7 +543,8 @@ export function projectTools(
         properties: {
           pattern: {
             type: "string",
-            description: "Optional test file/path pattern passed as an argv item to `bun test`.",
+            description:
+              "Optional test file/path pattern inside the project, passed as an argv item to `bun test`.",
           },
           timeoutMs: {
             type: "number",
@@ -573,7 +576,7 @@ export function projectTools(
     {
       name: "nifra_scaffold",
       description:
-        'Map a URL path to the CORRECT routes/ file and get a contract-correct page stub. Agents routinely place file routes wrong - this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns the file to create + the route-module contract (loader/action/meta/default) + a stub (ready-to-write for react/preact/solid; path+contract for vue/svelte/vanilla - use nifra_example for those bodies).',
+        'Map a URL path to the CORRECT routes/ files and get a contract-correct route pair: the page and its .backend.ts half (loader + output schema). Agents routinely place file routes wrong - this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns both files + the route contract + stubs (the page is ready-to-write for react/preact/solid/vanilla; for vue/svelte use nifra_example for the page body).',
       inputSchema: {
         type: "object",
         properties: {
@@ -584,7 +587,7 @@ export function projectTools(
           write: {
             type: "boolean",
             description:
-              "When true, create the file if a verified ready-to-write stub exists. Refuses overwrite.",
+              "When true, create both files if a verified ready-to-write page stub exists. Refuses overwrite.",
           },
           variant: {
             type: "string",
@@ -612,7 +615,7 @@ export function projectTools(
         if (write !== true) return renderScaffold(path, framework, flavour)
         const result = await writeScaffoldRoute(cwd, path, framework, flavour)
         const status = result.written
-          ? `Written: \`${result.file}\``
+          ? `Written: \`${result.file}\` and \`${result.backend.file}\``
           : `Not written: ${result.reason ?? "no write performed"}`
         return `${status}\n\n${renderScaffold(path, framework, flavour)}`
       },
@@ -628,13 +631,17 @@ export function projectTools(
         },
         additionalProperties: false,
       },
-      handler: async (args) => {
+      handler: async (args, context) => {
         const opts = args as { dir?: string; interact?: boolean }
         const target = resolveProjectDir(cwd, opts.dir)
         if (target === null) return dirError(opts.dir)
         const { runHydrationAssurance } = await import("./assure-hydration.ts")
         return JSON.stringify(
-          await runHydrationAssurance(target, { interact: opts.interact === true }),
+          await runHydrationAssurance(
+            target,
+            { interact: opts.interact === true },
+            { signal: context.signal },
+          ),
           null,
           2,
         )
@@ -678,7 +685,10 @@ export async function spawnChild(
   if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
     return `${label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes.`
   if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
-  const proc = Bun.spawn(["bun", childPath(child), cwd], {
+  const proc = Bun.spawn([process.execPath, childPath(child), cwd], {
+    cwd,
+    // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+    env: process.env,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -732,24 +742,38 @@ export async function spawnChild(
   }
 }
 
-const WARM_RUN_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
-const WARM_RUN_IGNORED =
-  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\//
+const WARM_RUN_SOURCE = /\.(?:[cm]?[jt]sx?|json)$/
+// Pruned while walking, not filtered after: a scan that descends into node_modules on every warm call
+// costs more than the cold start the worker saves.
+const WARM_RUN_SKIPPED_DIR = /^(?:\..*|node_modules|dist(?:-[a-z0-9]+)?|build|coverage)$/
 const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
 const MAX_WARM_PENDING = 64
 
 async function warmRunFingerprint(cwd: string): Promise<string> {
   const parts: string[] = []
-  for await (const rawRel of WARM_RUN_GLOB.scan({ cwd, dot: false })) {
-    const rel = rawRel.replaceAll("\\", "/")
-    if (WARM_RUN_IGNORED.test(rel)) continue
+  const walk = async (dir: string): Promise<void> => {
+    let entries: Dirent[]
     try {
-      const s = await stat(resolve(cwd, rel))
-      if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
+      entries = await readdir(resolve(cwd, dir), { withFileTypes: true })
     } catch {
-      // A file can disappear while an agent is editing. The next call will rescan the settled tree.
+      return
+    }
+    for (const entry of entries) {
+      const rel = dir === "" ? entry.name : `${dir}/${entry.name}`
+      if (entry.isDirectory()) {
+        if (!WARM_RUN_SKIPPED_DIR.test(entry.name)) await walk(rel)
+        continue
+      }
+      if (entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)) continue
+      try {
+        const s = await stat(resolve(cwd, rel))
+        if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
+      } catch {
+        // A file can disappear while an agent is editing. The next call will rescan the settled tree.
+      }
     }
   }
+  await walk("")
   for (const rel of WARM_RUN_EXTRA_FILES) {
     parts.push(`${rel}:${await fileFingerprint(resolve(cwd, rel))}`)
   }
@@ -795,7 +819,10 @@ export class WarmWorker {
     readonly fingerprint: string,
     private readonly label: string,
   ) {
-    this.proc = Bun.spawn(["bun", childPath(child), cwd, "--worker"], {
+    this.proc = Bun.spawn([process.execPath, childPath(child), cwd, "--worker"], {
+      cwd,
+      // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+      env: process.env,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -1081,7 +1108,7 @@ export interface CachedAppLoaderOptions {
   readonly fingerprint?: (cwd: string) => Promise<string>
 }
 
-const APP_FINGERPRINT_FILES = ["nifra.config.ts", "framework.ts", "backend.ts"] as const
+const APP_FINGERPRINT_FILES = [CONFIG_FILE, FRAMEWORK_FILE, BACKEND_APP_FILE] as const
 
 function cacheToken(input: string): string {
   let hash = 2166136261
@@ -1104,7 +1131,8 @@ async function fileFingerprint(path: string): Promise<string> {
   }
 }
 
-async function appFingerprint(cwd: string): Promise<string> {
+/** `mtime:size` of the app's config, framework and backend entry files: what notices an edit. */
+export async function appFingerprint(cwd: string): Promise<string> {
   return (
     await Promise.all(
       APP_FINGERPRINT_FILES.map(

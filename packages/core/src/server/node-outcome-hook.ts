@@ -186,11 +186,17 @@ class RecordHeadersView implements ResponseHeadersView {
    * a raw record write from a custom native twin uses lowercase names (the wire form the record
    * documents), so it stays visible without a scan. */
   #actual(lower: string): string {
+    return this.#key(lower) ?? lower
+  }
+
+  /** As {@link #actual}, but `undefined` when the record holds no such header: only an own property
+   * is a header, so an inherited `constructor` or `toString` never reads as one. */
+  #key(lower: string): string | undefined {
     const record = this.#target.headers
-    if (record !== undefined && Object.hasOwn(record, lower)) return lower
+    if (record === undefined) return undefined
+    if (Object.hasOwn(record, lower)) return lower
     const known = this.#alias?.get(lower)
-    if (known !== undefined && record !== undefined && Object.hasOwn(record, known)) return known
-    return lower
+    return known !== undefined && Object.hasOwn(record, known) ? known : undefined
   }
 
   /** The backing record if the outcome has one, prepared on first touch; `undefined` otherwise. */
@@ -242,16 +248,17 @@ class RecordHeadersView implements ResponseHeadersView {
   get(name: string): string | null {
     const headers = this.#readable()
     if (headers === undefined) return null
-    const value = headers[this.#actual(RecordHeadersView.#lower(name))]
+    const key = this.#key(RecordHeadersView.#lower(name))
+    const value = key === undefined ? undefined : headers[key]
     if (value === undefined) return null
     return typeof value === "string" ? value : (value.join(", ") ?? null)
   }
 
   has(name: string): boolean {
     const headers = this.#readable()
-    return (
-      headers !== undefined && headers[this.#actual(RecordHeadersView.#lower(name))] !== undefined
-    )
+    if (headers === undefined) return false
+    const key = this.#key(RecordHeadersView.#lower(name))
+    return key !== undefined && headers[key] !== undefined
   }
 
   set(name: string, value: string): void {

@@ -19,11 +19,15 @@ interface Range {
   readonly order: number
 }
 
+// A browser sends a handful of ranges. The header is client-controlled, and every range costs a
+// sort slot and a scan of the supported list, so only the first ones are read.
+const MAX_RANGES = 32
+
 function parseAcceptLanguage(header: string | null): Range[] {
   if (header === null) return []
   const ranges: Range[] = []
   let order = 0
-  for (const part of header.split(",")) {
+  for (const part of header.split(",", MAX_RANGES)) {
     const pieces = part.split(";").map((p) => p.trim())
     const tag = (pieces[0] ?? "").toLowerCase()
     if (tag === "") continue

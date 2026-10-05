@@ -1,9 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/backends",
@@ -32,7 +28,7 @@ export function receive(input: unknown): string | undefined {
   return parsed.success ? parsed.envelope.payload.title : undefined
 }`
 
-const BACKEND = `// backend.ts - a normal @nifrajs/core server. Routes live at the full /api/... path.
+const BACKEND = `// backend/app.ts - a normal @nifrajs/core server. Routes live at the full /api/... path.
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
@@ -45,12 +41,13 @@ export const backend = server()
 
 // inProcessClient(backend) is BOTH the typed loader client (ctx.api) AND the mount target: createWebApp
 // auto-serves it at apiPrefix (default /api). One backend, two call paths, zero hand-dispatch.
-const WIRE = `// server.ts (prod) - createWebApp serves pages AND auto-mounts the backend at /api/*.
+const WIRE = `// backend/server.ts - a hand-written server: createWebApp serves pages AND auto-mounts the
+// backend at /api/*. (\`nifra build\` emits this wiring for you; write it only for a custom host.)
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
-import { clientEntry, manifest } from "./server-manifest"
+import { backend } from "./app"
+import { clientEntry, manifest } from "../server-manifest"
 
 export const app = createWebApp({
   adapter: reactAdapter,
@@ -63,22 +60,41 @@ export const app = createWebApp({
 // Bun: Bun.serve({ fetch: app.fetch }). No \`if (pathname.startsWith("/api/")) …\` branch needed -
 // POST /api/sync, GET /api/me, etc. are dispatched to the backend BEFORE the page router sees them.`
 
-// The loader path: ctx.api is the SAME inProcessClient, called in-process during SSR (no HTTP hop).
-const LOADER = `// routes/index.tsx - a loader calls the backend IN-PROCESS via ctx.api (no network).
-import type { LoaderContext } from "@nifrajs/web"
+const FRAMEWORK_OPTIONS = `// backend/framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
+// and one extra URL outside both is a plain route on the web app.
+import { reactAdapter } from "@nifrajs/web-react"
 
-export async function loader(ctx: LoaderContext) {
-  const api = ctx.api as { me: { get(): Promise<{ data: { id: string | null } }> } }
-  const res = await api.me.get() // in-process: full validation/middleware, no HTTP round-trip
+// Any app with fetch(request) mounts; a third-party handler states why nifra cannot analyze it.
+const webhooks = { fetch: (_request: Request) => new Response(null, { status: 204 }) }
+const sitemapXml = () => '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>'
+
+export const adapter = reactAdapter
+export const clientModule = "@nifrajs/web-react/client"
+export const apiPrefix = "/rpc" // "" turns the backend mount off
+export const mounts = [{ path: "/hooks", app: webhooks, opaque: "third-party webhook verifier" }]
+export const use = (app: { get(path: string, handler: () => Response): unknown }) => {
+  app.get("/sitemap.xml", () => new Response(sitemapXml(), { headers: { "content-type": "application/xml" } }))
+}`
+
+// The loader path: ctx.api is the SAME inProcessClient, called in-process during SSR (no HTTP hop).
+const LOADER = `// routes/index.backend.ts - the loader calls the backend IN-PROCESS via api (no network).
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
+
+export const loaderOutput = t.object({ me: t.object({ id: t.union([t.string(), t.null()]) }) })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.api.me.get() // in-process: full validation/middleware, no HTTP round-trip
   return { me: res.data }
 }`
 
 // The browser path: the client calls the SAME /api/* routes over HTTP - now that they're mounted.
-const CLIENT = `// A browser island / client component hits the mounted HTTP routes with the typed client.
+const CLIENT = `// doc-check: skip - imports your backend/app.ts (the BACKEND sample above).
+// frontend/sync.ts - browser code hits the mounted HTTP routes with the typed client.
+// A type-only import of the backend is allowed anywhere: it is erased before bundling.
 import { client } from "@nifrajs/client"
-import type { backend } from "./backend"
+import type { Backend } from "../backend/app"
 
-const api = client<typeof backend>("") // same-origin: /api/sync is served by createWebApp's mount
+const api = client<Backend>("") // same-origin: /api/sync is served by createWebApp's mount
 export async function runSync(cursor: string) {
   const { data, error } = await api.api.sync.post({ cursor })
   return error ? { applied: 0 } : data
@@ -88,7 +104,7 @@ export async function runSync(cursor: string) {
 // one shared path space - no base path is added, nothing is stripped - and `c.req.url` inside a merged
 // (or /api-mounted) route is the ORIGINAL request URL, full path included. So groups own their absolute
 // paths (`/api/listings`), and the mount only SELECTS which requests reach the backend; it never rewrites.
-const COMPOSE = `// backend.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
+const COMPOSE = `// backend/app.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
 import { server } from "@nifrajs/core/server"
 
 const listings = server().get("/api/listings", (c) => {
@@ -154,6 +170,22 @@ export default function Backends() {
         is. Pass <code>apiPrefix: ""</code> to turn the mount off and keep <code>ctx.api</code> as a
         loader-only client.
       </p>
+      <p>
+        Because the backend answers first and its 404 is final, a page file under the prefix (
+        <code>routes/api/report.tsx</code>) could never render. Nifra refuses it instead of serving a
+        silent 404: <code>createWebApp</code> throws at startup naming the file, <code>nifra build</code>{" "}
+        stops, and <code>nifra check</code> reports <code>NF-C027</code>. The same holds for every other
+        mount in front of the page router.
+      </p>
+      <p>
+        An app run by <code>nifra dev</code> and <code>nifra build</code> sets these options from{" "}
+        <code>backend/framework.ts</code>: <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>,{" "}
+        <code>csp</code> and <code>nonce</code>. The generated server entry imports them from there, so
+        export them from <code>framework.ts</code> (and re-export from <code>nifra.config.ts</code> when
+        both exist). A <code>mounts</code> entry hands a path to another app; a single extra URL
+        outside the prefix, such as a sitemap, is a plain route registered in <code>use</code>:
+      </p>
+      <CodeBlock code={FRAMEWORK_OPTIONS} lang="ts" />
 
       <blockquote>
         [!NOTE] The mount lives in <code>createWebApp</code>, and <code>nifra dev</code> (the
@@ -194,6 +226,25 @@ export default function Backends() {
           <code>RouteConfigError</code> at merge time (fail-closed), so groups never silently shadow
           each other. Each domain therefore owns its full absolute paths (<code>/api/listings</code>,{" "}
           <code>/api/agents</code>), exactly as it would standalone.
+        </li>
+        <li>
+          <strong>
+            <code>.group(prefix, build)</code>
+          </strong>{" "}
+          - declare routes under a static prefix. <code>app.group("/admin", (a) =&gt; a.get("/users",
+          list))</code> serves <code>/admin/users</code>, and the prefix is part of the typed client,{" "}
+          <code>routes()</code>, OpenAPI, capability events and the effect ledger. The builder
+          inherits this server's middleware chain as it stands at the call; what it adds stays in the
+          group, and its <code>onRequest</code>/<code>onResponse</code> hooks run only for requests at
+          or under the prefix. A static header the group declares replaces the parent&apos;s value
+          of that name on the group&apos;s routes, so <code>securityHeaders()</code> with the group&apos;s
+          own configuration applies over the app&apos;s there. Any other plugin the parent already
+          applied stays the parent&apos;s: the group&apos;s <code>use()</code> of that same instance
+          does nothing, and its <code>use()</code> of another instance under the same name (another{" "}
+          <code>cors()</code> policy) throws a <code>RouteConfigError</code> when the group is
+          declared, rather than being dropped. A plugin the group applies still shares the
+          parent&apos;s copy of a plugin it <code>use()</code>s itself. The prefix is plain text (no
+          params or wildcards), and a collision throws before any group route is added.
         </li>
         <li>
           <strong>the <code>/api/*</code> auto-mount</strong> - a path <em>guard</em>, not a rewrite.{" "}

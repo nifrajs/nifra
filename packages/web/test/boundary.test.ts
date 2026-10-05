@@ -7,8 +7,10 @@ import {
   MemoryStaticBoundaryCache,
   resolveDynamicBoundaries,
   resolveStaticBoundaries,
+  type StaticCtx,
   startDynamicBoundaries,
 } from "../src/boundary.ts"
+import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } from "../src/index.ts"
 
 const context = (): BoundaryRequestCtx => ({
   request: new Request("https://example.test/users/7"),
@@ -265,5 +267,58 @@ describe("async boundaries", () => {
         { name: "modal", mode: { intercept: "//evil.test" }, render: () => null },
       ]),
     ).toThrow(/same-origin path/)
+  })
+})
+
+describe("static boundaries under createWebApp", () => {
+  const renderBoundaries: RenderAdapter = {
+    renderToString: (_chain, props) => `<pre>${JSON.stringify(props.boundaries)}</pre>`,
+    renderToStream: () => new ReadableStream(),
+    hydrationHead: () => "",
+  }
+  // The page declares the slot; its backend half supplies the load, as an app's two files would.
+  const appWith = (load: (ctx: StaticCtx) => unknown) => {
+    const page: RouteModule = {
+      default: () => null,
+      boundaries: [{ name: "nav", mode: "static", render: (data: unknown) => data }],
+    }
+    const backendHalf: Pick<RouteModule, "boundaryLoaders"> = { boundaryLoaders: { nav: { load } } }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a backend half has no `default` export, and the importer type names the merged module
+    const backend = backendHalf as RouteModule
+    return createWebApp({
+      adapter: renderBoundaries,
+      manifest: buildManifest(
+        ["index.tsx", "index.backend.ts"],
+        (file) => () => Promise.resolve(file.endsWith(".backend.ts") ? backend : page),
+      ),
+      clientEntry: "/c.js",
+    })
+  }
+  const boundariesOf = async (app: ReturnType<typeof appWith>, url: string) => {
+    const response = await app.fetch(new Request(url))
+    expect(response.status).toBe(200)
+    return (await response.text()).match(/<pre>(.*?)<\/pre>/)?.[1] ?? ""
+  }
+
+  test("a request's Host never reaches the cached static value", async () => {
+    const origins: unknown[] = []
+    const app = appWith((ctx) => {
+      origins.push(ctx.origin)
+    })
+    await boundariesOf(app, "http://evil.example/")
+    await boundariesOf(app, "http://shop.example/")
+    expect(origins).toEqual([undefined])
+  })
+
+  test("a static load that failed is loaded again on the next request", async () => {
+    let calls = 0
+    const app = appWith(() => {
+      calls++
+      if (calls === 1) throw new Error("CMS timeout")
+    })
+    expect(await boundariesOf(app, "http://shop.example/")).toContain('"status":"error"')
+    expect(await boundariesOf(app, "http://shop.example/")).toContain('"status":"ready"')
+    expect(await boundariesOf(app, "http://shop.example/")).toContain('"status":"ready"')
+    expect(calls).toBe(2)
   })
 })

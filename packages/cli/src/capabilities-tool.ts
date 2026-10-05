@@ -16,11 +16,14 @@ import {
   snapshotCapabilities,
   validCapabilityId,
 } from "@nifrajs/core/capabilities"
-import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
+import { expandOptionalParams } from "@nifrajs/core/pattern"
+import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
+// Import and re-export clauses are spelled out (a default binding, then `* as ns` or a `{ … }` list)
+// rather than scanned lazily, which is quadratic on a long semicolon-free module.
 const EFFECT_IMPORT =
-  /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\bexport\s+(?!type\b)[^'";]*?\bfrom\s*["']([^"']+)["']/g
+  /\bimport\s*(?!type\b)(?:(?:[\w$]+\s*,?\s*)?(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)?from\s*)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\bexport\s*(?!type\b)(?:\*\s*(?:as\b\s*[\w$]+\s*)?|\{[^{}'"]*\}\s*)from\s*["']([^"']+)["']/g
 // `\\` is excluded from both inner classes: letting the class also match a lone backslash makes the
 // `(A*(\\.A*)*)` shape ambiguous, which is exponential on a run of backslashes.
 const TEMPLATE_EFFECT_IMPORT = /\b(?:import|require)\s*\(\s*`([^`$\\]*(?:\\.[^`$\\]*)*)`\s*\)/g
@@ -312,21 +315,36 @@ async function walkRouteModules(
   return { covered, evidence, violations, truncations }
 }
 
+/** The reflected paths a statically collected pattern stands for; a malformed pattern is itself. */
+function staticRouteForms(path: string): readonly string[] {
+  try {
+    return expandOptionalParams(path)
+  } catch {
+    return [path]
+  }
+}
+
 /** Build coverage-qualified static evidence for every reflected route. */
 export async function collectCapabilityProjectReport(
   cwd: string,
   source: unknown,
   policyInput: CapabilityPolicy,
-  options: { readonly routes?: readonly ReflectedRoute[] } = {},
+  options: {
+    readonly routes?: readonly ReflectedRoute[]
+    readonly mounts?: readonly ReflectedMount[]
+  } = {},
 ): Promise<CapabilityProjectReport> {
   const policy = defineCapabilityPolicy(policyInput)
   const sources = await readSources(cwd)
   const automatic = new Map<string, Set<string>>()
   for (const [file, content] of sources) {
     for (const route of scanStaticRouteText(file, content)) {
-      const modules = automatic.get(routeKey(route.method, route.path)) ?? new Set<string>()
-      modules.add(file)
-      automatic.set(routeKey(route.method, route.path), modules)
+      // A path ending in optional params is reflected as one route per form it serves.
+      for (const path of staticRouteForms(route.path)) {
+        const modules = automatic.get(routeKey(route.method, path)) ?? new Set<string>()
+        modules.add(file)
+        automatic.set(routeKey(route.method, path), modules)
+      }
     }
   }
 
@@ -399,6 +417,7 @@ export async function collectCapabilityProjectReport(
   const evaluated = evaluateCapabilityAssurance(source, policy, {
     routes: evidenceRoutes,
     reflectedRoutes,
+    ...(options.mounts === undefined ? {} : { mounts: options.mounts }),
   })
   const report: CapabilityAssuranceReport =
     violations.length === 0 && truncations.length === 0 && unmatchedSeams.length === 0
@@ -679,9 +698,11 @@ export async function runCapabilityCheck(
         2,
       ),
     )
-  } else if (ok) {
-    console.log("✓ capability assurance and lockfile are current")
   } else {
+    if (ok) console.log("✓ capability assurance and lockfile are current")
+    // Stated on every run, passing or not: a gap is the report's own boundary, not a failure.
+    for (const gap of result.report.gaps ?? [])
+      console.log(`• known gap, not analyzed: ${gap.path} - ${gap.reason}`)
     for (const finding of result.report.findings) console.log(`✖ ${finding.message}`)
     for (const violation of result.violations)
       console.log(

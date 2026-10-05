@@ -11,6 +11,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import type { JsonSchema } from "@nifrajs/core/reflection"
 import type * as TSApi from "typescript"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   loadProjectTypeScript,
   type TypeScriptApi,
@@ -420,10 +421,11 @@ function responseEntries(
   return output
 }
 
-/** Infer response schemas from `<root>/backend.ts` without affecting runtime application loading. */
+/** Infer response schemas from `<root>/backend/app.ts` without affecting runtime application
+ * loading. */
 export async function inferOpenAPIResponses(root: string): Promise<OpenAPITypeInferenceResult> {
   const warnings: string[] = []
-  const backendPath = resolve(root, "backend.ts")
+  const backendPath = resolve(root, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) return { responses: {}, warnings }
 
   // TypeScript 7's project checker only resolves node handles inside a configured project's root.
@@ -449,7 +451,7 @@ export async function inferOpenAPIResponses(root: string): Promise<OpenAPITypeIn
           ? {
               extends: "./tsconfig.json",
               compilerOptions: { allowImportingTsExtensions: true },
-              include: ["backend.ts", basename(probePath)],
+              include: [BACKEND_APP_FILE, basename(probePath)],
             }
           : {
               compilerOptions: {
@@ -458,7 +460,7 @@ export async function inferOpenAPIResponses(root: string): Promise<OpenAPITypeIn
                 allowImportingTsExtensions: true,
                 skipLibCheck: true,
               },
-              include: ["backend.ts", basename(probePath)],
+              include: [BACKEND_APP_FILE, basename(probePath)],
             },
       ),
       "utf8",

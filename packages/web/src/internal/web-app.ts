@@ -6,15 +6,19 @@ import {
   NIFRA_BACKEND_MOUNT,
   NIFRA_BACKEND_WS_MOUNT,
   NIFRA_BACKEND_WS_RUNTIME,
+  preRouteMountPaths,
 } from "@nifrajs/core/mount"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
+import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
+import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
+import { PRERENDERED_LIST_PATH } from "../router.ts"
+import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
-import { urlPartsFor } from "./request-url.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 export interface CreateWebAppOptions<Env = unknown> {
@@ -32,6 +36,13 @@ export interface CreateWebAppOptions<Env = unknown> {
    * policy's allowed sources are app-specific.
    */
   readonly nonce?: NonceResolver<Env>
+  /**
+   * A hash-based Content-Security-Policy from `createCspPolicy`, instead of `nonce`. A document then
+   * carries a nonce only when it needs one (it `defer()`s a value, or `meta` names the nonce in
+   * `unsafeInlineScript`); every other page is nonce-free, gets the same CSP header on every request,
+   * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.
+   */
+  readonly csp?: CspPolicy
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -93,14 +104,26 @@ export interface CreateWebAppOptions<Env = unknown> {
    * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at
    * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
    * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`
-   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it. */
+   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it.
+   *
+   * **Request-scoped loader calls.** While a page renders, its loaders, actions and boundaries get a
+   * `ctx.api` bound to that request's platform identity: a backend handler reached through it sees the
+   * visitor's `c.clientIp` (derived under this app's `server.clientIp` trust declaration), `c.env` and
+   * `c.waitUntil`, so a per-caller rate limit or audit field keys on the real visitor. `c.clientIp` is
+   * the supported way to read the caller - identity travels in the platform, so rebuilding a `Request`
+   * does not lose it. Headers do NOT travel: the page request's `cookie` and `authorization` are never
+   * copied, so a loader call is anonymous unless the loader passes headers on the call itself. */
   readonly api?: unknown
   /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
    * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
    * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
    * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
    * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
-   * is also a no-op when `api` does not expose the symbol mount. */
+   * is also a no-op when `api` does not expose the symbol mount.
+   *
+   * A page file under the prefix (`routes/api/report.tsx`) could never render - the backend answers
+   * first and its 404 is final - so `createWebApp` throws, naming the file. The same holds for every
+   * other pre-route mount. */
   readonly apiPrefix?: string
   /**
    * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).
@@ -122,7 +145,8 @@ export interface CreateWebAppOptions<Env = unknown> {
    *
    * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend
    * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:
-   * leave it off to pass the full path through.
+   * leave it off to pass the full path through. `opaque` states why a mount whose routes nifra cannot
+   * read (better-auth's handler) is outside assurance; it is then listed as a known gap.
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string
@@ -130,6 +154,7 @@ export interface CreateWebAppOptions<Env = unknown> {
     readonly stripPrefix?: boolean
     readonly priority?: number
     readonly fallbackOn?: 404
+    readonly opaque?: string
   }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
@@ -156,14 +181,19 @@ export interface CreateWebAppOptions<Env = unknown> {
    */
   readonly cssLoading?: CssLoadingMode
   /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's
-   * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
-   * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */
+   * `prerendered.json`). Handed over as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
+   * into a prerendered route fetches its static `_data.json` instead of hitting the worker. A set over
+   * 4 KB of JSON is served once from `/__nifra/prerendered.json?v=<version>`, cacheable for good, and
+   * pages hand over only that URL; `prerenderRoutes` writes the file into a static output. */
   readonly prerenderedPaths?: readonly string[]
   /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:
    * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the
    * team - unreleased feature names, internal hostnames, and "don't touch X yet" notes live there
    * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */
   readonly publishLocalGuidelines?: boolean
+  /** Serve `/llms.txt` and `/llms-full.txt` (default `true`): the page routes, and the backend routes
+   * when the backend is mounted over HTTP at {@link apiPrefix}. `false` registers neither path. */
+  readonly llmsTxt?: boolean
   /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or
    * the build's `prerendered.json`). A route mapped to `"404"` rejects any path NOT in
    * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `"ssr"` (the
@@ -186,14 +216,6 @@ export interface CreateWebAppOptions<Env = unknown> {
       readonly route: string
     },
   ) => void
-}
-
-/** The handler context fields createWebApp uses - a structural subset of nifra's `Context`. */
-interface RouteContext<Env = unknown> {
-  readonly params: Record<string, string>
-  readonly req: Request
-  /** Platform bindings (Workers env), forwarded to each route's loader/action as `args.env`. */
-  readonly env: Env
 }
 
 /**
@@ -252,15 +274,6 @@ function mountPathPrefix(path: string): string {
   return withoutWildcard.slice(0, end)
 }
 
-function requestPathOf(request: Request): string {
-  try {
-    const parts = urlPartsFor(request)
-    return parts.pathname + parts.search
-  } catch {
-    return "/"
-  }
-}
-
 /**
  * Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`,
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
@@ -279,6 +292,12 @@ export function createWebApp<Env = unknown>(
   options: CreateWebAppOptions<Env>,
 ): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
+  if (options.csp !== undefined && options.nonce !== undefined) {
+    throw new TypeError("[nifra/web] createWebApp takes `csp` or `nonce`, not both")
+  }
+  if (options.csp !== undefined && !isCspPolicy(options.csp)) {
+    throw new TypeError("[nifra/web] createWebApp `csp` must come from createCspPolicy()")
+  }
   // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
@@ -291,6 +310,18 @@ export function createWebApp<Env = unknown>(
   // after caller middleware so its request-specific CSP value is the last default applied to a page.
   const nonceResponse = options.nonce?.onResponse
   if (nonceResponse !== undefined) app.onResponse(nonceResponse)
+  // How this app's documents meet a CSP, for wrappers that cache them (`withISR` warns on "nonce").
+  const documentPolicy =
+    options.csp !== undefined ? "hash" : options.nonce !== undefined ? "nonce" : undefined
+  if (documentPolicy !== undefined) {
+    Object.defineProperty(app, DOCUMENT_POLICY, { value: documentPolicy })
+  }
+  const cacheChannel = { enabled: false }
+  Object.defineProperty(app, CACHE_CHANNEL, {
+    value: () => {
+      cacheChannel.enabled = true
+    },
+  })
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
@@ -312,6 +343,7 @@ export function createWebApp<Env = unknown>(
         ...(mount.stripPrefix === undefined ? {} : { stripPrefix: mount.stripPrefix }),
         ...(mount.priority === undefined ? {} : { priority: mount.priority }),
         ...(mount.fallbackOn === undefined ? {} : { fallbackOn: mount.fallbackOn }),
+        ...(mount.opaque === undefined ? {} : { opaque: mount.opaque }),
       }),
     ),
   )
@@ -320,6 +352,14 @@ export function createWebApp<Env = unknown>(
     mounts.push({ path: apiPrefix, app: mountedApi, stripPrefix: apiStrip })
   }
   for (const mount of mounts) app.mount(mount)
+  // Read back the server's own mount table, so a mount added in `use` counts as well: a page under any
+  // pre-route mount is unreachable, and serving it as a silent 404 hides that.
+  const shadowed = shadowedPages(manifest, preRouteMountPaths(app))
+  if (shadowed.length > 0) throw new Error(`[nifra/web] ${formatShadowedPages(shadowed)}`)
+  const ownPatterns = new Set(manifest.routes.map((route) => route.pattern))
+  const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
+    ? undefined
+    : servedPrerenderedList(options.prerenderedPaths)
   const pageExecutor = createPageRequestExecutor<Env>({
     adapter,
     manifest,
@@ -334,38 +374,70 @@ export function createWebApp<Env = unknown>(
     ...(options.prerenderedPaths === undefined
       ? {}
       : { prerenderedPaths: options.prerenderedPaths }),
+    ...(prerenderedList === undefined ? {} : { prerenderedListUrl: prerenderedList.url }),
     ...(options.staticFallbacks === undefined ? {} : { staticFallbacks: options.staticFallbacks }),
     ...(options.staticBoundaryCache === undefined
       ? {}
       : { staticBoundaryCache: options.staticBoundaryCache }),
     ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
+    ...(options.csp === undefined
+      ? {}
+      : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
+    cacheChannel,
   })
 
   for (const route of manifest.routes) {
     app.register("GET", route.pattern, undefined, pageExecutor.get(route))
     app.register("POST", route.pattern, undefined, pageExecutor.post(route))
   }
-  // Register llms.txt & llms-full.txt
-  const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
-  app.register("GET", "/llms.txt", undefined, async () => {
-    const text = await generateLlmsTxt(false, manifest.routes, api, llmsOptions)
-    return new Response(text, {
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    })
-  })
+  // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
+  // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An
+  // app route at either path takes precedence, and each text is built once per app.
+  if (options.llmsTxt !== false) {
+    const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
+    const publicApi = mountedApi !== undefined && apiPrefix !== "" ? api : undefined
+    for (const [path, full] of [
+      ["/llms.txt", false],
+      ["/llms-full.txt", true],
+    ] as const) {
+      if (ownPatterns.has(path)) continue
+      let text: Promise<string> | undefined
+      app.register("GET", path, undefined, async () => {
+        text ??= generateLlmsTxt(full, manifest.routes, publicApi, llmsOptions).catch((error) => {
+          text = undefined
+          throw error
+        })
+        return new Response(await text, {
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        })
+      })
+    }
+  }
 
-  app.register("GET", "/llms-full.txt", undefined, async () => {
-    const text = await generateLlmsTxt(true, manifest.routes, api, llmsOptions)
-    return new Response(text, {
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    })
-  })
+  if (prerenderedList !== undefined) {
+    const { body, version } = prerenderedList
+    app.register(
+      "GET",
+      PRERENDERED_LIST_PATH,
+      undefined,
+      (c: { readonly req: Request }) =>
+        new Response(body, {
+          headers: {
+            "content-type": "application/json",
+            // Only the versioned URL pages hand over is immutable; a bare request gets today's list.
+            "cache-control":
+              new URL(c.req.url).searchParams.get("v") === version
+                ? "public, max-age=31536000, immutable"
+                : "no-cache",
+          },
+        }),
+    )
+  }
 
-  // Wildcard catch-all: unmatched paths render `_404` (404), or a plain text 404 if absent.
-  app.register("GET", "/*", undefined, (c: RouteContext<Env>) =>
-    pageExecutor.notFound(c.req, c.env, requestPathOf(c.req)),
-  )
+  // Wildcard catch-all: unmatched paths render the nearest `_404` (404), or a plain text 404 if
+  // absent.
+  app.register("GET", "/*", undefined, pageExecutor.fallback)
 
   let evidenceComposing = false
   const evidenceProvider: BackendEvidenceProvider = async () => {
@@ -384,8 +456,11 @@ export function createWebApp<Env = unknown>(
       for (const mount of configuredMounts) {
         const provider = evidenceProviderOf(mount.app)
         if (provider === undefined) {
+          // A declared opaque mount reaches the snapshot as a known gap, through this app's own
+          // mount reflection above.
+          if (mount.opaque !== undefined) continue
           throw new Error(
-            `[nifra/web] cannot compose assurance evidence: mount "${mount.path}" has no token-only evidence provider`,
+            `[nifra/web] cannot compose assurance evidence: mount "${mount.path}" has no token-only evidence provider - declare why it is not analyzed with { opaque: "<reason>" }`,
           )
         }
         parts.push({
@@ -429,4 +504,22 @@ export async function webProjectEvidence(
     throw new TypeError("webProjectEvidence(): expected an app created by createWebApp")
   }
   return provider.call(source)
+}
+
+// Up to this many characters of JSON, the prerendered set rides inline in each page's handover.
+const INLINE_PRERENDERED_CHARS = 4096
+
+/** The prerendered set as a served, content-versioned list, when it is too large to inline. */
+function servedPrerenderedList(
+  paths: readonly string[] | undefined,
+): { readonly body: string; readonly version: string; readonly url: string } | undefined {
+  if (paths === undefined || paths.length === 0) return undefined
+  const body = JSON.stringify(paths)
+  if (body.length <= INLINE_PRERENDERED_CHARS) return undefined
+  // FNV-1a: a version that changes with the list is all the URL needs; a stale cached list only
+  // costs a fallback to the dynamic data request.
+  let hash = 0x811c9dc5
+  for (let i = 0; i < body.length; i++) hash = Math.imul(hash ^ body.charCodeAt(i), 0x01000193)
+  const version = (hash >>> 0).toString(16).padStart(8, "0")
+  return { body, version, url: `${PRERENDERED_LIST_PATH}?v=${version}` }
 }

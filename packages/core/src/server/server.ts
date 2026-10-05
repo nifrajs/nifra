@@ -37,12 +37,12 @@ import {
   type RawErrorHandler,
   type RouteEntry,
 } from "../internal/route-execution.ts"
-import type { RouteProgramStage } from "../internal/route-program.ts"
+import type { ProgramValidationKind, RouteProgramStage } from "../internal/route-program.ts"
 import { compileRouteProgram, executeRouteProgram } from "../internal/route-program.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
-import { decodeRouteParams } from "../router/pattern.ts"
-import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
+import { decodeRouteParams, expandOptionalParams } from "../router/pattern.ts"
+import { EMPTY_PARAMS, METHODS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
   StandardIssue,
@@ -58,15 +58,27 @@ import {
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
-import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
+import {
+  type ClientIpTrust,
+  NIFRA_PLATFORM_CLIENT_IP_DERIVED,
+  resolveClientIp,
+} from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
+import "./core-copies.ts"
 import {
   hasLowercaseHeaderKeysMark,
   headerKeysAllLowercase,
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
 import { headerObjectOf } from "./headers.ts"
-import { jsonError, pathnameOf, plainError, type UrlParts, urlPartsOf } from "./http.ts"
+import {
+  isRoutableMethod,
+  jsonError,
+  pathnameOf,
+  plainError,
+  type UrlParts,
+  urlPartsOf,
+} from "./http.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
 import type {
   NodeOutcomeRuntime,
@@ -81,7 +93,14 @@ import type {
   ResponseHeadersView,
 } from "./node-outcome-hook.ts"
 import { type QueryValue, queryObjectOf, searchOf } from "./query.ts"
-import { RequestContext, readBodyFramed } from "./request-context.ts"
+import {
+  type PeerPlatform,
+  PLATFORM_PEER,
+  RequestContext,
+  readBodyFramed,
+} from "./request-context.ts"
+import { recordRequestReplacement } from "./request-lineage.ts"
+import { hasDotSegment, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -135,6 +154,7 @@ import {
   INSTALL_IDEMPOTENCY,
   INSTALL_MCP,
   INSTALL_NODE_DIRECT,
+  INSTALL_NOT_FOUND,
   INSTALL_RESPONSE_CONTRACT,
   INSTALL_RESPONSE_OBSERVER,
   INSTALL_SSE,
@@ -145,16 +165,20 @@ import {
 import type { EffectLedgerRuntime } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { McpRuntime } from "./mcp-hook.ts"
+import type { NotFoundLane } from "./not-found-answer.ts"
 import type {
   ContextPlugin,
   IdentityPlugin,
+  MethodRoutesPlugin,
   PluginTypeCollapsed,
   ServerTypeUnpinned,
+  WithMethodRoutes,
 } from "./plugin.ts"
 import type {
   AddRoute,
   EmptyRegistry,
   OutputOf,
+  PrefixRegistry,
   Registry,
   RouteInfoFor,
   WsRouteInfoFor,
@@ -163,6 +187,7 @@ import type {
   AdmissionController,
   AdmissionDecision,
   FetchHandler,
+  ListenTlsOptions,
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
@@ -247,15 +272,18 @@ export interface RawContext {
   readonly request: Request
   readonly json: (body: unknown, init?: ResponseInit | number) => Response
   readonly text: (body: string, init?: ResponseInit | number) => Response
-  // Writable: the lifecycle replaces it with the validated/coerced value when a `params` schema is
-  // declared (handlers still see it `readonly` via the public `Context` interface).
+  // Writable: the lifecycle replaces each with the validated/coerced value when its schema is
+  // declared (handlers still see them `readonly` via the public `Context` interface).
   params: Record<string, string>
   headers: Record<string, string>
   query: unknown
-  readonly cookies: Readonly<Record<string, string>>
+  cookies: Readonly<Record<string, string>>
   body: unknown
   readonly set: ResponseControls
   readonly [CONTEXT_SET]: () => CtxSet | undefined
+  /** The last `json()` reply and the value it was built from, for the response-contract lane. */
+  readonly jsonReply?: Response | undefined
+  readonly jsonBody?: unknown
   readonly [CONTEXT_SEARCH]: string
   readonly signal: AbortSignal
   readonly budget: RequestBudget
@@ -279,10 +307,15 @@ interface WsEntry {
   readonly handler: WebSocketHandler
 }
 
-/** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
-interface BunUpgradeServer {
-  upgrade(request: Request, options?: { data?: BunWsData }): boolean
+/** Structural view of the socket-peer lookup on the Bun `Server`, so any Bun `Server` (WS or not)
+ * satisfies it. */
+interface BunPeerServer {
   requestIP(request: Request): { readonly address: string } | null
+}
+
+/** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
+interface BunUpgradeServer extends BunPeerServer {
+  upgrade(request: Request, options?: { data?: BunWsData }): boolean
 }
 
 type MountedFetchHandler<Env = unknown> = (
@@ -313,22 +346,24 @@ interface FetchMount<Env = unknown> {
     request: Request,
     platform?: Platform<Env>,
   ) => MaybePromise<WebSocketUpgradeOutcome>
+  /** Set with the resolver: the runtime the child's WebSocket upgrades need (see `[GET_WS_RUNTIME]`). */
+  readonly wsRuntime?: (seen: Set<unknown>) => WsRuntime | null | undefined
   readonly stripPrefix: boolean
   readonly priority: number
   readonly fallbackOn404: boolean
   readonly beforeRoutes: boolean
   readonly order: number
+  /** The declared reason this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
+  readonly opaque: string | undefined
+  /** The mounted app (`mount()` only), for reflection to tell a composed child from an opaque one. */
+  readonly app?: object
 }
 
-/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown).
- * Typed structurally on `requestIP` alone so any Bun `Server` (WS or not) satisfies it. */
-function bunPeerPlatform(
-  server: { requestIP(request: Request): { readonly address: string } | null },
-  req: Request,
-): Platform {
-  // Bun's requestIP() is surprisingly expensive (~20 us on the SSR benchmark machine). Keep the
+/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
+function bunPeerPlatform(server: BunPeerServer, req: Request): Platform {
+  // Bun's requestIP() costs ~0.5 us per call, about 7% of a bare GET's server time. Keep the
   // documented raw-peer c.clientIp behavior, but resolve it lazily: most routes never read c.clientIp,
-  // and paying for the socket lookup on every request erased Bun's native HTTP advantage. A getter also
+  // so they should not pay for the socket lookup on every request. A getter also
   // preserves middleware that inspects the platform argument directly and trust-mode routes, which
   // resolve the value in deriveClientIp before the handler runs.
   let resolved = false
@@ -344,13 +379,42 @@ function bunPeerPlatform(
   }
 }
 
-type BunNativeHandler = (request: Request) => MaybePromise<Response>
+type BunNativeHandler = (request: Request, server: BunPeerServer) => MaybePromise<Response>
 type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
 type BunNativeRoutes = Record<string, BunNativeMethodTable>
 type BunRequestWithParams = Request & { readonly params?: Record<string, string> }
 
+/**
+ * Whether the portable router gives `other` a request that `route` also matches: the two patterns can
+ * match one path, and `other` is the more specific at the first segment where they differ. `route`
+ * holds static and `:param` segments only; `other` has a wildcard or a part-literal segment.
+ *
+ * It errs toward `true`. A segment that is part literal, part parameter is taken to match whatever
+ * `route` has in that position.
+ */
+function outranks(
+  other: CatalogRoute["pattern"]["segments"],
+  route: CatalogRoute["pattern"]["segments"],
+): boolean {
+  let ahead = false
+  for (let i = 0; i < route.length; i++) {
+    const theirs = other[i]
+    if (theirs === undefined) return false
+    if (theirs.kind === "wildcard") return ahead
+    const ours = route[i]!
+    if (ours.kind === "static") {
+      if (theirs.kind === "static" ? theirs.value !== ours.value : !ahead) return false
+    } else if (theirs.kind !== "param") ahead = true
+  }
+  return ahead && other.length === route.length
+}
+
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
 const DEFAULT_WS_UPGRADE_TIMEOUT_MS = 10_000
+/** Counts `ws()` routes and `mount()`s across every app in this copy of core: the only
+ * changes that can make a mounted app take WebSocket upgrades. An app's answer to that question
+ * (`mountsTakeUpgrades`) is kept until this moves. */
+let wsChanges = 0
 
 /** `app.ws()` (and everything downstream of it) needs the runtime `@nifrajs/core/ws` registers. */
 function requireWsRuntime(runtime: WsRuntime | undefined): WsRuntime {
@@ -432,6 +496,7 @@ export type {
   AdmissionController,
   AdmissionDecision,
   FetchHandler,
+  ListenTlsOptions,
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
@@ -462,8 +527,10 @@ export {
   defineIdentityPlugin,
   definePlugin,
   defineRouterPlugin,
+  type MethodRoutesPlugin,
   type NifraPlugin,
   type PluginTypeCollapsed,
+  type WithMethodRoutes,
 } from "./plugin.ts"
 export type { IdentityPlugin }
 
@@ -488,12 +555,30 @@ export { plainValidationError } from "./validation.ts"
 // importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
 export { type QueryValue, queryObjectOf, searchOf }
 
-function hasReplacementParam(params: Record<string, string>): boolean {
+/**
+ * A param value Bun's native route table matched but the portable router must decide: an invalid
+ * escape, or a piece of path Bun matched raw while its own parsed URL says otherwise - a `.` / `..`
+ * segment (Bun hands `%2e` over decoded), or a backslash, which the parsed URL reads as `/`.
+ */
+const unroutedParam = (value: string | undefined): boolean =>
+  value !== undefined &&
+  (value.includes("\uFFFD") || value.includes("\\") || value === "." || value === "..")
+
+function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
-    if (params[key]!.includes("\uFFFD")) return true
+    if (unroutedParam(params[key])) return true
   }
   return false
 }
+
+/**
+ * Deno is the runtime that hands an app a `Request` whose `url` is the target as the client sent it;
+ * Bun, workerd and every `new Request()` parse it first. Only there does `fetch` read the URL up front.
+ */
+const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
+
+/** `req` as Bun or workerd would have delivered it: the same request, its URL's dot segments resolved. */
+const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegments(req.url), req)
 
 function normalizeMountPrefix(path: string): string {
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
@@ -573,6 +658,88 @@ export type NifraFeatureVersion = FeatureVersionOf<Version>
  */
 const webResponseOf = (result: Response | ResponseResult): Response =>
   result instanceof Response ? result : toResponse(result, EMPTY_RESPONSE_CONTROLS)
+
+/** Which requests a scoped (group/merged) hook runs for, judged from the request the hook sees. */
+type HookScope = (req: { readonly method: string; readonly url: string }) => boolean
+
+/** A `group(prefix)` hook's scope: every request whose path is the prefix or lies under it - served,
+ * 404, 405, or preflight alike (Hono's `use("/api/*")` reach). The router matches static segments
+ * byte-exactly and case-sensitively, with the same path scanner used here, so no spelling a group
+ * route answers to can fall outside this test. */
+const underPrefix = (prefix: string): HookScope => {
+  const nested = `${prefix}/`
+  return (req) => {
+    const path = pathnameOf(req.url)
+    return path === prefix || path.startsWith(nested)
+  }
+}
+
+/** A merged server's hook scope: exactly the routes MERGED, snapshotted into a dedicated matcher so
+ * the guard never reflects whatever the source's own catalog grows into afterwards. */
+const servedBy = (routes: readonly CatalogRoute[]): HookScope => {
+  const scope = new RouteCatalog()
+  scope.addBatch(routes)
+  return (req) => scope.find(req.method, pathnameOf(req.url)).found
+}
+
+type AdoptedHook = ((first: never, second: never) => unknown) | undefined
+
+/** Gate adopted hooks to `inScope` (`undefined`: adopt them unchanged). The request is a request
+ * hook's first argument (`reqAt` 0) and every response-side hook's second; out of scope a hook
+ * declines, except a Web response hook, which must hand the response on (`passFirst`). An
+ * `undefined` slot marks an unpaired Node twin, position-aligned with its Web list, and stays
+ * `undefined` - wrapping it would fabricate a twin that never existed. */
+const scopeHooks = <H extends AdoptedHook>(
+  hooks: readonly H[],
+  inScope: HookScope | undefined,
+  reqAt: 0 | 1,
+  passFirst?: true,
+): readonly H[] =>
+  inScope === undefined
+    ? hooks
+    : hooks.map((hook) =>
+        hook === undefined
+          ? hook
+          : (((first: never, second: never) =>
+              inScope(reqAt === 0 ? first : second)
+                ? hook(first, second)
+                : passFirst && first) as H),
+      )
+
+/** A `group()` prefix: `/`-led segments of RFC 3986 `pchar` minus `%` and `:`, none of them `.` or
+ * `..`. That is text the router compares byte-for-byte as static, so a prefix can never smuggle a
+ * param, a wildcard, or an escape, and never spells a path (dot or empty segment, trailing slash)
+ * that no normalized client URL reaches. Segments are delimited by a `/` the class excludes, so the
+ * match is linear. */
+const GROUP_PREFIX = /^(?:\/(?!\.\.?(?:\/|$))[\w.~!$&'()+,;=@-]+)+$/
+
+/** The order-scoped chain a group scope inherits - copied, so what the group adds stays its own. */
+const GROUP_CHAIN = [
+  "derives",
+  "authStages",
+  "beforeHandleHooks",
+  "afterHandleHooks",
+  "onErrorHooks",
+  "aroundHooks",
+  "activeAssurance",
+  // Inherited so a group route computes `authenticated` (idempotency principal scoping) exactly as a
+  // parent route would; only the evidence the group adds is folded at adoption.
+  "globalAssurance",
+  "capabilityInterceptors",
+  "capabilityObservers",
+] as const
+
+/** Installed runtimes: a group scope inherits them, and adoption hoists a source's into a server that
+ * has none, so composing servers cannot silently disable a safety lane. */
+const SERVER_RUNTIMES = [
+  "responseContractRuntime",
+  "idempotencyRuntime",
+  "effectLedgerRuntime",
+  "mcpRuntime",
+  "nodeOutcomeRuntime",
+  "sseRuntime",
+  "wsRuntime",
+] as const
 
 // Stable module-level finalizers so `fetch`/`resolveNode` allocate no per-request closures.
 const IDENTITY_RESPONSE = (response: Response | ResponseResult): Response => webResponseOf(response)
@@ -699,8 +866,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
   private wsRouteCount: number
-  /** Mounted child apps that expose a WebSocket upgrade resolver. */
-  private wsMountCount: number
+  /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
+  private wsMountsCheckedAt = -1
+  /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
+  private wsMountsLive = false
   /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).
    * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
    * no-WebSocket app never constructs (or bundles) it. */
@@ -710,7 +879,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * rather than delegate to Bun's native `server.publish`. */
   private wsHasValidatedSend = false
   /** Bun's native topic broadcast, bound by `listen()` in native-pubsub mode; `app.publish` uses it
-   * instead of the JS registry. `undefined` off Bun, before `listen()`, or with a validated-send route. */
+   * instead of the JS registry. `undefined` off Bun, before `listen()`, with a validated-send route,
+   * or when a mounted app takes upgrades. */
   private nativePublish:
     | ((topic: string, data: string | ArrayBufferView | ArrayBuffer) => void)
     | undefined
@@ -748,6 +918,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private idempotencyRuntime: IdempotencyRuntime | undefined
   /** Installed opt-in runtime for `.tool()`/`.resource()`/`.prompt()`; `undefined` until `.use(mcp())`. */
   private mcpRuntime: McpRuntime | undefined
+  /** Installed answer for a request no route matched; `undefined` (the plain 404) until `.use(notFound())`. */
+  private notFoundLane: NotFoundLane | undefined
   /** Installed Node-direct renderer for direct `resolveNode()` callers; `undefined` until `.use(nodeDirect())`. */
   private nodeOutcomeRuntime: NodeOutcomeRuntime | undefined
   /** Installed streaming runtime for `.sse()` routes; `undefined` until `.use(streaming())`. */
@@ -796,6 +968,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `onResponse` hook would have disabled.
    */
   private staticResponseHeaders: StaticResponseHeaders | undefined
+  /** A group's view of the static headers its enclosing scopes declared before it was created. */
+  private declare inheritedStatics: Readonly<Record<string, string>> | undefined
+  /** A group's view of the plugins its enclosing scopes applied before it was created; unset while
+   * a plugin applies, so its own dependency `use()` shares the parent's copy. */
+  private declare inheritedPlugins: ReadonlyMap<string, unknown> | undefined
   /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
    * framework's own error/404/timeout renders, which are built outside the header init. */
   private wrapWebResponse: (response: Response | ResponseResult) => Response
@@ -810,8 +987,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly responseSources: WeakMap<object, Request>
   /** Memoized NodeRequestContext per plain-`Request` source - see {@link nodeRequestContextOf}. */
   private readonly nodeContexts: WeakMap<object, NodeRequestContext>
-  /** Names of plugins/middleware already applied via `use` - for idempotent dedupe. */
-  private readonly appliedPlugins: Set<string>
+  /** Plugins/middleware already applied via `use`, by name - for idempotent dedupe. */
+  private readonly appliedPlugins: Map<string, unknown>
   /** Order-scoped evidence captured by routes registered after an assured plugin. */
   private readonly activeAssurance: AssuranceDeclaration[]
   /** App-wide evidence from global hooks; applies retroactively to every route. */
@@ -819,11 +996,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */
   private readonly mcpResourceList: McpResourceDescriptor[]
   private readonly mcpPromptList: McpPromptDescriptor[]
+  /** Kept so a {@link group} scope is built with exactly this server's settings: fused lanes read
+   * several of them at request time, so a group route must never run under different ones. */
+  private readonly options: ServerOptions
+  /** Static prefix joined onto every route this server registers; non-empty only on a group scope. */
+  private routePrefix: string
   constructor(options: ServerOptions = {}) {
+    this.options = options
+    this.routePrefix = ""
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRouteCount = 0
-    this.wsMountCount = 0
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
@@ -902,7 +1085,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.responseRequests = new WeakMap()
     this.responseSources = new WeakMap()
     this.nodeContexts = new WeakMap()
-    this.appliedPlugins = new Set()
+    this.appliedPlugins = new Map()
     this.activeAssurance = []
     this.globalAssurance = []
     this.mcpResourceList = []
@@ -913,7 +1096,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (this.sealed) {
       throw new FrameworkError(
         "SERVER_SEALED",
-        `server configuration is sealed after listen(); call ${operation} before listen()`,
+        `server configuration is sealed after listen() (a group once its builder returns); call ${operation} before`,
       )
     }
   }
@@ -946,6 +1129,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       fallbackOn404: options.fallbackOn === 404,
       beforeRoutes: false,
       order: this.mountOrder++,
+      opaque: options.opaque,
     }
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
@@ -970,41 +1154,43 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (options === null || typeof options !== "object") {
       throw new TypeError("mount() requires { path, app }")
     }
-    if (options.app === null || typeof options.app !== "object") {
+    const app = options.app as MountableApp<EnvOf<Ctx>> & Record<symbol, unknown>
+    if (app === null || typeof app !== "object") {
       throw new TypeError("mount() app must be an object with fetch()")
     }
-    if (typeof options.app.fetch !== "function") {
+    if (typeof app.fetch !== "function") {
       throw new TypeError("mount() app.fetch must be a function")
     }
     const resolver =
-      typeof options.app.resolveWebSocketUpgrade === "function"
-        ? options.app.resolveWebSocketUpgrade.bind(options.app)
+      typeof app.resolveWebSocketUpgrade === "function"
+        ? app.resolveWebSocketUpgrade.bind(app)
         : undefined
+    // Bun needs a websocket callback table in the parent process. A composed Nifra app names the
+    // runtime its upgrades need through this internal seam, which `listen()` asks (see
+    // `[GET_WS_RUNTIME]`); a resolver without it names none. Adapters that wire standard sockets use
+    // the resolver outcome's own `attach`.
+    const getRuntime = app[GET_WS_RUNTIME] ?? app[NIFRA_BACKEND_WS_RUNTIME]
     const mount: FetchMount<EnvOf<Ctx>> = {
       path: normalizeMountPrefix(options.path),
-      handler: options.app.fetch.bind(options.app) as MountedFetchHandler<EnvOf<Ctx>>,
-      ...(resolver === undefined ? {} : { resolveWebSocketUpgrade: resolver }),
+      handler: app.fetch.bind(app) as MountedFetchHandler<EnvOf<Ctx>>,
+      ...(resolver === undefined
+        ? {}
+        : {
+            resolveWebSocketUpgrade: resolver,
+            wsRuntime: typeof getRuntime === "function" ? getRuntime.bind(app) : () => null,
+          }),
       stripPrefix: options.stripPrefix === true,
       priority: mountPriorityOf(options.priority),
       fallbackOn404: options.fallbackOn === 404,
       beforeRoutes: true,
       order: this.mountOrder++,
+      opaque: options.opaque,
+      app,
     }
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
     this.preRouteMountCount += 1
-    if (resolver !== undefined) {
-      this.wsMountCount += 1
-      // Bun needs a websocket callback table in the parent process. A composed Nifra server exposes
-      // its installed runtime through this internal seam; adapters that wire standard sockets use
-      // the resolver outcome's own `attach` and do not need this copy.
-      const appSymbols = options.app as unknown as Record<symbol, unknown>
-      const getRuntime = appSymbols[GET_WS_RUNTIME] ?? appSymbols[NIFRA_BACKEND_WS_RUNTIME]
-      if (this.wsRuntime === undefined && typeof getRuntime === "function") {
-        const runtime = (getRuntime as () => WsRuntime | undefined).call(options.app)
-        if (runtime !== undefined) this.wsRuntime = runtime
-      }
-    }
+    wsChanges += 1
     return this
   }
 
@@ -1211,7 +1397,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *   app.responseHeaders({ "x-frame-options": "DENY", "referrer-policy": "no-referrer" })
    *
    * They are DEFAULTS: a value the request itself produced (`c.set.headers`, or a response hook)
-   * wins, whatever casing it used. Names are lowercased once here; a non-string value, an invalid
+   * wins, whatever casing it used. In a group, a name the group declares replaces the value its
+   * enclosing scopes declared before the group, on the group's routes. Names are lowercased once here; a non-string value, an invalid
    * name, `__proto__`, or a name the render owns (`content-type`, `content-length`,
    * `transfer-encoding`, `set-cookie`) throws a `TypeError` at wire-up.
    *
@@ -1245,7 +1432,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // serialized-body marker survives for later `onResponseBody`/`onResponseRaw` observers and the
       // Node writer; reconstructing a `Response` here would strip that marker and reclassify the Node
       // outcome from `json` to a generic `response`. A guarded foreign response takes its clone path.
-      const statics = buildStaticResponseHeaders(record)
+      const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
       this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
       this.onNodeResponseHooks.push(undefined)
       this.nodeResponseHooksComplete = false
@@ -1255,7 +1442,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.staticResponseHeaders === undefined
         ? record
         : { ...this.staticResponseHeaders.record, ...record }
-    this.staticResponseHeaders = buildStaticResponseHeaders(merged)
+    this.staticResponseHeaders = buildStaticResponseHeaders(merged, this.inheritedStatics)
     const statics = this.staticResponseHeaders
     this.wrapWebResponse = (response) =>
       applyStaticResponseHeaders(webResponseOf(response), statics)
@@ -1294,6 +1481,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return this
   }
 
+  /**
+   * Apply `all()` or `method()` from `@nifrajs/core/methods`: one handler registered under several
+   * methods, or under a method outside the standard seven. The standard methods join the registry.
+   *
+   * Declared first on purpose. The plugin's handler is typed against this app's context, which
+   * TypeScript reads from the first overload it tries.
+   */
+  use<M extends string, Path extends string, S extends RouteSchema, Output>(
+    plugin: MethodRoutesPlugin<M, Path, S, Output, Ctx>,
+  ): Server<WithMethodRoutes<R, M, Path, S, Output, HookOutput>, Ctx, HookOutput>
   /** Enable the opt-in portable response observer methods. */
   use(plugin: ResponseObserverPlugin): this & ResponseObserverMethods
   /**
@@ -1318,7 +1515,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Apply a **plugin function** - `(app) => app`, typically built with {@link definePlugin}. It's
    * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread
    * the added context to handlers defined after `use` (the overload is generic over the concrete
-   * `this`). A named plugin already applied is skipped (idempotent dedupe).
+   * `this`). A named plugin already applied is skipped (idempotent dedupe), however it was configured,
+   * so a plugin meant to stack - a second, stricter guard - needs a name of its own per instance.
    *
    * If the plugin's return type is unpinned - `Server<any, any>`, as a hand-rolled `(app) => app` or a
    * `NifraPlugin<AnyServer, AnyServer>` infers (e.g. an auth plugin whose own types collapsed) - this
@@ -1339,22 +1537,43 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   use<M extends Middleware>(mw: M): Server<R, Ctx, HookOutput | MiddlewareOutputOf<M>>
   use(mw: Middleware): this
-  use(arg: Middleware | ((app: this) => AnyServer)): AnyServer {
+  use(
+    input:
+      | Middleware
+      | ((app: this) => AnyServer)
+      | MethodRoutesPlugin<string, string, RouteSchema, unknown, Ctx>,
+  ): AnyServer {
+    // A method-routes plugin is an ordinary plugin function; only its type is opaque.
+    const arg = input as Middleware | ((app: this) => AnyServer)
     this.assertConfigurable("use()")
-    if (typeof arg === "function") {
-      const name = (arg as { pluginName?: string }).pluginName
-      if (name !== undefined) {
-        if (this.appliedPlugins.has(name)) return this // idempotent: already applied
-        this.appliedPlugins.add(name)
+    const name = typeof arg === "function" ? (arg as { pluginName?: string }).pluginName : arg.name
+    if (name !== undefined) {
+      if (this.appliedPlugins.has(name)) {
+        const parent = this.inheritedPlugins?.get(name)
+        // A group's builder passing another instance of a plugin its parent applied would have it
+        // dropped, configuration and all. A plugin's own dependency use() shares the parent's copy.
+        if (parent !== undefined && parent !== arg) {
+          throw new RouteConfigError(
+            "PLUGIN_RECONFIGURED",
+            `use() of ${JSON.stringify(name)} in a group: its parent applied another instance`,
+          )
+        }
+        return this // idempotent: already applied
       }
+      this.appliedPlugins.set(name, arg)
+    }
+    if (typeof arg === "function") {
       const evidence = assuranceDeclarationsOf(arg)
       const pluginOnly = evidence.filter((item) => item.scope === "plugin")
       this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
       this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
       this.activeAssurance.push(...pluginOnly)
+      const inherited = this.inheritedPlugins
+      this.inheritedPlugins = undefined
       try {
         return arg(this)
       } finally {
+        this.inheritedPlugins = inherited
         // Remove only this plugin's temporary evidence. Nested assured plugins may deliberately leave
         // subsequent evidence active, so truncating the whole array would lose real ordering semantics.
         for (const item of pluginOnly) {
@@ -1362,10 +1581,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           if (index !== -1) this.activeAssurance.splice(index, 1)
         }
       }
-    }
-    if (arg.name !== undefined) {
-      if (this.appliedPlugins.has(arg.name)) return this
-      this.appliedPlugins.add(arg.name)
     }
     const evidence = assuranceDeclarationsOf(arg)
     if (evidence.some((item) => item.scope === "plugin")) {
@@ -1752,10 +1967,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
-    this.wsRouter.add("GET", path, {
-      handler: runtime.wrapHandler(handler as WebSocketHandler),
-    })
+    const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning) }
+    for (const form of expandOptionalParams(path)) this.wsRouter.add("GET", form, entry)
     this.wsRouteCount += 1
+    wsChanges += 1
     return this as never
   }
 
@@ -1802,34 +2017,54 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * is the "compiled", order-scoped per-route chain.
    */
   register(
-    method: Method,
+    method: string,
     path: string,
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): void {
-    this.assertConfigurable("route registration")
-    this.catalog.add(this.prepareRoute(method, path, schema, handler))
+    this.registerBatch([{ method, path, schema, handler }])
   }
 
   /** Register a contract/group route batch atomically. Every route captures the same current chain it
-   * would capture through {@link register}; no route becomes visible unless the full batch validates. */
+   * would capture through {@link register}; no route becomes visible unless the full batch validates.
+   *
+   * A path ending in optional parameters (`/users/:id?`) is one catalog route per concrete pattern,
+   * so reflection, OpenAPI, evidence and the typed client all see ordinary routes. */
   registerBatch(
     routes: readonly {
-      readonly method: Method
+      readonly method: string
       readonly path: string
       readonly schema: RouteSchema | undefined
       readonly handler: (context: never) => unknown
     }[],
   ): void {
     this.assertConfigurable("route registration")
-    const staged = routes.map(({ method, path, schema, handler }) =>
-      this.prepareRoute(method, path, schema, handler),
-    )
+    const staged: CatalogRoute[] = []
+    for (const { method, path, schema, handler } of routes) {
+      for (const form of expandOptionalParams(this.prefixed(path))) {
+        staged.push(this.prepareRoute(method, form, schema, handler))
+      }
+    }
     this.catalog.addBatch(staged)
   }
 
+  /** Join a group scope's prefix BEFORE compilation, so the pattern, the reflected descriptor, the
+   * capability guard, the ledger record, and assurance path matching all see the one served path. */
+  private prefixed(path: string): string {
+    const prefix = this.routePrefix
+    if (prefix === "") return path
+    if (path === "/") return prefix
+    // Checked here, not left to the pattern compiler: `"/api" + "users"` is a valid-looking path
+    // (`/apiusers`) that would silently escape the group instead of failing.
+    if (path[0] === "/") return prefix + path
+    throw new RouteConfigError(
+      "INVALID_PATH",
+      `group(${JSON.stringify(prefix)}) route path must start with "/": ${JSON.stringify(path)}`,
+    )
+  }
+
   private prepareRoute(
-    method: Method,
+    method: string,
     path: string,
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
@@ -1871,6 +2106,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       lanes,
       routeAssurance,
     } = compiled
+    if (idempotent !== undefined && this.idempotencyRuntime !== undefined) {
+      handler = this.idempotencyRuntime.wrapHandler(handler)
+    }
     const { bare, fusedQuery, fusedBody } = lanes
     // Fused lifecycle lanes: derive + before (with or without an after), and body + the same shape.
     // The lane selectors in `selectRouteLanes` are exhaustive about the lifecycleHookLane /
@@ -2093,6 +2331,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.mcpRuntime = runtime
   }
 
+  /** @internal Symbol-keyed install seam for the `notFound()` plugin. Off the public typed surface. */
+  [INSTALL_NOT_FOUND](lane: NotFoundLane): void {
+    this.assertConfigurable("notFound()")
+    this.notFoundLane = lane
+  }
+
   /** @internal Symbol-keyed install seam for the `nodeDirect()` plugin. Off the public typed surface. */
   [INSTALL_NODE_DIRECT](runtime: NodeOutcomeRuntime): void {
     this.assertConfigurable("nodeDirect()")
@@ -2111,9 +2355,39 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.wsRuntime = runtime
   }
 
-  /** @internal Bun's parent dispatcher uses this when a child Nifra app is mounted. */
-  [GET_WS_RUNTIME](): WsRuntime | undefined {
-    return this.wsRuntime
+  /**
+   * @internal The runtime Bun serves this app's WebSocket upgrades with, asked by `listen()` and by a
+   * parent that mounts this app: `undefined` while nothing here can take one, `null` when something
+   * can but no runtime is at hand. A mounted Nifra app answers through this same seam, so mounting an
+   * app without a WebSocket route needs no runtime; a resolver without the seam cannot say, so it
+   * counts. `seen` ends a mount cycle (an app mounted under itself to alias a prefix).
+   */
+  [GET_WS_RUNTIME](seen?: Set<unknown>): WsRuntime | null | undefined {
+    return this.wsRouteCount > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
+  }
+
+  /** The `[GET_WS_RUNTIME]` answer for the apps mounted here alone, whatever this app's own routes. */
+  private mountedWsRuntime(seen: Set<unknown> = new Set()): WsRuntime | null | undefined {
+    if (seen.has(this)) return
+    seen.add(this)
+    let found: WsRuntime | null | undefined
+    for (const mount of this.fetchMounts) {
+      const runtime = mount.wsRuntime?.(seen)
+      if (runtime === undefined) continue
+      found = this.wsRuntime ?? runtime
+      if (found) return found
+    }
+    return found
+  }
+
+  /** Whether an app mounted here takes WebSocket upgrades. Worked out again only after a `ws()` or a
+   * `mount()` somewhere, so the upgrade check on a plain request costs one comparison. */
+  private mountsTakeUpgrades(): boolean {
+    if (this.wsMountsCheckedAt !== wsChanges) {
+      this.wsMountsLive = this.mountedWsRuntime() !== undefined
+      this.wsMountsCheckedAt = wsChanges
+    }
+    return this.wsMountsLive
   }
 
   /**
@@ -2144,6 +2418,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     other: Server<R2, Ctx2, HookOutput2>,
   ): Server<R & R2, Ctx, HookOutput> {
     this.assertConfigurable("merge()")
+    if (!(other instanceof Server)) {
+      // A server from another copy of this package reaches this copy's private request state through
+      // symbols it does not share, and would fail per request. The boot warning names the copies.
+      throw new TypeError("merge() requires a server() from this copy of @nifrajs/core")
+    }
+    if (this.routePrefix !== "") {
+      // The merged routes were compiled under their own paths; adopting them here would publish them
+      // OUTSIDE the prefix while looking like part of the group.
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        "merge() inside a group cannot prefix compiled routes - merge on the parent",
+      )
+    }
     const source = other as unknown as Server<Registry, EmptyContext>
     if (source.wsRouteCount > 0) {
       throw new RouteConfigError(
@@ -2151,85 +2438,190 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
       )
     }
+    this.adopt(source, undefined, 0)
+    return this as unknown as Server<R & R2, Ctx, HookOutput>
+  }
+
+  /**
+   * Declare routes under a static path prefix, with the prefix in the typed client, `routes()`,
+   * OpenAPI, capability events, and the effect ledger - the counterpart of Hono's `route()`,
+   * Elysia's `group()`, and Fastify's `register({ prefix })`.
+   *
+   *   app
+   *     .derive(session)
+   *     .group("/admin", (admin) =>
+   *       admin.beforeHandle(requireAdmin).get("/users", listUsers).get("/users/:id", getUser),
+   *     )
+   *     .get("/", home)          // not covered by requireAdmin
+   *
+   * The builder receives a scope that INHERITS this server's route chain as it stands at the call
+   * (`derive`/`decorate`/`authenticate`/`beforeHandle`/`afterHandle`/`onError`/`around`, assurance,
+   * capability interceptors, installed runtimes, applied plugins), exactly as a route declared here
+   * would. A plugin this server already applied is in effect for the group: the group's `use()` of
+   * that same instance does nothing, and its `use()` of another instance under the same name throws a
+   * `RouteConfigError` (`PLUGIN_RECONFIGURED`), because that instance could never replace the parent's.
+   * A plugin the group applies still shares the parent's copy of a dependency it `use()`s itself.
+   * What it adds stays in the group: its chain additions apply only to its own routes, and its
+   * request/response hooks (`onRequest`, `onResponse`, `responseHeaders`, `onResponseFinalized`, and
+   * middleware bundles that use them) run only for requests whose path is the prefix or below it.
+   * Per-route authorization belongs in `authenticate`/`beforeHandle`, which are compiled into each
+   * route; request hooks are path prefilters.
+   *
+   * The prefix is static text - `"/api"`, `"/api/v1"` - validated when declared: no params,
+   * wildcards, empty or dot segments, percent-escapes, or trailing slash. A group's `"/"` route
+   * serves the prefix itself. Groups nest (`"/api"` then `"/v1"` serves `/api/v1/...`).
+   *
+   * Fail closed: the builder must synchronously return the scope it was given; a collision with an
+   * existing route throws `RouteConfigError` and adds none of the group's routes; `.ws()`, mounts,
+   * MCP `.tool()`s, and `merge()` inside a group are refused (register them on the parent). Once the
+   * builder returns, the scope is closed - a leaked reference cannot add routes later.
+   */
+  group<const P extends string, R2 extends Registry, Ctx2, HookOutput2>(
+    prefix: P,
+    build: (group: Server<EmptyRegistry, Ctx, HookOutput>) => Server<R2, Ctx2, HookOutput2>,
+  ): Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput> {
+    this.assertConfigurable("group()")
+    if (typeof prefix !== "string" || !GROUP_PREFIX.test(prefix)) {
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        `group() prefix must be a static path like "/api/v1": ${JSON.stringify(prefix)}`,
+      )
+    }
+    const fullPrefix = this.routePrefix + prefix
+    const scope = new Server<Registry, EmptyContext>(this.options)
+    scope.routePrefix = fullPrefix
+    scope.inheritedStatics = { ...this.inheritedStatics, ...this.staticResponseHeaders?.record }
+    for (const key of GROUP_CHAIN) (scope[key] as unknown[]).push(...this[key])
+    for (const key of SERVER_RUNTIMES)
+      (scope as unknown as Record<string, unknown>)[key] = this[key]
+    Object.assign(scope.decorations, this.decorations)
+    // A plugin already applied here is already in effect for the group (its chain was copied above
+    // and its request hooks are app-wide), so re-applying it would run it twice per request. The
+    // group's own plugins are NOT copied back: they are scoped, and a parent `use()` of the same
+    // plugin must still apply it to the parent's routes. The response observer is the exception: it
+    // installs methods bound to the server it is applied to, so the scope must be free to install its
+    // own (re-applying it registers no hook, so nothing can run twice).
+    for (const [name, plugin] of this.appliedPlugins) {
+      if (name !== "nifra:response-observer") scope.appliedPlugins.set(name, plugin)
+    }
+    scope.inheritedPlugins = new Map(scope.appliedPlugins)
+    let built: unknown
+    try {
+      built = build(scope as never)
+      // Only `listen()` seals a server, so a scope sealed here was served on its own - without this
+      // server's request hooks - which a group must never be.
+      if (scope.sealed) built = undefined
+    } finally {
+      // Closed on every exit, including a throw: an async continuation or a leaked reference must
+      // not register routes that nothing will ever adopt.
+      scope.sealed = true
+    }
+    const label = `group(${JSON.stringify(fullPrefix)})`
+    if (built !== scope) {
+      throw new TypeError(`${label} builder must return its group synchronously`)
+    }
+    if (
+      scope.wsRouteCount > 0 ||
+      scope.fetchMounts.length > 0 ||
+      scope.catalog.entries().some((route) => route.descriptor.tool !== undefined)
+    ) {
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        `${label} cannot hold ws(), mount, or MCP tool routes - add them to the parent`,
+      )
+    }
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      sealHookAudit(scope, scope.catalog.size, this.logger)
+    this.adopt(scope, fullPrefix, this.globalAssurance.length)
+    return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
+  }
+
+  /**
+   * Take over another server's routes and hooks - the shared core of {@link merge} and {@link group}.
+   * `prefix` selects group semantics: hooks are scoped to requests under the prefix (response hooks
+   * included), and the source's global assurance past `inheritedGlobal` (what it copied from this
+   * server) is folded into its routes. Without a prefix, merge semantics: request hooks are scoped to
+   * the source's routes when it has any, response hooks are appended app-wide.
+   */
+  private adopt(
+    source: Server<Registry, EmptyContext>,
+    prefix: string | undefined,
+    inheritedGlobal: number,
+  ): void {
     const sourceRoutes = source.catalog.entries()
     // Hooks and global assurance stay LOCAL to a group that has routes; a route-less group is a
     // middleware bundle whose hooks can only mean app-wide intent, so it keeps the global append.
-    const scoped = sourceRoutes.length > 0
-    // A group's global assurance rides its (route-scoped) hooks: folded into each merged route's
-    // own evidence rather than the parent's global list, so `routes()` never claims the group's
+    // A prefix group is always local: its hooks mean "under this path", routes or not.
+    const scoped = prefix !== undefined || sourceRoutes.length > 0
+    const ownGlobal = source.globalAssurance.slice(inheritedGlobal)
+    // A group's global assurance rides its (scoped) hooks: folded into each adopted route's own
+    // evidence rather than the parent's global list, so `routes()` never claims the group's
     // enforcement for parent routes the group's hooks do not see.
     const foldedAssurance =
-      scoped && source.globalAssurance.length > 0
+      scoped && ownGlobal.length > 0
         ? (route: CatalogRoute): CatalogRoute => ({
             ...route,
-            assurance: [...route.assurance, ...source.globalAssurance],
+            assurance: [...route.assurance, ...ownGlobal],
           })
         : (route: CatalogRoute): CatalogRoute => route
     this.catalog.addBatch(
       sourceRoutes.map((route) => this.bindFusedRuntime(foldedAssurance(route))),
     )
     // Resolved idempotency/ledger route entries carry their own store/sink configuration, while the
-    // runtime object supplies the generic execution machinery. Preserve a group's installed runtime
-    // when the parent has none so merging cannot silently disable a safety lane. If the parent already
-    // has a runtime, either implementation can execute every resolved entry because route-specific
-    // options were pinned during registration.
-    this.responseContractRuntime ??= source.responseContractRuntime
-    this.idempotencyRuntime ??= source.idempotencyRuntime
-    this.effectLedgerRuntime ??= source.effectLedgerRuntime
-    this.mcpRuntime ??= source.mcpRuntime
-    this.nodeOutcomeRuntime ??= source.nodeOutcomeRuntime
-    this.sseRuntime ??= source.sseRuntime
-    this.wsRuntime ??= source.wsRuntime
-    if (scoped && source.onRequestHooks.length > 0) {
-      // Snapshot the group's routes into a dedicated matcher: the guard must reflect what was
-      // MERGED, not whatever the group's own catalog grows into afterwards. One probe against it
-      // gates each group hook to requests the group would serve; everything else passes untouched.
-      const scope = new RouteCatalog()
-      scope.addBatch(sourceRoutes)
-      this.onRequestHooks.push(
-        ...source.onRequestHooks.map(
-          (hook): RawOnRequest =>
-            (req, platform) =>
-              scope.find(req.method, pathnameOf(req.url)).found ? hook(req, platform) : undefined,
-        ),
-      )
-      // An `undefined` slot marks an unpaired hook (position-aligned with `onRequestHooks`) and
-      // must stay `undefined` - wrapping it would fabricate a Node twin that never existed.
-      this.onNodeRequestHooks.push(
-        ...source.onNodeRequestHooks.map((hook): NodeRequestHook | undefined =>
-          hook === undefined
-            ? undefined
-            : (req, platform) =>
-                scope.find(req.method, pathnameOf(req.url)).found ? hook(req, platform) : undefined,
-        ),
-      )
-    } else {
-      this.onRequestHooks.push(...source.onRequestHooks)
-      this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
-    }
+    // runtime object supplies the generic execution machinery. If the parent already has a runtime,
+    // either implementation can execute every resolved entry because route-specific options were
+    // pinned during registration.
+    const runtimes = this as unknown as Record<string, unknown>
+    for (const key of SERVER_RUNTIMES) runtimes[key] ??= source[key]
+    // Which requests a scoped hook sees: under the prefix for a group; for a merged server with
+    // routes, a snapshot of exactly the routes MERGED (not whatever its own catalog grows into later).
+    const inScope =
+      prefix !== undefined
+        ? underPrefix(prefix)
+        : scoped && source.onRequestHooks.length > 0
+          ? servedBy(sourceRoutes)
+          : undefined
+    this.onRequestHooks.push(...scopeHooks(source.onRequestHooks, inScope, 0))
+    this.onNodeRequestHooks.push(...scopeHooks(source.onNodeRequestHooks, inScope, 0))
     this.nodeRequestHooksComplete &&= source.nodeRequestHooksComplete
     this.bunNativeRequestHooksSafe &&= source.bunNativeRequestHooksSafe
-    // The group's static declarations came before its own response hooks, so they are folded in
-    // first - and fold themselves into a hook here if this server already has one (same ordering
-    // rule as a direct `responseHeaders()` call).
-    if (source.staticResponseHeaders !== undefined) {
-      this.addStaticResponseHeaders({ ...source.staticResponseHeaders.record })
+    // A merged server's response hooks are app-wide; a group's run only under its prefix.
+    const responseScope = prefix === undefined ? undefined : inScope
+    const statics = source.staticResponseHeaders
+    if (statics !== undefined) {
+      if (responseScope === undefined) {
+        // The group's static declarations came before its own response hooks, so they are folded in
+        // first - and fold themselves into a hook here if this server already has one (same ordering
+        // rule as a direct `responseHeaders()` call).
+        this.addStaticResponseHeaders({ ...statics.record })
+      } else {
+        // The static tier is folded into EVERY response this server builds, so a group's static
+        // headers cannot join it. A hook ahead of the group's own (the sealed scope is discarded
+        // after adoption) keeps their meaning - defaults a value already on the response wins over.
+        source.onResponseHooks.unshift((response) => applyStaticResponseHeaders(response, statics))
+        source.onNodeResponseHooks.unshift(undefined)
+        source.nodeResponseHooksComplete = false
+      }
     }
-    this.onResponseHooks.push(...source.onResponseHooks)
-    this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
+    this.onResponseHooks.push(...scopeHooks(source.onResponseHooks, responseScope, 1, true))
+    this.onNodeResponseHooks.push(...scopeHooks(source.onNodeResponseHooks, responseScope, 1))
+    this.onResponseFinalizedHooks.push(
+      ...scopeHooks(source.onResponseFinalizedHooks, responseScope, 1),
+    )
     this.nodeResponseHooksComplete &&= source.nodeResponseHooksComplete
     this.bunNativeResponseHeadersOnly &&= source.bunNativeResponseHeadersOnly
     this.hasRawNodeResponseHook ||= source.hasRawNodeResponseHook
-    this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
     if (source.responseBodyTag !== undefined) {
       const owner = this.enableResponseBodyTagging()
       this.responseBodyOwners.add(source.responseBodyTag)
       source.responseBodyOwners.add(owner)
     }
-    if (!scoped) this.globalAssurance.push(...source.globalAssurance)
+    if (!scoped) this.globalAssurance.push(...ownGlobal)
+    // Cleanup the source registered (a pool, a queue consumer) belongs to the server that now runs
+    // its routes; dropping it would leak the resource past `stop()`.
+    this.stopHooks.push(...source.stopHooks)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
-    return this as unknown as Server<R & R2, Ctx, HookOutput>
   }
 
   /** A fused renderer closes over runtime services to keep its seven-argument JSC fast path. Merging
@@ -2389,6 +2781,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Bun/Node/Deno omit it (then `c.env` is `undefined` and `c.waitUntil` runs fire-and-forget).
    */
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
+    // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
+    // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
+    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
     if (this.trustBodyFraming) markTrustedBodyFraming(req)
@@ -2444,19 +2839,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     source: RequestSource,
     entry: RouteEntry,
     params: Record<string, string>,
+    platform: Platform,
   ): MaybePromise<Response> {
-    if (this.capacityGate === undefined) return this.fetchMatchedInner(source, entry, params)
-    return this.admitGated(requestOf(source), () => this.fetchMatchedInner(source, entry, params))
+    if (this.capacityGate === undefined) {
+      return this.fetchMatchedInner(source, entry, params, platform)
+    }
+    return this.admitGated(requestOf(source), () =>
+      this.fetchMatchedInner(source, entry, params, platform),
+    )
   }
 
   private fetchMatchedInner(
     source: RequestSource,
     entry: RouteEntry,
     params: Record<string, string>,
+    platform: Platform,
   ): MaybePromise<Response> {
     const outcome = this.runMatched(
       source,
-      undefined,
+      platform,
       entry,
       params,
       undefined,
@@ -2535,18 +2936,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const parts = source.urlParts ?? urlPartsOf(source.url)
     const match = this.catalog.find(source.method, parts.pathname)
-    if (match.found) return undefined
+    if (match.found || !isRoutableMethod(source.method)) return undefined
 
+    // The mount the ordinary path reaches first: every `mount()` runs before any `mountFetch()`,
+    // whatever their prefix lengths. A 404 fallthrough chain stays on the ordinary path.
+    const mount =
+      this.firstMountUnder(parts.pathname, true) ?? this.firstMountUnder(parts.pathname, false)
+    if (mount === undefined || mount.fallbackOn404) return undefined
+    const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
+    return typeof candidate === "function"
+      ? {
+          handler: candidate as NativeMountHandler,
+          path: mount.path,
+          stripPrefix: mount.stripPrefix,
+        }
+      : undefined
+  }
+
+  private firstMountUnder(
+    pathname: string,
+    beforeRoutes: boolean,
+  ): FetchMount<EnvOf<Ctx>> | undefined {
     for (const mount of this.fetchMounts) {
-      if (!underMountPrefix(parts.pathname, mount.path)) continue
-      const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
-      return typeof candidate === "function"
-        ? {
-            handler: candidate as NativeMountHandler,
-            path: mount.path,
-            stripPrefix: mount.stripPrefix,
-          }
-        : undefined
+      if (mount.beforeRoutes === beforeRoutes && underMountPrefix(pathname, mount.path))
+        return mount
     }
     return undefined
   }
@@ -2856,8 +3269,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     req: Request,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<WebSocketUpgradeOutcome> {
-    if (this.wsRouteCount === 0 && this.wsMountCount === 0) return WS_PASS
+    // Before any header is read: Deno only materializes a request's headers when asked, and that
+    // costs a plain request measurably.
+    if (this.wsRouteCount === 0 && !this.mountsTakeUpgrades()) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
+    // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
+    // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
+    if (req.method !== "GET") return WS_PASS
+    // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
+    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
+    // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
+    platform = this.trustedPlatform(req, platform)
 
     const timeoutMs =
       this.wsUpgradeTimeoutMs === 0
@@ -2956,6 +3378,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
 
     const resolveMounted = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      // Native pub/sub was chosen because no mounted app took upgrades when `listen()` ran. One that
+      // gains a WebSocket route later stays out: its sockets would share this server's Bun topics.
+      if (this.nativePublish !== undefined) return WS_PASS
       const pathname = urlPartsOf(request.url).pathname
       const dispatch = (start: number): MaybePromise<WebSocketUpgradeOutcome> => {
         let selected: FetchMount<EnvOf<Ctx>> | undefined
@@ -3072,6 +3497,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return { ...platform, clientIp: derived }
   }
 
+  private trustedPlatform(
+    source: RequestSource,
+    platform: Platform<EnvOf<Ctx>> | undefined,
+  ): Platform<EnvOf<Ctx>> | undefined {
+    return this.clientIpTrust === undefined ||
+      (platform as { [NIFRA_PLATFORM_CLIENT_IP_DERIVED]?: unknown } | undefined)?.[
+        NIFRA_PLATFORM_CLIENT_IP_DERIVED
+      ] === true
+      ? platform
+      : this.deriveClientIp(source, platform)
+  }
+
   private dispatch<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
@@ -3085,11 +3522,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Resolve the trust declaration into the platform's `clientIp` ONCE, here at the shared funnel, so
     // `c.clientIp` (and every hook/derive downstream) sees the derived caller. No config ⇒ the raw
     // socket peer the adapter supplied passes through untouched (a one-property no-op on the hot path).
-    const resolved =
-      this.clientIpTrust === undefined ? platform : this.deriveClientIp(source, platform)
+    // A platform an enclosing nifra server already resolved (an in-process call from an SSR loader)
+    // keeps its `clientIp`: the synthesized request carries none of the visitor's forwarding headers.
+    const resolved = this.trustedPlatform(source, platform)
     // onRequest hooks may be async, so a hooked app takes the async path; with no hooks (the common
     // case) routing stays synchronous, letting a bare route resolve with no lifecycle promise at all.
-    if (this.onRequestHooks.length === 0) {
+    // A token no route can be registered under skips the hooks as well: it cannot match, so routing
+    // answers it 404 or 405 and no hook reads a method string it would misjudge.
+    if (this.onRequestHooks.length === 0 || !isRoutableMethod(source.method)) {
       return this.routeAndRun(source, resolved, finalize, wrapResponse, onTimeout, webFast)
     }
     if (!webFast && this.canUseNodeRequestHooks()) {
@@ -3178,7 +3618,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (source !== originalRequest) this.responseSources.set(source as object, originalRequest)
     let current: RequestSource = source
     for (let i = 0; i < hooks.length; i++) {
-      const outcome = (hooks[i] as RawOnRequest)(requestOf(current), platform)
+      const seen = requestOf(current)
+      const outcome = (hooks[i] as RawOnRequest)(seen, platform)
       if (outcome instanceof Promise) {
         return outcome.then((early) =>
           this.continueOnRequest(
@@ -3195,6 +3636,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       if (outcome instanceof Request) {
+        if (outcome !== seen) recordRequestReplacement(outcome, seen)
         current = outcome
         if (outcome !== originalRequest) this.responseRequests.set(originalRequest, outcome)
         continue
@@ -3218,17 +3660,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     webFast: boolean,
   ): Promise<T> {
     let current = sourceAtAwait
+    let seen = requestOf(sourceAtAwait)
     let early = first
     let index = nextIndex
     for (;;) {
       if (early instanceof Request) {
+        if (early !== seen) recordRequestReplacement(early, seen)
         current = early
         if (early !== originalRequest) this.responseRequests.set(originalRequest, early)
       } else if (early !== undefined) {
         return wrapResponse(early)
       }
       if (index >= this.onRequestHooks.length) break
-      const outcome = (this.onRequestHooks[index] as RawOnRequest)(requestOf(current), platform)
+      seen = requestOf(current)
+      const outcome = (this.onRequestHooks[index] as RawOnRequest)(seen, platform)
       early = outcome instanceof Promise ? await outcome : outcome
       index++
     }
@@ -3376,7 +3821,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           plainError(405, "method_not_allowed", { allow: match.allowed.join(", ") }),
         )
       }
-      return wrapResponse(plainError(404, "not_found"))
+      const lane = this.notFoundLane
+      return lane === undefined
+        ? wrapResponse(plainError(404, "not_found"))
+        : lane(this, source, pathname, platform, wrapResponse, onTimeout)
     }
 
     // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
@@ -3413,7 +3861,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       first = i
       break
     }
-    if (first === -1) return undefined
+    // A mounted handler is arbitrary code that may read the method loosely, so it is only handed a
+    // token a route could be registered under; anything else is left to the route table to refuse.
+    if (first === -1 || !isRoutableMethod(source.method)) return undefined
 
     // A request body is a one-shot stream. Only methods whose request semantics are replayable are
     // eligible for 404 fallthrough; this intentionally refuses POST/PUT/PATCH even when the body is
@@ -3465,8 +3915,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // handler can reach `c.req`; that lane already enforces `entry.bodyLimit`. Installing the full
     // direct-reader cap on `c.req` here would allocate bound readers, closures, and a stream wrapper
     // for a body that is already consumed. Keep the lazy transport cap for raw-body routes, where a
-    // user read is the only framework-owned body boundary.
-    if (entry.bodyLimit !== undefined && entry.schema?.body === undefined) {
+    // user read is the only framework-owned body boundary, and for the auth-first lane, whose
+    // derive and beforeHandle hooks reach `c.req` before the body is read.
+    if (
+      entry.bodyLimit !== undefined &&
+      (entry.schema?.body === undefined || entry.program.authBeforeValidation)
+    ) {
       const method = source.method
       if (method !== "GET" && method !== "HEAD") markTransportCap(source, entry.bodyLimit)
     }
@@ -3980,6 +4434,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         finish,
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
+        bodySchema,
       )
     }
   }
@@ -4549,6 +5004,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         onParsed,
         (response) => this.wrapWebResponse(response),
         (err) => Promise.resolve(logError(err, ctx)),
+        bodySchema,
       ) as MaybePromise<Response>
     }
   }
@@ -4979,6 +5435,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
+        bodySchema,
       )
     }
   }
@@ -4996,7 +5453,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       err,
       ctx,
       finalize,
-      wrapResponse,
       responseSet,
       (e, c) => this.logRequestError(e, c),
       () => this.internalErrorResponse(wrapResponse),
@@ -5046,19 +5502,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   // @ts-expect-error TS6133 -- invoked structurally by the general route program
   private validateProgramStage(
     entry: RouteEntry,
-    stage: Extract<RouteProgramStage, { kind: "headers" | "params" | "body" | "query" }>,
+    stage: Extract<RouteProgramStage, { kind: ProgramValidationKind }>,
     source: RequestSource,
     ctx: RawContext,
   ): MaybePromise<Response | ResponseResult | undefined> {
+    if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
     const input =
       stage.kind === "headers"
         ? headerObjectOf(source.headers)
-        : stage.kind === "params"
-          ? ctx.params
-          : stage.kind === "query"
-            ? queryObjectOf(ctx[CONTEXT_SEARCH])
-            : undefined
-    if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
+        : stage.kind === "query"
+          ? queryObjectOf(ctx[CONTEXT_SEARCH])
+          : ctx[stage.kind]
     const validation = stage.schema["~standard"].validate(input)
     return validation instanceof Promise
       ? validation.then((result) => this.applyLifecycleValidation(entry, result, ctx, stage.kind))
@@ -5133,6 +5587,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      entry.schema?.body,
     )
   }
 
@@ -5497,7 +5952,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     try {
       const contract = entry.responseContract
       if (contract === undefined) return finalize(result, responseSet(ctx))
-      const checked = contract.runtime.check(contract.definition, result)
+      const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
           (outcome) => this.finishContractOutcome(ctx, finalize, wrapResponse, outcome),
@@ -5551,10 +6006,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
-    // an action throws an error page. Return it as-is (Remix/SvelteKit semantics); don't run onError
-    // or log it as a 500. This is what makes `throw redirect(...)` / `requireSession(...)` work from
-    // any handler or loader.
-    if (err instanceof Response) return wrapResponse(err)
+    // an action throws an error page. Send it as the same Response returned would be sent (Remix/
+    // SvelteKit semantics): as built, plus the cookies the request queued, so a session set or
+    // cleared before `throw redirect(...)` / `requireSession(...)` ships. Don't run onError or log
+    // it as a 500.
+    if (err instanceof Response) return finalize(err, responseSet(ctx))
     // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
     // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
     if (isResponseResult(err))
@@ -5618,6 +6074,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       validate,
       (response) => response,
       (error) => Promise.reject(error),
+      bodySchema,
     )
   }
 
@@ -5627,13 +6084,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    kind: "body" | "query" | "params" | "headers",
+    kind: ProgramValidationKind,
   ): MaybePromise<Response | ResponseResult | undefined> {
     const assign = (value: unknown): void => {
-      if (kind === "body") ctx.body = value
-      else if (kind === "query") ctx.query = value
-      else if (kind === "headers") ctx.headers = value as Record<string, string>
-      else ctx.params = value as Record<string, string>
+      ;(ctx as unknown as Record<ProgramValidationKind, unknown>)[kind] = value
     }
     if (result.issues === undefined) {
       assign(result.value)
@@ -5652,22 +6106,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private finishLifecycleValidationRecovery(
     entry: RouteEntry,
-    kind: "body" | "query" | "params" | "headers",
+    kind: ProgramValidationKind,
     issues: ReadonlyArray<StandardIssue>,
     recovery: unknown,
     assign: (value: unknown) => void,
   ): MaybePromise<Response | ResponseResult | undefined> {
     if (recovery === undefined) return plainValidationError(issues)
     if (recovery instanceof Response) return recovery
-    const schema =
-      kind === "body"
-        ? entry.schema?.body
-        : kind === "query"
-          ? entry.schema?.query
-          : kind === "params"
-            ? entry.schema?.params
-            : entry.schema?.headers
-    const retried = schema!["~standard"].validate(recovery)
+    const retried = entry.schema![kind]!["~standard"].validate(recovery)
     if (retried instanceof Promise) {
       return retried.then((settled) => {
         if (settled.issues !== undefined) return plainValidationError(settled.issues)
@@ -5688,6 +6134,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fused: FusedWebRunner | undefined,
     signal: AbortSignal | undefined,
     budget: RequestBudget | undefined,
+    peer: PeerPlatform,
+    fallback: BunNativeHandler,
   ): BunNativeHandler {
     // This callback is reached only from Bun's compiled native route table. Bun has already parsed
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
@@ -5696,7 +6144,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The fused native lane bypasses `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
     // reads uncapped. The non-fused branches go through `fetchMatched` -> `runMatched`, which marks.
-    const bodyLimit = entry.schema?.body === undefined ? entry.bodyLimit : undefined
+    const bodyLimit =
+      entry.schema?.body === undefined || entry.program.authBeforeValidation
+        ? entry.bodyLimit
+        : undefined
     const inner = fused
     const capped: FusedWebRunner | undefined =
       inner === undefined || bodyLimit === undefined
@@ -5715,7 +6166,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       request: Request,
       params: Record<string, string>,
     ): MaybePromise<Response> => {
-      const outcome = capped!(request, params, undefined, signal!, budget!, undefined, true)
+      const outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
       return outcome instanceof Promise
         ? outcome.then((response) => finishNative(request, response))
         : finishNative(request, outcome)
@@ -5724,15 +6175,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (capped === undefined) {
         return (request) => {
           markFramed(request)
-          return this.fetchMatched(request, entry, EMPTY_PARAMS)
+          return this.fetchMatched(request, entry, EMPTY_PARAMS, peer)
         }
       }
       if (this.acceptInboundDeadlines) {
         return (request) => {
           markFramed(request)
           return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
-            ? this.fetchMatched(request, entry, EMPTY_PARAMS)
-            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+            ? this.fetchMatched(request, entry, EMPTY_PARAMS, peer)
+            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, peer, true)
         }
       }
       return (request) => {
@@ -5743,46 +6194,52 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const malformed =
       paramNames.length === 1
-        ? (params: Record<string, string>) => params[paramNames[0]!]?.includes("\uFFFD") === true
-        : hasReplacementParam
+        ? (params: Record<string, string>) => unroutedParam(params[paramNames[0]!])
+        : hasUnroutedParam
     if (capped === undefined) {
-      return (request) => {
+      return (request, server) => {
         markFramed(request)
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-        if (malformed(params)) return this.fetchSource(request)
-        return this.fetchMatched(request, entry, params)
+        if (malformed(params)) return fallback(request, server)
+        return this.fetchMatched(request, entry, params, peer)
       }
     }
     if (this.acceptInboundDeadlines) {
-      return (request) => {
+      return (request, server) => {
         markFramed(request)
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-        if (malformed(params)) return this.fetchSource(request)
+        if (malformed(params)) return fallback(request, server)
         return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
-          ? this.fetchMatched(request, entry, params)
-          : capped(request, params, undefined, signal!, budget!, undefined, true)
+          ? this.fetchMatched(request, entry, params, peer)
+          : capped(request, params, undefined, signal!, budget!, peer, true)
       }
     }
-    return (request) => {
+    return (request, server) => {
       markFramed(request)
       const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-      if (malformed(params)) return this.fetchSource(request)
+      if (malformed(params)) return fallback(request, server)
       return runNative(request, params)
     }
   }
 
   /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
    * hooks or WebSockets retain the single portable dispatcher because those features must run before
-   * route selection/upgrade. Named wildcards also stay on the fallback until Bun exposes their raw
-   * capture semantics; static and `:param` routes take the native lane. */
-  private buildBunNativeRoutes(): BunNativeRoutes | undefined {
+   * route selection/upgrade.
+   *
+   * Bun and the portable router agree on which of two static-and-`:param` paths wins a request, so
+   * the table is kept to those paths. Where Bun would otherwise pass a request on to a less specific
+   * path, the more specific one carries `fallback`, the portable dispatcher, under that method.
+   * `peer` is the platform every request served from the table shares. */
+  private buildBunNativeRoutes(
+    fallback: BunNativeHandler,
+    peer: PeerPlatform,
+  ): BunNativeRoutes | undefined {
     // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
     // bypasses - so an app that declares trust routes through the fetch lane (where `c.clientIp`
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
       this.wsRouteCount > 0 ||
-      this.wsMountCount > 0 ||
       this.preRouteMountCount > 0 ||
       this.clientIpTrust !== undefined
     ) {
@@ -5800,33 +6257,75 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
-    for (const { method, path, pattern, entry } of this.catalog.entries()) {
-      // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
-      // of the native table means Bun dispatches it through CORS's onRequest hook even when the
-      // same path has native GET/POST handlers.
+    const all = this.catalog.entries()
+    // A path with a wildcard or a part-literal segment cannot go in the table: Bun reads `/:name.json`
+    // as one parameter named `name.json`. These are filed under each run of static segments they
+    // start with, which is where a table path they could outrank looks for them.
+    const under = new Map<string, CatalogRoute[]>()
+    const lead = all.map((route) => {
+      const segments = route.pattern.segments
+      const plain = segments.every(
+        (segment) => segment.kind === "static" || segment.kind === "param",
+      )
+      let prefix = ""
+      for (const segment of segments) {
+        if (!plain) {
+          let bucket = under.get(prefix)
+          if (bucket === undefined) {
+            bucket = []
+            under.set(prefix, bucket)
+          }
+          bucket.push(route)
+        }
+        if (segment.kind !== "static") break
+        prefix += `/${segment.value}`
+      }
+      return plain ? prefix : undefined
+    })
+    // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
+    // of the native lane means Bun dispatches it through CORS's onRequest hook even when the
+    // same path has native GET/POST handlers.
+    const preflightOnFallback = this.onRequestHooks.length > 0 && this.bunNativeRequestHooksSafe
+    // Where Bun could pass a request down: the methods served natively on a path with a parameter,
+    // as segment count + method. Two table paths match one request only at the same segment count.
+    const below = new Set<string>()
+    const tableAt = (path: string): BunNativeMethodTable => {
+      routes[path] ??= Object.create(null) as BunNativeMethodTable
+      return routes[path]
+    }
+    for (let i = 0; i < all.length; i++) {
+      const { method, path, pattern, entry } = all[i]!
+      const run = lead[i]
+      // The route is served from the table unless its path cannot be there, Bun's table has no slot
+      // for its method, or a path outside the table outranks it: Bun would hand this route a request
+      // the portable router gives to that one. An idempotent route stays off it too: its lanes run on
+      // a buffered copy of the request, and Bun names the peer only of the request it delivered, so
+      // the platform the table shares could not answer `c.clientIp` there.
       if (
-        this.onRequestHooks.length > 0 &&
-        this.bunNativeRequestHooksSafe &&
-        method === "OPTIONS"
+        run === undefined ||
+        entry.idempotent !== undefined ||
+        !METHODS.includes(method as Method) ||
+        (preflightOnFallback && method === "OPTIONS") ||
+        under.get(run)?.some((other) => outranks(other.pattern.segments, pattern.segments))
       ) {
         continue
       }
-      if (pattern.segments.some((segment) => segment.kind === "wildcard")) continue
-      let methods = routes[path]
-      if (methods === undefined) {
-        methods = Object.create(null) as BunNativeMethodTable
-        routes[path] = methods
-      }
       const paramNames = pattern.paramNames
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
-      methods[method] = this.compileBunNativeHandler(
+      tableAt(path)[method as Method] = this.compileBunNativeHandler(
         entry,
         paramNames,
         fused,
         unboundedSignal,
         unboundedBudget,
+        peer,
+        fallback,
       )
       count += 1
+      if (paramNames.length > 0) {
+        below.add(pattern.segments.length + method)
+        if (method === "GET") below.add(`${pattern.segments.length}HEAD`)
+      }
     }
     if (count === 0) return undefined
     // RFC 9110 §9.3.2: a GET route answers HEAD with identical status + headers (Bun strips the
@@ -5836,6 +6335,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (const path of Object.keys(routes)) {
       const methods = routes[path]!
       if (methods.GET !== undefined) methods.HEAD ??= methods.GET
+    }
+    // Bun picks among the paths its table holds for the request's method, so a path with no entry
+    // for the method lets the request through to a less specific one. The portable router stops at
+    // the most specific path and answers 405. Every path the table could hold therefore gets the
+    // portable dispatcher under each method a less specific path might serve.
+    for (let i = 0; i < all.length; i++) {
+      if (lead[i] === undefined) continue
+      const { path, pattern } = all[i]!
+      for (const method of METHODS) {
+        if (below.has(pattern.segments.length + method)) tableAt(path)[method] ??= fallback
+      }
     }
     return routes
   }
@@ -5861,6 +6371,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * connection cut mid-flight regardless of `requestTimeoutMs`. Apps with such endpoints must raise
    * this above their slowest expected response, which is why it is a first-class option and not a
    * reason to drop down to `Bun.serve`. `0` disables the timeout entirely; max 255.
+   *
+   * `tls` serves HTTPS directly: `app.listen(443, { tls: { cert, key } })` with PEM text or bytes.
+   * Requests then arrive with `https:` URLs. Behind a proxy or a platform that terminates TLS, leave
+   * it unset.
    */
   listen(
     port: number,
@@ -5868,6 +6382,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       readonly reusePort?: boolean
       readonly hostname?: string
       readonly idleTimeoutSec?: number
+      readonly tls?: ListenTlsOptions
     },
   ): RunningServer {
     if (typeof Bun === "undefined") {
@@ -5895,54 +6410,63 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
     // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
     // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
-    const hasWebSockets = this.wsRouteCount > 0 || this.wsMountCount > 0
-    if (hasWebSockets && this.wsRuntime === undefined) {
+    // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
+    // one without any needs no runtime here.
+    const wsRuntime = this[GET_WS_RUNTIME]()
+    if (wsRuntime === null) {
       throw new FrameworkError(
         "INVALID_WS_RUNTIME",
         "a Bun server with mounted WebSocket routes needs the websocket() runtime installed on the parent or child app",
       )
     }
-    // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child owns a
-    // different TopicRegistry, so force the per-connection JS dispatcher and carry that registry in
-    // the upgrade outcome instead of accidentally broadcasting child sockets through the parent.
+    // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child that takes
+    // upgrades owns a different TopicRegistry, so force the per-connection JS dispatcher and carry
+    // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
+    // the parent.
     const nativePubsub =
-      this.wsRouteCount > 0 && this.wsMountCount === 0 && !this.wsHasValidatedSend
-    const wsHandlers = !hasWebSockets
-      ? undefined
-      : (this.wsRuntime as WsRuntime).bunHandlers(
-          this.topics ?? (this.wsRuntime as WsRuntime).createTopics(),
-          nativePubsub,
-        )
-    const reusePort = options?.reusePort === true
-    // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
-    // on some option paths, and omitting is what selects its 0.0.0.0 default.
-    const bind = options?.hostname === undefined ? {} : { hostname: options.hostname }
-    // Same reasoning as `bind`: omit rather than pass undefined, so Bun's own default applies.
-    const idle =
-      options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }
-    const nativeRoutes = wsHandlers === undefined ? this.buildBunNativeRoutes() : undefined
+      this.wsRouteCount > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
+    const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
+    // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
+    // an explicit undefined as a value on some option paths, and omitting is what selects its own
+    // defaults, 0.0.0.0 among them.
+    const listening = {
+      port,
+      reusePort: options?.reusePort === true,
+      ...(options?.hostname === undefined ? {} : { hostname: options.hostname }),
+      ...(options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }),
+      ...(options?.tls === undefined ? {} : { tls: options.tls }),
+      // A hook that throws rejects `fetch`; Bun's own answer to that is a development page carrying
+      // the message, stack and source whenever NODE_ENV is not "production".
+      error: (err: unknown) => {
+        emitRequestErrorLog(this.logger, this.errorLogDetail, err, undefined)
+        return jsonError(500, "internal_error")
+      },
+    }
+    const fallback: BunNativeHandler = (req, server) => {
+      // Bun has already framed and bounded this request body in its HTTP parser. Mark the
+      // source before the portable fallback runs so body schemas use Bun's native `json()`
+      // reader instead of the defensive arrayBuffer/decode path reserved for caller-built
+      // Requests. Native route handlers mark themselves in compileBunNativeHandler; this
+      // covers every request the native lane does not serve.
+      markTrustedBodyFraming(req)
+      return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
+    }
+    // Bun names the socket peer of a request when its server is asked. A request served from the
+    // native table carries this one platform, which asks only when a handler reads `c.clientIp`.
+    const peer: PeerPlatform = {
+      [PLATFORM_PEER]: (request) =>
+        (running as unknown as BunPeerServer).requestIP(request as Request)?.address,
+    }
+    const nativeRoutes =
+      wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
     const running = (wsHandlers === undefined
       ? Bun.serve({
-          port,
-          reusePort,
-          ...bind,
-          ...idle,
+          ...listening,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: (req: Request, server) => {
-            // Bun has already framed and bounded this request body in its HTTP parser. Mark the
-            // source before the portable fallback runs so body schemas use Bun's native `json()`
-            // reader instead of the defensive arrayBuffer/decode path reserved for caller-built
-            // Requests. Native route handlers mark themselves in compileBunNativeHandler; this
-            // covers apps whose request/response middleware keeps them on the fallback dispatcher.
-            markTrustedBodyFraming(req)
-            return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
-          },
+          fetch: fallback,
         })
       : Bun.serve<BunWsData>({
-          port,
-          reusePort,
-          ...bind,
-          ...idle,
+          ...listening,
           fetch: (req, server) => this.bunFetchWithWebSocket(req, server),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
@@ -5958,7 +6482,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         })) as unknown as RunningServer
     this.bunServer = running
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
-    // method's presence so a runtime whose handle lacks it simply keeps the registry path.
+    // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
+    // first: a mounted app may have gained a WebSocket route since an earlier `listen()`.
+    this.nativePublish = undefined
     if (nativePubsub && typeof running.publish === "function") {
       const native = running.publish.bind(running)
       this.nativePublish = (topic, data) => {

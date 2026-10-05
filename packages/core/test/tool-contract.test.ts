@@ -8,6 +8,7 @@ import {
   executeTool,
   MemoryToolIdempotencyStore,
   runToolContractConformance,
+  type ToolIdempotencyStore,
 } from "../src/tool-contract.ts"
 
 const input = t.object({ name: t.string({ minLength: 1 }) })
@@ -187,6 +188,177 @@ describe("typed tool contracts", () => {
     expect(first).toMatchObject({ ok: false, error: { code: "output_invalid" } })
     expect(retry).toMatchObject({ ok: false, error: { code: "idempotency_duplicate" } })
     expect(executions).toBe(1)
+  })
+
+  test("a pending tool key lapses after its lease unless renewed, and a completed one holds for ttlMs", () => {
+    let now = 0
+    const store = new MemoryToolIdempotencyStore({ ttlMs: 1000, now: () => now })
+    const first = store.begin({ namespace: "ns", key: "k", pendingTtlMs: 100 })
+    if (first.state !== "new") throw new Error("expected a reservation")
+    const owner = { namespace: "ns", key: "k", reservation: first.reservation }
+    now = 80
+    expect(store.renew({ ...owner, ttlMs: 100 })).toBe(true)
+    now = 150
+    expect(store.begin({ namespace: "ns", key: "k" }).state).toBe("in-flight")
+    now = 181
+    expect(store.renew({ ...owner, ttlMs: 100 })).toBe(false)
+    const second = store.begin({ namespace: "ns", key: "k", pendingTtlMs: 100 })
+    if (second.state !== "new") throw new Error("expected the lapsed key to be reserved again")
+    expect(store.complete(owner)).toBe(false)
+    now = 200
+    expect(store.complete({ ...owner, reservation: second.reservation })).toBe(true)
+    expect(store.renew({ ...owner, reservation: second.reservation, ttlMs: 100 })).toBe(false)
+    now = 1100
+    expect(store.begin({ namespace: "ns", key: "k" }).state).toBe("duplicate")
+  })
+
+  test("a tool key whose process stopped renewing frees after the lease, not the store's TTL", async () => {
+    let now = 1_000_000
+    const store = new MemoryToolIdempotencyStore({ now: () => now })
+    let executions = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const tool = (block: boolean) =>
+      defineTool({
+        name: "orders.capture",
+        description: "Capture an order.",
+        input,
+        output,
+        capability: "orders.capture",
+        idempotency: { scope: "request", key: (value) => value.name },
+        execute: async () => {
+          executions += 1
+          if (block) {
+            entered()
+            await gate
+          }
+          return { ok: true }
+        },
+      })
+    const options = { capabilities: ["orders.capture"], idempotency: store }
+    // The first call reserves the key and never renews it, as if its process died mid-call.
+    const stalled = executeTool(tool(true), { name: "a" }, options)
+    await started
+    expect(await executeTool(tool(false), { name: "a" }, options)).toMatchObject({
+      ok: false,
+      error: { code: "idempotency_in_flight" },
+    })
+    now += 60_001
+    expect((await executeTool(tool(false), { name: "a" }, options)).ok).toBe(true)
+    expect(executions).toBe(2)
+    release()
+    expect((await stalled).ok).toBe(false)
+  })
+
+  test("a running tool call renews its lease and stops once it settles", async () => {
+    // The store's clock moves only when the test moves it, so a stalled event loop delays a
+    // renewal without letting the lease lapse; the heartbeat itself still runs on real timers.
+    let now = 1_000_000
+    const memory = new MemoryToolIdempotencyStore({ now: () => now })
+    const renewals: number[] = []
+    let renewed = (): void => {}
+    const store: ToolIdempotencyStore = {
+      begin: (value) => memory.begin(value),
+      complete: (value) => memory.complete(value),
+      abandon: (value) => memory.abandon(value),
+      renew: (value) => {
+        renewals.push(value.ttlMs)
+        const kept = memory.renew(value)
+        renewed()
+        return kept
+      },
+    }
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const tool = defineTool({
+      name: "orders.slow",
+      description: "A slow order operation.",
+      input,
+      output,
+      capability: "orders.slow",
+      idempotency: { scope: "request", key: (value) => value.name, pendingTtlMs: 300 },
+      execute: async () => {
+        entered()
+        await gate
+        return { ok: true }
+      },
+    })
+    const options = { capabilities: ["orders.slow"], idempotency: store }
+    const first = executeTool(tool, { name: "a" }, options)
+    await started
+    for (let step = 0; step < 2; step++) {
+      now += 200
+      await new Promise<void>((resolve) => {
+        renewed = resolve
+      })
+    }
+    // Past the 300ms lease: only the renewals keep a duplicate call from running.
+    expect(await executeTool(tool, { name: "a" }, options)).toMatchObject({
+      ok: false,
+      error: { code: "idempotency_in_flight" },
+    })
+    release()
+    expect((await first).ok).toBe(true)
+    expect(renewals.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(renewals)).toEqual(new Set([300]))
+    const settled = renewals.length
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(renewals.length).toBe(settled)
+    expect(() =>
+      defineTool({
+        name: "orders.bad-lease",
+        description: "Bad lease.",
+        input,
+        output,
+        idempotency: { scope: "request", key: (value) => value.name, pendingTtlMs: 0 },
+        execute: () => ({ ok: true }),
+      }),
+    ).toThrow(/pendingTtlMs must be a positive integer/)
+  })
+
+  test("a tool call whose renewals fail lets its lease lapse, which completion reports", async () => {
+    const memory = new MemoryToolIdempotencyStore()
+    let attempts = 0
+    const store: ToolIdempotencyStore = {
+      begin: (value) => memory.begin(value),
+      complete: (value) => memory.complete(value),
+      abandon: (value) => memory.abandon(value),
+      renew: () => {
+        attempts += 1
+        throw new Error("store unreachable")
+      },
+    }
+    const tool = defineTool({
+      name: "orders.flaky",
+      description: "An order operation on a flaky store.",
+      input,
+      output,
+      capability: "orders.flaky",
+      idempotency: { scope: "request", key: (value) => value.name, pendingTtlMs: 30 },
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        return { ok: true }
+      },
+    })
+    const result = await executeTool(
+      tool,
+      { name: "a" },
+      { capabilities: ["orders.flaky"], idempotency: store },
+    )
+    expect(attempts).toBeGreaterThanOrEqual(1)
+    expect(result).toMatchObject({ ok: false, error: { code: "idempotency_capacity" } })
   })
 
   test("fails closed when a required execution policy has no satisfying adapter", async () => {

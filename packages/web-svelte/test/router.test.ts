@@ -1,8 +1,11 @@
 import { afterEach, expect, test } from "bun:test"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import {
   type Blocker,
   type BlockerFunction,
   IDLE_BLOCKER,
+  type RenderProps,
   setBlockerController,
   setBrowserNavigate,
 } from "@nifrajs/web"
@@ -76,4 +79,39 @@ test("useBlocker boolean form reads as itself", () => {
   const unsubscribe = useBlocker(true).subscribe(() => {})
   expect(cap.shouldBlock?.({ currentLocation: loc(), nextLocation: loc() })).toBe(true)
   unsubscribe()
+})
+
+test("useSearch and useMatches read the chain's context, and report nothing outside one", async () => {
+  // Compiled here rather than through the Bun plugin, which registers process-wide: this runs in the
+  // test process, so the accessors count toward coverage.
+  const { compile } = await import("svelte/compiler")
+  const { render } = await import("svelte/server")
+  const source = `<script>
+  import { useMatches, useSearch } from ${JSON.stringify(join(import.meta.dir, "../src/router.ts"))}
+  const search = useSearch()
+  const matches = useMatches()
+</script>
+<p>{JSON.stringify(search())}|{JSON.stringify(matches().map((m) => [m.id, m.pathname]))}</p>`
+  // `.tmp-nifra-*` directories are outside the coverage gate.
+  const dir = await mkdtemp(join(import.meta.dir, ".tmp-nifra-router-probe-"))
+  try {
+    const file = join(dir, "probe.js")
+    await writeFile(file, compile(source, { generate: "server", filename: "Probe.svelte" }).js.code)
+    const Probe = (await import(file)).default
+    const props: RenderProps = {
+      data: null,
+      path: "/orgs/acme",
+      params: { org: "acme" },
+      matchChain: { ids: ["_layout", "orgs/[org]"], handles: [undefined, undefined] },
+    }
+    const context = new Map<string, unknown>([
+      ["@nifrajs/web-svelte:search", () => ({ page: 2 })],
+      ["@nifrajs/web-svelte:props", () => props],
+    ])
+    const inside = render(Probe, { context }).body
+    expect(inside).toContain('{"page":2}|[["_layout","/"],["orgs/[org]","/orgs/acme"]]')
+    expect(render(Probe).body).toContain("{}|[]")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

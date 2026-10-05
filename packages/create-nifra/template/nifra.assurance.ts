@@ -11,10 +11,10 @@
  * Rules are first-match-wins, so order matters: put narrow exemptions above the general rule.
  */
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
-import { app } from "./src/app.ts"
+import { backend } from "./backend/app.ts"
 
 export default defineAssuranceConfig({
-  source: app,
+  source: backend,
   // What each effect IS, so the policy below can be written about a CLASS of effect rather than a list
   // of token names: `{ access: "write", zone: "domain" }` covers `payments.charge` the day someone adds
   // it, where a rule naming `db.write` would not.
@@ -34,19 +34,21 @@ export default defineAssuranceConfig({
       // the route modules - is what keeps every route's declaration equal to its reach. The drivers
       // below are the backstop for code that goes around the seam; they grant both, because an import
       // cannot tell a read from a write.
+      // Shared starter catalog: an absent database integration is optional, but any matching
+      // import still grants its capabilities. Remove optional for seams this app owns.
       imports: [
-        { specifier: "./read.ts", capabilities: ["db.read"] },
-        { specifier: "./write.ts", capabilities: ["db.write"] },
-        { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
-        { specifier: "node:sqlite", capabilities: ["db.read", "db.write"] },
-        { specifier: "pg", capabilities: ["db.read", "db.write"] },
-        { specifier: "postgres", capabilities: ["db.read", "db.write"] },
-        { specifier: "mysql2", capabilities: ["db.read", "db.write"] },
-        { specifier: "kysely", capabilities: ["db.read", "db.write"] },
-        { specifier: "drizzle-orm", capabilities: ["db.read", "db.write"] },
-        { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"] },
-        { specifier: "@libsql/*", capabilities: ["db.read", "db.write"] },
-        { specifier: "@prisma/client", capabilities: ["db.read", "db.write"] },
+        { specifier: "./read.ts", capabilities: ["db.read"], optional: true },
+        { specifier: "./write.ts", capabilities: ["db.write"], optional: true },
+        { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "node:sqlite", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "pg", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "postgres", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "mysql2", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "kysely", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "drizzle-orm", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "@libsql/*", capabilities: ["db.read", "db.write"], optional: true },
+        { specifier: "@prisma/client", capabilities: ["db.read", "db.write"], optional: true },
       ],
       // Add a driver here to force every query through the seam, and the check will name any route that
       // reaches around it: `{ specifier: "pg", reason: "query through db/read.ts or db/write.ts" }`.

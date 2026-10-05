@@ -1,8 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity, so ship zero framework JS.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/capabilities",
@@ -62,11 +59,11 @@ const UNCONFINED = `$ nifra check
     GET / can reach domain write capability db.write without declaring it, and a safe method
     may not declare one - move the route or the effect so the write is not in its module's reach`
 
-const ROOT = `// src/app.ts - composition only. It merges route modules and registers none of its own.
+const ROOT = `// backend/app.ts - composition only. It merges route modules and registers none of its own.
 import { server } from "@nifrajs/core/server"
 import { routes } from "./routes.ts"
 
-export const app = server().merge(routes)`
+export const backend = server().merge(routes)`
 
 const SEAM = `db/
   index.ts        the connection - no route module imports this
@@ -104,6 +101,20 @@ const app = server()
   .post("/charge", { capabilities: ["billing.charge"] }, (c: object) =>
     executeCapability(c, "billing.charge", {}, () => gateway.charge()),
   )`
+
+const OPAQUE = `import { server } from "@nifrajs/core"
+
+// Stands in for a handler from another package (better-auth's): nifra cannot see what it reaches.
+const authHandler = { fetch: (request: Request) => new Response(request.url) }
+
+export const app = server().mount({
+  path: "/api/auth",
+  app: authHandler,
+  opaque: "better-auth's own handler; its effects are its own",
+})`
+
+const OPAQUE_CHECK = `$ nifra check
+• known gap, not capability-analyzed: /api/auth/* - better-auth's own handler; its effects are its own`
 
 const LEVELS = `$ nifra capabilities snapshot   # writes capabilities.lock.json
 $ nifra levels
@@ -217,8 +228,8 @@ export default function Capabilities() {
         <code>useCapability</code> is passed in rather than imported by those packages, so all three
         keep their zero dependencies - a cache should not pull the server into a bundle that only
         wanted a cache. Nothing changes for existing code: only the <code>for(context)</code> path
-        announces anything, and asking for it without a configured beacon throws rather than handing
-        back something that silently proves nothing.
+        announces anything, and asking for it with neither a beacon nor a tracing observer configured
+        throws rather than handing back something that silently proves nothing.
       </p>
       <p>
         The two are complements. Static provenance is total and runs in CI; a beacon is exact but only
@@ -247,6 +258,34 @@ export default function Capabilities() {
         like the auth plugins - routes registered before <code>.use(...)</code> are not covered, and{" "}
         <code>nifra check</code> says so rather than assuming.
       </p>
+      <p>
+        A process that dies while its handler runs also leaves the key reserved, and retries get{" "}
+        <code>409</code>. A store that implements <code>renew()</code>, as{" "}
+        <code>MemoryIdempotencyStore</code> does, holds that reservation as a lease of{" "}
+        <code>pendingTtlMs</code> (60 seconds by default) that the server renews every third of it while
+        the handler runs, so the key frees once the lease lapses rather than after <code>ttlMs</code>.
+        A store without <code>renew()</code> keeps the key reserved for <code>ttlMs</code>, and
+        declaring <code>pendingTtlMs</code> on it is a registration error.
+      </p>
+
+      <h2>Mounts nifra cannot read</h2>
+      <p>
+        <code>mount()</code> and <code>mountFetch()</code> hand requests to code that route reflection
+        does not walk, so the effects behind a mount are unproven. A <code>server()</code> you own
+        belongs in <code>merge()</code> instead, where every route is analyzed like your own. For a
+        handler you cannot analyze, such as a closure exported by an auth library, state why:
+      </p>
+      <CodeBlock code={OPAQUE} lang="ts" />
+      <p>
+        A mount with a reason is a <strong>known gap</strong>: <code>nifra check</code> and{" "}
+        <code>nifra capabilities check</code> list it on every run, and it neither fails assurance nor
+        lowers a level. A mount without one fails, naming both fixes:{" "}
+        <code>mount /api/auth/* is not analyzed</code>. The capability lockfile and the trust manifest
+        record routes, not mounts, so review a new gap where it is listed: in the check output. The
+        same{" "}
+        <code>opaque</code> field works on a <code>createWebApp</code> <code>mounts</code> entry.
+      </p>
+      <CodeBlock code={OPAQUE_CHECK} lang="bash" />
 
       <h2>The lockfile</h2>
       <p>

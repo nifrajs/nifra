@@ -29,7 +29,7 @@ export interface AuthSession {
   readonly session: Session | null
   /** Re-read the session from the server (after an out-of-band change, for example). */
   readonly refresh: () => Promise<void>
-  readonly signIn: (providerId: string, options?: SignInOptions) => void
+  readonly signIn: (providerId: string, options?: SignInOptions) => Promise<void>
   readonly signOut: (options?: SignOutOptions) => Promise<void>
 }
 
@@ -44,17 +44,23 @@ export interface AuthSessionProviderProps {
   readonly children?: ReactNode
 }
 
-/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. */
+function seededStatus(seed: Session | null | undefined): AuthStatus {
+  return seed === undefined ? "loading" : seed === null ? "unauthenticated" : "authenticated"
+}
+
+/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new
+ * `initialSession` (a loader re-run on navigation) replaces the session, as a remount would. */
 export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode {
   const client = useMemo(() => props.client ?? createAuthClient(), [props.client])
-  const [status, setStatus] = useState<AuthStatus>(
-    props.initialSession === undefined
-      ? "loading"
-      : props.initialSession === null
-        ? "unauthenticated"
-        : "authenticated",
-  )
+  const [seed, setSeed] = useState(props.initialSession)
+  const [status, setStatus] = useState<AuthStatus>(seededStatus(props.initialSession))
   const [session, setSession] = useState<Session | null>(props.initialSession ?? null)
+  if (seed !== props.initialSession) {
+    // A render-phase update: React re-runs this component before any child sees the old session.
+    setSeed(props.initialSession)
+    setStatus(seededStatus(props.initialSession))
+    setSession(props.initialSession ?? null)
+  }
   const refresh = useMemo(() => {
     return async (): Promise<void> => {
       try {
@@ -97,7 +103,13 @@ export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode 
       session,
       refresh,
       signIn: (providerId, options) => client.signIn(providerId, options),
-      signOut: (options) => client.signOut(options),
+      signOut: async (options) => {
+        await client.signOut(options)
+        // The server ended the session: the subtree must not go on showing it, whether a redirect is
+        // pending or `redirect: false` keeps the page.
+        setSession(null)
+        setStatus("unauthenticated")
+      },
     }),
     [status, session, refresh, client],
   )

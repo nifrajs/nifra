@@ -1,6 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: SQL scanner fixtures intentionally contain literal interpolation syntax.
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import ts from "typescript"
@@ -33,6 +33,7 @@ import {
   renderReleaseVerification,
   resolveVerificationRoot,
 } from "../src/release-verification.ts"
+import { readSecretExemptions } from "../src/rules/secrets.ts"
 import {
   omittedVerificationGateIds,
   renderVerificationPlan,
@@ -73,6 +74,7 @@ describe("release verification", () => {
       "size",
       "core-performance",
       "middleware-performance",
+      "output-guard-performance",
       "edge-startup",
       "publish",
       "consumer",
@@ -81,6 +83,7 @@ describe("release verification", () => {
       "cross-runtime-node",
       "workerd",
       "pipeline-parity",
+      "leak-matrix",
       "verification-parity",
       "changesets",
     ])
@@ -116,9 +119,12 @@ describe("release verification", () => {
   test("uses the workspace root when invoked from a subdirectory and runs the default plan", async () => {
     const root = createFixtureRoot("verify-root")
     try {
+      const scripts = Object.fromEntries(
+        verificationPlan().flatMap((gate) => gate.commands.map(([, script]) => [script, "true"])),
+      )
       await Bun.write(
         join(root, "package.json"),
-        JSON.stringify({ private: true, workspaces: ["*"] }),
+        JSON.stringify({ private: true, workspaces: ["*"], scripts }),
       )
       const project = createFixtureProject(root, "project-")
       await Bun.write(join(project, "package.json"), JSON.stringify({ name: "project" }))
@@ -153,6 +159,41 @@ describe("release verification", () => {
     }
   })
 
+  test("a gate whose script the project does not declare is reported, not run or failed", async () => {
+    const root = createFixtureRoot("verify-undeclared")
+    try {
+      const manifest = (scripts: Record<string, string>): string =>
+        JSON.stringify({ private: true, workspaces: ["*"], scripts })
+      await Bun.write(
+        join(root, "package.json"),
+        manifest({ lint: "biome check", test: "bun test" }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }))
+      const calls: string[] = []
+      const result = await collectReleaseVerification(project, {
+        runCommand: async (spec) => {
+          calls.push(spec.args.join(" "))
+          return { exitCode: 0 }
+        },
+      })
+      expect(calls).toEqual(["run lint", "run test"])
+      expect(result.ok).toBe(true)
+      const docs = result.gates.find((gate) => gate.id === "docs")
+      expect(docs?.status).toBe("undeclared")
+      expect(docs?.message).toBe("`check:docs` is not a script in package.json")
+      expect(renderReleaseVerification(result)).not.toContain("fix: Run `bun run check:docs`")
+
+      await Bun.write(join(root, "package.json"), manifest({}))
+      const nothing = await collectReleaseVerification(project, {
+        runCommand: async () => ({ exitCode: 0 }),
+      })
+      expect(nothing.ok).toBe(false)
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
   test("runs coverage before its ratchet and stops after the first failed gate", async () => {
     const root = createFixtureRoot("verify-release")
     try {
@@ -176,6 +217,70 @@ describe("release verification", () => {
         "test:coverage",
       )
       expect(result.gates.at(-1)?.status).toBe("skipped")
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("a shared runner leaves out the timing gates and names them", async () => {
+    const root = createFixtureRoot("verify-shared-runner")
+    try {
+      const plan = verificationPlan("release")
+      const scripts = Object.fromEntries(
+        plan.flatMap((gate) => gate.commands.map(([, script]) => [script, "true"])),
+      )
+      await Bun.write(
+        join(root, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["*"], scripts }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "project" }))
+      const calls: string[] = []
+      const result = await collectReleaseVerification(project, {
+        mode: "release",
+        sharedRunner: true,
+        runCommand: async (spec) => {
+          calls.push(spec.args.join(" "))
+          return { exitCode: 0 }
+        },
+      })
+      const local = plan.filter((gate) => !gate.workflowRequired).map((gate) => gate.id)
+      expect(local).toEqual([
+        "core-performance",
+        "middleware-performance",
+        "output-guard-performance",
+        "edge-startup",
+      ])
+      expect(result.ok).toBe(true)
+      expect(result.localGateIds).toEqual(local)
+      expect(result.gates.map((gate) => gate.id)).toEqual(
+        plan.filter((gate) => gate.workflowRequired).map((gate) => gate.id),
+      )
+      expect(calls).not.toContain("run check:middleware-overhead")
+      expect(renderReleaseVerification(result)).toContain(
+        `note: a shared runner leaves out the timing gates: ${local.join(", ")}`,
+      )
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("a failed gate shows the end of what its command printed", async () => {
+    const root = createFixtureRoot("verify-output")
+    try {
+      await Bun.write(join(root, "package.json"), JSON.stringify({ private: true, workspaces: [] }))
+      const printed = Array.from({ length: 60 }, (_, line) => `line ${line}`).join("\n")
+      const result = await collectReleaseVerification(root, {
+        runCommand: async (spec) =>
+          spec.args.join(" ") === "run lint"
+            ? { exitCode: 1, stdout: `${printed}\n`, stderr: "lint failed\n" }
+            : { exitCode: 0 },
+      })
+      expect(result.gates.find((gate) => gate.id === "lint")?.output?.split("\n")).toEqual([
+        ...Array.from({ length: 39 }, (_, line) => `line ${line + 21}`),
+        "lint failed",
+      ])
+      expect(renderReleaseVerification(result)).toContain("  | lint failed\n")
     } finally {
       removeFixtureRoot(root)
     }
@@ -366,6 +471,57 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
     ).toEqual(["GET /legacy"])
   })
 
+  test("collects the routes all() and method() register, one per method", () => {
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'import { all, method } from "@nifrajs/core/methods"',
+      "export const backend = server()",
+      '  .use(all("/echo", handler))',
+      "  .use(method('PURGE', '/cache/:key', handler))",
+      '  .use(method(["get", "REPORT"], "/doc", { body }, handler))',
+    ].join("\n")
+    const routes = scanStaticRouteText("backend.ts", src)
+    expect(routes.map((r) => `${r.line} ${r.method} ${r.path}`)).toEqual([
+      "4 GET /echo",
+      "4 POST /echo",
+      "4 PUT /echo",
+      "4 PATCH /echo",
+      "4 DELETE /echo",
+      "4 HEAD /echo",
+      "4 OPTIONS /echo",
+      "5 PURGE /cache/:key",
+      "6 GET /doc",
+      "6 REPORT /doc",
+    ])
+    // The AST pass agrees with the lexical one on real calls.
+    expect(scanStaticRouteText("backend.ts", src, createSourceFacts(ts))).toEqual(routes)
+  })
+
+  test("all() and method() are read only in a module that imports the methods subpath", () => {
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'const everything = all("/not-a-route", handler)',
+      'const one = method("PURGE", "/not-a-route", handler)',
+    ].join("\n")
+    expect(scanStaticRouteText("backend.ts", src)).toEqual([])
+  })
+
+  test("a member call, a non-literal path and a name that is not a literal are not collected", () => {
+    const facts = createSourceFacts(ts)
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'import { all, method } from "@nifrajs/core/methods"',
+      'const a = Promise.all("/member", handler)',
+      "const b = all(path, handler)",
+      'const c = method(name, "/dynamic-name", handler)',
+      'const d = method([name, "PURGE"], "/partly", handler)',
+      "const docs = 'all(\"/in-a-string\", handler)'",
+    ].join("\n")
+    expect(
+      scanStaticRouteText("backend.ts", src, facts).map((r) => `${r.method} ${r.path}`),
+    ).toEqual(["PURGE /partly"])
+  })
+
   test("AST refinement ignores route-shaped text inside ordinary strings", () => {
     const facts = createSourceFacts(ts)
     const src = [
@@ -388,12 +544,26 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
     expect(flag('import { db } from "../../db.ts"')).toHaveLength(1)
   })
 
-  test("does NOT flag type-only imports, dynamic imports, or normal client deps", () => {
+  test("does NOT flag type-only imports, type-position import() or normal client deps", () => {
     const flag = (src: string) => scanServerOnlyImports("routes/notes.tsx", src)
     expect(flag('import type { Note } from "../db"')).toHaveLength(0) // erased at build
-    expect(flag('const { db } = await import("../db")')).toHaveLength(0) // lazy, server-side only
+    expect(flag('type Db = typeof import("../db")')).toHaveLength(0)
+    expect(flag('let pool: import("pg").Pool')).toHaveLength(0)
     expect(flag('import { useState } from "react"')).toHaveLength(0)
     expect(flag('import { client } from "@nifrajs/client"')).toHaveLength(0)
+    expect(flag("const m = await import(`../db/${name}`)")).toHaveLength(0) // computed: not followed
+  })
+
+  test("flags a literal dynamic import(): the client build bundles it as a lazy chunk", () => {
+    const flag = (src: string) => scanServerOnlyImports("routes/notes.tsx", src)
+    expect(flag('export const loader = async () => (await import("../db")).db.all()')).toEqual([
+      expect.objectContaining({ specifier: "../db", line: 1 }),
+    ])
+    expect(flag("const fs = import('node:fs')")[0]?.specifier).toBe("node:fs")
+    expect(flag('import("pg").then((pg) => pg)')[0]?.specifier).toBe("pg")
+    expect(flag('const pg = await import(\n  "pg",\n  { with: {} }\n)')[0]?.specifier).toBe("pg")
+    expect(flag('// await import("pg")\nconst s = \'import("pg")\'')).toHaveLength(0)
+    expect(flag('obj.import("pg")')).toHaveLength(0)
   })
 
   test("does NOT flag server-only imports shown inside comments or code-sample strings", () => {
@@ -426,7 +596,7 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
     ).toBe("../db")
   })
 
-  test("AST refinement ignores inline type-only aliases but keeps dynamic imports out of the scan", () => {
+  test("AST refinement ignores inline type-only aliases and type-position import()", () => {
     const facts = createSourceFacts(ts)
     expect(
       scanServerOnlyImports(
@@ -436,8 +606,15 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
       ),
     ).toEqual([])
     expect(
-      scanServerOnlyImports("routes/notes.tsx", 'const load = () => import("../db")', facts),
+      scanServerOnlyImports(
+        "routes/notes.tsx",
+        'type Db = Awaited<ReturnType<typeof import("../db")["open"]>>\nlet p: import("pg").Pool',
+        facts,
+      ),
     ).toEqual([])
+    expect(
+      scanServerOnlyImports("routes/notes.tsx", 'const load = () => import("../db")', facts),
+    ).toEqual([expect.objectContaining({ specifier: "../db" })])
   })
 })
 
@@ -491,6 +668,34 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     expect(diagnostic?.suggestion?.diff).toContain('-const res = await fetch("/users")')
     expect(diagnostic?.suggestion?.diff).toContain("+const res = await api.users.get()")
     expect(diagnostic?.suggestion?.steps?.join("\n")).toContain("Matched GET /users")
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("the typed-client rewrite appends a reserved segment by a call", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(
+      join(dir, "backend.ts"),
+      [
+        'import { server } from "@nifrajs/core"',
+        "export const backend = server()",
+        '  .get("/blog/post", () => ({}))',
+        '  .get("/settings/options", () => [])',
+      ].join("\n"),
+    )
+    await writeFile(
+      join(dir, "src", "reader.ts"),
+      'const res = await fetch("/blog/post")\nconst opts = await fetch("/settings/options")\n',
+    )
+
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diffs = result.diagnostics
+      .filter((d) => d.rule === "typed-client")
+      .map((d) => d.suggestion?.diff ?? "")
+      .join("\n")
+    expect(diffs).toContain('+const res = await api.blog("post").get()')
+    expect(diffs).toContain('+const opts = await api.settings("options").get()')
 
     await rm(dir, { recursive: true, force: true })
   })
@@ -587,6 +792,55 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     }
   })
 
+  test("duplicate-install names a copy planted by a symlink out of the install, before the fixes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-planted-"))
+    try {
+      const root = join(dir, "workspace")
+      const app = join(root, "packages", "app")
+      const elsewhere = join(dir, "elsewhere", "node_modules", "@nifrajs", "core")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@nifrajs"), { recursive: true })
+      await mkdir(join(root, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(elsewhere, { recursive: true })
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "@nifrajs/core": "1.12.0" },
+        }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.12.0" } }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      for (const copy of [join(root, "node_modules", "@nifrajs", "core"), elsewhere]) {
+        await writeFile(
+          join(copy, "package.json"),
+          JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
+        )
+      }
+      await symlink(elsewhere, join(app, "node_modules", "@nifrajs", "core"))
+
+      const result = await collectCheckResult(root, { lintsOnly: true })
+      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      expect(diagnostic?.severity).toBe("error")
+      const steps = diagnostic?.suggestion?.steps ?? []
+      // Paths in a suggestion are written with `/` on every platform.
+      const link = "packages/app/node_modules/@nifrajs/core"
+      expect(steps.some((step) => step.includes(`through the symlink ${link}`))).toBe(true)
+      const planted = steps.findIndex((step) => step.startsWith("Planted links:"))
+      expect(planted).toBeGreaterThan(-1)
+      expect(planted).toBeLessThan(steps.findIndex((step) => step.startsWith("Fix 1")))
+      expect(steps[planted]).toContain(`${link} → ../elsewhere/node_modules/@nifrajs/core`)
+      expect(result.identityPreflight?.duplicates[0]?.provenance).toContain("bun link")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("single-copy declarations report handled duplicates without a duplicate-install diagnostic", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-dedup-"))
     try {
@@ -633,6 +887,72 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       )
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+  test("a version skew in a declared non-framework package fails check; one version on two paths does not", async () => {
+    // A linked sibling checkout sharing a module-state package with the app: only the app's singleCopy
+    // declaration makes it identity-sensitive, and the declaration must bring it under the check.
+    const fixture = async (siblingVersion: string) => {
+      const ground = await mkdtemp(join(tmpdir(), "nifra-check-declared-"))
+      const app = join(ground, "app")
+      const sibling = join(ground, "sibling")
+      await mkdir(join(app, ".git"), { recursive: true })
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(app, "node_modules", "shared-state"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@example"), { recursive: true })
+      await mkdir(join(sibling, ".git"), { recursive: true })
+      await mkdir(join(sibling, "node_modules", "shared-state"), { recursive: true })
+      await mkdir(join(sibling, "packages", "ui"), { recursive: true })
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "shared-state": "2.1.0", "@example/ui": "link:../sibling/packages/ui" },
+          nifra: { singleCopy: ["shared-state"] },
+        }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import "shared-state"\nimport "@example/ui"\n')
+      await writeFile(
+        join(sibling, "packages", "ui", "package.json"),
+        JSON.stringify({ name: "@example/ui", dependencies: { "shared-state": siblingVersion } }),
+      )
+      await writeFile(
+        join(app, "node_modules", "shared-state", "package.json"),
+        JSON.stringify({ name: "shared-state", version: "2.1.0" }),
+      )
+      await writeFile(
+        join(sibling, "node_modules", "shared-state", "package.json"),
+        JSON.stringify({ name: "shared-state", version: siblingVersion }),
+      )
+      await symlink(join(sibling, "packages", "ui"), join(app, "node_modules", "@example", "ui"))
+      return { ground, app }
+    }
+
+    const skewed = await fixture("2.0.0")
+    try {
+      const result = await collectCheckResult(skewed.app, { lintsOnly: true })
+      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      expect(result.ok).toBe(false)
+      expect(diagnostic?.severity).toBe("error")
+      expect(diagnostic?.message).toContain("shared-state identity preflight found version-skew")
+      expect(diagnostic?.fix).toContain("Align dependency ranges")
+      expect(result.identityPreflight?.duplicates.map((finding) => finding.package)).toEqual([
+        "shared-state",
+      ])
+    } finally {
+      await rm(skewed.ground, { recursive: true, force: true })
+    }
+
+    const aligned = await fixture("2.1.0")
+    try {
+      const result = await collectCheckResult(aligned.app, { lintsOnly: true })
+      expect(result.diagnostics.some((d) => d.rule === "duplicate-install")).toBe(false)
+      expect(result.identityPreflight?.duplicates).toEqual([])
+      expect(result.identityPreflight?.deduplicated.map((finding) => finding.package)).toEqual([
+        "shared-state",
+      ])
+    } finally {
+      await rm(aligned.ground, { recursive: true, force: true })
     }
   })
 })
@@ -913,12 +1233,31 @@ describe("scanServerManifestDrift", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("a route's backend half is a route file too", async () => {
+    const dir = await manifestApp(
+      ["index.backend.ts", "index.tsx"],
+      ["index.backend.ts", "index.tsx"],
+    )
+    expect(await scanServerManifestDrift(dir)).toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("a deleted route still imported by the manifest → reported as extra", async () => {
     const dir = await manifestApp(["index.tsx", "gone.tsx"], ["index.tsx"])
     const findings = await scanServerManifestDrift(dir)
     expect(findings[0]?.extra).toEqual(["gone.tsx"])
     expect(findings[0]?.missing).toEqual([])
     await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a _middleware.ts counts as a route file, other .ts files do not", async () => {
+    const dir = await manifestApp(["_middleware.ts", "index.tsx"], ["_middleware.ts", "index.tsx"])
+    await writeFile(join(dir, "routes", "helper.ts"), "export const x = 1\n")
+    expect(await scanServerManifestDrift(dir)).toEqual([])
+    const stale = await manifestApp(["index.tsx"], ["index.tsx", "_middleware.ts"])
+    expect((await scanServerManifestDrift(stale))[0]?.missing).toEqual(["_middleware.ts"])
+    await rm(dir, { recursive: true, force: true })
+    await rm(stale, { recursive: true, force: true })
   })
 
   test("a non-generated server-manifest.ts (no marker) is ignored", async () => {
@@ -1014,24 +1353,30 @@ describe("walkServerOnlyChain - bounded transitive walk over a fake module graph
     expect(chain).toBeUndefined()
   })
 
-  test("a *.server dependency terminates the chain by the .server convention", () => {
+  test("backend code is a sink; a *.fn.ts module ships as its stub, so the walk never enters it", () => {
     const g: Record<string, string> = {
       "/app/routes/z.tsx":
-        'import { secret } from "../auth.server.ts"\nexport default () => secret',
+        'import { secret } from "../backend/auth.ts"\nexport default () => secret',
+      "/app/backend/auth.ts": 'import { createHmac } from "node:crypto"\nexport const secret = 1',
+      "/app/routes/f.tsx":
+        'import { save } from "../backend/notes.fn.ts"\nexport default () => save',
+      "/app/backend/notes.fn.ts": 'import pg from "pg"\nexport const save = 1',
     }
-    const chain = walkServerOnlyChain(
-      "/app/routes/z.tsx",
-      g["/app/routes/z.tsx"] as string,
-      (from, spec) => resolve(from, spec),
-      (abs) => g[abs],
-    )
-    expect(chain).toEqual(["/app/routes/z.tsx", "../auth.server.ts"])
+    const walk = (file: string) =>
+      walkServerOnlyChain(
+        file,
+        g[file] as string,
+        (from, spec) => resolve(from, spec),
+        (abs) => g[abs],
+      )
+    expect(walk("/app/routes/z.tsx")).toEqual(["/app/routes/z.tsx", "../backend/auth.ts"])
+    expect(walk("/app/routes/f.tsx")).toBeUndefined()
   })
 
   test("a server-only-marked dependency terminates the chain", () => {
     const g: Record<string, string> = {
       "/app/routes/m.tsx": 'import { key } from "../secrets.ts"\nexport default () => key',
-      "/app/secrets.ts": 'import "@nifrajs/web/server-only"\nexport const key = "x"',
+      "/app/secrets.ts": 'import "@nifrajs/web/backend-only"\nexport const key = "x"',
     }
     const chain = walkServerOnlyChain(
       "/app/routes/m.tsx",
@@ -1236,6 +1581,15 @@ describe("scanInterpolatedSql", () => {
     expect(scan("db.query(`SELECT * FROM users WHERE id = ${id}`)")).toBe(1)
     expect(scan("await db.execute(`DELETE FROM notes WHERE id = ${req.params.id}`)")).toBe(1)
     expect(scan("conn.prepare(`UPDATE t SET body = ${body} WHERE id = ${id}`)")).toBe(1)
+  })
+
+  test("a .ts file with a generic arrow is scanned, not dropped as unparsable", () => {
+    // As TSX, `<T>(rows: T[])` opens a JSX element, the file fails to parse, and the scan saw none of it.
+    const src = [
+      "const first = <T>(rows: T[]): T | undefined => rows[0]",
+      "db.query(`SELECT * FROM users WHERE id = ${id}`)",
+    ].join("\n")
+    expect(scan(src)).toBe(1)
   })
 
   test("reports the line the call is on", () => {
@@ -2129,5 +2483,315 @@ describe("cwd invariance", () => {
       process.chdir(before)
     }
     await rm(root, { recursive: true, force: true })
+  })
+})
+
+describe("server-only-import follows literal dynamic import()", () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-dynamic-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+
+  test("a loader's dynamic import of a module that reaches pg is reported with its chain", async () => {
+    const dir = await project({
+      "routes/rashifal.tsx": [
+        "export async function loader() {",
+        '  const { horoscope } = await import("../lib/horoscope")',
+        "  return horoscope()",
+        "}",
+        "export default () => null",
+      ].join("\n"),
+      "lib/horoscope.ts":
+        'import { query } from "./pool"\nexport const horoscope = () => query()\n',
+      "lib/pool.ts": 'import pg from "pg"\nexport const query = () => new pg.Pool()\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diag = result.diagnostics.find((d) => d.rule === "server-only-import")
+    expect(diag?.line).toBe(2)
+    expect(diag?.chain).toEqual(["routes/rashifal.tsx", "../lib/horoscope", "./pool", "pg"])
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a dynamic import inside a dependency is followed too, and backend code is a sink", async () => {
+    const dir = await project({
+      "routes/a.tsx": 'import { load } from "../frontend/load"\nexport default () => load()\n',
+      "frontend/load.ts": 'export const load = () => import("./pool")\n',
+      "frontend/pool.ts": 'import pg from "pg"\nexport default pg\n',
+      "backend/db.ts": 'import pg from "pg"\nexport default pg\n',
+      "routes/b.tsx":
+        'export const view = () => import("../backend/db")\nexport default () => null\n',
+      "frontend/reads.ts": 'export const reads = () => import("../backend/db")\n',
+      "routes/c.tsx": 'import { reads } from "../frontend/reads"\nexport default () => reads()\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const chains = result.diagnostics
+      .filter((d) => d.rule === "server-only-import" && d.file?.startsWith("routes/"))
+      .map((d) => d.chain)
+    expect(chains).toEqual([
+      ["routes/a.tsx", "../frontend/load", "./pool", "pg"],
+      ["routes/b.tsx", "../backend/db"],
+      ["routes/c.tsx", "../frontend/reads", "../backend/db"],
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a loader in the route's backend half reading backend code is clean", async () => {
+    const dir = await project({
+      "backend/db.ts":
+        'import { Database } from "bun:sqlite"\nexport const db = new Database("app.db")\n',
+      "routes/notes.backend.ts":
+        'import type { LoaderContext } from "@nifrajs/web"\nimport { db } from "../backend/db"\n' +
+        "export async function loader(_ctx: LoaderContext) {\n" +
+        '  return { notes: db.query("select * from notes").all() }\n}\n',
+      "routes/notes.tsx":
+        'import type { loader } from "./notes.backend"\nexport default () => null\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.filter((d) => d.rule === "server-only-import")).toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a lazily loaded client component with no server reach is clean", async () => {
+    const dir = await project({
+      "routes/chart.tsx":
+        'const Chart = () => import("../components/chart")\nexport default () => Chart\n',
+      "components/chart.ts": 'export const draw = () => "svg"\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.find((d) => d.rule === "server-only-import")).toBeUndefined()
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("zone rules from source (NF-C028, NF-C029)", () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-zones-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+  const findings = async (dir: string, code: string) =>
+    (await collectCheckResult(dir, { lintsOnly: true })).diagnostics
+      .filter((d) => d.code === code)
+      .map((d) => `${d.file}:${d.line} ${d.message}`)
+
+  test("unzoned code, backend importing frontend, shared importing frontend", async () => {
+    const dir = await project({
+      "lib/format.ts": "export const format = (n: number) => String(n)\n",
+      "frontend/theme.ts": 'export const theme = "dark"\n',
+      "routes/index.tsx":
+        'import { format } from "../lib/format"\nexport default () => format(1)\n',
+      "backend/report.ts":
+        'import { theme } from "../frontend/theme"\nexport const report = theme\n',
+      "shared/ui.ts": 'import { theme } from "../frontend/theme"\nexport const ui = theme\n',
+      "shared/types.ts":
+        'import type { theme } from "../frontend/theme"\nexport type T = typeof theme\n',
+      "routes/index.backend.ts":
+        'import { ui } from "../shared/ui"\nexport const loader = () => ui\n',
+    })
+    const found = await findings(dir, "NF-C028")
+    expect(found).toHaveLength(3)
+    expect(found[0]).toStartWith(
+      "backend/report.ts:1 backend/report.ts (backend code) imports frontend/theme.ts",
+    )
+    expect(found[1]).toStartWith(
+      'routes/index.tsx:1 routes/index.tsx imports lib/format.ts: "lib/format.ts" is in no zone',
+    )
+    expect(found[2]).toContain(
+      "shared/ui.ts (shared code) imports frontend/theme.ts (frontend code)",
+    )
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a zoned app is clean", async () => {
+    const dir = await project({
+      "shared/format.ts": "export const format = (n: number) => String(n)\n",
+      "frontend/card.tsx":
+        'import { format } from "../shared/format"\nexport const Card = () => format(1)\n',
+      "backend/db.ts": 'import { format } from "../shared/format"\nexport const db = format(2)\n',
+      "routes/index.tsx": 'import { Card } from "../frontend/card"\nexport default Card\n',
+      "routes/index.backend.ts":
+        'import { db } from "../backend/db"\nexport const loader = () => db\n',
+    })
+    expect(await findings(dir, "NF-C028")).toEqual([])
+    expect(await findings(dir, "NF-C029")).toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("browser code reading a private variable, under the app's declared prefix", async () => {
+    const dir = await project({
+      "backend/framework.ts": 'export const publicEnvPrefix = "APP_PUBLIC_"\n',
+      "routes/index.tsx":
+        "export default () => [process.env.APP_PUBLIC_URL, process.env.PUBLIC_URL]\n",
+      "shared/config.ts": "// process.env.COMMENT\nexport const db = Bun.env.DATABASE_URL\n",
+      "routes/index.backend.ts": "export const loader = () => process.env.DATABASE_URL\n",
+    })
+    expect(await findings(dir, "NF-C029")).toEqual([
+      "routes/index.tsx:1 routes/index.tsx it reads private environment variable process.env.PUBLIC_URL. Browser code may read only NODE_ENV and variables named APP_PUBLIC_*; read the rest in a loader, an action or under backend/",
+      "shared/config.ts:2 shared/config.ts it reads private environment variable Bun.env.DATABASE_URL. Browser code may read only NODE_ENV and variables named APP_PUBLIC_*; read the rest in a loader, an action or under backend/",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("data guard from source (NF-C030, NF-C031)", () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-data-guard-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+  const findings = async (dir: string, code: string) =>
+    (await collectCheckResult(dir, { lintsOnly: true })).diagnostics
+      .filter((d) => d.code === code)
+      .map((d) => `${d.file}:${d.line} ${d.severity}`)
+
+  test("a loader or action that may return data without its output schema", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts":
+        "export async function loader({ api }: { api: unknown }): Promise<{ n: number }> {\n  return { n: 1 }\n}\nexport const action = () => ({ ok: true })\n",
+      "routes/b.tsx": "export default () => null\n",
+      "routes/b.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "export const loaderOutput = t.object({ n: t.number() })",
+        "export const loader = () => ({ n: 1 })",
+        "",
+      ].join("\n"),
+      "routes/c.tsx": "export default () => null\n",
+      "routes/c.backend.ts": [
+        'import { redirect } from "@nifrajs/web"',
+        "export function loader(): never {",
+        '  throw new Error("down")',
+        "}",
+        "export async function action() {",
+        '  if (Math.random() > 1) return redirect("/x")',
+        "  return",
+        "}",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C030")).toEqual([
+      "routes/a.backend.ts:1 warning",
+      "routes/a.backend.ts:4 warning",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a sensitive field an output schema names without t.declassified", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "export const loaderOutput = t.object({",
+        "  user: t.object({ name: t.string(), passwordHash: t.string() }),",
+        '  uploadToken: t.declassified("a one-time upload token", t.string()),',
+        "  csrfToken: t.string(),",
+        "})",
+        "export const actionInput = t.object({ password: t.string() })",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "backend/todos.fn.ts": [
+        'import { t } from "@nifrajs/schema"',
+        'import { serverFn } from "@nifrajs/web/fn"',
+        "export const me = serverFn(",
+        '  { input: t.object({ apiKey: t.string() }), output: t.object({ "api_key": t.string() }) },',
+        '  () => ({ api_key: "x" }),',
+        ")",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C031")).toEqual([
+      "backend/todos.fn.ts:4 error",
+      "routes/a.backend.ts:3 error",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("credentials in browser code (NF-C032)", () => {
+  // Assembled at runtime so this file carries no credential-shaped literal.
+  const STRIPE = ["sk_", "live_", "4eC39HqLyjWDarjtT1zdp7dc"].join("")
+  const AWS = ["AKIA", "IOSFODNN7EXAMPLE"].join("")
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-secrets-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+  const findings = async (dir: string) =>
+    (await collectCheckResult(dir, { lintsOnly: true })).diagnostics
+      .filter((d) => d.code === "NF-C032")
+      .map((d) => `${d.file}:${d.line ?? "-"} ${d.evidence?.[0] ?? d.message}`)
+
+  test("browser code and public/ files, never backend code", async () => {
+    const dir = await project({
+      "routes/index.tsx": `export const key = "${STRIPE}"\nexport default () => null\n`,
+      "routes/index.backend.ts": `export const key = "${STRIPE}"\nexport const loader = () => null\n`,
+      "shared/config.ts": 'export const config = { apiKey: "Zq8mW2vX9pLr4TbN7yKc3HdF" }\n',
+      "backend/aws.ts": `export const id = "${AWS}"\n`,
+      "public/keys.txt": `${AWS}\n`,
+    })
+    expect(await findings(dir)).toEqual([
+      "public/keys.txt:1 rule: key-format",
+      "routes/index.tsx:1 rule: key-format",
+      "shared/config.ts:1 rule: assigned-secret",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("nifra.config.ts exemptions apply, and a malformed one is reported", async () => {
+    const dir = await project({
+      "routes/index.tsx": `export const key = "${STRIPE}"\nexport default () => null\n`,
+      "nifra.config.ts": [
+        "export const secretExemptions = [",
+        '  { rule: "key-format", file: "routes/index.tsx", reason: "a published test fixture" },',
+        "]",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir)).toEqual([])
+    await writeFile(
+      join(dir, "nifra.config.ts"),
+      'export const secretExemptions = [{ rule: "key-format", file: "routes/index.tsx", reason: "" }]\n',
+    )
+    expect(await findings(dir)).toEqual([
+      expect.stringContaining(
+        "nifra.config.ts:- [nifra/web] secretExemptions[0] needs a reason",
+      ) as unknown as string,
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an exemption whose strings hold brackets, braces or colons is read whole", async () => {
+    const dir = await project({
+      "routes/[lang]/index.tsx": `export const key = "${STRIPE}"\nexport default () => null\n`,
+      "public/keys.txt": `${AWS}\n`,
+      "nifra.config.ts": [
+        "export const secretExemptions: SecretExemption[] = [",
+        '  { rule: "key-format", file: "routes/[lang]/index.tsx", reason: "a test key [1] {see file: x}" },',
+        "  { rule: 'key-format', file: 'public/keys.txt', reason: 'documented, not live' },",
+        "]",
+        "",
+      ].join("\n"),
+    })
+    expect(readSecretExemptions(dir).map((e) => [e.file, e.reason])).toEqual([
+      ["routes/[lang]/index.tsx", "a test key [1] {see file: x}"],
+      ["public/keys.txt", "documented, not live"],
+    ])
+    expect(await findings(dir)).toEqual([])
+    await rm(dir, { recursive: true, force: true })
   })
 })

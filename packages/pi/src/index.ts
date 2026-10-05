@@ -18,6 +18,11 @@ export interface PiBackendOptions {
   readonly command?: string
   /** Extra arguments appended after `--mode rpc`. */
   readonly args?: readonly string[]
+  /**
+   * Variables Pi runs with, on top of the base set (`PATH`, `HOME`, locale, terminal, and the
+   * model-provider credentials Pi reads, such as `ANTHROPIC_API_KEY`). Nothing else from the parent
+   * environment passes; a key mapped to `undefined` is withheld even when the parent has it.
+   */
   readonly env?: Readonly<Record<string, string | undefined>>
   readonly sessionDir?: string
   readonly noSession?: boolean
@@ -824,6 +829,61 @@ function writeRpc(session: PiSession, value: Record<string, unknown>): void {
   stdin.flush()
 }
 
+// The model-provider credentials Pi's providers read from the environment. Pi cannot reach a model
+// without one, and running `pi` directly would see them; every other parent variable stays out.
+const PI_PROVIDER_ENV = [
+  "AI_GATEWAY_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_OAUTH_TOKEN",
+  "ANT_LING_API_KEY",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+  "AWS_DEFAULT_REGION",
+  "AWS_PROFILE",
+  "AWS_REGION",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "AZURE_OPENAI_API_KEY",
+  "BASETEN_API_KEY",
+  "CEREBRAS_API_KEY",
+  "CLOUDFLARE_API_KEY",
+  "COPILOT_GITHUB_TOKEN",
+  "DEEPSEEK_API_KEY",
+  "FIREWORKS_API_KEY",
+  "GCLOUD_PROJECT",
+  "GEMINI_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_API_KEY",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_CLOUD_PROJECT",
+  "GROQ_API_KEY",
+  "HF_TOKEN",
+  "KIMI_API_KEY",
+  "MINIMAX_API_KEY",
+  "MINIMAX_CN_API_KEY",
+  "MISTRAL_API_KEY",
+  "MOONSHOT_API_KEY",
+  "NVIDIA_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENCODE_API_KEY",
+  "OPENROUTER_API_KEY",
+  "QWEN_TOKEN_PLAN_API_KEY",
+  "QWEN_TOKEN_PLAN_CN_API_KEY",
+  "RADIUS_API_KEY",
+  "TOGETHER_API_KEY",
+  "XAI_API_KEY",
+  "XIAOMI_API_KEY",
+  "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+  "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+  "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+  "ZAI_API_KEY",
+  "ZAI_CODING_CN_API_KEY",
+]
+
 function filteredEnv(
   values: Readonly<Record<string, string | undefined>> | undefined,
 ): Record<string, string> {
@@ -834,6 +894,7 @@ function filteredEnv(
     "LANG",
     "LC_ALL",
     "TERM",
+    ...PI_PROVIDER_ENV,
     ...(process.platform === "win32"
       ? [
           "SystemRoot",

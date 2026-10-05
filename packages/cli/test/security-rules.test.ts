@@ -32,6 +32,19 @@ describe("built-in security rules", () => {
     )
   })
 
+  test("a generic arrow in a .ts file does not hide the code after it", async () => {
+    // Parsed as TSX, `<T>(items: T[])` opens a JSX element and recovery drops the rest of the file.
+    const findings = await scan(
+      "routes/generic.ts",
+      [
+        "const first = <T>(items: T[]): T | undefined => items[0]",
+        "const token = input.token",
+        "if (token === expected) load(first([token]))",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => finding.code)).toContain("NF-S002")
+  })
+
   test("skips presence and typeof checks on secret-like names", async () => {
     const findings = await scan(
       "routes/presence.ts",
@@ -71,6 +84,23 @@ describe("built-in security rules", () => {
     expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S001:2"])
   })
 
+  test("NF-S001 names an arrow or function expression by the binding it is assigned to", async () => {
+    const findings = await scan(
+      "backend/gates.ts",
+      [
+        "const requireAuth = async () => { try { await check() } catch { return true } }",
+        "const canEdit = function () { try { check() } catch { return true } }",
+        "export const gates = { authorizeAdmin: (user) => { try { check(user) } catch {} } }",
+        "const loadProfile = async () => { try { await load() } catch { return null } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S001:1",
+      "NF-S001:2",
+      "NF-S001:3",
+    ])
+  })
+
   test("NF-S001 delegated denial: a catch that calls fail() is not fail-open", async () => {
     const findings = await scan(
       "routes/assert.server.ts",
@@ -94,6 +124,22 @@ describe("built-in security rules", () => {
     )
     // Only the camelCase secret compare on line 3 survives; the enum discriminants do not.
     expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([3])
+  })
+
+  test("NF-S002 flags a secret read from configuration by its UPPER_SNAKE name", async () => {
+    const findings = await scan(
+      "backend/webhook.ts",
+      [
+        "if (header === process.env.API_TOKEN) ok()",
+        "if (header === Bun.env.WEBHOOK_SECRET) ok()",
+        'if (header === process.env["API_KEY"]) ok()',
+        "if (header === env.HMAC_SECRET) ok()",
+        "if (kind === ts.SyntaxKind.PlusToken) ok()",
+      ].join("\n"),
+    )
+    expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([
+      1, 2, 3, 4,
+    ])
   })
 
   test("NF-S002 skips comparisons against a numeric literal (length/version, not a secret)", async () => {
@@ -237,27 +283,33 @@ describe("NF-S002 severity by file role", () => {
   const compare = "if (token === expected) deny()"
 
   test("server-side comparisons fail the gate", async () => {
-    for (const file of ["auth.server.ts", "server/verify.ts", "backend.ts", "lib/hmac.ts"]) {
+    for (const file of [
+      "backend/verify.ts",
+      "routes/login.backend.ts",
+      "shared/hmac.ts",
+      "lib/hmac.ts",
+      "routes/legacy.server.ts",
+    ]) {
       const findings = await scan(file, compare)
       expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
     }
   })
 
-  test("client-bundled comparisons are advisory", async () => {
-    for (const file of ["routes/login.ts", "components/Login.tsx", "app/Form.jsx"]) {
+  test("browser code comparisons are advisory", async () => {
+    for (const file of ["routes/login.tsx", "frontend/Login.tsx", "app/Form.frontend.jsx"]) {
       const findings = await scan(file, compare)
       expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("warn")
     }
   })
 
-  test("a server marker beats a client location (routes/x.server.ts is server)", async () => {
-    const findings = await scan("routes/session.server.ts", compare)
+  test("a route's backend half is server code although it sits in routes/", async () => {
+    const findings = await scan("routes/session.backend.ts", compare)
     expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
   })
 
   test("treats client-side password confirmation pairs as local validation", async () => {
     const findings = await scan(
-      "components/ConfirmPassword.tsx",
+      "frontend/ConfirmPassword.tsx",
       [
         "if (password !== confirm) return false",
         "if (password !== confirmPassword) return false",
@@ -272,7 +324,7 @@ describe("NF-S002 severity by file role", () => {
 
   test("does not weaken confirmation comparisons on the server", async () => {
     const findings = await scan(
-      "routes/auth.server.ts",
+      "routes/auth.backend.ts",
       "if (password !== confirmPassword) return false\nif (password === expectedPassword) return false",
     )
 

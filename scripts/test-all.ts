@@ -36,3 +36,5 @@ for (const step of STEPS) {
 }
 
 console.log("\nAll tests/checks passed.")
+
+export {}

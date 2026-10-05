@@ -17,6 +17,9 @@ import { type FailureDirective, FailureInjectedError, runFailureScenario } from 
 import { type FaultProfile, runFaultProfile } from "./fault-profile.ts"
 import { type EffectLedger, type IdempotencyProof, proveIdempotency } from "./idempotency.ts"
 
+/** Code-unit order, the same in every locale: a case digest must not depend on the machine scoring it. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
 const TOKEN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
 const MAX_CASES = 512
 const MAX_RUBRICS = 32
@@ -509,9 +512,7 @@ export function defineAgentEvalSuite(spec: AgentEvalSuiteSpec): AgentEvalSuite {
             throw new TypeError(`agent eval: case '${caseId}' scored rubric '${rubric.id}' twice`)
           perRubric.set(rubric.id, parseRubricVerdict(rubric, raw))
         }
-        const verdicts = [...perRubric.values()].sort((a, b) =>
-          a.rubricId.localeCompare(b.rubricId),
-        )
+        const verdicts = [...perRubric.values()].sort((a, b) => byCodeUnit(a.rubricId, b.rubricId))
         cases.push({
           caseId,
           verdicts: Object.freeze(verdicts),

@@ -10,10 +10,13 @@
  *   bun run site/build-vercel.ts
  */
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mdxBunPlugin } from "@nifrajs/content/mdx"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { buildSiteIslands } from "./build-islands"
 
 const dir = import.meta.dir
+// `.mdx` routes need the same compiler build.ts uses; without it Bun.build crashes on them.
+const mdx = mdxBunPlugin({ jsxImportSource: "react" })
 const out = `${dir}/.vercel/output`
 const fn = `${out}/functions/index.func`
 
@@ -27,6 +30,7 @@ const client = await buildClient({
   clientModule: "@nifrajs/web-react/client",
   conditions: ["bun", "browser"],
   define: { "process.env.NODE_ENV": '"production"' },
+  plugins: [mdx],
 })
 await buildSiteIslands({ outDir: `${out}/static/assets` })
 
@@ -36,6 +40,7 @@ const { worker } = await buildServer({
   serverEntry: `${dir}/server-vercel.ts`,
   outDir: `${dir}/.build-vercel`,
   clientEntry: client.entry,
+  plugins: [mdx],
 })
 
 cpSync(worker, `${fn}/index.js`)
@@ -45,6 +50,8 @@ cpSync(`${dir}/public/logo-mark.png`, `${out}/static/assets/logo-mark.png`)
 cpSync(`${dir}/public/og.jpg`, `${out}/static/assets/og.jpg`)
 cpSync(`${dir}/public/background.png`, `${out}/static/assets/background.png`)
 cpSync(`${dir}/public/nifra-bot-avatar.png`, `${out}/static/assets/nifra-bot-avatar.png`)
+cpSync(`${dir}/public/fonts`, `${out}/static/assets/fonts`, { recursive: true })
+cpSync(`${dir}/public/media`, `${out}/static/assets/media`, { recursive: true })
 rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
 
 // Build Output API v3: the function is an Edge runtime entry; routing serves real files first

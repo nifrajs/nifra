@@ -12,6 +12,7 @@ export {
   type InProcessClient,
   type InProcessClientOptions,
   inProcessClient,
+  type TestClientOptions,
   testClient,
 } from "./client.ts"
 export type { Jsonify } from "./jsonify.ts"
@@ -22,7 +23,20 @@ export {
   reservedKeyFor,
 } from "./reserved.ts"
 export type { ApiError, Result } from "./result.ts"
-export type { ActionArgs, ActionData, ApiProxy, LoaderArgs, LoaderData } from "./routes.ts"
+export type {
+  ActionArgs,
+  ActionData,
+  ApiProxy,
+  LoaderArgs,
+  LoaderData,
+  LoaderResponseControls,
+  OutputOf,
+  Register,
+  RegisteredBackend,
+  RegisteredEnv,
+  RouteLoaderArgs,
+  SearchSchemaOf,
+} from "./routes.ts"
 export type {
   RegistryOf,
   SubscribeOptions,

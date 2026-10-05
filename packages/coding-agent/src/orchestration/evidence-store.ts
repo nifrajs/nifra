@@ -51,8 +51,9 @@ async function sha256Bytes(text: string): Promise<Uint8Array> {
 /**
  * The identity of one record for the terminal digest: node outcome only. `seq`, `durationMs`, and
  * `runId` are excluded so two runs of the same plan (or the same plan under a different parallel
- * schedule) produce an identical digest - the deterministic-eval anchor. Each node emits at most one
- * record per status, so XOR accumulation never cancels a distinct outcome.
+ * schedule) produce an identical digest - the deterministic-eval anchor. A retried node emits the same
+ * record more than once, so the accumulator adds hashes (mod 2^256) rather than XORing them: repeats
+ * count instead of cancelling in pairs.
  */
 function digestKey(record: RunEvidence): string {
   return canonicalJson({
@@ -97,7 +98,12 @@ class EvidenceAccumulator {
     if (record.artifacts !== undefined)
       for (const ref of record.artifacts) this.artifactRefs.push(ref)
     const hash = await sha256Bytes(digestKey(record))
-    for (let i = 0; i < 32; i++) this.acc[i] = (this.acc[i] as number) ^ (hash[i] as number)
+    let carry = 0
+    for (let i = 31; i >= 0; i--) {
+      const sum = (this.acc[i] as number) + (hash[i] as number) + carry
+      this.acc[i] = sum & 0xff
+      carry = sum >> 8
+    }
     this.pushLive(record)
   }
 

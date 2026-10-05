@@ -9,6 +9,8 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  RenderProps,
+  UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
@@ -18,6 +20,8 @@ import {
   registerBlocker,
   resolveNavigate,
 } from "@nifrajs/web/client"
+// Its own subpath, so an app that never calls `useMatches` never bundles it.
+import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 /**
  * `@nifrajs/web-solid/router` - Solid routing bindings over the agnostic `@nifrajs/web` history layer:
  * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
@@ -29,12 +33,13 @@ import {
   type Accessor,
   type Context,
   createContext,
+  createMemo,
   createSignal,
   onCleanup,
   useContext,
 } from "solid-js"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search + a stable accessor for a `useSearch` used outside a nifra route tree.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -54,6 +59,34 @@ const searchContextSlot = globalThis as {
 export const SearchContext =
   searchContextSlot[SEARCH_CONTEXT_SLOT] ?? createContext<Accessor<Record<string, unknown>>>()
 searchContextSlot[SEARCH_CONTEXT_SLOT] = SearchContext
+
+/** The props `compose` rendered the chain with - getters over the router snapshot on the client - which
+ * {@link useMatches} reads. A `globalThis` singleton for the same reason as {@link SearchContext}. */
+const PROPS_CONTEXT_SLOT = Symbol.for("nifra.web-solid.props-context")
+const propsContextSlot = globalThis as { [PROPS_CONTEXT_SLOT]?: Context<RenderProps | undefined> }
+export const RenderPropsContext =
+  propsContextSlot[PROPS_CONTEXT_SLOT] ?? createContext<RenderProps>()
+propsContextSlot[PROPS_CONTEXT_SLOT] = RenderPropsContext
+
+const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
+
+/**
+ * The rendered chain - each layout, then the page - with the URL prefix, params and loader data each
+ * one owns, plus its `handle` export, as a reactive accessor. The same list on the server render and
+ * the client mount, so a layout can render breadcrumbs from its children's `handle`s without a
+ * hydration mismatch; it updates in place when a same-route navigation settles.
+ *
+ * ```tsx
+ * export const handle = { crumb: "Settings" }
+ * const matches = useMatches()
+ * const crumbs = () => matches().flatMap((m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? [])
+ * ```
+ */
+export function useMatches(): Accessor<readonly UIMatch[]> {
+  const props = useContext(RenderPropsContext)
+  if (props === undefined) return () => NO_MATCHES
+  return createMemo(() => chainMatches(props))
+}
 
 /**
  * The route's typed, validated search params as a reactive accessor - the SAME value the loader received

@@ -1,6 +1,11 @@
 name = "nifra-isr"
 main = "dist-server/worker.js"
-compatibility_date = "2025-01-01"
+# 2025-04-01 or later: from that date `nodejs_compat` fills `process.env` from the Worker's variables,
+# where backend/app.ts reads NIFRA_ALLOW_MEMORY_RATE_LIMIT; until that variable is "true" the deployed
+# Worker refuses to start. Set it (a Worker variable, or [vars] below) only if a per-isolate rate limit
+# will do: Cloudflare runs many isolates and each counts alone. `bun run dev` sets it for its one local
+# process.
+compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Workers Assets: the content-hashed client bundle (buildClient → ./public/assets) is served at

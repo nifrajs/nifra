@@ -4,13 +4,16 @@ import {
   type BackendEvidenceProvider,
   type BackendMount,
   type BackendMountHandler,
+  type BackendPlatformBinder,
   type BackendWebSocketMountHandler,
   type BackendWebSocketRuntimeProvider,
+  NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
   NIFRA_BACKEND_WS_MOUNT,
   NIFRA_BACKEND_WS_RUNTIME,
 } from "@nifrajs/core/mount"
+import type { Platform } from "@nifrajs/core/server"
 import {
   assertTransportTextBounded,
   createTransportCodecRegistry,
@@ -24,8 +27,13 @@ import {
 } from "@nifrajs/core/transport-codec"
 import { RESERVED_VERB_KEYS } from "./reserved.ts"
 import type { ApiError, Result } from "./result.ts"
+import { hasDotSegment } from "./sendable-path.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
-import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
+import {
+  type PlatformFetchFn,
+  ResponseContractViolation,
+  withResponseValidation,
+} from "./validate-responses.ts"
 import { NO_SOCKET, openWebSocket } from "./ws.ts"
 
 const CORE_WS_RUNTIME = Symbol.for("@nifrajs/core/get-ws-runtime")
@@ -44,7 +52,7 @@ const CORE_WS_RUNTIME = Symbol.for("@nifrajs/core/get-ws-runtime")
 const HTTP_VERBS: ReadonlySet<string> = new Set(RESERVED_VERB_KEYS)
 const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
 
-/** Marks a fetcher whose responses are same-process objects (see {@link inProcessClient}). */
+/** Marks client options whose transport returns same-process responses (see {@link inProcessClient}). */
 const LOCAL_FETCH = Symbol("nifra.local-fetch")
 
 /**
@@ -69,7 +77,11 @@ export interface ClientRetryOptions {
 }
 
 export interface ClientOptions {
-  /** Headers sent on every request (a per-call `headers` option is merged on top). */
+  /**
+   * Headers sent on every HTTP request (a per-call `headers` option is merged on top). A WebSocket
+   * handshake carries none of them, on any runtime: a browser cannot set them, and a socket that
+   * authenticated under Bun but not in the browser would be worse than one that never did.
+   */
   readonly headers?: Record<string, string>
   /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */
   readonly fetch?: FetchFn
@@ -99,7 +111,8 @@ export interface ClientOptions {
    *
    * Bounds the two paths that build something in memory - a JSON body becoming an object graph, a text
    * body becoming a string - and it bounds them while streaming, cancelling the read the moment the
-   * total passes. A 2 GB string costs as much as a 2 GB object, so both answer to one number.
+   * total passes. A 2 GB string costs as much as a 2 GB object, so both answer to one number. Each
+   * event a `.subscribe()` stream assembles answers to it too.
    *
    * A BINARY body is deliberately not bounded by this. That is a download, and a size limit on a
    * download is a bug rather than a defence - the caller asked for the file. Bound one at the call site
@@ -134,9 +147,22 @@ function defaultBackoff(attempt: number): number {
   return Math.min(300 * 2 ** (attempt - 1), 3000) + Math.random() * 100
 }
 
-function delay(ms: number): Promise<void> {
+/** Resolves after `ms`, or as soon as `signal` aborts, and leaves no listener on the signal either way:
+ * a long-lived signal waited on once per reconnect otherwise collects one listener per wait. */
+function delay(ms: number, signal?: AbortSignal, unref = false): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+    if (signal?.aborted === true) {
+      resolve()
+      return
+    }
+    const done = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    if (unref) (timer as { unref?: () => void }).unref?.()
+    signal?.addEventListener("abort", done, { once: true })
   })
 }
 
@@ -174,6 +200,11 @@ export interface InProcessClientOptions extends Omit<ClientOptions, "fetch"> {
    * check parses a clone of each JSON body, a cost that belongs in tests, not production hot paths.
    */
   readonly validateResponses?: boolean
+}
+
+export interface TestClientOptions extends InProcessClientOptions {
+  /** The address every call comes from, as a socket peer's would (default `"127.0.0.1"`). */
+  readonly clientIp?: string
 }
 
 interface CallOptions {
@@ -226,11 +257,21 @@ export function client(
  * The returned proxy also implements the explicit symbol-keyed {@link BackendMount} interface, so
  * `createWebApp({ api: inProcessClient(backend) })` can auto-mount the backend while forwarding the
  * outer runtime's `env` and `waitUntil`.
+ *
+ * **Loader calls inherit the page request's platform identity.** While `createWebApp` renders a page,
+ * each loader, action and boundary gets a `ctx.api` bound to that request's platform: the backend sees
+ * the visitor's `c.clientIp` (as the outer app derived it under its `clientIp` trust declaration),
+ * `c.env` and `c.waitUntil`. Read the caller through `c.clientIp` - identity travels in the platform,
+ * so rebuilding a `Request` never loses it. Only platform fields travel: the page request's `cookie`,
+ * `authorization` and other headers are NOT copied, so a loader call is anonymous unless the loader
+ * passes headers itself (`ctx.api.me.get({ headers: { cookie } })`). Used outside a page render (a
+ * script, a job), calls carry no platform, so they come from no address; {@link testClient} is the
+ * variant whose calls come from a local peer.
  */
 const utf8 = new TextEncoder()
 
 /** Byte length of a body whose size is knowable without reading a stream; `undefined` otherwise
- * (a `ReadableStream` or `FormData` body stays lengthless - multipart framing is the runtime's). */
+ * (a `ReadableStream` body stays lengthless; a `FormData` body is framed by {@link framedFormRequest}). */
 function knownBodyLength(body: NonNullable<RequestInit["body"]>): number | undefined {
   if (typeof body === "string") return utf8.encode(body).byteLength
   if (body instanceof URLSearchParams) return utf8.encode(body.toString()).byteLength
@@ -255,19 +296,58 @@ function synthesizedRequest(url: string, init?: RequestInit): Request {
   return request
 }
 
+/**
+ * A form body as the bytes a socket would carry, with the length a network peer would declare.
+ *
+ * Handing the `FormData` itself to `Request` leaves the runtime to encode it while the app reads,
+ * which has two costs in-process. The request arrives lengthless, so a fail-closed length gate
+ * refuses it. And an app that stops reading early - a body over its limit - cancels a stream the
+ * runtime is still writing to, which Node 26 reports as an unhandled rejection. Encoding first
+ * gives the app a finished body it can refuse like any other.
+ */
+async function framedFormRequest(url: string, init: RequestInit, form: FormData): Promise<Request> {
+  const encoded = new Response(form as ConstructorParameters<typeof Response>[0])
+  // Read before the body: Bun derives this header from the body and cannot once it is consumed.
+  const contentType = encoded.headers.get("content-type") as string
+  const bytes = await encoded.arrayBuffer()
+  const headers = new Headers(init.headers)
+  headers.set("content-type", contentType)
+  headers.set("content-length", String(bytes.byteLength))
+  return new Request(url, { ...init, headers, body: bytes })
+}
+
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
 >(app: App, options?: InProcessClientOptions): InProcessClient<App> {
+  return createInProcessClient(app, options, undefined)
+}
+
+function createInProcessClient<
+  App extends { fetch(request: Request): Response | Promise<Response> },
+>(
+  app: App,
+  options: InProcessClientOptions | undefined,
+  // The platform an unbound call carries. Only `testClient` sets one: a production call made on behalf
+  // of a remote user must not look local to rate limits or IP rules.
+  unboundPlatform: Platform | undefined,
+): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
-  // is the platform-aware auto-mount path.
-  const direct: FetchFn = (url, init) => Promise.resolve(app.fetch(synthesizedRequest(url, init)))
+  // is the platform-aware auto-mount path. The optional third argument is the calling request's
+  // platform, supplied only by a view from the bind seam below; the unbound proxy never passes one.
+  const direct: PlatformFetchFn = (url, init, boundPlatform) => {
+    const platform = boundPlatform ?? unboundPlatform
+    const body = init?.body
+    if (body instanceof FormData) {
+      return framedFormRequest(url, init as RequestInit, body).then((request) =>
+        (app.fetch as BackendMountHandler)(request, platform),
+      )
+    }
+    return Promise.resolve(
+      (app.fetch as BackendMountHandler)(synthesizedRequest(url, init), platform),
+    )
+  }
   const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
-  // Mark the bridge as same-process: its response bodies are memory the app already holds, so
-  // `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the streaming
-  // byte-cap reader) - the cap itself is still enforced on the result. Network fetchers are never
-  // marked; they keep the bounded-while-streaming read.
-  ;(bridge as { [LOCAL_FETCH]?: true })[LOCAL_FETCH] = true
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
   const evidenceProvider: BackendEvidenceProvider = async () => {
@@ -304,17 +384,28 @@ export function inProcessClient<
   ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
-  const proxy = client<App>("http://nifra.internal", {
-    ...options,
-    fetch: bridge,
-    [NO_SOCKET]: true,
-  } as ClientOptions)
+  // LOCAL_FETCH marks the transport as same-process: its response bodies are memory the app already
+  // holds, so `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the
+  // streaming byte-cap reader) - the cap itself is still enforced on the result. Network clients are
+  // never marked; they keep the bounded-while-streaming read.
+  const baseOptions = { ...options, [NO_SOCKET]: true, [LOCAL_FETCH]: true } as ClientOptions
+  const proxy = client<App>("http://nifra.internal", { ...baseOptions, fetch: bridge })
+  // Request scoping: a view whose every call carries one request's platform (clientIp/env/waitUntil),
+  // built by the page executor once per render. The view owns its own route tree because the tree's
+  // nodes close over their transport; the validator's router and every other per-client structure are
+  // shared. A view lives for one render, so its nodes skip the memo Maps a long-lived client keeps.
+  // Nothing here runs unless a render asks, so the unbound proxy's per-call path is unchanged.
+  const bindPlatform: BackendPlatformBinder = (platform) => {
+    const bound: FetchFn = (url, init) => bridge(url, init, platform)
+    return createProxy("http://nifra.internal", "", { ...baseOptions, fetch: bound }, false)
+  }
   // An outer Proxy intercepts only the explicit mount symbol, delegating every typed route segment
   // unchanged (`api.users({ id }).get()`).
   return new Proxy(proxy as object, {
     get(targetProxy, key, receiver) {
       if (key === NIFRA_BACKEND_MOUNT) return mount
       if (key === NIFRA_BACKEND_EVIDENCE) return evidenceProvider
+      if (key === NIFRA_BACKEND_BIND_PLATFORM) return bindPlatform
       if (key === NIFRA_BACKEND_WS_MOUNT) {
         return (
           mount as BackendMountHandler & {
@@ -338,7 +429,9 @@ export function inProcessClient<
  * The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the
  * app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation,
  * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on
- * `res.ok`. An alias of {@link inProcessClient} with a test-focused name; identical behavior.
+ * `res.ok`. It is {@link inProcessClient} plus a client address: every call comes from `127.0.0.1`
+ * (or `options.clientIp`), so middleware keyed on the caller, like `rateLimit()`, runs as it would
+ * behind a listener.
  *
  * ```ts
  * import { testClient } from "@nifrajs/client"
@@ -349,7 +442,13 @@ export function inProcessClient<
  * expect(res.ok && res.data.id).toBe("42")
  * ```
  */
-export const testClient = inProcessClient
+export function testClient<App extends { fetch(request: Request): Response | Promise<Response> }>(
+  app: App,
+  options?: TestClientOptions,
+): InProcessClient<App> {
+  const { clientIp = "127.0.0.1", ...rest } = options ?? {}
+  return createInProcessClient(app, rest, { clientIp })
+}
 
 function createProxy(
   base: string,
@@ -418,7 +517,6 @@ function resolveSegment(
         base,
         path,
         {
-          headers: options.headers,
           ...wsOptions,
           ...(options.transport === undefined ? {} : { transport: options.transport }),
         },
@@ -429,6 +527,46 @@ function resolveSegment(
   return createProxy(base, key === "index" ? path : `${path}/${key}`, options, cacheable)
 }
 
+/**
+ * The `multipart/form-data` encoding of a body that carries a file: JSON cannot hold one, so a
+ * record with a `Blob`/`File` value (or a list of them) is sent as a form instead - one part per
+ * value, a list as one part per item under the same name, `null`/`undefined` left out. A
+ * `FormData` passed as the body is sent as is. Anything else returns `undefined` and stays JSON.
+ * A form part is text or a file, so a nested object or list cannot be sent and throws.
+ */
+function formBody(body: unknown): FormData | undefined {
+  if (body instanceof FormData) return body
+  if (body === null || typeof body !== "object" || Array.isArray(body) || body instanceof Blob) {
+    return undefined
+  }
+  const entries = Object.entries(body)
+  const isFile = (value: unknown): boolean => value instanceof Blob
+  if (!entries.some(([, value]) => isFile(value) || (Array.isArray(value) && value.some(isFile)))) {
+    return undefined
+  }
+  const form = new FormData()
+  for (const [name, value] of entries) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item === undefined || item === null) continue
+      if (item instanceof Blob) {
+        form.append(name, item)
+      } else if (
+        typeof item === "string" ||
+        typeof item === "number" ||
+        typeof item === "boolean" ||
+        typeof item === "bigint"
+      ) {
+        form.append(name, String(item))
+      } else {
+        throw new TypeError(
+          `Cannot send "${name}" in a form body: a form field is text or a file, not ${typeof item}`,
+        )
+      }
+    }
+  }
+  return form
+}
+
 async function execute(
   base: string,
   path: string,
@@ -436,6 +574,11 @@ async function execute(
   args: unknown[],
   options: ClientOptions,
 ): Promise<Result<unknown>> {
+  // Refused before anything runs - no hook, no fetch, no retry - because nothing can be sent: the
+  // request would reach a different path than this call names. Same shape as a network failure.
+  if (hasDotSegment(path)) {
+    return { ok: false, status: 0, data: null, error: { error: "invalid_path" } }
+  }
   const isBodyVerb = BODY_VERBS.has(verb)
   const body = isBodyVerb ? args[0] : undefined
   const callOptions = (isBodyVerb ? args[1] : args[0]) as CallOptions | undefined
@@ -452,10 +595,20 @@ async function execute(
   }
   const init: RequestInit = { method, headers }
   if (body !== undefined) {
-    const codec = options.transport?.codec ?? plainJsonCodec
-    init.body = codec.encode(body)
-    headers["content-type"] = codec.mediaType
-    if (options.transport !== undefined) headers.accept ??= codec.mediaType
+    const form = formBody(body)
+    if (form !== undefined) {
+      init.body = form
+      // The platform writes this header itself, boundary included; one set by hand would name a
+      // boundary the body does not use and the server would refuse the request.
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === "content-type") delete headers[name]
+      }
+    } else {
+      const codec = options.transport?.codec ?? plainJsonCodec
+      init.body = codec.encode(body)
+      headers["content-type"] = codec.mediaType
+      if (options.transport !== undefined) headers.accept ??= codec.mediaType
+    }
   }
   const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)
   if (signal !== undefined) init.signal = signal
@@ -484,17 +637,25 @@ async function execute(
       // A contract violation is a test assertion (validateResponses), not a call outcome - let it
       // fail the test instead of degrading into a `Result` the test would happily branch on.
       if (error instanceof ResponseContractViolation) throw error
-      if (methodRetryable && attempt < maxRetries) {
+      // An aborted call (the caller's signal, or `timeoutMs` spent) fails every further attempt at once.
+      if (methodRetryable && attempt < maxRetries && signal?.aborted !== true) {
         attempt += 1
-        await delay(backoff(attempt))
+        await delay(backoff(attempt), signal)
         continue
       }
       const code = timeout?.aborted === true ? "timeout" : "network_error"
       return { ok: false, status: 0, data: null, error: { error: code } }
     }
-    if (methodRetryable && attempt < maxRetries && retryStatuses.has(response.status)) {
+    if (
+      methodRetryable &&
+      attempt < maxRetries &&
+      signal?.aborted !== true &&
+      retryStatuses.has(response.status)
+    ) {
+      // This answer is discarded; cancelling its body frees the connection now rather than at GC.
+      void response.body?.cancel().catch(() => {})
       attempt += 1
-      await delay(backoff(attempt))
+      await delay(backoff(attempt), signal)
       continue
     }
     break
@@ -511,8 +672,15 @@ async function execute(
   try {
     data = await parseBody(response, options)
   } catch (cause) {
-    if (!isPayloadTooLarge(cause)) throw cause
-    return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
+    if (isPayloadTooLarge(cause)) {
+      return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
+    }
+    // A codec refusing the payload stays a throw. Anything else is the read itself failing - the
+    // deadline or the caller's signal firing mid-body, or the connection dropping - which the fetch
+    // above already reports as a Result.
+    if (cause instanceof Error && cause.name === "TransportCodecError") throw cause
+    const code = timeout?.aborted === true ? "timeout" : "network_error"
+    return { ok: false, status: 0, data: null, error: { error: code } }
   }
   if (response.ok) {
     return { ok: true, status: response.status, data, error: null }
@@ -540,18 +708,28 @@ interface SseFrame {
   retry?: number
 }
 
+// Past 2^31-1 ms a timer fires at once, so a larger `retry:` would turn into an immediate reconnect.
+const MAX_RETRY_MS = 2_147_483_647
+
 /**
  * Incrementally parse a `text/event-stream` body, invoking `onFrame` per dispatched event.
- * Implements the SSE wire format: `data:` accumulates multi-line, `id:`/`retry:` update stream
- * state, `:` lines are comments, a blank line dispatches.
+ * Implements the SSE wire format: CRLF, CR, and LF all end a line, `data:` accumulates multi-line,
+ * `id:`/`retry:` update stream state, `:` lines are comments, a blank line dispatches. An event
+ * still being assembled may hold at most `maxEventLength` characters.
  */
 async function readSseStream(
   body: ReadableStream<Uint8Array>,
   onFrame: (frame: SseFrame) => void,
+  maxEventLength: number,
 ): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
-  let buffer = ""
+  const lineEnd = /\r\n?|\n/g
+  // Only newly decoded text is scanned; the unfinished line is carried here, so a line that arrives
+  // over many small reads costs its length once rather than once per read.
+  let partial = ""
+  let afterCr = false
+  let held = 0
   let dataLines: string[] = []
   let frame: SseFrame = {}
 
@@ -561,6 +739,7 @@ async function readSseStream(
       onFrame(frame)
     }
     dataLines = []
+    held = 0
     frame = {}
   }
 
@@ -574,42 +753,66 @@ async function readSseStream(
     const field = colon === -1 ? line : line.slice(0, colon)
     let value = colon === -1 ? "" : line.slice(colon + 1)
     if (value.startsWith(" ")) value = value.slice(1)
-    if (field === "data") dataLines.push(value)
-    else if (field === "id") frame.id = value
-    else if (field === "retry") {
-      const parsed = Number(value)
-      if (Number.isFinite(parsed)) frame.retry = parsed
+    if (field === "data") {
+      dataLines.push(value)
+      held += value.length + 1
+    } else if (field === "id") {
+      // The grammar ignores an id with a NUL; it could never be sent back as `Last-Event-ID`.
+      if (!value.includes("\0")) frame.id = value
+    } else if (field === "retry") {
+      if (/^\d+$/.test(value)) frame.retry = Math.min(Number(value), MAX_RETRY_MS)
     }
     // `event:` names pass through untyped for now - the contract types the data payload.
+  }
+
+  const feed = (text: string): void => {
+    if (text === "") return
+    // An LF opening this read completes a CRLF whose CR closed the previous one.
+    let start = afterCr && text.charCodeAt(0) === 10 ? 1 : 0
+    lineEnd.lastIndex = start
+    for (let end = lineEnd.exec(text); end !== null; end = lineEnd.exec(text)) {
+      handleLine(partial + text.slice(start, end.index))
+      partial = ""
+      start = lineEnd.lastIndex
+    }
+    afterCr = text.charCodeAt(text.length - 1) === 13
+    partial += text.slice(start)
+    if (partial.length + held > maxEventLength) throw new Error("sse_event_too_large")
   }
 
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      for (;;) {
-        const newline = buffer.indexOf("\n")
-        if (newline === -1) break
-        const line = buffer.slice(0, newline).replace(/\r$/, "")
-        buffer = buffer.slice(newline + 1)
-        handleLine(line)
-      }
+      feed(decoder.decode(value, { stream: true }))
     }
-    buffer += decoder.decode()
-    if (buffer !== "") handleLine(buffer.replace(/\r$/, ""))
+    feed(decoder.decode())
+    if (partial !== "") handleLine(partial)
     dispatch() // an unterminated final frame still dispatches
+  } catch (error) {
+    // Stopping early must not leave the response open behind a released lock.
+    void reader.cancel(error).catch(() => {})
+    throw error
   } finally {
     reader.releaseLock()
   }
+}
+
+/** A `Last-Event-ID` value as EventSource sends it: a header carries bytes, so an id beyond ASCII goes
+ * as its UTF-8 bytes - a character past U+00FF would otherwise fail every reconnect before it left. */
+function lastEventIdHeader(id: string): string {
+  if (/^[\x20-\x7e]*$/.test(id)) return id
+  let bytes = ""
+  for (const byte of new TextEncoder().encode(id)) bytes += String.fromCharCode(byte)
+  return bytes
 }
 
 /**
  * The `.subscribe()` runtime for `app.sse()` routes. fetch-based (never `EventSource`), so it
  * streams over the configured fetcher - network, an in-process bridge, or a test mock - with
  * EventSource semantics where they matter: auto-reconnect with backoff + jitter (honoring the
- * server's `retry:` hint), `Last-Event-ID` resumption, JSON-parsed typed events. Never throws:
- * failures reach `onError`; a terminal end reaches `onClose`.
+ * server's `retry:` hint after a stream it served), `Last-Event-ID` resumption, JSON-parsed typed
+ * events. Never throws: failures reach `onError`; a terminal end reaches `onClose`.
  */
 function subscribeSse(
   base: string,
@@ -646,22 +849,19 @@ function subscribeSse(
   const query = callOptions?.query ? buildQuery(callOptions.query) : ""
   if (query !== "") url += `?${query}`
   const doFetch = options.fetch ?? fetch
-
-  const delay = (ms: number): Promise<void> =>
-    new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms)
-      ;(timer as { unref?: () => void }).unref?.()
-      controller.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true },
-      )
-    })
+  // One event decodes into one value, so it answers to the same bound a decoded response body does.
+  const maxEventLength = options.transport?.maxBytes ?? options.maxDecodedBytes ?? 16 * 1024 * 1024
 
   void (async () => {
+    if (hasDotSegment(path)) {
+      // Nothing is sent (see `hasDotSegment`). Reported after `subscribe()` has returned, as every
+      // other failure is, so a handler can use the subscription it was given.
+      await Promise.resolve()
+      if (closed) return
+      callOptions?.onError?.(new Error("invalid_path"))
+      close()
+      return
+    }
     let attempt = 0
     while (!closed) {
       try {
@@ -669,24 +869,30 @@ function subscribeSse(
           ...options.headers,
           ...callOptions?.headers,
           accept: "text/event-stream",
-          ...(lastEventId !== undefined ? { "last-event-id": lastEventId } : {}),
+          ...(lastEventId ? { "last-event-id": lastEventIdHeader(lastEventId) } : {}),
         }
         const response = await doFetch(url, { headers, signal: controller.signal })
         if (!response.ok || response.body === null) {
+          void response.body?.cancel().catch(() => {})
           throw new Error(`sse_http_${response.status}`)
         }
         attempt = 0 // a successful connect resets the backoff
-        await readSseStream(response.body, (frame) => {
-          if (frame.id !== undefined) lastEventId = frame.id
-          if (frame.retry !== undefined) serverRetryMs = frame.retry
-          if (frame.data !== undefined) {
-            try {
-              onEvent(JSON.parse(frame.data))
-            } catch (error) {
-              callOptions?.onError?.(error)
+        await readSseStream(
+          response.body,
+          (frame) => {
+            if (closed) return
+            if (frame.id !== undefined) lastEventId = frame.id
+            if (frame.retry !== undefined) serverRetryMs = frame.retry
+            if (frame.data !== undefined) {
+              try {
+                onEvent(JSON.parse(frame.data))
+              } catch (error) {
+                callOptions?.onError?.(error)
+              }
             }
-          }
-        })
+          },
+          maxEventLength,
+        )
         // Clean server-side end: a finite stream (`reconnect: false`) completes here.
         if (!reconnectEnabled) {
           close()
@@ -702,9 +908,18 @@ function subscribeSse(
       }
       if (closed) return
       const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt)
+      const jittered = backoff / 2 + Math.random() * (backoff / 2)
+      // The server's `retry:` times the reconnect after a stream it served (`attempt` is 0 only then),
+      // and is only a floor while reconnects keep failing: a hint of 0 must not become a request loop
+      // against a server that has started answering 503.
+      const wait =
+        serverRetryMs === undefined
+          ? jittered
+          : attempt === 0
+            ? serverRetryMs
+            : Math.max(serverRetryMs, jittered)
       attempt = Math.min(attempt + 1, 10)
-      const wait = serverRetryMs ?? backoff / 2 + Math.random() * (backoff / 2)
-      await delay(wait)
+      await delay(wait, controller.signal, true)
     }
   })()
 
@@ -803,12 +1018,11 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
-  // In-process responses (the marked fetcher) hold their body as same-process memory the app
+  // In-process responses (the marked transport) hold their body as same-process memory the app
   // already allocated, so the streaming byte-cap reader protects nothing there - the native read
   // is ~23x cheaper and the SAME cap is enforced on the result (identical error). A network
-  // fetcher is never marked and keeps the bounded-while-streaming read.
-  const local =
-    (options.fetch as { readonly [LOCAL_FETCH]?: true } | undefined)?.[LOCAL_FETCH] === true
+  // client is never marked and keeps the bounded-while-streaming read.
+  const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
   if (
     contentType.startsWith("application/json") ||
     contentType.startsWith("application/vnd.nifra.")

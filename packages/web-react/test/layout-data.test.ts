@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
+import type { RouterState } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { compose } from "../src/compose.ts"
 import { reactAdapter } from "../src/index.ts"
+import { routeProps } from "../src/route-props.ts"
 
 const html = async (node: ReactNode): Promise<string> => {
   const stream = await reactAdapter.renderToStream([() => node], { data: null })
@@ -59,4 +61,27 @@ test("an entry past the layout prefix is ignored rather than mis-indexed", async
   const out = await html(node)
   expect(out).toContain('{"only":"root"}')
   expect(out).toContain('data-layout="mid">null')
+})
+
+const snapshot = (over: Partial<RouterState> = {}): RouterState => ({
+  routeId: "org/index",
+  params: {},
+  path: "/org",
+  data: { page: 1 },
+  pending: false,
+  ...over,
+})
+
+test("the mounted Router renders each layout with the snapshot's layout data", async () => {
+  // What the client mount renders for a store snapshot. The server rendered these layouts with their
+  // data, so a client render that drops it is a hydration mismatch on the first paint.
+  const props = routeProps(snapshot({ layoutData: [{ from: "root" }, { from: "org" }] }), undefined)
+  const out = await html(compose([layout("root"), layout("org"), Page], props))
+  expect(out).toContain('data-layout="root">{"from":"root"}')
+  expect(out).toContain('data-layout="org">{"from":"org"}')
+  expect(out).toContain('{"page":1}')
+})
+
+test("a snapshot with no layout data leaves the key off the props", () => {
+  expect("layoutData" in routeProps(snapshot(), undefined)).toBe(false)
 })

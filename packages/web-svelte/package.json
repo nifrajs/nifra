@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-svelte",
-  "version": "3.5.0",
-  "description": "Svelte 5 render adapter for @nifrajs/web - SSR + hydration + the .svelte compiler Bun-plugin.",
+  "version": "4.0.0",
+  "description": "Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte compiler Bun plugin (@nifrajs/web-svelte/plugin).",
   "keywords": [
     "bun",
     "typescript",
@@ -14,6 +14,9 @@
     "full-stack"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

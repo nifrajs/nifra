@@ -28,7 +28,13 @@ export function docsTools(
     // The annotations state that for MCP hosts (and directory reviews check for them).
     {
       name: "nifra_docs",
-      annotations: { title: "Search nifra docs", readOnlyHint: true, openWorldHint: false },
+      annotations: {
+        title: "Search nifra docs",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       description:
         "Search nifra's framework documentation and get back ONLY the matching sections - auth, uploads, ISR, WebSockets, loaders, deployment, anything. Call with no query for the cheap section index; pass query (e.g. \"isr revalidate\") for the top matching sections. Use this instead of reading llms-full.txt (~150 KB) whole. For the EXACT TypeScript of a type/interface/function, call nifra_types instead (don't read .d.ts files).",
       inputSchema: {
@@ -57,10 +63,12 @@ export function docsTools(
       annotations: {
         title: "Get a verified nifra example",
         readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
       description:
-        'Get a VERIFIED, copy-pasteable nifra code example for a task - auth route, file upload, ISR page, loader/action, typed client, SSE, deployment, etc. Every snippet is typechecked against the installed nifra version, so it compiles as-is. PREFER THIS over writing nifra code from memory (training data drifts). Returns code as TEXT for direct use; to visually browse the whole example set instead, use nifra_gallery. Call with no query for the grouped index; pass query (e.g. "protected route", "upload", "isr revalidate") for matching snippets.',
+        'Get a verified, copy-pasteable Nifra code example for a task - auth route, file upload, ISR page, loader/action, typed client, SSE, deployment, and more. Every snippet is typechecked against the installed Nifra version, so it compiles as-is. Returns code as text for direct use. Call with no query for the grouped index; pass query (e.g. "protected route", "upload", "isr revalidate") for matching snippets.',
       inputSchema: {
         type: "object",
         properties: {
@@ -84,9 +92,15 @@ export function docsTools(
     },
     {
       name: "nifra_types",
-      annotations: { title: "Look up nifra API types", readOnlyHint: true, openWorldHint: false },
+      annotations: {
+        title: "Look up nifra API types",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       description:
-        'Get the EXACT TypeScript declaration of any exported @nifrajs/* symbol - interface, type, class, function, const. Each signature is generated from the package\'s built .d.ts, so it is the LITERAL declaration: complete, authoritative, never prose and never truncated. THIS IS THE SOURCE OF TRUTH for nifra\'s types - do NOT read node_modules/@nifrajs/**/*.d.ts; call this instead. Pass `name` for an exact symbol (e.g. "RateLimitStore", "RouteSchema", "Context", "rateLimit"); pass `query` to search by keyword; omit both for the per-package index of names. A `name` lookup is always the complete declaration; a `query` returns a one-line summary plus the signature, collapsing an oversized body - pass `full: true` to override.',
+        'Get the exact TypeScript declaration of any exported @nifrajs/* symbol - interface, type, class, function, or const. Each signature is generated from the package\'s built .d.ts and returns the complete declaration rather than prose. Pass `name` for an exact symbol (e.g. "RateLimitStore", "RouteSchema", "Context", "rateLimit"); pass `query` to search by keyword; omit both for the per-package index of names. A `name` lookup is always the complete declaration; a `query` returns a one-line summary plus the signature, collapsing an oversized body - pass `full: true` to override.',
       inputSchema: {
         type: "object",
         properties: {
@@ -132,6 +146,8 @@ export function docsTools(
       annotations: {
         title: "Guided nifra learning path",
         readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
       description:
@@ -153,10 +169,12 @@ export function docsTools(
       annotations: {
         title: "Frontend footgun guidance",
         readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
       description:
-        'Diagnose a CLIENT-SIDE nifra problem by symptom, across every adapter (React/Preact/Solid/Vue/Svelte/vanilla). Returns the cause, the concrete fix, and how to verify it. Covers the nifra SEAM (a server-only import leaking into a client component, a hydration mismatch, a duplicated framework runtime, loader-data typing) - where it points at the nifra_* tool that fixes and checks it - and the per-framework reactivity-loss idioms (Vue ref, Solid props, Svelte runes, React effect deps), where it points at that framework\'s own ESLint plugin. Call with no args for the index; pass `symptom` (e.g. "hydration mismatch", "value stopped updating") and/or `adapter` to filter. Use this when a rendered page misbehaves and nifra_check is green (check owns the static seam; this owns the rest).',
+        'Diagnose a client-side Nifra problem by symptom across every adapter (React, Preact, Solid, Vue, Svelte, and vanilla). Returns the likely cause, a concrete fix, and how to verify it. Covers the Nifra server/client seam, hydration mismatches, duplicated framework runtimes, loader-data typing, and adapter-specific reactivity guidance. Call with no args for the index; pass `symptom` (e.g. "hydration mismatch", "value stopped updating") and/or `adapter` to filter.',
       inputSchema: {
         type: "object",
         properties: {

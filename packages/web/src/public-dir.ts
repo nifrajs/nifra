@@ -14,7 +14,7 @@
  */
 import { constants as FS } from "node:fs"
 import { open, realpath } from "node:fs/promises"
-import { normalize, resolve, sep } from "node:path"
+import { extname, normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
@@ -38,8 +38,67 @@ export interface ServePublicDirOptions {
   readonly files?: ReadonlySet<string>
 }
 
-const IMMUTABLE = "public, max-age=31536000, immutable"
-const ONE_DAY = "public, max-age=86400"
+export const IMMUTABLE = "public, max-age=31536000, immutable"
+export const ONE_DAY = "public, max-age=86400"
+
+/**
+ * Media types by extension. A table rather than `Bun.file(path).type`: this handler also runs on the
+ * Node and Deno adapters, where `Bun` does not exist and every hit would throw. Unknown extensions
+ * (and extensionless files such as ACME tokens) are served as `application/octet-stream`, which
+ * together with `nosniff` keeps the browser from guessing a more dangerous type.
+ */
+export const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".cjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json",
+  ".txt": "text/plain; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+  ".xml": "application/xml",
+  ".rss": "application/rss+xml",
+  ".atom": "application/atom+xml",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".ico": "image/x-icon",
+  ".bmp": "image/bmp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".wasm": "application/wasm",
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".vtt": "text/vtt; charset=utf-8",
+}
+
+/**
+ * Whether a confined path crosses a dot-segment other than `.well-known`. The build copies `public/`
+ * with dotfiles included, so an editor or VCS artifact (`.env`, `.git/`, `.DS_Store`) dropped there
+ * would otherwise be downloadable. Checked on the resolved path, so `%2e` encodings are covered.
+ */
+function isHiddenPath(root: string, abs: string): boolean {
+  for (const segment of abs.slice(root.length + 1).split(sep)) {
+    if (segment.startsWith(".") && segment !== ".well-known") return true
+  }
+  return false
+}
 
 /** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
 function seconds(time: number): number {
@@ -119,7 +178,7 @@ export function servePublicDir(
     // A production manifest can reject page routes without touching the filesystem.
     if (options.files !== undefined && !options.files.has(pathname)) return undefined
     const abs = resolvePublicPath(root, pathname)
-    if (abs === undefined) return undefined
+    if (abs === undefined || isHiddenPath(root, abs)) return undefined
     const [resolvedRoot, resolvedFile] = await Promise.all([
       rootReal,
       realpath(abs).catch(() => undefined),
@@ -141,16 +200,18 @@ export function servePublicDir(
       const stat = await handle.stat()
       if (!stat.isFile()) return undefined
       const size = stat.size
-      const file = Bun.file(resolvedFile)
       const headers = new Headers({
         "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,
         // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
         // so a video or audio file under `public/` is scrubbable only once this header is present.
         "accept-ranges": "bytes",
+        // Never let a client sniff a served file into a more dangerous type (an upload-like `.txt`
+        // rendered as HTML, say). The declared type below is authoritative.
+        "x-content-type-options": "nosniff",
+        // Set explicitly rather than inferred from the body, so HEAD (a null body) carries it too.
+        "content-type":
+          CONTENT_TYPES[extname(resolvedFile).toLowerCase()] ?? "application/octet-stream",
       })
-      // `new Response(file)` used to infer the media type, which meant HEAD - built from a null body -
-      // silently lost it. Setting it here is what makes the two methods agree.
-      if (file.type !== "") headers.set("content-type", file.type)
       const lastModified =
         Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0 ? stat.mtimeMs : undefined
       if (lastModified !== undefined) {

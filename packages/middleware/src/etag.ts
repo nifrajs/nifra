@@ -137,6 +137,16 @@ export function etag(options: ETagOptions = {}) {
           if (req.method !== "GET" || response.status !== 200 || response.body === null) {
             return response
           }
+          // Hashing reads the body before any of it is sent. A stream meant to arrive as it is
+          // produced - an event stream, or one marked no-store or no-transform - passes through.
+          if (
+            /^text\/event-stream\b/i.test(response.headers.get("content-type") ?? "") ||
+            /(?:^|,)\s*(?:no-store|no-transform)\s*(?:,|$)/i.test(
+              response.headers.get("cache-control") ?? "",
+            )
+          ) {
+            return response
+          }
           const declared = response.headers.get("content-length")
           if (
             declared !== null &&

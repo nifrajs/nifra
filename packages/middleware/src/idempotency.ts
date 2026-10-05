@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { METHODS, type Middleware } from "@nifrajs/core/server"
+import { METHODS, type Middleware, replacedRequestOf } from "@nifrajs/core/server"
 
 /**
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
@@ -190,7 +190,11 @@ export interface IdempotencyOptions {
   readonly lockTtlMs?: number
   /** Max response bytes to cache. A larger response is returned but **not** stored. Default 1 MiB. */
   readonly maxBytes?: number
-  /** Whether a response should be cached for replay. Default: status `< 500` (don't replay transient 5xx). */
+  /**
+   * Whether a response should be cached for replay. Default: any status below 500 except 401, 403,
+   * 408, 409, 425, and 429. Those, like a transient 5xx, say the operation did not run; replaying one
+   * would refuse every retry under that key until it expired.
+   */
   readonly shouldCache?: (response: Response) => boolean
   /**
    * Derive the store key from the request. Default: the `header` value scoped by method + path **and
@@ -219,6 +223,7 @@ export interface IdempotencyOptions {
 }
 
 const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const
+const NOT_THE_OPERATIONS_ANSWER = new Set([401, 403, 408, 409, 425, 429])
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function assertPositiveTtl(value: number, name: string): void {
@@ -405,6 +410,10 @@ function defaultIdempotencyKey(
  * session-specific, so replaying it to a different caller (key collision or abuse) would leak/fixate a
  * session. Cache the body + status + the rest of the headers; let auth cookies re-issue per request.
  *
+ * The key is not bound to the request body: a key reused with a different body replays the first
+ * answer. A route that needs that check declares `schema.idempotency`, which fingerprints the request
+ * and refuses a mismatched reuse with 409.
+ *
  * Caching buffers the response body, so apply this to JSON/API routes, not streaming SSR responses.
  */
 export function idempotency(options: IdempotencyOptions): Middleware {
@@ -419,7 +428,9 @@ export function idempotency(options: IdempotencyOptions): Middleware {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new Error("idempotency: maxBytes must be a non-negative integer")
   }
-  const shouldCache = options.shouldCache ?? ((res: Response) => res.status < 500)
+  const shouldCache =
+    options.shouldCache ??
+    ((res: Response) => res.status < 500 && !NOT_THE_OPERATIONS_ANSWER.has(res.status))
   const principalHeaders = (options.principalHeaders ?? DEFAULT_PRINCIPAL_HEADERS).map((name) =>
     name.toLowerCase(),
   )
@@ -465,9 +476,16 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       return undefined
     },
     async onResponse(res, req) {
-      const claim = claimed.get(req)
-      if (claim === undefined) return res // not a claimed request (safe method / no key / a replay)
-      claimed.delete(req)
+      // A later onRequest hook (methodOverride, a transport codec) may have replaced the request
+      // this one claimed; walk back to it.
+      let claimedReq: Request | undefined = req
+      let claim = claimed.get(req)
+      while (claim === undefined && claimedReq !== undefined) {
+        claimedReq = replacedRequestOf(claimedReq)
+        if (claimedReq !== undefined) claim = claimed.get(claimedReq)
+      }
+      if (claim === undefined || claimedReq === undefined) return res // not a claimed request
+      claimed.delete(claimedReq)
       if (!shouldCache(res)) {
         await store.release(claim.key, claim.reservation)
         return res

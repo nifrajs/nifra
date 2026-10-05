@@ -10,8 +10,9 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, resolve, sep } from "node:path"
+import { assertNoSecrets, buildEnvironment, type SecretExemption } from "./internal/secret-scan.ts"
 import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
-import { DATA_HEADER } from "./router.ts"
+import { DATA_HEADER, PRERENDERED_GLOBAL, PRERENDERED_LIST_PATH } from "./router.ts"
 
 /** Minimal app surface the driver needs - just a fetch handler (a built `createWebApp`). */
 export interface PrerenderApp {
@@ -30,6 +31,15 @@ export interface PrerenderOptions {
   /** Origin for the synthetic request URL. Default `http://localhost`. Only the path is meaningful;
    * loaders see this as `request.url`, so set it if a loader builds absolute URLs from the origin. */
   readonly origin?: string
+  /** The secret scan every page and `_data.json` passes before it is written: what looks like a
+   * credential, or the value of a non-public build environment variable, fails the prerender. */
+  readonly secrets?: {
+    /** Default: the build environment (`Bun.env`, else `process.env`). */
+    readonly env?: Readonly<Record<string, string | undefined>>
+    /** Default `"PUBLIC_"`. */
+    readonly publicEnvPrefix?: string
+    readonly exemptions?: readonly SecretExemption[]
+  }
 }
 
 export interface PrerenderEntry {
@@ -66,6 +76,11 @@ export function htmlFileFor(pattern: string): string {
   return trimmed === "" ? "index.html" : `${trimmed}/index.html`
 }
 
+// The handover of a page whose prerendered set is served as a list rather than inlined.
+const PRERENDERED_LIST_URL = new RegExp(
+  `"${PRERENDERED_GLOBAL}":"(${PRERENDERED_LIST_PATH.replaceAll(".", "\\.")}\\?v=[0-9a-f]+)"`,
+)
+
 /** The static loader-data file next to a route's `index.html`: `/` → `_data.json`, `/a/b` →
  * `a/b/_data.json`. The client fetches it on soft-nav into a prerendered route (no worker). */
 export function dataFileFor(pattern: string): string {
@@ -90,9 +105,19 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
   const skipped: { path: string; reason: string }[] = []
   const fallbacks: Record<string, "ssr" | "404"> = {}
   const outRoot = resolve(options.outDir)
+  let listUrl: string | undefined
+
+  const secretScan = {
+    env: options.secrets?.env ?? buildEnvironment(),
+    publicEnvPrefix: options.secrets?.publicEnvPrefix ?? "PUBLIC_",
+    ...(options.secrets?.exemptions ? { exemptions: options.secrets.exemptions } : {}),
+  }
+  const assertClean = (name: string, text: string): void =>
+    assertNoSecrets({ ...secretScan, artifacts: [{ name, text }] })
 
   // Render one concrete path → drain the streamed document to bytes → write its index.html. Shared by
-  // static (one path) and dynamic (one path per getStaticPaths entry) routes; never throws.
+  // static (one path) and dynamic (one path per getStaticPaths entry) routes. A failed render is a skip;
+  // a credential in the output fails the whole prerender.
   const renderPath = async (path: string): Promise<void> => {
     const res = await options.app.fetch(new Request(`${origin}${path}`))
     if (!res.ok) {
@@ -101,12 +126,14 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       return
     }
     const html = await res.text()
+    listUrl ??= PRERENDERED_LIST_URL.exec(html)?.[1]
     const file = htmlFileFor(path)
     const abs = outputPath(outRoot, file)
     if (abs === undefined) {
       skipped.push({ path, reason: "unsafe output path" })
       return
     }
+    assertClean(file, html)
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, html)
 
@@ -128,7 +155,9 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
         await dataRes.body?.cancel()
         dataFile = undefined
       } else {
-        writeFileSync(dataAbs, await dataRes.text())
+        const data = await dataRes.text()
+        assertClean(dataFile, data)
+        writeFileSync(dataAbs, data)
       }
     } else {
       await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) - release the stream
@@ -175,6 +204,23 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       continue
     }
     await renderPath(route.pattern)
+  }
+
+  // A set too large to inline is handed over as the URL of a list the app serves; the static output
+  // has to carry the file those pages fetch.
+  if (listUrl !== undefined) {
+    const listRes = await options.app.fetch(new Request(`${origin}${listUrl}`))
+    const listFile = PRERENDERED_LIST_PATH.slice(1)
+    const listAbs = outputPath(outRoot, listFile)
+    if (listRes.ok && listAbs !== undefined) {
+      const text = await listRes.text()
+      assertClean(listFile, text)
+      mkdirSync(dirname(listAbs), { recursive: true })
+      writeFileSync(listAbs, text)
+    } else {
+      await listRes.body?.cancel()
+      skipped.push({ path: PRERENDERED_LIST_PATH, reason: `list returned HTTP ${listRes.status}` })
+    }
   }
 
   return { prerendered, skipped, fallbacks }

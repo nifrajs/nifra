@@ -1,11 +1,11 @@
-// The nifra CLI's config - read by `nifra dev|build|start`. Unlike `framework.ts` (imported by an app's
-// edge/server entries, so it must stay edge-bundlable), THIS file is imported only by the CLI, which
-// runs on Bun - so it can eagerly import the Vite plugin + the SFC compiler. That's the whole point of
-// the split: the dev/build tooling never reaches a `target:"browser"` worker bundle.
+// The nifra CLI's config - read by `nifra dev|build|start`. Unlike `backend/framework.ts` (imported by
+// an app's edge/server entries, so it must stay edge-bundlable), THIS file is imported only by the
+// CLI, which runs on Bun - so it can eagerly import the Vite plugin + the SFC compiler. That's the
+// whole point of the split: the dev/build tooling never reaches a `target:"browser"` worker bundle.
 import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
 import vue from "@vitejs/plugin-vue"
 
-export { adapter } from "./framework"
+export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-vue/client"
 
 // `nifra dev` HMR: Vite + the official Vue plugin compile/HMR the .vue client modules.

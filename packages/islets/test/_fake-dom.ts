@@ -3,6 +3,7 @@
  * a DOM dependency these fakes don't model, the type system flags it here first. */
 
 export class FakeElement {
+  parent: FakeElement | undefined
   private readonly attrs = new Map<string, string>()
   private readonly listeners = new Map<string, Array<(event: Event) => void>>()
   readonly classes = new Set<string>()
@@ -23,6 +24,12 @@ export class FakeElement {
     for (const [k, v] of Object.entries(attrs)) this.attrs.set(k, v)
   }
 
+  /** Whether this element or an ancestor carries `attr`. */
+  within(attr: string): boolean {
+    for (let el: FakeElement | undefined = this; el !== undefined; el = el.parent)
+      if (el.getAttribute(attr) !== null) return true
+    return false
+  }
   getAttribute(name: string): string | null {
     return this.attrs.get(name) ?? null
   }
@@ -42,28 +49,50 @@ export class FakeElement {
   }
 }
 
-const SELECTOR = /^\[([a-z-]+)\]$/
+// `[attr]`, optionally followed by `:not([x],[x] *)` - "not inside an element carrying x" - which may
+// end with `,:scope [y] *`: "nor inside an element carrying y below the queried root".
+const SELECTOR = /^\[([a-z-]+)\](?::not\(\[([a-z-]+)\],\[\2\] \*(?:,:scope \[([a-z-]+)\] \*)?\))?$/
 
-/** A root whose querySelectorAll supports exactly the `[data-attr]` selectors the walker uses. */
+/** A root whose querySelectorAll supports exactly the selectors the walker uses. */
 export class FakeRoot {
-  constructor(readonly elements: FakeElement[]) {}
+  constructor(
+    readonly elements: FakeElement[],
+    readonly scope?: FakeElement,
+  ) {}
   querySelectorAll(selector: string): FakeElement[] {
     const m = SELECTOR.exec(selector)
     if (m === null) throw new Error(`fake DOM: unsupported selector ${selector}`)
-    const attr = m[1] as string
-    return this.elements.filter((el) => el.getAttribute(attr) !== null)
+    const [, attr = "", outside, nested] = m
+    const belowScope = (el: FakeElement, name: string): boolean => {
+      for (let up = el.parent; up !== undefined && up !== this.scope; up = up.parent)
+        if (up.getAttribute(name) !== null) return true
+      return false
+    }
+    return this.elements.filter(
+      (el) =>
+        el.getAttribute(attr) !== null &&
+        (outside === undefined || !el.within(outside)) &&
+        (nested === undefined || !belowScope(el, nested)),
+    )
   }
 }
 
-/** An island host: an element that is also a root over its (flat) children. */
+/** An element with children: an island host, or any container. Its root covers every descendant. */
 export class FakeHost extends FakeElement {
   constructor(
     attrs: Record<string, string>,
     readonly children: FakeElement[],
   ) {
     super(attrs)
+    for (const child of children) child.parent = this
+  }
+  descendants(): FakeElement[] {
+    return this.children.flatMap((child) => [
+      child,
+      ...(child instanceof FakeHost ? child.descendants() : []),
+    ])
   }
   querySelectorAll(selector: string): FakeElement[] {
-    return new FakeRoot(this.children).querySelectorAll(selector)
+    return new FakeRoot(this.descendants(), this).querySelectorAll(selector)
   }
 }

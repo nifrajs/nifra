@@ -10,15 +10,16 @@
  * Text, not types, so the rules are chosen for the ones that survive being read rather than run:
  *
  *   - Which pipeline the app is on. `chooseBuildPipeline` decides from whether the plugin slots are
- *     empty, and "does this file declare a non-empty `vitePlugins`" is a question the source answers.
- *   - The adapter-entry hazard. `nifra build` imports the adapter from `framework.ts`, or from
- *     `nifra.config.ts` when there is no `framework.ts`, and bundles everything that file imports into
- *     the production server. A Vite plugin or an SFC compiler reached that way builds cleanly and then
- *     dies at startup on a missing native binding. Nothing runtime-side catches it: by then the build
- *     has already succeeded.
- *   - A plugin in the wrong slot, for the subset whose import specifier names its pipeline. The load
- *     guard classifies by hook shape and is authoritative; this catches the same thing earlier, before
- *     anything is installed or started.
+ *     empty, and "does this file declare a non-empty `vitePlugins`" is a question the source
+ * answers.
+ *   - The adapter-entry hazard. `nifra build` imports the adapter from `backend/framework.ts`, or
+ * from     `nifra.config.ts` when there is no `backend/framework.ts`, and bundles everything that
+ * file imports into     the production server. A Vite plugin or an SFC compiler reached that way
+ * builds cleanly and then     dies at startup on a missing native binding. Nothing runtime-side
+ * catches it: by then the build     has already succeeded.
+ *   - A plugin in the wrong slot, for the subset whose import specifier names its pipeline. The
+ * load     guard classifies by hook shape and is authoritative; this catches the same thing
+ * earlier, before     anything is installed or started.
  *   - `conditions` on the Bun pipeline, which reach SSR and cannot reach the dev client bundle.
  *
  * Everything here degrades to silence rather than guessing. A config that computes its plugins, or
@@ -27,6 +28,7 @@
  */
 import { existsSync } from "node:fs"
 import { join } from "node:path"
+import { CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { codePositionMask, stripComments } from "./check.ts"
 import type { BuildPipeline } from "./pipeline-guard.ts"
 
@@ -52,7 +54,8 @@ export interface PipelineFinding {
 }
 
 export interface PipelineReport {
-  /** `false` when the directory holds no `nifra.config.ts` or `framework.ts` - nothing to report on. */
+  /** `false` when the directory holds no `nifra.config.ts` or `backend/framework.ts` - nothing to
+   * report on. */
   readonly ran: boolean
   /** The bundler `nifra dev` and `nifra build` will use, or `unknown` when the source can't say. */
   readonly pipeline: BuildPipeline | "unknown"
@@ -65,7 +68,7 @@ export interface PipelineReport {
   readonly certain: boolean
   /** The config file read, project-relative. */
   readonly configFile?: string
-  /** The file `nifra build` imports the adapter from - `framework.ts`, else the config. */
+  /** The file `nifra build` imports the adapter from - `backend/framework.ts`, else the config. */
   readonly adapterEntry?: string
   readonly findings: readonly PipelineFinding[]
 }
@@ -227,13 +230,13 @@ async function readSource(path: string): Promise<string | undefined> {
  * Total: a missing or unreadable config yields `ran: false`, never a throw.
  */
 export async function collectPipelineReport(cwd: string): Promise<PipelineReport> {
-  const configFile = existsSync(join(cwd, "nifra.config.ts")) ? "nifra.config.ts" : "framework.ts"
+  const configFile = existsSync(join(cwd, CONFIG_FILE)) ? CONFIG_FILE : FRAMEWORK_FILE
   const source = await readSource(join(cwd, configFile))
   if (source === undefined) {
     return {
       ran: false,
       pipeline: "unknown",
-      reason: "no nifra.config.ts or framework.ts here",
+      reason: "no nifra.config.ts or backend/framework.ts here",
       certain: false,
       findings: [],
     }
@@ -284,8 +287,9 @@ export async function collectPipelineReport(cwd: string): Promise<PipelineReport
       ? "default: this app declares Bun plugins, so both phases stay on Bun"
       : "default: no transforms to place, so both phases stay on Bun"
 
-  // The adapter entry is bundled into every `nifra build` server entry. Whatever it imports goes with it.
-  const adapterEntry = existsSync(join(cwd, "framework.ts")) ? "framework.ts" : configFile
+  // The adapter entry is bundled into every `nifra build` server entry. Whatever it imports goes
+  // with it.
+  const adapterEntry = existsSync(join(cwd, FRAMEWORK_FILE)) ? FRAMEWORK_FILE : configFile
   const entrySource =
     adapterEntry === configFile ? source : await readSource(join(cwd, adapterEntry))
   if (entrySource !== undefined) {
@@ -302,11 +306,11 @@ export async function collectPipelineReport(cwd: string): Promise<PipelineReport
           `${adapterEntry} imports "${specifier}", and \`nifra build\` imports the adapter from ${adapterEntry} - ` +
           "so the dev toolchain is bundled into the production server entry. The build succeeds and the server then fails at startup on a dependency of the bundler (a missing native binding, typically), which reads like a broken install rather than a config split.",
         fix:
-          adapterEntry === "framework.ts"
+          adapterEntry === FRAMEWORK_FILE
             ? 'move "' +
               specifier +
-              '" to `nifra.config.ts`, which only the CLI imports, and keep `framework.ts` to the adapter'
-            : 'add a `framework.ts` exporting just the adapter, re-export it from `nifra.config.ts` (`export { adapter } from "./framework"`), and leave the toolchain imports in the config',
+              '" to `nifra.config.ts`, which only the CLI imports, and keep `backend/framework.ts` to the adapter'
+            : 'add a `backend/framework.ts` exporting just the adapter, re-export it from `nifra.config.ts` (`export { adapter } from "./backend/framework"`), and leave the toolchain imports in the config',
       })
     }
   }

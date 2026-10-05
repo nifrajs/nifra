@@ -121,7 +121,9 @@ backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` /
   `node_modules`): declare `"nifra": { "singleCopy": ["react", "react-dom", "@nifrajs/*"] }` in the
   app's `package.json`, and preload `@nifrajs/core/single-copy/register` from `bunfig.toml` (under
   both `preload` and `[test].preload`) so unbundled runs are covered too. It never redirects across
-  versions - a version skew stays fatal in `nifra check`. See `/docs/troubleshooting`.
+  versions - a version skew in any declared package is fatal in `nifra check`, and the preload warns
+  once per package (`{ "packages": [...], "strict": true }` or `NIFRA_SINGLE_COPY_STRICT=1` makes it
+  throw). See `/docs/troubleshooting`.
 - **Server-only code** → three ways to keep it out of the browser bundle:
   - put it in a `*.server.ts` module - the client build empties it (its `node:` / native imports never
     ship), no extra import needed;
@@ -154,3 +156,9 @@ backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` /
 content-hashed, immutable assets). One `app.fetch` runs on Bun / Node / Deno / Cloudflare Pages /
 Vercel / any VPS. `prerenderRoutes` + `cloudflarePagesRoutes` (`@nifrajs/web/build`) emit the static
 output + `_routes.json`.
+
+## Release policy
+
+Prepare every release on a `release/<name>` branch. Run `bun run release:prepare` there so the one
+release pull request contains package versions, changelogs, lockfile, and generated artifacts. Never
+stage versioning on `main`, push directly to `main`, or create a second Version Packages pull request.

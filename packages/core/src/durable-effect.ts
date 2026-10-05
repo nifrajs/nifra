@@ -57,6 +57,7 @@ export function createDurableEffectJournal(
     if (record === undefined) throw new DurableEffectTransitionError(effectId, "missing")
     if (
       record.effectId !== effectId ||
+      typeof record.capability !== "string" ||
       !validCapabilityId(record.capability) ||
       !["admission", "executing", "committed", "failed", "unknown"].includes(record.state) ||
       !Number.isSafeInteger(record.version) ||
@@ -69,7 +70,10 @@ export function createDurableEffectJournal(
     if (record.createdAt > record.updatedAt)
       throw new TypeError(`durable effect ${effectId}: updatedAt precedes createdAt`)
     if (record.target !== undefined) assertToken(record.target, "stored durable effect target", 128)
-    if (record.digest !== undefined && !/^[0-9a-f]{64}$/u.test(record.digest))
+    if (
+      record.digest !== undefined &&
+      (typeof record.digest !== "string" || !/^[0-9a-f]{64}$/u.test(record.digest))
+    )
       throw new TypeError(`durable effect ${effectId}: store returned an invalid digest`)
     if (record.tenantId !== undefined)
       assertToken(record.tenantId, "stored durable effect tenantId")
@@ -77,7 +81,10 @@ export function createDurableEffectJournal(
       assertToken(record.principalId, "stored durable effect principalId")
     if ((record.tenantId === undefined) !== (record.principalId === undefined))
       throw new TypeError(`durable effect ${effectId}: store returned a partial identity`)
-    if (record.errorCode !== undefined && !ERROR_CODE.test(record.errorCode))
+    if (
+      record.errorCode !== undefined &&
+      (typeof record.errorCode !== "string" || !ERROR_CODE.test(record.errorCode))
+    )
       throw new TypeError(`durable effect ${effectId}: store returned an invalid error code`)
     return record
   }
@@ -145,7 +152,7 @@ export function createDurableEffectJournal(
       await transition(effectId, "executing", "committed")
     },
     async failed(effectId, input) {
-      if (!ERROR_CODE.test(input.errorCode))
+      if (typeof input.errorCode !== "string" || !ERROR_CODE.test(input.errorCode))
         throw new TypeError("durable effect errorCode is invalid")
       const record = await current(effectId)
       const to = input.began ? "unknown" : "failed"

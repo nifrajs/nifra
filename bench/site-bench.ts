@@ -1,6 +1,6 @@
 /**
  * Push fresh benchmark numbers to the website. The landing + /benchmarks read
- * `site/data/benchmarks.json` (a single source of truth); a bench run calls `writeSiteBench(slice)`
+ * `site/shared/data/benchmarks.json` (a single source of truth); a bench run calls `writeSiteBench(slice)`
  * here to merge its slice in, so the published numbers can't drift from the latest run.
  *
  * Each suite writes only the result slices it measured; partial updates leave other published
@@ -102,7 +102,7 @@ export interface SiteBench {
   readonly proof: readonly ProofStat[]
 }
 
-const SITE_DATA = join(import.meta.dir, "..", "site", "data", "benchmarks.json")
+const SITE_DATA = join(import.meta.dir, "..", "site", "shared", "data", "benchmarks.json")
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
 export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
@@ -301,5 +301,7 @@ export async function writeSiteBench(partial: Partial<SiteBench>): Promise<void>
   if (Object.keys(partial).length === 0) return
   const current = (await Bun.file(SITE_DATA).json()) as SiteBench
   await Bun.write(SITE_DATA, `${JSON.stringify(mergeSiteBench(current, partial), null, 2)}\n`)
-  process.stderr.write(`updated site/data/benchmarks.json (${Object.keys(partial).join(", ")})\n`)
+  process.stderr.write(
+    `updated site/shared/data/benchmarks.json (${Object.keys(partial).join(", ")})\n`,
+  )
 }

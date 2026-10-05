@@ -3,14 +3,18 @@ import { realpathSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { copyPublicDir } from "../src/build.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
   collectDevelopmentParityInput,
   collectIdentityParity,
+  compareRouteIds,
+  createDevelopmentParityManifest,
   formatIdentityParityFindings,
   identityParityBasis,
   identityParityHeadline,
+  normalizeBuildManifest,
   pathInside,
 } from "../src/internal/parity.ts"
 
@@ -227,6 +231,30 @@ test("a scan that hit its limit fails the gate instead of passing as clean", asy
   }
 }, { timeout: 30_000 })
 
+test("development parity lists public files by the URL the build records for them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-public-"))
+  try {
+    const routesDir = join(root, "routes")
+    const publicDir = join(root, "public")
+    await mkdir(routesDir, { recursive: true })
+    await mkdir(join(publicDir, "docs"), { recursive: true })
+    await writeFile(join(routesDir, "index.tsx"), "export default () => null\n")
+    for (const name of ["My Logo.png", "café.txt", "docs/report,2026 #1.csv"]) {
+      await writeFile(join(publicDir, name), "x")
+    }
+    const built = await copyPublicDir(publicDir, join(root, "dist"))
+    const input = collectDevelopmentParityInput(routesDir, publicDir)
+    expect(input.publicFiles).toEqual(built)
+    expect(input.publicFiles).toEqual([
+      "/My%20Logo.png",
+      "/caf%C3%A9.txt",
+      "/docs/report,2026%20%231.csv",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("development parity counts a Svelte <style> block as css without a css import", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-"))
   try {
@@ -238,6 +266,48 @@ test("development parity counts a Svelte <style> block as css without a css impo
     )
     const input = collectDevelopmentParityInput(routesDir, false)
     expect(input.css).toEqual(["css:present"])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("development parity ignores a <style> in an SFC comment, markup or expression", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-comment-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "_layout.vue"),
+      [
+        "<!--",
+        "<style> in a comment is prose",
+        "-->",
+        "<template><component :is=\"'style'\">{{ css }}</component><slot /></template>",
+        "<script>const css = '<style>' + 1 + '</style>'</script>",
+      ].join("\n"),
+    )
+    const input = collectDevelopmentParityInput(routesDir, false)
+    expect(input.css).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("development parity ends an SFC comment at --!> as a browser does", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-bang-comment-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "_layout.vue"),
+      [
+        "<!--",
+        "<style>.retired { color: red }</style>",
+        "--!>",
+        "<template><slot /></template>",
+      ].join("\n"),
+    )
+    expect(collectDevelopmentParityInput(routesDir, false).css).toEqual([])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -322,6 +392,68 @@ test("a module-graph failure names the symmetric difference, not both full sets"
       routes: { about: ["/assets/about-a1b2.js"] },
     }),
   ).toThrow(/module-graph:.*only in production=\["about"\]/s)
+})
+
+/** `_` sorts after `[` by code unit and before it by locale - the pair that split the two sides. */
+const underscoreRoutes = { _404: 1, "[lang]": 1, index: 1, "a/b": 1 }
+const underscoreBuild = (routes: Record<string, readonly string[]>) => ({
+  entry: "/assets/entry.js",
+  assets: ["/assets/entry.js", ...Object.values(routes).flat()],
+  routes,
+})
+
+test("parity passes for a `_`-prefixed route next to a dynamic route", () => {
+  // Insertion order is deliberately neither sort, so the verdict cannot lean on key order.
+  expect(() =>
+    assertDevelopmentProductionParity(
+      devInput({ routes: underscoreRoutes }),
+      underscoreBuild({
+        index: ["/assets/index-a1.js"],
+        _404: ["/assets/_404-b2.js"],
+        "a/b": ["/assets/b-c3.js"],
+        "[lang]": ["/assets/_lang_-d4.js"],
+      }),
+    ),
+  ).not.toThrow()
+})
+
+test("parity still fails when a `_`-prefixed app is genuinely missing a route", () => {
+  expect(() =>
+    assertDevelopmentProductionParity(
+      devInput({ routes: underscoreRoutes }),
+      underscoreBuild({
+        index: ["/assets/index-a1.js"],
+        "a/b": ["/assets/b-c3.js"],
+        "[lang]": ["/assets/_lang_-d4.js"],
+      }),
+    ),
+  ).toThrow(/module-graph: routes only in development=\["_404"\] only in production=\[\]/)
+})
+
+test("both parity sides order route ids with the one shared comparator", () => {
+  const ids = ["index", "_404", "a/b", "[lang]", "_410"]
+  const expected = [...ids].sort(compareRouteIds)
+  expect(expected).toEqual(["[lang]", "_404", "_410", "a/b", "index"])
+  const dev = createDevelopmentParityManifest({
+    routes: Object.fromEntries(ids.map((id) => [id, 1])),
+    publicFiles: [],
+    css: [],
+  })
+  const prod = normalizeBuildManifest(
+    underscoreBuild(Object.fromEntries(ids.map((id) => [id, [`/assets/${id}.js`]]))),
+  )
+  expect(dev.moduleGraph.routes).toEqual(expected)
+  expect(prod.moduleGraph.routes).toEqual(expected)
+  expect(Object.keys(prod.moduleGraph.routeChunks)).toEqual(expected)
+})
+
+test("a chunk-count failure names the route and both counts", () => {
+  expect(() =>
+    assertDevelopmentProductionParity(
+      devInput({ routes: { index: 2 } }),
+      underscoreBuild({ index: ["/assets/index-a1.js"] }),
+    ),
+  ).toThrow(/route chunk counts differ: index development=2 production=1/)
 })
 
 test("development parity reports css for a dynamic import of a stylesheet", async () => {
@@ -455,6 +587,62 @@ test("a linked sibling repo's second react is fatal when nothing is declared", a
     // The scanned root IS the requested one here, so there is no scope surprise to explain and the
     // note stays off. It appears only where the answer would otherwise look like the wrong project.
     expect(result.findings[0]?.scope).toBeUndefined()
+    // Each install holds its own react directory, so no link was crossed.
+    expect(result.findings[0]?.provenance).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a copy reached through a link planted outside the sibling's install names the link and its fix", async () => {
+  const { ground, app, sibling } = await linkedRepos("planted")
+  try {
+    // A third project planted its react into the sibling's install: the sibling's own reinstall would
+    // replace it, but nothing in either listing says where the extra copy came from.
+    const third = join(ground, "third")
+    await rm(join(sibling, "node_modules", "react"), { recursive: true })
+    await mkdir(join(third, ".git"), { recursive: true })
+    await mkdir(join(third, "node_modules", "react"), { recursive: true })
+    await writeFile(
+      join(third, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.8" }),
+    )
+    await symlink(join(third, "node_modules", "react"), join(sibling, "node_modules", "react"))
+
+    const result = await collectIdentityParity(app)
+    const finding = result.findings[0]
+    expect(finding?.package).toBe("react")
+    const planted = finding?.copies.find((copy) => copy.links !== undefined)
+    expect(planted?.links).toEqual(["../sibling/node_modules/react"])
+    expect(planted?.path).toContain("third")
+    // The app's own copy was reached without a link and carries none.
+    expect(finding?.copies.filter((copy) => copy.links !== undefined)).toHaveLength(1)
+    expect(finding?.provenance).toContain(`../sibling/node_modules/react → ${planted?.path}`)
+    expect(finding?.provenance).toContain("remove it and reinstall there")
+    expect(formatIdentityParityFindings(result.findings)).toContain(
+      "links: reached through a symlink",
+    )
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a package-manager store link inside the sibling's own install is not reported as planted", async () => {
+  const { ground, app, sibling } = await linkedRepos("store-link")
+  try {
+    const stored = join(sibling, "node_modules", ".bun", "react@19.2.8", "node_modules", "react")
+    await rm(join(sibling, "node_modules", "react"), { recursive: true })
+    await mkdir(stored, { recursive: true })
+    await writeFile(
+      join(stored, "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.8" }),
+    )
+    await symlink(stored, join(sibling, "node_modules", "react"))
+
+    const result = await collectIdentityParity(app)
+    expect(result.findings.map((finding) => finding.package)).toEqual(["react"])
+    expect(result.findings[0]?.copies.every((copy) => copy.links === undefined)).toBe(true)
+    expect(result.findings[0]?.provenance).toBeUndefined()
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
@@ -537,5 +725,109 @@ test("a declaration never covers a version skew", async () => {
     expect(result.findings.map((finding) => finding.cause)).toEqual(["version-skew"])
   } finally {
     await rm(ground, { recursive: true, force: true })
+  }
+})
+
+/**
+ * A linked sibling that shares a NON-framework package with the app - module state like a store or
+ * a registry, which only the app's `singleCopy` declaration marks as identity-sensitive.
+ */
+const linkedSharedState = async (
+  label: string,
+  versions: { readonly app: string; readonly sibling: string },
+  singleCopy: unknown,
+) => {
+  const ground = await mkdtemp(join(tmpdir(), `nifra-single-copy-declared-${label}-`))
+  const app = join(ground, "app")
+  const sibling = join(ground, "sibling")
+  await mkdir(join(app, ".git"), { recursive: true })
+  await mkdir(join(app, "node_modules", "shared-state"), { recursive: true })
+  await mkdir(join(app, "node_modules", "@example"), { recursive: true })
+  await mkdir(join(sibling, ".git"), { recursive: true })
+  await mkdir(join(sibling, "node_modules", "shared-state"), { recursive: true })
+  await mkdir(join(sibling, "packages", "ui"), { recursive: true })
+  await writeFile(
+    join(app, "package.json"),
+    JSON.stringify({
+      name: "app",
+      dependencies: { "shared-state": versions.app, "@example/ui": "link:../sibling/packages/ui" },
+      ...(singleCopy === undefined ? {} : { nifra: { singleCopy } }),
+    }),
+  )
+  await writeFile(
+    join(sibling, "packages", "ui", "package.json"),
+    JSON.stringify({ name: "@example/ui", dependencies: { "shared-state": versions.sibling } }),
+  )
+  await writeFile(
+    join(app, "node_modules", "shared-state", "package.json"),
+    JSON.stringify({ name: "shared-state", version: versions.app }),
+  )
+  await writeFile(
+    join(sibling, "node_modules", "shared-state", "package.json"),
+    JSON.stringify({ name: "shared-state", version: versions.sibling }),
+  )
+  await symlink(join(sibling, "packages", "ui"), join(app, "node_modules", "@example", "ui"))
+  return { ground, app }
+}
+
+test("a declared non-framework package with a version skew is a fatal finding", async () => {
+  const { ground, app } = await linkedSharedState("skew", { app: "2.1.0", sibling: "2.0.0" }, [
+    "shared-state",
+  ])
+  try {
+    const result = await collectIdentityParity(app)
+    expect(result.deduplicated).toHaveLength(0)
+    expect(result.findings.map((finding) => [finding.package, finding.cause])).toEqual([
+      ["shared-state", "version-skew"],
+    ])
+    expect(result.findings[0]?.versions).toEqual(["2.0.0", "2.1.0"])
+    // Same remediation as a skewed react: align ranges - nifra never redirects across versions.
+    expect(result.findings[0]?.remediation).toContain("Align dependency ranges")
+    await expect(assertIdentityParity(app)).rejects.toThrow("shared-state [version-skew]")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a declared non-framework package at one version on two paths is deduplicated, not fatal", async () => {
+  const { ground, app } = await linkedSharedState("same", { app: "2.1.0", sibling: "2.1.0" }, [
+    "shared-state",
+  ])
+  try {
+    const result = await collectIdentityParity(app)
+    expect(result.findings).toHaveLength(0)
+    expect(result.deduplicated.map((finding) => finding.package)).toEqual(["shared-state"])
+    expect(result.deduplicated[0]?.cause).toBe("duplicate-path")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("an undeclared non-framework package is outside the identity scan", async () => {
+  const { ground, app } = await linkedSharedState(
+    "undeclared",
+    { app: "2.1.0", sibling: "2.0.0" },
+    undefined,
+  )
+  try {
+    const result = await collectIdentityParity(app)
+    expect(result.findings).toHaveLength(0)
+    expect(result.deduplicated).toHaveLength(0)
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("development parity skips tool output in dot-directories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-dot-dir-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(join(routesDir, "index.tsx"), "export default () => null\n")
+    await mkdir(join(root, ".wrangler", "tmp"), { recursive: true })
+    await writeFile(join(root, ".wrangler", "tmp", "worker.js"), 'import "./app.css"\n')
+    expect(collectDevelopmentParityInput(routesDir, false).css).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
   }
 })

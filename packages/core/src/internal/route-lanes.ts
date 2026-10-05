@@ -59,11 +59,13 @@ export function selectRouteLanes(options: {
 
   const authBeforeValidation =
     options.hasAuth === true || schema?.validationOrder === "auth-before-validation"
+  // No fused lane validates params, headers, or cookies: any of those schemas keeps the stage runner.
+  const plain =
+    schema?.params === undefined && schema?.headers === undefined && schema?.cookies === undefined
 
   const bare =
     !authBeforeValidation &&
-    schema?.params === undefined &&
-    schema?.headers === undefined &&
+    plain &&
     schema?.body === undefined &&
     schema?.query === undefined &&
     !hasIdempotency &&
@@ -85,8 +87,7 @@ export function selectRouteLanes(options: {
     !hasResponseContract &&
     schema?.query !== undefined &&
     schema.body === undefined &&
-    schema.params === undefined &&
-    schema.headers === undefined &&
+    plain &&
     schema.onValidationError === undefined &&
     !defaultOnValidationError &&
     !hasIdempotency &&
@@ -102,8 +103,7 @@ export function selectRouteLanes(options: {
     !hasResponseContract &&
     schema?.body !== undefined &&
     schema.query === undefined &&
-    schema.params === undefined &&
-    schema.headers === undefined &&
+    plain &&
     derives === 0 &&
     beforeHandle === 0 &&
     afterHandle === 0 &&
@@ -128,8 +128,7 @@ export function selectRouteLanes(options: {
         : !hasResponseContract &&
             schema?.body === undefined &&
             schema?.query !== undefined &&
-            schema.params === undefined &&
-            schema.headers === undefined &&
+            plain &&
             derives === 0 &&
             beforeHandle === 0 &&
             afterHandle === 0 &&
@@ -142,7 +141,7 @@ export function selectRouteLanes(options: {
   // request path never re-checks params/body presence. Parameter-schema routes retain the generic
   // lifecycle runner until their more involved recovery matrix is selected explicitly.
   const lifecycleLane: LifecycleExecutionLane =
-    lane !== "lifecycle" || schema?.params !== undefined || schema?.headers !== undefined
+    lane !== "lifecycle" || !plain
       ? undefined
       : schema?.body !== undefined
         ? schema.query !== undefined
@@ -155,8 +154,8 @@ export function selectRouteLanes(options: {
   // The realistic middleware shape is commonly exactly one synchronous-or-async derive followed by
   // one before hook. Keep the generic runner for every route that can observe decorations, after hooks,
   // error hooks, or response contracts; this lane only removes the two per-request hook-loop dispatches
-  // and preserves the same async continuations and error handling. A params or headers schema routes
-  // back to the generic lane because the fused builder has no `params` / `headers` validation step
+  // and preserves the same async continuations and error handling. A params, headers, or cookies schema
+  // routes back to the generic lane because the fused builder has no validation step for them
   // baked in - adding them would be more code than it saves. A `body` schema is the same story
   // because the fused derive-before / derive-before-after builders don't parse the body: routes with a
   // body schema are routed to the `body-derive-before` / `body-derive-before-after` lane below.
@@ -169,8 +168,7 @@ export function selectRouteLanes(options: {
     !hasLedger &&
     schema?.onValidationError === undefined &&
     !defaultOnValidationError &&
-    schema?.params === undefined &&
-    schema?.headers === undefined &&
+    plain &&
     schema?.body === undefined &&
     derives === 1 &&
     beforeHandle === 1 &&
@@ -191,8 +189,7 @@ export function selectRouteLanes(options: {
     !authBeforeValidation &&
     schema?.body !== undefined &&
     schema?.query === undefined &&
-    schema?.params === undefined &&
-    schema?.headers === undefined &&
+    plain &&
     schema?.onValidationError === undefined &&
     !defaultOnValidationError &&
     !hasResponseContract &&

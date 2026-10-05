@@ -23,6 +23,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import ts from "typescript"
 import { renderCommandCatalogLines } from "../packages/cli/src/command-catalog.ts"
+import { codeUnitOrder } from "./code-unit-order.ts"
 import { publishedPackages, readPackageManifest } from "./public-package-manifest.ts"
 
 const ROOT = `${import.meta.dir}/..`
@@ -81,14 +82,14 @@ function publicPackages(): Pkg[] {
     }
     const fallback = `${dir}/src/index.ts`
     if (entries.length === 0 && existsSync(fallback)) {
-      entries.push({ importPath: json.name, entry: fallback })
+      entries.push({ importPath: pkg.name, entry: fallback })
     }
     entries.sort((a, b) =>
-      a.importPath === json.name
+      a.importPath === pkg.name
         ? -1
-        : b.importPath === json.name
+        : b.importPath === pkg.name
           ? 1
-          : a.importPath.localeCompare(b.importPath),
+          : codeUnitOrder(a.importPath, b.importPath),
     )
     pkgs.push({
       name: pkg.name,
@@ -97,7 +98,7 @@ function publicPackages(): Pkg[] {
       description: typeof json.description === "string" ? json.description : "",
     })
   }
-  return pkgs.sort((a, b) => a.name.localeCompare(b.name))
+  return pkgs.sort((a, b) => codeUnitOrder(a.name, b.name))
 }
 
 function repoOptions(): ts.CompilerOptions {
@@ -192,6 +193,11 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   "@nifrajs/core": [
     "The package root is the lean HTTP server API. Enable optional systems with `.use()` plugins from their subpaths - `.use(mcp())` from `@nifrajs/core/mcp`, `.use(streaming())` from `@nifrajs/core/sse`, `.use(idempotency())`, `.use(effectLedger())`; the root activates none of them.",
     "`t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `422 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.",
+    "A route reads JSON and urlencoded bodies and answers `415` to anything else. `bodyParser(schema, { types, parse })` from `@nifrajs/core/body-parser` opts ONE route into other media types; `parse` gets the bytes, already within `bodyLimit`, and its result is validated by the schema. `types` refuses JSON, urlencoded, multipart and `text/plain`. Bound the decoder you pass (aliases, depth).",
+    'A path may END in optional params: `/users/:id?` serves `/users` and `/users/:id`, and `c.params.id` is `string | undefined` (absent, not `""`). Runs fill left to right (`/d/:y?/:m?` is three paths). It is one route per path in `app.routes()`, OpenAPI and the typed client (`api.users.get()` / `api.users({ id }).get()`), so `GET /users` next to `GET /users/:id?` throws. A `?` anywhere else, and `:id+` / `:id*` / `:id(...)`, are literal text (`nifra check` NF-C026).',
+    "A param constraint is ONE character class with an optional count (`:id{[0-9]+}`, `:code{[A-Z]{2}}`, `\\d`/`\\w`) or a list of two or more values (`:ext{png|jpg}`); anything else in braces (`{int}`, `{.+}`, `{a+|b+}`) is literal text (NF-C026). The value is checked as SENT, before percent-decoding (`/users/4%32` does not fit `[0-9]+`), and stays a `string`. The narrowest route answers regardless of registration order (literal, list, class, bare `:param`, wildcard), and a method that route lacks is a 405, not a fall-through to a broader route. Typed client and OpenAPI use the bare name (`api.users({ id })`, `/users/{id}` with a `pattern` or `enum`); the client does not check the value. Not allowed in a `routes/` file name.",
+    'One handler for several methods: `.use(all(path, handler))` and `.use(method("PURGE" | ["GET", "POST"], path, handler))` from `@nifrajs/core/methods`. `all()` is the seven standard methods, NOT a catch-all: any other method is still `405` + `Allow` (use `mount()` to pass every method through). `method()` takes any uppercase token except `TRACE`/`CONNECT`/`TRACK`. A custom-method route has no typed-client call and no OpenAPI entry, and an assurance rule with `methods` never matches it - classify it with a path rule.',
+    'A path no route matches is a `404` `{ ok: false, error: "not_found" }`. `.use(notFound(handler))` from `@nifrajs/core/not-found` answers it instead: return a `Response` (a `2xx` is sent as a `404`; `3xx`/`4xx`/`5xx` are kept) or `undefined` for the default. It is NOT a `server()` option, never runs for a `405`, gets no request body, and is one per server (not inside `group()`). To serve unmatched paths (SPA shell, proxy) use a wildcard route or a mount.',
     '**Throw rule:** `throw new Response("", { status: 404 })` is control flow - returned as-is, bypasses `_error`. `throw new Error(…)` hits the nearest `_error` boundary / a 500. Do not throw a `Response` to signal a bug, and do not `throw new Error` to send a 4xx.',
     "Type the env ONCE on `server<Env>()` → `c.env` is typed on every route below (no per-binding cast). Without `<Env>`, `c.env` is `unknown`. Still validate untrusted env at the boundary.",
   ],
@@ -199,6 +205,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "**The client never throws.** Every call returns `{ ok, status, data, error }` - branch on `res.ok`, never `try/catch`. A network failure is `ok: false`, not an exception.",
     "Import the server's app **type-only**: `import type { app }` + `client<typeof app>(url)`. The value import would pull server code (and its `node:` deps) into the browser bundle.",
     "`inProcessClient(app)` is a **callable proxy** with the same shape as `client()` but no network - use it in SSR loaders and tests. It mutates/serves the real app in-process; it is not a mock.",
+    "A body that holds a `File` or `Blob` is sent as `multipart/form-data`. Do not set `content-type` for it - the boundary is generated, and a caller-set value is dropped.",
     '**Reserved proxy keys:** the seven HTTP verbs (`get`/`post`/`put`/`patch`/`delete`/`head`/`options`, any casing) plus `subscribe`, `ws`, `index`, `then` (exact) resolve **before** path segments, so `api.delete.post` calls the DELETE verb, not the `/delete` segment. The typed spelling for a colliding segment is a **call on the parent node**: `api.api("delete").post()` sends `POST /api/delete` (accepts exactly the colliding names). The type rejects the dot access with that guidance; `nifra check` reports it (NF-C018, advisory). Prefer verb-free segments when you control the path.',
   ],
   "@nifrajs/testing": [
@@ -207,7 +214,9 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "Query mutations are proved invalid after URL serialization, and every failure carries `{ seed, caseId, runtime }`; replay one with `only: caseId`.",
   ],
   "@nifrajs/schema": [
-    "`t.object` is **strict** - unknown keys → `400`. Reach for `t.looseObject` only when extra keys are intentional.",
+    "`t.object` is **strict** - unknown keys → `422`. Reach for `t.looseObject` only when extra keys are intentional.",
+    "`t.file` and `t.form` are on the `t` of **`@nifrajs/schema/form`**, not the root `t`. A `t.form` is the route `body` as is and reads `multipart/form-data`; the default body cap is 1 MB, so set `bodyLimit` on a route that takes files.",
+    "`t.file({ accept })` proves the file's **signature**, nothing more. `file.name` is the client's: generate the storage key, never build a path from the name. Without `accept`, `file.type` is the client's too.",
     "`t` is TypeBox-backed and implements **Standard Schema**, so a nifra route accepts it natively (no adapter). zod/valibot/arktype work the same way at the route boundary.",
   ],
   "@nifrajs/web": [
@@ -215,11 +224,19 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     '**Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.',
     "`PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.",
     "`trustHtml(value)` is an explicit raw-HTML escape hatch, **not a sanitizer**. Use escaped text for untrusted values; pass request/CMS/markdown HTML through a maintained allowlist sanitizer with `sanitizeHtml(value, sanitizer)` before rendering.",
+    "`ctx.set.headers` from a loader or action reaches **only the rendered document** - not a `redirect()`, a status or error page, or a navigation data response. `ctx.set.cookie()` rides every outcome and makes it `cache-control: private, no-store`. Write before the loader returns: a write from a deferred promise throws. A prerendered page is a static file and serves neither.",
   ],
   "@nifrajs/mcp": [
     "HTTP MCP is same-origin for browser clients by default. Set an exact `allowedOrigins` list for known cross-origin callers; use `allowAnyOrigin: true` only for an intentionally public, secret-free server.",
+    'A server on localhost or a private network needs `allowedHosts` (e.g. `["localhost", "127.0.0.1"]`): a DNS-rebound page reaches it under the attacker\'s hostname with a matching Origin, so only the Host check stops it. Unset, any Host is accepted.',
     "`createMcpServer` has **no built-in authentication**. Put authorization at the host boundary with `authorizeMessage`, and do not expose state-changing or private tools on an unauthenticated mount.",
     "Tool and prompt failures are deliberately returned as generic errors; log detailed diagnostics on the server and never put filesystem paths, SQL, provider responses, or secrets in thrown messages.",
+  ],
+  "@nifrajs/mcp-db": [
+    "`run_query` on `serveDatabaseAsMcp` is off until you pass an `authorize` hook, and a table outside `tables` is refused even through an alias. D1 is not supported: it cannot open a database read-only at the engine.",
+    "The engines are for development databases. `@nifrajs/mcp-db/postgres` refuses a superuser connection (`NIFRA_DB_SUPERUSER`), a role in `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, and a role that can use dblink, postgres_fdw, file_fdw or an untrusted language (`NIFRA_DB_EXTENSION`, unless `allowExtensions` names it). Connect as a read-only role; `postgresRoleSql` writes the SQL for one and runs nothing.",
+    "Rows and schema text are database data: treat every value (and every table or column name) as untrusted, never as instructions. Results are capped by `maxRows` and `maxResultBytes`, and `redaction` scrubs strings and refuses any query that reads a column `redaction.column` matches, aliased, in an expression or a filter included - pass one.",
+    "`exclude` is enforced on the plan (Postgres) or the compiled statement (SQLite), so views, CTEs, partitions and inheritance children are covered. On Postgres the hard boundary for an excluded table is still the role's privileges: a SQL function can read a table without it appearing in the plan, which is why `postgresRoleSql` REVOKEs excluded tables instead of granting `pg_read_all_data`.",
   ],
   "@nifrajs/webmcp": [
     "WebMCP registration is **page-local and opt-in**: pass an explicit capability allowlist to `registerWebMcpTools`; unsupported browsers safely no-op, and registration never replaces server authorization.",
@@ -268,6 +285,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/uploads": [
     "MIME is detected from **magic bytes**, never the `Content-Type` header - validate the real bytes, enforce the size cap, and strip EXIF before storing.",
+    "To declare a file in a route's body schema, use `t.file` / `t.form` from `@nifrajs/schema/form` (same detection, validated before the handler). `validateUpload` is for a route that reads the upload itself.",
     "Signed download URLs carry the **shortest viable TTL** - re-sign on demand, don't cache a long-lived URL.",
   ],
   "@nifrajs/image": [
@@ -277,6 +295,10 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   "@nifrajs/i18n": [
     "The message formatter is a **tiny ICU** layer on the platform `Intl` - it isn't full ICU MessageFormat; check the supported syntax before porting complex messages.",
     "Locale negotiation reads the request; resolve the locale at the boundary and thread it, don't read a global.",
+    "Formatters are cached per catalog object and options: pass a **stable** `onMissing` (module scope) and reuse catalog objects, or every call builds a new formatter.",
+    '`get(key)` returns the first catalog\'s value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.',
+    "Gate catalogs with `nifra i18n check` (or `checkCatalogs()` from `@nifrajs/i18n/check` in a test): it catches dropped `{placeholders}`, missing plural categories and lookalike letters from another script that review misses.",
+    "Rich text is `rich()` (`@nifrajs/i18n/rich`, or the adapter's `/i18n` `rich()` / Svelte `<Rich>`), **never** `t()` + innerHTML/`{@html}`/`v-html`: tags are bare names mapped to handlers, `t()` returns the markers verbatim.",
   ],
   "@nifrajs/middleware": [
     "Middleware is **fail-closed** by default - a throwing/denying middleware blocks the request rather than letting it through. Order matters: auth/CSRF before handlers.",
@@ -309,7 +331,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/cli": [
     "`nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.",
-    "One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.",
+    "One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cloudflare/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.",
     "`nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.",
   ],
   nifra: [
@@ -406,7 +428,7 @@ function extractExports(pkgs: readonly Pkg[]): Map<string, ExportRow[]> {
       (a, b) =>
         (KEY_EXPORT_RANK.get(a.name) ?? 99) - (KEY_EXPORT_RANK.get(b.name) ?? 99) ||
         (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) ||
-        a.name.localeCompare(b.name),
+        codeUnitOrder(a.name, b.name),
     )
     byPkg.set(pkg.name, rows)
   }

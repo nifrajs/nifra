@@ -34,6 +34,16 @@ describe("routePathToFile", () => {
     expect(() => routePathToFile("/a/*rest/b", "tsx")).toThrow(/catch-all must be the last/)
   })
 
+  test("refuses a param constraint: a route file name cannot carry one", () => {
+    expect(() => routePathToFile("/users/:id{[0-9]+}", "tsx")).toThrow(
+      'a param constraint cannot be written in a route file name: ":id{[0-9]+}" in "/users/:id{[0-9]+}"',
+    )
+    expect(() => routePathToFile("/img/:kind{thumb|full}/edit", "tsx")).toThrow(
+      /check the value in the route's loader/,
+    )
+    expect(() => scaffoldRoute("/users/:id{[0-9]+}", "react")).toThrow(/param constraint/)
+  })
+
   test("rejects filesystem traversal and separator syntax", () => {
     expect(() => routePathToFile("/../src/escape", "tsx")).toThrow(/invalid route segment/)
     expect(() => routePathToFile("/a/../../src/escape", "tsx")).toThrow(/invalid route segment/)
@@ -42,18 +52,31 @@ describe("routePathToFile", () => {
 })
 
 describe("scaffoldRoute", () => {
-  test("JSX frameworks get a ready-to-write stub", () => {
+  test("JSX frameworks get a ready-to-write route pair", () => {
     const r = scaffoldRoute("/users/:id", "react")
     expect(r.file).toBe("routes/users/[id].tsx")
-    expect(r.content).toContain("export default function Page")
-    expect(r.content).toContain("never top-level-import server-only") // the gotcha, inline
-    expect(r.note).toContain("loader")
+    expect(r.content).toContain("export default function Page({ data }: Route.ComponentProps)")
+    expect(r.content).toContain('import type { Route } from "./+types/[id]"')
+    // The page carries no server code: the loader and its schema live in the backend half.
+    expect(r.content).not.toContain("loader")
+    expect(r.backend.file).toBe("routes/users/[id].backend.ts")
+    expect(r.backend.content).toContain("export const loaderOutput = t.object(")
+    expect(r.backend.content).toContain(
+      "export async function loader({ params }: Route.LoaderArgs)",
+    )
+    expect(r.note).toContain("routes/users/[id].backend.ts")
   })
 
-  test("vue/svelte get path + contract, no hallucinated SFC", () => {
+  test("an optional param is read as possibly absent", () => {
+    expect(scaffoldRoute("/[[lang]]", "react").backend.content).toContain('params.lang ?? ""')
+  })
+
+  test("vue/svelte get paths, the backend half and the contract, no hallucinated SFC", () => {
     const r = scaffoldRoute("/about", "svelte")
     expect(r.file).toBe("routes/about.svelte")
     expect(r.content).toBeUndefined() // no guessed SFC body
+    expect(r.backend.file).toBe("routes/about.backend.ts")
+    expect(r.backend.content).toContain("export const loaderOutput")
     expect(r.note).toContain("nifra_example")
   })
 
@@ -61,7 +84,9 @@ describe("scaffoldRoute", () => {
     const r = scaffoldRoute("/hotels", "vanilla")
     expect(r.file).toBe("routes/hotels.ts")
     expect(r.content).toContain('import { html } from "@nifrajs/web-vanilla"')
-    expect(r.content).toContain("export const hydrate = false") // no hydration, ever
+    // `hydrate` is a server-only export now: it belongs to the backend half, never the page.
+    expect(r.content).not.toContain("export const hydrate")
+    expect(r.backend.content).toContain("export const hydrate = false") // no hydration, ever
     expect(r.content).toContain("defineIsland") // the AI-safe interactivity path
     expect(r.content).toContain("return () =>") // cleanup pattern NF-C020 enforces
     expect(r.note).toContain("islands")
@@ -70,7 +95,7 @@ describe("scaffoldRoute", () => {
   test("vanilla + variant stateful emits the golden nano pattern", () => {
     const r = scaffoldRoute("/todos", "vanilla", "stateful")
     expect(r.file).toBe("routes/todos.ts")
-    expect(r.content).toContain("export const hydrate = false") // still zero-runtime, no hydration
+    expect(r.backend.content).toContain("export const hydrate = false") // still zero-runtime
     expect(r.content).toContain(
       'import { signal, computed, bind, bindList } from "@nifrajs/web/nano"',
     )
@@ -90,8 +115,9 @@ describe("scaffoldRoute", () => {
 describe("renderScaffold", () => {
   test("renders file + stub for react", () => {
     const out = renderScaffold("/users/:id", "react" as Framework)
-    expect(out).toContain("**File:** `routes/users/[id].tsx`")
+    expect(out).toContain("**Files:** `routes/users/[id].tsx` + `routes/users/[id].backend.ts`")
     expect(out).toContain("```tsx")
+    expect(out).toContain("```ts\n// routes/users/[id].backend.ts")
   })
 
   test("renders an actionable error for an invalid path", () => {
@@ -100,7 +126,7 @@ describe("renderScaffold", () => {
 })
 
 describe("writeScaffoldRoute", () => {
-  test("writes a verified JSX stub and refuses to overwrite it", async () => {
+  test("writes a verified route pair and its route types, and refuses to overwrite either", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-scaffold-"))
     try {
       const first = await writeScaffoldRoute(dir, "/users/:id", "react")
@@ -108,9 +134,21 @@ describe("writeScaffoldRoute", () => {
       expect(await readFile(join(dir, "routes/users/[id].tsx"), "utf8")).toContain(
         "export default function Page",
       )
+      expect(await readFile(join(dir, "routes/users/[id].backend.ts"), "utf8")).toContain(
+        "export const loaderOutput",
+      )
+      expect(
+        await readFile(join(dir, ".nifra/types/routes/users/+types/[id].d.ts"), "utf8"),
+      ).toContain("export namespace Route")
       const second = await writeScaffoldRoute(dir, "/users/:id", "react")
       expect(second.written).toBe(false)
       expect(second.reason).toContain("already exists")
+
+      // An existing backend half alone also stops the write: nothing is half-written.
+      await rm(join(dir, "routes/users/[id].tsx"))
+      const third = await writeScaffoldRoute(dir, "/users/:id", "react")
+      expect(third.reason).toBe("file already exists: routes/users/[id].backend.ts")
+      expect(await readFile(join(dir, "routes/users/[id].tsx")).catch(() => null)).toBeNull()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

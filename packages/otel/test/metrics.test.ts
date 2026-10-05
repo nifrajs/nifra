@@ -63,6 +63,34 @@ describe("metrics()", () => {
     expect(text).toContain('nifra_http_requests_in_flight{method="GET"} 0')
   })
 
+  test("a request a later hook rewrote is still counted and leaves the in-flight gauge", async () => {
+    const app = server()
+      .use(metrics())
+      .onRequest((req) => (req.method === "POST" ? new Request(req, { method: "PUT" }) : undefined))
+      .put("/items/:id", () => ({ ok: true }))
+    await app.fetch(new Request("http://t/items/1", { method: "POST" }))
+    const text = await scrape(app)
+    expect(text).toContain('nifra_http_requests_in_flight{method="POST"} 0')
+    expect(text).toContain(
+      'nifra_http_requests_total{method="POST",route="/items/:id",status="200"} 1',
+    )
+  })
+
+  test("a method outside HTTP's own set is labeled _OTHER, not a series of its own", async () => {
+    // Deno passes extension methods through; Bun's Request folds them to GET, so one is made here.
+    const withMethod = (method: string) =>
+      new (class extends Request {
+        override get method(): string {
+          return method
+        }
+      })("http://t/users/1")
+    const app = makeApp()
+    for (let i = 0; i < 20; i++) await app.fetch(withMethod(`X-CUSTOM-${i}`))
+    const text = await scrape(app)
+    expect(text).not.toContain("X-CUSTOM")
+    expect(text).toContain('nifra_http_requests_in_flight{method="_OTHER"} 0')
+  })
+
   test("custom app metrics on a shared registry render at /metrics", async () => {
     const registry = createMetricsRegistry()
     const logins = registry.counter("app_logins_total", "Logins.")

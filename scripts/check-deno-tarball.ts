@@ -31,6 +31,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { $ } from "bun"
+import { exportTargets, shipsTarget } from "./export-targets.ts"
 
 const PKG_DIR = "packages/deno"
 const requireDeno = process.argv.includes("--require-deno")
@@ -82,7 +83,7 @@ try {
     name: string
     version: string
     types?: string
-    exports?: Record<string, Record<string, string> | string>
+    exports?: unknown
   }
   const entries = new Set(
     (await $`tar -tzf ${tarball}`.text())
@@ -90,22 +91,14 @@ try {
       .split("\n")
       .map((entry) => entry.replace(/^package\//, "")),
   )
-  const targets = new Map<string, string>()
-  for (const [subpath, entry] of Object.entries(manifest.exports ?? {})) {
-    if (typeof entry === "string") targets.set(subpath, entry)
-    else {
-      for (const [condition, target] of Object.entries(entry)) {
-        if (typeof target === "string") targets.set(`${subpath} (${condition})`, target)
-      }
-    }
-  }
-  if (manifest.types !== undefined) targets.set('"types"', manifest.types)
+  const targets = exportTargets(manifest.exports)
+  if (manifest.types !== undefined) targets.push({ label: '"types"', target: manifest.types })
   const failuresBeforeTargets = failures
-  for (const [label, target] of targets) {
+  for (const { label, target } of targets) {
     const path = target.replace(/^\.\//, "")
     if (path.endsWith(".ts") && !path.endsWith(".d.ts")) {
       fail(`${manifest.name} ${label} → ${target}: Deno cannot strip types under node_modules`)
-    } else if (!entries.has(path)) {
+    } else if (!shipsTarget(target, entries)) {
       fail(`${manifest.name} ${label} → ${target}: not present in the tarball`)
     }
   }

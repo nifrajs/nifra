@@ -37,14 +37,13 @@ beforeEach(() => {
   routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
   // A minimal home route (no JSX → no framework runtime needed), opted into prerendering.
-  writeFileSync(
-    join(routesDir, "index.tsx"),
-    "export const prerender = true\nexport default function Home() { return null }\n",
-  )
+  writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
+  writeFileSync(join(routesDir, "index.backend.ts"), "export const prerender = true\n")
   // The app's framework wiring - exports a stub adapter the generated server entry imports. It emits a
   // fixed marker ("nifra") so the prerendered HTML is assertable without a real UI framework.
+  mkdirSync(join(projectRoot, "backend"), { recursive: true })
   writeFileSync(
-    join(projectRoot, "framework.ts"),
+    join(projectRoot, "backend/framework.ts"),
     "import { streamOf } from './stub-adapter.ts'\n" +
       "export const adapter = {\n" +
       '  renderToStream: () => streamOf("<p>nifra</p>"),\n' +
@@ -52,30 +51,31 @@ beforeEach(() => {
       "}\n",
   )
   writeFileSync(
-    join(projectRoot, "stub-adapter.ts"),
+    join(projectRoot, "backend/stub-adapter.ts"),
     "export const streamOf = (s) => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(s)); c.close() } })\n",
   )
   // The stub client runtime the client bundle imports (exports `mountRouter`).
-  writeFileSync(join(projectRoot, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(projectRoot, "frontend"), { recursive: true })
+  writeFileSync(join(projectRoot, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
 })
 afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
 })
 
-test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async () => {
+test("--target cloudflare → _worker.js + _routes.json + /assets bundle", async () => {
   const outDir = join(projectRoot, "dist")
   mkdirSync(join(projectRoot, "public", ".well-known", "acme-challenge"), { recursive: true })
   writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *")
   writeFileSync(join(projectRoot, "public", ".well-known", "acme-challenge", "token"), "challenge")
-  const result = await buildTarget("cf-pages", {
+  const result = await buildTarget("cloudflare", {
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work"),
-    clientModule: join(projectRoot, "client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
   })
 
-  expect(result.target).toBe("cf-pages")
+  expect(result.target).toBe("cloudflare")
   // The three artifacts the Cloudflare Pages deploy needs.
   expect(existsSync(join(outDir, "_worker.js"))).toBe(true)
   expect(existsSync(join(outDir, "_routes.json"))).toBe(true)
@@ -106,6 +106,34 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async (
   expect(result.size.totalGzip).toBeGreaterThan(0)
 }, 60_000)
 
+test("--target vercel → Build Output API v3 (config.json, static/, functions/index.func)", async () => {
+  const outDir = join(projectRoot, ".vercel/output")
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *")
+  const result = await buildTarget("vercel", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-vercel"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  expect(JSON.parse(readFileSync(join(outDir, "config.json"), "utf8"))).toEqual({
+    version: 3,
+    routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }],
+  })
+  const fn = join(outDir, "functions/index.func")
+  expect(JSON.parse(readFileSync(join(fn, ".vc-config.json"), "utf8"))).toEqual({
+    runtime: "edge",
+    entrypoint: "index.js",
+  })
+  expect(readFileSync(join(fn, "index.js"), "utf8")).toContain("export")
+  // Static files sit where the filesystem route serves them: the hashed bundle and public/.
+  expect(existsSync(join(outDir, "static", result.client.entry.replace(/^\//, "")))).toBe(true)
+  expect(readFileSync(join(outDir, "static/robots.txt"), "utf8")).toBe("User-agent: *")
+  expect(existsSync(join(outDir, "assets"))).toBe(false)
+  expect(result.run).toContain("vercel deploy --prebuilt")
+}, 60_000)
+
 test("--target static → prerenders opted-in routes to index.html", async () => {
   const outDir = join(projectRoot, "dist-static")
   const manifest = discoverRoutes(routesDir)
@@ -118,8 +146,8 @@ test("--target static → prerenders opted-in routes to index.html", async () =>
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work-static"),
-    clientModule: join(projectRoot, "client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
     prerenderApp: app,
   })
 
@@ -144,8 +172,8 @@ test("--target bun persists the CSS loading policy in the client manifest", asyn
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work-bun-css"),
-    clientModule: join(projectRoot, "client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
     cssLoading: "deferred",
   })
 
@@ -159,6 +187,7 @@ test("--target bun persists the CSS loading policy in the client manifest", asyn
 test("--target static with no prerenderable route throws a clear error", async () => {
   // Replace the opted-in route with one that doesn't opt in.
   writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
+  rmSync(join(routesDir, "index.backend.ts"))
   const manifest = discoverRoutes(routesDir)
   const app = (client: { entry: string }) =>
     createWebApp({ adapter: stubAdapter, manifest, clientEntry: client.entry })
@@ -166,8 +195,8 @@ test("--target static with no prerenderable route throws a clear error", async (
     routesDir,
     outDir: join(projectRoot, "dist-empty"),
     workDir: join(projectRoot, ".work-empty"),
-    clientModule: join(projectRoot, "client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
     prerenderApp: app,
   })
   await expect(promise).rejects.toThrow(/no routes were prerendered/)

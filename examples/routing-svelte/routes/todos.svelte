@@ -3,46 +3,26 @@
   useFetcher (the bump button). The bindings are Svelte stores, read reactively with `$` (top-level
   vars only - that's why the bump is a single top-level fetcher, not per-row).
 -->
-<script module>
-  import { revalidate } from "@nifrajs/web"
-
+<script module lang="ts">
   export const meta = {
     title: "nifra + Svelte - Todos (fetchers + query)",
     meta: [{ name: "description", content: "nifra Svelte bindings: useFetcher + useQuery" }],
   }
-
-  export async function loader({ api }) {
-    const res = await api.todos.get()
-    return { todos: res.data?.todos ?? [] }
-  }
-
-  export async function action({ request, api }) {
-    const form = await request.formData()
-    const bumpId = form.get("bump")
-    if (typeof bumpId === "string" && bumpId !== "") {
-      await new Promise((resolve) => setTimeout(resolve, 500)) // slow → pending visible
-      await api.todos.bump.post({ id: Number(bumpId) })
-      return revalidate(["/todos"], { ok: true })
-    }
-    const raw = form.get("text")
-    const text = typeof raw === "string" ? raw.trim() : ""
-    if (text === "") return { ok: false }
-    await api.todos.post({ text })
-    return { ok: true }
-  }
 </script>
 
-<script>
+<script lang="ts">
   import { useFetcher } from "@nifrajs/web-svelte/fetcher"
   import { useQuery, useQueryClient } from "@nifrajs/web-svelte/query"
-  let { data } = $props()
+  import type { Route } from "./+types/todos"
+
+  let { data }: Route.ComponentProps = $props()
 
   const qc = useQueryClient()
   // A keyed query for the home count (data-mode GET), distinct from this route's loader. Read via `$`.
   const count = useQuery(["count"], () =>
     fetch("/", { headers: { "x-nifra-data": "1" } })
       .then((r) => r.json())
-      .then((d) => d.count),
+      .then((d: { count: number }) => d.count),
   )
 
   // A concurrent fetcher: bumps todo #1 (appends "!"), then revalidate() refreshes the list. Read via `$`.

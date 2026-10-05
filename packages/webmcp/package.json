@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/webmcp",
-  "version": "3.5.0",
+  "version": "4.0.0",
   "description": "Typed WebMCP site tools and predictive UI contracts for Nifra.",
   "keywords": [
     "bun",
@@ -14,6 +14,9 @@
     "optimistic-ui"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

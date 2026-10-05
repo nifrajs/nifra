@@ -81,8 +81,8 @@ async function dump(base: string, path: string): Promise<unknown> {
 }
 
 async function dumpAll(app: ReturnType<typeof server>): Promise<unknown[]> {
-  running = await serve(app, { port: 0 })
-  const base = `http://localhost:${running.port}`
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const base = `http://127.0.0.1:${running.port}`
   const out: unknown[] = []
   for (const path of PATHS) out.push(await dump(base, path))
   await running.stop({ drainMs: 0 })
@@ -110,9 +110,10 @@ test("declared headers are byte-identical to the equivalent hook on every Node w
 
 test("a mixed-case collision ships one header line, with the value the route set", async () => {
   running = await serve(routes(server({ logger: silentLogger })).responseHeaders(DECLARED), {
+    hostname: "127.0.0.1",
     port: 0,
   })
-  const res = await fetch(`http://localhost:${running.port}/collision`)
+  const res = await fetch(`http://127.0.0.1:${running.port}/collision`)
   expect([...res.headers].filter(([name]) => name === "x-frame-options")).toEqual([
     ["x-frame-options", "SAMEORIGIN"],
   ])
@@ -123,9 +124,9 @@ test("securityHeaders() ships the same wire it did as a hook", async () => {
     server()
       .use(securityHeaders({ hsts: { maxAge: 100 }, contentSecurityPolicy: "default-src 'self'" }))
       .get("/", () => ({ ok: true })),
-    { port: 0 },
+    { hostname: "127.0.0.1", port: 0 },
   )
-  const res = await fetch(`http://localhost:${running.port}/`)
+  const res = await fetch(`http://127.0.0.1:${running.port}/`)
   expect(res.headers.get("x-content-type-options")).toBe("nosniff")
   expect(res.headers.get("x-frame-options")).toBe("DENY")
   expect(res.headers.get("referrer-policy")).toBe("no-referrer")

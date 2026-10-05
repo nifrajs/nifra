@@ -14,7 +14,7 @@
  * not, and saving it does a clean full reload. Plus no Vite dependency and ONE bundler across dev and
  * production, which is the real prize - the dev/prod seam disappears.
  *
- * CSS Modules, server functions, and `*.server` modules use the same production transforms through the
+ * CSS Modules, server functions, and the zone guard use the same production transforms through the
  * generated Bun config. The CLI owns that config because Bun's HTML dev server accepts plugins only from
  * `[serve.static] plugins`; direct callers should pass the equivalent plugin through their Bun config.
  *
@@ -39,7 +39,7 @@
  *
  * SSR invalidation is Bun's import cache rather than Vite's module graph, so route modules are re-imported
  * under a changing query on each change - which is what `discoverRoutes({ importQuery })` exists for. That
- * query stops at the route file, so everything BELOW it - components, helpers, `*.server` modules - is
+ * query stops at the route file, so everything BELOW it - components, helpers, backend modules - is
  * tracked and re-keyed per module by `./dev-ssr-graph.ts`, or SSR would render the code that was on disk
  * when the server started.
  *
@@ -57,14 +57,16 @@ import {
 import { dirname, relative, resolve } from "node:path"
 import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
-import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { explainBindFailure } from "./dev-port.ts"
+import { createDevSession, type DevAppHooks, type DevSession } from "./dev-session.ts"
 import { createSsrGraph, type SsrGraph } from "./dev-ssr-graph.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { DEV_ENTRY_FILE } from "./internal/dev-reserved.ts"
 import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
 import { servePublicDir } from "./public-dir.ts"
 
+export type { DevAppHooks } from "./dev-session.ts"
 export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 /** Minimal app surface the dev server needs - `createWebApp(...)` satisfies it. */
@@ -76,9 +78,14 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
   /**
    * Build the nifra app for the current client entry. `importQuery` changes on every reload - pass it to
    * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's
-   * cached copies.
+   * cached copies. Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders
+   * still reach the dev feed (`nifra errors`).
    */
-  readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>
+  readonly createApp: (
+    clientEntry: string,
+    importQuery: string,
+    dev: DevAppHooks,
+  ) => FetchApp | Promise<FetchApp>
   /** Directories to watch (default: `[routesDir]`). */
   readonly watch?: readonly string[]
   /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */
@@ -95,6 +102,16 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
    * pass runs in the background off the hot path, so HMR is never waiting on it, and only reports.
    */
   readonly guardLeaks?: boolean
+  /**
+   * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)
+   * and the persisted dev log beside it (default `true`).
+   */
+  readonly record?: boolean
+  /**
+   * Show the browser errors a dev page reports in a badge on that page, with a Copy prompt button per
+   * fix (default `true`). Off, the errors still reach the feed.
+   */
+  readonly indicator?: boolean
 }
 
 export interface DevServer {
@@ -293,10 +310,17 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   // (`devHotComponent`). Announced here rather than passed, for the same reason the flag above is.
   process.env[DEV_ROOT_ENV] = root
   process.env[DEV_ROUTES_ENV] = resolve(routesDir)
-  // The most recent SSR failure as a structured Diagnostic, scoped to THIS server. Served at
-  // LAST_ERROR_PATH so an agent driving the dev server reads the exact failure (code, codeframe, fix) as
-  // JSON instead of scraping the overlay. Shared with the Vite adapter so the endpoint can't drift.
-  const devDiagnostics = createDevDiagnostics(root)
+  // Everything this server sees, for the agent driving it: failures (with the overlay's Diagnostic and
+  // LAST_ERROR_PATH riding on the same capture), console output, request traces and the discovery
+  // record. Shared with the Vite adapter so the two servers report identically.
+  const session = createDevSession({
+    root,
+    pipeline: "bun",
+    publicEnvPrefix: options.publicEnvPrefix,
+    record: options.record,
+    indicator: options.indicator,
+  })
+  const devHooks: DevAppHooks = { onLoaderError: session.onLoaderError }
   // SSR freshness BELOW the route module. The route-level `importQuery` only ever reloaded the route
   // itself; everything it imports is tracked here and re-keyed when it changes. Registered now because a
   // Bun runtime plugin only affects modules loaded after it, and the first route import is `appFor`
@@ -307,7 +331,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const ssrGraph = createSsrGraph({ root })
   ;(await import("bun")).plugin(ssrGraph.plugin)
   const devDir = resolve(root, DEV_DIR)
-  const entryPath = resolve(devDir, "entry.tsx")
+  const entryPath = resolve(devDir, DEV_ENTRY_FILE)
   const htmlPath = resolve(devDir, "entry.html")
   const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   // Route dev's `public/` through the SAME handler production uses. Dev previously inherited this
@@ -378,15 +402,17 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
    * client leaks. It is no longer what keeps SSR correct.
    *
    * The entry hash is not the whole marker, though, because it only covers the CLIENT graph. A module
-   * the browser never receives - a `*.server` file, a loader's helper - can change without moving it, so
+   * the browser never receives - a backend module, a loader's helper - can change without moving it, so
    * the key also carries {@link SsrGraph} generation, which counts changes on the SERVER side. Either
    * one moving rebuilds the app, which is what re-imports the route modules under a fresh query.
    */
   const appFor = (key: string): Promise<FetchApp> => {
     if (built?.key === key) return Promise.resolve(built.app)
     if (building?.key === key) return building.promise
+    // A new key means the code moved since the last build: what the feed recorded before is stale.
+    if (version > 0) session.markChange()
     version += 1
-    const promise = Promise.resolve(createApp(CLIENT_ENTRY_PATH, `v=${version}`))
+    const promise = Promise.resolve(createApp(CLIENT_ENTRY_PATH, `v=${version}`, devHooks))
     building = { key, promise }
     void promise
       .then((next) => {
@@ -408,6 +434,37 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
     return appFor(`${entrySrc}#${ssrGraph.generation()}`)
   }
 
+  const renderApp = async (req: Request, url: URL): Promise<Response> => {
+    try {
+      // One fresh probe per request: it is both the freshness check for SSR and the stylesheet list,
+      // so the page cannot be rendered against a build the browser is not about to load.
+      const entry = await currentEntry(true)
+      const res = await (await appForRequest(entry.src)).fetch(req)
+      if (!(res.headers.get("content-type") ?? "").includes("text/html")) return res
+      if (entry.styles.length === 0) return session.decoratePage(req, res)
+      const headers = new Headers(res.headers)
+      headers.delete("content-length") // the body grows with the injected stylesheet links
+      return session.decoratePage(
+        req,
+        new Response(injectStyles(await res.text(), entry.styles), {
+          status: res.status,
+          headers,
+        }),
+      )
+    } catch (err) {
+      // One Diagnostic drives every surface: the overlay returned here, the JSON at LAST_ERROR_PATH and
+      // the feed's `ssr` entry.
+      const html = session.failure(err, {
+        method: req.method,
+        url: `${url.pathname}${url.search}`,
+      })
+      return new Response(html, {
+        status: 500,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })
+    }
+  }
+
   try {
     server = serve({
       port,
@@ -427,11 +484,9 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           const entry = await currentEntry()
           return new Response(null, { status: 307, headers: { location: entry.src } })
         }
-        if (devDiagnostics.isLastErrorPath(url.pathname)) {
-          // The structured form of the overlay, for an agent driving the dev server (shared surface).
-          const { body, headers } = devDiagnostics.lastError()
-          return new Response(body, { headers })
-        }
+        // The agent endpoints (errors, logs, requests, identity, last-error): shared surface.
+        const agent = await session.handle(req)
+        if (agent !== undefined) return agent
         // Static probe before routing; a miss returns undefined and falls through, so no route is
         // shadowed. Every GET/HEAD pays the probe, including page renders and API routes: the handler
         // serves extension-less files too (an ACME challenge token is the reason), so there is no
@@ -439,33 +494,11 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
         // mounting this handler itself can pass `files` to answer a miss without touching the disk.
         const staticFile = await servePublic(req)
         if (staticFile !== undefined) return staticFile
-        try {
-          // One fresh probe per request: it is both the freshness check for SSR and the stylesheet list,
-          // so the page cannot be rendered against a build the browser is not about to load.
-          const entry = await currentEntry(true)
-          const res = await (await appForRequest(entry.src)).fetch(req)
-          if (!(res.headers.get("content-type") ?? "").includes("text/html")) return res
-          if (entry.styles.length === 0) return res
-          const headers = new Headers(res.headers)
-          headers.delete("content-length") // the body grows with the injected stylesheet links
-          return new Response(injectStyles(await res.text(), entry.styles), {
-            status: res.status,
-            headers,
-          })
-        } catch (err) {
-          // One Diagnostic drives both surfaces: the overlay returned here and the JSON at LAST_ERROR_PATH.
-          const html = devDiagnostics.capture(err, {
-            method: req.method,
-            url: `${url.pathname}${url.search}`,
-          })
-          return new Response(html, {
-            status: 500,
-            headers: { "content-type": "text/html; charset=utf-8" },
-          })
-        }
+        return session.track(req, () => renderApp(req, url))
       },
     })
   } catch (err) {
+    session.stop()
     // `Bun.serve` throws synchronously on a bind failure; the Vite path's equivalent arrives as an async
     // `error` event. Same explanation either way - see ./dev-port.ts for why it is worth spelling out.
     throw explainBindFailure(err, port)
@@ -479,10 +512,12 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
     // Leaving the server up would answer 500s forever, which presents as a running server rather than as
     // the startup failure it is.
     server.stop(true)
+    session.stop()
     throw err
   }
+  session.listening(server.port ?? port)
 
-  const guard = options.guardLeaks !== false ? leakGuard(options) : undefined
+  const guard = options.guardLeaks !== false ? leakGuard(options, session) : undefined
   guard?.()
 
   // What is left for the watcher, now that request ordering keeps SSR fresh: regenerate the client entry
@@ -494,11 +529,16 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const onChange = (): void => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
+      // A deletion its own watcher reported is unwatched now, or the next topology poll reports it
+      // again as a second change: another regeneration and another leak-guard build.
+      syncWatchedFiles(false)
+      session.markChange()
       try {
         writeDevFiles({ routesDir, clientModule, entryPath, htmlPath })
       } catch (err) {
         // A half-saved file can fail the scan mid-edit; the next change re-runs this.
         console.error("[nifra/web/dev] client entry regeneration failed:", err)
+        session.buildFailed(err, "client entry regeneration failed")
       }
       guard?.()
     }, 60)
@@ -552,6 +592,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       for (const file of watched) unwatchFile(file)
       ssrGraph.dispose()
       server.stop(true)
+      session.stop()
       rmSync(devDir, { recursive: true, force: true })
       // Put the dev-phase env flags back the way this server found them (see `priorDevEnv`).
       for (const [key, prior] of Object.entries(priorDevEnv)) {
@@ -585,7 +626,7 @@ export function buildFailureDetail(err: unknown): string {
     : `  ${err instanceof Error ? err.message : String(err)}`
 }
 
-function leakGuard(options: DevServerOptions): () => void {
+function leakGuard(options: DevServerOptions, session: DevSession): () => void {
   let running = false
   let queued = false
   const run = (): void => {
@@ -595,11 +636,13 @@ function leakGuard(options: DevServerOptions): () => void {
     }
     running = true
     buildClient({ ...options, minify: false })
+      .then(() => session.buildPassed())
       .catch((err: unknown) => {
         console.error(
           `\n[nifra/web/dev] client-leak guard failed:\n${buildFailureDetail(err)}\n` +
             "  The dev server is still running. This will fail `nifra build`.\n",
         )
+        session.buildFailed(err, "client build failed (this will fail `nifra build`)")
       })
       .finally(() => {
         running = false

@@ -1,5 +1,6 @@
 import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import { basename, join, resolve } from "node:path"
+import { sessionFileStem } from "./sessions.ts"
 
 /** Version of the evidence-only legacy session file format. */
 export const SESSION_EVIDENCE_VERSION = 1 as const
@@ -160,7 +161,7 @@ export async function migrateLegacySession(
   const lines = records.map((record) => JSON.stringify(record))
   const content = lines.length === 0 ? "" : `${lines.join("\n")}\n`
   const digest = await sha256Hex(content)
-  const targetFile = join(targetRoot, `${sessionId}.jsonl`)
+  const targetFile = join(targetRoot, `${sessionFileStem(sessionId)}.jsonl`)
   await commitTarget(targetRoot, targetFile, content, options.signal)
   // Re-read the committed target and validate every line before the caller treats this as active.
   const committed = await readEvidenceTarget(targetFile, sessionId)
@@ -221,7 +222,7 @@ async function readLegacyEntries(
   sessionId: string,
   maxSourceBytes: number,
 ): Promise<readonly LegacyEntry[]> {
-  const path = join(sourceRoot, `${sessionId}.jsonl`)
+  const path = join(sourceRoot, `${sessionFileStem(sessionId)}.jsonl`)
   let text: string
   try {
     const bytes = await readFile(path)

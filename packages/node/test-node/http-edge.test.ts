@@ -21,6 +21,7 @@ import { createHash } from "node:crypto"
 import { connect, type Socket } from "node:net"
 import { after, before, test } from "node:test"
 import { server } from "@nifrajs/core"
+import { responseContract } from "@nifrajs/core/response-contract"
 import { serve } from "@nifrajs/node"
 
 let port = 0
@@ -206,6 +207,101 @@ test("HEAD returns the headers of the GET with no body", async () => {
   const [head, ...rest] = transcript.split("\r\n\r\n")
   assert.match(head ?? "", /HTTP\/1\.1 200/)
   assert.equal(rest.join("\r\n\r\n"), "")
+})
+
+test("a deferred c.json reply is held to the route's response contract", async () => {
+  const declared = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value: unknown) => ({
+        value:
+          typeof value === "object" && value !== null
+            ? { id: Reflect.get(value, "id"), name: Reflect.get(value, "name") }
+            : value,
+      }),
+    },
+  } as const
+  const app = server()
+    .use(responseContract("enforce"))
+    .get("/me", { response: declared }, (c) =>
+      c.json(
+        { id: "u1", name: "Ada", passwordHash: "SECRET" },
+        { status: 201, headers: { "x-request": "r1" } },
+      ),
+    )
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const response = await fetch(`http://127.0.0.1:${running.port}/me`)
+    assert.equal(response.status, 201)
+    assert.equal(response.headers.get("x-request"), "r1")
+    assert.deepEqual(await response.json(), { id: "u1", name: "Ada" })
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("HEAD to a streaming route cancels the body nothing will read", async () => {
+  let cancelled!: () => void
+  const cancel = new Promise<void>((resolve) => {
+    cancelled = resolve
+  })
+  const app = server().get(
+    "/stream",
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (controller) =>
+            new Promise<void>((resolve) =>
+              setTimeout(() => {
+                controller.enqueue(new TextEncoder().encode("tick\n"))
+                resolve()
+              }, 10),
+            ),
+          cancel: () => cancelled(),
+        }),
+      ),
+  )
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const response = await fetch(`http://127.0.0.1:${running.port}/stream`, { method: "HEAD" })
+    assert.equal(response.status, 200)
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("the body was never cancelled")), 2000),
+    )
+    await Promise.race([cancel, timeout])
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("a client that leaves an idle streamed response cancels its body", async () => {
+  const cancelled = Promise.withResolvers<void>()
+  const app = server().get(
+    "/idle",
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: (controller) => controller.enqueue(new TextEncoder().encode("first\n")),
+          // Nothing more is ever produced: only a cancel can end this stream.
+          pull: () => new Promise<void>(() => {}),
+          cancel: () => cancelled.resolve(),
+        }),
+      ),
+  )
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const socket = connect(running.port, "127.0.0.1")
+    socket.write("GET /idle HTTP/1.1\r\nhost: x\r\n\r\n")
+    await new Promise((resolve) => socket.once("data", resolve))
+    socket.destroy()
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("the body was never cancelled")), 2000),
+    )
+    await Promise.race([cancelled.promise, timeout])
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
 })
 
 test("a 204 carries no body and does not wedge the connection", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { detectFileType } from "../src/detect.ts"
+import { DETECTABLE_MIME_TYPES, detectFileType, FILE_TYPE_PREFIX_BYTES } from "../src/detect.ts"
 import { signDownloadUrl, verifyDownloadUrl } from "../src/sign.ts"
 import { type ImageReencoder, stripImageMetadata } from "../src/strip.ts"
 import { validateUpload } from "../src/validate.ts"
@@ -14,9 +14,13 @@ const WEBP = bytesOf(0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50)
 // RIFF: "RIFF" + 4 size bytes + a 4-char form type at offset 8.
 const riff = (form: string): Uint8Array =>
   bytesOf(0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, ...[...form].map((c) => c.charCodeAt(0)))
-// ISO-BMFF: 4 size bytes + "ftyp" + a 4-char major brand at offset 8.
-const isobmff = (brand: string): Uint8Array =>
-  bytesOf(0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, ...[...brand].map((c) => c.charCodeAt(0)))
+// ISO-BMFF: 4 size bytes + "ftyp" + a 4-char major brand at offset 8, then a minor version and the
+// compatible brands, to the end of the box.
+const isobmff = (brand: string, ...compatible: string[]): Uint8Array => {
+  const ascii = (text: string): number[] => [...text].map((c) => c.charCodeAt(0))
+  const tail = [0, 0, 0, 0, ...compatible.flatMap(ascii)]
+  return bytesOf(0, 0, 0, 12 + tail.length, ...ascii("ftyp"), ...ascii(brand), ...tail)
+}
 
 describe("detectFileType", () => {
   // One row per branch in detect.ts - every magic-byte path is exercised.
@@ -31,11 +35,14 @@ describe("detectFileType", () => {
     ["avif (ftyp/avif)", isobmff("avif"), "image/avif", "avif"],
     ["heic (ftyp/heic)", isobmff("heic"), "image/heic", "heic"],
     ["heif (ftyp/mif1)", isobmff("mif1"), "image/heic", "heic"],
+    ["avif (ftyp/mif1, compatible avif)", isobmff("mif1", "miaf", "avif"), "image/avif", "avif"],
+    ["heif sequence (ftyp/msf1)", isobmff("msf1", "heic"), "image/heic", "heic"],
     ["m4a (ftyp/M4A )", isobmff("M4A "), "audio/mp4", "m4a"],
     ["m4b (ftyp/M4B )", isobmff("M4B "), "audio/mp4", "m4a"],
     ["webm (Matroska)", bytesOf(0x1a, 0x45, 0xdf, 0xa3, 0, 0), "video/webm", "webm"],
     ["ogg (OggS)", bytesOf(0x4f, 0x67, 0x67, 0x53, 0, 0), "audio/ogg", "ogg"],
     ["mp3 (ID3)", bytesOf(0x49, 0x44, 0x33, 0, 0, 0), "audio/mpeg", "mp3"],
+    ["mp3 (untagged MPEG-1 Layer III frame)", bytesOf(0xff, 0xfb, 0x90, 0x64), "audio/mpeg", "mp3"],
     ["pdf (%PDF)", PDF, "application/pdf", "pdf"],
     ["zip (PK\\x03\\x04)", ZIP, "application/zip", "zip"],
     ["zip (PK\\x05\\x06 empty)", bytesOf(0x50, 0x4b, 0x05, 0x06, 0, 0), "application/zip", "zip"],
@@ -47,8 +54,31 @@ describe("detectFileType", () => {
     })
   }
 
+  test("DETECTABLE_MIME_TYPES lists exactly the types the detector returns", () => {
+    expect([...DETECTABLE_MIME_TYPES].sort()).toEqual([...new Set(cases.map((c) => c[2]))].sort())
+  })
+
+  test("FILE_TYPE_PREFIX_BYTES leading bytes are enough for every type", () => {
+    for (const [, bytes, mime] of cases) {
+      const padded = new Uint8Array(64)
+      padded.set(bytes)
+      expect(detectFileType(padded.subarray(0, FILE_TYPE_PREFIX_BYTES))?.mime).toBe(mime)
+    }
+    // One byte less loses the fourth compatible brand, so the constant is not over-generous.
+    const fourth = isobmff("mif1", "miaf", "MA1B", "MiHB", "avif")
+    expect(detectFileType(fourth)?.mime).toBe("image/avif")
+    expect(detectFileType(fourth.subarray(0, FILE_TYPE_PREFIX_BYTES - 1))?.mime).toBe("image/heic")
+  })
+
   test("returns null for unrecognized bytes", () => {
     expect(detectFileType(bytesOf(1, 2, 3, 4, 5, 6, 7, 8))).toBeNull()
+  })
+
+  test("an MPEG frame sync with reserved fields, or AAC's ADTS sync, is not an MP3", () => {
+    expect(detectFileType(bytesOf(0xff, 0xf1, 0x50, 0x80))).toBeNull() // ADTS: layer 00
+    expect(detectFileType(bytesOf(0xff, 0xeb, 0x90, 0x64))).toBeNull() // reserved version 01
+    expect(detectFileType(bytesOf(0xff, 0xfb, 0xf0, 0x64))).toBeNull() // bitrate index 1111
+    expect(detectFileType(bytesOf(0xff, 0xfb, 0x9c, 0x64))).toBeNull() // reserved sample rate 11
   })
 
   test("returns null for an unknown RIFF form type (not webp/wav/avi)", () => {
@@ -194,6 +224,20 @@ describe("signDownloadUrl / verifyDownloadUrl", () => {
     await expect(verifyDownloadUrl(signed, weak, { now: 1000 })).rejects.toThrow(
       /at least 32 bytes/,
     )
+  })
+
+  test("accepts only the canonical spelling of a signature", async () => {
+    const signed = await signDownloadUrl("/uploads/a.png", secret, {
+      expiresInSeconds: 60,
+      now: 1000,
+    })
+    const sig = new URL(signed, "http://x").searchParams.get("vsig") ?? ""
+    // 32 bytes → 43 chars; the last char carries 2 unused bits that `atob` would ignore.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    const twin = `${sig.slice(0, -1)}${alphabet[alphabet.indexOf(sig.at(-1) ?? "") | 1]}`
+    expect(await verifyDownloadUrl(signed.replace(sig, twin), secret, { now: 1000 })).toBe(false)
+    const spaced = signed.replace(sig, `${sig.slice(0, 4)}%20${sig.slice(4)}`)
+    expect(await verifyDownloadUrl(spaced, secret, { now: 1000 })).toBe(false)
   })
 
   test("rejects a wrong secret + a missing signature", async () => {

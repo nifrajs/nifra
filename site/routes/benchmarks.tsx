@@ -7,8 +7,8 @@ import {
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
-} from "../data/benchmarks"
-import { pageMeta } from "../meta"
+} from "../shared/data/benchmarks"
+import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - Benchmarks",
@@ -17,7 +17,7 @@ export const meta = pageMeta(
 )
 
 // ---- Frontend: full-stack SSR, Nifra vs each framework's own meta-framework ----
-// Data + grouping come from site/data/benchmarks.json, which `bun run bench:ssr` refreshes on every
+// Data + grouping come from site/shared/data/benchmarks.json, which `bun run bench:ssr` refreshes on every
 // complete run - the page can't drift from the last measured numbers.
 const fmtMs = (ms: number): string => `${ms.toFixed(2)} ms`
 const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB` : "n/a")

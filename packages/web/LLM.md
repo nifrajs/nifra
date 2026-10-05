@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/diagnostic` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/plugins/vite-server-only` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/service-worker` · `@nifrajs/web/vite`
+`@nifrajs/web` · `@nifrajs/web/backend-only` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/cdn` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/dev-feed` · `@nifrajs/web/diagnostic` · `@nifrajs/web/diagnostic-prompt` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/route-types` · `@nifrajs/web/service-worker` · `@nifrajs/web/vitals` · `@nifrajs/web/vite` · `@nifrajs/web/zones`
 
 ## Key exports
 
@@ -26,10 +26,10 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void` · from `@nifrajs/web/nano`
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
+- **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined` · from `@nifrajs/web/zones`
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
-- **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
 
-_…and 428 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 589 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 
@@ -37,3 +37,4 @@ _…and 428 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) f
 - **Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.
 - `PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.
 - `trustHtml(value)` is an explicit raw-HTML escape hatch, **not a sanitizer**. Use escaped text for untrusted values; pass request/CMS/markdown HTML through a maintained allowlist sanitizer with `sanitizeHtml(value, sanitizer)` before rendering.
+- `ctx.set.headers` from a loader or action reaches **only the rendered document** - not a `redirect()`, a status or error page, or a navigation data response. `ctx.set.cookie()` rides every outcome and makes it `cache-control: private, no-store`. Write before the loader returns: a write from a deferred promise throws. A prerendered page is a static file and serves neither.

@@ -3,25 +3,20 @@
  * Scaffold a new nifra app:  `bun create nifra <directory>`  (or `npm create nifra <dir>`).
  *
  *   bun create nifra my-app                      # api backend (default)
- *   bun create nifra my-app --template site      # multi-target SSR site
+ *   bun create nifra my-app --template site      # SSR site, deployed to Bun
  *   bun create nifra my-app --template batteries # api + jobs + cache + storage + cursor pagination
- *   bun create nifra my-app --deploy vercel      # site, with Vercel as the default deploy target
+ *   bun create nifra my-app --target vercel      # site, deployed to Vercel
  *
- * Copies the bundled template, restores `.gitignore` (npm strips a literal one from packages), sets the
- * app's `package.json` name, and - with `--deploy <target>` (site template only) - repoints the default
- * `build`/`deploy` scripts at that target and fills the project name into its config. Refuses to overwrite.
+ * Copies the bundled template, restores `.gitignore` (npm strips a literal one from packages), and sets
+ * the app's `package.json` name. A site deploys to ONE target (`--target`, default `bun`; `--docker`
+ * adds a Dockerfile for bun/node): `nifra build` generates its server entry, and the scaffold writes
+ * only that target's config and scripts. Refuses to overwrite.
  */
 import { realpathSync } from "node:fs"
-import { cp, mkdir, readFile, rename, writeFile } from "node:fs/promises"
-import { basename, join, relative, resolve } from "node:path"
+import { cp, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import {
-  CLAUDE_MD_PATH,
-  CURSOR_MCP_JSON_PATH,
-  claudeMd,
-  MCP_JSON_PATH,
-  mcpJson,
-} from "./agent-files.ts"
+import { AGENT_POINTERS, CURSOR_MCP_JSON_PATH, MCP_JSON_PATH, mcpJson } from "./agent-files.ts"
 import { agentsMd } from "./agents.ts"
 import {
   AUTH_CHOICES,
@@ -32,7 +27,15 @@ import {
 } from "./auth.ts"
 import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "./db.ts"
 import { applyFeatures, type FeatureContribution } from "./scaffold/features.ts"
+import { starterRouteTypes } from "./scaffold/route-types.ts"
 import { materializeSite } from "./scaffold/site.ts"
+import {
+  DEPLOY_TARGETS,
+  type DeployTarget,
+  deployName,
+  isDeployTarget,
+  TARGETS,
+} from "./scaffold/targets.ts"
 
 const TEMPLATES = {
   api: "../template",
@@ -48,66 +51,29 @@ export type TemplateName = keyof typeof TEMPLATES
 const FRAMEWORKS = ["react", "preact", "vue", "solid", "svelte"] as const
 export type Framework = (typeof FRAMEWORKS)[number]
 
-/**
- * Deploy targets for the multi-target `site` template. Every target's build + server entry already ships
- * in the template; choosing one repoints the canonical `build`/`deploy` scripts at it (the per-target
- * `build:*` scripts stay, so you can still switch). nifra never runs the deploy or enters credentials -
- * `deploy` shells out to the vendor CLI you've authed yourself.
- */
-interface DeployPreset {
-  readonly label: string
-  readonly build: string
-  /** `deploy` script; `NAME` is replaced with the app directory name. */
-  readonly deploy: string
-  readonly steps: readonly string[]
-}
-const DEPLOY: Record<string, DeployPreset> = {
-  bun: {
-    label: "Bun",
-    build: "bun run build-bun.ts",
-    deploy: "bun run start",
-    steps: ["bun run build", "bun run start        # serves on $PORT (default 3000), any host"],
-  },
-  node: {
-    label: "Node (Docker)",
-    build: "bun run build-node.ts",
-    deploy: "docker build -t NAME . && docker run -p 3000:3000 NAME",
-    steps: ["bun run build", "bun run deploy       # docker build + run (or `bun run start:node`)"],
-  },
-  deno: {
-    label: "Deno Deploy",
-    build: "bun run build-deno.ts",
-    deploy: "deployctl deploy --prod --entrypoint=dist-deno/server-deno.js",
-    steps: [
-      "bun run build",
-      "bun run deploy       # deployctl (install: deno install -A jsr:@deno/deployctl)",
-    ],
-  },
-  "cf-pages": {
-    label: "Cloudflare Pages",
-    build: "bun run build.ts",
-    deploy: "wrangler pages deploy dist",
-    steps: ["bun run build", "bun run deploy       # wrangler pages deploy dist"],
-  },
-  vercel: {
-    label: "Vercel Edge",
-    build: "bun run build-vercel.ts",
-    deploy: "vercel deploy --prebuilt",
-    steps: ["bun run build", "bun run deploy       # vercel deploy --prebuilt"],
-  },
+/** The next-steps lines after `bun run dev`, per deploy target. */
+function targetSteps(target: DeployTarget, docker: boolean): string[] {
+  const spec = TARGETS[target]
+  if (docker) return ["bun run build", "bun run deploy       # docker build + run"]
+  return [
+    "bun run build",
+    ...(spec.deploy !== undefined
+      ? [`bun run deploy       # ${spec.deploy}`]
+      : [`bun run start        # ${spec.start}, any host`]),
+  ]
 }
 
 // Self-hosted servers (bun/node) have no canonical push-to-deploy - CI builds + uploads the artifact and
 // leaves a host-specific placeholder. The managed targets use the vendor's official action/CLI.
 const SELF_HOSTED_STEP = (hint: string): string =>
-  `      # Self-hosted: deploy is host-specific. The build output is in dist*/ - add your step here
+  `      # Self-hosted: deploy is host-specific. The build output is in dist/ - add your step here
       # (${hint}). Until then, CI builds on every push and uploads the bundle as an artifact.
       - name: Upload build
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: build
-          path: dist*`
+          path: dist`
 
 /** The GitHub Actions deploy step + required secrets + permissions, per deploy target. */
 interface CiDeploy {
@@ -118,7 +84,7 @@ interface CiDeploy {
   /** YAML for the deploy step(s), indented to sit under `steps:` (`NAME` → the app name). */
   readonly step: string
 }
-const CI_DEPLOY: Record<string, CiDeploy> = {
+const CI_DEPLOY: Record<DeployTarget, CiDeploy> = {
   bun: {
     permissions: "  contents: read",
     secrets: [],
@@ -127,7 +93,7 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
   node: {
     permissions: "  contents: read",
     secrets: [],
-    step: SELF_HOSTED_STEP("the template ships a Dockerfile - push to a registry, or flyctl/SSH"),
+    step: SELF_HOSTED_STEP("with --docker, push the image to a registry; or flyctl/SSH"),
   },
   deno: {
     // OIDC: link the repo in the Deno Deploy dashboard (no token needed) - needs id-token: write.
@@ -138,9 +104,9 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
         uses: denoland/deployctl@87e43e57b2336bcaf96bcd193687edcb3c5795c1
         with:
           project: NAME
-          entrypoint: dist-deno/server-deno.js`,
+          entrypoint: dist/server.js`,
   },
-  "cf-pages": {
+  cloudflare: {
     permissions: "  contents: read",
     secrets: ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
     step: `      - name: Publish to Cloudflare Pages
@@ -166,11 +132,11 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
 
 /**
  * Build a GitHub Actions workflow that builds on every push/PR and deploys `target` on a push to `main`.
- * Reuses the canonical `bun run build` (the deploy preset repoints it), then runs the target's official
- * deploy mechanism. Exported for unit tests. Throws on an unknown target.
+ * Runs `bun run build` (`nifra build` for the app's target), then the target's official deploy
+ * mechanism. Exported for unit tests. Throws on an unknown target.
  */
 export function githubDeployWorkflow(target: string, appName: string): string {
-  const ci = CI_DEPLOY[target]
+  const ci = isDeployTarget(target) ? CI_DEPLOY[target] : undefined
   if (ci === undefined) {
     throw new Error(`no CI workflow for deploy target "${target}"`)
   }
@@ -201,7 +167,7 @@ jobs:
       # declared. Shipping that config without ever running it makes it decoration.
       - run: bun run check
       - run: bun run build
-${ci.step.replaceAll("NAME", appName)}
+${ci.step.replaceAll("NAME", deployName(appName))}
 `
 }
 
@@ -212,9 +178,12 @@ export interface ScaffoldOptions {
   readonly template?: TemplateName
   /** Frontend framework (site template only). Default `"react"`. */
   readonly framework?: string
-  /** Deploy target (site template only) - repoints the default `build`/`deploy` scripts. */
-  readonly deploy?: string
-  /** Emit a CI deploy workflow for the chosen `--deploy` target. Only `"github"` today. */
+  /** Where the site deploys (site template only): `bun` (default), `node`, `deno`, `cloudflare` or
+   * `vercel`. */
+  readonly deployTarget?: string
+  /** Add a Dockerfile that builds and runs the server (`bun` and `node` targets). */
+  readonly docker?: boolean
+  /** Emit a CI deploy workflow for the site's target. Only `"github"` today. */
   readonly ci?: string
   /** Wire a data layer: `drizzle-{libsql,postgres,sqlite}` | `prisma-{postgres,sqlite}` | `kysely-postgres`. */
   readonly db?: string
@@ -231,7 +200,12 @@ export interface ScaffoldResult {
   readonly name: string
   readonly template: TemplateName
   readonly framework?: Framework
-  readonly deploy?: DeployPreset
+  /** Where a site deploys, and whether it ships a Dockerfile. */
+  readonly deploy?: {
+    readonly target: DeployTarget
+    readonly label: string
+    readonly docker: boolean
+  }
   /** The CI provider a workflow was generated for, when `--ci` was passed. */
   readonly ci?: "github"
   /** Repo secrets the generated workflow needs (for the next-steps message). */
@@ -245,9 +219,9 @@ export interface ScaffoldResult {
 }
 
 /**
- * Copy a template into `target` and finalize it (gitignore rename, package name, optional deploy preset).
- * Throws on: unknown template, `--deploy` with a non-site template, unknown deploy target, or an existing
- * destination. Pure enough to unit-test (no argv, no process.exit).
+ * Copy a template into `target` and finalize it (gitignore rename, package name, the site's deploy target).
+ * Throws on: unknown template, `--target`/`--docker` with a non-site template, unknown deploy target, or
+ * an existing destination. Pure enough to unit-test (no argv, no process.exit).
  */
 export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // Validated first, before a single file is copied - a name rejected halfway through would leave a
@@ -256,7 +230,11 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // them aborts a scaffold npm would have accepted. Still narrow, because the name is substituted into
   // deploy scripts (`--name NAME`) that a shell runs - hence no metacharacters, no whitespace, and no
   // leading `-` to be read as a flag.
-  const name = basename(opts.target)
+  // Resolved first, so `bun create nifra . --force` names the project after the directory it is in.
+  // Every path below is built from the resolved directory: on Windows, Bun fails to create `.` itself
+  // (EEXIST), which `mkdir(dirname(join(".", "AGENTS.md")), { recursive: true })` would ask it to.
+  const dir = resolve(opts.target)
+  const name = basename(dir)
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.length > 214) {
     throw new Error(
       `invalid project name ${JSON.stringify(name)}: use letters, digits, "-", "_", and "." ` +
@@ -285,24 +263,33 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     framework = opts.framework as Framework
   }
 
-  let preset: DeployPreset | undefined
-  if (opts.deploy !== undefined) {
-    if (template !== "site") {
-      throw new Error(`--deploy requires the site template (got "${template}")`)
-    }
-    preset = DEPLOY[opts.deploy]
-    if (preset === undefined) {
-      throw new Error(
-        `unknown deploy target "${opts.deploy}". options: ${Object.keys(DEPLOY).join(", ")}`,
-      )
+  if (template !== "site") {
+    for (const [flag, given] of [
+      ["--target", opts.deployTarget !== undefined],
+      ["--docker", opts.docker === true],
+      ["--ci", opts.ci !== undefined],
+    ] as const) {
+      if (given) throw new Error(`${flag} requires the site template (got "${template}")`)
     }
   }
-
-  if (opts.ci !== undefined) {
-    if (opts.ci !== "github") throw new Error(`unknown --ci "${opts.ci}". options: github`)
-    if (preset === undefined) {
-      throw new Error("--ci requires --deploy <target> (the workflow deploys that target)")
+  let deploy: ScaffoldResult["deploy"]
+  if (template === "site") {
+    const target = opts.deployTarget ?? "bun"
+    if (target === "cf-pages") throw new Error('the deploy target "cf-pages" is now "cloudflare"')
+    if (!isDeployTarget(target)) {
+      throw new Error(`unknown deploy target "${target}". options: ${DEPLOY_TARGETS.join(", ")}`)
     }
+    const docker = opts.docker === true
+    if (docker && !TARGETS[target].docker) {
+      throw new Error(
+        `--docker builds a self-hosting server image (bun or node); ${TARGETS[target].label} runs the app itself`,
+      )
+    }
+    deploy = { target, label: TARGETS[target].label, docker }
+  }
+
+  if (opts.ci !== undefined && opts.ci !== "github") {
+    throw new Error(`unknown --ci "${opts.ci}". options: github`)
   }
 
   // DB preset (any template - an API or a site can both want persistence).
@@ -329,29 +316,46 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     auth = opts.auth as AuthChoice
   }
 
+  // An occupied destination is refused before the first write. The template copy alone would refuse
+  // only a colliding template file, and every file written after it (.gitignore, AGENTS.md, the agent
+  // and MCP configs) would still replace one of the user's.
+  if (opts.force !== true && (await readdir(dir).catch(() => [])).length > 0) {
+    throw new Error(`"${opts.target}" already exists and is not empty`)
+  }
+
   // The site scaffold is COMPOSED rather than copied: thirteen of its files are identical whatever you
   // render with, eight are emitted from the framework model, and five are the framework's own. The
   // other templates are still a plain copy - they have no framework axis to collapse.
   // Either way the default refuses an occupied destination rather than clobbering it; --force is what
   // `bun create nifra .` needs.
-  if (template === "site") {
-    await materializeSite(opts.target, framework ?? "react", { force: opts.force === true })
+  if (deploy !== undefined) {
+    await materializeSite(dir, framework ?? "react", {
+      force: opts.force === true,
+      target: deploy.target,
+      docker: deploy.docker,
+      name,
+    })
   } else {
     const templateDir = fileURLToPath(new URL(TEMPLATES[template], import.meta.url))
-    await cp(templateDir, opts.target, {
-      recursive: true,
-      ...(opts.force ? { force: true } : { errorOnExist: true, force: false }),
-    })
+    // The destination is empty or --force was given (checked above), so nothing here replaces a file of
+    // the user's; Bun's errorOnExist would also refuse an existing empty directory.
+    await cp(templateDir, dir, { recursive: true, force: true })
+    if (template === "isr") {
+      for (const [file, contents] of starterRouteTypes("tsx")) {
+        await mkdir(dirname(join(dir, file)), { recursive: true })
+        await writeFile(join(dir, file), contents)
+      }
+    }
   }
 
   // The template ships its ignore file as `gitignore` (npm strips a literal `.gitignore`); restore the dot.
   try {
-    await rename(join(opts.target, "gitignore"), join(opts.target, ".gitignore"))
+    await rename(join(dir, "gitignore"), join(dir, ".gitignore"))
   } catch {
     // A template without a `gitignore` - nothing to restore.
   }
 
-  const pkgPath = join(opts.target, "package.json")
+  const pkgPath = join(dir, "package.json")
   const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as {
     name?: string
     scripts?: Record<string, string>
@@ -360,17 +364,8 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   }
   pkg.name = name
   // Every feature states what it contributes and the merge refuses an undeclared collision, so which
-  // flag was handled first stops deciding what a project ends up with. `--deploy` repoints the
-  // canonical `build`/`deploy` aliases, which is the flag's purpose, so it says so.
+  // flag was handled first stops deciding what a project ends up with.
   const features: FeatureContribution[] = []
-  if (preset !== undefined) {
-    // Multi-target stays intact (build:*, deploy:* scripts); just point the canonical aliases at the pick.
-    features.push({
-      label: `--deploy ${opts.deploy}`,
-      scripts: { build: preset.build, deploy: preset.deploy.replaceAll("NAME", name) },
-      replaces: ["build", "deploy"],
-    })
-  }
   if (db !== undefined) {
     // Merge the Drizzle preset's deps + db:* scripts; `bun install` then resolves them.
     const dbp = DB_PRESETS[db]
@@ -399,7 +394,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
       }
     }
     const linkPackages = real(resolve(opts.link, "packages"))
-    const targetAbs = real(resolve(opts.target))
+    const targetAbs = real(dir)
     for (const section of ["dependencies", "devDependencies"] as const) {
       const deps = pkg[section]
       if (deps === undefined) continue
@@ -417,7 +412,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // Ship agent guidance so a coding agent (Claude Code, Cursor, …) writes correct nifra code from the
   // first prompt - the conventions + the gotchas, tailored to this template.
   await writeFile(
-    join(opts.target, "AGENTS.md"),
+    join(dir, "AGENTS.md"),
     agentsMd({
       template,
       framework: framework ?? "react",
@@ -427,45 +422,36 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     }),
   )
 
-  // Register the project's nifra MCP server so a coding agent auto-discovers it. Claude Code reads
-  // `.mcp.json` + `CLAUDE.md`; Cursor reads `.cursor/mcp.json`. All three come from one canonical config
-  // (agent-files.ts) so they can't drift. CLAUDE.md is a short MCP-first preamble that `@AGENTS.md`-imports
-  // the full cookbook rather than duplicating it.
-  await writeFile(join(opts.target, MCP_JSON_PATH), mcpJson())
-  await writeFile(join(opts.target, CLAUDE_MD_PATH), claudeMd())
-  await mkdir(join(opts.target, ".cursor"), { recursive: true })
-  await writeFile(join(opts.target, CURSOR_MCP_JSON_PATH), mcpJson())
-
-  // Wire the Drizzle data layer (db/ module + drizzle.config + .env.example + gitignore entries).
-  if (db !== undefined) await writeDbFiles(opts.target, db)
-  // Wire auth AFTER the DB (it appends to the .env.example the DB preset wrote; --auth requires --db).
-  if (auth !== undefined && db !== undefined) await writeAuthFiles(opts.target, auth, db)
-
-  // Fill the project name into the site template's wrangler config (CF Pages project name).
-  if (template === "site") {
-    const wranglerPath = join(opts.target, "wrangler.toml")
-    try {
-      const toml = await readFile(wranglerPath, "utf8")
-      await writeFile(wranglerPath, toml.replace(/^name = ".*"$/m, `name = "${name}"`))
-    } catch {
-      // No wrangler.toml - skip the name fill.
-    }
+  // Every agent's own file points at AGENTS.md, and both MCP registries launch the same server - all from
+  // agent-files.ts, which `nifra init-agents` shares, so none of them can drift.
+  await writeFile(join(dir, MCP_JSON_PATH), mcpJson())
+  await mkdir(join(dir, ".cursor"), { recursive: true })
+  await writeFile(join(dir, CURSOR_MCP_JSON_PATH), mcpJson())
+  for (const pointer of AGENT_POINTERS) {
+    const path = join(dir, pointer.path)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, pointer.content())
   }
 
-  // Emit a CI deploy workflow for the chosen target (validated above to require a deploy preset).
+  // Wire the Drizzle data layer (db/ module + drizzle.config + .env.example + gitignore entries).
+  if (db !== undefined) await writeDbFiles(dir, db)
+  // Wire auth AFTER the DB (it appends to the .env.example the DB preset wrote; --auth requires --db).
+  if (auth !== undefined && db !== undefined) await writeAuthFiles(dir, auth, db)
+
+  // Emit a CI deploy workflow for the site's target.
   let ciResult: { ci: "github"; ciSecrets: readonly string[] } | undefined
-  if (opts.ci === "github" && opts.deploy !== undefined) {
-    const workflowsDir = join(opts.target, ".github", "workflows")
+  if (opts.ci === "github" && deploy !== undefined) {
+    const workflowsDir = join(dir, ".github", "workflows")
     await mkdir(workflowsDir, { recursive: true })
-    await writeFile(join(workflowsDir, "deploy.yml"), githubDeployWorkflow(opts.deploy, name))
-    ciResult = { ci: "github", ciSecrets: CI_DEPLOY[opts.deploy]?.secrets ?? [] }
+    await writeFile(join(workflowsDir, "deploy.yml"), githubDeployWorkflow(deploy.target, name))
+    ciResult = { ci: "github", ciSecrets: CI_DEPLOY[deploy.target].secrets }
   }
 
   return {
     name,
     template,
     ...(framework !== undefined ? { framework } : {}),
-    ...(preset !== undefined ? { deploy: preset } : {}),
+    ...(deploy !== undefined ? { deploy } : {}),
     ...(ciResult !== undefined ? ciResult : {}),
     ...(db !== undefined ? { db } : {}),
     ...(auth !== undefined ? { auth } : {}),
@@ -477,7 +463,8 @@ interface ParsedArgs {
   readonly target?: string
   readonly template?: TemplateName
   readonly framework?: string
-  readonly deploy?: string
+  readonly deployTarget?: string
+  readonly docker?: boolean
   readonly ci?: string
   readonly db?: string
   readonly auth?: string
@@ -485,10 +472,14 @@ interface ParsedArgs {
   readonly link?: string
 }
 
-/** Parse `[dir] [--template|-t <t>] [--framework|-f <fw>] [--deploy|-d <target>] [--ci|-c github]
+/** Parse `[dir] [--template|-t <t>] [--framework|-f <fw>] [--target <t>] [--docker] [--ci|-c github]
  *  [--db <preset>] [--auth <preset>] [--force] [--link <path>]`.
- * `--framework`/`--deploy`/`--ci` all default the template to `site`. */
+ * `--framework`/`--target`/`--docker`/`--ci` all default the template to `site`. Throws on the retired
+ * `--deploy`. */
 export function parseArgs(argv: readonly string[]): ParsedArgs {
+  if (argv.includes("--deploy") || argv.includes("-d")) {
+    throw new Error("--deploy is now --target (bun | node | deno | cloudflare | vercel)")
+  }
   const rest = [...argv]
   const take = (...flags: string[]): string | undefined => {
     const i = rest.findIndex((a) => flags.includes(a))
@@ -505,23 +496,25 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
   const templateFlag = take("--template", "-t")
   const framework = take("--framework", "-f")
-  const deploy = take("--deploy", "-d")
+  const deployTarget = take("--target")
+  const docker = hasFlag("--docker")
   const ci = take("--ci", "-c")
   const db = take("--db")
   const auth = take("--auth")
   const link = take("--link")
   const force = hasFlag("--force")
   const target = rest.find((a) => !a.startsWith("-"))
-  // `--framework`/`--deploy`/`--ci` imply the multi-target site template unless one was named explicitly.
+  // `--framework`/`--target`/`--docker`/`--ci` imply the site template unless one was named explicitly.
   const template = (templateFlag ??
-    (framework !== undefined || deploy !== undefined || ci !== undefined ? "site" : undefined)) as
-    | TemplateName
-    | undefined
+    (framework !== undefined || deployTarget !== undefined || docker || ci !== undefined
+      ? "site"
+      : undefined)) as TemplateName | undefined
   return {
     ...(target !== undefined ? { target } : {}),
     ...(template !== undefined ? { template } : {}),
     ...(framework !== undefined ? { framework } : {}),
-    ...(deploy !== undefined ? { deploy } : {}),
+    ...(deployTarget !== undefined ? { deployTarget } : {}),
+    ...(docker ? { docker } : {}),
     ...(ci !== undefined ? { ci } : {}),
     ...(db !== undefined ? { db } : {}),
     ...(auth !== undefined ? { auth } : {}),
@@ -530,14 +523,20 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 }
 
-const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
+const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--target bun|node|deno|cloudflare|vercel] [--docker] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
 
 /**
  * Run the CLI for `argv` and return the exit code + the message to print - no `process.exit`, `console`,
  * or `process.argv`, so the whole flow (parse → scaffold → next-steps) is unit-testable in-process.
  */
 export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; message: string }> {
-  const { target, template, framework, deploy, ci, db, auth, force, link } = parseArgs(argv)
+  let parsed: ParsedArgs
+  try {
+    parsed = parseArgs(argv)
+  } catch (err) {
+    return { code: 1, message: `✗ ${err instanceof Error ? err.message : String(err)}` }
+  }
+  const { target, template, framework, deployTarget, docker, ci, db, auth, force, link } = parsed
   if (target === undefined) return { code: 1, message: USAGE }
 
   let result: ScaffoldResult
@@ -546,7 +545,8 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
       target,
       ...(template !== undefined ? { template } : {}),
       ...(framework !== undefined ? { framework } : {}),
-      ...(deploy !== undefined ? { deploy } : {}),
+      ...(deployTarget !== undefined ? { deployTarget } : {}),
+      ...(docker ? { docker } : {}),
       ...(ci !== undefined ? { ci } : {}),
       ...(db !== undefined ? { db } : {}),
       ...(auth !== undefined ? { auth } : {}),
@@ -555,10 +555,12 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    // A copy failure is almost always "destination exists" - say so plainly.
-    const friendly = /exist/i.test(msg)
-      ? `refusing to scaffold: "${target}" already exists. Use --force to overwrite.`
-      : msg
+    // Without --force a copy failure is almost always "destination exists" - say so plainly. With it,
+    // that advice is wrong, and the error itself is the only clue.
+    const friendly =
+      !force && /exist/i.test(msg)
+        ? `refusing to scaffold: "${target}" already exists. Use --force to overwrite.`
+        : msg
     return { code: 1, message: `✗ ${friendly}` }
   }
 
@@ -574,7 +576,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     )
   } else if (result.deploy !== undefined) {
     steps[2] = "bun run dev          # local preview"
-    steps.push(...result.deploy.steps)
+    steps.push(...targetSteps(result.deploy.target, result.deploy.docker))
   }
   if (result.db !== undefined) {
     // After install: set the connection string. When auth is wired, generate its tables into the schema
@@ -583,9 +585,12 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
       `cp .env.example .env # then set DATABASE_URL${result.auth ? " + BETTER_AUTH_SECRET" : ""}`,
     )
     if (result.auth !== undefined) {
-      steps.push("bunx @better-auth/cli@latest generate # writes auth tables into db/schema.ts")
+      steps.push("bunx @better-auth/cli@latest generate --config backend/auth.ts # the auth tables")
     }
-    steps.push("bun run db:generate  # SQL from db/schema.ts", "bun run db:migrate   # apply it")
+    steps.push(
+      "bun run db:generate  # SQL from backend/db/schema.ts",
+      "bun run db:migrate   # apply it",
+    )
   }
   // Tag the chosen framework + deploy target + db + auth, e.g. "(Vue, Drizzle + libSQL, better-auth)".
   const tags = [

@@ -54,6 +54,17 @@ describe("scanServerFnExports", () => {
     expect(scanServerFnExports(commented)).toEqual(["real"])
   })
 
+  test("a declaration inside a block comment is not mistaken for a real one", () => {
+    const blocked = `/* export const ghost = serverFn({}, () => ({})) */\nexport const real = serverFn({}, () => ({}))\n`
+    expect(scanServerFnExports(blocked)).toEqual(["real"])
+    // An unterminated block comment hides the rest of the source, as it would from a parser.
+    expect(
+      scanServerFnExports(
+        `export const a = serverFn({}, () => ({}))\n/* export const b = serverFn(`,
+      ),
+    ).toEqual(["a"])
+  })
+
   test("explicit type arguments are part of the declaration form", () => {
     // `serverFn<Input, Output>(...)` is idiomatic TypeScript; the scanner used to see neither a
     // declaration NOR a call in it, emitting an exportless stub that failed the build with a

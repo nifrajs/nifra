@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { generateLlmsTxt } from "../src/llms-txt.ts"
 
 /** A schema node the way a `t`/Standard Schema exposes it: the raw JSON Schema hangs off `.jsonSchema`. */
@@ -52,6 +55,11 @@ const backend = {
       path: "/items/:id",
       schema: { query: schema({ type: "object", properties: { page: { type: "number" } } }) },
     },
+    { method: "GET", path: "/orders/:id{[0-9]+}/lines/:kind{open|closed}" },
+    { method: "GET", path: "/files/:name.json" },
+    { method: "GET", path: "/img/:id{[0-9]+}.png/meta" },
+    { method: "GET", path: "/assets/*" },
+    { method: "GET", path: "/docs/*rest" },
   ],
 }
 
@@ -74,6 +82,16 @@ describe("generateLlmsTxt", () => {
     expect(out).toContain("api.index")
     expect(out).toContain("api.users.post(body, { query })")
     expect(out).toContain("api.items({ id }).get({ query })")
+    // A constraint is not part of the argument's name.
+    expect(out).toContain("api.orders({ id }).lines({ kind }).get()")
+    // A segment that is part literal, part parameter is called with the segment text.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the printed call is a template literal
+    expect(out).toContain("api.files(`${name}.json`).get()")
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the printed call is a template literal
+    expect(out).toContain("api.img(`${id}.png`).meta.get()")
+    // A wildcard is called by its name; an unnamed one is `*`.
+    expect(out).toContain('api.assets({ "*": rest }).get()')
+    expect(out).toContain("api.docs({ rest }).get()")
     // tsTypeOf: object w/ required+optional, array, enum, union, const, additionalProperties
     expect(out).toContain("name: string")
     expect(out).toContain("age?: number")
@@ -99,13 +117,37 @@ describe("generateLlmsTxt", () => {
     expect(out).toContain("No API routes registered.")
   })
 
-  // The repo this test runs in has an AGENTS.md, so the default must not be publishing it: these
-  // endpoints are public, and that file is written for the team.
+  // `AGENTS.md` is read from the directory the app runs in. These endpoints are public and that file
+  // is written for the team, so the default must not be publishing it.
   test("the project's AGENTS.md is not published unless the app opts in", async () => {
-    const off = await generateLlmsTxt(true, [], {})
-    expect(off).not.toContain("Guidelines & Conventions")
+    const project = await mkdtemp(join(tmpdir(), "nifra-llms-txt-"))
+    const cwd = process.cwd()
+    try {
+      await writeFile(join(project, "AGENTS.md"), "Internal: never ship on a Friday.\n")
+      process.chdir(project)
 
-    const on = await generateLlmsTxt(true, [], {}, { includeLocalGuidelines: true })
-    expect(on).toContain("Guidelines & Conventions")
+      const off = await generateLlmsTxt(true, [], {})
+      expect(off).not.toContain("Guidelines & Conventions")
+      expect(off).not.toContain("never ship on a Friday")
+
+      const on = await generateLlmsTxt(true, [], {}, { includeLocalGuidelines: true })
+      expect(on).toContain("## Guidelines & Conventions\n\nInternal: never ship on a Friday.")
+    } finally {
+      process.chdir(cwd)
+      await rm(project, { recursive: true, force: true })
+    }
+  })
+
+  test("opting in without an AGENTS.md adds no guidelines section", async () => {
+    const project = await mkdtemp(join(tmpdir(), "nifra-llms-txt-"))
+    const cwd = process.cwd()
+    try {
+      process.chdir(project)
+      const out = await generateLlmsTxt(true, [], {}, { includeLocalGuidelines: true })
+      expect(out).not.toContain("Guidelines & Conventions")
+    } finally {
+      process.chdir(cwd)
+      await rm(project, { recursive: true, force: true })
+    }
   })
 })

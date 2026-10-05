@@ -4,22 +4,23 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch run src/index.ts",
-    "start": "bun run src/index.ts",
+    "dev": "bun --watch run backend/index.ts",
+    "start": "bun run backend/index.ts",
     "check": "nifra check && nifra assure",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nifrajs/cache": "^3.5.0",
-    "@nifrajs/client": "^3.5.0",
-    "@nifrajs/core": "^3.5.0",
-    "@nifrajs/jobs": "^3.5.0",
-    "@nifrajs/schema": "^3.5.0",
-    "@nifrajs/storage": "^3.5.0"
+    "@nifrajs/cache": "^4.0.0",
+    "@nifrajs/client": "^4.0.0",
+    "@nifrajs/core": "^4.0.0",
+    "@nifrajs/jobs": "^4.0.0",
+    "@nifrajs/middleware": "^4.0.0",
+    "@nifrajs/schema": "^4.0.0",
+    "@nifrajs/storage": "^4.0.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^3.5.0",
+    "@nifrajs/cli": "^4.0.0",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   }

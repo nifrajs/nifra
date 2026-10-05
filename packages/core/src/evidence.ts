@@ -14,11 +14,14 @@ import type {
   CapabilityFinding,
 } from "./capabilities.ts"
 import type { ResponseClassification } from "./classification.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { evidenceProvenance } from "./internal/route-assurance.ts"
 import {
   type JsonSchema,
+  type ReflectedMount,
   type ReflectedRoute,
   type ReflectedSchemaField,
+  reflectMounts,
   reflectRoutes,
   type SchemaReflection,
 } from "./reflection.ts"
@@ -26,12 +29,15 @@ import {
 export interface ProjectEvidenceSchemaPart {
   readonly jsonSchema?: JsonSchema
   readonly fields?: readonly ReflectedSchemaField[]
+  /** The media types a body schema reads through a parser of its own. */
+  readonly mediaTypes?: readonly string[]
 }
 
 export interface ProjectEvidenceSchema {
   readonly bodyLimit?: number | "unlimited"
   readonly bodyLimitReason?: string
   readonly headers?: ProjectEvidenceSchemaPart
+  readonly cookies?: ProjectEvidenceSchemaPart
   readonly body?: ProjectEvidenceSchemaPart
   readonly query?: ProjectEvidenceSchemaPart
   readonly params?: ProjectEvidenceSchemaPart
@@ -94,6 +100,8 @@ export interface ProjectEvidenceCapabilities {
 export interface ProjectEvidenceSnapshot {
   readonly version: 1
   readonly routes: readonly ProjectEvidenceRoute[]
+  /** Mounted children whose routes are not in `routes`, present when there is at least one. */
+  readonly mounts?: readonly ReflectedMount[]
   readonly assurance?: ProjectEvidenceAssurance
   readonly capabilities?: ProjectEvidenceCapabilities
 }
@@ -109,6 +117,8 @@ export interface ProjectEvidenceOptions {
   readonly routes?: readonly ReflectedRoute[]
   /** Optional static source locations keyed by `${METHOD}\n${path}`. */
   readonly sourceLocations?: ReadonlyMap<string, readonly ProjectEvidenceSourceLocation[]>
+  /** An existing mount reflection, like `routes`. Default: `reflectMounts(source)`. */
+  readonly mounts?: readonly ReflectedMount[]
 }
 
 /** One token-only evidence snapshot in a composed application surface. */
@@ -128,6 +138,9 @@ function schemaPart(value: SchemaReflection | undefined): ProjectEvidenceSchemaP
   return Object.freeze({
     ...(value.jsonSchema !== undefined ? { jsonSchema: value.jsonSchema } : {}),
     ...(value.fields !== undefined ? { fields: Object.freeze([...value.fields]) } : {}),
+    ...(value.mediaTypes !== undefined
+      ? { mediaTypes: Object.freeze([...value.mediaTypes].sort()) }
+      : {}),
   })
 }
 
@@ -135,6 +148,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
   const source = route.schema
   if (source === undefined) return undefined
   const headers = schemaPart(source.headers)
+  const cookies = schemaPart(source.cookies)
   const body = schemaPart(source.body)
   const query = schemaPart(source.query)
   const params = schemaPart(source.params)
@@ -149,6 +163,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
     ...(source.bodyLimit !== undefined ? { bodyLimit: source.bodyLimit } : {}),
     ...(source.bodyLimitReason !== undefined ? { bodyLimitReason: source.bodyLimitReason } : {}),
     ...(headers !== undefined ? { headers } : {}),
+    ...(cookies !== undefined ? { cookies } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(params !== undefined ? { params } : {}),
@@ -171,7 +186,7 @@ function assuranceEvidenceOf(values: readonly AssuranceEvidence[]): readonly Ass
           provenance: evidenceProvenance(item),
         }),
       )
-      .sort((a, b) => a.id.localeCompare(b.id) || a.source.localeCompare(b.source)),
+      .sort((a, b) => codeUnitOrder(a.id, b.id) || codeUnitOrder(a.source, b.source)),
   )
 }
 
@@ -183,9 +198,9 @@ function capabilityEvidenceOf(
       .map((item) => Object.freeze({ id: item.id, kind: item.kind, source: item.source }))
       .sort(
         (a, b) =>
-          a.id.localeCompare(b.id) ||
-          a.kind.localeCompare(b.kind) ||
-          a.source.localeCompare(b.source),
+          codeUnitOrder(a.id, b.id) ||
+          codeUnitOrder(a.kind, b.kind) ||
+          codeUnitOrder(a.source, b.source),
       ),
   )
 }
@@ -194,7 +209,7 @@ const sortByRoute = <T extends { readonly method: string; readonly path: string 
   values: readonly T[],
 ): readonly T[] =>
   Object.freeze(
-    [...values].sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method)),
+    [...values].sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method)),
   )
 
 function evidenceRouteOf(
@@ -239,9 +254,9 @@ function assuranceOf(report: AssuranceReport | undefined): ProjectEvidenceAssura
     findings: Object.freeze(
       [...report.findings].sort(
         (a, b) =>
-          a.path.localeCompare(b.path) ||
-          a.method.localeCompare(b.method) ||
-          a.code.localeCompare(b.code),
+          codeUnitOrder(a.path, b.path) ||
+          codeUnitOrder(a.method, b.method) ||
+          codeUnitOrder(a.code, b.code),
       ),
     ),
   })
@@ -269,9 +284,9 @@ function capabilitiesOf(
     findings: Object.freeze(
       [...report.findings].sort(
         (a, b) =>
-          a.path.localeCompare(b.path) ||
-          a.method.localeCompare(b.method) ||
-          a.code.localeCompare(b.code),
+          codeUnitOrder(a.path, b.path) ||
+          codeUnitOrder(a.method, b.method) ||
+          codeUnitOrder(a.code, b.code),
       ),
     ),
   })
@@ -313,6 +328,9 @@ function remapEvidenceSnapshot(
     const key = route(item.method, item.path)
     return Object.freeze({ ...item, ...key })
   })
+  const mounts = evidence.mounts?.map((item) =>
+    Object.freeze({ ...item, path: composedPath(pathPrefix, item.path) }),
+  )
   const assurance =
     evidence.assurance === undefined
       ? undefined
@@ -348,6 +366,7 @@ function remapEvidenceSnapshot(
   return Object.freeze({
     version: 1,
     routes: Object.freeze(routes),
+    ...(mounts === undefined ? {} : { mounts: Object.freeze(mounts) }),
     ...(assurance === undefined ? {} : { assurance }),
     ...(capabilities === undefined ? {} : { capabilities }),
   })
@@ -384,6 +403,7 @@ export function composeProjectEvidence(
 ): ProjectEvidenceSnapshot {
   const routes: ProjectEvidenceRoute[] = []
   const routeKeys = new Set<string>()
+  const mounts: ReflectedMount[] = []
   const assuranceReports: ProjectEvidenceAssurance[] = []
   const capabilityReports: ProjectEvidenceCapabilities[] = []
 
@@ -398,6 +418,7 @@ export function composeProjectEvidence(
       routeKeys.add(key)
       routes.push(route)
     }
+    mounts.push(...(mapped.mounts ?? []))
     if (mapped.assurance !== undefined) assuranceReports.push(mapped.assurance)
     if (mapped.capabilities !== undefined) capabilityReports.push(mapped.capabilities)
   }
@@ -413,9 +434,9 @@ export function composeProjectEvidence(
               .flatMap((report) => report.findings)
               .sort(
                 (a, b) =>
-                  a.path.localeCompare(b.path) ||
-                  a.method.localeCompare(b.method) ||
-                  a.code.localeCompare(b.code),
+                  codeUnitOrder(a.path, b.path) ||
+                  codeUnitOrder(a.method, b.method) ||
+                  codeUnitOrder(a.code, b.code),
               ),
           ),
         })
@@ -430,9 +451,9 @@ export function composeProjectEvidence(
               .flatMap((report) => report.findings)
               .sort(
                 (a, b) =>
-                  a.path.localeCompare(b.path) ||
-                  a.method.localeCompare(b.method) ||
-                  a.code.localeCompare(b.code),
+                  codeUnitOrder(a.path, b.path) ||
+                  codeUnitOrder(a.method, b.method) ||
+                  codeUnitOrder(a.code, b.code),
               ),
           ),
         })
@@ -443,6 +464,7 @@ export function composeProjectEvidence(
   return Object.freeze({
     version: 1,
     routes: sortByRoute(routes),
+    ...mountsPart(mounts),
     ...(assurance === undefined ? {} : { assurance }),
     ...(capabilities === undefined ? {} : { capabilities }),
   })
@@ -453,7 +475,12 @@ function schemaPartToReflection(
 ): SchemaReflection | undefined {
   return value === undefined
     ? undefined
-    : { standard: undefined, jsonSchema: value.jsonSchema, fields: value.fields }
+    : {
+        standard: undefined,
+        jsonSchema: value.jsonSchema,
+        fields: value.fields,
+        ...(value.mediaTypes !== undefined ? { mediaTypes: value.mediaTypes } : {}),
+      }
 }
 
 function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): ReflectedRoute["schema"] {
@@ -465,6 +492,7 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
     ]),
   )
   const headers = schemaPartToReflection(schema.headers)
+  const cookies = schemaPartToReflection(schema.cookies)
   const body = schemaPartToReflection(schema.body)
   const query = schemaPartToReflection(schema.query)
   const params = schemaPartToReflection(schema.params)
@@ -474,6 +502,7 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
     ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
     ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
     ...(headers !== undefined ? { headers } : {}),
+    ...(cookies !== undefined ? { cookies } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(params !== undefined ? { params } : {}),
@@ -527,10 +556,24 @@ export function snapshotProjectEvidence(
   return Object.freeze({
     version: 1,
     routes,
+    ...mountsPart(options.mounts ?? reflectMounts(source)),
     ...(assurance !== undefined ? { assurance } : {}),
     ...(capabilities !== undefined ? { capabilities } : {}),
   })
 }
+
+/** The snapshot's `mounts` field, sorted, and absent when empty so a mount-free app's snapshot (and its
+ * manifest hash) is unchanged. */
+const mountsPart = (
+  mounts: readonly ReflectedMount[],
+): { readonly mounts?: readonly ReflectedMount[] } =>
+  mounts.length === 0
+    ? {}
+    : {
+        mounts: Object.freeze(
+          [...mounts].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+        ),
+      }
 
 function canonicalValue(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {

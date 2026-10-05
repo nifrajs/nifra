@@ -1,5 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
+import { bearerToken, guardName } from "./_utils.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -48,7 +49,7 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
         headers: config.challenge !== undefined ? { "www-authenticate": config.challenge } : {},
       },
     )
-  const plugin = defineIdentityPlugin(config.name, (app) =>
+  const plugin = defineIdentityPlugin(guardName(config.name), (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = config.extract(c.req)
       // Empty string is treated as "no credential" - never passed to verify.
@@ -96,10 +97,7 @@ export function bearer<P>(options: BearerOptions<P>): AuthPlugin<P> {
   const realm = options.realm ?? "api"
   return createTokenAuth({
     name: "bearer",
-    extract: (request) => {
-      const header = request.headers.get("authorization")
-      return header?.startsWith("Bearer ") === true ? header.slice(7).trim() : undefined
-    },
+    extract: (request) => bearerToken(request.headers.get("authorization")) ?? undefined,
     verify: options.verify,
     optional: options.optional === true,
     challenge: `Bearer realm="${realm}"`,

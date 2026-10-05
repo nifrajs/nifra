@@ -1,5 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 
 /**
  * A test-only filesystem seam. Every suite gets a unique parent and every logical project can get a
@@ -19,4 +19,12 @@ export function createFixtureProject(parent: string, prefix: string): string {
 /** Remove a suite-owned root and all child projects. */
 export function removeFixtureRoot(root: string): void {
   rmSync(root, { recursive: true, force: true })
+}
+
+/** Write a fixture file at an app-relative path (`backend/app.ts`), creating its directory. */
+export function writeAppFile(root: string, path: string, content: string): string {
+  const file = join(root, path)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, content)
+  return file
 }

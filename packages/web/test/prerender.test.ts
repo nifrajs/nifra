@@ -86,6 +86,37 @@ describe("prerenderRoutes", () => {
     expect(result.skipped).toEqual([])
   })
 
+  test("writes the prerendered list a page hands over as a URL", async () => {
+    const listUrl = "/__nifra/prerendered.json?v=0a1b2c3d"
+    const requested: string[] = []
+    const app: PrerenderApp = {
+      fetch: async (req) => {
+        requested.push(new URL(req.url).pathname + new URL(req.url).search)
+        if (req.url.endsWith(listUrl)) return Response.json(["/"])
+        return new Response(`<script>({"__NIFRA_PRERENDERED__":"${listUrl}"})</script>`)
+      },
+    }
+    const result = await prerenderRoutes({ app, routes: [route("/", true)], outDir: dir })
+    expect(readFileSync(join(dir, "__nifra/prerendered.json"), "utf8")).toBe('["/"]')
+    expect(requested.filter((url) => url === listUrl)).toHaveLength(1)
+    expect(result.skipped).toEqual([])
+  })
+
+  test("a prerendered list the app fails to serve is reported, not written", async () => {
+    const listUrl = "/__nifra/prerendered.json?v=0a1b2c3d"
+    const app: PrerenderApp = {
+      fetch: async (req) =>
+        req.url.endsWith(listUrl)
+          ? new Response("down", { status: 503 })
+          : new Response(`<script>({"__NIFRA_PRERENDERED__":"${listUrl}"})</script>`),
+    }
+    const result = await prerenderRoutes({ app, routes: [route("/", true)], outDir: dir })
+    expect(existsSync(join(dir, "__nifra/prerendered.json"))).toBe(false)
+    expect(result.skipped).toEqual([
+      { path: "/__nifra/prerendered.json", reason: "list returned HTTP 503" },
+    ])
+  })
+
   test("emits a static _data.json next to index.html (JSON data-mode) for soft-nav [Phase 2.3]", async () => {
     const { app, dataUrls } = fakeApp(200, "<html>x</html>", '{"user":{"id":"7"}}')
     const result = await prerenderRoutes({

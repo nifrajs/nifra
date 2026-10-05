@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
 const GROUPS = [
-  ["core", "agent-review"],
+  ["core", "agent-review", "uploads"],
   [
     "client",
     "cache",
@@ -14,7 +14,6 @@ const GROUPS = [
     "better-auth",
     "i18n",
     "image",
-    "uploads",
     "storage",
     "node",
     "runner",

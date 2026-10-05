@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { isAbsolute, join } from "node:path"
 import { loadApp } from "../src/load.ts"
-import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
 
 const dirs: string[] = []
 
@@ -15,8 +15,9 @@ test("plugin thunks resolve exactly once and remain available to later phases", 
   dirs.push(root)
   mkdirSync(join(root, "routes"))
   writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
-  writeFileSync(
-    join(root, "framework.ts"),
+  writeAppFile(
+    root,
+    "backend/framework.ts",
     `export const adapter = {}
      export const clientModule = "./client.ts"
      export const vitePlugins = () => {
@@ -50,8 +51,9 @@ async function loadWithClientModule(spec: string): Promise<string> {
   dirs.push(root)
   mkdirSync(join(root, "routes"))
   writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
-  writeFileSync(
-    join(root, "framework.ts"),
+  writeAppFile(
+    root,
+    "backend/framework.ts",
     `export const adapter = {}\nexport const clientModule = ${JSON.stringify(spec)}\n`,
   )
   const app = await loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` })
@@ -62,8 +64,8 @@ async function loadWithClientModule(spec: string): Promise<string> {
 // `nifra build` write that entry into different directories - so a RELATIVE clientModule must be
 // absolutized at load, or it resolves against different bases and loads in one phase but not the other.
 test("a relative clientModule is resolved to absolute at load", async () => {
-  const resolved = await loadWithClientModule("./src/client.tsx")
-  expect(resolved.replaceAll("\\", "/").endsWith("/src/client.tsx")).toBe(true)
+  const resolved = await loadWithClientModule("./frontend/client.tsx")
+  expect(resolved.replaceAll("\\", "/").endsWith("/frontend/client.tsx")).toBe(true)
   expect(isAbsolute(resolved)).toBe(true)
 })
 
@@ -79,13 +81,13 @@ test("a non-relative clientModule shadowing a local file is rejected with the ./
   dirs.push(root)
   mkdirSync(join(root, "routes"))
   writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
-  mkdirSync(join(root, "src"))
-  writeFileSync(join(root, "src", "client.tsx"), "export function mountRouter() {}\n")
-  writeFileSync(
-    join(root, "framework.ts"),
-    `export const adapter = {}\nexport const clientModule = "src/client.tsx"\n`,
+  writeAppFile(root, "frontend/client.tsx", "export function mountRouter() {}\n")
+  writeAppFile(
+    root,
+    "backend/framework.ts",
+    `export const adapter = {}\nexport const clientModule = "frontend/client.tsx"\n`,
   )
   await expect(
     loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` }),
-  ).rejects.toThrow(/no "\.\/" prefix.*"\.\/src\/client\.tsx"/s)
+  ).rejects.toThrow(/no "\.\/" prefix.*"\.\/frontend\/client\.tsx"/s)
 })

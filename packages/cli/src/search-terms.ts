@@ -48,12 +48,18 @@ const ALIASES: Readonly<Record<string, readonly string[]>> = {
 export const MAX_QUERY_CHARS = 256
 export const MAX_QUERY_TERMS = 12
 
+// A camelCase word also stays whole: "WebSockets" splits to "web" + "sockets", which a
+// "websocket" query never matches.
+const CAMEL_WORD = /[A-Za-z0-9]*[a-z0-9][A-Z][A-Za-z0-9]*/g
+
 export const tokenize = (s: string): string[] =>
-  s
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 1)
+  [
+    ...s
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/),
+    ...(s.match(CAMEL_WORD) ?? []).map((word) => word.toLowerCase()),
+  ].filter((t) => t.length > 1)
 
 export function queryTermGroups(query: string): SearchTermGroup[] {
   return [...new Set(tokenize(query.slice(0, MAX_QUERY_CHARS)))]
@@ -82,9 +88,10 @@ export function tokenSetHas(tokens: ReadonlySet<string>, group: SearchTermGroup)
 export function tokenSetScore(tokens: ReadonlySet<string>, group: SearchTermGroup): number {
   let best = 0
   for (const variant of group.variants) {
-    for (const token of tokens) {
-      if (!tokenMatches(variant, token)) continue
-      const score = variant === group.term && token === variant ? 3 : token === variant ? 2 : 1
+    for (const candidate of tokens) {
+      if (!tokenMatches(variant, candidate)) continue
+      const score =
+        variant === group.term && candidate === variant ? 3 : candidate === variant ? 2 : 1
       if (score > best) best = score
     }
   }

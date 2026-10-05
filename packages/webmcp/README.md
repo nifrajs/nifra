@@ -78,7 +78,9 @@ console.log(result.outcome, result.snapshot)
 
 The store is atomic, defensive, expiry-aware, version-aware, and rejects prototype-grafting paths.
 Successful server state replaces the authoritative base; failed calls roll the overlay back; stale
-commits become conflicts.
+commits become conflicts. A capability declared with `reconciliation: "accept-server-state"` instead
+commits the server's state even when its prediction conflicted with a newer commit, so concurrent
+calls end on the latest server response.
 
 ## Remote MCP and MCP Apps
 

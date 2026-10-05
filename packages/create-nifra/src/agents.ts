@@ -1,12 +1,12 @@
 /**
  * Generate the `AGENTS.md` a scaffolded app ships with - the conventions file read by coding agents
  * (Claude Code, Cursor, …). It encodes nifra's non-obvious rules so an agent writes correct code from
- * the first prompt: validate at the boundary, the never-throwing client, `app.fetch` as the universal
- * entry, and (for full-stack apps) the one gotcha that bites everyone - never top-level-import
- * server-only code into a route module. Tailored per template so the paths + commands are real.
+ * the first prompt: validate at the boundary, the never-throwing client, `backend.fetch` as the universal
+ * entry, and (for full-stack apps) the frontend/backend zones the build enforces. Tailored per template so
+ * the paths + commands are real.
  */
 
-import { agentsMcpSection } from "./agent-files.ts"
+import { agentsMcpSection, agentsStructureSection } from "./agent-files.ts"
 import type { AuthChoice } from "./auth.ts"
 import type { Framework, TemplateName } from "./cli.ts"
 import { DB_PRESETS, type DbChoice, type DbPreset } from "./db.ts"
@@ -26,7 +26,7 @@ const API_RULES = `## The backend: \`server()\`
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
-export const app = server()
+export const backend = server()
   .get("/users/:id", { response: t.object({ id: t.string() }) }, (c) => ({ id: c.params.id }))
   .post(
     "/users",
@@ -38,19 +38,21 @@ export const app = server()
     },
   )
 
-export type App = typeof app
+export type Backend = typeof backend
 \`\`\`
 
 Rules an agent must follow:
 
-- **Validate every input at the boundary.** The route schema slots are \`{ body, query }\` (plus
-  \`response\`, below) - use \`t\` from \`@nifrajs/schema\` (installed) or any Standard Schema (zod, valibot).
-  Read the typed, already-validated \`c.body\` / \`c.query\` (invalid input was rejected with a 422 before the
-  handler ran). **Never** hand-parse \`await c.req.json()\` and poke at properties - that's the bug class the
-  schema exists to remove.
-- **Path params are NOT a schema slot.** \`:id\` etc. are inferred from the path literal as \`string\` and
-  read via \`c.params.id\`; there is no \`params\` (or \`headers\`) key in the route schema. Validate a param's
-  shape inside the handler (a length/format check), not via \`{ params: ... }\` - that's a type error.
+- **Validate every input at the boundary.** The route schema slots are \`{ body, query, params, headers,
+  cookies }\` (plus \`response\`, below) - use \`t\` from \`@nifrajs/schema\` (installed) or any Standard Schema
+  (zod, valibot). Read the typed, already-validated \`c.body\` / \`c.query\` / \`c.params\` / \`c.headers\` /
+  \`c.cookies\` (invalid input was rejected with a 422 before the handler ran). **Never** hand-parse
+  \`await c.req.json()\` and poke at properties - that's the bug class the schema exists to remove.
+- **Path params are strings until a \`params\` schema says otherwise.** \`:id\` is inferred from the path
+  literal as a \`string\` on \`c.params.id\`. Declare \`{ params: t.object({ id: t.string({ format: "uuid" }) }) }\`
+  to reject a malformed id with a 422 before the handler runs, or \`t.query({ id: t.integer() })\` to coerce a
+  numeric one, instead of a format check inside the handler. The schema covers every path param. Header
+  names in a \`headers\` schema are lower-case.
 - **Lock the output shape with \`response\` (no drift).** Add \`{ response: t.object({...}) }\` to a route:
   the handler's return is type-checked against it, and the typed client sees exactly that shape. One
   contract, both sides - the frontend physically can't drift from the backend's output.
@@ -65,8 +67,9 @@ Rules an agent must follow:
 - **Raw \`Response\` is for redirects / streams / files** (\`Response.redirect(url, 302)\`, a file body, an
   SSE stream). The typed client infers \`res.data: never\` on such a route and \`nifra check\` emits a
   non-blocking \`response-route\` warning - both are EXPECTED there, not defects.
-- **\`app.fetch(request)\` is the whole app** - \`(Request) => Response | Promise<Response>\`. Tests drive it
-  directly (\`await app.fetch(new Request("http://x/users/1"))\`); no server needs to be running.
+- **\`backend.fetch(request)\` is the whole app** - \`(Request) => Response | Promise<Response>\`. Tests
+  drive it directly (\`await backend.fetch(new Request("http://x/users/1"))\`); no server needs to be
+  running.
 - **Don't reach for a heavy ORM/HTTP layer.** Routing, validation, cookies, and the typed client are
   built in. Parameterize DB queries; use \`timingSafeEqual\` (or WebCrypto) for secret comparison.
 - **Cross-cutting concerns - use \`@nifrajs/middleware\`, don't hand-roll.** Rate limiting (\`429\` +
@@ -78,31 +81,31 @@ Rules an agent must follow:
 
 \`\`\`ts
 import { client } from "@nifrajs/client"
-import type { app } from "./app"          // type-only import - server code never ships to the client
+import type { Backend } from "./backend/app"   // type-only import - server code never ships
 
-const api = client<typeof app>("https://api.example.com")
+const api = client<Backend>("https://api.example.com")
 const res = await api.users({ id: "42" }).get()
 if (res.ok) res.data            // typed from the route's return type - zero codegen
 else res.error                  // errors are returned, never thrown
 \`\`\`
 
 **Never hand-roll \`fetch\` + ad-hoc response types for this app's own API** - that's exactly how a screen
-drifts from the backend. \`client<typeof app>\` derives both the request inputs and \`res.data\` from the
+drifts from the backend. \`client<Backend>\` derives both the request inputs and \`res.data\` from the
 route types, so \`tsc\` (and \`nifra build\`) catch any mismatch the moment a route changes. When building a
 page that calls the API, reach for the client first.
 `
 
-/** File-routing + the server-only gotcha - only for full-stack (site/isr) templates. */
+/** File routing, loaders and the zones - only for full-stack (site/isr) templates. */
 function webRules(framework: Framework): string {
   const label = FRAMEWORK_LABEL[framework]
   return `## The frontend: file routing + loaders (${label})
 
 - Routes live in \`routes/\`. \`index.tsx\` → \`/\`, \`[id].tsx\` → \`/:id\`, \`_layout.tsx\` wraps a subtree,
   \`_404.tsx\` / \`_error.tsx\` are the fallbacks.
-- A route file may export: \`default\` (the page component), \`loader\` (server-only data), \`action\`
-  (server-only mutation), and \`meta\` (head tags). The \`loader\` returns data typed straight into the page.
+- A page's \`.tsx\` file exports \`default\` (the component) and \`meta\` (head tags). Its \`.backend.ts\` file
+  exports \`loader\` (data) and \`action\` (mutations), each with its output schema.
 - **The \`server()\` backend is IN-PROCESS, not a public HTTP surface.** Loaders/actions call it through
-  \`ctx.api\` (the typed client - no network) during SSR; there is no \`GET /your-route\` endpoint on the page
+  \`api\` (the typed client - no network) during SSR; there is no \`GET /your-route\` endpoint on the page
   server to curl. Build features through loaders/actions + the typed client, not direct HTTP calls.
 - Swap UI frameworks by changing one import (\`@nifrajs/web-${framework}\` → another adapter); your route,
   loader, and action code do not change.
@@ -111,21 +114,15 @@ function webRules(framework: Framework): string {
   and navigate without a full reload. Throwing in an action or returning in a loader is a silent bug
   that produces a false "operation failed" error on the client.
 
-## ⚠️ The one rule that bites everyone: never import server-only code at a route's top level
-
-A route module's \`loader\`/\`action\` run **only on the server**, but the module is **also bundled for the
-browser** (for the component) - and the loader is *not* stripped. So a top-level
-\`import db from "./db"\` (or anything touching \`process.env\`, secrets, \`node:\` APIs) ships server code to
-the client and crashes hydration. Reach server resources through \`ctx.api\` / \`ctx.env\` (injected via
-\`createWebApp\`) inside the loader instead - never as a top-level import in a \`routes/\` file.
+${agentsStructureSection()}
 `
 }
 
 /** Per-ORM body of the DB rules: the query idiom, schema location, and migrate story all differ. */
 function dbRulesBody(orm: DbPreset["orm"]): string {
   if (orm === "prisma") {
-    return `A Prisma data layer is wired: \`prisma/schema.prisma\` (a starter \`Note\` model) + \`db/index.ts\` (a
-singleton \`PrismaClient\`).
+    return `A Prisma data layer is wired: \`prisma/schema.prisma\` (a starter \`Note\` model) +
+\`backend/db/index.ts\` (a singleton \`PrismaClient\`).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
@@ -144,9 +141,9 @@ singleton \`PrismaClient\`).
   applies the migration and regenerates the client). \`bun run db:studio\` opens a DB browser.`
   }
   if (orm === "kysely") {
-    return `A Kysely typed query builder is wired in \`db/\`: \`db/schema.ts\` (the DB-shape interface - keep it in
-sync with your migrations) + \`db/index.ts\` (the typed client). You own the migrations (\`db/migrations/\`,
-run by \`db/migrate.ts\`).
+    return `A Kysely typed query builder is wired in \`backend/db/\`: \`backend/db/schema.ts\` (the DB-shape
+interface - keep it in sync with your migrations) + \`backend/db/index.ts\` (the typed client). You own the
+migrations (\`backend/db/migrations/\`, run by \`backend/db/migrate.ts\`).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
@@ -161,11 +158,11 @@ run by \`db/migrate.ts\`).
     .post("/notes", { body: t.object({ title: t.string({ minLength: 1 }) }) }, async (c) =>
       c.db.insertInto("notes").values({ title: c.body.title }).returningAll().executeTakeFirstOrThrow())
   \`\`\`
-- **Migrations:** add a file to \`db/migrations/\` (copy the \`0001_create_notes.ts\` shape), update the
-  \`db/schema.ts\` interface to match, then \`bun run db:migrate\`.`
+- **Migrations:** add a file to \`backend/db/migrations/\` (copy the \`0001_create_notes.ts\` shape),
+  update the \`backend/db/schema.ts\` interface to match, then \`bun run db:migrate\`.`
   }
-  return `A Drizzle data layer is wired in \`db/\`: \`db/schema.ts\` (a starter \`notes\` table) + \`db/index.ts\` (the
-typed client).
+  return `A Drizzle data layer is wired in \`backend/db/\`: \`backend/db/schema.ts\` (a starter \`notes\`
+table) + \`backend/db/index.ts\` (the typed client).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
@@ -180,8 +177,8 @@ typed client).
       (await c.db.insert(notes).values({ title: c.body.title }).returning())[0],
     )
   \`\`\`
-- **Migrations:** edit \`db/schema.ts\`, then \`bun run db:generate\` (writes SQL to \`db/migrations\`) +
-  \`bun run db:migrate\` (applies it). \`bun run db:studio\` opens a DB browser.`
+- **Migrations:** edit \`backend/db/schema.ts\`, then \`bun run db:generate\` (writes SQL to
+  \`backend/db/migrations\`) + \`bun run db:migrate\` (applies it). \`bun run db:studio\` opens a DB browser.`
 }
 
 /** DB rules - only when scaffolded with `--db`. Teaches the wired data layer + the `c.db` seam. */
@@ -192,16 +189,16 @@ function dbRules(db: DbChoice): string {
 ${dbRulesBody(p.orm)} ${p.note}
 
 - **Query is fully typed** - types flow from the schema/model; \`c.db\` is typed end to end.
-- **Never top-level-import \`db\` into a \`routes/\` page file** - it's server-only; reach it via \`c.db\` on
-  the backend (or \`ctx.api\` from a loader). A top-level import ships it to the browser and breaks the build.`
+- **\`backend/db/\` is backend code.** Reach it via \`c.db\` on the backend, or through \`api\` from a
+  route's \`.backend.ts\` loader. A frontend file that imports it fails the build.`
 }
 
 /** Auth rules - only when scaffolded with `--auth`. Teaches the better-auth mount + the typed guards. */
 function authRules(_auth: AuthChoice): string {
   return `## Authentication (better-auth)
 
-better-auth is configured in \`auth.ts\` (email/password + sessions, backed by your scaffolded database via
-its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifrajs/better-auth\`.
+better-auth is configured in \`backend/auth.ts\` (email/password + sessions, backed by your scaffolded
+database via its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifrajs/better-auth\`.
 
 - **Mount it once** on the backend - it serves every auth endpoint under \`/api/auth/*\`:
   \`\`\`ts
@@ -210,9 +207,10 @@ its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifr
   import { auth } from "./auth"
   export const app = server().use(betterAuth(auth))
   \`\`\`
-- **Generate the auth tables** once, and after changing the config: \`bunx @better-auth/cli@latest generate\`
-  writes them into your schema (\`db/schema.ts\` for Drizzle, \`prisma/schema.prisma\` for Prisma); then
-  \`bun run db:migrate\`.
+- **Generate the auth tables** once, and after changing the config:
+  \`bunx @better-auth/cli@latest generate --config backend/auth.ts\` writes their schema (Prisma: into
+  \`prisma/schema.prisma\`; Drizzle: a \`schema.ts\` at the root unless \`--output\` names a file under
+  \`backend/db/\`); then \`bun run db:migrate\`.
 - **Read / require a session** with the typed guards (pass the raw \`Request\` - \`c.req\` in a handler, or a
   loader's \`request\`):
   \`\`\`ts
@@ -223,7 +221,8 @@ its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifr
     return { id: user.id }
   })
   \`\`\`
-- \`auth\` is **server-only** - never import it into a \`routes/\` page, and keep \`BETTER_AUTH_SECRET\` in \`.env\`.`
+- \`backend/auth.ts\` is **backend code** - a frontend file cannot import it - and \`BETTER_AUTH_SECRET\`
+  stays in \`.env\`.`
 }
 
 const SECURITY_RULES = `## Production defaults (don't ship the happy path only)
@@ -244,28 +243,25 @@ const SECURITY_RULES = `## Production defaults (don't ship the happy path only)
 const COMMANDS: Readonly<Record<TemplateName, string>> = {
   api: `- \`bun install\` - install dependencies
 - \`bun run dev\` - run the API (watch mode)
-- \`bun test\` - drive \`app.fetch\` directly; no server required
+- \`bun test\` - drive \`backend.fetch\` directly; no server required
 - \`nifra check\` - typecheck + typed-client lint (run before you call work done)`,
   site: `- \`bun install\` - install dependencies
-- \`nifra dev\` - true-HMR dev server
-- \`nifra build\` - complete Bun deploy (server + content-hashed client assets)
-- \`nifra start\` - run the generated Bun server - pairs with \`nifra build\`
-- \`nifra check\` - typecheck + typed-client lint (run before you call work done)
-
-  For a local production run use \`nifra build && nifra start\` (or \`bun run build:bun && bun run start\`). NOTE:
-  the bare \`bun run build\` script targets **Cloudflare Pages for DEPLOY** (emits \`dist/\`, a different layout)
-  - it does NOT pair with \`nifra start\`/\`bun run start\` (which serve \`dist-bun/\`). Don't mix the two.`,
+- \`bun run dev\` (\`nifra dev\`) - true-HMR dev server
+- \`bun run build\` (\`nifra build\`) - the deploy directory for the app's \`target\` in \`nifra.config.ts\`; it
+  generates the server entry, so the app has no per-runtime entry or build script
+- \`bun run start\` - run the built app locally (on targets with a local runner)
+- \`nifra target <t>\` - switch where the app deploys: bun | node | deno | cloudflare | vercel
+- \`nifra check\` - typecheck + typed-client lint (run before you call work done)`,
   isr: `- \`bun install\` - install dependencies
-- \`nifra dev\` - true-HMR dev server
-- \`nifra build\` - complete Bun deploy (server + content-hashed client assets)
-- \`nifra start\` - run the generated Bun server (SSR + ISR cache) - pairs with \`nifra build\`
-- \`nifra check\` - typecheck + typed-client lint (run before you call work done)
-
-  For a local production run use \`nifra build && nifra start\`. NOTE: the bare \`bun run build\` script targets
-  **Cloudflare Pages for DEPLOY** (\`dist/\`) and does NOT pair with \`nifra start\` - don't mix the two.`,
+- \`bun run build\` - \`build.ts\`: the client bundle into \`public/assets\`, the worker
+  (\`backend/worker.ts\`) into \`dist-server/worker.js\`
+- \`bun run dev\` - \`wrangler dev\` on real workerd with a local KV (run \`bun run build\` first)
+- \`bun run dev:bun\` - the same app on a local Bun server (\`backend/dev-server.ts\`, in-memory cache)
+- \`bun run build && bunx wrangler deploy\` - deploy (create the KV namespace first; see README)
+- \`nifra check\` - typecheck + typed-client lint (run before you call work done)`,
   batteries: `- \`bun install\` - install dependencies
-- \`bun run dev\` - run the API (watch mode); \`src/index.ts\` also starts the job worker (\`queue.start()\`)
-- \`bun test\` - drives \`app.fetch\` directly (pagination, jobs via \`queue.drain()\`, cache, storage); no server required
+- \`bun run dev\` - run the API (watch mode); \`backend/index.ts\` also starts the job worker (\`queue.start()\`)
+- \`bun test\` - drives \`backend.fetch\` directly (pagination, jobs via \`queue.drain()\`, cache, storage); no server required
 - \`bun run typecheck\` - run before you call work done
 
   Wired: cursor pagination (\`t.pageQuery\`/\`t.paginated\`/\`paginate\`), background jobs (\`@nifrajs/jobs\`),
@@ -279,8 +275,8 @@ const DONE = `## Definition of done - run \`nifra check\`
 Before considering any change complete, run **\`nifra check\`**. It (1) typechecks - the frontend↔backend
 contract is compiler-enforced, so the typed client deriving \`res.data\` from your routes turns any
 mismatch into an error; (2) flags any hand-rolled \`fetch()\` to this app's own API (which bypasses that
-check); and (3) flags a server-only import (a DB driver, \`node:\`/\`bun:\`, \`./db\`) at the top level of a
-\`routes/\` page - that ships server code to the browser. Use \`nifra check --json\` for machine-readable
+check); and (3) enforces the frontend/backend zones - a frontend file reaching backend code, or a loader
+or action without an output schema, fails it. Use \`nifra check --json\` for machine-readable
 diagnostics. A failing \`nifra check\` means the work isn't done - fix it, don't ship around it.`
 
 export interface AgentsMdOptions {

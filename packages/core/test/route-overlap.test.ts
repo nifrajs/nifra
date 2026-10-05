@@ -28,4 +28,26 @@ describe("route pattern overlap", () => {
     const right = "/a"
     expect(() => overlap(left, right)).toThrow(RoutePatternOverlapLimitError)
   })
+
+  test("a pattern ending in optional params is every concrete path it serves", () => {
+    expect(overlap("/users/:id?", "/users")).toBe("/users")
+    expect(overlap("/users", "/users/:id?")).toBe("/users")
+    expect(overlap("/users/:id?", "/users/me")).toBe("/users/me")
+    expect(overlap("/d/:y?/:m?", "/d/:year/archive")).toBe("/d/a/archive")
+    expect(overlap("/:lang?", "/")).toBe("/")
+    expect(overlap("/a/:x?", "/a/:y?")).toBe("/a")
+    expect(overlap("/users/:id?", "/teams/:id?")).toBeUndefined()
+    expect(overlap("/users/:id?", "/users/:id/posts")).toBeUndefined()
+  })
+
+  test("a `?` outside a trailing run of whole segments is ordinary text", () => {
+    expect(overlap("/a/:id?/b", "/a")).toBeUndefined()
+    expect(overlap("/a/x-:id?", "/a")).toBeUndefined()
+  })
+
+  test("the state budget is shared across every concrete path of both sides", () => {
+    const run = (name: string): string =>
+      Array.from({ length: 400 }, (_, index) => `/:${name}${index}?`).join("")
+    expect(() => overlap(`/a${run("p")}`, `/b${run("q")}`)).toThrow(RoutePatternOverlapLimitError)
+  })
 })

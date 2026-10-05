@@ -29,7 +29,10 @@ import type { ReactNode } from "react"
  * resolves to an absolute path string) stays strict - no `any` crosses the boundary. */
 export interface ReactDomServer {
   renderToString(node: ReactNode): string
-  renderToReadableStream(node: ReactNode): Promise<ReadableStream<Uint8Array>>
+  renderToReadableStream(
+    node: ReactNode,
+    options?: { readonly nonce?: string },
+  ): Promise<ReadableStream<Uint8Array>>
 }
 
 interface RuntimeProcess {

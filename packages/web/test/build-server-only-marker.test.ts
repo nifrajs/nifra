@@ -14,8 +14,8 @@ import {
   SERVER_ONLY_MARKER,
 } from "../src/build.ts"
 
-// §3.3/§5.1: the `server-only` poison-import marker. A module of PURE server logic (no `node:` import,
-// not named `*.server`) opts in with `import "@nifrajs/web/server-only"` and the CLIENT build fails
+// The `backend-only` poison-import marker. A module of PURE server logic (no `node:` import,
+// placed where the zones cannot see it) opts in with `import "@nifrajs/web/backend-only"` and the CLIENT build fails
 // loud - with the import chain - if it reaches a browser chunk. detectServerOnlyInClient is the pure
 // core; it works off Bun's metafile graph (NOT the emitted text), so it survives minification.
 
@@ -27,10 +27,10 @@ const META_MARKED = {
     "routes/index.tsx": { imports: [{ path: "src/secrets.ts", original: "../secrets.ts" }] },
     "src/secrets.ts": {
       imports: [
-        { path: "node_modules/@nifrajs/web/src/server-only.ts", original: SERVER_ONLY_MARKER },
+        { path: "node_modules/@nifrajs/web/src/backend-only.ts", original: SERVER_ONLY_MARKER },
       ],
     },
-    "node_modules/@nifrajs/web/src/server-only.ts": { imports: [] },
+    "node_modules/@nifrajs/web/src/backend-only.ts": { imports: [] },
   },
   outputs: {
     "dist/index-abc123.js": {
@@ -38,7 +38,7 @@ const META_MARKED = {
       inputs: {
         "routes/index.tsx": {},
         "src/secrets.ts": {},
-        "node_modules/@nifrajs/web/src/server-only.ts": {},
+        "node_modules/@nifrajs/web/src/backend-only.ts": {},
       },
     },
   },
@@ -50,7 +50,7 @@ test("flags the marked module + its chunk + the import chain (entry → marked) 
     {
       chunk: "index-abc123.js",
       // Root is the route entry key; the hop is the as-written specifier; the tail names the marked module.
-      chain: ["routes/index.tsx", "../secrets.ts (marked server-only)"],
+      chain: ["routes/index.tsx", "../secrets.ts (marked backend-only)"],
     },
   ])
 })
@@ -58,9 +58,9 @@ test("flags the marked module + its chunk + the import chain (entry → marked) 
 test("the marker module itself (imports nothing) is never reported [server-only]", () => {
   // Only the marker module is in the graph, as a leaf - there is no module that *opts in*, so it's clean.
   const found = detectServerOnly({
-    inputs: { "node_modules/@nifrajs/web/dist/server-only.js": { imports: [] } },
+    inputs: { "node_modules/@nifrajs/web/dist/backend-only.js": { imports: [] } },
     outputs: {
-      "dist/x.js": { inputs: { "node_modules/@nifrajs/web/dist/server-only.js": {} } },
+      "dist/x.js": { inputs: { "node_modules/@nifrajs/web/dist/backend-only.js": {} } },
     },
   })
   expect(found).toHaveLength(0)
@@ -77,9 +77,8 @@ test("a normal module (no marker import) is unaffected [server-only]", () => {
   expect(found).toHaveLength(0)
 })
 
-test("undefined/empty metafile → no findings (never throws on a missing graph) [server-only]", () => {
-  expect(detectServerOnly(undefined)).toHaveLength(0)
-  expect(detectServerOnly({ outputs: {} })).toHaveLength(0)
+test("a missing metafile is an error [server-only]", () => {
+  expect(() => detectServerOnly(undefined)).toThrow("produced no module graph")
 })
 
 test("a pre-resolved marker edge (no `original`) is still recognised by its resolved path [server-only]", () => {
@@ -88,9 +87,9 @@ test("a pre-resolved marker edge (no `original`) is still recognised by its reso
       "routes/page.tsx": { imports: [{ path: "src/secrets.ts", original: "../secrets.ts" }] },
       // The marker edge lost its `original` but resolved to the marker module file.
       "src/secrets.ts": {
-        imports: [{ path: "node_modules/@nifrajs/web/dist/server-only.js" }],
+        imports: [{ path: "node_modules/@nifrajs/web/dist/backend-only.js" }],
       },
-      "node_modules/@nifrajs/web/dist/server-only.js": { imports: [] },
+      "node_modules/@nifrajs/web/dist/backend-only.js": { imports: [] },
     },
     outputs: {
       "dist/page-y.js": {
@@ -98,13 +97,13 @@ test("a pre-resolved marker edge (no `original`) is still recognised by its reso
         inputs: {
           "routes/page.tsx": {},
           "src/secrets.ts": {},
-          "node_modules/@nifrajs/web/dist/server-only.js": {},
+          "node_modules/@nifrajs/web/dist/backend-only.js": {},
         },
       },
     },
   })
   expect(found).toEqual([
-    { chunk: "page-y.js", chain: ["routes/page.tsx", "../secrets.ts (marked server-only)"] },
+    { chunk: "page-y.js", chain: ["routes/page.tsx", "../secrets.ts (marked backend-only)"] },
   ])
 })
 
@@ -120,10 +119,10 @@ test("chain BFS picks the SHORTEST path to a marked module reachable two ways [s
       "src/long/a.ts": { imports: [{ path: "src/secrets.ts", original: "../secrets.ts" }] },
       "src/secrets.ts": {
         imports: [
-          { path: "node_modules/@nifrajs/web/src/server-only.ts", original: SERVER_ONLY_MARKER },
+          { path: "node_modules/@nifrajs/web/src/backend-only.ts", original: SERVER_ONLY_MARKER },
         ],
       },
-      "node_modules/@nifrajs/web/src/server-only.ts": { imports: [] },
+      "node_modules/@nifrajs/web/src/backend-only.ts": { imports: [] },
     },
     outputs: {
       "dist/index-z.js": {
@@ -132,13 +131,13 @@ test("chain BFS picks the SHORTEST path to a marked module reachable two ways [s
           "routes/index.tsx": {},
           "src/long/a.ts": {},
           "src/secrets.ts": {},
-          "node_modules/@nifrajs/web/src/server-only.ts": {},
+          "node_modules/@nifrajs/web/src/backend-only.ts": {},
         },
       },
     },
   })
   // Direct import wins: entry → secrets (length 2), not entry → ./long/a.ts → secrets.
-  expect(found[0]?.chain).toEqual(["routes/index.tsx", "./secrets.ts (marked server-only)"])
+  expect(found[0]?.chain).toEqual(["routes/index.tsx", "./secrets.ts (marked backend-only)"])
 })
 
 // End-to-end through the real build. The temp app lives INSIDE the workspace so the generated
@@ -152,7 +151,8 @@ beforeEach(() => {
   root = mkdtempSync(TMP)
   routesDir = join(root, "routes")
   mkdirSync(routesDir, { recursive: true })
-  clientModule = join(root, "client-stub.ts")
+  clientModule = join(root, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
 })
 afterEach(() => {
@@ -160,17 +160,15 @@ afterEach(() => {
 })
 
 test("buildClient throws naming the marker + the chain when a marked module reaches the client", async () => {
-  // A pure-server module (NO node: import) that opts into the marker, imported at a route's top level
-  // so it can't be tree-shaken out → it lands in the route's chunk.
+  // shared/ code may reach a browser by zone, so the marker is what refuses it.
+  mkdirSync(join(root, "shared"))
   writeFileSync(
-    join(root, "secrets.ts"),
+    join(root, "shared/secrets.ts"),
     `import "${SERVER_ONLY_MARKER}"\nexport const apiKey = "sk-live-1234567890"\n`,
   )
   writeFileSync(
     join(routesDir, "index.tsx"),
-    'import { apiKey } from "../secrets.ts"\n' +
-      "export const loader = () => ({ key: apiKey })\n" +
-      "export default () => apiKey\n",
+    'import { apiKey } from "../shared/secrets.ts"\nexport default () => apiKey\n',
   )
   const promise = buildClient({
     routesDir,
@@ -178,21 +176,23 @@ test("buildClient throws naming the marker + the chain when a marked module reac
     clientModule,
     minify: false,
   })
-  await expect(promise).rejects.toThrow(/server-only module reached the client bundle via/)
-  await expect(promise).rejects.toThrow(/marked server-only/)
-  await expect(promise).rejects.toThrow(/\.\.\/secrets\.ts/)
+  await expect(promise).rejects.toThrow(/backend-only module reached the client bundle via/)
+  await expect(promise).rejects.toThrow(/marked backend-only/)
+  await expect(promise).rejects.toThrow(/\.\.\/shared\/secrets\.ts/)
 })
 
 test("the server build KEEPS a marker-importing module (no throw - marker is a server no-op)", async () => {
   // The marker is an empty module on the server, so a server-only module importing it builds fine and
   // the real module is retained (it runs server-side).
+  mkdirSync(join(root, "backend"))
   writeFileSync(
-    join(root, "secrets.ts"),
+    join(root, "backend/secrets.ts"),
     `import "${SERVER_ONLY_MARKER}"\nexport const apiKey = "sk-live-1234567890"\n`,
   )
+  writeFileSync(join(routesDir, "index.tsx"), 'export default () => "home"\n')
   writeFileSync(
-    join(routesDir, "index.tsx"),
-    'import { apiKey } from "../secrets.ts"\nexport const loader = () => ({ key: apiKey })\nexport default () => "home"\n',
+    join(routesDir, "index.backend.ts"),
+    'import { apiKey } from "../backend/secrets.ts"\nexport const loader = () => ({ key: apiKey })\n',
   )
   const serverEntry = join(root, "worker.ts")
   writeFileSync(
@@ -217,13 +217,14 @@ test("the server build KEEPS a marker-importing module (no throw - marker is a s
 })
 
 test("buildClient is unaffected by a normal (unmarked) module", async () => {
+  mkdirSync(join(root, "shared"))
   writeFileSync(
-    join(root, "util.ts"),
+    join(root, "shared/util.ts"),
     "export const greeting = () => 'hello from a normal module'\n",
   )
   writeFileSync(
     join(routesDir, "index.tsx"),
-    'import { greeting } from "../util.ts"\nexport default () => greeting()\n',
+    'import { greeting } from "../shared/util.ts"\nexport default () => greeting()\n',
   )
   const manifest = await buildClient({
     routesDir,
@@ -235,7 +236,7 @@ test("buildClient is unaffected by a normal (unmarked) module", async () => {
 })
 
 test("the marker module itself is empty / a no-op (re-exports nothing)", async () => {
-  const mod = (await import("../src/server-only.ts")) as Record<string, unknown>
+  const mod = (await import("../src/backend-only.ts")) as Record<string, unknown>
   // No runtime exports - the marker is purely the import side-effect the build guard keys off.
   expect(Object.keys(mod).filter((k) => k !== "default")).toHaveLength(0)
 })

@@ -1,6 +1,12 @@
 import type { ContractShape } from "@nifrajs/core/contract"
 import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "@nifrajs/core/evidence"
 import {
+  compileRoutePattern,
+  expandOptionalParams,
+  type ParamConstraint,
+  type RoutePatternSegment,
+} from "@nifrajs/core/pattern"
+import {
   type JsonSchema,
   type ReflectedRouteSchema,
   reflectRoutes,
@@ -86,7 +92,7 @@ export interface ToOpenAPIOptions {
 
 interface OpenAPIParameter {
   readonly name: string
-  readonly in: "path" | "query" | "header"
+  readonly in: "path" | "query" | "header" | "cookie"
   readonly required: boolean
   readonly schema: JsonSchema
 }
@@ -181,54 +187,47 @@ class SchemaStore {
   }
 }
 
-const NIFRA_PARAM = /^[A-Za-z_][A-Za-z0-9_]*$/
-const MIXED_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g
-
-/** Names captured by a route segment under Nifra's parameter grammar. */
-function segmentParams(segment: string): readonly string[] {
-  if (segment.startsWith("*")) return [segment.length > 1 ? segment.slice(1) : "wildcard"]
-  const names: string[] = []
-  for (const match of segment.matchAll(MIXED_PARAM)) {
-    const name = match[1]
-    if (name === undefined || match.index === undefined) continue
-    const previous = segment[match.index - 1]
-    const atEnd = match.index + match[0].length === segment.length
-    // `things:batchGet` is an established literal action path. The router only treats a terminal
-    // colon after an identifier as a parameter when a literal suffix follows it.
-    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous) && atEnd) continue
-    names.push(name)
-  }
-  return names
+interface PathParameter {
+  readonly name: string
+  readonly constraint: ParamConstraint | undefined
 }
 
-/** Name of a wholly dynamic path segment, or `undefined` for static/mixed segments. */
-function segmentParam(segment: string): string | undefined {
-  const names = segmentParams(segment)
-  if (segment.startsWith("*") && names.length === 1) return names[0]
-  if (segment.startsWith(":") && NIFRA_PARAM.test(segment.slice(1)) && names.length === 1)
-    return names[0]
-  return undefined
-}
-
-/** Convert one Nifra route segment, including mixed forms, to OpenAPI templates. */
-function toTemplatedSegment(segment: string): string {
-  const whole = segmentParam(segment)
-  if (whole !== undefined) return `{${whole}}`
-  return segment.replace(MIXED_PARAM, (match, name: string, offset: number) => {
-    const previous = segment[offset - 1]
-    const atEnd = offset + match.length === segment.length
-    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous) && atEnd) return match
+/**
+ * `/users/:id/*rest` as `/users/{id}/{rest}`, with its params in order. Split by the router's own
+ * compiler, so names and constraints end where the router ends them.
+ */
+function templatedPath(path: string): {
+  readonly template: string
+  readonly parameters: readonly PathParameter[]
+} {
+  const parameters: PathParameter[] = []
+  const take = (name: string, constraint?: ParamConstraint): string => {
+    parameters.push({ name, constraint })
     return `{${name}}`
-  })
-}
-
-/** `/users/:id/*rest` → `/users/{id}/{rest}` (OpenAPI path templating). */
-function toTemplatedPath(path: string): string {
-  return path.split("/").map(toTemplatedSegment).join("/")
+  }
+  let segments: readonly RoutePatternSegment[]
+  try {
+    segments = compileRoutePattern(path).segments
+  } catch {
+    return { template: path, parameters }
+  }
+  const template = segments
+    .map((segment) =>
+      segment.kind === "static"
+        ? segment.value
+        : segment.kind === "param"
+          ? take(segment.name)
+          : segment.kind === "wildcard"
+            ? take(segment.name === "*" ? "wildcard" : segment.name)
+            : segment.parts
+                .map((part) => (part.t === "lit" ? part.v : take(part.name, part.c)))
+                .join(""),
+    )
+    .join("/")
+  return { template: `/${template}`, parameters }
 }
 
 function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIParameter[] {
-  const params: OpenAPIParameter[] = []
   // Build a lookup of per-field schemas from the declared params schema (if any).
   const fieldSchemas = new Map<string, JsonSchema>()
   if (paramsSchema?.fields !== undefined) {
@@ -236,15 +235,20 @@ function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIP
       fieldSchemas.set(field.name, field.schema)
     }
   }
-  for (const segment of path.split("/")) {
-    for (const name of segmentParams(segment)) {
-      // Merge the declared constraint (uuid format, integer type, etc.) when present;
-      // fall back to the bare { type: "string" } derived from the URL pattern.
-      const schema = fieldSchemas.get(name) ?? { type: "string" as const }
-      params.push({ name, in: "path", required: true, schema })
-    }
-  }
-  return params
+  // A declared field schema (uuid format, integer type, etc.) wins. Without one, a constraint in
+  // the path says what the router accepts; without either, the parameter is any string.
+  return templatedPath(path).parameters.map(({ name, constraint }) => ({
+    name,
+    in: "path",
+    required: true,
+    schema:
+      fieldSchemas.get(name) ??
+      (constraint === undefined
+        ? { type: "string" }
+        : constraint.oneOf === undefined
+          ? { type: "string", pattern: `^${constraint.source}$` }
+          : { type: "string", enum: constraint.oneOf }),
+  }))
 }
 
 function queryParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
@@ -270,11 +274,23 @@ function headerParameters(schema: SchemaReflection | undefined): OpenAPIParamete
   }))
 }
 
+/** Cookie names are case-sensitive, so each declared field keeps its name as written. */
+function cookieParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
+  if (schema?.fields === undefined) return []
+  return schema.fields.map((field) => ({
+    name: field.name,
+    in: "cookie" as const,
+    required: field.required,
+    schema: field.schema,
+  }))
+}
+
 interface OperationInput {
   readonly path: string
   readonly body: SchemaReflection | undefined
   readonly query: SchemaReflection | undefined
   readonly headers: SchemaReflection | undefined
+  readonly cookies?: SchemaReflection | undefined
   /** Reflected params schema - per-field constraints merge into path parameters. */
   readonly params: SchemaReflection | undefined
   readonly response: SchemaReflection | undefined
@@ -374,6 +390,30 @@ function buildResponses(
   return responses
 }
 
+const isBinary = (schema: unknown): boolean =>
+  typeof schema === "object" &&
+  schema !== null &&
+  (schema as { type?: unknown }).type === "string" &&
+  (schema as { format?: unknown }).format === "binary"
+
+/**
+ * Whether a body schema declares a file field (a binary string, or a list of them) - the shape
+ * `t.form` produces. JSON cannot carry a file, so such a body is `multipart/form-data`. Read off
+ * the plain JSON Schema so a document built from a stored evidence snapshot agrees with a live one.
+ */
+function hasFileField(schema: JsonSchema | undefined): boolean {
+  if (typeof schema !== "object" || schema === null) return false
+  const properties = (schema as { properties?: unknown }).properties
+  if (typeof properties !== "object" || properties === null) return false
+  return Object.values(properties).some(
+    (property) =>
+      isBinary(property) ||
+      (typeof property === "object" &&
+        property !== null &&
+        isBinary((property as { items?: unknown }).items)),
+  )
+}
+
 function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOperation {
   const operation: OpenAPIOperation = { responses: buildResponses(input, store) }
   if (input.operationId !== undefined) operation.operationId = input.operationId
@@ -387,20 +427,35 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
     ...pathParameters(input.path, input.params),
     ...queryParameters(input.query),
     ...headerParameters(input.headers),
+    ...cookieParameters(input.cookies),
   ]
   if (parameters.length > 0) operation.parameters = parameters
 
   if (input.body !== undefined) {
     const schema = store.collect(input.body.jsonSchema)
     if (schema !== undefined) {
-      operation.requestBody = {
-        required: true,
-        content: { [input.requestContentType ?? "application/json"]: { schema } },
-      }
+      const contentType =
+        input.requestContentType ??
+        (hasFileField(input.body.jsonSchema) ? "multipart/form-data" : "application/json")
+      const content: Record<string, { schema: typeof schema }> = { [contentType]: { schema } }
+      // A body schema with a parser of its own reads those media types too: one entry each, in a
+      // fixed order so a live document and one built from a stored snapshot are the same document.
+      for (const type of [...(input.body.mediaTypes ?? [])].sort()) content[type] ??= { schema }
+      operation.requestBody = { required: true, content }
     }
   }
   return operation
 }
+
+const PATH_ITEM_METHODS: ReadonlySet<string> = new Set([
+  "get",
+  "put",
+  "post",
+  "delete",
+  "options",
+  "head",
+  "patch",
+])
 
 function addOperation(
   paths: Record<string, Record<string, OpenAPIOperation>>,
@@ -409,7 +464,10 @@ function addOperation(
   store: SchemaStore,
   operations: ToOpenAPIOptions["operations"],
 ): void {
-  const templated = toTemplatedPath(input.path)
+  // A path item has a field for each standard method and no place for any other, so a route
+  // registered under a custom method is left out of the document.
+  if (!PATH_ITEM_METHODS.has(method.toLowerCase())) return
+  const templated = templatedPath(input.path).template
   const pathItem = paths[templated] ?? {}
   paths[templated] = pathItem
   let operation = buildOperation(input, store)
@@ -448,6 +506,7 @@ export function toOpenAPI(
           body: route.schema?.body,
           query: route.schema?.query,
           headers: route.schema?.headers,
+          cookies: route.schema?.cookies,
           params: route.schema?.params,
           // A route may now declare a `response` contract - emit it as the 200 body schema.
           response: route.schema?.response,
@@ -463,44 +522,54 @@ export function toOpenAPI(
     }
   } else {
     for (const [name, op] of Object.entries(input)) {
-      addOperation(
-        paths,
-        op.method,
-        {
-          path: op.path,
-          body: op.body === undefined ? undefined : reflectSchema(op.body),
-          query: op.query === undefined ? undefined : reflectSchema(op.query),
-          headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
-          params: op.params === undefined ? undefined : reflectSchema(op.params),
-          response: op.response === undefined ? undefined : reflectSchema(op.response),
-          operationId: name,
-          summary: op.summary,
-          description: op.description,
-          tags: op.tags,
-          deprecated: op.deprecated,
-          security: op.security,
-          requestContentType: op.requestContentType,
-          responseContentType: op.responseContentType,
-          responses:
-            op.responses === undefined
-              ? undefined
-              : Object.fromEntries(
-                  Object.entries(op.responses).map(([status, response]) => {
-                    const { schema, ...metadata } = response
-                    return [
-                      status,
-                      {
-                        ...metadata,
-                        ...(schema === undefined ? {} : { schema: reflectSchema(schema) }),
-                      },
-                    ]
-                  }),
-                ),
-          inferredResponses: options.inferredResponses?.[`${op.method.toUpperCase()} ${op.path}`],
-        },
-        store,
-        options.operations,
-      )
+      // A path ending in optional params is one operation per concrete path it serves. Operation ids
+      // are unique in a document, so the contract name goes to the full path and the shorter ones
+      // carry none; a shorter path declares only the parameters it has.
+      const forms = expandOptionalParams(op.path)
+      const responses =
+        op.responses === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(op.responses).map(([status, response]) => {
+                const { schema, ...metadata } = response
+                return [
+                  status,
+                  {
+                    ...metadata,
+                    ...(schema === undefined ? {} : { schema: reflectSchema(schema) }),
+                  },
+                ]
+              }),
+            )
+      for (const path of forms) {
+        addOperation(
+          paths,
+          op.method,
+          {
+            path,
+            body: op.body === undefined ? undefined : reflectSchema(op.body),
+            query: op.query === undefined ? undefined : reflectSchema(op.query),
+            headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
+            cookies: op.cookies === undefined ? undefined : reflectSchema(op.cookies),
+            params: op.params === undefined ? undefined : reflectSchema(op.params),
+            response: op.response === undefined ? undefined : reflectSchema(op.response),
+            operationId: path === forms[forms.length - 1] ? name : undefined,
+            summary: op.summary,
+            description: op.description,
+            tags: op.tags,
+            deprecated: op.deprecated,
+            security: op.security,
+            requestContentType: op.requestContentType,
+            responseContentType: op.responseContentType,
+            responses,
+            inferredResponses:
+              options.inferredResponses?.[`${op.method.toUpperCase()} ${path}`] ??
+              options.inferredResponses?.[`${op.method.toUpperCase()} ${op.path}`],
+          },
+          store,
+          options.operations,
+        )
+      }
     }
   }
 

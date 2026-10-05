@@ -30,6 +30,41 @@ export interface RenderProps {
   readonly search?: Record<string, unknown>
   /** Neutral named-boundary states; adapters choose how each boundary's `render` UI is mounted. */
   readonly boundaries?: BoundaryStates
+  /** The rendered chain's module ids and `handle` exports, for the adapter's `useMatches`. */
+  readonly matchChain?: MatchChain
+}
+
+/**
+ * The modules a render stacks, as `useMatches` needs them: each one's id and `handle` export,
+ * outermost layout first and the page (or status page) last. Built by the server for SSR and by the
+ * generated client entry per route, from the same manifest, so both sides report the same matches.
+ */
+export interface MatchChain {
+  /** Layout ids (`orgs/[org]/_layout`), then the page's route id. */
+  readonly ids: readonly string[]
+  /** Each module's `handle` export, index-aligned with {@link ids}. */
+  readonly handles: readonly unknown[]
+}
+
+/** One module of the rendered chain, as `useMatches` returns it. */
+export interface UIMatch {
+  /** The module's id: a layout's (`orgs/[org]/_layout`), or the page's route id last. */
+  readonly id: string
+  /** The part of the URL path this module wraps: a layout's directory prefix, the whole path for the
+   * page. Raw, as it appears in the URL. */
+  readonly pathname: string
+  /** The params this module's loader receives: a layout's own, every route param for the page. */
+  readonly params: Readonly<Record<string, string>>
+  /** This module's loader data: `null` for a layout without a loader. */
+  readonly data: unknown
+  /** The module's `handle` export - any value, commonly a breadcrumb label or a render function. */
+  readonly handle: unknown
+}
+
+/** Per-document options for {@link RenderAdapter.renderToStream}. */
+export interface RenderStreamOptions {
+  /** The document's CSP nonce, for every executable `<script>` the framework streams. */
+  readonly nonce?: string
 }
 
 /**
@@ -39,11 +74,14 @@ export interface RenderProps {
 export interface RenderAdapter {
   /**
    * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,
-   * including the framework's hydration markers.
+   * including the framework's hydration markers. When `options.nonce` is set, every executable
+   * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must
+   * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.
    */
   renderToStream(
     chain: readonly unknown[],
     props: RenderProps,
+    options?: RenderStreamOptions,
   ): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
   /** Render the chain to a complete HTML string when no content is deferred. */
   renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>
@@ -66,6 +104,13 @@ export function setSsrModuleLoader(load: SsrModuleLoader | undefined): void {
 export function ssrModuleLoader(): SsrModuleLoader | undefined {
   return loaderSlot[SSR_MODULE_LOADER_SLOT]
 }
+
+/**
+ * `id` of the inert `<script type="application/json">` a hydrating document hands its page state over
+ * in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto
+ * `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
+ */
+export const HANDOVER_ID = "__nifra-handover"
 
 /** Global the server serializes loader data into; the client reads it to hydrate. */
 export const DATA_GLOBAL = "__NIFRA_DATA__"

@@ -46,7 +46,7 @@ Agent input is `message.metadata.input` when present, otherwise the first `text`
 
 ## Human-in-the-loop resume
 
-A suspended task's status message carries the pending continuation in `metadata`. Send it back to continue the same task - the runtime keeps state token-only, so a suspended tool's input must be replayed in `continuation.input`:
+A suspended task's status message carries the pending continuation in `metadata`. Send it back to continue the same task - the runtime keeps state token-only, so a suspended tool's input must be replayed in `continuation.input`. The turn keeps a digest of that input: a continuation naming another tool, effect, kind or input is refused, and an `approval` answers only an `approval` suspension:
 
 ```jsonc
 {
@@ -68,6 +68,8 @@ A suspended task's status message carries the pending continuation in `metadata`
 ```
 
 Cross-request registries (cancellation, subscription fan-out, push notifications) are deliberately out of scope for the stateless seam; those spec methods answer `UnsupportedOperationError` (-32004).
+
+A reply larger than `maxOutputBytes` answers the request with a JSON-RPC internal error (-32603, `output_limit`), the same error a stream sends when it runs out of budget. A request whose ports or store fail answers with -32603 `internal_error`, keeping the request's `id`.
 
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 

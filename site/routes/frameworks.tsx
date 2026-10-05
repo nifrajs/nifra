@@ -1,24 +1,16 @@
-import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "../frameworks/data"
+import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "../shared/frameworks/data"
 import {
   FRAMEWORK_DEMO_DATA,
   FRAMEWORK_ENTRIES,
   FRAMEWORK_ITEM_COUNT,
-} from "../frameworks/generated"
-import { FRAMEWORKS_ENTRY } from "../islands/entries"
-import { pageMeta } from "../meta"
+} from "../shared/frameworks/generated"
+import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - Same app, five frameworks",
   "One Nifra app, one data loader, rendered through React, Preact, Vue, Solid, and Svelte - with each framework's real, measured hydration-JS gzip size side by side.",
   "/frameworks",
 )
-
-// Static showcase: the host route ships NO framework runtime of its own (`hydrate: false`). Each of the
-// five rows is server-rendered into its own stage; the toggle island (vanilla JS) lazily hydrates the
-// shown one by loading that framework's real client bundle. So React never re-renders this DOM, and the
-// only request-time cost is five small HTML fragments + one ~1 KB island.
-export const hydrate = false
-export const islandScripts = [FRAMEWORKS_ENTRY]
 
 // The five entries, smallest gzip first - so the bars chart reads as an ascending ladder and React's
 // ~10× tail is the punchline. Reordering for display only; identity/data are unchanged.

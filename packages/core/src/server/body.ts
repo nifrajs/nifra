@@ -82,7 +82,9 @@ export async function drainCapped(
     if (done) break
     total += value.byteLength
     if (total > maxBytes) {
-      await reader.cancel()
+      // Not awaited: on a teed body (a `clone()` taken first) the cancel settles only once the other
+      // branch is read or cancelled too, and nothing here ever reads it.
+      reader.cancel().catch(() => {})
       return { ok: false, status: 413 }
     }
     if (first === undefined) {
@@ -210,9 +212,45 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
     : (bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
 }
 
+/** The two members of a raw body stream {@link cappedStreamOf} uses. */
+interface RawStream {
+  getReader(): unknown
+  cancel(reason?: unknown): Promise<void>
+}
+
+// Deno's `process.env` throws without `--allow-env`, so the dev guard in `capRequestBodyReads` asks
+// `typeof Deno` first: a bare typeof is pure, so a production `NODE_ENV` define folds the guard away.
+declare const Deno: unknown
+
+/** Dev only: `body`, recording the first reader user code takes from it through the capped getter. */
+function markedOnRead(body: ReadableStream<Uint8Array>, mark: () => void): RawStream {
+  return {
+    getReader: () => {
+      mark()
+      return body.getReader()
+    },
+    cancel: (reason) => body.cancel(reason),
+  }
+}
+
+/**
+ * Dev only: user code streamed the native body, which is one-shot, so every framework reader after
+ * it (a body schema, `c.boundedJson()`, the handler's `c.req.json()`) can only fail. Each raw reader
+ * now throws, synchronously so no lane maps it to a client error, naming the reader that replays.
+ */
+function spendRaw(raw: RawBodyReaders): void {
+  const spent = (): never => {
+    throw new TypeError(
+      "[nifra] c.req.body was read as a stream; read it with c.req.bytes() in a hook",
+    )
+  }
+  Object.assign(raw, { arrayBuffer: spent, bytes: spent, json: spent })
+  Object.defineProperty(raw, "body", { get: spent })
+}
+
 /** A pass-through stream that errors (with `reject(413)`) once more than `maxBytes` flow through. */
 function cappedStreamOf(
-  body: ReadableStream<Uint8Array>,
+  body: RawStream,
   maxBytes: number,
   reject: (status: 400 | 413) => unknown,
 ): ReadableStream<Uint8Array> {
@@ -231,7 +269,7 @@ function cappedStreamOf(
   return new ReadableStream<Uint8Array>(
     {
       async pull(controller) {
-        reader ??= body.getReader() as unknown as CappedReader
+        reader ??= body.getReader() as CappedReader
         const active = reader
         const { done, value } = await active.read()
         if (done) {
@@ -293,11 +331,34 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
   // One bounded buffer backs every shadowed reader; a second read replays it instead of failing
   // with "body already used" (a strict superset of the native one-shot contract).
   let buffered: Promise<Uint8Array> | undefined
-  const cappedBytes = (): Promise<Uint8Array> =>
-    (buffered ??= readBoundedBytes(raw, maxBytes).then((read) => {
-      if (!read.ok) throw reject(read.status)
-      return read.bytes
-    }))
+  const cappedBytes = (): Promise<Uint8Array> => {
+    if (buffered === undefined) {
+      const read = readBoundedBytes(raw, maxBytes).then((result) => {
+        if (!result.ok) throw reject(result.status)
+        return result.bytes
+      })
+      buffered = read
+      // The raw readers now replay these bytes, so a framework reader that runs after a hook read
+      // `c.req` (an auth-first route's body schema) parses the same body instead of a spent stream.
+      // readBoundedBytes took its reader before its first await, so it never reads the replay.
+      Object.assign(raw, {
+        arrayBuffer: shadowed.arrayBuffer,
+        bytes: shadowed.bytes,
+        json: shadowed.json,
+      })
+      Object.defineProperty(raw, "body", {
+        get: () =>
+          new ReadableStream<Uint8Array>({
+            start: (controller) =>
+              read.then((bytes) => {
+                controller.enqueue(bytes)
+                controller.close()
+              }),
+          }),
+      })
+    }
+    return buffered
+  }
   // The reader methods live on the prototype as writable data properties, so a plain instance
   // assignment shadows them - materially cheaper than defineProperty on this per-read path. Only
   // `body` (a prototype accessor) needs defineProperty below.
@@ -339,7 +400,19 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
     get(): ReadableStream<Uint8Array> | null {
       if (cappedBody === undefined) {
         const rawBody = raw.body
-        cappedBody = rawBody === null ? null : cappedStreamOf(rawBody, maxBytes, reject)
+        cappedBody =
+          rawBody === null
+            ? null
+            : cappedStreamOf(
+                typeof Deno === "undefined" && process.env.NODE_ENV !== "production"
+                  ? markedOnRead(rawBody, () => {
+                      // After a buffered read the getter streams a replay, which spends nothing.
+                      if (buffered === undefined) spendRaw(raw)
+                    })
+                  : rawBody,
+                maxBytes,
+                reject,
+              )
       }
       return cappedBody
     },

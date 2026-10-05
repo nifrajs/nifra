@@ -7,7 +7,7 @@
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
 import { isDraftEnabled } from "./draft.ts"
-import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
+import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
 /** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */
 export interface CachedResponse {
@@ -51,7 +51,7 @@ function normalizeTag(tag: string): string {
   return tag
 }
 
-function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
+export function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   if (tags === undefined) return []
   if (!Array.isArray(tags) || tags.length > MAX_ISR_TAGS) {
     throw new TypeError("[nifra/web] ISR tags must contain at most 32 bounded tokens")
@@ -61,7 +61,8 @@ function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   return Object.freeze([...unique])
 }
 
-function tagsFromHeader(value: string | null): readonly string[] {
+/** The route tags a response carries on {@link ISR_REVALIDATE_TAGS_HEADER}; malformed means none. */
+export function tagsFromHeader(value: string | null): readonly string[] {
   if (value === null || value.trim() === "") return []
   try {
     return normalizeTags(value.split(",").map((tag) => tag.trim()))
@@ -76,6 +77,51 @@ function tagsFromHeader(value: string | null): readonly string[] {
 export function serializeISRTags(tags: readonly string[]): string | undefined {
   const normalized = normalizeTags(tags)
   return normalized.length === 0 ? undefined : normalized.join(",")
+}
+
+/** What a `revalidateTags` function is given: the URL and route params only, both already public. */
+export interface RevalidateTagsInput {
+  readonly params: Readonly<Record<string, string>>
+  readonly url: URL
+}
+
+/**
+ * A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. The
+ * function is declared as a method so a route may annotate its own params (`{ params: { id: string } }`).
+ */
+export type RevalidateTags =
+  | readonly string[]
+  | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]
+
+const warnedTagRoutes = new Set<string>()
+
+/**
+ * The tags `declared` gives this request. A fixed list is returned as declared (it is validated when
+ * the header is written). A function's result keeps its valid, distinct tags, at most 32; anything
+ * else is dropped with one warning per route, naming the route but never the tag.
+ */
+export function routeTags(
+  declared: RevalidateTags,
+  input: RevalidateTagsInput,
+  routeId: string,
+): readonly string[] {
+  if (typeof declared !== "function") return declared
+  const result: unknown = declared(input)
+  const listed: readonly unknown[] = Array.isArray(result) ? result : []
+  const kept = new Set<string>()
+  let dropped = 0
+  for (const tag of listed) {
+    if (typeof tag === "string" && ISR_TAG_PATTERN.test(tag) && kept.size < MAX_ISR_TAGS) {
+      kept.add(tag)
+    } else dropped++
+  }
+  if ((dropped > 0 || !Array.isArray(result)) && !warnedTagRoutes.has(routeId)) {
+    warnedTagRoutes.add(routeId)
+    console.warn(
+      `[nifra/web] NIFRA_CDN_TAG_INVALID: revalidateTags of route "${routeId}" returned ${Array.isArray(result) ? `${dropped} tag(s) that are not a letter followed by up to 127 of A-Z a-z 0-9 . _ : / -, or past the first 32` : "something other than an array"}; those were dropped.`,
+    )
+  }
+  return [...kept]
 }
 
 export interface MemoryCacheStoreOptions {
@@ -389,6 +435,34 @@ export const ISR_REVALIDATE_TAGS_HEADER = "x-nifra-isr-tags"
  */
 export const ISR_REVALIDATE_HEADER = "x-nifra-isr-revalidate"
 
+/** A `createWebApp` app answers this with a function that turns its ISR headers on. A wrapper that
+ * reads them calls it, so an app nothing caches never sends a route's freshness or tags. */
+export const CACHE_CHANNEL: unique symbol = Symbol.for("nifra.web.cacheChannel")
+
+/** Ask `app` to emit its ISR headers; an app without the channel emits whatever it emits. */
+export function openCacheChannel(app: object): void {
+  const open: unknown = Reflect.get(app, CACHE_CHANNEL)
+  if (typeof open === "function") open()
+}
+
+/** Drop the ISR headers from a response that leaves the cache layer. */
+export function withoutCacheChannel(res: Response): Response {
+  if (!res.headers.has(ISR_REVALIDATE_HEADER) && !res.headers.has(ISR_REVALIDATE_TAGS_HEADER)) {
+    return res
+  }
+  try {
+    res.headers.delete(ISR_REVALIDATE_HEADER)
+    res.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+    return res
+  } catch {
+    // A `fetch()` response has immutable headers: rebuild it around the same body instead.
+    const headers = new Headers(res.headers)
+    headers.delete(ISR_REVALIDATE_HEADER)
+    headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+  }
+}
+
 export interface ISROptions {
   readonly store: CacheStore
   /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated
@@ -397,20 +471,67 @@ export interface ISROptions {
   readonly revalidate: number
   /** Monotonic clock (ms) - injected for testability; production passes `() => Date.now()`. */
   readonly now: () => number
-  /** Cache key for a request. Default: `origin + pathname + search` so host-routed apps do not share
-   * entries across tenants. Return `null` to bypass the cache for this request (it goes straight to the
-   * app, uncached). */
+  /** Cache key for a request. Default: `origin + pathname`, plus the query parameters `query` admits,
+   * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for
+   * this request (it goes straight to the app, uncached). Replaces `query` entirely. */
   readonly key?: (req: Request) => string | null
+  /**
+   * How the query string reaches the default key. Default `"bypass"`: a request carrying any query
+   * parameter skips the cache - rendered fresh, never stored - so `?a=1`, `?a=2`, ... cannot each
+   * store a full page. A list caches by those parameters only, in any order (`?b=2&a=1` and
+   * `?a=1&b=2` share an entry); a request carrying any other parameter still bypasses, because a
+   * loader that reads it would otherwise be served another request's page. `"all"` keys on the whole
+   * query string, so every distinct query is a new entry.
+   */
+  readonly query?: ISRQuery
   /** Draft/preview secret (the same one given to `createWebApp({ draftSecret })` + `enableDraft`). When
    * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
 }
 
-const defaultKey = (req: Request): string => {
-  const url = new URL(req.url)
-  return url.origin + url.pathname + url.search
+/** `createWebApp`'s marker for how its documents meet a CSP (see `DOCUMENT_POLICY` in ./csp.ts). Read
+ * through the global symbol registry so a cache wrapper never imports the CSP module. */
+const DOCUMENT_POLICY = Symbol.for("nifra.web.documentPolicy")
+
+/** Remembered `no-store` keys per `withISR` wrapper. */
+const MAX_UNCACHEABLE_KEYS = 1024
+
+/** Which query parameters an ISR key carries - see {@link ISROptions.query}. */
+export type ISRQuery = "bypass" | "all" | readonly string[]
+
+/** The default key for a URL under a `query` policy, or `null` when the URL must bypass the cache. */
+export const urlKeyOf = (query: ISRQuery = "bypass"): ((url: URL) => string | null) => {
+  if (query === "all") return (url) => url.origin + url.pathname + url.search
+  if (query !== "bypass" && !Array.isArray(query)) {
+    throw new TypeError(
+      '[nifra/web] ISR query must be "bypass", "all", or a list of parameter names',
+    )
+  }
+  const allowed = new Set<string>(query === "bypass" ? [] : query)
+  for (const name of allowed) {
+    if (typeof name !== "string" || name === "") {
+      throw new TypeError("[nifra/web] ISR query parameter names must be non-empty strings")
+    }
+  }
+  return (url) => {
+    if (url.search === "") return url.origin + url.pathname
+    if (allowed.size === 0) return null
+    const entries: [string, string][] = []
+    for (const entry of url.searchParams) {
+      if (!allowed.has(entry[0])) return null
+      entries.push(entry)
+    }
+    // Stable by name, so a repeated name keeps its value order (`getAll` can tell them apart).
+    entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    return `${url.origin}${url.pathname}?${new URLSearchParams(entries)}`
+  }
 }
+
+const requestKeyOf =
+  (urlKey: (url: URL) => string | null) =>
+  (req: Request): string | null =>
+    urlKey(new URL(req.url))
 
 function assertRevalidate(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -439,12 +560,25 @@ const requestCarriesPrivateState = (req: Request): boolean =>
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
 
+// `x-nifra-data` alone is not a variation the URL key misses: a navigation data request never reads
+// or writes the store, so every stored entry is the document.
 const responseDeclaresVary = (res: Response): boolean => {
   const value = res.headers.get("vary")
-  return value !== null && value.trim() !== ""
+  if (value === null) return false
+  for (const part of value.split(",")) {
+    const name = part.trim().toLowerCase()
+    if (name !== "" && name !== "x-nifra-data") return true
+  }
+  return false
 }
 
-const isCacheablePage = (req: Request, res: Response): boolean => {
+/**
+ * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
+ * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
+ * the data header, and, for a request carrying a cookie or Authorization, an explicit `public`.
+ * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
+ */
+export const isCacheablePage = (req: Request, res: Response): boolean => {
   if (req.method !== "GET") return false
   if (req.headers.get("x-nifra-data") !== null) return false
   if (res.status !== 200) return false
@@ -481,6 +615,7 @@ const CACHEABLE_RESPONSE_HEADERS = new Set([
   "vary",
   "x-content-type-options",
   "x-frame-options",
+  "x-robots-tag",
 ])
 
 const isCacheableResponseHeader = (key: string): boolean => {
@@ -538,9 +673,47 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
-  const keyOf = options.key ?? defaultKey
+  const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
   const regenerating = new Set<string>()
+  openCacheChannel(app)
+  // An outer cache layer (`withCdn`) opens this wrapper's own channel: cached responses then carry how
+  // much freshness they have left and their tags, so the CDN never holds a page longer than ISR would.
+  let channelOpen = false
+  const advertise = (headers: Headers, remainingMs: number, tags: readonly string[]): void => {
+    if (!channelOpen) return
+    headers.set(ISR_REVALIDATE_HEADER, String(Math.max(0, Math.floor(remainingMs / 1000))))
+    const serialized = tags.length === 0 ? undefined : tags.join(",")
+    if (serialized !== undefined) headers.set(ISR_REVALIDATE_TAGS_HEADER, serialized)
+  }
+  const served = (entry: CachedResponse, status: "hit" | "stale"): Response => {
+    const res = responseFrom(entry, status)
+    advertise(
+      res.headers,
+      status === "stale" ? 0 : entry.revalidate - (now() - entry.storedAt),
+      entry.tags ?? [],
+    )
+    return res
+  }
+  if ((app as unknown as Record<symbol, unknown>)[DOCUMENT_POLICY] === "nonce") {
+    console.warn(
+      "[nifra/web] withISR wraps an app whose every document carries a CSP nonce. Such documents are " +
+        "`private, no-store`, so this cache will never store a page. Use " +
+        "`createWebApp({ csp: createCspPolicy(...) })` instead of `nonce` to cache pages under a CSP.",
+    )
+  }
+  // Keys whose last render declared itself `private` or `no-store`, with when that memo expires. A
+  // remembered key skips the store lookup (a network round trip on a shared store) and renders fresh;
+  // a render that turns out cacheable is stored and forgets the key. So the memo can only cost a cache
+  // hit, never serve the wrong page. Bounded, oldest first, so a URL flood cannot grow it.
+  const uncacheable = new Map<string, number>()
+  const rememberUncacheable = (key: string, res: Response): void => {
+    if (options.revalidate === 0 || !cacheControlHas(res.headers, ["private", "no-store"])) return
+    if (uncacheable.size >= MAX_UNCACHEABLE_KEYS) {
+      uncacheable.delete(uncacheable.keys().next().value as string)
+    }
+    uncacheable.set(key, now() + options.revalidate * 1000)
+  }
 
   // Per-page TTL (ms): the app's `x-nifra-isr-revalidate` header (seconds) if present, else the default.
   const ttlMs = (res: Response): number => {
@@ -556,7 +729,11 @@ export function withISR(
     key: string,
   ): Promise<Response> => {
     const res = await app.fetch(req, platform)
-    if (!isCacheablePage(req, res)) return res
+    if (!isCacheablePage(req, res)) {
+      rememberUncacheable(key, res)
+      return withoutCacheChannel(res)
+    }
+    uncacheable.delete(key)
     const body = await res.text()
     const tags = tagsOf(res)
     const entry: CachedResponse = {
@@ -568,10 +745,12 @@ export function withISR(
       ...(tags.length === 0 ? {} : { tags }),
     }
     await store.set(key, entry)
-    return new Response(body, {
+    const fresh = new Response(body, {
       status: res.status,
       headers: { ...entry.headers, [ISR_STATUS_HEADER]: "miss" },
     })
+    advertise(fresh.headers, entry.revalidate, tags)
+    return fresh
   }
 
   // Background regeneration (single-flight per key) - a failed regen keeps the stale entry; the next
@@ -610,34 +789,67 @@ export function withISR(
     }
   }
 
-  return async (req, platform) => {
+  const handler = async (req: Request, platform?: ISRPlatform): Promise<Response> => {
     // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
     // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
     // the loader payload. (The write path already refuses to cache data-mode responses.)
     const key = req.method === "GET" && req.headers.get("x-nifra-data") === null ? keyOf(req) : null
-    if (key === null) return app.fetch(req, platform)
+    if (key === null) return withoutCacheChannel(await app.fetch(req, platform))
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so
     // unpublished content can't leak into the public cache (and the editor isn't served a stale page).
     if (draftSecret !== undefined && (await isDraftEnabled(req, draftSecret))) {
-      return app.fetch(req, platform)
+      return withoutCacheChannel(await app.fetch(req, platform))
+    }
+
+    const until = uncacheable.get(key)
+    if (until !== undefined) {
+      if (now() < until) return render(req, platform, key)
+      uncacheable.delete(key)
     }
 
     const hit = await store.get(key)
     if (hit !== undefined) {
-      if (now() - hit.storedAt < hit.revalidate) return responseFrom(hit, "hit")
+      if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).
       const task = regenerate(req, platform, key)
       if (typeof platform?.waitUntil === "function") platform.waitUntil(task)
       else void task.catch(() => {})
-      return responseFrom(hit, "stale")
+      return served(hit, "stale")
     }
     return render(req, platform, key)
   }
+  Object.defineProperty(handler, CACHE_CHANNEL, {
+    value: () => {
+      channelOpen = true
+    },
+  })
+  return handler
 }
 
 const jsonError = (status: number, error: string): Response =>
   Response.json({ ok: false, error }, { status })
+
+/** What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused. */
+export interface CdnPurgeOutcome {
+  readonly cdn: "accepted" | "queued" | "failed"
+  /** Whether the same purge may succeed if sent again. */
+  readonly retryable: boolean
+  /** A short reason when it did not succeed (never the provider's credentials). */
+  readonly error?: string
+}
+
+/** A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one. */
+export interface CdnPurgeTarget {
+  purge(
+    target: { readonly tags?: readonly string[]; readonly paths?: readonly string[] },
+    platform?: ISRPlatform,
+  ): Promise<CdnPurgeOutcome>
+}
+
+/** Most paths and tags one revalidation request may name, so a leaked token cannot fan out. */
+export const MAX_REVALIDATE_PATHS = 100
+export const MAX_REVALIDATE_TAGS = MAX_ISR_TAGS
 
 export interface RevalidateEndpointOptions {
   readonly store: CacheStore
@@ -648,22 +860,46 @@ export interface RevalidateEndpointOptions {
   /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the
    * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */
   readonly key?: (path: string, req: Request) => string
+  /** The `query` policy given to `withISR`, so a purged path's query string is keyed the same way.
+   * Default `"bypass"`. A path whose query `withISR` never caches is refused with `400`. Ignored
+   * when `key` is supplied. */
+  readonly query?: ISRQuery
+  /**
+   * A CDN to purge after the origin store (a `@nifrajs/web/cdn` provider). The origin goes first so a
+   * CDN refetch cannot repopulate from a stale origin entry. The reply is `200` when the CDN accepted
+   * the purge, `202` when it is queued (rate limit or retry), and `502` when the CDN refused it.
+   */
+  readonly cdn?: CdnPurgeTarget
+}
+
+const stringList = (value: unknown): string[] | null | undefined => {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null
+  return value
 }
 
 /**
- * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry
+ * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path
  * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either
- * `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body.
+ * `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a
+ * batch `{ "paths": [...], "tags": [...] }` of at most 100 paths and 32 tags.
  * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;
  * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.
  * `app.post("/__nifra/revalidate", (c) => handler(c.req))`.
  */
 export function revalidateEndpoint(
   options: RevalidateEndpointOptions,
-): (req: Request) => Promise<Response> {
+): (req: Request, platform?: ISRPlatform) => Promise<Response> {
+  // An empty secret matches a request that omits the header (`"" === ""`), so an unset env var passed
+  // through `?? ""` would open the purge to anyone. Refuse it at construction instead.
+  assertTokenSecret(options.secret, "revalidateEndpoint")
   const tokenHeader = options.tokenHeader ?? "x-nifra-revalidate-token"
-  const keyOf = options.key ?? ((path: string, req: Request) => new URL(req.url).origin + path)
-  return async (req) => {
+  const urlKey = options.key === undefined ? urlKeyOf(options.query) : undefined
+  // Joined as text, never resolved against the origin: `//host/x` must stay a path on this origin.
+  const keyOf =
+    options.key ??
+    ((path: string, req: Request) => urlKey?.(new URL(new URL(req.url).origin + path)) ?? null)
+  return async (req, platform) => {
     if (req.method !== "POST") return jsonError(405, "method_not_allowed")
     if (!timingSafeEqual(req.headers.get(tokenHeader) ?? "", options.secret)) {
       return jsonError(401, "unauthorized")
@@ -671,29 +907,81 @@ export function revalidateEndpoint(
     const url = new URL(req.url)
     let path = url.searchParams.get("path")
     let tag = url.searchParams.get("tag")
+    let batch: { paths: string[]; tags: string[] } | undefined
     if (path === null && tag === null) {
       const body: unknown = await req.json().catch(() => null)
       if (typeof body === "object" && body !== null) {
-        const candidate = body as { path?: unknown; tag?: unknown }
-        path = typeof candidate.path === "string" ? candidate.path : null
-        tag = typeof candidate.tag === "string" ? candidate.tag : null
+        const candidate = body as { path?: unknown; tag?: unknown; paths?: unknown; tags?: unknown }
+        if (candidate.paths !== undefined || candidate.tags !== undefined) {
+          const paths = stringList(candidate.paths)
+          const tags = stringList(candidate.tags)
+          if (paths === null || tags === null) return jsonError(400, "invalid_batch")
+          if ((paths?.length ?? 0) > MAX_REVALIDATE_PATHS) return jsonError(400, "too_many_paths")
+          if ((tags?.length ?? 0) > MAX_REVALIDATE_TAGS) return jsonError(400, "too_many_tags")
+          batch = { paths: paths ?? [], tags: tags ?? [] }
+          if (batch.paths.length + batch.tags.length === 0) return jsonError(400, "empty_batch")
+        } else {
+          path = typeof candidate.path === "string" ? candidate.path : null
+          tag = typeof candidate.tag === "string" ? candidate.tag : null
+        }
       }
     }
-    if (path !== null && tag !== null) return jsonError(400, "choose_path_or_tag")
-    if (tag !== null) {
+    if (batch === undefined) {
+      if (path !== null && tag !== null) return jsonError(400, "choose_path_or_tag")
+      if (path === null && tag === null) return jsonError(400, "invalid_path")
+      batch = { paths: path === null ? [] : [path], tags: tag === null ? [] : [tag] }
+    }
+
+    const tags = [...new Set(batch.tags)]
+    for (const candidate of tags) {
       try {
-        normalizeTag(tag)
+        normalizeTag(candidate)
       } catch {
         return jsonError(400, "invalid_tag")
       }
-      if (options.store.invalidateTag === undefined) {
-        return jsonError(501, "tag_invalidation_not_supported")
-      }
-      await options.store.invalidateTag(tag)
-      return Response.json({ revalidatedTag: tag })
     }
-    if (path === null || !path.startsWith("/")) return jsonError(400, "invalid_path")
-    await options.store.delete(keyOf(path, req))
-    return Response.json({ revalidated: path })
+    const paths = [...new Set(batch.paths)]
+    const keys: string[] = []
+    for (const candidate of paths) {
+      if (!candidate.startsWith("/")) return jsonError(400, "invalid_path")
+      const key = keyOf(candidate, req)
+      if (key === null) return jsonError(400, "uncached_query")
+      keys.push(key)
+    }
+    const invalidateTag = options.store.invalidateTag
+    if (tags.length > 0 && invalidateTag === undefined) {
+      return jsonError(501, "tag_invalidation_not_supported")
+    }
+
+    for (const key of keys) await options.store.delete(key)
+    for (const candidate of tags) await invalidateTag?.call(options.store, candidate)
+    const done =
+      path !== null
+        ? { revalidated: path }
+        : tag !== null
+          ? { revalidatedTag: tag }
+          : { revalidated: paths, revalidatedTags: tags }
+    if (options.cdn === undefined) return Response.json(done)
+
+    let outcome: CdnPurgeOutcome
+    try {
+      outcome = await options.cdn.purge({ tags, paths }, platform)
+    } catch {
+      outcome = { cdn: "failed", retryable: true, error: "cdn_purge_threw" }
+    }
+    if (outcome.cdn === "failed") {
+      const failure: Record<string, unknown> = {
+        ok: false,
+        error: "cdn_purge_failed",
+        origin: "done",
+        retryable: outcome.retryable,
+      }
+      if (outcome.error !== undefined) failure.reason = outcome.error
+      return Response.json(failure, { status: 502 })
+    }
+    return Response.json(
+      { ...done, cdn: outcome.cdn },
+      { status: outcome.cdn === "queued" ? 202 : 200 },
+    )
   }
 }

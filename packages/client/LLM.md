@@ -12,7 +12,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 
 - **client** _(function)_ - `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, optio…`
 - **inProcessClient** _(function)_ - `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => In…`
-- **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProce…`
+- **testClient** _(function)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: TestClientOptions) => InProcessCli…`
 - **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
@@ -23,13 +23,14 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **ClientRetryOptions** _(interface)_ - `interface ClientRetryOptions`
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
-- **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
+- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
 
-_…and 14 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 22 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 
 - **The client never throws.** Every call returns `{ ok, status, data, error }` - branch on `res.ok`, never `try/catch`. A network failure is `ok: false`, not an exception.
 - Import the server's app **type-only**: `import type { app }` + `client<typeof app>(url)`. The value import would pull server code (and its `node:` deps) into the browser bundle.
 - `inProcessClient(app)` is a **callable proxy** with the same shape as `client()` but no network - use it in SSR loaders and tests. It mutates/serves the real app in-process; it is not a mock.
+- A body that holds a `File` or `Blob` is sent as `multipart/form-data`. Do not set `content-type` for it - the boundary is generated, and a caller-set value is dropped.
 - **Reserved proxy keys:** the seven HTTP verbs (`get`/`post`/`put`/`patch`/`delete`/`head`/`options`, any casing) plus `subscribe`, `ws`, `index`, `then` (exact) resolve **before** path segments, so `api.delete.post` calls the DELETE verb, not the `/delete` segment. The typed spelling for a colliding segment is a **call on the parent node**: `api.api("delete").post()` sends `POST /api/delete` (accepts exactly the colliding names). The type rejects the dot access with that guidance; `nifra check` reports it (NF-C018, advisory). Prefer verb-free segments when you control the path.

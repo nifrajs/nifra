@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { solidSvgComponentBunPlugin } from "../src/svg.ts"
 
 type LoadCb = (args: { path: string }) => Promise<{ contents: string; loader: string }>
@@ -32,5 +35,21 @@ describe("solidSvgComponentBunPlugin", () => {
     const ssr = await setup("ssr")({ path: fixture })
     expect(ssr.contents.length).toBeGreaterThan(0)
     expect(ssr.contents).not.toBe(dom.contents) // solid dom vs ssr transforms differ
+  })
+})
+
+describe("an exported stylesheet", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-solid-svg-"))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  test("compiles: its braces reach babel as text, not as JSX expressions", async () => {
+    const file = join(dir, "illustrator.svg")
+    writeFileSync(
+      file,
+      '<svg xmlns="http://www.w3.org/2000/svg"><style>.st0{fill:#FFF;}</style><path class="st0" d="M0 0"/></svg>',
+    )
+    const out = await setup("dom")({ path: `${file}?component` })
+    // Solid's template is HTML: inside an <svg> a browser decodes the references back to braces.
+    expect(out.contents).toContain(".st0&#123;fill:#FFF;&#125;")
   })
 })

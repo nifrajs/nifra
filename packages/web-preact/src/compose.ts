@@ -1,6 +1,6 @@
 import type { RenderProps } from "@nifrajs/web"
 import { type ComponentChildren, type ComponentType, createElement, h, type VNode } from "preact"
-import { SearchContext } from "./router.ts"
+import { RenderPropsContext, SearchContext } from "./router.ts"
 
 // Frozen empty search so a render with no search context has a stable provider value.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -11,6 +11,11 @@ const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 const createSearchProvider = createElement as (
   type: typeof SearchContext.Provider,
   props: { value: Record<string, unknown> },
+  children?: ComponentChildren,
+) => VNode
+const createPropsProvider = createElement as (
+  type: typeof RenderPropsContext.Provider,
+  props: { value: RenderProps },
   children?: ComponentChildren,
 ) => VNode
 
@@ -44,5 +49,9 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
       node,
     ) as VNode
   }
-  return createSearchProvider(SearchContext.Provider, { value: props.search ?? EMPTY_SEARCH }, node)
+  return createSearchProvider(
+    SearchContext.Provider,
+    { value: props.search ?? EMPTY_SEARCH },
+    createPropsProvider(RenderPropsContext.Provider, { value: props }, node),
+  )
 }

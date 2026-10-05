@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   buildFailureDetail,
@@ -8,10 +8,28 @@ import {
   type DevServer,
   LAST_ERROR_PATH,
 } from "../src/dev.ts"
+import {
+  DEV_FEED_PATHS,
+  DEV_REQUEST_ID_HEADER,
+  DEV_SERVER_RECORD_FILE,
+  DEV_TOKEN_HEADER,
+  readDevServerRecord,
+} from "../src/dev-feed.ts"
+import { DEV_ENTRY_FILE } from "../src/internal/dev-reserved.ts"
 
 // Integration coverage for the Bun-pipeline dev server. The temp app lives INSIDE the workspace so the
 // generated entry's `@nifrajs/web/client` import resolves through node_modules hoisting, exactly as a real
 // app's would.
+
+/** A JSON body, typed by the caller (`json()` is untyped). */
+const readJson = async <T>(response: Response): Promise<T> => response.json()
+
+/** The agent token from the server's discovery record. */
+const tokenFor = (root: string): string => {
+  const token = readDevServerRecord(root)?.token
+  if (token === undefined) throw new Error(`no dev server record under ${root}`)
+  return token
+}
 
 const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-dev-server-`
 let projectRoot: string
@@ -24,7 +42,8 @@ beforeEach(() => {
   routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
   writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
-  clientModule = join(projectRoot, "client-stub.ts")
+  clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
 })
 afterEach(() => {
@@ -99,6 +118,9 @@ test("Bun's stylesheets are injected into the SSR'd <head>", async () => {
   const dev = await boot()
   const page = await (await fetch(`http://127.0.0.1:${dev.port}/`)).text()
   expect(page).toMatch(/<link rel="stylesheet" href="\/_bun\/[^"]+\.css"><\/head>/)
+  // The browser-capture script rides along, ahead of everything the page loads.
+  expect(page.indexOf("<script data-nifra-dev>")).toBeGreaterThan(page.indexOf("<head"))
+  expect(page.indexOf("<script data-nifra-dev>")).toBeLessThan(page.indexOf("/_bun/"))
 })
 
 test("SSR never lags the client: the render that follows a rebuild is already rebuilt too", async () => {
@@ -143,15 +165,15 @@ test("an unchanged app is NOT rebuilt on every request (the query is stable)", a
 
 test("stop() removes the generated dev directory", async () => {
   const dev = await boot()
-  expect(await Bun.file(join(projectRoot, ".nifra-bun", "entry.tsx")).exists()).toBe(true)
+  expect(await Bun.file(join(projectRoot, ".nifra-bun", DEV_ENTRY_FILE)).exists()).toBe(true)
   dev.stop()
   server = undefined
-  expect(await Bun.file(join(projectRoot, ".nifra-bun", "entry.tsx")).exists()).toBe(false)
+  expect(await Bun.file(join(projectRoot, ".nifra-bun", DEV_ENTRY_FILE)).exists()).toBe(false)
 })
 
 test("route additions and removals regenerate the Bun client entry without restart", async () => {
   await boot()
-  const entry = join(projectRoot, ".nifra-bun", "entry.tsx")
+  const entry = join(projectRoot, ".nifra-bun", DEV_ENTRY_FILE)
   const about = join(routesDir, "about.tsx")
   writeFileSync(about, "export default function About() { return null }\n")
 
@@ -241,10 +263,31 @@ test("the dev leak guard reports a client leak instead of serving it silently", 
       await Bun.sleep(200)
     }
     expect(errors.join("\n")).toContain("node:crypto")
+    // The same failure is in the feed as an open build error, located for an agent.
+    const feed = await readJson<{ errors: Array<{ diagnostic: { message: string } }> }>(
+      await fetch(`http://127.0.0.1:${server.port}${DEV_FEED_PATHS.errors}?category=build`, {
+        headers: { [DEV_TOKEN_HEADER]: tokenFor(projectRoot) },
+      }),
+    )
+    expect(feed.errors[0]?.diagnostic.message).toContain("node:crypto")
+
+    // Fixing the leak clears it: the next passing build resolves the open build error.
+    writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
+    const openBuildErrors = async (): Promise<number> =>
+      (
+        await readJson<{ errors: unknown[] }>(
+          await fetch(`http://127.0.0.1:${server?.port}${DEV_FEED_PATHS.errors}?category=build`, {
+            headers: { [DEV_TOKEN_HEADER]: tokenFor(projectRoot) },
+          }),
+        )
+      ).errors.length
+    const fixDeadline = Date.now() + 20_000
+    while (Date.now() < fixDeadline && (await openBuildErrors()) > 0) await Bun.sleep(200)
+    expect(await openBuildErrors()).toBe(0)
   } finally {
     console.error = original
   }
-}, 40_000)
+}, 60_000)
 
 test("buildFailureDetail surfaces AggregateError members, not Bun's bare 'Bundle failed'", () => {
   // Bun.build rejects with an AggregateError whose own message says nothing; the actionable part
@@ -261,4 +304,82 @@ test("buildFailureDetail surfaces AggregateError members, not Bun's bare 'Bundle
   expect(buildFailureDetail(new AggregateError([], "Bundle failed"))).toBe("  Bundle failed")
   expect(buildFailureDetail(new Error("boom"))).toBe("  boom")
   expect(buildFailureDetail("not an error")).toBe("  not an error")
+})
+
+test("the dev feed: discovery record, request ids, boundary errors, request-tagged logs", async () => {
+  server = await createDevServer({
+    routesDir,
+    outDir: join(projectRoot, "dist"),
+    clientModule,
+    port: 0,
+    guardLeaks: false,
+    createApp: (_entry, _query, dev) => ({
+      fetch: (request) => {
+        console.log(`serving ${new URL(request.url).pathname}`)
+        if (new URL(request.url).pathname === "/broken") {
+          // What createWebApp does when an _error boundary answers a loader failure.
+          dev.onLoaderError(new Error("orders query failed"), { request, route: "/broken" })
+          return new Response("<html><head></head><body>boundary</body></html>", {
+            status: 500,
+            headers: { "content-type": "text/html" },
+          })
+        }
+        return new Response("ok")
+      },
+    }),
+  })
+  const origin = `http://127.0.0.1:${server.port}`
+  const record = readDevServerRecord(projectRoot)
+  expect(record?.port).toBe(server.port)
+  expect(record?.pipeline).toBe("bun")
+  const headers = { [DEV_TOKEN_HEADER]: tokenFor(projectRoot) }
+  const page = await fetch(`${origin}/broken`)
+  expect(page.status).toBe(500)
+  const requestId = page.headers.get(DEV_REQUEST_ID_HEADER)
+  expect(requestId).toMatch(/^r\d+$/)
+  const { errors } = await readJson<{
+    errors: Array<{ category: string; route: string; requestId: string }>
+  }>(await fetch(`${origin}${DEV_FEED_PATHS.errors}`, { headers }))
+  expect(errors).toEqual([
+    expect.objectContaining({ category: "page", route: "/broken", requestId }),
+  ])
+  const { logs } = await readJson<{ logs: Array<{ message: string }> }>(
+    await fetch(`${origin}${DEV_FEED_PATHS.logs}?requestId=${requestId}`, { headers }),
+  )
+  expect(logs.map((l) => l.message)).toContain("serving /broken")
+  const { requests } = await readJson<{ requests: Array<{ status: number; errorIds: string[] }> }>(
+    await fetch(`${origin}${DEV_FEED_PATHS.requests}?path=/broken`, { headers }),
+  )
+  expect(requests[0]?.status).toBe(500)
+  expect(requests[0]?.errorIds).toHaveLength(1)
+  // Without the token, nothing.
+  expect((await fetch(`${origin}${DEV_FEED_PATHS.errors}`)).status).toBe(401)
+  server.stop()
+  server = undefined
+  expect(existsSync(join(projectRoot, DEV_SERVER_RECORD_FILE))).toBe(false)
+})
+
+test("an overlay failure is recorded once, as an ssr error tied to its request", async () => {
+  server = await createDevServer({
+    routesDir,
+    outDir: join(projectRoot, "dist"),
+    clientModule,
+    port: 0,
+    guardLeaks: false,
+    createApp: () => ({
+      fetch: () => {
+        throw new Error("render exploded")
+      },
+    }),
+  })
+  const origin = `http://127.0.0.1:${server.port}`
+  const res = await fetch(`${origin}/`)
+  const headers = { [DEV_TOKEN_HEADER]: tokenFor(projectRoot) }
+  const { errors } = await readJson<{
+    errors: Array<{ category: string; requestId: string; diagnostic: { message: string } }>
+  }>(await fetch(`${origin}${DEV_FEED_PATHS.errors}`, { headers }))
+  expect(errors).toHaveLength(1)
+  expect(errors[0]?.category).toBe("ssr")
+  expect(errors[0]?.requestId).toBe(res.headers.get(DEV_REQUEST_ID_HEADER) ?? "")
+  expect(errors[0]?.diagnostic.message).toContain("render exploded")
 })

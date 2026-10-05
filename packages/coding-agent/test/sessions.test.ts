@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type CompactionReport, ContextWindow, FileSessionStore } from "../src/sessions.ts"
+import {
+  type CompactionReport,
+  ContextWindow,
+  FileSessionStore,
+  sessionFileStem,
+} from "../src/sessions.ts"
 
 const roots: string[] = []
 
@@ -88,5 +93,19 @@ describe("sessions and compaction", () => {
     await store.append("review", "event", { keep: true })
     await expect(store.fork("main", "review")).rejects.toThrow()
     expect((await store.read("review"))[0]?.payload).toEqual({ keep: true })
+  })
+})
+
+describe("session file names", () => {
+  test("a session id's colons and device names are escaped in Windows file names only", () => {
+    expect(sessionFileStem("run:fork:abc", "win32")).toBe("run%3Afork%3Aabc")
+    expect(sessionFileStem("run:fork:abc", "darwin")).toBe("run:fork:abc")
+    expect(sessionFileStem("plain-id", "win32")).toBe("plain-id")
+    expect(sessionFileStem("nul", "win32")).toBe("%6Eul")
+    expect(sessionFileStem("Com1.fork", "win32")).toBe("%43om1.fork")
+    expect(sessionFileStem("aux:1", "win32")).toBe("aux%3A1")
+    expect(sessionFileStem("AUX", "win32")).toBe("%41UX")
+    expect(sessionFileStem("console", "win32")).toBe("console")
+    expect(sessionFileStem("nul", "darwin")).toBe("nul")
   })
 })

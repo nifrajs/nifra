@@ -1,5 +1,302 @@
 # @nifrajs/web-react
 
+## 4.0.0
+
+### Minor Changes
+
+- af7648c: feat(authjs): official Auth.js integration (backend + client + React bindings)
+
+  New `@nifrajs/authjs` package driving `@auth/core` itself - never a reimplementation of
+  the security-critical work:
+
+  - `authjs(config, options?)` mounts `/api/auth/*` (GET + POST) as a type-identity plugin:
+    sign-in, OAuth callbacks, session, sign-out, CSRF. Secrets resolve per request
+    (explicit → platform binding → `process.env`) and fail loud when missing; `authUrl`
+    covers proxy deployments.
+  - `getSession(req, config)` (`Session | null`, handlers + loaders) and
+    `requireAuthUser(req, config)` (401/redirect guard) mirror the `@nifrajs/better-auth`
+    shapes.
+  - `@nifrajs/authjs/client` - framework-agnostic `createAuthClient()` (session, sign-in,
+    sign-out over the mounted endpoints).
+  - `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()` (other adapters
+    wrap the agnostic client the same way `web-react/i18n` wraps `@nifrajs/i18n`).
+
+- f70f99b: feat(i18n): selectordinal, fallback catalogs, typed nested catalogs and the locale cookie
+
+  The formatter supports `selectordinal` (`{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}`).
+  Inside a `plural` or `selectordinal` case, `#` is now the number in the locale's own format
+  (`1,000 items`, `1.000 Artikel`) instead of its plain digits - the output changes for counts of 1,000
+  and more and for fractions.
+
+  `createFormatter(locale, messages, options)` takes `fallback` catalogs, tried in order for a key the
+  catalog lacks (`locales.chain()` gives the order); `onMissing(key, locale)`, called once per key when
+  no catalog has it; and `timeZone` and `numberingSystem` defaults for `d()`, `n()` and `#`. An invalid
+  locale, time zone or numbering system throws at creation. Formatters are cached per catalog and
+  options, with bounded caches, so per-request values cannot grow memory.
+
+  Catalogs may nest: values are messages, lists or blocks, read with dotted keys (`t("home.title")`); a
+  flat key that contains a dot is found first, so flat catalogs work unchanged. `get(key)` returns a list
+  or block whole. Lookups read own properties only, and an argument named like an `Object.prototype`
+  member renders empty unless passed. Declaring `interface Register { messages: typeof en }` on
+  `@nifrajs/i18n` types every `t()` and `get()` key, and other locales' catalogs (`Translation`,
+  `PartialMessages`) against that shape.
+
+  `localeCookie(name, locale, { maxAge })` returns the `document.cookie` string for a language switcher,
+  byte-identical to the `Set-Cookie` `localeDetector({ persist: true })` writes.
+
+  Every adapter's `<I18nProvider>` takes `fallback`, `onMissing`, `timeZone` and `numberingSystem`, and
+  its `messages` prop is checked against the registered catalog type.
+
+- 49f106f: feat(i18n): rich text from catalog messages without HTML
+
+  `rich(formatter, key, tags, vars)` from the new `@nifrajs/i18n/rich` entry formats a message like
+  `t()` and turns its `<name>…</name>` and `<name/>` tags into calls to `tags[name]`, returning the
+  message as text and whatever the handlers returned. Tags are bare names (no attributes); a tag
+  without an own handler keeps its content as text, an unclosed or stray marker stays literal, and
+  interpolated values and `#` are never read for tags. `renderRich(renderer, ...)` is the same for a
+  UI framework.
+
+  React, Preact, Solid and Vue export `rich(t, key, tags, vars)` from `/i18n`, returning one node
+  (each handler receives its tag's content as one node, and `<br/>` renders a `<br>` unless `br` is
+  given). Svelte exports `<Rich key tags vars>`, which takes one snippet per tag, and `rich()` for the
+  parts array. `t()` is unchanged.
+
+- 7e1e1c3: feat(web): `data-nifra-prefetch` picks when a link warms its route: `intent`, `viewport`, `render` or `none`.
+
+  ```html
+  <nav data-nifra-prefetch="viewport">
+    <a href="/docs/routing">Routing</a>
+    <a href="/reports/annual" data-nifra-prefetch="none">Annual report</a>
+  </nav>
+  ```
+
+  The attribute goes on a link or on any element around it; the nearest one wins. `intent` (the
+  default, as before) warms the route's code and loader data on hover or keyboard focus, `viewport`
+  once the link scrolls into view, `render` as soon as a page shows it, and `none` never. An unknown
+  value is `intent`. `viewport` and `render` links are found when the page loads and whenever the
+  router settles (a navigation, a submit); a link the page adds in between warms on intent until
+  then. It works under every adapter, and React's `<Link>` and `<NavLink>` take a `prefetch` prop
+  that renders it.
+
+  Prefetched data is now used by a click within 30 seconds of arriving; after that the click loads
+  the route again. The page already on screen is no longer prefetched. `PrefetchMode` is exported
+  from `@nifrajs/web`.
+
+- 0f6babe: feat(web): a route can export a `handle`, and `useMatches()` reports the rendered chain on every adapter.
+
+  ```tsx
+  // routes/orgs/[org]/_layout.tsx
+  import { useMatches } from "@nifrajs/web-react/router";
+
+  export const handle = { crumb: "Organization" };
+
+  export default function OrgLayout({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) {
+    const crumbs = useMatches().flatMap(
+      (m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? []
+    );
+    // ...
+  }
+  ```
+
+  `useMatches()` lists the layouts being rendered, outermost first, then the page, each as
+  `{ id, pathname, params, data, handle }`: the route file without its extension, the part of the URL
+  it covers (never the query), the params it declares, its loader data (`null` without a loader), and
+  its `handle` export. The server render and the browser report the same list, so a breadcrumb trail
+  hydrates with no mismatch. `handle` is read from the module on each side and never serialized.
+
+  While a `_loading` page is up it takes the page's place; a nested `_404` reports the layouts it
+  renders inside; an `_error` page the server renders reports an empty list. The hook ships from each
+  adapter's `/router` entry: an array on React and Preact, a `Ref` on Vue, an accessor on Solid and
+  Svelte. An app that never calls it does not bundle it.
+
+  The Preact, Solid, Vue and Svelte client mounts now pass `params` and `path` to the rendered chain,
+  as the server render already did. `UIMatch` and `MatchChain` are exported from `@nifrajs/web`.
+
+### Patch Changes
+
+- 65f2d4b: `createAuthClient().signIn()` works with Auth.js v5, which refuses a `GET` to `/signin/:provider`. It now fetches a CSRF token, submits the sign-in as a `POST`, and navigates to the provider page Auth.js answers with (any `http(s)` address; anything else lands on `/`). `signIn()` therefore returns a `Promise<void>`, and so does `useAuthSession().signIn`. `signInUrl()` is deprecated: it names a URL Auth.js v5 only accepts as a CSRF-carrying `POST`.
+- ee19d29: fix(web-react, web-preact, web-vue, web-solid, web-svelte): a layout keeps its loader data in the
+  browser. The mounted router rendered every layout with `data: null` - on the first paint, where the
+  server had rendered the layout with its data and the client render no longer matched it, and after
+  each client navigation. It now hands each layout the data the router holds for it. On Solid a layout
+  also follows a same-route update, so new layout data after a revalidation or a param change arrives
+  without the layout remounting.
+- 3442e1c: feat(web): `export const ssr = false` keeps a page's component off the server. The route is still
+  matched, its layouts still render, its gates and loader still run and the data is still embedded;
+  the server puts the page's `HydrateFallback` export in the page slot - or nothing - and the browser
+  hydrates that before it renders the component with the data it already has. A client navigation to
+  the page renders the component directly. `HydrateFallback` receives the component's props. The
+  module is still imported on the server for its loader and options, so an import that needs a
+  browser at load time belongs inside the component. `ssr = false` together with `hydrate = false`
+  is refused when the page is rendered: nothing would render it. On Solid the layouts mount again
+  when the component takes over from the fallback, as they do on any Solid route change.
+
+  `assertRenderAdapterConformance` now also renders a chain whose leaf is a function returning
+  `null` and requires the layouts around an empty page slot (check `"empty leaf"`). An adapter that
+  cannot render such a leaf fails conformance.
+
+  fix(web-react): the mounted router hydrates against the state it was mounted with. A router that
+  changed before React reached the component - a client loader that answered first - no longer
+  hydrates a tree the server markup never had; React renders the newer state right after.
+
+- 000c1a0: `<AuthSessionProvider>` follows its `initialSession` prop after mount: a new seed, such as a loader re-run on navigation, replaces the provider's session and status as a remount would. Re-rendering with the same seed keeps a session changed since, for example by `signOut()`.
+- 1a9e804: `useAuthSession().signOut()` leaves the `<AuthSessionProvider>` subtree unauthenticated once the server has ended the session, including with `redirect: false`, where the page stays and used to go on showing the signed-out user's session. A sign-out the server refuses keeps the session.
+- e70d33c: fix(web-react): a render that hits two copies of React says so. When a component's hooks come from a
+  different React than the one `react-dom/server` renders with (often a linked package's own
+  `node_modules`), SSR failed with the engine's raw null-dispatcher `TypeError`. It now fails with
+  `[nifra/web-react] a component called a React hook with no dispatcher`, naming the duplicate and the
+  fix, with the original error kept as `cause`.
+- 64e7a42: fix(web): pages that `defer()` keep working under a nonce Content-Security-Policy.
+  React, Solid and Preact stream inline scripts to reveal a Suspense boundary that resolves after the
+  shell, and none of them carried the document's nonce, so a nonce CSP blocked them and the boundary
+  stayed on its fallback. `RenderAdapter.renderToStream` now receives `{ nonce }` as an optional third
+  argument (`RenderStreamOptions`), and every adapter that streams scripts applies it: React and Solid
+  through their own `nonce` option, Preact on the one island-runtime script it streams. A script the
+  app renders itself never inherits the nonce. Vue, Svelte and the vanilla adapter stream no scripts.
+- Updated dependencies [65f2d4b]
+- Updated dependencies [d8c2a35]
+- Updated dependencies [af7648c]
+- Updated dependencies [dde125b]
+- Updated dependencies [22e2af8]
+- Updated dependencies [72b62fa]
+- Updated dependencies [aa44e93]
+- Updated dependencies [4a3ee60]
+- Updated dependencies [963694f]
+- Updated dependencies [aad6297]
+- Updated dependencies [dad0d41]
+- Updated dependencies [538adc2]
+- Updated dependencies [f47edd1]
+- Updated dependencies [df9530a]
+- Updated dependencies [3e6973f]
+- Updated dependencies [25e8edf]
+- Updated dependencies [2b5e5fc]
+- Updated dependencies [3b090de]
+- Updated dependencies [da7d792]
+- Updated dependencies [612a296]
+- Updated dependencies [fb14dfa]
+- Updated dependencies [8ae97f6]
+- Updated dependencies [4af6f39]
+- Updated dependencies [ca8b50d]
+- Updated dependencies [b00a889]
+- Updated dependencies [b53d64f]
+- Updated dependencies [66fd712]
+- Updated dependencies [9c3d524]
+- Updated dependencies [738e7a1]
+- Updated dependencies [4801cac]
+- Updated dependencies [1b2d53a]
+- Updated dependencies [25fe13d]
+- Updated dependencies [0852290]
+- Updated dependencies [0589dbe]
+- Updated dependencies [2e2d8c0]
+- Updated dependencies [856f5ce]
+- Updated dependencies [18aa5aa]
+- Updated dependencies [cfd86b3]
+- Updated dependencies [8ff96c9]
+- Updated dependencies [4c46199]
+- Updated dependencies [eef4932]
+- Updated dependencies [6de8686]
+- Updated dependencies [86e2d0f]
+- Updated dependencies [a0cfffa]
+- Updated dependencies [d7892ea]
+- Updated dependencies [93e5e7f]
+- Updated dependencies [214d674]
+- Updated dependencies [4936309]
+- Updated dependencies [ff5a779]
+- Updated dependencies [772249a]
+- Updated dependencies [f70f99b]
+- Updated dependencies [49f106f]
+- Updated dependencies [4936309]
+- Updated dependencies [def0172]
+- Updated dependencies [fc2f019]
+- Updated dependencies [a734fba]
+- Updated dependencies [0e9b167]
+- Updated dependencies [bbdc5a1]
+- Updated dependencies [10bc446]
+- Updated dependencies [e8270d9]
+- Updated dependencies [d942c33]
+- Updated dependencies [ef28ef9]
+- Updated dependencies [ff4a062]
+- Updated dependencies [43ba944]
+- Updated dependencies [46c741a]
+- Updated dependencies [7bfa25e]
+- Updated dependencies [216fe27]
+- Updated dependencies [4936309]
+- Updated dependencies [6e257a6]
+- Updated dependencies [4a03d30]
+- Updated dependencies [8e30090]
+- Updated dependencies [28f3aaf]
+- Updated dependencies [6d20355]
+- Updated dependencies [08250bf]
+- Updated dependencies [6907cbe]
+- Updated dependencies [4b8d8de]
+- Updated dependencies [ba5dd1c]
+- Updated dependencies [d50f73e]
+- Updated dependencies [031c33d]
+- Updated dependencies [8fa902c]
+- Updated dependencies [085e852]
+- Updated dependencies [0dac7ec]
+- Updated dependencies [b64c3ee]
+- Updated dependencies [dc2d4d3]
+- Updated dependencies [bda9637]
+- Updated dependencies [81c720e]
+- Updated dependencies [ed60b23]
+- Updated dependencies [0150ed4]
+- Updated dependencies [ae815ab]
+- Updated dependencies [ea2ee87]
+- Updated dependencies [3442e1c]
+- Updated dependencies [85d636b]
+- Updated dependencies [6c978a1]
+- Updated dependencies [bfe29b6]
+- Updated dependencies [8b99424]
+- Updated dependencies [87783f0]
+- Updated dependencies [135aba4]
+- Updated dependencies [47b0d65]
+- Updated dependencies [e32268d]
+- Updated dependencies [432fec3]
+- Updated dependencies [0e14068]
+- Updated dependencies [8f1b780]
+- Updated dependencies [dcc9ff6]
+- Updated dependencies [5a63dd4]
+- Updated dependencies [c49882f]
+- Updated dependencies [dfd19d8]
+- Updated dependencies [28e091f]
+- Updated dependencies [046e79d]
+- Updated dependencies [6393b1e]
+- Updated dependencies [a158b74]
+- Updated dependencies [ee19d29]
+- Updated dependencies [293d3c8]
+- Updated dependencies [7e1e1c3]
+- Updated dependencies [0cd5f6e]
+- Updated dependencies [2245bee]
+- Updated dependencies [feeec4a]
+- Updated dependencies [3eb6339]
+- Updated dependencies [f784c32]
+- Updated dependencies [e3b2b97]
+- Updated dependencies [5934b5d]
+- Updated dependencies [03a3729]
+- Updated dependencies [bd11269]
+- Updated dependencies [579d9a9]
+- Updated dependencies [3554ad8]
+- Updated dependencies [64e7a42]
+- Updated dependencies [ee19d29]
+- Updated dependencies [d6f806f]
+- Updated dependencies [38cf032]
+- Updated dependencies [b94e5cb]
+- Updated dependencies [0f6babe]
+- Updated dependencies [00f18bf]
+- Updated dependencies [a84f546]
+- Updated dependencies [669b6a2]
+- Updated dependencies [ff25d68]
+  - @nifrajs/authjs@4.0.0
+  - @nifrajs/core@4.0.0
+  - @nifrajs/web@4.0.0
+  - @nifrajs/i18n@4.0.0
+  - @nifrajs/image@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

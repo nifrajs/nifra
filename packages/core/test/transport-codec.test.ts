@@ -8,10 +8,41 @@ import {
   encodeTransportFrame,
   encodeTransportResponse,
   plainJsonCodec,
+  readBoundedBytes,
   TransportCodecError,
 } from "../src/transport-codec.ts"
 import { richWireCodec } from "../src/transport-codec-rich.ts"
 import { transportCodecs } from "../src/transport-plugin.ts"
+
+/** A POST whose length-less body is still producing when a cap trips: its last chunk is never
+ * pulled. */
+function overCapPost(url: string, headers: Record<string, string> = {}): Request {
+  let sent = 0
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers,
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ >= 2) return controller.close()
+        controller.enqueue(new Uint8Array(65_536).fill(32))
+      },
+    }),
+    duplex: "half",
+  }
+  return new Request(url, init)
+}
+
+/** Resolves with the response, or with "no response" once `ms` pass without one. */
+function within(
+  ms: number,
+  response: Promise<Response> | Response,
+): Promise<Response | "no response"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"no response">((resolve) => {
+    timer = setTimeout(() => resolve("no response"), ms)
+  })
+  return Promise.race([Promise.resolve(response), deadline]).finally(() => clearTimeout(timer))
+}
 
 describe("versioned transport codecs", () => {
   test("negotiates versions and round-trips rich values across HTTP and frames", async () => {
@@ -68,6 +99,31 @@ describe("versioned transport codecs", () => {
     )
     expect(response.status).toBe(200)
     expect(await decodeTransportResponse(response, registry)).toEqual(value)
+  })
+
+  test("a route's own bodyLimit applies to a body a codec decoded before routing", async () => {
+    const rich = richWireCodec()
+    const registry = createTransportCodecRegistry([plainJsonCodec, rich])
+    const bodySchema = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => ({ value }),
+      },
+    }
+    const app = server()
+      .use(transportCodecs(registry))
+      .post("/small", { body: bodySchema, bodyLimit: 1024 }, () => "accepted")
+    const post = (text: string) =>
+      app.fetch(
+        new Request("http://test/small", {
+          method: "POST",
+          headers: { "content-type": rich.mediaType },
+          body: rich.encode({ s: text }),
+        }),
+      )
+    expect((await post("x".repeat(100))).status).toBe(200)
+    expect((await post("x".repeat(50_000))).status).toBe(413)
   })
 
   test("transport hooks preserve response controls and enforce their own request cap", async () => {
@@ -252,12 +308,140 @@ describe("transport lane edges", () => {
     expect(response.status).toBe(413)
     expect(await response.json()).toMatchObject({ error: "payload_too_large" })
   })
+
+  test("a length-less body over the cap is a 413, not a wait on an unread copy", async () => {
+    const app = server()
+      .use(transportCodecs(registry(), { maxBytes: 1024 }))
+      .post("/echo", () => ({ ok: true }))
+    const response = await within(
+      2000,
+      app.fetch(overCapPost("http://test/echo", { "content-type": rich.mediaType })),
+    )
+    expect(response === "no response" ? response : response.status).toBe(413)
+  })
+
+  // A codec that keeps references decodes a graph, while everything after it walks a tree.
+  const cyclic = '{"r":{"$w":"ref","i":0},"n":[{"$w":"obj","v":{"self":{"$w":"ref","i":0}}}]}'
+  const amplified = JSON.stringify({
+    r: { $w: "ref", i: 0 },
+    n: Array.from({ length: 41 }, (_, i) =>
+      i === 40
+        ? { $w: "obj", v: { leaf: 1 } }
+        : {
+            $w: "arr",
+            v: [
+              { $w: "ref", i: i + 1 },
+              { $w: "ref", i: i + 1 },
+            ],
+          },
+    ),
+  })
+
+  test("a cyclic or reference-amplified body is a 400, never handler input", async () => {
+    let reached = false
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", () => {
+        reached = true
+        return { ok: true }
+      })
+    for (const body of [cyclic, amplified]) {
+      const response = await app.fetch(
+        new Request("http://test/echo", {
+          method: "POST",
+          headers: { "content-type": rich.mediaType },
+          body,
+        }),
+      )
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ error: "invalid_transport_payload" })
+    }
+    expect(reached).toBe(false)
+  })
+
+  test("a decoded RegExp is a 400 unless the lane accepts patterns", async () => {
+    const anyBody = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },
+    } as const
+    const seen: unknown[] = []
+    const post = (accept: boolean) =>
+      server()
+        .use(transportCodecs(registry(), { acceptRegExp: accept }))
+        .post("/echo", { body: anyBody }, (c) => {
+          seen.push(c.body)
+          return { ok: true }
+        })
+        .fetch(
+          new Request("http://test/echo", {
+            method: "POST",
+            headers: { "content-type": rich.mediaType, accept: "application/json" },
+            body: rich.encode({ filter: [/^a+$/] }),
+          }),
+        )
+    const refused = await post(false)
+    expect(refused.status).toBe(400)
+    expect(await refused.json()).toMatchObject({ error: "invalid_transport_payload" })
+    expect(seen).toEqual([])
+    expect((await post(true)).status).toBe(200)
+    expect(seen).toEqual([{ filter: [/^a+$/] }])
+  })
+
+  test("a shared reference within the bound still decodes", async () => {
+    const anyBody = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },
+    } as const
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", { body: anyBody }, (c) => c.body)
+    const shared = { id: 1 }
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType, accept: "application/json" },
+        body: rich.encode({ a: shared, b: [shared, shared] }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ a: { id: 1 }, b: [{ id: 1 }, { id: 1 }] })
+  })
+
+  test("the poisoning policy reaches into Map members", async () => {
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", () => ({ ok: true }))
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType },
+        body: '{"r":{"$w":"ref","i":0},"n":[{"$w":"map","v":[["k",{"$w":"ref","i":1}]]},{"$w":"obj","v":{"__proto__":{"$w":"ref","i":2}}},{"$w":"obj","v":{"admin":true}}]}',
+      }),
+    )
+    expect(response.status).toBe(400)
+  })
 })
 
 // The cap is enforced on already-read text for callers that never stream (the typed client's
 // in-process branch). A UTF-16 length check bounds the encoded size from above so the common case
 // skips re-encoding; only a string within 3x of the cap is measured exactly, and that exact count
 // is what decides accept vs reject for multi-byte text.
+describe("readBoundedBytes", () => {
+  test("an oversized stream whose cancel rejects still fails with the bound", async () => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => controller.enqueue(new Uint8Array(600)),
+      cancel: () => {
+        cancelled = true
+        throw new Error("cancel failed")
+      },
+    })
+    await expect(readBoundedBytes(new Response(stream), { maxBytes: 1000 })).rejects.toThrow(
+      "transport payload exceeds maxBytes",
+    )
+    await Bun.sleep(0)
+    expect(cancelled).toBe(true)
+  })
+})
+
 describe("assertTransportTextBounded", () => {
   test("accepts without measuring when the length bound already proves it fits", () => {
     expect(() => assertTransportTextBounded("x".repeat(10), { maxBytes: 1000 })).not.toThrow()

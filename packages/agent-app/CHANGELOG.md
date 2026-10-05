@@ -1,5 +1,19 @@
 # @nifrajs/agent-app
 
+## 4.0.0
+
+### Patch Changes
+
+- 930ed0d: `AgentAppClient.send()` delivers every turn, not only the first. The client advances `session.lastSeq` as it yields each event, and the next turn's ordering buffer starts after it. Previously a second turn's events waited behind a gap that never filled, and the turn yielded nothing.
+- db9d1e1: The view models hold their input to one shape:
+
+  - `boundaryIsStale` treats an expiry or a clock that is not a number as stale, so `boundaryCommands` offers no command for that boundary.
+  - `toRunStudioView` refuses a run graph that lists the same node twice, instead of rendering it twice and counting it twice.
+  - `toReviewView` reads the `report` inside a host result as a review report only. A host result nested inside another projects as the `invalid-report` unavailable view. Duplicate finding ids are checked in linear time, so a report at the 4,096-finding cap parses in about 5 ms instead of 22 ms.
+
+- ef28ef9: Run views list nodes, checks and findings in code-unit order of their ids, the same in every locale.
+  - @nifrajs/agent-protocol@4.0.0
+
 ## 3.5.0
 
 ### Patch Changes

@@ -1,10 +1,13 @@
 import {
+  concatSourceMaps,
   devServerCompile,
   hash8,
   normalizeFilePath,
   portablePath,
+  type RawSourceMap,
   reproduciblePath,
   rewriteSsrImports,
+  withDevSourceMap,
 } from "@nifrajs/web/plugins/kit"
 import {
   type BindingMetadata,
@@ -12,6 +15,7 @@ import {
   compileStyle,
   compileTemplate,
   parse,
+  type SFCTemplateCompileOptions,
 } from "@vue/compiler-sfc"
 import type { BunPlugin } from "bun"
 
@@ -50,6 +54,16 @@ const templateErrorMessage = (e: string | { message?: string }): string =>
  * it into the client stylesheet); this function only handles the markup side.
  */
 export function compileVue(source: string, filename: string, generate: "dom" | "ssr"): string {
+  return compileVueModule(source, filename, generate, false).code
+}
+
+/** {@link compileVue}, plus with `withMap` one map from the module back to the `.vue` file. */
+function compileVueModule(
+  source: string,
+  filename: string,
+  generate: "dom" | "ssr",
+  withMap: boolean,
+): { readonly code: string; readonly map: RawSourceMap | undefined } {
   const ssr = generate === "ssr"
   const { descriptor, errors } = parse(source, { filename })
   if (errors.length > 0) {
@@ -62,19 +76,25 @@ export function compileVue(source: string, filename: string, generate: "dom" | "
 
   // compileScript merges `<script>` + `<script setup>`; `genDefaultAs` emits the component as
   // `const _sfc_main = …` (so the plain script's `export const loader/meta` stay module exports).
-  let code: string
+  // The module is these parts joined; the script and the template each come with a compiler map.
+  const parts: { code: string; map?: RawSourceMap | undefined }[] = []
   let bindings: BindingMetadata | undefined
   if (descriptor.script !== null || descriptor.scriptSetup !== null) {
-    const script = compileScript(descriptor, { id, inlineTemplate: false, genDefaultAs: COMPONENT })
-    code = script.content
+    const script = compileScript(descriptor, {
+      id,
+      inlineTemplate: false,
+      genDefaultAs: COMPONENT,
+      sourceMap: withMap,
+    })
+    parts.push({ code: script.content, map: script.map })
     bindings = script.bindings
   } else {
     // Template-only SFC: no script block → an empty component options object.
-    code = `const ${COMPONENT} = {}\n`
+    parts.push({ code: `const ${COMPONENT} = {}\n` })
   }
 
   if (descriptor.template !== null) {
-    const template = compileTemplate({
+    const templateOptions: SFCTemplateCompileOptions = {
       source: descriptor.template.content,
       filename,
       id,
@@ -84,18 +104,34 @@ export function compileVue(source: string, filename: string, generate: "dom" | "
         ...(bindings !== undefined ? { bindingMetadata: bindings } : {}),
         ...(scopeAttr !== undefined ? { scopeId: scopeAttr } : {}), // bake `data-v-<id>` onto elements
       },
-    })
+    }
+    // Through the block's own map, so the template's map names lines of the `.vue` file.
+    if (withMap && descriptor.template.map !== undefined) {
+      templateOptions.inMap = descriptor.template.map
+    }
+    const template = compileTemplate(templateOptions)
     if (template.errors.length > 0) {
       throw new Error(
         `[nifra/web-vue] template error in ${filename}: ${templateErrorMessage(template.errors[0] as string | { message?: string })}`,
       )
     }
     // `render`/`ssrRender` come from the compiled template; bind whichever the renderer reads.
-    code += `\n${template.code}\n${COMPONENT}.${ssr ? "ssrRender = ssrRender" : "render = render"}\n`
+    parts.push(
+      { code: "\n" },
+      { code: template.code, map: withMap ? template.map : undefined },
+      { code: `\n${COMPONENT}.${ssr ? "ssrRender = ssrRender" : "render = render"}\n` },
+    )
   }
-  if (scopeAttr !== undefined) code += `${COMPONENT}.__scopeId = ${JSON.stringify(scopeAttr)}\n`
-
-  return `${code}${hmrEnabled(generate) ? hmrBlock(descriptor, filename, id) : ""}\nexport default ${COMPONENT}\n`
+  if (scopeAttr !== undefined) {
+    parts.push({ code: `${COMPONENT}.__scopeId = ${JSON.stringify(scopeAttr)}\n` })
+  }
+  parts.push({
+    code: `${hmrEnabled(generate) ? hmrBlock(descriptor, filename, id) : ""}\nexport default ${COMPONENT}\n`,
+  })
+  return {
+    code: parts.map((part) => part.code).join(""),
+    map: withMap ? concatSourceMaps(parts) : undefined,
+  }
 }
 
 /**
@@ -193,18 +229,26 @@ export function vueBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         const source = await Bun.file(path).text()
         // `ts`, not `js`: `@vue/compiler-sfc` leaves TS syntax (a `lang="ts"` script's types) for the
         // bundler to strip. The `ts` loader handles both TS and plain-JS SFC output (TS ⊃ JS).
-        const js = compileVue(source, path, generate)
+        const { code: js, map } = compileVueModule(source, path, generate, devServerCompile())
         if (generate === "dom") {
           const css = compileVueStyles(source, path)
           if (css.length > 0) {
             cssByPath.set(portablePath(path), css)
             return {
-              contents: `${js}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
+              contents: withDevSourceMap(
+                `${js}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
+                map,
+                path,
+                generate,
+              ),
               loader: "ts",
             }
           }
         }
-        return { contents: rewriteSsrImports(js, path, generate), loader: "ts" }
+        return {
+          contents: withDevSourceMap(rewriteSsrImports(js, path, generate), map, path, generate),
+          loader: "ts",
+        }
       })
       // Virtual CSS module: `<file>.vue?vue-css` → the compiled (scoped) stylesheet (css loader).
       build.onResolve({ filter: /\?vue-css$/ }, (args) => ({

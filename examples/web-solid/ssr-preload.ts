@@ -1,4 +1,4 @@
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 // Preloaded so the server runtime compiles .tsx route components with Solid's SSR transform.
 import { plugin } from "bun"
 

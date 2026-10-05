@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
+import { reservedKeyFor } from "@nifrajs/client"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { SINGLE_COPY_REGISTER_SPECIFIER } from "@nifrajs/core/single-copy"
@@ -7,6 +8,7 @@ import type { CapabilityProjectReport } from "../capabilities-tool.ts"
 import type { SourceFinding, StaticRouteFinding } from "../check-scan.ts"
 import {
   IDENT,
+  movedExportSites,
   parseSimpleFetchCall,
   REMOVED_IMPORTS,
   SIMPLE_REWRITE_METHODS,
@@ -19,6 +21,7 @@ import {
   diagnosticWithCompatibility,
 } from "../diagnostics.ts"
 import type { DuplicateInstallFinding } from "../doctor.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
@@ -90,7 +93,7 @@ const FETCH_HINT =
 const STREAM_HINT =
   "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift"
 const SERVER_IMPORT_HINT =
-  "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import"
+  "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too"
 const RESPONSE_ROUTE_HINT =
   "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
 const PIPELINE_DOC_HINT =
@@ -122,6 +125,8 @@ interface LegacyFields {
   readonly evidence?: readonly string[]
   readonly chain?: readonly string[]
   readonly fix?: string
+  /** A recipe for this one finding, when the rule's findings are not all mechanically fixable. */
+  readonly recipe?: Diagnostic["fix"]
   readonly suggestion?: DiagnosticSuggestion
   readonly verify?: string
   readonly includeCode?: boolean
@@ -142,7 +147,7 @@ function legacyDiagnostic(rule: string, fields: LegacyFields): Diagnostic {
   const code = LEGACY_RULE_CODES[rule]
   if (code === undefined) throw new Error(`unknown legacy rule ${rule}`)
   const evidence = fields.evidence ?? fields.chain
-  const fix = canonicalRecipe(rule)
+  const fix = fields.recipe ?? canonicalRecipe(rule)
   const canonical: Diagnostic = {
     code,
     severity: fields.severity === "warning" ? "warn" : fields.severity,
@@ -164,7 +169,7 @@ function legacyDiagnostic(rule: string, fields: LegacyFields): Diagnostic {
 }
 
 const bySite = (a: SourceFinding, b: SourceFinding): number =>
-  a.file.localeCompare(b.file) || a.line - b.line
+  codeUnitOrder(a.file, b.file) || a.line - b.line
 
 function oneLineDiff(file: string, line: number, before: string, after: string): string {
   return `--- ${file}:${line}\n+++ ${file}:${line}\n@@\n-${before}\n+${after}`
@@ -199,7 +204,10 @@ function typedClientCall(method: string, path: string): string {
   if (segs.length === 0) chain += ".index"
   else {
     for (const seg of segs) {
-      chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
+      // The proxy answers a reserved name (`post`, `index`, `then`...) itself, so that segment is
+      // appended by a call instead of a property read.
+      if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
+      else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
     }
   }
   return `${chain}.${method.toLowerCase()}()`
@@ -286,12 +294,13 @@ function serverImportSuggestion(
       : undefined
   return {
     kind: "manual",
-    title: "Move server-only code behind the route server boundary",
+    title: "Move server-only code behind the route's backend half",
     steps: [
       ...(chainStep === undefined ? [] : [chainStep]),
-      `Remove the top-level \`import … from "${specifier}"\` from this route module (it's bundled for the browser).`,
-      "Access backend/data work through the route `loader`/`action` context (`api`, `env`, or project server context).",
-      `If a direct module import is unavoidable, lazy-load it (\`await import("${specifier}")\`) inside the server-only loader/action path.`,
+      `Remove the import of "${specifier}" from this module: it is browser code, bundled for the browser.`,
+      "Do the backend work in the route's backend half (`x.backend.ts` - its `loader` or `action`) and pass the result as loader data, or call a server function (`*.fn.ts`).",
+      "Code both sides need belongs in `shared/`, which may import only shared code and third-party packages.",
+      "A dynamic `import()` does not keep code off the client: the build bundles its target as a lazy chunk.",
     ],
   }
 }
@@ -399,7 +408,7 @@ const typedClientRule: CheckRule = {
       }),
     )
     return [...fetchFindings, ...streamFindings].sort(
-      (a, b) => (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
+      (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
   },
 }
@@ -409,6 +418,18 @@ const removedImportRule: CheckRule = {
   title: TITLES["removed-import"]!,
   async scan(ctx) {
     return [...ctx.project.sourceFindings.removedImports].sort(bySite).map((finding) => {
+      const moved = movedExportSites(finding.snippet)[0]
+      if (moved !== undefined) {
+        const names = moved.moved.map((binding) => `\`${binding.split(/\s+/)[0]}\``).join(", ")
+        return legacyDiagnostic("removed-import", {
+          severity: "error",
+          file: finding.file,
+          line: finding.line,
+          message: `${finding.snippet} - ${names} moved from "${moved.from}" to "${moved.to}"`,
+          fix: `import ${names} from "${moved.to}" - \`nifra fix --code NF-C005\` rewrites it`,
+          recipe: { recipe: "imports.moved-export", command: "nifra fix --code NF-C005" },
+        })
+      }
       const entry = REMOVED_IMPORTS.find(
         (candidate) =>
           finding.snippet.includes(`"${candidate.specifier}`) ||
@@ -531,7 +552,7 @@ const responseRouteRule: CheckRule = {
 function copyLines(finding: DuplicateInstallFinding): string[] {
   return finding.copies.map(
     (copy) =>
-      `${finding.package}@${copy.version} at ${copy.absolutePath ?? copy.path} - pulled in by ${copy.importers.join(", ")}`,
+      `${finding.package}@${copy.version} at ${copy.absolutePath ?? copy.path} - pulled in by ${copy.importers.join(", ")}${copy.links === undefined ? "" : ` through the symlink ${copy.links.join(", ")}`}`,
   )
 }
 
@@ -550,6 +571,9 @@ function duplicateSuggestion(finding: DuplicateInstallFinding): DiagnosticSugges
     ].join("\n"),
     steps: [
       ...lines.map((line) => `Copy: ${line}`),
+      ...(finding.provenance === undefined
+        ? []
+        : [`Planted links: ${finding.provenance} Try this before the fixes below.`]),
       "Fix 1 - deduplicate: align workspace dependency and peer ranges on one compatible version, remove stale nested installs, and reinstall from the workspace root so every importer resolves one physical copy.",
       `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${finding.cause === "version-skew" ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
       "Re-run `nifra check`; the gate stays failing until one fix lands.",
@@ -725,6 +749,11 @@ const capabilityAssuranceRule: CheckRule = {
         finding.code === "unmatched-provenance-seam"
           ? "Write the seam exactly as the code imports it, or delete the rule."
           : undefined
+      const mountFix =
+        finding.code === "opaque-mount-undeclared"
+          ? 'merge() a nifra server() instead of mounting it, or add { opaque: "<why it cannot be analyzed>" } to the mount.'
+          : undefined
+      const ownFix = seamFix ?? mountFix
       findings.push(
         legacyDiagnostic("capability-assurance", {
           severity: "error",
@@ -733,30 +762,40 @@ const capabilityAssuranceRule: CheckRule = {
               ? {}
               : { chain: truncation.chain }
             : { file: violation.module, chain: violation.chain }),
-          message: `${finding.message}${seamFix === undefined ? ` - ${CAPABILITY_HINT}` : ""}`,
-          fix: seamFix ?? CAPABILITY_HINT,
+          message: `${finding.message}${ownFix === undefined ? ` - ${CAPABILITY_HINT}` : ""}`,
+          fix: ownFix ?? CAPABILITY_HINT,
           suggestion:
-            seamFix === undefined
+            mountFix !== undefined
               ? {
                   kind: "manual",
-                  title: "Restore declared effect provenance",
+                  title: "Analyze the mounted routes, or state why they cannot be",
                   steps: [
-                    "Route effectful work through an import listed in capabilities.provenance.imports.",
-                    "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
-                    "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
-                    "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+                    "If the child is a nifra server() you own, merge() it so its routes join the analyzed app.",
+                    'If its effects live in code nifra cannot follow (a handler closure from another package), add { opaque: "<reason>" } to the mount.',
+                    "A declared opaque mount is listed as a known gap on every run; it no longer fails assurance.",
                   ],
                 }
-              : {
-                  kind: "manual",
-                  title: "Point the provenance rule at a module that exists",
-                  steps: [
-                    "Copy the specifier from the import statement itself - it is matched as written, with no extension or index resolution.",
-                    "Use a trailing `/*` when the seam is a directory of modules (`@myorg/db/*`).",
-                    "For a routeModules entry, give the project-relative path of the file that implements the route.",
-                    "Delete the rule if the seam it governed is gone; leaving it in place proves nothing.",
-                  ],
-                },
+              : seamFix === undefined
+                ? {
+                    kind: "manual",
+                    title: "Restore declared effect provenance",
+                    steps: [
+                      "Route effectful work through an import listed in capabilities.provenance.imports.",
+                      "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
+                      "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
+                      "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+                    ],
+                  }
+                : {
+                    kind: "manual",
+                    title: "Point the provenance rule at a module that exists",
+                    steps: [
+                      "Copy the specifier from the import statement itself - it is matched as written, with no extension or index resolution.",
+                      "Use a trailing `/*` when the seam is a directory of modules (`@myorg/db/*`).",
+                      "For a routeModules entry, give the project-relative path of the file that implements the route.",
+                      "Delete the rule if the seam it governed is gone; leaving it in place proves nothing.",
+                    ],
+                  },
         }),
       )
     }

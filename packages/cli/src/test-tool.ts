@@ -1,3 +1,6 @@
+import { type HeadTailOutput, readHeadTail } from "./mcp-io.ts"
+import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
+
 export interface TestToolArgs {
   readonly pattern?: unknown
   readonly timeoutMs?: unknown
@@ -26,9 +29,11 @@ export interface TestToolResult {
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_TIMEOUT_MS = 300_000
-const MAX_OUTPUT_CHARS = 12_000
+const HEAD_CHARS = 4_000
+const TAIL_CHARS = 8_000
+const MAX_OUTPUT_CHARS = HEAD_CHARS + TAIL_CHARS
 
-function normalizePattern(value: unknown): string | undefined {
+function normalizePattern(value: unknown, root: string): string | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value !== "string") throw new Error("pattern must be a string")
   const pattern = value.trim()
@@ -39,6 +44,9 @@ function normalizePattern(value: unknown): string | undefined {
   // `pattern` narrows test files; it is not a remote flag injection surface.
   if (pattern.startsWith("-"))
     throw new Error("pattern must be a file/path pattern, not a CLI flag")
+  // `bun test` runs any `./`, `../` or absolute path it is given, so a pattern stays inside the project.
+  if (resolveMcpProjectPath(root, pattern) === null)
+    throw new Error(mcpProjectPathError("pattern", pattern))
   return pattern
 }
 
@@ -52,11 +60,18 @@ function normalizeTimeout(value: unknown): number {
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g")
 
-function clean(text: string): string {
-  const stripped = text.replace(ANSI, "")
+// A UTF-8 character is at most four bytes, so these hold every character the result can show.
+const HEAD_BYTES = HEAD_CHARS * 4
+const TAIL_BYTES = TAIL_CHARS * 4
+
+function clean(output: HeadTailOutput): string {
+  const strip = (text: string): string => text.replace(ANSI, "")
+  if (output.droppedBytes > 0)
+    return `${strip(output.head).slice(0, HEAD_CHARS)}\n…(trimmed more than ${output.droppedBytes} bytes)…\n${strip(output.tail).slice(-TAIL_CHARS)}`
+  const stripped = strip(output.head + output.tail)
   return stripped.length <= MAX_OUTPUT_CHARS
     ? stripped
-    : `${stripped.slice(0, 4_000)}\n…(trimmed ${stripped.length - MAX_OUTPUT_CHARS} chars)…\n${stripped.slice(-8_000)}`
+    : `${stripped.slice(0, HEAD_CHARS)}\n…(trimmed ${stripped.length - MAX_OUTPUT_CHARS} chars)…\n${stripped.slice(-TAIL_CHARS)}`
 }
 
 function firstNumber(pattern: RegExp, text: string): number | undefined {
@@ -89,7 +104,7 @@ export async function collectTestResult(
   let pattern: string | undefined
   let timeoutMs: number
   try {
-    pattern = normalizePattern(args.pattern)
+    pattern = normalizePattern(args.pattern, cwd)
     timeoutMs = normalizeTimeout(args.timeoutMs)
   } catch (err) {
     return {
@@ -124,8 +139,11 @@ export async function collectTestResult(
           : "cancelled",
     }
   }
-  const proc = Bun.spawn(command, {
+  // The running Bun, not the first `bun` on PATH: an MCP client may start the server with no `bun` there.
+  const proc = Bun.spawn([process.execPath, ...command.slice(1)], {
     cwd,
+    // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+    env: process.env,
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -140,13 +158,16 @@ export async function collectTestResult(
     timedOut = true
     proc.kill()
   }, timeoutMs)
-  let stdoutRaw = ""
-  let stderrRaw = ""
+  const empty: HeadTailOutput = { head: "", tail: "", droppedBytes: 0 }
+  let stdoutRaw = empty
+  let stderrRaw = empty
   let exitCode: number | null = null
   try {
+    // Drained to the end but held to what the result shows, so a test run that prints without limit
+    // cannot grow the server's memory with it.
     const result = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      readHeadTail(proc.stdout, HEAD_BYTES, TAIL_BYTES),
+      readHeadTail(proc.stderr, HEAD_BYTES, TAIL_BYTES),
       proc.exited,
     ])
     stdoutRaw = result[0]
