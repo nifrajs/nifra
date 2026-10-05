@@ -529,6 +529,9 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const onChange = (): void => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
+      // A deletion its own watcher reported is unwatched now, or the next topology poll reports it
+      // again as a second change: another regeneration and another leak-guard build.
+      syncWatchedFiles(false)
       session.markChange()
       try {
         writeDevFiles({ routesDir, clientModule, entryPath, htmlPath })
