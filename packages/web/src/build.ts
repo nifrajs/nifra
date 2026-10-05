@@ -1012,7 +1012,7 @@ function withEmittedImports(
 /** Refusals the bundler stopped on before it produced a graph, so without import chains. */
 function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string): string {
   const lines = [...refused].map(([file, reason]) => {
-    const rel = relative(root, file)
+    const rel = relative(root, file).replaceAll("\\", "/")
     return `  - ${rel.startsWith("..") ? file : rel}: ${reason}`
   })
   return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`

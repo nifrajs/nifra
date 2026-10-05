@@ -486,7 +486,8 @@ test("a server frame in a file a dev plugin compiled is remapped to the line wri
   // Compiled line 9 (0-based 8), column 22 came from authored line 3 (0-based 2), column 10.
   const lines = Array.from({ length: 9 }, () => Int32Array.of())
   lines[8] = Int32Array.of(0, 0, 2, 10)
-  ssrSourceMaps().set(file, {
+  // The registry keys a file by its portable path, as the dev plugins register it.
+  ssrSourceMaps().set(file.replaceAll("\\", "/"), {
     version: 3,
     sources: ["settings.svelte"],
     mappings: encodeMappings(lines),
@@ -505,6 +506,6 @@ test("a server frame in a file a dev plugin compiled is remapped to the line wri
     expect(browser.diagnostic.frames[0]?.line).toBe(9)
     feed.close()
   } finally {
-    ssrSourceMaps().delete(file)
+    ssrSourceMaps().delete(file.replaceAll("\\", "/"))
   }
 })

@@ -94,7 +94,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
   const classifier = createZoneClassifier(options)
   let root = resolve(options.appRoot)
   const display = (file: string): string => {
-    const rel = relative(classifier.appRoot, file)
+    const rel = relative(classifier.appRoot, file).replaceAll("\\", "/")
     return rel.startsWith("..") || isAbsolute(rel) ? file : rel
   }
   const isClient = (context: PluginContext, ssr: boolean | undefined): boolean =>
@@ -149,7 +149,8 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
     } else if (path.startsWith("/@")) return undefined
     else file = join(root, path)
     for (const candidate of [file, file.replace(/\.map$/, "")]) {
-      if (isFile(candidate)) return candidate
+      // One spelling per file: Vite names it `C:/app/x.ts` on Windows, `join` names it `C:\app\x.ts`.
+      if (isFile(candidate)) return resolve(candidate)
     }
     return undefined
   }
@@ -158,7 +159,9 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
     const url = req.url ?? "/"
     const file = fileForUrl(url)
     if (file === undefined) return next()
-    const source = file.includes("/node_modules/.vite/") ? (depSource(file) ?? file) : file
+    const source = file.replaceAll("\\", "/").includes("/node_modules/.vite/")
+      ? (depSource(file) ?? file)
+      : file
     const classification = classifier.classify(source)
     let reason = browserDenial(classification)
     const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : ""
@@ -180,7 +183,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
     importer?: string,
   ): never => {
     const message = `[nifra/web] ${display(file)} may not reach the browser${importer === undefined ? "" : ` (imported by ${display(importer)})`}: ${reason}`
-    refusals.set(importer ?? file, message)
+    refusals.set(resolve(importer ?? file), message)
     return context.error(new Error(message))
   }
 
@@ -245,7 +248,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       const file = stripQuery(id)
       if (!isAbsolute(file) || !isFile(file)) return null
       // A fresh transform re-resolves every import, so an earlier refusal is stale until it recurs.
-      refusals.delete(file)
+      refusals.delete(resolve(file))
       const classification = classifier.classify(file)
       // A `pre` transform sees the file as written, so the env check reads the source the author wrote.
       const reason =

@@ -101,10 +101,7 @@ export function verifyClientGraph(
   options: VerifyClientGraphOptions,
 ): ClientGraphVerdict {
   const { classifier, sourceOf } = options
-  const display = (file: string): string => {
-    const rel = relative(classifier.appRoot, file).replaceAll("\\", "/")
-    return rel.startsWith("..") || isAbsolute(rel) ? file : rel
-  }
+  const display = (file: string): string => shownPath(classifier.appRoot, file)
   const labelOf = (id: string): string => {
     const source = sourceOf(id)
     return source.kind !== "builtin" && source.file !== undefined ? display(source.file) : id
@@ -299,10 +296,7 @@ export function verifyServerGraph(
   options: VerifyClientGraphOptions,
 ): ServerGraphVerdict {
   const { classifier, sourceOf } = options
-  const display = (file: string): string => {
-    const rel = relative(classifier.appRoot, file).replaceAll("\\", "/")
-    return rel.startsWith("..") || isAbsolute(rel) ? file : rel
-  }
+  const display = (file: string): string => shownPath(classifier.appRoot, file)
   const fileOf = (id: string): string | undefined => {
     const source = sourceOf(id)
     return source.kind === "builtin" ? undefined : source.file
@@ -462,7 +456,8 @@ export function accountEmittedFiles(
     for (const file of sources) {
       const classification = classifier.classify(file)
       const reason = asset ? assetDenial(classification) : browserDenial(classification)
-      if (reason !== undefined) problems.push(`${where} names ${file}: ${reason}`)
+      if (reason !== undefined)
+        problems.push(`${where} names ${shownPath(classifier.appRoot, file)}: ${reason}`)
     }
   }
   for (const file of files) {
@@ -552,6 +547,12 @@ function mapSourceFiles(map: SourceMapLike, base: string): string[] {
     if (existsSync(absolute)) files.push(absolute)
   }
   return files
+}
+
+/** `file` as a message names it: relative to the app with `/` separators, or as given outside it. */
+const shownPath = (appRoot: string, file: string): string => {
+  const rel = relative(appRoot, file).replaceAll("\\", "/")
+  return rel.startsWith("..") || isAbsolute(rel) ? file : rel
 }
 
 const indent = (lines: readonly string[]): string => lines.map((line) => `  - ${line}`).join("\n")

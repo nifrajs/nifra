@@ -67,7 +67,7 @@ describe("generated route types", () => {
     write("routes/(shop)/items/[id].svelte", "<p>item</p>\n")
     write("routes/_404.tsx", "export default () => null\n")
     const files = [...routeTypeFiles({ appRoot: root }).keys()].map((file) =>
-      file.slice(root.length + 1),
+      file.slice(root.length + 1).replaceAll("\\", "/"),
     )
     expect(files.sort()).toEqual([
       ".nifra/types/routes/(shop)/items/+types/[id].d.ts",

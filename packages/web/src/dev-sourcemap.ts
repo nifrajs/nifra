@@ -136,7 +136,10 @@ function decodeDataUrl(url: string): string | undefined {
  */
 function scriptDirectory(scriptPath: string, root: string): string {
   const dir = decodeURIComponent(scriptPath.replace(/[^/]*$/, ""))
-  return dir.startsWith("/@fs/") ? dir.slice(4) : resolve(root, `.${dir}`)
+  // `/@fs/C:/x/` names `C:/x/` on Windows: the slash before a drive letter is URL syntax only.
+  return dir.startsWith("/@fs/")
+    ? dir.slice("/@fs".length).replace(/^\/([a-zA-Z]:)/, "$1")
+    : resolve(root, `.${dir}`)
 }
 
 /** The filesystem path a map's source names, when it is a file. */

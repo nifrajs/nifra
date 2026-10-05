@@ -93,7 +93,10 @@ describe("deploy targets publish no backend source", () => {
       await build(app, target)
       const plan = planBuildTarget(target, outDir)
       const worker = plan.outputFile
-      const published = filesUnder(outDir).filter((file) => relative(outDir, file) !== worker)
+      // The plan names the worker with `/`; Windows lists it with `\`.
+      const published = filesUnder(outDir).filter(
+        (file) => relative(outDir, file).replaceAll("\\", "/") !== worker?.replaceAll("\\", "/"),
+      )
       expect(published.map((file) => relative(outDir, file))).toContain(
         join(plan.staticDir, "robots.txt"),
       )

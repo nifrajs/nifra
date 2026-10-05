@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { DEV_FEED_PATHS, DEV_REQUEST_ID_HEADER } from "../src/dev-feed.ts"
 import { createDevSession, type DevSession } from "../src/dev-session.ts"
 
@@ -217,7 +217,7 @@ test("a browser stack is source-mapped through the server's own scripts", async 
     outdir: join(app.root, "out"),
   })
   for (const output of built.outputs)
-    app.files.set(`/out/${output.path.split("/").at(-1)}`, await output.text())
+    app.files.set(`/out/${basename(output.path)}`, await output.text())
   const script = [...app.files].find(([path]) => path.endsWith(".js"))
   const lines = (script?.[1] ?? "").split("\n")
   const line = lines.findIndex((text) => text.includes("throw new RangeError"))
@@ -430,7 +430,9 @@ test("a frame the page names reads no codeframe from .nifra/, data files, or bac
     ],
   })
   const shown = app.session.feed.errors().errors.find((e) => e.diagnostic.message.includes("still"))
-  expect(shown?.diagnostic.codeframe?.lines.some((l) => l.caret && l.text.includes("boom()"))).toBe(
-    true,
-  )
+  // The frames ride along, so a failure shows which frame the codeframe was read for.
+  expect({
+    frames: shown?.diagnostic.frames,
+    shown: shown?.diagnostic.codeframe?.lines.some((l) => l.caret && l.text.includes("boom()")),
+  }).toEqual({ frames: shown?.diagnostic.frames, shown: true })
 })

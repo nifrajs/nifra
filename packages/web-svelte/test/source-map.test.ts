@@ -71,14 +71,14 @@ test("a dev SSR compile registers its map; a production compile carries none", a
   await Bun.write(path, SOURCE)
   process.env.NIFRA_DEV_HMR = "1"
   const code = await compile(path, "ssr")
-  const map = ssrSourceMaps().get(path)
+  const map = ssrSourceMaps().get(path.replaceAll("\\", "/"))
   if (map === undefined) throw new Error("expected a registered map")
   const compiled = at(code, "saved.items.push")
   expect(originalPosition(map, compiled.line, compiled.column)?.line).toBe(4)
-  ssrSourceMaps().delete(path)
+  ssrSourceMaps().delete(path.replaceAll("\\", "/"))
 
   delete process.env.NIFRA_DEV_HMR
   expect(inlineSourceMap(await compile(path, "dom"))).toBeUndefined()
   await compile(path, "ssr")
-  expect(ssrSourceMaps().has(path)).toBe(false)
+  expect(ssrSourceMaps().has(path.replaceAll("\\", "/"))).toBe(false)
 })

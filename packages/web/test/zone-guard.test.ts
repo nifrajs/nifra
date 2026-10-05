@@ -394,8 +394,8 @@ describe("graph evidence", () => {
     expect(problems).toEqual([
       "./stray-b.js is in the output but not in the module graph",
       "./other-12345678.png was emitted, but no module in the graph accounts for it",
-      `./index-a.js.map names ${join(root, "backend/db.ts")}: it is backend code`,
-      `./index-a.js's inline source map names ${join(root, "backend/db.ts")}: it is backend code`,
+      "./index-a.js.map names backend/db.ts: it is backend code",
+      "./index-a.js's inline source map names backend/db.ts: it is backend code",
     ])
   })
 })

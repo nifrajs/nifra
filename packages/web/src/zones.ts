@@ -10,7 +10,7 @@
  * Default-deny: a first-party file that no rule places is an error, never "probably fine".
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync } from "node:fs"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
 
 export type Zone =
@@ -162,7 +162,12 @@ function realFile(path: string): string {
   try {
     return toPosix(realpathSync.native(path))
   } catch {
-    return toPosix(path)
+    // A path that does not exist yet keeps its directory's real spelling, so it still compares with
+    // the paths around it: a Windows short name or a symlinked temp dir spells one directory two ways.
+    const parent = dirname(path)
+    if (parent === path) return toPosix(path)
+    const real = realFile(parent)
+    return `${real.endsWith("/") ? real : `${real}/`}${basename(path)}`
   }
 }
 

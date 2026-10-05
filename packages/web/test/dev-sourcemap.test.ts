@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { createSourceMapper, decodeMappings } from "../src/dev-sourcemap.ts"
 import { encodeMappings } from "../src/internal/source-map.ts"
 
@@ -35,7 +35,7 @@ const bundle = async (
   const files = new Map<string, string>()
   for (const output of result.outputs) {
     // Served from where it was built, so the map's relative sources resolve as they would on disk.
-    files.set(`/out/${output.path.split("/").at(-1)}`, await output.text())
+    files.set(`/out/${basename(output.path)}`, await output.text())
   }
   return { root, source, files }
 }
@@ -161,7 +161,8 @@ test("a module Vite serves from outside the root (/@fs/) maps to its real path",
   const dep = join(tmpdir(), "elsewhere", "node_modules", "lib", "index.js")
   const map = { version: 3, sources: ["index.ts"], names: [], mappings: "AAAA" }
   const script = `x()\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString("base64")}\n`
-  const servedAt = `/@fs${dep}`
+  // Vite's spelling everywhere: `/@fs/C:/x/index.js` on Windows, `/@fs/x/index.js` elsewhere.
+  const servedAt = `/@fs/${dep.replaceAll("\\", "/").replace(/^\//, "")}`
   const mapper = createSourceMapper({
     root,
     origin: () => ORIGIN,
@@ -219,7 +220,7 @@ test("a plugin's own inline map is followed back to the file it compiled", async
   })
   const files = new Map<string, string>()
   for (const output of result.outputs) {
-    files.set(`/out/${output.path.split("/").at(-1)}`, await output.text())
+    files.set(`/out/${basename(output.path)}`, await output.text())
   }
   const [path, script] = [...files].find(([name]) => name.endsWith(".js")) ?? ["", ""]
   const at = positionOf(script, "throw new TypeError")

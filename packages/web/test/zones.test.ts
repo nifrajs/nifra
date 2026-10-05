@@ -90,6 +90,19 @@ describe("createZoneClassifier", () => {
     expect(zoneOf(path).zone).toBe(zone)
   })
 
+  test("a routes directory made after the classifier holds routes, whatever the root's spelling", () => {
+    const real = join(root, "late-routes")
+    mkdirSync(real)
+    // A second spelling of one directory, as a Windows short name or a symlinked temp dir gives.
+    const alias = join(root, "late-routes-alias")
+    symlinkSync(real, alias)
+    const late = createZoneClassifier({ appRoot: alias })
+    mkdirSync(join(real, "routes"))
+    writeFileSync(join(real, "routes/page.tsx"), "export default () => null\n")
+    expect(late.classify(join(real, "routes/page.tsx"))).toEqual({ zone: "route-frontend" })
+    expect(late.classify(join(alias, "routes/page.tsx"))).toEqual({ zone: "route-frontend" })
+  })
+
   test("a file in no zone is an error, never a default", () => {
     const result = zoneOf("lib/helpers.ts")
     expect(result.zone).toBe("error")

@@ -70,7 +70,9 @@ describe("a browser request for server code gets a 403, whatever the URL form", 
   })
 
   test("/@fs/ with the absolute path", async () => {
-    const response = await fetch(`${origin}/@fs${join(root, "backend/db.ts")}`)
+    // Vite's spelling everywhere: `/@fs/C:/app/db.ts` on Windows, `/@fs/app/db.ts` elsewhere.
+    const absolute = join(root, "backend/db.ts").replaceAll("\\", "/").replace(/^\//, "")
+    const response = await fetch(`${origin}/@fs/${absolute}`)
     expect(response.status).toBe(403)
     expect(await response.text()).not.toContain(SECRET)
   })

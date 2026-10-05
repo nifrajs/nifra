@@ -55,7 +55,7 @@ const BROWSER_CODE = new Set<string>(["route-frontend", "frontend", "shared"])
 export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
   const classifier = options.classifier ?? createZoneClassifier(options)
   const display = (file: string): string => {
-    const rel = relative(classifier.appRoot, file)
+    const rel = relative(classifier.appRoot, file).replaceAll("\\", "/")
     return rel.startsWith("..") || isAbsolute(rel) ? file : rel
   }
   const refuse = (file: string, reason: string, importer?: string): undefined => {

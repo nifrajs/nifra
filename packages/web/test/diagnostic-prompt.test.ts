@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import {
   buildDiagnostic,
   buildFixPrompt,
@@ -249,7 +250,7 @@ describe("catalogFixPrompts", () => {
 describe("browser safety", () => {
   test("the prompt builder and the catalog bundle for a browser", async () => {
     const result = await Bun.build({
-      entrypoints: [new URL("../src/diagnostic-prompt.ts", import.meta.url).pathname],
+      entrypoints: [fileURLToPath(new URL("../src/diagnostic-prompt.ts", import.meta.url))],
       target: "browser",
     })
     expect(result.logs.filter((log) => log.level === "error")).toEqual([])

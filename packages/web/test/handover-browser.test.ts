@@ -19,12 +19,13 @@ if (chrome === undefined && process.env.CI !== undefined) {
 }
 
 let page: ChromePage | undefined
+// Chrome's cold start and shutdown can each pass the 5s default on a loaded Windows runner.
 beforeAll(async () => {
   if (chrome !== undefined) page = await launchChrome(chrome)
-})
+}, 30_000)
 afterAll(async () => {
   await page?.close()
-})
+}, 30_000)
 
 /** The handover block of the generated entry, as the browser runs it. */
 function handoverScript(): string {
@@ -84,4 +85,5 @@ test.skipIf(chrome === undefined)(
       server.stop(true)
     }
   },
+  30_000,
 )
