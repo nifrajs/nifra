@@ -221,6 +221,70 @@ describe("release verification", () => {
       removeFixtureRoot(root)
     }
   })
+
+  test("a shared runner leaves out the timing gates and names them", async () => {
+    const root = createFixtureRoot("verify-shared-runner")
+    try {
+      const plan = verificationPlan("release")
+      const scripts = Object.fromEntries(
+        plan.flatMap((gate) => gate.commands.map(([, script]) => [script, "true"])),
+      )
+      await Bun.write(
+        join(root, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["*"], scripts }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "project" }))
+      const calls: string[] = []
+      const result = await collectReleaseVerification(project, {
+        mode: "release",
+        sharedRunner: true,
+        runCommand: async (spec) => {
+          calls.push(spec.args.join(" "))
+          return { exitCode: 0 }
+        },
+      })
+      const local = plan.filter((gate) => !gate.workflowRequired).map((gate) => gate.id)
+      expect(local).toEqual([
+        "core-performance",
+        "middleware-performance",
+        "output-guard-performance",
+        "edge-startup",
+      ])
+      expect(result.ok).toBe(true)
+      expect(result.localGateIds).toEqual(local)
+      expect(result.gates.map((gate) => gate.id)).toEqual(
+        plan.filter((gate) => gate.workflowRequired).map((gate) => gate.id),
+      )
+      expect(calls).not.toContain("run check:middleware-overhead")
+      expect(renderReleaseVerification(result)).toContain(
+        `note: a shared runner leaves out the timing gates: ${local.join(", ")}`,
+      )
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("a failed gate shows the end of what its command printed", async () => {
+    const root = createFixtureRoot("verify-output")
+    try {
+      await Bun.write(join(root, "package.json"), JSON.stringify({ private: true, workspaces: [] }))
+      const printed = Array.from({ length: 60 }, (_, line) => `line ${line}`).join("\n")
+      const result = await collectReleaseVerification(root, {
+        runCommand: async (spec) =>
+          spec.args.join(" ") === "run lint"
+            ? { exitCode: 1, stdout: `${printed}\n`, stderr: "lint failed\n" }
+            : { exitCode: 0 },
+      })
+      expect(result.gates.find((gate) => gate.id === "lint")?.output?.split("\n")).toEqual([
+        ...Array.from({ length: 39 }, (_, line) => `line ${line + 21}`),
+        "lint failed",
+      ])
+      expect(renderReleaseVerification(result)).toContain("  | lint failed\n")
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
 })
 
 describe("scanFetchText - own-API fetch detection", () => {
