@@ -1052,8 +1052,8 @@
     "lines": 100
   },
   "packages/mcp-db/src/engine.ts": {
-    "functions": 100,
-    "lines": 97.10144927536231
+    "functions": 97.61904761904762,
+    "lines": 94.20289855072464
   },
   "packages/mcp-db/src/index.ts": {
     "functions": 100,
