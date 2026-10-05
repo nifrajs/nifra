@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -21,6 +21,43 @@ afterAll(async () => {
   await Promise.all(grounds.map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
+/** The shell-script fake below as a Bun program: Windows runs only a real `.bin/nifra.exe`. */
+const FAKE_CLI_SOURCE = `import { realpathSync } from "node:fs"
+const reader = Bun.stdin.stream().getReader()
+let text = ""
+while (!text.includes("\\n")) {
+  const { value, done } = await reader.read()
+  if (done) break
+  text += new TextDecoder().decode(value)
+}
+const result = {
+  serverInfo: { name: "project-cli", version: ${JSON.stringify(PROJECT_VERSION)} },
+  args: process.argv.slice(2).join(" "),
+  marker: process.env[${JSON.stringify(MCP_DELEGATED_ENV)}] ?? "",
+  cwd: realpathSync.native(process.cwd()),
+}
+process.stdout.write(\`\${JSON.stringify({ jsonrpc: "2.0", id: 1, result })}\\n\`)
+`
+
+let compiledFake: Promise<string> | undefined
+/** Compiled once per run and copied into each project that needs a bin. */
+const windowsFakeCli = (): Promise<string> => {
+  compiledFake ??= (async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-delegate-fake-"))
+    grounds.push(dir)
+    await writeFile(join(dir, "fake.ts"), FAKE_CLI_SOURCE)
+    const exe = join(dir, "nifra.exe")
+    const built = Bun.spawnSync(
+      [process.execPath, "build", "--compile", join(dir, "fake.ts"), "--outfile", exe],
+      { stdout: "ignore", stderr: "pipe" },
+    )
+    if (built.exitCode !== 0)
+      throw new Error(`the fake project CLI did not compile: ${built.stderr}`)
+    return exe
+  })()
+  return compiledFake
+}
+
 /** A nifra project whose install pins `@nifrajs/*` to {@link PROJECT_VERSION}. */
 const project = async (
   label: string,
@@ -39,18 +76,22 @@ const project = async (
   if (over.bin === true) {
     // The project's CLI, reduced to what the hand-off contract needs: it answers the first request
     // with the argv, cwd and hand-off marker it was started with.
-    const bin = join(dir, "node_modules", ".bin", "nifra")
     await mkdir(join(dir, "node_modules", ".bin"), { recursive: true })
-    await writeFile(
-      bin,
-      [
-        "#!/bin/sh",
-        "read line",
-        `printf '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"project-cli","version":"${PROJECT_VERSION}"},"args":"%s","marker":"%s","cwd":"%s"}}\\n' "$*" "$${MCP_DELEGATED_ENV}" "$(pwd -P)"`,
-        "",
-      ].join("\n"),
-    )
-    await chmod(bin, 0o755)
+    if (process.platform === "win32") {
+      await copyFile(await windowsFakeCli(), join(dir, "node_modules", ".bin", "nifra.exe"))
+    } else {
+      const bin = join(dir, "node_modules", ".bin", "nifra")
+      await writeFile(
+        bin,
+        [
+          "#!/bin/sh",
+          "read line",
+          `printf '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"project-cli","version":"${PROJECT_VERSION}"},"args":"%s","marker":"%s","cwd":"%s"}}\\n' "$*" "$${MCP_DELEGATED_ENV}" "$(pwd -P)"`,
+          "",
+        ].join("\n"),
+      )
+      await chmod(bin, 0o755)
+    }
   }
   return dir
 }

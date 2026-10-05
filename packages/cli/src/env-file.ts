@@ -130,7 +130,7 @@ export async function applyEnvFiles(
  *
  * Bun applies the files under the environment (a variable already set wins) and expands `${NAME}`
  * references, so Bun itself says which values came from a file: a subprocess with an empty
- * environment reports what the files hold, and a variable with that value is removed. A value that
+ * environment reports what the files add to it, and a variable with that value is removed. A value that
  * differs is asked again with the rest of the environment, for an expansion that read it; one that
  * still differs was set by the environment, and stays.
  */
@@ -156,13 +156,30 @@ export async function forgetAutoLoadedEnv(cwd = process.cwd()): Promise<readonly
   return removed
 }
 
-/** What `process.env` holds in a Bun process started in `cwd` with `env`: `env` plus its `.env` files. */
+/** What the `.env` files in `cwd` add to a Bun process started there with `env`. */
 async function envFromFiles(
   cwd: string,
   env: Record<string, string | undefined>,
 ): Promise<Record<string, string>> {
+  // A child holds more than `env`: Windows copies PATH, SYSTEMROOT and a few more from the parent,
+  // and a bunfig preload can set others. A `--no-env-file` copy of the child holds those as well.
+  const [loaded, bare] = await Promise.all([
+    childEnv(cwd, env, []),
+    childEnv(cwd, env, ["--no-env-file"]),
+  ])
+  const added: Record<string, string> = {}
+  for (const [name, value] of Object.entries(loaded)) if (bare[name] !== value) added[name] = value
+  return added
+}
+
+/** What `process.env` holds in a Bun process started in `cwd` with `env` and the runtime `flags`. */
+async function childEnv(
+  cwd: string,
+  env: Record<string, string | undefined>,
+  flags: readonly string[],
+): Promise<Record<string, string>> {
   const proc = Bun.spawn(
-    [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"],
+    [process.execPath, ...flags, "-e", "process.stdout.write(JSON.stringify(process.env))"],
     { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "ignore" },
   )
   const [text] = await Promise.all([new Response(proc.stdout).text(), proc.exited])

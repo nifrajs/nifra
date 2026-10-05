@@ -388,10 +388,11 @@ export function applyImportMoves(
 const SOURCE_GLOB = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
 const IGNORED_DIRECTORIES = new Set(["node_modules", "dist", "build", ".git", "coverage", ".next"])
 
-// Any directory on the path counts, the top-level one included (`dist/index.js`).
+// Any directory on the path counts, the top-level one included (`dist/index.js`). Bun's glob yields
+// `dist\index.js` on Windows.
 const isIgnored = (path: string): boolean =>
   path
-    .split("/")
+    .split(/[\\/]/)
     .slice(0, -1)
     .some((segment) => IGNORED_DIRECTORIES.has(segment))
 

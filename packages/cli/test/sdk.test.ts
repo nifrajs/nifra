@@ -167,11 +167,17 @@ describe("SDK generation", () => {
         new Response(process.stdout).text(),
       ])
       expect(exitCode).toBe(0)
-      expect(output.trim().split("\n")).toEqual([".. refused", ". refused", "... sent", "a.b sent"])
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        ".. refused",
+        ". refused",
+        "... sent",
+        "a.b sent",
+      ])
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
-  })
+    // Windows takes about two seconds to report each refused connection.
+  }, 30_000)
 
   test("generated Go refuses a path parameter that is a dot segment", () => {
     expect(renderSdk(document, "go")).toContain('if segment == "." || segment == ".."')

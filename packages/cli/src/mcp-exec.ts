@@ -6,7 +6,7 @@
  * replaceable.
  */
 
-import type { Dirent } from "node:fs"
+import { type Dirent, realpathSync } from "node:fs"
 import { readdir, stat } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -49,9 +49,15 @@ const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
 /** The files a stack the caller supplies may show a codeframe from: project source, never a dotfile
  * or anything under a dot directory (`.env`, `.git/`, `.nifra/`). */
 function explainSourceGate(root: string): (file: string) => boolean {
+  // The codeframe reads a native realpath, which expands a Windows short name (`RUNNER~1`); the root
+  // has to be spelled the same way or every file looks like it sits outside it.
+  let base = resolve(root)
+  try {
+    base = realpathSync.native(base)
+  } catch {}
   return (file) =>
     CODEFRAME_SOURCE.test(file) &&
-    !relative(root, file)
+    !relative(base, file)
       .split(/[\\/]/)
       .some((segment) => segment.startsWith("."))
 }

@@ -36,7 +36,7 @@ function tempRoot(): string {
 }
 
 /** The script a process runs: the server is `cli.ts`, a project subprocess `mcp-project-child.ts`. */
-const SCRIPT = 'String(process.argv[1]).split("/").pop()'
+const SCRIPT = "String(process.argv[1]).split(/[\\\\/]/).pop()"
 
 /** A module line that records which process evaluated it and what it saw of the environment. */
 const record = (log: string): string =>
@@ -423,7 +423,7 @@ describe("forgetAutoLoadedEnv", () => {
       script,
       `import { forgetAutoLoadedEnv } from ${JSON.stringify(join(import.meta.dir, "../src/env-file.ts"))}\n` +
         "const removed = await forgetAutoLoadedEnv()\n" +
-        'const names = ["A_FILE", "A_SHELL", "A_EXPANDED", "A_LOCAL", "NODE_ENV"]\n' +
+        'const names = ["A_FILE", "A_SHELL", "A_EXPANDED", "A_LOCAL", "A_PRELOADED", "NODE_ENV"]\n' +
         "console.log(JSON.stringify({ removed: [...removed].sort(), left: Object.fromEntries(names.map((n) => [n, process.env[n] ?? null])) }))\n",
     )
     const proc = Bun.spawn([process.execPath, script], {
@@ -448,8 +448,19 @@ describe("forgetAutoLoadedEnv", () => {
       A_SHELL: "shell",
       A_EXPANDED: null,
       A_LOCAL: null,
+      A_PRELOADED: null,
       NODE_ENV: "development",
     })
+  }, 30_000)
+
+  test("keeps what the process got besides the files: a bunfig preload, the copies Windows makes", async () => {
+    const dir = tempRoot()
+    writeFileSync(join(dir, ".env"), "A_FILE=file\n")
+    writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./preload.ts"]\n')
+    writeFileSync(join(dir, "preload.ts"), 'process.env.A_PRELOADED = "preloaded"\n')
+    const { removed, left } = await forgetIn(dir, {})
+    expect(removed).toEqual(["A_FILE"])
+    expect(left.A_PRELOADED).toBe("preloaded")
   }, 30_000)
 
   test("does nothing in a directory without .env files", async () => {

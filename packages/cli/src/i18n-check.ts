@@ -66,7 +66,7 @@ export async function runI18nCheck(
   const mod = (await import(pathToFileURL(path).href)) as Record<string, unknown>
   const source = isObject(mod.default) && mod.locales === undefined ? mod.default : mod
   const { locales, catalogs, ignore } = source
-  const entry = relative(cwd, path) || path
+  const entry = relative(cwd, path).replaceAll("\\", "/") || path
   if (!isRegistry(locales)) {
     throw new Error(
       `i18n check: ${entry} must export \`locales\`, the registry defineLocales() returns`,

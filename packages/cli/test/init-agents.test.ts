@@ -447,7 +447,9 @@ describe("initAgents --sync-mcp - re-pins the MCP launch and nothing else", () =
     const result = await initAgents(dir, { syncMcp: true })
     expect(actionFor(result, "AGENTS.md")).toBe("skipped")
     expect(await readFile(target, "utf8")).toBe(agents(STALE))
-    expect((await stat(join(dir, "CLAUDE.md"))).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX permission bits to keep.
+    if (process.platform !== "win32")
+      expect((await stat(join(dir, "CLAUDE.md"))).mode & 0o777).toBe(0o600)
   })
 
   test("refuses --force alongside --sync-mcp", async () => {

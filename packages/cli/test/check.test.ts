@@ -828,7 +828,8 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
       expect(diagnostic?.severity).toBe("error")
       const steps = diagnostic?.suggestion?.steps ?? []
-      const link = join("packages", "app", "node_modules", "@nifrajs", "core")
+      // Paths in a suggestion are written with `/` on every platform.
+      const link = "packages/app/node_modules/@nifrajs/core"
       expect(steps.some((step) => step.includes(`through the symlink ${link}`))).toBe(true)
       const planted = steps.findIndex((step) => step.startsWith("Planted links:"))
       expect(planted).toBeGreaterThan(-1)

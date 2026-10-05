@@ -407,8 +407,11 @@ describe("the audit log", () => {
   test("owner-only, bounded by rotation, never through a symlink", () => {
     const root = createFixtureProject(parent, "audit-")
     expect(appendDbAudit(root, entry({ sql: "SELECT 1" }))).toBe(true)
-    expect(statSync(join(root, ".nifra")).mode & 0o777).toBe(0o700)
-    expect(statSync(join(root, DB_AUDIT_FILE)).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX permission bits to check.
+    if (process.platform !== "win32") {
+      expect(statSync(join(root, ".nifra")).mode & 0o777).toBe(0o700)
+      expect(statSync(join(root, DB_AUDIT_FILE)).mode & 0o777).toBe(0o600)
+    }
     writeFileSync(join(root, DB_AUDIT_FILE), `${"x".repeat(DB_AUDIT_MAX_BYTES - 10)}\n`)
     expect(appendDbAudit(root, entry({ sql: "SELECT 2" }))).toBe(true)
     expect(existsSync(join(root, DB_AUDIT_ROTATED_FILE))).toBe(true)
@@ -543,7 +546,10 @@ describe("a fresh subprocess per call", () => {
     )
     const killed = sqliteProject("", 'process.kill(process.pid, "SIGKILL")')
     const signalled = await runDbChild(killed, { op: "schema" })
-    expect(!signalled.ok && signalled.refusal.message).toContain("exited on SIGKILL")
+    // Windows has no signals: a killed process reports an exit code instead.
+    expect(!signalled.ok && signalled.refusal.message).toContain(
+      process.platform === "win32" ? "exited with code 1" : "exited on SIGKILL",
+    )
   })
 
   test("cancelling the call kills the subprocess", async () => {

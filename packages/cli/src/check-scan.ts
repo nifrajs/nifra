@@ -2065,7 +2065,8 @@ export async function walkSource(
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
-  for (const rel of rels) {
+  // Glob order is the filesystem's, so findings would come out in a different order on each platform.
+  for (const rel of rels.sort(codeUnitOrder)) {
     if (ignored.has(rel)) continue
     visit(rel, await Bun.file(join(cwd, rel)).text())
   }
