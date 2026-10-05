@@ -1,7 +1,8 @@
 /**
  * After `changeset publish` (which publishes to the `beta` dist-tag in prerelease mode),
  * point `latest` at the same versions so `npm install nifra` gets the current beta.
- * Run only in CI via `changeset:publish`; skip locally unless NPM_TOKEN is set.
+ * Skips without NPM_TOKEN, which CI no longer has: it publishes through npm trusted publishing, and
+ * that cannot move dist-tags, so after a prerelease a maintainer moves `latest` by hand.
  */
 import { readdirSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
@@ -67,7 +68,7 @@ const realNpm: NpmRunner = async (args) => {
 
 async function main(): Promise<void> {
   if (!process.env.NPM_TOKEN) {
-    console.log("point-latest: no NPM_TOKEN - skipping (local run)")
+    console.log("point-latest: no NPM_TOKEN - skipping; trusted publishing cannot move dist-tags")
     return
   }
   const failed = await pointLatest(join(resolve(import.meta.dir, ".."), "packages"), realNpm)
