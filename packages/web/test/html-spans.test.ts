@@ -14,7 +14,7 @@ const strings = (tokens: readonly string[], length: number): string[] => {
 
 test("withoutComments removes what the lazy comment pattern removes", () => {
   for (const source of strings(["<!--", "-->", "--!>", "--", "-", "!", ">", "<", "x"], 4)) {
-    expect(withoutComments(source)).toBe(source.replace(/<!--[\s\S]*?--!?>/g, ""))
+    expect(withoutComments(source)).toBe(source.split(/<!--[\s\S]*?--!?>/).join(""))
   }
 })
 
