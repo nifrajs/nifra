@@ -18,6 +18,9 @@ export function routeProps(
     },
     // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
     // server rendered it with its data.
+    get serverComponents() {
+      return snapshot().serverComponents
+    },
     get layoutData() {
       return snapshot().layoutData
     },

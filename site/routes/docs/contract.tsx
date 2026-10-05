@@ -593,6 +593,16 @@ export default function Contract() {
       </p>
       <CodeBlock code={BOUNDARY} />
 
+      <h2>Optional server components</h2>
+      <p>
+        The post-4.0 <a href="/docs/server-components">server-components pipeline</a> supports
+        React, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
+        in <code>*.component.server.ts(x)</code>, register owner instances and export a named
+        <code>componentPipeline</code> configuration. React uses native RSC/Flight; the other three
+        hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
+        HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
+        router and await auth-scope invalidation on identity, tenant or permission changes.
+      </p>
       <h2>The build-output contract</h2>
       <p>
         The programmatic <code>buildClient()</code> API emits a content-hashed directory plus a{" "}

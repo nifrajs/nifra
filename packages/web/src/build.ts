@@ -1,3 +1,7 @@
+import { publicEnvDefines } from "./internal/public-env.ts"
+
+export { publicEnvDefines } from "./internal/public-env.ts"
+
 /**
  * `@nifrajs/web/build` - the production build (Bun-only, build-time). `buildClient` codegens + bundles
  * the client entry (content-hashed, code-split); `buildServer` codegens the static-import server
@@ -180,20 +184,6 @@ export interface BuildClientOptions {
  * define resolves it to `undefined` in the client bundle. An empty `prefix` exposes nothing (the
  * opt-out). Pure + exported so the prefix/redaction contract is unit-testable without a real build.
  */
-export function publicEnvDefines(
-  prefix: string,
-  env: Readonly<Record<string, string | undefined>>,
-): Record<string, string> {
-  const defines: Record<string, string> = {}
-  if (prefix === "") return defines // opt-out: bake in nothing
-  for (const [name, value] of Object.entries(env)) {
-    // Skip `undefined` (a deleted/unset key can still enumerate) so we never bake in `"undefined"`.
-    if (name.startsWith(prefix) && value !== undefined) {
-      defines[`process.env.${name}`] = JSON.stringify(value)
-    }
-  }
-  return defines
-}
 
 /**
  * Cloudflare Pages rejects a `_routes.json` with more than 100 include+exclude rules combined, or any

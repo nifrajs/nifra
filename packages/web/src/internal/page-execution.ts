@@ -78,6 +78,7 @@ export type { NonceResolver } from "../nonce.ts"
 
 /** Structural context supplied by the core server to one page route handler. */
 export interface PageRouteContext<Env = unknown> {
+  readonly signal?: AbortSignal
   readonly params: Record<string, string>
   readonly req: Request
   readonly env: Env
@@ -172,6 +173,11 @@ function appTarget(location: string, requestUrl: string): string {
 }
 
 export interface PageExecutionOptions<Env = unknown> {
+  readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
+  readonly rerenderOwnerGET?: (
+    request: Request,
+    context: PageRouteContext<Env>,
+  ) => Promise<Response>
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
   readonly clientEntry: string
@@ -251,6 +257,8 @@ export function createPageRequestExecutor<Env = unknown>(
   options: PageExecutionOptions<Env>,
 ): PageRequestExecutor<Env> {
   const { adapter, manifest, clientEntry, api } = options
+  // The action result is request-local; a browser cannot manufacture this handoff.
+  const progressiveActionData = new WeakMap<Request, unknown>()
   // Bound once per render, so every loader, action and boundary in that render shares one view of the
   // in-process client carrying the visitor's platform. An `api` without the seam passes through as-is.
   const bindApi = platformBinderOf(api)
@@ -385,6 +393,7 @@ export function createPageRequestExecutor<Env = unknown>(
         try {
           keep = keepsLayoutData(route, i, layout, ctx.params, retain)
         } catch (err) {
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
           throw tagLayoutError(err, route.layoutIds[i] as string)
         }
         if (keep) {
@@ -401,6 +410,7 @@ export function createPageRequestExecutor<Env = unknown>(
         try {
           results[i] = await loader(scoped)
         } catch (err) {
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
           throw tagLayoutError(err, route.layoutIds[i] as string)
         }
         continue
@@ -453,6 +463,7 @@ export function createPageRequestExecutor<Env = unknown>(
           set: controls.scope(i),
         })
       } catch (err) {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
         throw tagLayoutError(err, route.layoutIds[i] as string)
       }
     }
@@ -789,6 +800,7 @@ export function createPageRequestExecutor<Env = unknown>(
     assemblyCache: RenderAssemblyCache | undefined,
     responseHeaders: Record<string, string> | undefined,
     personalized: boolean,
+    serverComponents?: import("../server-components/types.ts").ComponentState,
   ): Promise<PageResponse> => {
     if (isStatusSignal(data)) return renderStatusSignal(req, env, data, personalized)
     if (isControlFlow(data)) return data
@@ -809,7 +821,7 @@ export function createPageRequestExecutor<Env = unknown>(
         ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
       ]
       const payload =
-        layoutData === undefined && boundarySplit === undefined
+        layoutData === undefined && boundarySplit === undefined && serverComponents === undefined
           ? pageSplit.forClient
           : {
               v: 1 as const,
@@ -817,6 +829,7 @@ export function createPageRequestExecutor<Env = unknown>(
               layoutData: layoutSplits.map((split) => split.forClient),
               retained: layoutRetained,
               ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
+              ...(serverComponents === undefined ? {} : { serverComponents }),
             }
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
@@ -853,6 +866,8 @@ export function createPageRequestExecutor<Env = unknown>(
         path: pathOf(req),
         search: searchChainOf(layoutModules, mod, req),
         matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
+        ...(serverComponents === undefined ? {} : { serverComponents }),
+        ...(progressiveActionData.has(req) ? { actionData: progressiveActionData.get(req) } : {}),
         hydrate: mod.hydrate !== false,
         ...(layoutData !== undefined ? { layoutData } : {}),
         ...(boundaryStates !== undefined ? { boundaries: boundaryStates } : {}),
@@ -1084,7 +1099,18 @@ export function createPageRequestExecutor<Env = unknown>(
       }
 
       return withResponseControls(async (c, controls) => {
-        if (is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
+        const componentRuntime = options.serverComponents
+        const componentOwner = componentRuntime?.owns(route.id) === true
+        let componentRequest:
+          | import("../server-components/protocol.ts").ComponentRequest
+          | undefined
+        try {
+          componentRequest = componentRuntime?.classify(c.req, route.id)
+        } catch (error) {
+          return componentRuntime!.failure(error)
+        }
+        if (componentOwner || componentRequest !== undefined) controls.personalize()
+        if (!componentOwner && is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
           return renderNotFound(c.req, c.env, pathOf(c.req))
         }
         const mod = await route.load()
@@ -1097,6 +1123,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let layoutModules: LoadedLayoutModules | undefined
         let layoutRetained: readonly number[] = []
         let responseHeaders: Record<string, string> | undefined
+        let componentState: import("../server-components/types.ts").ComponentState | undefined
         const requestApi = apiFor(c)
         let run: LayoutRun | undefined
         try {
@@ -1111,13 +1138,21 @@ export function createPageRequestExecutor<Env = unknown>(
             set: controls.scope(PAGE_SCOPE),
           }
           if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls)
-          run = await runLayoutChain(route, ctx, controls, retainContextOf(c.req))
+          run = await runLayoutChain(
+            route,
+            ctx,
+            controls,
+            componentOwner ? undefined : retainContextOf(c.req),
+          )
           layoutModules = run.modules
           layoutRetained = run.retained
-          const boundaryDefinitions = [
-            ...run.modules.flatMap((layout) => layout.boundaries ?? []),
-            ...(mod.boundaries ?? []),
-          ]
+          const boundaryDefinitions =
+            componentRequest === undefined
+              ? [
+                  ...run.modules.flatMap((layout) => layout.boundaries ?? []),
+                  ...(mod.boundaries ?? []),
+                ]
+              : []
           if (boundaryDefinitions.length > 0) boundaryDescriptors(boundaryDefinitions)
           const effectiveSearch = searchChainOf(run.modules, mod, c.req)
           const boundaryBatch =
@@ -1149,6 +1184,34 @@ export function createPageRequestExecutor<Env = unknown>(
                 : await Promise.all([pageResult, run.pending, staticBoundaryPromise])
           data = pageData
           layoutData = run.layoutData
+          if (componentOwner) {
+            for (let i = 0; i < (layoutData?.length ?? 0); i++) {
+              const outcome = layoutData?.[i]
+              if (isControlFlow(outcome) || isStatusSignal(outcome))
+                throw tagLayoutError(outcome, route.layoutIds[i] as string)
+            }
+          }
+          if (componentRequest !== undefined && (isControlFlow(data) || isStatusSignal(data)))
+            return componentRuntime!.failure(data)
+          if (componentOwner && !isControlFlow(data) && !isStatusSignal(data)) {
+            const componentContext = Object.create(
+              c,
+              Object.getOwnPropertyDescriptors({
+                ...ctx,
+                search: effectiveSearch,
+                signal:
+                  c.signal === undefined ? c.req.signal : AbortSignal.any([c.signal, c.req.signal]),
+                data,
+                layoutData: layoutData ?? [],
+              }),
+            )
+            componentState = await componentRuntime!.execute(
+              route.id,
+              componentContext,
+              componentRequest,
+              options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
+            )
+          }
           if (boundaryBatch !== undefined) {
             const streamed = { ...boundaryBatch.initial, ...(staticBoundaries ?? {}) }
             for (const entry of boundaryBatch.pending) {
@@ -1164,6 +1227,7 @@ export function createPageRequestExecutor<Env = unknown>(
           // by the same boundary as one.
           responseHeaders = controls.documentHeaders()
         } catch (err) {
+          if (componentRequest !== undefined) return componentRuntime!.failure(err)
           if (isStatusSignal(err)) {
             return (
               (await renderRouteNotFound(
@@ -1178,6 +1242,14 @@ export function createPageRequestExecutor<Env = unknown>(
             )
           }
           return renderLoaderFailure(route, c.req, c.env, c.params, err, controls.personalized)
+        }
+        if (componentRequest !== undefined && componentState !== undefined) {
+          const answer = componentRuntime!.response(componentState, componentRequest)
+          const headers = new Headers(answer.headers)
+          for (const [name, value] of Object.entries(responseHeaders ?? {}))
+            if (name !== "cache-control" && name !== "content-type" && name !== "vary")
+              headers.set(name, value)
+          return new Response(answer.body, { status: answer.status, headers })
         }
         if (isStatusSignal(data)) {
           const nested = await renderRouteNotFound(
@@ -1205,6 +1277,7 @@ export function createPageRequestExecutor<Env = unknown>(
           layoutModules === undefined ? undefined : assemblyCacheFor(mod, layoutModules),
           responseHeaders,
           controls.personalized,
+          componentState,
         )
       })
     },
@@ -1270,6 +1343,51 @@ export function createPageRequestExecutor<Env = unknown>(
               ...revalidateHeader,
             },
           })
+        }
+        if (options.serverComponents?.owns(route.id)) {
+          if (options.rerenderOwnerGET === undefined) throw new Error("component_contract")
+          const actionHeaders = controls.documentHeaders()
+          if (controls.progressiveRedirect(c.req)) {
+            return new Response(null, {
+              status: 303,
+              headers: { ...actionHeaders, location: c.req.url, "cache-control": PRIVATE_NO_STORE },
+            })
+          }
+          const headers = new Headers(c.req.headers)
+          for (const name of [
+            DATA_HEADER,
+            RETAIN_HEADER,
+            NAV_FROM_HEADER,
+            "x-nifra-component",
+            "content-type",
+            "content-length",
+            "transfer-encoding",
+          ])
+            headers.delete(name)
+          const cookie = controls.progressiveCookies(c.req)
+          if (cookie) headers.set("cookie", cookie)
+          else headers.delete("cookie")
+          const request = new Request(c.req.url, {
+            method: "GET",
+            headers,
+            signal:
+              c.signal === undefined ? c.req.signal : AbortSignal.any([c.signal, c.req.signal]),
+          })
+          progressiveActionData.set(request, actionResult)
+          try {
+            const response = await options.rerenderOwnerGET(request, c)
+            const merged = new Headers(response.headers)
+            for (const [name, value] of Object.entries(actionHeaders ?? {}))
+              if (!merged.has(name)) merged.set(name, value)
+            merged.set("cache-control", PRIVATE_NO_STORE)
+            return new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: merged,
+            })
+          } finally {
+            progressiveActionData.delete(request)
+          }
         }
         const search = searchChainOf(layoutModules, mod, c.req)
         const data = mod.loader

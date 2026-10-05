@@ -227,6 +227,76 @@
       "bun": "./src/internal/matches-runtime.ts",
       "types": "./dist/internal/matches-runtime.d.ts",
       "default": "./dist/internal/matches-runtime.js"
+    },
+    "./server-components": {
+      "bun": "./src/server-components.ts",
+      "types": "./dist/server-components.d.ts",
+      "default": "./dist/server-components.js"
+    },
+    "./server-components/client": {
+      "bun": "./src/server-components/client.ts",
+      "types": "./dist/server-components/client.d.ts",
+      "default": "./dist/server-components/client.js"
+    },
+    "./server-components/vite": {
+      "bun": "./src/server-components/vite.ts",
+      "types": "./dist/server-components/vite.d.ts",
+      "default": "./dist/server-components/vite.js"
+    },
+    "./server-components/build": {
+      "bun": "./src/server-components/build.ts",
+      "types": "./dist/server-components/build.d.ts",
+      "default": "./dist/server-components/build.js"
+    },
+    "./server-components/source": {
+      "bun": "./src/server-components/source.ts",
+      "types": "./dist/server-components/source.d.ts",
+      "default": "./dist/server-components/source.js"
+    },
+    "./server-components/props": {
+      "bun": "./src/server-components/props.ts",
+      "types": "./dist/server-components/props.d.ts",
+      "default": "./dist/server-components/props.js"
+    },
+    "./server-components/stream": {
+      "bun": "./src/server-components/stream.ts",
+      "types": "./dist/server-components/stream.d.ts",
+      "default": "./dist/server-components/stream.js"
+    },
+    "./server-components/state": {
+      "bun": "./src/server-components/state.ts",
+      "types": "./dist/server-components/state.d.ts",
+      "default": "./dist/server-components/state.js"
+    },
+    "./server-components/native": {
+      "bun": "./src/server-components/native.ts",
+      "types": "./dist/server-components/native.d.ts",
+      "default": "./dist/server-components/native.js"
+    },
+    "./server-components/islands": {
+      "bun": "./src/server-components/islands.ts",
+      "types": "./dist/server-components/islands.d.ts",
+      "default": "./dist/server-components/islands.js"
+    },
+    "./server-components/range": {
+      "bun": "./src/server-components/range.ts",
+      "types": "./dist/server-components/range.d.ts",
+      "default": "./dist/server-components/range.js"
+    },
+    "./server-components/build-info": {
+      "bun": "./src/server-components/build-info.ts",
+      "types": "./dist/server-components/build-info.d.ts",
+      "default": "./dist/server-components/build-info.js"
+    },
+    "./server-components/portal": {
+      "bun": "./src/server-components/portal.ts",
+      "types": "./dist/server-components/portal.d.ts",
+      "default": "./dist/server-components/portal.js"
+    },
+    "./server-components/trusted-html": {
+      "bun": "./src/server-components/trusted-html.ts",
+      "types": "./dist/server-components/trusted-html.d.ts",
+      "default": "./dist/server-components/trusted-html.js"
     }
   },
   "files": [
@@ -245,7 +315,8 @@
   },
   "dependencies": {
     "@nifrajs/core": "workspace:*",
-    "@nifrajs/island-trigger": "workspace:*"
+    "@nifrajs/island-trigger": "workspace:*",
+    "parse5": "8.0.1"
   },
   "peerDependencies": {
     "@babel/core": "^7.26.0",
@@ -255,7 +326,9 @@
     "@stylexjs/babel-plugin": "^0.19.0",
     "sass": "^1.0.0",
     "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0",
-    "web-vitals": "^6.0.0"
+    "web-vitals": "^6.0.0",
+    "typescript": "^5.9.0 || ^6.0.0",
+    "@vitejs/plugin-rsc": "0.5.35"
   },
   "peerDependenciesMeta": {
     "@babel/core": {
@@ -281,6 +354,12 @@
     },
     "web-vitals": {
       "optional": true
+    },
+    "typescript": {
+      "optional": true
+    },
+    "@vitejs/plugin-rsc": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -294,8 +373,19 @@
     "@nifrajs/web-react": "workspace:*",
     "@stylexjs/babel-plugin": "^0.19.0",
     "@stylexjs/stylex": "^0.19.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/react": "19.2.17",
+    "@vitejs/plugin-rsc": "0.5.35",
+    "@vitejs/plugin-vue": "6.0.9",
+    "playwright": "1.63.0",
     "sass": "^1.77.0",
+    "solid-js": "1.9.14",
+    "svelte": "5.56.8",
+    "svelte-check": "4.7.6",
     "vite": "^8.2.1",
+    "vite-plugin-solid": "2.11.14",
+    "vue": "3.5.40",
+    "vue-tsc": "3.3.12",
     "web-vitals": "^6.2.2"
   },
   "repository": {

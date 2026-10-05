@@ -76,6 +76,7 @@ export interface RenderedPage {
 }
 
 export interface RenderPageOptions {
+  readonly serverComponents?: import("../server-components/types.ts").ComponentState
   readonly adapter: RenderAdapter
   /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */
   readonly chain: readonly unknown[]
@@ -343,6 +344,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     boundarySplit === undefined
       ? ""
       : `,"${BOUNDARY_GLOBAL}":${serializeData(boundarySplit.forClient)}`
+  const componentTail =
+    options.serverComponents === undefined
+      ? ""
+      : `,"__NIFRA_COMPONENTS__":${serializeData(options.serverComponents)}`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
@@ -443,7 +448,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Tail - the page-state handover + the client module. Module scripts defer (run after parse), so
   // the handover + every streamed deferred resolution are in the document before the entry hydrates.
   const tailHtml = hydrate
-    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${slot.tailPost}`
+    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${componentTail}${slot.tailPost}`
     : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   // Caller-supplied headers (a terminal status page's `cache-control`, say). Applied before the
@@ -469,6 +474,9 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     if (policy !== undefined) headers["content-security-policy"] = policy
   }
   const renderProps: RenderProps = {
+    ...(options.serverComponents === undefined
+      ? {}
+      : { serverComponents: options.serverComponents }),
     data: forComponent,
     actionData: actionSplit?.forComponent,
     // `params`/`path` thread the matched route + URL to the adapter's `useParams`/`useLocation` so they

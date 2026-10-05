@@ -1886,6 +1886,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **executeCapability** _(function)_ - `executeCapability: <T>(context: object, capability: string, options: CapabilityExecutionOptions, executor: CapabilityExecutor<T>) => Promise<T>`
   Execute one owned effect behind a fail-closed capability boundary. The boundary assigns a stable effect id, records intent before execution, and records exactly one terminal outcome automatically. The callback result and errors never enter the token-only ledger.
+- **narrowCapabilityContext** _(function)_ - `narrowCapabilityContext: (context: object, allowed: readonly string[]) => object`
+  Preserve the request's effect/admission scope while restricting a nested execution's privileges.
 - **recordCapabilityOutcome** _(function)_ - `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
   Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **snapshotCapabilities** _(function)_ - `snapshotCapabilities: (report: CapabilityAssuranceReport) => CapabilitySnapshot`
@@ -5348,7 +5350,6 @@ _No named exports (side-effect entrypoint)._
 - **prerenderRoutes** _(function)_ - `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
   Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient` (so the app references the hashed client entry). Returns a report of what was emitted vs skipped - the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR work…
 - **publicEnvDefines** _(function)_ - `publicEnvDefines: (prefix: string, env: Readonly<Record<string, string | undefined>>) => Record<string, string>`
-  The `process.env.<NAME>` → `JSON.stringify(value)` define entries for every env var whose name carries `prefix` (the Vite/Next public-env convention). Exposing ONLY the prefixed vars is the security boundary: an unprefixed var (a secret) never gets a define, so the bare `process.env` define resolve…
 - **reactDedupePlugin** _(const)_ - `reactDedupePlugin: (from: string) => BunPlugin`
 - **renderSizeReport** _(function)_ - `renderSizeReport: (report: SizeReport) => string`
   Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row - the text `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.
@@ -5863,7 +5864,7 @@ _No named exports (side-effect entrypoint)._
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
 - **LeakGuardSecretOptions** _(interface)_ - `interface LeakGuardSecretOptions`
-- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" >`
+- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" > & { readonly componentModules?: ReadonlySet<string> }`
   What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
 - **viteAssetUrlGuard** _(function)_ - `viteAssetUrlGuard: (options?: ServerZoneGuardOptions) => AssetUrlGuardPlugin`
   Keep server files out of a Vite client build's assets. A `new URL("./x", import.meta.url)` makes Vite copy the file it names into the output, or inline it into the chunk as a `data:` URL when it is small - no module and no import edge, so {@link viteLeakGuard}'s graph never sees it. This refuses a …
@@ -5942,6 +5943,145 @@ _No named exports (side-effect entrypoint)._
 - **writeRouteTypes** _(function)_ - `writeRouteTypes: (options: RouteTypesOptions) => RouteTypesResult`
   Bring `.nifra/types` up to date with the app's routes. Unchanged files are left alone, so an editor watching them sees only real changes. Owns the directory: anything else in it is removed.
 
+### `@nifrajs/web/server-components`
+
+- **ComponentErrorCode** _(type)_ - `type ComponentErrorCode = (typeof COMPONENT_ERROR_CODES)[number]`
+- **ComponentInstance** _(interface)_ - `interface ComponentInstance`
+- **ComponentIsland** _(interface)_ - `interface ComponentIsland`
+- **ComponentKey** _(type)_ - `type ComponentKey = string | number`
+- **ComponentOwner** _(interface)_ - `interface ComponentOwner`
+- **ComponentRecord** _(interface)_ - `interface ComponentRecord`
+- **ComponentRender** _(interface)_ - `interface ComponentRender`
+- **ComponentRenderContext** _(interface)_ - `interface ComponentRenderContext`
+- **ComponentState** _(interface)_ - `interface ComponentState`
+- **ComponentValue** _(type)_ - `type ComponentValue = | null | boolean | number | string | readonly ComponentValue[] | { readonly [key: string]: ComponentValue }`
+- **PreparedServerComponent** _(interface)_ - `interface PreparedServerComponent<Props = unknown, View = unknown>`
+- **ServerComponent** _(interface)_ - `interface ServerComponent<Input = unknown, Props = unknown, View = unknown>`
+- **ServerComponentContext** _(interface)_ - `interface ServerComponentContext`
+- **ServerComponentDefinition** _(interface)_ - `interface ServerComponentDefinition<Input, Props, View>`
+- **ServerComponentError** _(class)_ - `class ServerComponentError`
+- **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
+- **ServerComponentRenderAdapter** _(interface)_ - `interface ServerComponentRenderAdapter`
+- **ServerComponentRuntime** _(interface)_ - `interface ServerComponentRuntime`
+  Optional seam passed to createWebApp; disabled applications have no runtime import of this feature.
+- **ServerComponentsOptions** _(interface)_ - `interface ServerComponentsOptions`
+- **createServerComponents** _(function)_ - `createServerComponents: (options: ServerComponentsOptions) => ServerComponentRuntime`
+- **defineComponentOwner** _(function)_ - `defineComponentOwner: <const Owner extends ComponentOwner>(owner: Owner) => Owner`
+- **defineServerComponent** _(function)_ - `defineServerComponent: <Input, Props, View>(definition: ServerComponentDefinition<Input, Props, View>, reference?: string) => ServerComponent<Input, Props, View>`
+- **inheritOwnerAuthorization** _(function)_ - `inheritOwnerAuthorization: () => void`
+- **isServerComponent** _(function)_ - `isServerComponent: (value: unknown) => value is ServerComponent`
+- **prepareServerComponent** _(function)_ - `prepareServerComponent: <Input, Props, View>(component: ServerComponent<Input, Props, View>, input: unknown, ctx: ServerComponentContext) => Promise<PreparedServerComponent<Props, View>>`
+- **serverComponentIdentity** _(function)_ - `serverComponentIdentity: (owner: string, component: ServerComponentHandle, key: string | number, parent?: string | null) => Promise<string>`
+- **serverComponentInstance** _(function)_ - `serverComponentInstance: <Input, Props, View>(component: ServerComponent<Input, Props, View>, key: string | number, input: Input, parent?: string) => ComponentInstance`
+
+### `@nifrajs/web/server-components/build`
+
+- **ComponentPipelineOptions** _(interface)_ - `interface ComponentPipelineOptions`
+- **buildServerComponents** _(function)_ - `buildServerComponents: (options: ComponentPipelineOptions) => Promise<ComponentBuildResult>`
+- **componentBuildId** _(function)_ - `componentBuildId: (root: string, outDir?: string) => string`
+  One content-derived generation for every environment; no payloads or paths are published.
+- **devServerComponents** _(function)_ - `devServerComponents: (options: ComponentPipelineOptions) => Promise<Awaited<ReturnType<typeof createServer>>>`
+- **serverComponentsConfig** _(function)_ - `serverComponentsConfig: (options: ComponentPipelineOptions, generationId?: string) => Promise<UserConfig>`
+  Coordinated Vite 8 build/dev configuration with the ordinary Nifra boundary guards.
+
+### `@nifrajs/web/server-components/build-info`
+
+- **componentBuild** _(const)_ - `componentBuild: string`
+  The coordinated compiler replaces this value in every environment.
+
+### `@nifrajs/web/server-components/client`
+
+- **ComponentClientAdapter** _(interface)_ - `interface ComponentClientAdapter`
+- **ComponentClientRoot** _(interface)_ - `interface ComponentClientRoot`
+- **ComponentController** _(class)_ - `class ComponentController`
+- **ComponentControllerOptions** _(interface)_ - `interface ComponentControllerOptions`
+- **ComponentKey** _(type)_ - `type ComponentKey = string | number`
+- **ComponentRecord** _(interface)_ - `interface ComponentRecord`
+- **ComponentState** _(interface)_ - `interface ComponentState`
+- **CurrentComponent** _(type)_ - `type CurrentComponent = () => boolean`
+- **ServerComponent** _(interface)_ - `interface ServerComponent<Input = unknown, Props = unknown, View = unknown>`
+- **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
+- **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
+  Optional router integration; imported only by opted-in application entries.
+- **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
+- **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
+- **refreshAfterComponentMutation** _(function)_ - `refreshAfterComponentMutation: <T extends { readonly ok: boolean; }>(mutation: Promise<T>, controller: ComponentController, instances: readonly string[]) => Promise<T>`
+  Refresh only after the existing mutation transport reports success.
+- **resolveComponentRecord** _(function)_ - `resolveComponentRecord: <Input>(state: ComponentState, component: Pick<ServerComponent<Input>, "reference" | "input">, key: ComponentKey, input: NoInfer<Input>, parent?: string | null) => ComponentRecord`
+
+### `@nifrajs/web/server-components/islands`
+
+- **ClientIsland** _(interface)_ - `interface ClientIsland<Props = unknown, Component = unknown>`
+- **IslandInstance** _(interface)_ - `interface IslandInstance`
+- **NativeServerView** _(interface)_ - `interface NativeServerView`
+- **clientIsland** _(function)_ - `clientIsland: <Props>(contract: ClientIsland<Props>, key: ComponentKey, props: NoInfer<Props>, slots?: Readonly<Record<string, string>>) => IslandInstance`
+- **defineClientIsland** _(function)_ - `defineClientIsland: <Props, Component>(definition: { readonly props: StandardSchemaV1<unknown, Props>; readonly component: Component; readonly slots?: readonly string[]; } & CompatibleComponent<NoInfer<Props>, NoInfer<C…`
+- **isClientIsland** _(function)_ - `isClientIsland: (value: unknown) => value is ClientIsland`
+- **isNativeServerView** _(function)_ - `isNativeServerView: (value: unknown) => value is NativeServerView`
+- **nativeServerView** _(function)_ - `nativeServerView: (component: unknown, islands?: Readonly<Record<string, IslandInstance>>, ranges?: Readonly<Record<string, ComponentRecord>>) => NativeServerView`
+  Server-only native view: Vue VNode/component, Svelte component or Solid component.
+- **serverComponentChild** _(function)_ - `serverComponentChild: (children: readonly ComponentRecord[], component: Pick<ServerComponentHandle, "reference">, key: ComponentKey) => ComponentRecord`
+
+### `@nifrajs/web/server-components/native`
+
+- **NativeRender** _(type)_ - `type NativeRender = ( component: unknown, props: Record<string, unknown>, renderId: string, ) => string | Promise<string>`
+- **nativeServerComponents** _(function)_ - `nativeServerComponents: (name: "vue" | "svelte" | "solid", render: NativeRender) => ServerComponentRenderAdapter`
+
+### `@nifrajs/web/server-components/portal`
+
+- **componentPortalTarget** _(function)_ - `componentPortalTarget: (source: Element, target: Element) => Element`
+  Resolve only a declared target inside the island or component that owns the calling node.
+- **disposeComponentPortals** _(function)_ - `disposeComponentPortals: (owner: Element) => Promise<void>`
+- **ownComponentPortal** _(function)_ - `ownComponentPortal: (source: Element, target: Element, cleanup: () => void | Promise<void>) => () => Promise<void>`
+  Native portal actions register cleanup with the island that owns their target.
+
+### `@nifrajs/web/server-components/props`
+
+- **guardComponentProps** _(function)_ - `guardComponentProps: (schema: StandardSchemaV1, value: unknown) => Promise<unknown>`
+
+### `@nifrajs/web/server-components/range`
+
+- **NativeIslandRoot** _(interface)_ - `interface NativeIslandRoot`
+- **NativeIslandRuntime** _(interface)_ - `interface NativeIslandRuntime`
+- **NativeRangeOptions** _(interface)_ - `interface NativeRangeOptions`
+- **nativeComponentClient** _(function)_ - `nativeComponentClient: (options: NativeRangeOptions) => ComponentClientAdapter`
+- **parseComponentHTML** _(function)_ - `parseComponentHTML: (html: string, context: Element, trustedHTML?: NativeRangeOptions["trustedHTML"]) => DocumentFragment`
+  Parse inertly and reject executable content before it can reach a live document.
+
+### `@nifrajs/web/server-components/source`
+
+- **CompiledComponentModule** _(interface)_ - `interface CompiledComponentModule`
+- **compileComponentModule** _(function)_ - `compileComponentModule: (source: string, file: string, root: string, environment: string, kind?: "server" | "island") => CompiledComponentModule`
+- **componentReference** _(function)_ - `componentReference: (file: string, root: string, name: string) => string`
+- **directive** _(function)_ - `directive: (file: ts.SourceFile, value: string) => boolean`
+- **exportedValues** _(function)_ - `exportedValues: (file: ts.SourceFile) => readonly string[]`
+- **guardCreateElementCalls** _(function)_ - `guardCreateElementCalls: (source: string, file: string) => string`
+- **sourceFile** _(function)_ - `sourceFile: (source: string, file: string) => ts.SourceFile`
+
+### `@nifrajs/web/server-components/state`
+
+- **componentToken** _(function)_ - `componentToken: (value: unknown) => value is string`
+- **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
+
+### `@nifrajs/web/server-components/stream`
+
+- **bytesStream** _(function)_ - `bytesStream: (bytes: Uint8Array) => ReadableStream<Uint8Array>`
+- **decodeComponentBytes** _(function)_ - `decodeComponentBytes: (value: unknown) => Uint8Array`
+- **encodeComponentBytes** _(function)_ - `encodeComponentBytes: (bytes: Uint8Array) => string`
+- **readComponentBytes** _(function)_ - `readComponentBytes: (stream: ReadableStream<Uint8Array>, signal: AbortSignal, limit?: number) => Promise<Uint8Array>`
+  The bounded snapshot is shared by SSR and hydration; it never tees into an unread branch.
+
+### `@nifrajs/web/server-components/trusted-html`
+
+- **installComponentTrustedTypesPolicy** _(function)_ - `installComponentTrustedTypesPolicy: () => void`
+  Explicit opt-in for native framework HTML sinks. Every accepted string is tokenized first.
+
+### `@nifrajs/web/server-components/vite`
+
+- **ServerComponentsPluginOptions** _(interface)_ - `interface ServerComponentsPluginOptions`
+- **serverComponentsPlugin** _(function)_ - `serverComponentsPlugin: (options: ServerComponentsPluginOptions) => Plugin & { readonly api: { readonly componentModules: ReadonlySet<string>; }; }`
+  Compiler bridge. The ordinary build must continue rejecting arbitrary server imports.
+
 ### `@nifrajs/web/service-worker`
 
 - **ServiceWorkerManifest** _(interface)_ - `interface ServiceWorkerManifest`
@@ -5988,6 +6128,7 @@ _No named exports (side-effect entrypoint)._
 - **PackageEnvironment** _(type)_ - `type PackageEnvironment = "frontend" | "backend" | "shared" | "library"`
 - **ROUTE_BACKEND_FILE** _(const)_ - `ROUTE_BACKEND_FILE: RegExp`
   A route's backend half: `x.backend.ts`. Script extensions only; JSX belongs to the frontend half.
+- **SERVER_COMPONENT_FILE** _(const)_ - `SERVER_COMPONENT_FILE: RegExp`
 - **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
   Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
@@ -6294,6 +6435,51 @@ _No named exports (side-effect entrypoint)._
 - **useSearchParams** _(function)_ - `useSearchParams: () => readonly [URLSearchParams, SetSearchParams]`
   The current query as a `URLSearchParams` (SSR-correct via the router context) plus a setter that navigates to the new query. Mirrors react-router's `useSearchParams` tuple.
 
+### `@nifrajs/web-react/server-components`
+
+- **ReactFlightRenderer** _(type)_ - `type ReactFlightRenderer = ( reference: string, props: unknown, context: ComponentRenderContext, ) => Promise<ReadableStream<Uint8Array>>`
+- **reactServerComponents** _(function)_ - `reactServerComponents: (renderFlight: ReactFlightRenderer) => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-react/server-components/client`
+
+- **reactComponentClient** _(function)_ - `reactComponentClient: () => ComponentClientAdapter`
+
+### `@nifrajs/web-react/server-components/guard`
+
+- **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined`
+- **guardedClientReference** _(function)_ - `guardedClientReference: (reference: unknown, schema: StandardSchemaV1, slots?: readonly string[]) => ComponentType<Record<string, unknown>>`
+  Called by generated facades. The actual native reference stays private to this module.
+- **guardedCloneElement** _(function)_ - `guardedCloneElement: (element: ReactElement, props?: unknown, ...children: ReactNode[]) => ReactNode`
+- **guardedCreateElement** _(function)_ - `guardedCreateElement: (type: unknown, props?: unknown, ...children: ReactNode[]) => ReactNode`
+
+### `@nifrajs/web-react/server-components/jsx-dev-runtime`
+
+- **Fragment** _(const)_ - `Fragment: ExoticComponent<FragmentProps>`
+  Lets you group elements without a wrapper node.
+- **jsxDEV** _(function)_ - `jsxDEV: (type: unknown, props: unknown, key: unknown, isStaticChildren: boolean, source?: { fileName: string; lineNumber: number; columnNumber: number; }, self?: unknown) => unknown`
+
+### `@nifrajs/web-react/server-components/jsx-runtime`
+
+- **Fragment** _(const)_ - `Fragment: ExoticComponent<FragmentProps>`
+  Lets you group elements without a wrapper node.
+- **jsx** _(function)_ - `jsx: (type: unknown, props: unknown, key?: unknown) => unknown`
+- **jsxs** _(function)_ - `jsxs: (type: unknown, props: unknown, key?: unknown) => unknown`
+
+### `@nifrajs/web-react/server-components/nested`
+
+- **NestedServerComponent** _(function)_ - `NestedServerComponent: ({ instance, html, }: { readonly instance: string; readonly html: string; }) => import("react").DOMElement<{ "data-nifra-component": string; dangerouslySetInnerHTML: { __html: string; }; }, Elemen…`
+  The outer Flight root preserves this host; the controller owns the complete nested range.
+
+### `@nifrajs/web-react/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("react").FunctionComponentElement<{ readonly state: ComponentState; readonly record: import("@nifrajs/web/server-component…`
+- **ServerComponentProps** _(interface)_ - `interface ServerComponentProps<Input, Props, View>`
+
+### `@nifrajs/web-react/server-components/rsc`
+
+- **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRenderContext) => Promise<ReadableStream<Uint8Array>>`
+  Export this renderer from the compiler's RSC entry, which owns React's server condition.
+
 ## @nifrajs/web-solid
 
 ### `@nifrajs/web-solid`
@@ -6405,6 +6591,18 @@ _No named exports (side-effect entrypoint)._
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read…
 
+### `@nifrajs/web-solid/server-components`
+
+- **solidServerComponents** _(const)_ - `solidServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-solid/server-components/client`
+
+- **solidComponentClient** _(function)_ - `solidComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
+
+### `@nifrajs/web-solid/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: { readonly state: ComponentState; readonly component: Handle<Input, Props, View>; readonly instanceKey: ComponentKey; readonly input: NoInfer<Input>; readonly parent?: string…`
+
 ### `@nifrajs/web-solid/svg`
 
 - **solidSvgComponentBunPlugin** _(function)_ - `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
@@ -6504,6 +6702,14 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
+
+### `@nifrajs/web-svelte/server-components`
+
+- **svelteServerComponents** _(const)_ - `svelteServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-svelte/server-components/client`
+
+- **svelteComponentClient** _(function)_ - `svelteComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
 
 ### `@nifrajs/web-svelte/svg`
 
@@ -6635,6 +6841,21 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
   The route's typed, validated search params as a reactive ref - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value` …
+
+### `@nifrajs/web-vue/server-components`
+
+- **vueServerComponents** _(const)_ - `vueServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-vue/server-components/client`
+
+- **vueComponentClient** _(function)_ - `vueComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
+
+### `@nifrajs/web-vue/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => VNode`
+- **ServerComponentProps** _(interface)_ - `interface ServerComponentProps<Input, Props, View>`
+- **createServerComponentOutlet** _(function)_ - `createServerComponentOutlet: <Input, Props, View>(component: Handle<Input, Props, View>) => FunctionalComponent<Omit<ServerComponentProps<Input, Props, View>, "component">>`
+  Specialize the schema before Vue's h/template component-prop inference.
 
 ### `@nifrajs/web-vue/svg`
 

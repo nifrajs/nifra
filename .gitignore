@@ -84,3 +84,4 @@ dv-*/
 /.playwright-cli
 /vite-split-*.png
 /docs/
+/.nifra-components-fixtures/

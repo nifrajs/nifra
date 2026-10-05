@@ -23,6 +23,8 @@ export type Zone =
   | "shared"
   /** A server-function module (`*.fn.ts`); the browser only ever receives its generated RPC stub. */
   | "fn"
+  /** A compiler-owned server UI module; only opaque reference stubs may reach a browser. */
+  | "component"
   /** Framework output (the client entry, the server composition, generated types). */
   | "generated"
   /** A third-party package, or a workspace package declaring `"nifra": { "environment": "library" }`. */
@@ -118,6 +120,7 @@ const SOURCE = "(?:[cm]?[jt]sx?|svelte|vue|mdx)"
 export const ROUTE_BACKEND_FILE = /\.backend\.(?:[cm]?[jt]s)$/
 const ZONE_SUFFIX = new RegExp(`\\.(frontend|backend|shared|fn)\\.${SOURCE}$`)
 const LEGACY_SERVER_SUFFIX = new RegExp(`\\.server\\.${SOURCE}$`)
+export const SERVER_COMPONENT_FILE = /\.component\.server\.[cm]?[jt]sx?$/
 
 const ZONE_FOLDERS: Readonly<Record<string, Zone>> = {
   frontend: "frontend",
@@ -437,6 +440,8 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
       if (SERVER_MANIFEST_FILE.test(base) && isGeneratedServerManifest(file)) {
         return { zone: "generated" }
       }
+      if (SERVER_COMPONENT_FILE.test(base)) return { zone: "component" }
+      if (/\.island\.[cm]?[jt]sx?$/.test(base)) return { zone: "frontend" }
       if (LEGACY_SERVER_SUFFIX.test(base)) {
         return {
           zone: "error",
@@ -579,6 +584,7 @@ export function browserDenial(
 
 /** Whether a module in `from` may import (with a value import) a module in `to`. */
 export function importAllowed(from: Zone, to: Zone): boolean {
+  if (from === "component") return true
   if (from === "generated" || from === "library") return true
   if (to === "generated" || to === "library") return true
   if (FRONTEND_ZONES.has(from)) return FRONTEND_ZONES.has(to) || to === "shared" || to === "fn"

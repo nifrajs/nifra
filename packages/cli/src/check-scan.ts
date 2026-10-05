@@ -1834,6 +1834,7 @@ export function walkServerOnlyChain(
   resolve: ModuleResolver,
   read: ModuleReader,
   facts?: SourceFacts,
+  componentReceipts: ReadonlySet<string> = new Set(),
 ): readonly string[] | undefined {
   // Frontier nodes carry the absolute file to inspect, the source to scan, the display chain so far
   // (route + the as-written specifier of each hop), and the file the imports resolve relative to.
@@ -1860,6 +1861,7 @@ export function walkServerOnlyChain(
         if (!isRelativeSpecifier(spec)) continue
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
+        if (componentReceipts.has(abs)) continue
         // (c) Backend code is a sink: the browser build refuses it. A `*.fn.ts` module ships as its
         // generated stub, so its imports never reach the browser and the walk does not enter it.
         if (isBackendModule(abs)) return [...node.chain, spec]
@@ -1893,6 +1895,7 @@ export function resolveServerOnlyChains(
   resolve: ModuleResolver,
   read: ModuleReader,
   facts?: SourceFacts,
+  componentReceipts: ReadonlySet<string> = new Set(),
 ): TransitiveServerImportFinding[] {
   if (!isBrowserSource(file)) return []
   const lines = content.split("\n")
@@ -1926,6 +1929,7 @@ export function resolveServerOnlyChains(
         }
         continue
       }
+      if (componentReceipts.has(abs)) continue
       // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
       if (isBackendModule(abs)) {
         flaggedSpecifiers.add(specifier)
@@ -1941,7 +1945,7 @@ export function resolveServerOnlyChains(
         continue
       }
       // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
-      const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts)
+      const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts, componentReceipts)
       if (subChain !== undefined) {
         flaggedSpecifiers.add(specifier)
         // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the

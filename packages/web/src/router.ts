@@ -91,6 +91,7 @@ export const NAV_FROM_HEADER = "x-nifra-from"
  * structure rather than by assuming the deploy was atomic.
  */
 export interface RouteDataEnvelope {
+  readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
   readonly v: 1
   readonly data: unknown
   readonly layoutData?: readonly unknown[]
@@ -130,6 +131,7 @@ export interface Submission {
 
 /** The router's observable state. A new object is published on every transition. */
 export interface RouterState {
+  readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
   readonly routeId: string
   readonly params: Record<string, string>
   /** The current URL path (used to revalidate the active loader after an action). */
@@ -520,11 +522,18 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
    * an older build be read by newer client code.
    */
   type LoadedRouteData = {
+    readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
     readonly data: unknown
     readonly layoutData?: readonly unknown[] | undefined
     readonly terminalRouteId?: string | undefined
     readonly boundaries?: BoundaryStates
   }
+  const dataFields = (value: LoadedRouteData) => ({
+    data: value.data,
+    layoutData: value.layoutData,
+    serverComponents: value.serverComponents,
+    ...(value.boundaries === undefined ? {} : { boundaries: value.boundaries }),
+  })
   const loadRouteData = async (
     path: string,
     match: { routeId: string; params: Record<string, string> },
@@ -552,24 +561,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
       return { data: null, terminalRouteId }
     }
-    if (retainFrom === undefined || payload.retained === undefined) {
-      return {
-        data: payload.data,
-        layoutData: payload.layoutData,
-        ...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),
-      }
+    let layoutData = payload.layoutData
+    if (retainFrom !== undefined && payload.retained !== undefined) {
+      const retained = new Set(
+        payload.retained.filter(
+          (index) => Number.isInteger(index) && index >= 0 && index < retainFrom.layoutData.length,
+        ),
+      )
+      layoutData = layoutData?.map((value, index) =>
+        retained.has(index) ? retainFrom.layoutData[index] : value,
+      )
     }
-    const retained = new Set(
-      payload.retained.filter(
-        (index) => Number.isInteger(index) && index >= 0 && index < retainFrom.layoutData.length,
-      ),
-    )
-    const layoutData = payload.layoutData?.map((value, index) =>
-      retained.has(index) ? retainFrom.layoutData[index] : value,
-    )
     return {
       data: payload.data,
       layoutData,
+      serverComponents: payload.serverComponents,
       ...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),
     }
   }
@@ -645,11 +651,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     navAbort?.abort()
     const ac = new AbortController()
     navAbort = ac
-    const initial = {
-      data: state.data,
-      layoutData: state.layoutData,
-      ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-    }
+    const initial = dataFields(state)
     const loaded = await applyClientLoader(
       state.path,
       route,
@@ -664,9 +666,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     } else {
       state = {
         ...state,
-        data: loaded.data,
-        layoutData: loaded.layoutData,
-        ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+        ...dataFields(loaded),
       }
     }
     emit()
@@ -708,6 +708,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     }
   >()
   const cachePut = (path: string, loaded: LoadedRouteData): void => {
+    if (loaded.serverComponents !== undefined) {
+      cache.delete(path)
+      return
+    }
     if (!cache.has(path) && cache.size >= MAX_CACHE) {
       const oldest = cache.keys().next().value
       if (oldest !== undefined) cache.delete(oldest)
@@ -818,9 +822,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       cachePut(state.path, loaded)
       state = {
         ...state,
-        data: loaded.data,
-        layoutData: loaded.layoutData,
-        ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+        ...dataFields(loaded),
         pending: false,
       }
       emit()
@@ -990,11 +992,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       ) {
         ++generation // supersede any in-flight navigation so its late result is dropped
         navAbort?.abort()
-        cachePut(path, {
-          data: state.data,
-          layoutData: state.layoutData,
-          ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-        })
+        cachePut(path, dataFields(state))
         state = { ...state, path, pending: false, pendingPath: undefined }
         emit()
         return
@@ -1042,9 +1040,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           routeId: loaded.terminalRouteId ?? target.routeId,
           params: loaded.terminalRouteId === undefined ? target.params : {},
           path: to,
-          data: loaded.data,
-          layoutData: loaded.layoutData,
-          ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+          ...dataFields(loaded),
           actionData: undefined, // a fresh navigation has no action result
           pending: false,
         }
@@ -1115,9 +1111,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             routeId: loaded.terminalRouteId ?? target.routeId,
             params: loaded.terminalRouteId === undefined ? target.params : {},
             path: to,
-            data: loaded.data,
-            layoutData: loaded.layoutData,
-            ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+            ...dataFields(loaded),
             actionData: undefined,
             pending: false,
           }
@@ -1138,9 +1132,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const active = { routeId: state.routeId, params: state.params }
         const loaded = skipActive
           ? {
-              data: state.data,
-              layoutData: state.layoutData,
-              ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
+              ...dataFields(state),
             }
           : await applyClientLoader(state.path, active, ac.signal, () =>
               loadRouteData(state.path, active, ac.signal),
@@ -1155,9 +1147,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           routeId: state.routeId,
           params: state.params,
           path: state.path,
-          data: loaded.data,
-          layoutData: loaded.layoutData,
-          ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+          ...dataFields(loaded),
           actionData,
           pending: false,
         }
@@ -1173,9 +1163,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             routeId: state.routeId,
             params: state.params,
             path: state.path,
-            data: state.data,
-            layoutData: state.layoutData,
-            ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
+            ...dataFields(state),
             actionData: previousActionData,
             pending: false,
           }
@@ -1217,7 +1205,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           const oldest = prefetched.keys().next().value
           if (oldest !== undefined) prefetched.delete(oldest)
         }
-        prefetched.set(path, [loaded, Date.now()])
+        if (loaded.serverComponents === undefined) prefetched.set(path, [loaded, Date.now()])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {

@@ -16,12 +16,13 @@ import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
-import { PRERENDERED_LIST_PATH } from "../router.ts"
+import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 export interface CreateWebAppOptions<Env = unknown> {
+  readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
   /** URL of the built client entry (module script) injected into every page. */
@@ -306,6 +307,38 @@ export function createWebApp<Env = unknown>(
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
   options.use?.(app)
+  if (options.serverComponents !== undefined) {
+    const runtime = options.serverComponents
+    const match = createMatcher(
+      manifest.routes
+        .filter((route) => runtime.owns(route.id))
+        .map((route) => ({ routeId: route.id, pattern: route.pattern })),
+    )
+    const privateRoute = (request: Request): boolean =>
+      request.headers.has("x-nifra-component") || match(new URL(request.url).pathname) !== undefined
+    Object.defineProperty(app, Symbol.for("nifra.web.private-route"), { value: privateRoute })
+    app.onResponse((response, request) => {
+      if (!privateRoute(request)) return response
+      const headers = new Headers(response.headers)
+      headers.set("cache-control", "private, no-store")
+      const vary = new Set(
+        (headers.get("vary") ?? "")
+          .split(",")
+          .map((name) => name.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      vary.add("x-nifra-component")
+      vary.add("x-nifra-data")
+      headers.set("vary", [...vary].join(", "))
+      headers.delete("x-nifra-isr-revalidate")
+      headers.delete("x-nifra-isr-tags")
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      })
+    })
+  }
   // A resolver created by `createNonceResolver({ header })` carries a paired response hook. Register it
   // after caller middleware so its request-specific CSP value is the last default applied to a page.
   const nonceResponse = options.nonce?.onResponse
@@ -361,6 +394,22 @@ export function createWebApp<Env = unknown>(
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
   const pageExecutor = createPageRequestExecutor<Env>({
+    ...(options.serverComponents === undefined
+      ? {}
+      : { serverComponents: options.serverComponents }),
+    ...(options.serverComponents === undefined
+      ? {}
+      : {
+          rerenderOwnerGET: async (
+            request: Request,
+            context: import("./page-execution.ts").PageRouteContext<Env>,
+          ) =>
+            app.fetch(request, {
+              env: context.env,
+              ...(context.waitUntil === undefined ? {} : { waitUntil: context.waitUntil }),
+              ...(context.clientIp === undefined ? {} : { clientIp: context.clientIp }),
+            }),
+        }),
     adapter,
     manifest,
     clientEntry,
@@ -388,7 +437,14 @@ export function createWebApp<Env = unknown>(
   })
 
   for (const route of manifest.routes) {
-    app.register("GET", route.pattern, undefined, pageExecutor.get(route))
+    app.register(
+      "GET",
+      route.pattern,
+      options.serverComponents?.owns(route.id)
+        ? { capabilities: options.serverComponents.capabilities(route.id) }
+        : undefined,
+      pageExecutor.get(route),
+    )
     app.register("POST", route.pattern, undefined, pageExecutor.post(route))
   }
   // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
@@ -477,6 +533,7 @@ export function createWebApp<Env = unknown>(
         }
         parts.push({
           evidence: await provider.call(api),
+          // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: Evidence paths acquire a prefix only when the mounted backend strips it.
           ...(apiStrip ? { pathPrefix: mountPathPrefix(apiPrefix) } : {}),
         })
       }

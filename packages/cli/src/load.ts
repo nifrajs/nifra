@@ -40,6 +40,12 @@ export type PluginsField =
  * don't).
  */
 export interface NifraFramework {
+  /** Optional coordinated Vite 8 component graph. Tooling stays in nifra.config.ts. */
+  readonly componentPipeline?: Omit<
+    import("@nifrajs/web/server-components/build").ComponentPipelineOptions,
+    "root" | "outDir" | "port" | "plugins"
+  >
+  readonly serverComponents?: CreateWebAppOptions["serverComponents"]
   /** The render adapter, e.g. `reactAdapter` from `@nifrajs/web-react`. */
   readonly adapter: unknown
   /** The client runtime module providing `mountRouter`, e.g. `"@nifrajs/web-react/client"`. */
@@ -106,7 +112,14 @@ export interface NifraFramework {
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
  * entry, in one list so every command that builds the app forwards the same set. */
-export const FRAMEWORK_WEB_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export const FRAMEWORK_WEB_OPTIONS = [
+  "apiPrefix",
+  "apiStrip",
+  "mounts",
+  "csp",
+  "nonce",
+  "serverComponents",
+] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
 /** Refuse a forwarded field of the wrong shape at load, naming the field, rather than letting it fail
@@ -114,6 +127,24 @@ export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: string): void {
   const wrong = (field: string, expected: string): never => {
     throw new Error(`[nifra] ${configFile}: \`${field}\` must be ${expected}.`)
+  }
+  if (fw.componentPipeline !== undefined) {
+    const pipeline = fw.componentPipeline
+    if (
+      typeof pipeline !== "object" ||
+      pipeline === null ||
+      !["react", "vue", "svelte", "solid"].includes(pipeline.adapter) ||
+      typeof pipeline.entries !== "object" ||
+      pipeline.entries === null ||
+      typeof pipeline.entries.client !== "string" ||
+      typeof pipeline.entries.ssr !== "string" ||
+      (pipeline.adapter === "react" && typeof pipeline.entries.rsc !== "string") ||
+      (pipeline.adapter !== "react" && pipeline.entries.rsc !== undefined)
+    )
+      wrong(
+        "componentPipeline",
+        "an adapter plus existing client/ssr entries and a React-only rsc entry",
+      )
   }
   if (fw.apiPrefix !== undefined && typeof fw.apiPrefix !== "string") {
     wrong("apiPrefix", 'a path string such as "/api", or "" to turn the backend mount off')

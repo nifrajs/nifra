@@ -722,6 +722,21 @@ async function runCapabilityInterceptors(
   await nextPromise
 }
 
+/** Preserve the request's effect/admission scope while restricting a nested execution's privileges. */
+export function narrowCapabilityContext(context: object, allowed: readonly string[]): object {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The private symbol stores only the capability guard installed by owner admission.
+  const guard = (context as { readonly [CAPABILITY_GUARD]?: CapabilityGuard })[CAPABILITY_GUARD]
+  const capabilities = Object.freeze([...new Set(allowed)])
+  for (const capability of capabilities) guardFor(context, capability)
+  const child: object = Object.create(context)
+  if (guard !== undefined) {
+    Object.defineProperty(child, CAPABILITY_GUARD, {
+      value: Object.freeze({ ...guard, allowed: capabilities }),
+    })
+  }
+  return child
+}
+
 function guardFor(context: object, capability: string): CapabilityGuard {
   if (!validCapabilityId(capability)) {
     throw new Error(

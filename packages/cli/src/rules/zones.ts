@@ -123,6 +123,11 @@ export const zoneImportRule: CheckRule = {
   title: "Zone import check",
   async scan(ctx) {
     const { files, classifierFor, configErrors } = zonedFiles(ctx)
+    const receipts = ctx.sources.files.some((file) =>
+      /\.component\.server\.[cm]?[jt]sx?$/.test(file),
+    )
+      ? (await import("../component-check.ts")).componentCheckReceipts(ctx.root, ctx.sources)
+      : new Set<string>()
     const findings: Diagnostic[] = configErrors.map(({ app, message }) =>
       diagnostic({
         code: "NF-C028",
@@ -143,6 +148,11 @@ export const zoneImportRule: CheckRule = {
         if (target === undefined) continue
         const to = classifierFor(app).classify(target)
         const targetName = display(ctx.root, target)
+        if (
+          ["frontend", "route-frontend", "shared"].includes(from.zone) &&
+          (receipts.has(target) || receipts.has(targetName))
+        )
+          continue
         let message: string
         if (to.zone === "error") {
           if (to.package !== undefined) {

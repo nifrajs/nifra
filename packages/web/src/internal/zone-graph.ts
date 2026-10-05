@@ -103,6 +103,8 @@ export interface ClientGraphVerdict {
 }
 
 export interface VerifyClientGraphOptions {
+  /** Exact modules certified by the component compiler in this generation. */
+  readonly componentModules?: ReadonlySet<string>
   readonly classifier: ZoneClassifier
   readonly sourceOf: (id: string) => ModuleSource
   /** The private-env denial for a browser-code file (see `privateEnvCheck`); unchecked when absent. */
@@ -407,7 +409,9 @@ export function verifyServerGraph(
       const to = classOf(target)
       if (from === undefined || to === undefined || from.zone === "error" || to.zone === "error")
         continue
-      if (!importAllowed(from.zone, to.zone)) {
+      const componentBridge =
+        to.zone === "component" && options.componentModules?.has(fileOf(target) ?? "") === true
+      if (!componentBridge && !importAllowed(from.zone, to.zone)) {
         found.push({
           at: id,
           module: labelOf(target),

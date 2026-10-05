@@ -1,0 +1,532 @@
+import { afterAll, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
+import {
+  type ComponentClientAdapter,
+  ComponentController,
+  type ComponentState,
+  resolveComponentRecord,
+} from "../src/server-components/client.ts"
+import { componentFrames } from "../src/server-components/frames.ts"
+import { COMPONENT_MEDIA_TYPE, readComponentRequest } from "../src/server-components/protocol.ts"
+
+const locationBefore = Object.getOwnPropertyDescriptor(globalThis, "location")
+Object.defineProperty(globalThis, "location", {
+  configurable: true,
+  value: { href: "https://fixture.test/owner", origin: "https://fixture.test" },
+})
+afterAll(() => {
+  if (locationBefore === undefined) Reflect.deleteProperty(globalThis, "location")
+  else Object.defineProperty(globalThis, "location", locationBefore)
+})
+const state = (scope = "scope_1", revision = "public", input = {}): ComponentState => ({
+  v: 1,
+  build: "build_1",
+  adapter: "vue",
+  owner: "owner_1",
+  scope,
+  records: [
+    {
+      reference: "reference_1",
+      instance: "instance_1",
+      parent: null,
+      key: "stable",
+      input,
+      html: revision,
+    },
+  ],
+})
+
+test("a compiled browser generation mismatch refuses hydration and reloads at most once", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "__NIFRA_COMPONENT_BUILD__")
+  Object.defineProperty(globalThis, "__NIFRA_COMPONENT_BUILD__", {
+    configurable: true,
+    value: "compiled_build",
+  })
+  let reloads = 0
+  const errors: string[] = []
+  try {
+    const h = harness()
+    for (let index = 0; index < 2; index++)
+      expect(
+        () =>
+          new ComponentController({
+            state: { ...state(), build: "stale_fixture_build" },
+            adapter: h.adapter,
+            reload: () => {
+              reloads++
+            },
+            onError: (code) => errors.push(code),
+          }),
+      ).toThrow()
+    expect(reloads).toBe(1)
+    expect(errors).toEqual(["component_version"])
+    expect(h.trace).toEqual([])
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(globalThis, "__NIFRA_COMPONENT_BUILD__")
+    else Object.defineProperty(globalThis, "__NIFRA_COMPONENT_BUILD__", previous)
+  }
+})
+test("untrusted hydration HTML and hidden managed slots fail before a native root can mount", () => {
+  const h = harness()
+  const initial = state()
+  const record = initial.records[0]!
+  for (const records of [
+    [{ ...record, html: '<img src="x" onerror="alert(1)">' }],
+    [
+      {
+        ...record,
+        islands: [
+          {
+            reference: "island",
+            key: "stable",
+            renderId: "render",
+            props: {},
+            slots: { summary: '<svg onload="alert(1)"></svg>' },
+          },
+        ],
+      },
+    ],
+  ]) {
+    expect(
+      () => new ComponentController({ state: { ...initial, records }, adapter: h.adapter }),
+    ).toThrow()
+  }
+  expect(h.trace).toEqual([])
+})
+function harness() {
+  const trace: string[] = []
+  // Pure controller tests use a host token; the actual DOM/native roots run in the browser suite.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: These controller-only host tokens implement the exercised methods; the real DOM/native ABI is covered by the three-engine browser suite.
+  const host = {} as Element
+  const adapter: ComponentClientAdapter = {
+    name: "vue",
+    prepare: (record) => record.html,
+    hydrate: (_host, record) => {
+      trace.push(`hydrate:${record.html}`)
+      return {
+        update() {},
+        dispose() {
+          trace.push(`dispose:${record.html}`)
+        },
+      }
+    },
+    create: (_host, record) => {
+      trace.push(`create:${record.html}`)
+      return {
+        update() {},
+        dispose() {
+          trace.push(`dispose:${record.html}`)
+        },
+      }
+    },
+    update: (_root, record, _prepared, current) => {
+      if (current()) trace.push(`update:${record.html}`)
+    },
+  }
+  return { trace, host, adapter }
+}
+
+test("typed outlet lookup treats reordered public input fields as the same resource", () => {
+  const initial = state("scope_1", "public", { id: "resource", filter: "public" })
+  const handle = {
+    reference: "reference_1",
+    input: t.object({ id: t.string(), filter: t.string() }),
+  }
+  expect(
+    resolveComponentRecord(initial, handle, "stable", { filter: "public", id: "resource" })
+      .instance,
+  ).toBe("instance_1")
+  expect(() =>
+    resolveComponentRecord(initial, handle, "stable", { filter: "public", id: "other" }),
+  ).toThrow()
+})
+
+test("native readiness resolves mount waiters and cancels waiters when their owner is disposed", async () => {
+  const h = harness()
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  const ready = controller.whenReady("instance_1")
+  await controller.mount(h.host, "instance_1")
+  await ready
+  await controller.whenReady("instance_1")
+  await expect(controller.whenReady("missing")).rejects.toMatchObject({
+    code: "component_unavailable",
+  })
+  await controller.dispose()
+  const other = new ComponentController({ state: state(), adapter: h.adapter })
+  const cancelled = other.whenReady("instance_1")
+  const outcome = cancelled.then(
+    () => {
+      throw new Error("Disposed owner unexpectedly became ready")
+    },
+    (error: unknown) => error,
+  )
+  await other.dispose()
+  expect(await outcome).toMatchObject({ code: "component_cancelled" })
+})
+
+test("route adoption preserves native state when equivalent input fields arrive in another order", async () => {
+  const h = harness()
+  const controller = new ComponentController({
+    state: state("scope_1", "old", { id: "resource", filter: { mode: "public", count: 1 } }),
+    adapter: h.adapter,
+  })
+  try {
+    await controller.mount(h.host, "instance_1")
+    await controller.adopt(
+      state("scope_1", "new", { filter: { count: 1, mode: "public" }, id: "resource" }),
+    )
+    expect(h.trace).toEqual(["hydrate:old", "update:new"])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("owner adoption disposes an old auth scope and creates authorized roots for stable identities", async () => {
+  const h = harness()
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    await controller.mount(h.host, "instance_1")
+    await controller.adopt(state("scope_2", "new-public"))
+    expect(h.trace).toEqual(["hydrate:public", "dispose:public", "create:new-public"])
+    expect(controller.state.scope).toBe("scope_2")
+  } finally {
+    await controller.dispose()
+  }
+})
+test("changed resource input replaces the native root even when the explicit key is stable", async () => {
+  const h = harness()
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    await controller.mount(h.host, "instance_1")
+    await controller.adopt(state("scope_1", "new-public", { resource: "next" }))
+    expect(h.trace).toEqual(["hydrate:public", "dispose:public", "create:new-public"])
+  } finally {
+    await controller.dispose()
+  }
+})
+test("scope invalidation clears private controller payloads and a subsequent verified adoption can mount", async () => {
+  const h = harness()
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    await controller.mount(h.host, "instance_1")
+    await controller.invalidateScope()
+    expect(controller.state.records).toEqual([])
+    await controller.adopt(state("scope_2", "next-public"))
+    expect(h.trace).toEqual(["hydrate:public", "dispose:public", "create:next-public"])
+  } finally {
+    await controller.dispose()
+  }
+})
+test("failed preparation can be retried without retaining an orphan mount", async () => {
+  const h = harness()
+  let first = true
+  h.adapter.prepare = () => {
+    if (first) {
+      first = false
+      throw new Error("fixture failure")
+    }
+    return null
+  }
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    await expect(controller.mount(h.host, "instance_1")).rejects.toThrow()
+    await controller.mount(h.host, "instance_1")
+    expect(h.trace).toEqual(["hydrate:public"])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+const refreshedResponse: NonNullable<
+  import("../src/server-components/client.ts").ComponentControllerOptions["fetch"]
+> = async (url, init) => {
+  const selection = readComponentRequest(
+    new Request(url, { ...init, headers: { ...init?.headers, "sec-fetch-site": "same-origin" } }),
+  )!
+  const next = state("scope_1", "next")
+  return new Response(
+    componentFrames(
+      {
+        ...selection,
+        input: undefined,
+        adapter: next.adapter,
+        owner: next.owner,
+        scope: next.scope,
+        instance: "instance_1",
+      },
+      next,
+    ),
+    { headers: { "content-type": COMPONENT_MEDIA_TYPE } },
+  )
+}
+
+test("failed decode and preparation retain the last authorized native tree", async () => {
+  for (const failure of ["decode", "prepare"] as const) {
+    const h = harness()
+    const controller = new ComponentController({
+      state: state(),
+      adapter: h.adapter,
+      fetch:
+        failure === "prepare"
+          ? refreshedResponse
+          : async () =>
+              new Response("invalid", { headers: { "content-type": COMPONENT_MEDIA_TYPE } }),
+    })
+    try {
+      await controller.mount(h.host, "instance_1")
+      if (failure === "prepare")
+        h.adapter.prepare = () => {
+          throw new Error("fixture preparation")
+        }
+      await expect(controller.refresh("instance_1")).rejects.toThrow()
+      expect(h.trace).toEqual(["hydrate:public"])
+      expect(controller.state.records[0]?.html).toBe("public")
+      h.adapter.prepare = (record) => record.html
+    } finally {
+      await controller.dispose()
+    }
+  }
+})
+
+test("a failed native commit disposes once and permits a verified remount", async () => {
+  const h = harness()
+  const controller = new ComponentController({
+    state: state(),
+    adapter: h.adapter,
+    fetch: refreshedResponse,
+  })
+  try {
+    await controller.mount(h.host, "instance_1")
+    h.adapter.update = () => {
+      throw new Error("fixture native commit")
+    }
+    await expect(controller.refresh("instance_1")).rejects.toThrow()
+    expect(h.trace).toEqual(["hydrate:public", "dispose:public"])
+    await controller.mount(h.host, "instance_1")
+    expect(h.trace).toEqual(["hydrate:public", "dispose:public", "hydrate:public"])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("only a typed generation failure reloads; busy and ordinary conflicts retain state", async () => {
+  for (const [status, body, expected] of [
+    [409, { conflict: true }, "component_failed"],
+    [429, { v: 1, error: "component_busy" }, "component_busy"],
+    [504, { v: 1, error: "component_timeout" }, "component_timeout"],
+    [409, { v: 1, error: "component_version" }, "component_version"],
+  ] as const) {
+    const h = harness()
+    let reloads = 0
+    const controller = new ComponentController({
+      state: { ...state(), build: `failure_${expected}` },
+      adapter: h.adapter,
+      reload: () => {
+        reloads++
+      },
+      fetch: async () => Response.json(body, { status }),
+    })
+    try {
+      await controller.mount(h.host, "instance_1")
+      if (expected === "component_version")
+        expect(await controller.refresh("instance_1")).toBe(false)
+      else
+        await expect(controller.refresh("instance_1")).rejects.toMatchObject({
+          code: expected,
+          status,
+        })
+      expect(reloads).toBe(expected === "component_version" ? 1 : 0)
+      expect(h.trace).toEqual(["hydrate:public"])
+    } finally {
+      await controller.dispose()
+    }
+  }
+})
+
+test("parallel parent refreshes release admission before mounting new descendants", async () => {
+  const roots = Array.from({ length: 4 }, (_, index) => ({
+    instance: `parent_${index}`,
+    reference: "reference_1",
+    parent: null,
+    key: index,
+    input: {},
+    html: "initial",
+  }))
+  const hosts = new Map<string, Element>()
+  for (const record of roots) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: These controller-only host tokens implement the exercised methods; the real DOM/native ABI is covered by the three-engine browser suite.
+    hosts.set(record.instance, {
+      querySelectorAll: () => [],
+      childNodes: [1],
+    } as unknown as Element)
+  }
+  const adapter: ComponentClientAdapter = {
+    name: "vue",
+    prepare: () => null,
+    hydrate: () => ({ update() {}, dispose() {} }),
+    create: () => ({ update() {}, dispose() {} }),
+    update(_root, record) {
+      const host = hosts.get(record.instance)!
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: These controller-only host tokens implement the exercised methods; the real DOM/native ABI is covered by the three-engine browser suite.
+      const child = {
+        childNodes: [1],
+        getAttribute: () => `${record.instance}_child`,
+        parentElement: { closest: () => host },
+      } as unknown as Element
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: These controller-only host tokens implement the exercised methods; the real DOM/native ABI is covered by the three-engine browser suite.
+      host.querySelectorAll = (() => [child]) as unknown as Element["querySelectorAll"]
+    },
+  }
+  const controller = new ComponentController({
+    state: { ...state(), records: roots },
+    adapter,
+    fetch: async (url, init) => {
+      const request = new Request(url, {
+        ...init,
+        headers: { ...init?.headers, "sec-fetch-site": "same-origin" },
+      })
+      const selection = readComponentRequest(request)!
+      const root = roots.find((record) => record.key === selection.key)!
+      const next = {
+        ...state(),
+        records: [
+          { ...root, html: "next" },
+          { ...root, instance: `${root.instance}_child`, parent: root.instance },
+        ],
+      }
+      return new Response(
+        componentFrames(
+          {
+            ...selection,
+            input: undefined,
+            adapter: next.adapter,
+            owner: next.owner,
+            scope: next.scope,
+            instance: root.instance,
+          },
+          next,
+        ),
+        { headers: { "content-type": COMPONENT_MEDIA_TYPE } },
+      )
+    },
+  })
+  try {
+    await Promise.all(
+      roots.map((record) => controller.mount(hosts.get(record.instance)!, record.instance)),
+    )
+    expect(await Promise.all(roots.map((record) => controller.refresh(record.instance)))).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a later child refresh cancels an older parent payload before it can overwrite the subtree", async () => {
+  const h = harness()
+  const parent = state().records[0]!
+  const child = { ...parent, instance: "child_1", parent: parent.instance, key: "child" }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: These controller-only host tokens implement the exercised methods; the real DOM/native ABI is covered by the three-engine browser suite.
+  const childHost = {
+    childNodes: [1],
+    getAttribute: () => child.instance,
+    parentElement: { closest: () => h.host },
+  } as unknown as Element
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: These controller-only host tokens implement the exercised methods; the real DOM/native ABI is covered by the three-engine browser suite.
+  h.host.querySelectorAll = (() => [childHost]) as unknown as Element["querySelectorAll"]
+  let release!: () => void
+  let started!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const controller = new ComponentController({
+    state: { ...state(), records: [parent, child] },
+    adapter: h.adapter,
+    fetch: async (url, init) => {
+      const selection = readComponentRequest(
+        new Request(url, {
+          ...init,
+          headers: { ...init?.headers, "sec-fetch-site": "same-origin" },
+        }),
+      )!
+      const selected = selection.key === "child" ? child : parent
+      if (selected === parent) {
+        started()
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      }
+      const next = {
+        ...state(),
+        records:
+          selected === child
+            ? [{ ...child, html: "latest-child" }]
+            : [
+                { ...parent, html: "old-parent" },
+                { ...child, html: "old-child" },
+              ],
+      }
+      return new Response(
+        componentFrames(
+          {
+            ...selection,
+            input: undefined,
+            adapter: next.adapter,
+            owner: next.owner,
+            scope: next.scope,
+            instance: selected.instance,
+          },
+          next,
+        ),
+        { headers: { "content-type": COMPONENT_MEDIA_TYPE } },
+      )
+    },
+  })
+  try {
+    await controller.mount(h.host, parent.instance)
+    const old = controller.refresh(parent.instance)
+    await waiting
+    expect(await controller.refresh(child.instance)).toBe(true)
+    release()
+    expect(await old).toBe(false)
+    expect(
+      controller.state.records.find((record) => record.instance === child.instance)?.html,
+    ).toBe("latest-child")
+    expect(h.trace).not.toContain("update:old-child")
+  } finally {
+    await controller.dispose()
+  }
+})
+test("an obsolete adoption cannot update after a later route adoption", async () => {
+  const h = harness()
+  let release!: () => void
+  let entered!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  h.adapter.prepare = async (record) => {
+    if (record.html === "old") {
+      entered()
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+    }
+    return record.html
+  }
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    await controller.mount(h.host, "instance_1")
+    const old = controller.adopt(state("scope_1", "old"))
+    await waiting
+    await controller.adopt(state("scope_1", "latest"))
+    release()
+    await old
+    expect(h.trace).toEqual(["hydrate:public", "update:latest"])
+    expect(controller.state.records[0]?.html).toBe("latest")
+  } finally {
+    await controller.dispose()
+  }
+})

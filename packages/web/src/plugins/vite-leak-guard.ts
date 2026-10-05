@@ -251,6 +251,7 @@ function secretLeak(
       artifacts,
       env: options.secrets?.env ?? process.env,
       publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+      // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: Explicitly configured secret-scan exemptions preserve their absence by default.
       ...(options.secrets?.exemptions ? { exemptions: options.secrets.exemptions } : {}),
     }),
   )
@@ -260,7 +261,7 @@ function secretLeak(
 export type ServerZoneGuardOptions = Pick<
   LeakGuardOptions,
   "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix"
->
+> & { readonly componentModules?: ReadonlySet<string> }
 
 /**
  * The server build's half of the zone rules, with the same checks and message as nifra's Bun server
@@ -285,6 +286,9 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
           classifier,
           sourceOf: rollupModuleSource,
           privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
+          ...(options.componentModules === undefined
+            ? {}
+            : { componentModules: options.componentModules }),
         }),
       )
       if (leak === undefined) return

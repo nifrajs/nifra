@@ -220,6 +220,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "`t` is TypeBox-backed and implements **Standard Schema**, so a nifra route accepts it natively (no adapter). zod/valibot/arktype work the same way at the route boundary.",
   ],
   "@nifrajs/web": [
+    "Optional post-4.0 server components: defineServerComponent in *.component.server.ts(x) requires closed input/props schemas and authorization. Register owner instances and the componentPipeline named config export. Refresh executes the actual owner GET with all admission; output is private/no-store and cannot acquire domain write privileges. Use serverFn/actions for writes; bindComponentRouter and await invalidateComponentScope on auth changes. See /docs/server-components for pinned compiler versions and complete entries.",
     "`meta()` runs at **module load**, before any request - it has **no access to request env or `c.env`**. For the request origin (canonical/OG URLs) read `args.origin` in the meta function, never a build-time constant.",
     '**Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.',
     "`PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.",
@@ -244,6 +245,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     'The default WebMCP result is a bounded receipt. Large/non-JSON output is omitted with `outputTruncated: true`; `resultMode: "output"` is an explicit host-controlled escape hatch.',
   ],
   "@nifrajs/web-react": [
+    "Server-component opt-in uses real RSC/Flight with React, React DOM and Flight exactly 19.2.7, Vite 8.2.1 and plugin-rsc 0.5.35. Register server views in the RSC entry; every use-client export needs a closed companion props schema. Native use-server actions are rejected; use validated serverFn.",
     "React is **deduped** in both the build and the Vite dev server, so a `file:`-linked package shipping its own React no longer nulls the SSR hook dispatcher (`Invalid hook call` / `resolveDispatcher`). See `/docs/troubleshooting`.",
     "A route file that exports `loader`/`action`/`meta` is **not a Fast-Refresh boundary** - keep the view in a child component for state-preserving HMR.",
   ],
@@ -252,14 +254,17 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "Set `hydrate={false}` (or `export const hydrate = false`) on a static, interaction-free page to ship **zero** client JS for it.",
   ],
   "@nifrajs/web-vue": [
+    "The optional Vite component pipeline compiles SFCs without a Bun preload. Use vueServerComponents and vueComponentClient; specialize createServerComponentOutlet(handle) to preserve schema input types in h() and templates. Native contexts are local to each owned root.",
     "The `.vue` SFC compiler is a **Bun plugin** (`@nifrajs/web-vue/plugin`) you must preload for server rendering - without it the SFC import fails at build/SSR.",
     "`<style scoped>` is compiled and folded into the app stylesheet; no runtime, no FOUC.",
   ],
   "@nifrajs/web-svelte": [
+    "The optional Vite component pipeline uses Svelte 5 native SSR/hydration and rune props, with compiler-generated generic outlet declarations. It compiles Svelte without a Bun preload. Stable keys preserve native state; removal awaits unmount. Native contexts are local to each owned root.",
     "The `.svelte` compiler is a **Bun plugin** (`@nifrajs/web-svelte/plugin`) you must preload for SSR. attw/`.d.ts` don't model `.svelte`, so resolution flows through the consumer's Svelte toolchain.",
     "Svelte HMR re-runs the edited component, so its own local state resets on edit (the page itself doesn't reload).",
   ],
   "@nifrajs/web-solid": [
+    "The optional server-component pipeline uses Solid native hydratable SSR, stable render IDs and reactive props. Use solidServerComponents and solidComponentClient; native contexts are local to each owned root. Declare managed portal targets inside their owning range.",
     'Solid needs its **Babel build plugin** (and `solid({ ssr: true })` + the `"solid"` resolve condition) - without it, reactivity/SSR breaks.',
     "Each framework build is isolated so Solid's Babel transform never leaks onto React/Preact `.tsx`.",
   ],

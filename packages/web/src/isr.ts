@@ -793,7 +793,15 @@ export function withISR(
     // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
     // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
     // the loader payload. (The write path already refuses to cache data-mode responses.)
-    const key = req.method === "GET" && req.headers.get("x-nifra-data") === null ? keyOf(req) : null
+    const privateRoute: unknown = Reflect.get(app, Symbol.for("nifra.web.private-route"))
+    const ownsPrivate = typeof privateRoute === "function" && privateRoute(req) === true
+    const key =
+      req.method === "GET" &&
+      req.headers.get("x-nifra-data") === null &&
+      !req.headers.has("x-nifra-component") &&
+      !ownsPrivate
+        ? keyOf(req)
+        : null
     if (key === null) return withoutCacheChannel(await app.fetch(req, platform))
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so

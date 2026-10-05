@@ -5,6 +5,8 @@
     // The backend packages stay DOM-free; this is why @nifrajs/web-solid has its own config
     // and is excluded from the root typecheck.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     // Resolve the workspace core to its source so typecheck needs no prior build.
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],

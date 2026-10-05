@@ -557,7 +557,7 @@ function mergeArrays(branches: readonly Node[]): Node {
 }
 
 /** The JSON Schema a schema exposes to project by, if any. */
-function jsonSchemaOf(schema: StandardSchemaV1): Node | undefined {
+export function jsonSchemaOf(schema: StandardSchemaV1): Node | undefined {
   const own = (schema as { readonly jsonSchema?: unknown }).jsonSchema
   if (isNode(own)) return own
   const standard = schema["~standard"] as {

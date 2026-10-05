@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "allowImportingTsExtensions": true,
+    "types": ["node", "vite/client"],
+    "jsx": "preserve",
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.vue",
+    "**/*.svelte",
+    "../schema.shared.ts",
+    "../benchmark.backend.ts",
+    "../measure.frontend.ts"
+  ]
+}

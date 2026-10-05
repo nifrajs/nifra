@@ -131,6 +131,10 @@
     "packages/web/test/apply-head.test.ts",
     "packages/web/test/client-browser.test.ts",
     "packages/web/test/css-loading.test.ts",
+    // Native compiler fixtures have independent JSX/SFC configurations in the component type gate.
+    "packages/web/test/fixtures/server-components/solid",
+    "packages/web/test/fixtures/server-components/svelte",
+    "packages/web/test/fixtures/server-components/vue",
     // Cross-adapter dev-SSR integration test: it statically imports @nifrajs/web-react (a frontend
     // adapter, outside this DOM-free program) and resolves it at runtime via linkWorkspacePackages -
     // the same reason build-vite-react-edge.test.ts references the adapter as a runtime string. Its

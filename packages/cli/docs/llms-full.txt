@@ -12,6 +12,7 @@ nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript 
 - **Secure by default.** Body-size cap, `requestTimeoutMs` + `c.signal`, graceful shutdown, redacting logger, same-origin `redirect()`, constant-time secret comparison, fail-closed middleware.
 - **Money** in integer minor units; **time** parsed to absolute UTC at the boundary.
 - Throwing a `Response` anywhere in the lifecycle is control flow (returned as-is), not an error.
+Optional server components (post-4.0): React, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.
 
 ---
 
@@ -212,24 +213,19 @@ The data model (loaders, actions, `defer`, progressive enhancement, fetchers,
 revalidation) is closest to **Remix / React Router** - delivered across five UI libraries instead
 of one.
 
-### Server code on every page - RSC is the one protocol Nifra trades away
+### Server code and server-only views
 
-Nifra covers the full server side: typed **loaders and actions**, **streaming SSR** with
-out-of-order Suspense, **islands**, and typed
-[server functions](/docs/server-functions) - `serverFn` RPC whose body (DB
-handles, secrets, imports) is _never_ shipped to the browser, callable as a normal typed
-function from any component, on all five UI libraries. Data on the server, mutations on the
-server, minimal client JS: all there, by a framework-agnostic mechanism instead of a
-React-only one.
+Nifra provides typed loaders and actions, streaming SSR, islands and typed
+[server functions](/docs/server-functions). Server functions keep their
+implementation, secrets and database handles off the browser and use the same validated
+mutation API across the supported UI libraries.
 
-What Nifra deliberately does not adopt is **React Server Components as a component
-protocol** - `"use server"` / `"use client"` directives and the
-server-only component tree. RSC is React-specific; a core that also serves Vue, Solid,
-Svelte, and Preact can't be built on it. (Nuxt, SvelteKit, and Remix don't ship RSC either -
-this is _Nifra vs. Next App Router specifically_.) So the call is simple: if your app is
-architected around RSC itself, **Next.js App Router is the right tool**. For everything RSC
-is usually reached for - server-side data, secrets off the client, less JS - loaders,
-`defer()`, islands, and server functions cover it here.
+The optional [server-components pipeline](/docs/server-components) adds
+server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte
+and Solid use their native islands in validated server-rendered ranges. The feature is
+intended for the release after 4.0.0 and requires all four adapters to pass certification.
+Server functions remain the mutation API; native React `"use server"` actions
+are unsupported.
 
 ### Also a standalone backend (vs. Hono & Elysia)
 
@@ -347,10 +343,10 @@ version-checked examples, which no other framework ships.
 **To start lean and grow** - begin as a typed API, graduate to full-stack on the same core,
 no rewrite.
 
-The one deliberate trade: Nifra is streaming SSR + islands + typed
-[server functions](/docs/server-functions), **not** the RSC component protocol -
-framework-agnostic by design. Apps architected around RSC itself belong on Next App Router;
-everyone else gives up nothing server-side here.
+Nifra provides streaming SSR, islands and typed
+[server functions](/docs/server-functions). The optional
+[server-components pipeline](/docs/server-components) adds native React
+RSC/Flight and corresponding Vue, Svelte and Solid views under a shared execution contract.
 
 ## Nifra - Routing
 
@@ -1621,6 +1617,10 @@ against, and [the verification ladder](/docs/verification) for where this sits.
 Nothing here touches the kernel or the request path. An app that mounts no server functions
 pays exactly nothing for the feature - which is the reason it is built as a plugin over the
 public registration API rather than as a bespoke dispatcher.
+
+## Nifra - Server components
+
+> Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte and Solid hydration.
 
 ## Nifra - Optimistic UI & fetchers
 
@@ -8400,6 +8400,16 @@ file that reaches it.
 //     same layout-chain head, so sitewide tags persist across navigation - no page-only flash.
 ```
 
+### Optional server components
+
+The post-4.0 [server-components pipeline](/docs/server-components) supports
+React, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
+in `*.component.server.ts(x)`, register owner instances and export a named
+`componentPipeline` configuration. React uses native RSC/Flight; the other three
+hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
+HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
+router and await auth-scope invalidation on identity, tenant or permission changes.
+
 ### The build-output contract
 
 The programmatic `buildClient()` API emits a content-hashed directory plus a
@@ -14693,6 +14703,17 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
+
+Optional server components are implemented for React, Vue, Svelte and Solid in the post-4.0
+feature branch. React uses native RSC/Flight; the other adapters use native islands in validated
+server ranges. Definitions require closed input/public-props schemas and authorization. Refresh
+executes the actual owner GET, preserving admission, read capabilities, budgets and cancellation;
+output is private/no-store. Mutate through validated server functions or actions.
+
+Use the `/server-components`, `/server-components/client`, `/server-components/islands` and
+`/server-components/build` exports with an explicit `componentPipeline` named config export.
+See [the server-components guide](https://nifra.dev/docs/server-components) and the four runnable
+repository examples for complete entries, native outlets, exact compiler pins and rollback.
 
 Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 

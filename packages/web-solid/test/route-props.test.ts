@@ -17,6 +17,7 @@ test("route props read every field from the latest snapshot", () => {
   const chain: MatchChain = { ids: ["_layout", "items"], handles: [undefined, { crumb: "Items" }] }
   const props = routeProps(() => state, undefined, { items: chain })
   expect(props.data).toEqual({ items: 1 })
+  expect(props.serverComponents).toBeUndefined()
   expect(props.layoutData).toEqual([{ user: "ada" }])
   expect(props.actionData).toEqual({ saved: true })
   expect(props.pending).toBe(false)
@@ -27,7 +28,16 @@ test("route props read every field from the latest snapshot", () => {
   expect(props.matchChain).toBe(chain)
   expect(props.search).toEqual({ sort: "asc" })
 
-  state = { ...first, pending: true, path: "/items/8" }
+  const components = {
+    v: 1 as const,
+    build: "build",
+    adapter: "solid" as const,
+    owner: "owner",
+    scope: "anonymous",
+    records: [],
+  }
+  state = { ...first, pending: true, path: "/items/8", serverComponents: components }
+  expect(props.serverComponents).toBe(components)
   expect(props.pending).toBe(true)
   expect(props.path).toBe("/items/8")
   expect(props.search).toEqual({})

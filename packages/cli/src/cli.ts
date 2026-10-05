@@ -314,6 +314,17 @@ const CLI_VERSION = "4.0.2"
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
 const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
 
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Trusted application configuration supplies native Vite plugins; the pinned pipeline validates their hooks.
+const asComponentPlugins = (
+  value: readonly unknown[],
+): NonNullable<
+  import("@nifrajs/web/server-components/build").ComponentPipelineOptions["plugins"]
+> =>
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Trusted config forwards the pinned Vite plugin ABI; this does not accept request data.
+  value as NonNullable<
+    import("@nifrajs/web/server-components/build").ComponentPipelineOptions["plugins"]
+  >
+
 /**
  * Render an error for the CLI, unwrapping the detail a bare `.message` drops.
  *
@@ -349,6 +360,27 @@ export function formatCliError(err: unknown): string {
 }
 
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
+  if (app.framework.componentPipeline !== undefined) {
+    if (flags.bun)
+      throw new Error(
+        "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
+      )
+    const { devServerComponents } = await import("@nifrajs/web/server-components/build")
+    if (
+      app.resolvedPlugins.clientPlugins.length > 0 ||
+      app.resolvedPlugins.serverPlugins.length > 0
+    )
+      throw new Error(
+        "[nifra/components] Use Vite equivalents for client/server Bun plugins in the component pipeline",
+      )
+    await devServerComponents({
+      ...app.framework.componentPipeline,
+      root: app.cwd,
+      port: flags.port,
+      plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
+    })
+    return
+  }
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra dev` takes `--vite` or `--bun`, not both.")
   }
@@ -731,6 +763,40 @@ async function buildForTarget(
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
   const { framework: fw } = app
+  if (fw.componentPipeline !== undefined) {
+    if (flags.bun)
+      throw new Error(
+        "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
+      )
+    if (target === "static")
+      throw new Error(
+        "[nifra/components] Component owners require private per-request execution; choose bun, node, deno, cloudflare, or vercel",
+      )
+    if (
+      app.resolvedPlugins.clientPlugins.length > 0 ||
+      app.resolvedPlugins.serverPlugins.length > 0
+    )
+      throw new Error(
+        "[nifra/components] Use Vite equivalents for client/server Bun plugins in the component pipeline",
+      )
+    const { buildServerComponents } = await import("@nifrajs/web/server-components/build")
+    const outDir =
+      target === "vercel" && flags.out === undefined
+        ? resolve(app.cwd, ".vercel/output")
+        : app.outDir
+    const result = await buildServerComponents({
+      ...fw.componentPipeline,
+      target,
+      root: app.cwd,
+      outDir,
+      plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
+    })
+    await assertFreshWorkspaceDists(app.cwd)
+    console.log(
+      `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`,
+    )
+    return
+  }
   const cssCodeSplitRequested = fw.cssCodeSplit === false
   const hasBunTransforms =
     app.resolvedPlugins.clientPlugins.length > 0 || app.resolvedPlugins.serverPlugins.length > 0

@@ -136,6 +136,33 @@ jobs:
       # release gate because request throughput is too noisy to require on CI.
       - name: Verification plan / CI parity
         run: bun run check:verification-parity
+      - name: Server component contracts
+        run: bun run check:server-components:contracts
+
+  server-components:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 26.6.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.4
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Install required browser engines
+        run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+      - name: All four adapters and every runtime, browser and lifecycle row
+        run: bun run check:server-components
+      - name: Isolated packaged feature consumers
+        run: bun run check:server-components:consumers
 
   windows:
     # Windows is the slowest platform job. Run it for main pushes, release PRs, and manual runs so a

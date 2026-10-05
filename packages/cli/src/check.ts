@@ -381,9 +381,21 @@ async function buildProjectScan(
         return undefined
       }
     }
+    const componentReceipts = source.files.some((file) =>
+      /\.component\.server\.[cm]?[jt]sx?$/.test(file),
+    )
+      ? (await import("./component-check.ts")).componentCheckReceipts(cwd, source)
+      : new Set<string>()
     for (const { rel, content } of browserModules) {
       serverImports.push(
-        ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
+        ...resolveServerOnlyChains(
+          rel,
+          content,
+          resolveModule,
+          readModule,
+          sourceFacts,
+          componentReceipts,
+        ),
       )
     }
 

@@ -48,6 +48,7 @@ describe("release verification", () => {
       "lint",
       "typecheck",
       "tests",
+      "server-components-contracts",
       "docs",
       "api-corpus",
       "cards-corpus",
@@ -85,6 +86,9 @@ describe("release verification", () => {
       "pipeline-parity",
       "leak-matrix",
       "verification-parity",
+      "server-components",
+      "server-components-performance",
+      "server-components-contracts",
       "changesets",
     ])
     const release = verificationPlan("release")
@@ -141,6 +145,7 @@ describe("release verification", () => {
         "lint",
         "typecheck",
         "tests",
+        "server-components-contracts",
         "docs",
         "api-corpus",
         "cards-corpus",

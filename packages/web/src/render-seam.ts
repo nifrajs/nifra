@@ -12,6 +12,7 @@ import type { Submission } from "./router.ts"
 
 /** The data handed to a route component. */
 export interface RenderProps {
+  readonly serverComponents?: import("./server-components/types.ts").ComponentState
   readonly data: unknown
   /** Per-layout loader data, aligned index-for-index with the layout prefix of `chain`. */
   readonly layoutData?: readonly unknown[]
@@ -123,5 +124,6 @@ export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
 export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 /** Dynamic-boundary states for hydration; absent when a route declares no boundaries. */
 export const BOUNDARY_GLOBAL = "__NIFRA_BOUNDARIES__"
+export const COMPONENT_GLOBAL = "__NIFRA_COMPONENTS__"
 /** Marker attribute used to find a non-default hydration container. */
 export const ROOT_ATTRIBUTE = "data-nifra-root"

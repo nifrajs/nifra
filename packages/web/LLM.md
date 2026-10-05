@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/backend-only` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/cdn` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/dev-feed` · `@nifrajs/web/diagnostic` · `@nifrajs/web/diagnostic-prompt` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/route-types` · `@nifrajs/web/service-worker` · `@nifrajs/web/vitals` · `@nifrajs/web/vite` · `@nifrajs/web/zones`
+`@nifrajs/web` · `@nifrajs/web/backend-only` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/cdn` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/dev-feed` · `@nifrajs/web/diagnostic` · `@nifrajs/web/diagnostic-prompt` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/route-types` · `@nifrajs/web/server-components` · `@nifrajs/web/server-components/build` · `@nifrajs/web/server-components/build-info` · `@nifrajs/web/server-components/client` · `@nifrajs/web/server-components/islands` · `@nifrajs/web/server-components/native` · `@nifrajs/web/server-components/portal` · `@nifrajs/web/server-components/props` · `@nifrajs/web/server-components/range` · `@nifrajs/web/server-components/source` · `@nifrajs/web/server-components/state` · `@nifrajs/web/server-components/stream` · `@nifrajs/web/server-components/trusted-html` · `@nifrajs/web/server-components/vite` · `@nifrajs/web/service-worker` · `@nifrajs/web/vitals` · `@nifrajs/web/vite` · `@nifrajs/web/zones`
 
 ## Key exports
 
@@ -22,17 +22,18 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>` · from `@nifrajs/web`
 - **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: Reado…` · from `@nifrajs/web`
 - **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void` · from `@nifrajs/web/nano`
+- **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void` · from `@nifrajs/web/server-components/client`
 - **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void` · from `@nifrajs/web/nano`
 - **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void` · from `@nifrajs/web/nano`
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 - **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined` · from `@nifrajs/web/zones`
-- **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 
-_…and 592 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 671 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 
+- Optional post-4.0 server components: defineServerComponent in *.component.server.ts(x) requires closed input/props schemas and authorization. Register owner instances and the componentPipeline named config export. Refresh executes the actual owner GET with all admission; output is private/no-store and cannot acquire domain write privileges. Use serverFn/actions for writes; bindComponentRouter and await invalidateComponentScope on auth changes. See /docs/server-components for pinned compiler versions and complete entries.
 - `meta()` runs at **module load**, before any request - it has **no access to request env or `c.env`**. For the request origin (canonical/OG URLs) read `args.origin` in the meta function, never a build-time constant.
 - **Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.
 - `PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.

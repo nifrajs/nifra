@@ -4,6 +4,7 @@ import type { LayoutEntry, Manifest } from "../manifest.ts"
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
+  COMPONENT_GLOBAL,
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
@@ -20,6 +21,7 @@ const HANDOVER_GLOBALS = [
   ROUTE_GLOBAL,
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
+  COMPONENT_GLOBAL,
   PRERENDERED_GLOBAL,
 ]
 export interface GenerateClientEntryOptions {
@@ -36,6 +38,7 @@ export interface GenerateClientEntryOptions {
   readonly clientModule: string
   /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */
   readonly resolve: (file: string) => string
+  readonly serverComponents?: boolean
 }
 
 /**
@@ -131,6 +134,9 @@ export function generateClientEntry(
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
+    ...(options.serverComponents
+      ? ['import { bindComponentRouter } from "@nifrajs/web/server-components/client"']
+      : []),
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     ...(loadings.length > 0
@@ -270,6 +276,7 @@ export function generateClientEntry(
     // Undefined on a page-only app, which is exactly what the router treats as "no layout data".
     `  layoutData: window.${LAYOUT_DATA_GLOBAL} && window.${LAYOUT_DATA_GLOBAL}.map(mapDeferred),`,
     `  boundaries: mapDeferred(window.${BOUNDARY_GLOBAL}),`,
+    `  serverComponents: window.${COMPONENT_GLOBAL},`,
     // actionData (only set after a form POST) is in the initial state so the binding hydrates
     // consistently with the server-rendered markup; mapped through `mapDeferred` too so a deferred
     // action's placeholders become registry markers (a no-op when the action didn't defer).
@@ -282,6 +289,7 @@ export function generateClientEntry(
     loadings.length > 0
       ? "const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })"
       : "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
+    ...(options.serverComponents ? ["bindComponentRouter(router)"] : []),
     "installHistory(router)",
     "installForms(router)",
     // The container is found in the DOM, not baked in. `rootId` is a per-render option and this entry

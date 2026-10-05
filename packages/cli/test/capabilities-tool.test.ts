@@ -75,6 +75,39 @@ describe("effect import scanner", () => {
 })
 
 describe("project provenance firewall", () => {
+  test("a component receipt cannot hide raw providers from owner route provenance", async () => {
+    const cwd = join(FIXTURES, "component-owner")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/owner.backend.ts"), 'import "./Summary.component.server.ts"\n')
+    await writeFile(
+      join(cwd, "src/Summary.component.server.ts"),
+      'import "app-db/read"; import "postgres"\n',
+    )
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    const app = server().get("/components/:id", { capabilities: ["db.read"] }, () => [])
+    const explicit = defineCapabilityPolicy({
+      ...policy,
+      provenance: {
+        ...policy.provenance,
+        routeModules: [
+          {
+            match: { methods: ["GET"], paths: ["/components/:id"] },
+            modules: ["src/owner.backend.ts"],
+          },
+        ],
+      },
+    })
+    const project = await collectCapabilityProjectReport(cwd, app, explicit)
+    expect(project.violations).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/components/:id",
+        specifier: "postgres",
+        chain: ["src/owner.backend.ts", "./Summary.component.server.ts", "postgres"],
+      }),
+    ])
+  })
+
   test("walks local imports, attributes effects conservatively, and reports raw bypasses", async () => {
     const cwd = join(FIXTURES, "raw-bypass")
     await mkdir(join(cwd, "src"), { recursive: true })

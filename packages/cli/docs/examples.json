@@ -558,6 +558,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { securityHeaders } from \"@nifrajs/middleware\"\n\n// Always on (covering errors and 404s too): X-Content-Type-Options: nosniff,\n// X-Frame-Options: DENY, Referrer-Policy: no-referrer. The rest are opt-in - each is a\n// deliberate cross-origin decision, so nifra never turns them on behind your back:\nconst app = server().use(securityHeaders({\n  crossOriginOpenerPolicy: \"same-origin\",      // isolate the browsing-context group\n  crossOriginResourcePolicy: \"same-origin\",    // block cross-origin embedding of your responses\n  crossOriginEmbedderPolicy: \"require-corp\",   // enable crossOriginIsolated (SharedArrayBuffer, …)\n  permissionsPolicy: \"camera=(), geolocation=()\",\n  contentSecurityPolicy: \"default-src 'self'\",\n  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // opt in once HTTPS-only\n}))"
   },
   {
+    "name": "DEFINE",
+    "topic": "Nifra - Server components",
+    "slug": "server-components",
+    "code": "// Product.component.server.ts - native Vue/Svelte/Solid view.\nimport { t } from \"@nifrajs/schema\"\nimport { defineServerComponent, type ServerComponentContext } from \"@nifrajs/web/server-components\"\nimport { nativeServerView } from \"@nifrajs/web/server-components/islands\"\n\n// Replace these declarations with your native view and scoped read service.\ndeclare const ProductView: unknown\ndeclare function readProduct(ctx: ServerComponentContext, id: string): Promise<{ title: string; internal: string }>\n\nexport const Product = defineServerComponent({\n  input: t.object({ id: t.string({ minLength: 1 }) }),\n  props: t.object({ title: t.string() }),\n  authorize(ctx, input) {\n    if (ctx.params.id !== input.id) throw new Response(null, { status: 403 })\n  },\n  load: (ctx, input) => readProduct(ctx, input.id),\n  view: () => nativeServerView(ProductView),\n})"
+  },
+  {
     "name": "DECLARE",
     "topic": "Nifra - Server functions",
     "slug": "server-functions",

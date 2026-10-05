@@ -187,6 +187,15 @@ test("route additions and removals regenerate the Bun client entry without resta
     await Bun.sleep(100)
   }
   expect(readFileSync(entry, "utf8")).not.toContain("routes/about.tsx")
+
+  const contact = join(routesDir, "contact.tsx")
+  writeFileSync(contact, "export default function Contact() { return null }\n")
+  for (let i = 0; i < 40 && !readFileSync(entry, "utf8").includes("routes/contact.tsx"); i++) {
+    await Bun.sleep(100)
+  }
+  const finalEntry = readFileSync(entry, "utf8")
+  expect(finalEntry).toContain("routes/contact.tsx")
+  expect(finalEntry).not.toContain("routes/about.tsx")
 })
 
 test("a failing app render returns the dev error overlay, not a bare 500", async () => {
