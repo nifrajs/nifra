@@ -32,6 +32,12 @@ import type { RouteTypesReport } from "./route-types.ts"
 import type { SmokeReport } from "./smoke.ts"
 import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
+  renderSyncManifestResults,
+  type SyncManifestResult,
+  syncManifestsOk,
+  syncServerManifests,
+} from "./sync-manifest.ts"
+import {
   collectProjectWorkGraph,
   type ProjectWorkGraphResult,
   renderWorkGraphText,
@@ -497,6 +503,10 @@ interface ContractsCommandOutput {
 interface SyncCommandOutput {
   readonly ok: true
   readonly results: readonly unknown[]
+}
+interface SyncManifestCommandOutput {
+  readonly ok: boolean
+  readonly results: readonly SyncManifestResult[]
 }
 
 interface SmokeCommandOutput extends SmokeReport {}
@@ -1674,7 +1684,7 @@ const contractsSpec: CommandSpec<ContractsInput, ContractsCommandOutput> = {
   success: (out) => out.ok,
 }
 
-const syncManifestSpec: CommandSpec<SyncInput, SyncCommandOutput> = {
+const syncManifestSpec: CommandSpec<SyncInput, SyncManifestCommandOutput> = {
   name: "sync-manifest",
   summary: "Regenerate generated server-manifest route tables without a full build.",
   input: SYNC_SCHEMA,
@@ -1687,16 +1697,11 @@ const syncManifestSpec: CommandSpec<SyncInput, SyncCommandOutput> = {
   stability: "stable",
   argv: { flags: [{ name: "json", field: "json", type: "boolean" }] },
   async run(_value, ctx) {
-    return {
-      ok: true,
-      results: await (await import("./sync-manifest.ts")).syncServerManifests(ctx.cwd),
-    }
+    const results = await syncServerManifests(ctx.cwd)
+    return { ok: syncManifestsOk(results), results }
   },
-  render: (out) => [
-    out.results.length === 0
-      ? "nifra sync-manifest: no generated server-manifest.ts found under this directory."
-      : `✓ checked ${out.results.length} generated server manifest${out.results.length === 1 ? "" : "s"}`,
-  ],
+  render: (out) => renderSyncManifestResults(out.results),
+  success: (out) => out.ok,
 }
 
 const syncRoutesSpec: CommandSpec<SyncInput, SyncCommandOutput> = {

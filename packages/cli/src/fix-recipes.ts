@@ -62,7 +62,15 @@ registerFixRecipe({
   async apply(root) {
     const { syncServerManifests } = await import("./sync-manifest.ts")
     const results = await syncServerManifests(root)
-    return results.filter((result) => result.changed).map((result) => result.file)
+    const changed = results.filter((result) => result.changed).map((result) => result.file)
+    const failed = results.filter((result) => result.error !== undefined)
+    if (failed.length > 0) {
+      const synced = changed.length === 0 ? "" : `synced ${changed.join(", ")}; `
+      throw new Error(
+        `[nifra] ${synced}cannot sync ${failed.map((result) => `${result.file}: ${result.error}`).join("; ")}`,
+      )
+    }
+    return changed
   },
 })
 
