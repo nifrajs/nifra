@@ -959,21 +959,31 @@ describe("server({ idempotency }) - request path", () => {
   })
 
   test("the lease is renewed while the handler runs and stops once it settles", async () => {
-    const memory = new MemoryIdempotencyStore()
+    // The store's clock moves only when the test moves it, so a stalled event loop delays a
+    // renewal without letting the lease lapse; the heartbeat itself still runs on real timers.
+    let now = 1_000_000
+    const memory = new MemoryIdempotencyStore({ now: () => now })
     const renewals: number[] = []
+    let renewed = (): void => {}
     const store: IdempotencyStore = {
       begin: (input) => memory.begin(input),
       complete: (input) => memory.complete(input),
       abandon: (input) => memory.abandon(input),
       renew: (input) => {
         renewals.push(input.ttlMs)
-        return memory.renew(input)
+        const kept = memory.renew(input)
+        renewed()
+        return kept
       },
     }
     let runs = 0
     let entered!: () => void
     const started = new Promise<void>((resolve) => {
       entered = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
     })
     const app = server()
       .use(idempotency())
@@ -983,15 +993,21 @@ describe("server({ idempotency }) - request path", () => {
         async () => {
           runs++
           entered()
-          await new Promise((resolve) => setTimeout(resolve, 700))
+          await gate
           return { ok: true }
         },
       )
     const first = app.fetch(post({ amount: 1 }, "slow"))
     await started
-    await new Promise((resolve) => setTimeout(resolve, 450))
+    for (let step = 0; step < 2; step++) {
+      now += 200
+      await new Promise<void>((resolve) => {
+        renewed = resolve
+      })
+    }
     // Past the 300ms lease: only the renewals keep a duplicate from running the handler again.
     expect((await app.fetch(post({ amount: 1 }, "slow"))).status).toBe(409)
+    release()
     expect((await first).status).toBe(200)
     expect(runs).toBe(1)
     expect(renewals.length).toBeGreaterThanOrEqual(2)

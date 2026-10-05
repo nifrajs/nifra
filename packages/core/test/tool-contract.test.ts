@@ -257,20 +257,30 @@ describe("typed tool contracts", () => {
   })
 
   test("a running tool call renews its lease and stops once it settles", async () => {
-    const memory = new MemoryToolIdempotencyStore()
+    // The store's clock moves only when the test moves it, so a stalled event loop delays a
+    // renewal without letting the lease lapse; the heartbeat itself still runs on real timers.
+    let now = 1_000_000
+    const memory = new MemoryToolIdempotencyStore({ now: () => now })
     const renewals: number[] = []
+    let renewed = (): void => {}
     const store: ToolIdempotencyStore = {
       begin: (value) => memory.begin(value),
       complete: (value) => memory.complete(value),
       abandon: (value) => memory.abandon(value),
       renew: (value) => {
         renewals.push(value.ttlMs)
-        return memory.renew(value)
+        const kept = memory.renew(value)
+        renewed()
+        return kept
       },
     }
     let entered!: () => void
     const started = new Promise<void>((resolve) => {
       entered = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
     })
     const tool = defineTool({
       name: "orders.slow",
@@ -281,19 +291,25 @@ describe("typed tool contracts", () => {
       idempotency: { scope: "request", key: (value) => value.name, pendingTtlMs: 300 },
       execute: async () => {
         entered()
-        await new Promise((resolve) => setTimeout(resolve, 700))
+        await gate
         return { ok: true }
       },
     })
     const options = { capabilities: ["orders.slow"], idempotency: store }
     const first = executeTool(tool, { name: "a" }, options)
     await started
-    await new Promise((resolve) => setTimeout(resolve, 450))
+    for (let step = 0; step < 2; step++) {
+      now += 200
+      await new Promise<void>((resolve) => {
+        renewed = resolve
+      })
+    }
     // Past the 300ms lease: only the renewals keep a duplicate call from running.
     expect(await executeTool(tool, { name: "a" }, options)).toMatchObject({
       ok: false,
       error: { code: "idempotency_in_flight" },
     })
+    release()
     expect((await first).ok).toBe(true)
     expect(renewals.length).toBeGreaterThanOrEqual(2)
     expect(new Set(renewals)).toEqual(new Set([300]))
