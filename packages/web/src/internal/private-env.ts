@@ -10,7 +10,7 @@
  * ESM lines.
  */
 import { readFileSync } from "node:fs"
-import { HTML_COMMENT, withoutMatches } from "./html-spans.ts"
+import { delimitedSpans, withoutComments, withoutMatches } from "./html-spans.ts"
 
 const IMPORT_META_FLAGS = new Set(["MODE", "DEV", "PROD", "SSR", "BASE_URL"])
 
@@ -210,10 +210,10 @@ function sfcCode(
   const withoutScripts = withoutMatches(source, SCRIPT_ELEMENT, (match) => {
     scripts.push(match[1] ?? "")
   })
-  const markup = withoutMatches(withoutMatches(withoutScripts, STYLE_ELEMENT), HTML_COMMENT)
+  const markup = withoutComments(withoutMatches(withoutScripts, STYLE_ELEMENT))
   const expressions: string[] = []
   if (vue) {
-    for (const match of markup.matchAll(/\{\{([\s\S]*?)\}\}/g)) expressions.push(match[1] ?? "")
+    expressions.push(...delimitedSpans(markup, "{{", "}}"))
     for (const match of markup.matchAll(/\s(?::|@|v-|#)[\w:.[\]-]*\s*=\s*("([^"]*)"|'([^']*)')/g))
       expressions.push(match[2] ?? match[3] ?? "")
   } else {

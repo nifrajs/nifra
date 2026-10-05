@@ -78,6 +78,19 @@ describe("privateEnvReads", () => {
     ).toEqual(["process.env.BROKEN"])
   })
 
+  test("comment and mustache openers that never close cost one read, however many there are", () => {
+    const script = "<script setup>\nconst v = process.env.SCRIPT\n</script>\n"
+    const started = performance.now()
+    expect(reads("a.vue", `${script}<template>${"<!--".repeat(100_000)}</template>\n`)).toEqual([
+      "process.env.SCRIPT",
+    ])
+    expect(reads("a.vue", `${script}<template>{{${"{{{{a".repeat(50_000)}</template>\n`)).toEqual([
+      "process.env.SCRIPT",
+    ])
+    // A lazy pattern rescanning from each opener takes tens of seconds here; one read, milliseconds.
+    expect(performance.now() - started).toBeLessThan(2000)
+  })
+
   test("MDX: ESM and expressions, never prose or code samples", () => {
     const source = [
       "export const k = process.env.ESM",

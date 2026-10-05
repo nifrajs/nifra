@@ -18,7 +18,7 @@ import {
 } from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
-import { HTML_COMMENT, withoutMatches } from "./html-spans.ts"
+import { withoutComments } from "./html-spans.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
 import { publicUrlPath } from "./public-url.ts"
 
@@ -1088,7 +1088,7 @@ export function collectDevelopmentParityInput(
     const content = readFileSync(file, "utf8")
     return (
       hasStylesheetImport(content) ||
-      (isSingleFileComponent(file) && SFC_STYLE.test(withoutMatches(content, HTML_COMMENT)))
+      (isSingleFileComponent(file) && SFC_STYLE.test(withoutComments(content)))
     )
   })
     ? ["css:present"]
