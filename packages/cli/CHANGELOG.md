@@ -569,6 +569,7 @@
   pages. It also remembers, for its revalidate window, keys whose page answered `private` or
   `no-store` and skips the store lookup for them. A remembered key that turns cacheable is stored again.
 
+- f90bf81: On Windows, `nifra upgrade` leaves build output and coverage alone, `nifra_explain` shows a codeframe for project source under a short path, and `nifra i18n check` names its entry with `/`. `nifra check` reports findings in the same order on every platform, and `nifra mcp` keeps the variables a process has besides its `.env` files: the ones Windows copies into every subprocess and the ones a bunfig preload sets.
 - Updated dependencies [a8b33bc]
 - Updated dependencies [c3057ee]
 - Updated dependencies [dde125b]
@@ -727,6 +728,7 @@
 - Updated dependencies [0f6babe]
 - Updated dependencies [00f18bf]
 - Updated dependencies [a84f546]
+- Updated dependencies [669b6a2]
 - Updated dependencies [ff25d68]
   - create-nifra@4.0.0
   - @nifrajs/core@4.0.0

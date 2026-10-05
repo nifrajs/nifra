@@ -73,6 +73,7 @@
 - Updated dependencies [0f6babe]
 - Updated dependencies [00f18bf]
 - Updated dependencies [a84f546]
+- Updated dependencies [669b6a2]
   - @nifrajs/web@4.0.0
 
 ## 3.5.0

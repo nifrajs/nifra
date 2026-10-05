@@ -288,6 +288,7 @@
 - Updated dependencies [0f6babe]
 - Updated dependencies [00f18bf]
 - Updated dependencies [a84f546]
+- Updated dependencies [669b6a2]
 - Updated dependencies [ff25d68]
   - @nifrajs/authjs@4.0.0
   - @nifrajs/core@4.0.0
