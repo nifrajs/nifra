@@ -338,17 +338,30 @@ describe("prediction store", () => {
     interface Counter {
       readonly count: number
     }
+    const gate = () => {
+      let enter!: () => void
+      let release!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { entered, enter, released, release }
+    }
+    let gates: ReturnType<typeof gate>[] = []
     const counter = (
       reconciliation: "accept-server-state" | "manual",
-    ): AgentCapability<{ delay: number }, Counter, Counter> =>
+    ): AgentCapability<{ turn: number }, Counter, Counter> =>
       defineAgentCapability({
         name: "counter.increment",
         description: "Increment the counter.",
-        input: t.object({ delay: t.number() }),
+        input: t.object({ turn: t.number() }),
         output: t.object({ count: t.number() }),
         reconciliation,
-        execute: async ({ delay }) => {
-          await Bun.sleep(delay)
+        execute: async ({ turn }) => {
+          gates[turn]?.enter()
+          await gates[turn]?.released
           server += 1
           return { count: server }
         },
@@ -363,13 +376,21 @@ describe("prediction store", () => {
       })
     const race = async (reconciliation: "accept-server-state" | "manual") => {
       server = 0
+      const early = gate()
+      const late = gate()
+      gates = [early, late]
       const store = createPredictionStore<Counter>({ state: { count: 0 }, version: "v0" })
       const capability = counter(reconciliation)
-      const outcomes = await Promise.all([
-        executePredicted(capability, { delay: 5 }, store),
-        executePredicted(capability, { delay: 25 }, store),
-      ])
-      return { outcomes: outcomes.map((result) => result.outcome), snapshot: store.snapshot() }
+      const first = executePredicted(capability, { turn: 0 }, store)
+      const second = executePredicted(capability, { turn: 1 }, store)
+      // Both predictions are in the store once both executions have started. The gates, not
+      // timer order, then let the first call finish before the second.
+      await Promise.all([early.entered, late.entered])
+      early.release()
+      const firstOutcome = (await first).outcome
+      late.release()
+      const secondOutcome = (await second).outcome
+      return { outcomes: [firstOutcome, secondOutcome], snapshot: store.snapshot() }
     }
 
     const accepted = await race("accept-server-state")
