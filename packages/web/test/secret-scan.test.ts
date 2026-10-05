@@ -120,6 +120,24 @@ describe("assigned secrets", () => {
     }
   })
 
+  test("a ternary's branches are not assignments; a key inside one still is", () => {
+    for (const text of [
+      'autoComplete={mode === "signup" ? "new-password" : "current-password"}',
+      'const key = ready ? apiKey : "Zq8mW2vX9pLr4TbN7yKc3HdF"',
+      'const key = ready\n  ? config.apiKey\n  : "Zq8mW2vX9pLr4TbN7yKc3HdF"',
+      'const key = ready ? "apiKey" : "Zq8mW2vX9pLr4TbN7yKc3HdF"',
+    ]) {
+      expect(source(text)).toEqual([])
+    }
+    for (const text of [
+      'const config = ready ? { apiKey: "Zq8mW2vX9pLr4TbN7yKc3HdF" } : null',
+      'export default { "apiKey": "Zq8mW2vX9pLr4TbN7yKc3HdF" }',
+      'config.apiKey = "Zq8mW2vX9pLr4TbN7yKc3HdF"',
+    ]) {
+      expect(rules(source(text))).toEqual(['assigned-secret: literal assigned to "apiKey"'])
+    }
+  })
+
   test("a long unbroken word run, such as inlined base64, scans in linear time", () => {
     const text = `${"a".repeat(100_000)} x; const apiKey = "Zq8mW2vX9pLr4TbN7yKc3HdF"`
     const started = performance.now()
