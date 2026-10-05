@@ -207,6 +207,23 @@ export function waitForStyles(options: WaitForStylesOptions = {}): Promise<void>
 }
 
 /**
+ * Resolve `href` against this page and keep it only when history may move there without a load: same
+ * scheme and host as the document, or null. Compared by protocol + host rather than `URL.origin`,
+ * which is `"null"` for every non-special scheme - a native webview's `capacitor://localhost` page and
+ * a `javascript:` target alike. An opaque or `file:` document may not push another path at all, so its
+ * links load natively.
+ */
+function sameDocumentUrl(href: string): URL | null {
+  if (location.origin === "null" || location.protocol === "file:") return null
+  try {
+    const url = new URL(href, location.href)
+    return url.protocol === location.protocol && url.host === location.host ? url : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Attach history + link interception to a router. Returns a teardown function that removes the
  * listeners. A data-fetch failure during a client navigation falls back to a full-page load, so
  * navigation degrades gracefully rather than leaving the user stuck.
@@ -288,7 +305,7 @@ export function installHistory(
 
   // Parse a path into the `{ pathname, search, hash }` a `BlockerFunction` decides on.
   const locationOf = (path: string): BlockerLocation => {
-    const url = new URL(path, location.origin)
+    const url = new URL(path, location.href)
     return { pathname: url.pathname, search: url.search, hash: url.hash }
   }
 
@@ -332,17 +349,6 @@ export function installHistory(
   // Commit a navigation only after its URL and origin are known-safe. An unmatched same-origin path
   // becomes a hard load BEFORE history is mutated; otherwise the address bar could change while the
   // router intentionally kept rendering the old route.
-  const parseNavigationUrl = (path: string): URL | null => {
-    try {
-      const url = new URL(path, location.origin)
-      if (url.protocol !== "http:" && url.protocol !== "https:") return null
-      if (url.origin !== location.origin) return null
-      return url
-    } catch {
-      return null
-    }
-  }
-
   const commit = (path: string, url: URL, mode: "push" | "replace", state?: unknown): void => {
     const routePath = url.pathname + url.search
     if (router.match(routePath) === null) {
@@ -387,7 +393,7 @@ export function installHistory(
   const go = (path: string, mode: "push" | "replace", state?: unknown): void => {
     // Validate before the blocker observes the target. A blocker receives parsed locations, so letting a
     // malformed string reach `locationOf` would make an otherwise no-throw navigate unexpectedly throw.
-    const url = parseNavigationUrl(path)
+    const url = sameDocumentUrl(path)
     if (url === null) {
       settle()
       return
@@ -432,8 +438,8 @@ export function installHistory(
     if (anchor.target !== "" && anchor.target !== "_self") return null
     if (anchor.hasAttribute("download")) return null
     if (anchor.getAttribute("rel")?.split(/\s+/).includes("external")) return null
-    const url = new URL(anchor.href)
-    if (url.origin !== location.origin) return null
+    const url = sameDocumentUrl(anchor.href)
+    if (url === null) return null
     if (router.match(url.pathname) === null) return null
     // A same-page fragment link (`#section`, `/here#section` - only the hash differs) → null: let the
     // browser do its native in-page anchor jump. Intercepting it would drop the fragment from the URL
@@ -465,7 +471,7 @@ export function installHistory(
   const warm = (target: EventTarget | null): void => {
     const href = inAppHref(target)
     if (href === null) return
-    const url = new URL(href, location.origin)
+    const url = new URL(href, location.href)
     const path = url.pathname + url.search // the #hash isn't data
     if (path !== location.pathname + location.search) void router.prefetch(path)
   }
@@ -689,8 +695,8 @@ export function installForms(router: ClientRouter): () => void {
     const form = event.target
     if (!(form instanceof HTMLFormElement)) return
     if (form.method.toLowerCase() !== "post") return // GET forms submit natively
-    const url = new URL(form.action) // resolved (or the current document URL if unset)
-    if (url.origin !== location.origin) return
+    const url = sameDocumentUrl(form.action) // resolved (or the current document URL if unset)
+    if (url === null) return
     if (router.match(url.pathname) === null) return // not an app route → native submit
     event.preventDefault()
     // `data-nifra-revalidate="false"` opts out of the post-action loader revalidation (the action's
