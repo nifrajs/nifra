@@ -44,7 +44,8 @@ export function parseLcovRecords(source: string): readonly LcovRecord[] | undefi
     if (line.startsWith("SF:")) {
       if (line.slice(3).length === 0) return undefined
       records.push({
-        file: line.slice(3),
+        // Bun writes `src\small.ts` on Windows; baselines name every file with `/`.
+        file: line.slice(3).replaceAll("\\", "/"),
         functionsFound: 0,
         functionsHit: 0,
         linesFound: 0,

@@ -51,6 +51,13 @@ describe("coverage runner", () => {
     expect(parseLcovRecords("")).toBeUndefined()
   })
 
+  test("names a Windows path with / like the baseline", () => {
+    const records = parseLcovRecords(
+      ["SF:src\\small.ts", "FNF:2", "FNH:1", "DA:1,1", "end_of_record"].join("\n"),
+    )
+    expect(records?.map((record) => record.file)).toEqual(["src/small.ts"])
+  })
+
   test("parses a bounded coverage threshold", () => {
     expect(parseCoverageThreshold("[test]\ncoverageThreshold = 0.9\n")).toBe(0.9)
     expect(parseCoverageThreshold("coverageThreshold = 1.2\n")).toBeUndefined()

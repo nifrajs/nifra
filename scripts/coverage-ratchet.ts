@@ -82,7 +82,7 @@ export function parseLcov(source: string): Record<string, FileCoverage> {
     const line = raw.trim()
     if (line.startsWith("SF:")) {
       flush()
-      file = line.slice(3)
+      file = line.slice(3).replaceAll("\\", "/")
     } else if (line.startsWith("FNF:")) fnFound = Number(line.slice(4))
     else if (line.startsWith("FNH:")) fnHit = Number(line.slice(4))
     else if (line.startsWith("DA:")) {

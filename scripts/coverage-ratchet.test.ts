@@ -52,6 +52,11 @@ describe("parseLcov", () => {
   test("an empty report yields nothing rather than throwing", () => {
     expect(parseLcov("")).toEqual({})
   })
+
+  test("a Windows path is keyed with / like the baseline", () => {
+    const parsed = parseLcov(lcov(["SF:packages\\a\\src\\x.ts", "FNF:1", "FNH:1", "DA:1,1"]))
+    expect(Object.keys(parsed)).toEqual(["packages/a/src/x.ts"])
+  })
 })
 
 describe("findRegressions", () => {
