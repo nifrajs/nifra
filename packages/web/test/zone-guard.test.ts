@@ -168,6 +168,19 @@ describe("buildClient refuses", () => {
     )
   })
 
+  test("a suffix-zoned or dotted backend module imported without its extension, by its real file", async () => {
+    write("lib/db.backend.ts", "export const q = 1\n")
+    write("backend/date.utils.ts", "export const d = 2\n")
+    write(
+      "routes/index.tsx",
+      'import { q } from "../lib/db.backend"\nimport { d } from "../backend/date.utils"\nexport default () => q + d\n',
+    )
+    const message = await refusal()
+    expect(message).toContain("lib/db.backend.ts: it is backend code")
+    expect(message).toContain("backend/date.utils.ts: it is backend code")
+    expect(message).not.toContain("missing from the graph")
+  })
+
   test("a backend-only export in a route's frontend file", async () => {
     write("routes/index.tsx", "export const loader = () => 1\nexport default () => null\n")
     expect(await refusal()).toContain(
@@ -201,6 +214,16 @@ describe("buildClient builds", () => {
         .map((file) => Bun.file(join(root, "dist", file)).text()),
     )
     expect(text.join("\n")).not.toContain("do-not-ship")
+  })
+
+  test("a suffix-zoned shared module outside the zone folders, imported without its extension", async () => {
+    write("lib/calendar.shared.ts", "export const label = (n: number) => 'day ' + n\n")
+    write("frontend/date.utils.ts", "export const pad = (n: number) => String(n).padStart(2)\n")
+    write(
+      "routes/index.tsx",
+      'import { label } from "../lib/calendar.shared"\nimport { pad } from "../frontend/date.utils"\nexport default () => label(1) + pad(2)\n',
+    )
+    expect((await build()).routes.index?.length).toBe(1)
   })
 })
 
@@ -262,6 +285,10 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
       "/abs/app/frontend/x.module.css",
       "./query.ts?raw",
       "../backend/db.ts#frag",
+      "../lib/calendar.shared",
+      "./notes.fn",
+      "../lib/db.backend?raw",
+      "/abs/app/lib/Nav.frontend",
     ]) {
       expect(matches(specifier), specifier).toBe(false)
     }
@@ -270,6 +297,7 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
       "../backend/query.sql",
       "../backend/key.pem?v=1",
       "./a.ts/b.wasm",
+      "./x.shared/logo.svg",
     ]) {
       expect(matches(specifier), specifier).toBe(true)
     }

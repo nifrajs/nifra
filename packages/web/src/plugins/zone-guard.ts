@@ -7,6 +7,7 @@
  * and the refusal must stop the response.
  */
 
+import { statSync } from "node:fs"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import type { BunPlugin } from "bun"
 import { privateEnvDenial } from "../internal/private-env.ts"
@@ -23,15 +24,20 @@ const SOURCE_EXTENSIONS =
  * (images, fonts, wasm, and a `.pem` or `.sql` imported `with { type: "text" }`) goes through
  * `onResolve`: a file-loader asset panics Bun 1.4 on a declining `onLoad`. */
 const SOURCE_FILE = new RegExp(`\\.(?:${SOURCE_EXTENSIONS})$`)
+const ZONE_SUFFIXES = "frontend|backend|shared|fn"
 /**
- * A relative or absolute import whose last segment has an extension, other than a source file.
+ * A relative or absolute import whose last segment has an extension, other than a source file. A zone
+ * suffix is no extension: `"./calendar.shared"` imports `calendar.shared.ts`.
  * Source files are excluded by the FILTER, not declined by the handler: on Bun's dev server a filter
  * match alone changes how the import resolves, even when the handler declines (see
  * `internal/dev-reserved.ts`), and a source file is the onLoad hook's to judge anyway.
  */
 const NON_SOURCE_PATH = new RegExp(
-  `^(?:\\.|\\/|[A-Za-z]:[\\\\/])(?![^?#]*\\.(?:${SOURCE_EXTENSIONS})(?:[?#]|$)).*\\.[^./\\\\?#]+(?:[?#].*)?$`,
+  `^(?:\\.|\\/|[A-Za-z]:[\\\\/])(?![^?#]*\\.(?:${SOURCE_EXTENSIONS}|${ZONE_SUFFIXES})(?:[?#]|$)).*\\.[^./\\\\?#]+(?:[?#].*)?$`,
 )
+
+const isFile = (path: string): boolean =>
+  statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
 
 export interface ZoneGuardOptions {
   /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/`. */
@@ -88,6 +94,9 @@ export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
         // An entry point (a dev server's HTML page) is the build's own choice, not an import.
         if (args.importer === "") return undefined
         const file = resolve(dirname(args.importer), args.path.replace(/[?#].*$/, ""))
+        // No such file means an extensionless import of a dotted source name (`./date.utils`): Bun resolves
+        // it to the source file, which onLoad judges. Judging the bare path would refuse a file never loaded.
+        if (!isFile(file)) return undefined
         const reason = browserDenial(classifier.classify(file))
         return reason === undefined ? undefined : refuse(file, reason, args.importer)
       })
