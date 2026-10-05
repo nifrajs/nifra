@@ -547,7 +547,8 @@ function scriptBlocks(
   source: string,
 ): Array<{ start: number; end: number; module: boolean; setup: boolean }> {
   const blocks: Array<{ start: number; end: number; module: boolean; setup: boolean }> = []
-  const pattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/g
+  // A closing tag ends at any space, slash or `>` after its name, as the compilers read it.
+  const pattern = /<script\b([^>]*)>([\s\S]*?)<\/script(?=[\s/>])[^>]*>/gi
   // A `<script>` written inside an HTML comment is prose, not a block; blank comments out, keeping offsets.
   const visible = source.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, " "))
   for (const match of visible.matchAll(pattern)) {

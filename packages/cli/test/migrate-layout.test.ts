@@ -257,6 +257,21 @@ describe("migrateLayout", () => {
     expect(read(dir, "routes/about.backend.ts")).toContain("return { n: 2 }")
   })
 
+  test("an SFC script block ends at its closing tag however that tag is spaced", async () => {
+    const dir = app({
+      "routes/index.svelte": [
+        "<script module>",
+        "  export async function loader() { return { n: 1 } }",
+        "</script >",
+        "<p>hi</p>",
+        "",
+      ].join("\n"),
+    })
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "routes/index.svelte")).not.toContain("async function loader")
+    expect(read(dir, "routes/index.backend.ts")).toContain("export async function loader()")
+  })
+
   test("retired names: .server modules move under backend/, the marker and type are renamed", async () => {
     const dir = app({
       "routes/index.tsx": [
