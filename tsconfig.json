@@ -133,6 +133,7 @@
     "packages/web/test/css-loading.test.ts",
     // Native compiler fixtures have independent JSX/SFC configurations in the component type gate.
     "packages/web/test/fixtures/server-components/solid",
+    "packages/web/test/fixtures/server-components/preact",
     "packages/web/test/fixtures/server-components/svelte",
     "packages/web/test/fixtures/server-components/vue",
     // Cross-adapter dev-SSR integration test: it statically imports @nifrajs/web-react (a frontend
