@@ -1,5 +1,31 @@
 # @nifrajs/web
 
+## 4.0.1
+
+### Patch Changes
+
+- bbb2b27: Client navigation works on a page served from a native webview's own scheme, such as Capacitor's
+  `capacitor://localhost` on iOS: link clicks, prefetch, `navigate()` and `<form method="post">` stay
+  in-app there instead of the click being swallowed. Whether a URL belongs to the app is decided by the
+  document's scheme and host rather than `URL.origin`, which reads `"null"` for every non-special scheme,
+  so a `javascript:` target is still never taken in. An opaque or `file:` page, where history cannot move
+  to another path, leaves its links to the browser.
+- 2957acd: The credential scan no longer reads a ternary as an assignment. In
+  `mode === "signup" ? "new-password" : "current-password"` the tail of `"new-password"` was taken for a
+  key named `password`, and in `ready ? config.apiKey : "..."` the branch was taken for an `apiKey:` key,
+  so a client build and `nifra check` (NF-C032) failed on a plain string. A quoted name must now be the
+  whole string, and a name after a ternary's `?` or a member access's `.` is not a key. An object key
+  inside a ternary branch, a quoted JSON key and a property assignment are still checked.
+- 4bd292a: A static route file beside a dynamic one builds again: `users/me.tsx` next to `users/[id].tsx`, or a
+  `[lang]/` tree next to `about.tsx`, no longer fails `buildManifest` with "overlapping routes". The path
+  they share goes to the more specific route, in the router's own order (static, then mixed, then param,
+  then wildcard, segment by segment), and each keeps the paths only it serves. Two routes of one shape
+  that share a path, such as `users/[id].tsx` and `users/[slug].tsx`, still fail at boot, because one of
+  them could never be served.
+- 55e813b: The browser zone guard no longer refuses an extensionless import of a dotted source file. `import { x } from "../lib/calendar.shared"` (or `./date.utils`) was read as an asset with the extension `.shared`, judged by its bare path, refused, and then reported as "missing from the graph" once Bun loaded the real `.ts` file, so a `*.shared.ts` module outside the zone folders failed the client build and the dev server. Zone suffixes are no longer treated as asset extensions, and a path that names no file on disk is left to the source-file check, which judges the file Bun actually resolves.
+  - @nifrajs/core@4.0.1
+  - @nifrajs/island-trigger@4.0.1
+
 ## 4.0.0
 
 ### Major Changes

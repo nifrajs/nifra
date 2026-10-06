@@ -1,5 +1,11 @@
 # @nifrajs/workers
 
+## 4.0.1
+
+### Patch Changes
+
+- @nifrajs/core@4.0.1
+
 ## 4.0.0
 
 ### Patch Changes

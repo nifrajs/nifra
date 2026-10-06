@@ -1,5 +1,16 @@
 # @nifrajs/testing
 
+## 4.0.1
+
+### Patch Changes
+
+- @nifrajs/agent@4.0.1
+- @nifrajs/client@4.0.1
+- @nifrajs/core@4.0.1
+- @nifrajs/mcp@4.0.1
+- @nifrajs/mock@4.0.1
+- @nifrajs/webmcp@4.0.1
+
 ## 4.0.0
 
 ### Minor Changes

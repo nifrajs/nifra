@@ -1,5 +1,7 @@
 # @nifrajs/island-trigger
 
+## 4.0.1
+
 ## 4.0.0
 
 ## 3.5.0

@@ -1,5 +1,47 @@
 # @nifrajs/cli
 
+## 4.0.1
+
+### Patch Changes
+
+- 3fffcd1: `nifra migrate layout` puts a module only route pages use in `frontend/` even when a generated
+  `server-manifest.ts` imports every page. The server renders a page it imports rather than running it,
+  so the server's reach stops at route pages.
+- fb8e364: `nifra migrate layout` re-points a moved module's paths from its own location so each still reaches
+  what it did: `join(import.meta.dir, "..", "x")`, `import.meta.dir + "/../x"`, `` `${__dirname}/../x` ``
+  and `new URL("../x", import.meta.url)` with literal segments; any other use of its location is
+  reported. It also reports a folder that some files leave while others stay (a runner that lists
+  `migrations/` misses what moved), and scripts or config beside the code (`package.json`, shell scripts,
+  YAML, TOML) that name a moved file by path. An import that still reads like an old path but resolves
+  after the moves is no longer reported.
+- 12e420e: `nifra sync-manifest` fails when `routes/` does not build a route table, such as a duplicate route or
+  two routes of one shape that share a path. It prints the error under the manifest's file name, leaves
+  the manifest untouched, and exits with status 1, where it used to report that no generated
+  server-manifest.ts was found and exit 0. The `nifra_sync_manifest` MCP tool answers `ok: false` with
+  the error on that manifest's result, and the `manifest.sync` fix recipe refuses with the same error.
+  The command also prints one line per manifest: synced (with added and removed routes), already in
+  sync, or refused.
+- be27a41: `nifra upgrade` to 4.0 notes two more changes an app may hit. Page routes of one shape that share a
+  path fail with "overlapping routes", and same-method backend registrations that accept a shared path
+  are reported (NF-C024). `contracts.lock.json` also needs one `nifra contracts snapshot`: a route whose
+  schema has a property named `description`, `title`, `default`, `example` or `examples` gets a new
+  digest, because earlier digests skipped those properties.
+- Updated dependencies [bbb2b27]
+- Updated dependencies [2957acd]
+- Updated dependencies [4bd292a]
+- Updated dependencies [55e813b]
+  - @nifrajs/web@4.0.1
+  - @nifrajs/agent-review@4.0.1
+  - @nifrajs/client@4.0.1
+  - @nifrajs/core@4.0.1
+  - @nifrajs/i18n@4.0.1
+  - @nifrajs/mcp@4.0.1
+  - @nifrajs/mcp-db@4.0.1
+  - @nifrajs/runner@4.0.1
+  - @nifrajs/schema@4.0.1
+  - @nifrajs/testing@4.0.1
+  - create-nifra@4.0.1
+
 ## 4.0.0
 
 ### Major Changes
