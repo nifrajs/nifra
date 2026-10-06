@@ -122,6 +122,7 @@
     "react-dom": "19.2.7",
     "seroval": "1.6.8",
     "seroval-plugins": "1.6.8",
+    "sharp": "0.35.5",
     "source-map-js": "1.2.2",
     "vue": "3.5.42"
   },
