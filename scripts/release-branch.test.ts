@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 import {
   changedPublicPackageVersions,
@@ -100,8 +100,12 @@ interface WorkflowJob {
   readonly steps?: readonly WorkflowStep[]
 }
 
+// Windows checks the workflows out with CRLF line endings.
 const workflowText = (name: string): string =>
-  readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8")
+  readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  )
 
 const workflowJobs = (name: string): Readonly<Record<string, WorkflowJob | undefined>> =>
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a checked-in workflow; a field it lacks reads undefined and fails the assertion on it
@@ -181,6 +185,134 @@ test.skipIf(process.platform === "win32")(
         "11.12.0 publishes",
         "12.0.0 publishes",
       ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
+
+const releaseStep = (job: string, name: string): string =>
+  workflowJobs("release.yml")[job]?.steps?.find((step) => step.name === name)?.run ?? ""
+
+/** Writes `files` as executables into `dir`/bin; the PATH returned finds them before anything real. */
+const fakeBin = (dir: string, files: Readonly<Record<string, string>>): string => {
+  const bin = join(dir, "bin")
+  mkdirSync(bin)
+  for (const [name, body] of Object.entries(files)) {
+    writeFileSync(join(bin, name), body)
+    chmodSync(join(bin, name), 0o755)
+  }
+  return `${bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`
+}
+
+const NPM_WAIT = "Wait for npm to serve the published versions"
+
+test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
+  "the smoke test waits until npm serves every published version",
+  () => {
+    const names = workflowJobs("release.yml")["deploy-site"]?.steps?.map((step) => step.name) ?? []
+    expect(names.indexOf(NPM_WAIT)).toBeGreaterThan(-1)
+    expect(names.indexOf(NPM_WAIT)).toBeLessThan(
+      names.indexOf("Smoke test published registry packages"),
+    )
+    const dir = mkdtempSync(join(tmpdir(), "release-npm-wait-"))
+    try {
+      for (const [folder, manifest] of Object.entries({
+        scoped: { name: "@scope/scoped", version: "2.0.0" },
+        plain: { name: "plain", version: "2.0.0" },
+        internal: { name: "internal", version: "9.9.9", private: true },
+      })) {
+        mkdirSync(join(dir, "packages", folder), { recursive: true })
+        writeFileSync(join(dir, "packages", folder, "package.json"), JSON.stringify(manifest))
+      }
+      const served = join(dir, "served")
+      // npm serves 2.0.0 once `served` exists, which the wait between rounds creates under PROPAGATE.
+      const PATH = fakeBin(dir, {
+        curl: `#!/bin/sh\necho "$*" >> "${join(dir, "curl.log")}"\nif [ -e "${served}" ]; then echo '{"versions":{"1.0.0":{},"2.0.0":{}}}'; else echo '{"versions":{"1.0.0":{}}}'; fi\n`,
+        sleep: `#!/bin/sh\nif [ -n "$PROPAGATE" ]; then touch "${served}"; fi\n`,
+      })
+      const run = (env: Record<string, string>) =>
+        Bun.spawnSync(["bash", "-c", releaseStep("deploy-site", NPM_WAIT)], {
+          cwd: dir,
+          env: { HOME: dir, PATH, ...env },
+        })
+      const stalled = run({})
+      expect(stalled.exitCode).toBe(1)
+      for (const spec of ["@scope/scoped@2.0.0", "plain@2.0.0"])
+        expect(stalled.stderr.toString()).toContain(spec)
+      expect(run({ PROPAGATE: "1" }).exitCode).toBe(0)
+      const calls = readFileSync(join(dir, "curl.log"), "utf8")
+      expect(calls).toContain("https://registry.npmjs.org/@scope%2fscoped")
+      expect(calls).not.toContain("internal")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
+
+const DEPLOY = "Deploy site to Cloudflare Pages"
+const PROBE = "Probe production site"
+
+test.skipIf(process.platform === "win32")(
+  "the deployment carries its own stamp, written before wrangler deploys the site",
+  () => {
+    const steps = workflowJobs("release.yml")["deploy-site"]?.steps ?? []
+    const stamps = [DEPLOY, PROBE].map(
+      (name) => steps.find((step) => step.name === name)?.env?.DEPLOYMENT,
+    )
+    expect(stamps).toEqual([
+      `\${{ github.run_id }}.\${{ github.run_attempt }}`,
+      `\${{ github.run_id }}.\${{ github.run_attempt }}`,
+    ])
+    const dir = mkdtempSync(join(tmpdir(), "release-site-deploy-"))
+    try {
+      mkdirSync(join(dir, "site"))
+      const PATH = fakeBin(dir, {
+        bun: "#!/bin/sh\nmkdir -p dist/assets\necho built > dist/index.html\n",
+        bunx: `#!/bin/sh\ncat dist/assets/deployment.txt > "${join(dir, "deployed.txt")}"\n`,
+      })
+      const deploy = Bun.spawnSync(["bash", "-e", "-c", releaseStep("deploy-site", DEPLOY)], {
+        cwd: join(dir, "site"),
+        env: { HOME: dir, PATH, DEPLOYMENT: "2.1" },
+      })
+      expect(deploy.exitCode).toBe(0)
+      expect(readFileSync(join(dir, "deployed.txt"), "utf8")).toBe("2.1\n")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
+
+test.skipIf(process.platform === "win32")(
+  "the site check passes once a healthy nifra.dev serves this deployment's stamp, not just the same pages",
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "release-site-probe-"))
+    try {
+      const live = join(dir, "live")
+      // Until `live` exists nifra.dev serves the previous deployment: the same pages and corpus, an older
+      // stamp. A wait between rounds makes this deployment live under DEPLOYED.
+      const PATH = fakeBin(dir, {
+        curl: [
+          "#!/bin/sh",
+          'for arg; do url="$arg"; done',
+          `if [ -e "${live}" ]; then stamp="$DEPLOYMENT"; else stamp="1.1"; fi`,
+          'if [ -n "$BROKEN" ]; then title="502 Bad Gateway"; else title="Nifra - the same copy"; fi',
+          'case "$url" in',
+          '  */assets/deployment.txt) echo "$stamp" ;;',
+          '  *) echo "<html><title>$title</title></html>" ;;',
+          "esac",
+          "",
+        ].join("\n"),
+        sleep: `#!/bin/sh\nif [ -n "$DEPLOYED" ]; then touch "${live}"; fi\n`,
+      })
+      const run = (env: Record<string, string>) =>
+        Bun.spawnSync(["bash", "-c", releaseStep("deploy-site", PROBE)], {
+          cwd: dir,
+          env: { HOME: dir, PATH, DEPLOYMENT: "2.1", ...env },
+        }).exitCode
+      expect(run({})).toBe(1)
+      expect(run({ DEPLOYED: "1" })).toBe(0)
+      expect(run({ BROKEN: "1" })).toBe(1)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
