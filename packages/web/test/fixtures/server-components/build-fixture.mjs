@@ -1,8 +1,8 @@
 import { resolve } from "node:path"
 import { buildServerComponents } from "@nifrajs/web/server-components/build"
+import preact from "@preact/preset-vite"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import vue from "@vitejs/plugin-vue"
-import preact from "@preact/preset-vite"
 import solid from "vite-plugin-solid"
 
 const adapter = process.env.NIFRA_COMPONENT_ADAPTER ?? "vue"
@@ -18,7 +18,15 @@ const entries =
 const plugins =
   adapter === "react"
     ? []
-    : [adapter === "vue" ? vue() : adapter === "svelte" ? svelte() : adapter === "preact" ? preact() : solid({ ssr: true })]
+    : [
+        adapter === "vue"
+          ? vue()
+          : adapter === "svelte"
+            ? svelte()
+            : adapter === "preact"
+              ? preact()
+              : solid({ ssr: true }),
+      ]
 const outDir = resolve(
   import.meta.dirname,
   "../../../../../.nifra-components-fixtures",

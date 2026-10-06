@@ -91,7 +91,7 @@ function ComponentRange(props: {
   }, [props.state])
   return h("nifra-component-outlet", {
     ref: host,
-    // biome-ignore lint/security/noDangerouslySetInnerHtml: Record HTML passed the shared component policy before an outlet can resolve it.
+    // Record HTML passed the shared component policy before an outlet can resolve it.
     dangerouslySetInnerHTML: initial.current,
   })
 }

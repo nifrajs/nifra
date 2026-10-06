@@ -1,7 +1,7 @@
 import { serverComponentsConfig } from "@nifrajs/web/server-components/build"
+import preact from "@preact/preset-vite"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import vue from "@vitejs/plugin-vue"
-import preact from "@preact/preset-vite"
 import solid from "vite-plugin-solid"
 
 const adapter = process.env.NIFRA_COMPONENT_ADAPTER ?? "vue"
@@ -12,7 +12,13 @@ export default await serverComponentsConfig({
   port: 4422,
   entries: { client: "./entry.client.ts", ssr: "./entry.backend.ts" },
   plugins: [
-    adapter === "vue" ? vue() : adapter === "svelte" ? svelte() : adapter === "preact" ? preact() : solid({ ssr: true }),
+    adapter === "vue"
+      ? vue()
+      : adapter === "svelte"
+        ? svelte()
+        : adapter === "preact"
+          ? preact()
+          : solid({ ssr: true }),
     {
       name: "fixture-server",
       configureServer(server) {

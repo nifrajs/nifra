@@ -23,7 +23,7 @@ test("Preact renders native server views and hook islands with projected public 
   const publicProps = { title: "Public island", privateValue: "PRIVATE_ISLAND_SENTINEL" }
   const adapter = preactServerComponents()
   const result = await adapter.render(
-    ({ props }: { props: { title: string } }) =>
+    () =>
       nativeServerView(
         ({
           props: projected,
