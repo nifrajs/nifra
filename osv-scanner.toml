@@ -7,3 +7,12 @@
 id = "GHSA-vfj7-8cjw-p6xm"
 ignoreUntil = 2027-01-04T00:00:00Z
 reason = "Dev-only, via @changesets/cli on repository-controlled globs; no fixed braces release exists."
+
+# sprintf-js is reached only as argparse's dependency, and argparse only from js-yaml 3's command-line
+# entry (bin/js-yaml.js). read-yaml-file, under @changesets, loads js-yaml's library, which never
+# requires argparse, and no published package depends on any of them. Every sprintf-js release is in
+# the affected range. The entry lapses so the advisory is looked at again.
+[[IgnoredVulns]]
+id = "GHSA-hp3w-g68c-fv3c"
+ignoreUntil = 2027-01-04T00:00:00Z
+reason = "Dev-only, via @changesets read-yaml-file -> js-yaml 3 CLI -> argparse; never loaded; no fixed sprintf-js release exists."
