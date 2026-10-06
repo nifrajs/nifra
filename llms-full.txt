@@ -1620,7 +1620,7 @@ public registration API rather than as a bespoke dispatcher.
 
 ## Nifra - Server components
 
-> Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte and Solid hydration.
+> Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte, Solid and Preact hydration.
 
 ## Nifra - Optimistic UI & fetchers
 

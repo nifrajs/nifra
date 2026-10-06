@@ -2,6 +2,7 @@ import { resolve } from "node:path"
 import { devServerComponents } from "@nifrajs/web/server-components/build"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import vue from "@vitejs/plugin-vue"
+import preact from "@preact/preset-vite"
 import solid from "vite-plugin-solid"
 
 const adapter = process.env.NIFRA_COMPONENT_ADAPTER ?? "vue"
@@ -16,7 +17,7 @@ const entries =
 const plugins =
   adapter === "react"
     ? []
-    : [adapter === "vue" ? vue() : adapter === "svelte" ? svelte() : solid({ ssr: true })]
+    : [adapter === "vue" ? vue() : adapter === "svelte" ? svelte() : adapter === "preact" ? preact() : solid({ ssr: true })]
 const server = await devServerComponents({
   root,
   adapter,

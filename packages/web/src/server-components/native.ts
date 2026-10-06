@@ -10,7 +10,7 @@ export type NativeRender = (
   renderId: string,
 ) => string | Promise<string>
 export function nativeServerComponents(
-  name: "vue" | "svelte" | "solid",
+  name: "vue" | "svelte" | "solid" | "preact",
   render: NativeRender,
 ): ServerComponentRenderAdapter {
   return {

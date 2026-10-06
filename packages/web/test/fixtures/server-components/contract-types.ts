@@ -6,6 +6,7 @@ import {
 } from "@nifrajs/web/server-components"
 import type { ComponentClientAdapter } from "@nifrajs/web/server-components/client"
 import { clientIsland, defineClientIsland } from "@nifrajs/web/server-components/islands"
+import { ServerComponent as PreactOutlet } from "@nifrajs/web-preact/server-components/outlet"
 import { ServerComponent as ReactOutlet } from "@nifrajs/web-react/server-components/outlet"
 import { ServerComponent as SolidOutlet } from "@nifrajs/web-solid/server-components/outlet"
 import SvelteOutlet from "@nifrajs/web-svelte/server-components/outlet"
@@ -13,6 +14,7 @@ import {
   createServerComponentOutlet,
   ServerComponent as VueOutlet,
 } from "@nifrajs/web-vue/server-components/outlet"
+import type { FunctionComponent as PreactFunctionComponent } from "preact"
 import type { FunctionComponent } from "react"
 import type { Component as SolidComponent } from "solid-js"
 import type { Component as SvelteComponent } from "svelte"
@@ -30,6 +32,7 @@ declare const clientAdapter: ComponentClientAdapter
 declare const context: ServerComponentContext
 const outlet = { state, component, instanceKey: "stable", input: { id: "public" }, clientAdapter }
 ReactOutlet(outlet)
+PreactOutlet(outlet)
 VueOutlet(outlet)
 const TypedVueOutlet = createServerComponentOutlet(component)
 h(TypedVueOutlet, { state, instanceKey: "stable", input: { id: "public" }, clientAdapter })
@@ -44,20 +47,26 @@ ReactOutlet({ ...outlet, input: { id: 42 } })
 VueOutlet({ ...outlet, input: { id: 42 } })
 // @ts-expect-error Solid keeps the same schema-derived input contract.
 SolidOutlet({ ...outlet, input: { id: 42 } })
+// @ts-expect-error Preact input must retain the schema-derived string type.
+PreactOutlet({ ...outlet, input: { id: 42 } })
 // @ts-expect-error Svelte declarations keep the same schema-derived input contract.
 SvelteOutlet(null!, { ...outlet, input: { id: 42 } })
 const island = defineClientIsland({ props: t.object({ title: t.string() }), component: () => null })
 clientIsland(island, "stable", { title: "Public" })
 declare const reactIsland: FunctionComponent<{ title: string }>
+declare const preactIsland: PreactFunctionComponent<{ title: string }>
 declare const solidIsland: SolidComponent<{ title: string }>
 declare const svelteIsland: SvelteComponent<{ title: string }>
 const vueIsland = defineComponent({ props: { title: { type: String, required: true } } })
 defineClientIsland({ props: t.object({ title: t.string() }), component: reactIsland })
+defineClientIsland({ props: t.object({ title: t.string() }), component: preactIsland })
 defineClientIsland({ props: t.object({ title: t.string() }), component: vueIsland })
 defineClientIsland({ props: t.object({ title: t.string() }), component: svelteIsland })
 defineClientIsland({ props: t.object({ title: t.string() }), component: solidIsland })
 // @ts-expect-error React's native props must accept the schema projection.
 defineClientIsland({ props: t.object({ title: t.number() }), component: reactIsland })
+// @ts-expect-error Preact native props must accept schema projection.
+defineClientIsland({ props: t.object({ title: t.number() }), component: preactIsland })
 // @ts-expect-error Vue's required props must be satisfied by the schema projection.
 defineClientIsland({ props: t.object({}), component: vueIsland })
 // @ts-expect-error Svelte's native props must accept the schema projection.

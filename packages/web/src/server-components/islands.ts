@@ -21,7 +21,10 @@ type NativeComponentProps<Component> = Component extends abstract new (
     : Component extends (...args: infer Args) => unknown
       ? Args extends []
         ? object
-        : Args[0] | Args[1]
+        : // Optional legacy context is not a public props alternative (Preact types it as any).
+          Args extends [unknown, infer Props, ...unknown[]]
+          ? Args[0] | Props
+          : Args[0]
       : never
 type CompatibleComponent<Props, Component> =
   Props extends NativeComponentProps<Component>
@@ -75,7 +78,7 @@ export interface NativeServerView {
   readonly ranges: Readonly<Record<string, ComponentRecord>>
   readonly [viewBrand]: true
 }
-/** Server-only native view: Vue VNode/component, Svelte component or Solid component. */
+/** Server-only native view rendered by the selected framework's own renderer. */
 export function nativeServerView(
   component: unknown,
   islands: Readonly<Record<string, IslandInstance>> = {},

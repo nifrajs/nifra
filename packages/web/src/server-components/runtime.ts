@@ -84,7 +84,7 @@ export function createServerComponents(options: ServerComponentsOptions): Server
   if (
     !token.test(options.build) ||
     options.adapter.version !== 1 ||
-    !["react", "vue", "svelte", "solid"].includes(options.adapter.name)
+    !["react", "vue", "svelte", "solid", "preact"].includes(options.adapter.name)
   )
     throw new ServerComponentError("component_contract")
   const owners = new Map<

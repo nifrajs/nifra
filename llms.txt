@@ -12,7 +12,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra - API & typed client](/docs/api): Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.
 - [Nifra - Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
 - [Nifra - Server functions](/docs/server-functions): Write a function on the server and call it from a component. The module never reaches the browser, the arguments are validated, and the mounted function is an ordinary route - so assurance, capabilities and the effect ledger all apply.
-- [Nifra - Server components](/docs/server-components): Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte and Solid hydration.
+- [Nifra - Server components](/docs/server-components): Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte, Solid and Preact hydration.
 - [Nifra - Optimistic UI & fetchers](/docs/mutations): Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
 - [Nifra - Rendering: SSR, streaming, SSG & ISR](/docs/rendering): Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.
 - [Nifra - Hydration & pre-hydration forms](/docs/hydration): SSR pages become interactive after hydration. Nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.

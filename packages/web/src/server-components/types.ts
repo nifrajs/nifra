@@ -72,7 +72,7 @@ export interface ComponentIsland {
 }
 
 export interface ServerComponentRenderAdapter {
-  readonly name: "react" | "vue" | "svelte" | "solid"
+  readonly name: "react" | "vue" | "svelte" | "solid" | "preact"
   readonly version: 1
   render(
     view: unknown,
@@ -116,7 +116,7 @@ export interface ComponentRecord extends ComponentRender {
 export interface ComponentState {
   readonly v: 1
   readonly build: string
-  readonly adapter: "react" | "vue" | "svelte" | "solid"
+  readonly adapter: "react" | "vue" | "svelte" | "solid" | "preact"
   readonly owner: string
   readonly scope: string
   readonly records: readonly ComponentRecord[]

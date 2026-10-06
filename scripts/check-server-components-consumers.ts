@@ -132,6 +132,7 @@ try {
     "@nifrajs/web-vue",
     "@nifrajs/web-svelte",
     "@nifrajs/web-solid",
+    "@nifrajs/web-preact",
   ])
   for (const name of needed) {
     const pkg = packages.get(name)
@@ -149,6 +150,9 @@ try {
     vue: "3.5.40",
     svelte: "5.56.8",
     "solid-js": "1.9.14",
+    preact: "10.29.8",
+    "preact-render-to-string": "6.7.0",
+    "@preact/preset-vite": "2.10.5",
     vite: "8.2.1",
     "@vitejs/plugin-rsc": "0.5.35",
     "@vitejs/plugin-vue": "6.0.9",
@@ -225,7 +229,7 @@ try {
   await mkdir(apps)
   for (const name of ["schema.shared.ts", "benchmark.backend.ts", "measure.frontend.ts"])
     await cp(resolve(fixture, name), resolve(apps, name))
-  for (const adapter of ["react", "vue", "svelte", "solid"]) {
+  for (const adapter of ["react", "vue", "svelte", "solid", "preact"]) {
     const app = resolve(apps, adapter)
     await cp(
       adapter === "react"
@@ -259,7 +263,9 @@ try {
           ? 'import plugin from "@vitejs/plugin-vue";'
           : adapter === "svelte"
             ? 'import {svelte as plugin} from "@sveltejs/vite-plugin-svelte";'
-            : 'import plugin from "vite-plugin-solid";'
+            : adapter === "preact"
+              ? 'import plugin from "@preact/preset-vite";'
+              : 'import plugin from "vite-plugin-solid";'
     await mkdir(resolve(app, "routes"))
     await mkdir(resolve(app, "backend"))
     await writeFile(
@@ -281,7 +287,7 @@ try {
     JSON.stringify(
       {
         status: "passed",
-        adapters: ["react", "vue", "svelte", "solid"],
+        adapters: ["react", "vue", "svelte", "solid", "preact"],
         packages: [...needed],
         mode: "isolated-tarballs",
         sourceAliases: false,

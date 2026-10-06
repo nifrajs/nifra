@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import preact from "@preact/preset-vite"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import vue from "@vitejs/plugin-vue"
 import solid from "vite-plugin-solid"
@@ -9,7 +10,7 @@ import { componentRequestHeader } from "../src/server-components/protocol.ts"
 import { parseComponentState } from "../src/server-components/state.ts"
 import type { ComponentState } from "../src/server-components/types.ts"
 
-for (const adapter of ["react", "vue", "svelte", "solid"] as const) {
+for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
   test(`${adapter} development runs the native SSR entry and authorized owner refresh`, async () => {
     const root =
       adapter === "react"
@@ -22,7 +23,15 @@ for (const adapter of ["react", "vue", "svelte", "solid"] as const) {
     const plugins =
       adapter === "react"
         ? []
-        : [adapter === "vue" ? vue() : adapter === "svelte" ? svelte() : solid({ ssr: true })]
+        : [
+            adapter === "vue"
+              ? vue()
+              : adapter === "svelte"
+                ? svelte()
+                : adapter === "preact"
+                  ? preact()
+                  : solid({ ssr: true }),
+          ]
     const server = await devServerComponents({ root, adapter, entries, plugins, port: 0 })
     try {
       const url = server.resolvedUrls!.local[0]!
@@ -49,7 +58,7 @@ for (const adapter of ["react", "vue", "svelte", "solid"] as const) {
   }, 30000)
 }
 
-for (const adapter of ["react", "vue", "svelte", "solid"] as const) {
+for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
   test(`${adapter} hot updates replace all environments and reject earlier component generations`, async () => {
     const source =
       adapter === "react"
@@ -67,7 +76,15 @@ for (const adapter of ["react", "vue", "svelte", "solid"] as const) {
     const plugins =
       adapter === "react"
         ? []
-        : [adapter === "vue" ? vue() : adapter === "svelte" ? svelte() : solid({ ssr: true })]
+        : [
+            adapter === "vue"
+              ? vue()
+              : adapter === "svelte"
+                ? svelte()
+                : adapter === "preact"
+                  ? preact()
+                  : solid({ ssr: true }),
+          ]
     const server = await devServerComponents({ root, adapter, entries, plugins, port: 0 })
     const stateAt = async (): Promise<ComponentState> => {
       const html = await (

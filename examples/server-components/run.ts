@@ -2,7 +2,7 @@ import { createRequire } from "node:module"
 import { resolve } from "node:path"
 import { buildServerComponents, devServerComponents } from "@nifrajs/web/server-components/build"
 
-export async function runExample(adapter: "react" | "vue" | "svelte" | "solid") {
+export async function runExample(adapter: "react" | "vue" | "svelte" | "solid" | "preact") {
   const repo = resolve(import.meta.dirname, "../..")
   const fixtures = resolve(repo, "packages/web/test/fixtures/server-components")
   const require = createRequire(resolve(repo, "packages/web/package.json"))
@@ -13,7 +13,9 @@ export async function runExample(adapter: "react" | "vue" | "svelte" | "solid") 
         ? [(await import(require.resolve("@vitejs/plugin-vue"))).default()]
         : adapter === "svelte"
           ? [(await import(require.resolve("@sveltejs/vite-plugin-svelte"))).svelte()]
-          : [(await import(require.resolve("vite-plugin-solid"))).default({ ssr: true })]
+          : adapter === "preact"
+            ? [(await import(require.resolve("@preact/preset-vite"))).default()]
+            : [(await import(require.resolve("vite-plugin-solid"))).default({ ssr: true })]
   const options = {
     root:
       adapter === "react"

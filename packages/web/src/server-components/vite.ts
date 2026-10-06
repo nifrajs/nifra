@@ -21,7 +21,7 @@ const bare = (id: string): string => id.split("?")[0] ?? id
 
 export interface ServerComponentsPluginOptions {
   readonly root: string
-  readonly adapter: "react" | "vue" | "svelte" | "solid"
+  readonly adapter: "react" | "vue" | "svelte" | "solid" | "preact"
 }
 
 function nativeFacade(source: string, file: string): string {

@@ -14,7 +14,7 @@ const result = spawnSync(
   { cwd: resolve(root, "packages/web"), encoding: "utf8" },
 )
 if (result.status !== 0) throw new Error(result.stdout + result.stderr)
-console.log("components: four-adapter schema contract types and deliberate breaks passed")
+console.log("components: five-adapter schema contract types and deliberate breaks passed")
 const require = createRequire(resolve(root, "packages/web/package.json"))
 const tsc = resolve(root, "node_modules/typescript/bin/tsc")
 const fixture = resolve(root, "packages/web/test/fixtures/server-components")
@@ -44,6 +44,7 @@ const commands = [
     [require.resolve("vue-tsc/bin/vue-tsc.js"), "--project", resolve(fixture, "vue/tsconfig.json")],
   ],
   ["solid", [tsc, "--project", resolve(fixture, "solid/tsconfig.json")]],
+  ["preact", [tsc, "--project", resolve(fixture, "preact/tsconfig.json")]],
   [
     "svelte",
     [
@@ -75,18 +76,24 @@ for (const [adapter, args] of commands) {
   run(args)
   console.log(`components: ${adapter} native fixture typecheck passed`)
 }
-for (const adapter of ["vue", "svelte"] as const) {
+for (const adapter of ["vue", "svelte", "preact"] as const) {
   const file = resolve(
     fixture,
     adapter,
-    adapter === "vue" ? "Invalid.types.frontend.vue" : "Invalid.types.frontend.svelte",
+    adapter === "vue"
+      ? "Invalid.types.frontend.vue"
+      : adapter === "preact"
+        ? "Invalid.types.frontend.tsx"
+        : "Invalid.types.frontend.svelte",
   )
   const imports =
     'import type { ComponentState, ServerComponent } from "@nifrajs/web/server-components/client"; declare const handle: ServerComponent<{ id: string }, { title: string }, string>;'
   const source =
     adapter === "vue"
       ? `<script setup lang="ts">${imports} import {createServerComponentOutlet} from "@nifrajs/web-vue/server-components/outlet"; defineProps<{state: ComponentState}>(); const Outlet = createServerComponentOutlet(handle);</script><template><Outlet :state="state" instance-key="stable" :input="{id: 42}" /></template>`
-      : `<script lang="ts">${imports} import Outlet from "@nifrajs/web-svelte/server-components/outlet"; let {state}: {state: ComponentState} = $props();</script><Outlet {state} component={handle} instanceKey="stable" input={{id: 42}} />`
+      : adapter === "preact"
+        ? `${imports} import {ServerComponent as Outlet} from "@nifrajs/web-preact/server-components/outlet"; export function Invalid({state}: {state: ComponentState}) { return <Outlet state={state} component={handle} instanceKey="stable" input={{id: 42}} />; }`
+        : `<script lang="ts">${imports} import Outlet from "@nifrajs/web-svelte/server-components/outlet"; let {state}: {state: ComponentState} = $props();</script><Outlet {state} component={handle} instanceKey="stable" input={{id: 42}} />`
   try {
     await writeFile(file, source, { flag: "wx" })
     run(commands.find(([name]) => name === adapter)![1], true)

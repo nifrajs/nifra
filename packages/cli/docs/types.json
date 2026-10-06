@@ -3429,7 +3429,7 @@
     "name": "ComponentPipelineOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ComponentPipelineOptions {\n    readonly root: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\";\n    readonly entries: {\n        readonly client: string;\n        readonly ssr: string;\n        readonly rsc?: string;\n    };\n    readonly plugins?: readonly PluginOption[];\n    readonly outDir?: string;\n    readonly port?: number;\n    readonly publicEnvPrefix?: string;\n    readonly target?: \"bun\" | \"node\" | \"deno\" | \"cloudflare\" | \"vercel\";\n}"
+    "signature": "export interface ComponentPipelineOptions {\n    readonly root: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\" | \"preact\";\n    readonly entries: {\n        readonly client: string;\n        readonly ssr: string;\n        readonly rsc?: string;\n    };\n    readonly plugins?: readonly PluginOption[];\n    readonly outDir?: string;\n    readonly port?: number;\n    readonly publicEnvPrefix?: string;\n    readonly target?: \"bun\" | \"node\" | \"deno\" | \"cloudflare\" | \"vercel\";\n}"
   },
   {
     "name": "ComponentRecord",
@@ -3453,7 +3453,7 @@
     "name": "ComponentState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ComponentState {\n    readonly v: 1;\n    readonly build: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\";\n    readonly owner: string;\n    readonly scope: string;\n    readonly records: readonly ComponentRecord[];\n}"
+    "signature": "export interface ComponentState {\n    readonly v: 1;\n    readonly build: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\" | \"preact\";\n    readonly owner: string;\n    readonly scope: string;\n    readonly records: readonly ComponentRecord[];\n}"
   },
   {
     "name": "ComponentValue",
@@ -13472,6 +13472,12 @@
   {
     "name": "ServerComponent",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function ServerComponent<Input, Props, View>(props: ServerComponentProps<Input, Props, View>): import(\"preact\").VNode<import(\"preact\").Attributes & {\n    key: string;\n    state: ComponentState;\n    record: import(\"@nifrajs/web/server-components\").ComponentRecord;\n    controller: ComponentController | undefined;\n    clientAdapter: ComponentClientAdapter | undefined;\n    onError: ((code: string) => void) | undefined;\n}>;"
+  },
+  {
+    "name": "ServerComponent",
+    "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function ServerComponent<Input, Props, View>(props: ServerComponentProps<Input, Props, View>): import(\"react\").FunctionComponentElement<{\n    readonly state: ComponentState;\n    readonly record: import(\"@nifrajs/web/server-components/client\").ComponentRecord;\n    readonly controller?: ComponentController | undefined;\n    readonly clientAdapter?: ComponentClientAdapter | undefined;\n    readonly onError?: ((code: string) => void) | undefined;\n}>;"
   },
@@ -13514,6 +13520,12 @@
   {
     "name": "ServerComponentProps",
     "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface ServerComponentProps<Input, Props, View> {\n    readonly state: ComponentState;\n    readonly component: ComponentHandle<Input, Props, View>;\n    readonly instanceKey: ComponentKey;\n    readonly input: NoInfer<Input>;\n    readonly parent?: string;\n    readonly controller?: ComponentController | undefined;\n    readonly clientAdapter?: ComponentClientAdapter | undefined;\n    readonly onError?: ((code: string) => void) | undefined;\n}"
+  },
+  {
+    "name": "ServerComponentProps",
+    "kind": "interface",
     "package": "@nifrajs/web-react",
     "signature": "export interface ServerComponentProps<Input, Props, View> {\n    readonly state: ComponentState;\n    readonly component: ComponentHandle<Input, Props, View>;\n    readonly instanceKey: ComponentKey;\n    readonly input: NoInfer<Input>;\n    readonly parent?: string;\n    readonly controller?: ComponentController | undefined;\n    readonly clientAdapter?: ComponentClientAdapter;\n    readonly onError?: (code: string) => void;\n}"
   },
@@ -13527,7 +13539,7 @@
     "name": "ServerComponentRenderAdapter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerComponentRenderAdapter {\n    readonly name: \"react\" | \"vue\" | \"svelte\" | \"solid\";\n    readonly version: 1;\n    render(view: unknown, props: unknown, context: ComponentRenderContext): ComponentRender | Promise<ComponentRender>;\n}"
+    "signature": "export interface ServerComponentRenderAdapter {\n    readonly name: \"react\" | \"vue\" | \"svelte\" | \"solid\" | \"preact\";\n    readonly version: 1;\n    render(view: unknown, props: unknown, context: ComponentRenderContext): ComponentRender | Promise<ComponentRender>;\n}"
   },
   {
     "name": "ServerComponentRuntime",
@@ -13546,7 +13558,7 @@
     "name": "ServerComponentsPluginOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerComponentsPluginOptions {\n    readonly root: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\";\n}"
+    "signature": "export interface ServerComponentsPluginOptions {\n    readonly root: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\" | \"preact\";\n}"
   },
   {
     "name": "ServerEntryClientIp",
@@ -19703,14 +19715,14 @@
     "name": "nativeServerComponents",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function nativeServerComponents(name: \"vue\" | \"svelte\" | \"solid\", render: NativeRender): ServerComponentRenderAdapter;"
+    "signature": "export declare function nativeServerComponents(name: \"vue\" | \"svelte\" | \"solid\" | \"preact\", render: NativeRender): ServerComponentRenderAdapter;"
   },
   {
     "name": "nativeServerView",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function nativeServerView(component: unknown, islands?: Readonly<Record<string, IslandInstance>>, ranges?: Readonly<Record<string, ComponentRecord>>): NativeServerView;",
-    "doc": "/** Server-only native view: Vue VNode/component, Svelte component or Solid component. */"
+    "doc": "/** Server-only native view rendered by the selected framework's own renderer. */"
   },
   {
     "name": "negotiateContentType",
@@ -20455,10 +20467,22 @@
     "doc": "/** The Preact server render adapter - pass to @nifrajs/web's `renderPage`. */"
   },
   {
+    "name": "preactComponentClient",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function preactComponentClient(options: Omit<NativeRangeOptions, \"adapter\" | \"runtime\">): import(\"@nifrajs/web/server-components/client\").ComponentClientAdapter;"
+  },
+  {
     "name": "preactDedupePlugin",
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const preactDedupePlugin: (from: string) => BunPlugin;"
+  },
+  {
+    "name": "preactServerComponents",
+    "kind": "const",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare const preactServerComponents: () => ServerComponentRenderAdapter;"
   },
   {
     "name": "predictionLabCaseIds",

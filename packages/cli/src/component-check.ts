@@ -64,7 +64,7 @@ export function componentCheckReceipts(root: string, source: SourceIndex): Reado
   const options = pipeline as Record<string, unknown>
   if (
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Static receipt inspection checks object shape before reading fields; the source scanner never executes configuration.
-    !["react", "vue", "svelte", "solid"].includes(options.adapter as string) ||
+    !["react", "vue", "svelte", "solid", "preact"].includes(options.adapter as string) ||
     typeof options.entries !== "object" ||
     options.entries === null ||
     Array.isArray(options.entries)

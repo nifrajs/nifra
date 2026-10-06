@@ -7,7 +7,7 @@ import { resolve } from "node:path"
 
 const root = resolve(import.meta.dirname, "..")
 const fixture = "packages/web/test/fixtures/server-components"
-const adapters = ["react", "vue", "svelte", "solid"] as const
+const adapters = ["react", "vue", "svelte", "solid", "preact"] as const
 const selected = process.argv.find((item) => item.startsWith("--target="))?.slice(9)
 const targets = ["dev", "node", "bun", "deno", "cloudflare", "vercel"].filter(
   (item) => selected === undefined || item === selected,
@@ -218,6 +218,7 @@ try {
     "test",
     ...contractFiles,
     "packages/web-react/test/server-components-flight.test.ts",
+    "packages/web-preact/test/server-components.test.ts",
     "packages/core/test/capability-context.test.ts",
     "packages/cli/test/component-check.test.ts",
   ])

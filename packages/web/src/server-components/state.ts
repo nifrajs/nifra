@@ -63,7 +63,7 @@ export function parseComponentState(
     !componentToken(state.owner) ||
     !componentToken(state.scope) ||
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Object shape is checked before field inspection; each typed field follows its closed vocabulary check.
-    !["react", "vue", "svelte", "solid"].includes(state.adapter as string) ||
+    !["react", "vue", "svelte", "solid", "preact"].includes(state.adapter as string) ||
     !Array.isArray(state.records) ||
     state.records.length > COMPONENT_LIMITS.instances
   )

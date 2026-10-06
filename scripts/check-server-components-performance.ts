@@ -64,10 +64,10 @@ try {
           builder.onLoad({ filter: /.*/ }, (args) => {
             const name = relative(root, args.path).replaceAll("\\", "/")
             if (
-              /^packages\/(?:web\/(?:src|dist)\/server-components|web-(?:react|vue|svelte|solid))\//.test(
+              /^packages\/(?:web\/(?:src|dist)\/server-components|web-(?:react|vue|svelte|solid|preact))\//.test(
                 name,
               ) ||
-              /node_modules\/(?:\.bun\/)?(?:react(?:-dom|-server-dom-webpack)?|vue|svelte|solid-js)(?:@|\/)/.test(
+              /node_modules\/(?:\.bun\/)?(?:react(?:-dom|-server-dom-webpack)?|vue|svelte|solid-js|preact(?:-render-to-string)?)(?:@|\/)/.test(
                 name,
               )
             )
@@ -105,7 +105,7 @@ try {
     ) + "\n",
   )
   console.log("components: disabled response, imports and 1.03x latency gate passed")
-  for (const adapter of ["react", "vue", "svelte", "solid"]) {
+  for (const adapter of ["react", "vue", "svelte", "solid", "preact"]) {
     run(["node", `${fixture}/build-fixture.mjs`], {
       NIFRA_COMPONENT_ADAPTER: adapter,
       NIFRA_COMPONENT_TARGET: "node",

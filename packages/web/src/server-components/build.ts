@@ -40,7 +40,7 @@ function compilerGeneration(): string {
 
 export interface ComponentPipelineOptions {
   readonly root: string
-  readonly adapter: "react" | "vue" | "svelte" | "solid"
+  readonly adapter: "react" | "vue" | "svelte" | "solid" | "preact"
   readonly entries: { readonly client: string; readonly ssr: string; readonly rsc?: string }
   readonly plugins?: readonly PluginOption[]
   readonly outDir?: string
@@ -85,7 +85,7 @@ export async function serverComponentsConfig(
 ): Promise<UserConfig> {
   const root = resolve(options.root)
   if (
-    !["react", "vue", "svelte", "solid"].includes(options.adapter) ||
+    !["react", "vue", "svelte", "solid", "preact"].includes(options.adapter) ||
     (options.target !== undefined &&
       !["bun", "node", "deno", "cloudflare", "vercel"].includes(options.target))
   )
@@ -256,6 +256,7 @@ export async function serverComponentsConfig(
         "vue",
         "svelte",
         "solid-js",
+        "preact",
         "@nifrajs/web",
         "@nifrajs/core",
       ],
@@ -265,7 +266,9 @@ export async function serverComponentsConfig(
       target: edge ? "webworker" : "node",
       resolve: { conditions: serverConditions },
     },
-    esbuild: { jsx: "automatic" },
+    ...(options.adapter === "preact"
+      ? { oxc: { jsx: { runtime: "automatic", importSource: "preact" } } }
+      : { esbuild: { jsx: "automatic" } }),
     build: { outDir: out, sourcemap: false, manifest: true, minify: true },
     environments: {
       client: {

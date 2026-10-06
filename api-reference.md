@@ -6019,13 +6019,13 @@ _No named exports (side-effect entrypoint)._
 - **isClientIsland** _(function)_ - `isClientIsland: (value: unknown) => value is ClientIsland`
 - **isNativeServerView** _(function)_ - `isNativeServerView: (value: unknown) => value is NativeServerView`
 - **nativeServerView** _(function)_ - `nativeServerView: (component: unknown, islands?: Readonly<Record<string, IslandInstance>>, ranges?: Readonly<Record<string, ComponentRecord>>) => NativeServerView`
-  Server-only native view: Vue VNode/component, Svelte component or Solid component.
+  Server-only native view rendered by the selected framework's own renderer.
 - **serverComponentChild** _(function)_ - `serverComponentChild: (children: readonly ComponentRecord[], component: Pick<ServerComponentHandle, "reference">, key: ComponentKey) => ComponentRecord`
 
 ### `@nifrajs/web/server-components/native`
 
 - **NativeRender** _(type)_ - `type NativeRender = ( component: unknown, props: Record<string, unknown>, renderId: string, ) => string | Promise<string>`
-- **nativeServerComponents** _(function)_ - `nativeServerComponents: (name: "vue" | "svelte" | "solid", render: NativeRender) => ServerComponentRenderAdapter`
+- **nativeServerComponents** _(function)_ - `nativeServerComponents: (name: "vue" | "svelte" | "solid" | "preact", render: NativeRender) => ServerComponentRenderAdapter`
 
 ### `@nifrajs/web/server-components/portal`
 
@@ -6264,6 +6264,19 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed cl…
+
+### `@nifrajs/web-preact/server-components`
+
+- **preactServerComponents** _(const)_ - `preactServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-preact/server-components/client`
+
+- **preactComponentClient** _(function)_ - `preactComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
+
+### `@nifrajs/web-preact/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("preact").VNode<import("preact").Attributes & { key: string; state: ComponentState; record: import("@nifrajs/web/server-co…`
+- **ServerComponentProps** _(interface)_ - `interface ServerComponentProps<Input, Props, View>`
 
 ## @nifrajs/web-react
 

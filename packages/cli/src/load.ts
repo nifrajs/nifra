@@ -133,7 +133,7 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
     if (
       typeof pipeline !== "object" ||
       pipeline === null ||
-      !["react", "vue", "svelte", "solid"].includes(pipeline.adapter) ||
+      !["react", "vue", "svelte", "solid", "preact"].includes(pipeline.adapter) ||
       typeof pipeline.entries !== "object" ||
       pipeline.entries === null ||
       typeof pipeline.entries.client !== "string" ||
