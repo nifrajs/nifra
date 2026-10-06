@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { afterAll, describe, expect, test } from "bun:test"
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -34,31 +35,42 @@ import { HOSTILE_CORPUS } from "./fixtures/hostile-corpus.ts"
 const scratch = mkdtempSync(join(tmpdir(), "nifra-mcp-db-engine-"))
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
+// Seeded once per journal mode at load, in one transaction, then copied per test. Seeding inside a
+// test cost a synced journal file per statement, which ran a Windows runner past the 5 s test timeout.
+function seededTemplate(wal: boolean): string {
+  const file = join(scratch, wal ? "template-wal.db" : "template.db")
+  const db = new Database(file)
+  if (wal) db.run("PRAGMA journal_mode = WAL")
+  db.transaction(() => {
+    db.run(`CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'open',
+      total INTEGER, user_id INTEGER REFERENCES users (id), blob BLOB)`)
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT)")
+    db.run("CREATE TABLE secrets (id INTEGER PRIMARY KEY, value TEXT)")
+    db.run("CREATE VIEW secret_view AS SELECT * FROM secrets")
+    db.run("CREATE VIEW paid AS SELECT * FROM orders WHERE status = 'paid'")
+    db.run("CREATE INDEX orders_lower_status ON orders (lower(status))")
+    db.run("CREATE VIEW virtual_rows AS SELECT * FROM json_each('[1, 2]')")
+    db.run("INSERT INTO users (email, password_hash) VALUES ('a@example.com', 'hash')")
+    db.run(
+      "INSERT INTO orders (status, total, user_id, blob) VALUES ('paid', 9007199254740993, 1, x'0102'), ('open', 5, 1, NULL)",
+    )
+    db.run("INSERT INTO secrets (value) VALUES ('top secret')")
+  })()
+  if (wal) db.run("PRAGMA wal_checkpoint(TRUNCATE)")
+  db.close()
+  // No writer has it open now: a WAL database without its -wal and -shm files.
+  rmSync(`${file}-wal`, { force: true })
+  rmSync(`${file}-shm`, { force: true })
+  return file
+}
+const TEMPLATES = { rollback: seededTemplate(false), wal: seededTemplate(true) }
+
 let counter = 0
 function seededFile(options: { wal?: boolean } = {}): string {
   const dir = join(scratch, `db-${counter++}`)
   mkdirSync(dir)
   const file = join(dir, "app.db")
-  const db = new Database(file)
-  if (options.wal === true) db.run("PRAGMA journal_mode = WAL")
-  db.run(`CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'open',
-    total INTEGER, user_id INTEGER REFERENCES users (id), blob BLOB)`)
-  db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT)")
-  db.run("CREATE TABLE secrets (id INTEGER PRIMARY KEY, value TEXT)")
-  db.run("CREATE VIEW secret_view AS SELECT * FROM secrets")
-  db.run("CREATE VIEW paid AS SELECT * FROM orders WHERE status = 'paid'")
-  db.run("CREATE INDEX orders_lower_status ON orders (lower(status))")
-  db.run("CREATE VIEW virtual_rows AS SELECT * FROM json_each('[1, 2]')")
-  db.run("INSERT INTO users (email, password_hash) VALUES ('a@example.com', 'hash')")
-  db.run(
-    "INSERT INTO orders (status, total, user_id, blob) VALUES ('paid', 9007199254740993, 1, x'0102'), ('open', 5, 1, NULL)",
-  )
-  db.run("INSERT INTO secrets (value) VALUES ('top secret')")
-  if (options.wal === true) db.run("PRAGMA wal_checkpoint(TRUNCATE)")
-  db.close()
-  // No writer has it open now: a WAL database without its -wal and -shm files.
-  rmSync(`${file}-wal`, { force: true })
-  rmSync(`${file}-shm`, { force: true })
+  copyFileSync(options.wal === true ? TEMPLATES.wal : TEMPLATES.rollback, file)
   return file
 }
 
