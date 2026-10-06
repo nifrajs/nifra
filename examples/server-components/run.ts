@@ -14,7 +14,7 @@ export async function runExample(adapter: "react" | "vue" | "svelte" | "solid" |
         : adapter === "svelte"
           ? [(await import(require.resolve("@sveltejs/vite-plugin-svelte"))).svelte()]
           : adapter === "preact"
-            ? [(await import(require.resolve("@preact/preset-vite"))).default()]
+            ? [(await import("@preact/preset-vite")).default()]
             : [(await import(require.resolve("vite-plugin-solid"))).default({ ssr: true })]
   const options = {
     root:
