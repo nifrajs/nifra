@@ -6,6 +6,12 @@ It starts Pi in headless RPC mode, maps Pi lifecycle, assistant, tool,
 compaction, extension, and error events into `@nifrajs/agent-protocol`, and
 supports cancellation, reload, session identity, and bounded event buffering.
 
+A turn whose model call fails ends with `session.failed` (`recoverable: true`):
+`PI_AUTH_REQUIRED` when Pi's provider login or API key was rejected, so the
+user needs to sign in to Pi again, and `PI_MODEL_FAILED` otherwise. The error
+message is the first line of Pi's error. A transient error Pi retries keeps the
+turn open until the retry settles.
+
 Reload defaults to a process restart with the same Pi session ID. This is the
 reliable reload primitive in Pi's documented RPC protocol: the transcript stays
 in Pi's session store while the new process loads changed extensions. The tiny

@@ -22,12 +22,198 @@ process.stdin.on("data", (chunk) => {
 })
 `
 
+/** A fake Pi that answers every prompt with the given RPC records. */
+function scriptedPi(records: readonly unknown[]): string {
+  return `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  for (const record of ${JSON.stringify(records)}) process.stdout.write(JSON.stringify(record) + "\\n")
+})
+`
+}
+
+// Recorded from `pi --mode rpc` 0.84.1 with an expired ChatGPT login.
+const expiredLoginMessage = {
+  role: "assistant",
+  content: [],
+  api: "openai-codex-responses",
+  provider: "openai-codex",
+  model: "gpt-5.6-luna",
+  usage: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason: "error",
+  errorMessage:
+    'OAuth refresh failed for openai-codex: OpenAI Codex token refresh failed (401): {\n  "error": {\n    "message": "Could not validate your refresh token. Please try signing in again.",\n    "type": "invalid_request_error",\n    "param": null,\n    "code": "invalid_refresh_token"\n  }\n}',
+  timestamp: 1791366339228,
+}
+
 describe("PiBackend", () => {
   async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
     const values: T[] = []
     for await (const value of source) values.push(value)
     return values
   }
+
+  async function collectUntilSettled<T>(
+    source: AsyncIterable<T>,
+  ): Promise<{ events: T[]; error: unknown }> {
+    const events: T[] = []
+    try {
+      for await (const value of source) events.push(value)
+      return { events, error: undefined }
+    } catch (error) {
+      return { events, error }
+    }
+  }
+
+  test("a failed model call fails the turn with a sign-in code and only the first line", async () => {
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: [
+        "-e",
+        scriptedPi([
+          { type: "agent_start" },
+          { type: "message_start", message: expiredLoginMessage },
+          { type: "message_end", message: expiredLoginMessage },
+          { type: "turn_end", message: expiredLoginMessage, toolResults: [] },
+          { type: "agent_end", messages: [expiredLoginMessage], willRetry: false },
+          { type: "agent_settled" },
+        ]),
+      ],
+    })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-failed" })
+      const { events, error } = await collectUntilSettled(
+        backend.send({ sessionId: "model-failed", message: "hi" }),
+      )
+      const expected = {
+        code: "PI_AUTH_REQUIRED",
+        message: "OAuth refresh failed for openai-codex: OpenAI Codex token refresh failed (401)",
+      }
+      expect(events.map((event) => event.type)).toEqual([
+        "session.updated",
+        "turn.started",
+        "session.updated",
+        "session.failed",
+      ])
+      expect(events.at(-1)).toMatchObject({ error: expected, recoverable: true })
+      expect(error).toEqual(expected)
+      expect((await backend.snapshot("model-failed")).status).toBe("failed")
+    } finally {
+      await backend.close("model-failed")
+    }
+  })
+
+  test("a model error without an auth cause reports PI_MODEL_FAILED", async () => {
+    const overloaded = {
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage:
+        '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+    }
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: [
+        "-e",
+        scriptedPi([
+          { type: "message_end", message: overloaded },
+          { type: "agent_end", willRetry: false },
+        ]),
+      ],
+    })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-overloaded" })
+      const { events, error } = await collectUntilSettled(
+        backend.send({ sessionId: "model-overloaded", message: "hi" }),
+      )
+      expect(events.at(-1)).toMatchObject({
+        type: "session.failed",
+        error: { code: "PI_MODEL_FAILED", message: overloaded.errorMessage },
+        recoverable: true,
+      })
+      expect(error).toMatchObject({ code: "PI_MODEL_FAILED" })
+    } finally {
+      await backend.close("model-overloaded")
+    }
+  })
+
+  test("a model error Pi retries does not end the turn", async () => {
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: [
+        "-e",
+        scriptedPi([
+          {
+            type: "message_end",
+            message: { role: "assistant", content: [], stopReason: "error", errorMessage: "529" },
+          },
+          { type: "agent_end", willRetry: true },
+          { type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 0, errorMessage: "529" },
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "ok" }],
+              stopReason: "stop",
+            },
+          },
+          { type: "auto_retry_end", success: true, attempt: 1 },
+          { type: "agent_end", willRetry: false },
+          { type: "agent_settled" },
+        ]),
+      ],
+    })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-retried" })
+      const events = await collect(backend.send({ sessionId: "model-retried", message: "hi" }))
+      expect(events.map((event) => event.type)).toEqual([
+        "session.updated",
+        "turn.started",
+        "assistant.message",
+        "session.updated",
+        "session.completed",
+      ])
+    } finally {
+      await backend.close("model-retried")
+    }
+  })
+
+  test("a model call Pi aborts stops the turn instead of completing it", async () => {
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: [
+        "-e",
+        scriptedPi([
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [],
+              stopReason: "aborted",
+              errorMessage: "Request was aborted",
+            },
+          },
+          { type: "agent_end", willRetry: false },
+        ]),
+      ],
+    })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-aborted" })
+      const events = await collect(backend.send({ sessionId: "model-aborted", message: "hi" }))
+      expect(events.at(-1)).toMatchObject({ type: "session.stopped", reason: "aborted" })
+      expect(events.some((event) => event.type === "session.completed")).toBe(false)
+      expect((await backend.snapshot("model-aborted")).status).toBe("stopped")
+    } finally {
+      await backend.close("model-aborted")
+    }
+  })
 
   test("maps Pi JSONL events into the Nifra protocol", async () => {
     const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] })
