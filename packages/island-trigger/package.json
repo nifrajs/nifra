@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/island-trigger",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Tiny, framework-neutral island trigger scheduler for nifra.",
   "keywords": [
     "nifra",

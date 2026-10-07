@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/ts-plugin",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "TypeScript language-service plugin for nifra - go-to-definition from a route-path string literal to the routes/ file that serves it, and the frontend/backend zone rules as editor errors.",
   "keywords": [
     "bun",

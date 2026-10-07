@@ -10,7 +10,7 @@
  * injects its HMR client + the framework's refresh preamble. Node `http` (not `Bun.serve`) because
  * Vite's `middlewares` are Connect-style - it runs fine under Bun.
  */
-import { writeFileSync } from "node:fs"
+import { type Dirent, readdirSync, writeFileSync } from "node:fs"
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -170,6 +170,7 @@ export { LAST_ERROR_PATH } from "./diagnostic.ts"
 // The codegen'd client entry is written here (at the Vite root) so Vite serves + HMRs it.
 const DEV_ENTRY = ".nifra-vite-entry.tsx"
 const VITE_CLOSE_BOUND_MS = 2000
+const POLL_INTERVAL_MS = 80
 
 /** Candidate spellings for Vite's module-graph map. Vite has used native and slash-normalized
  * absolute Windows paths across versions, while watcher events can additionally arrive as a file URL. */
@@ -182,6 +183,22 @@ const modulePathCandidates = (path: string): string[] => {
 const pathInside = (root: string, path: string): boolean => {
   const rel = relative(resolvePath(root), resolvePath(normalizeFilePath(path)))
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+/** Every file below `dir` as an absolute path. A directory removed mid-walk contributes nothing. */
+const filesUnder = (dir: string, into = new Set<string>()): Set<string> => {
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return into
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) filesUnder(path, into)
+    else into.add(path)
+  }
+  return into
 }
 
 const readNodeBody = async (req: IncomingMessage): Promise<Buffer | undefined> => {
@@ -415,6 +432,9 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       generateClientEntry(manifest, { clientModule: options.clientModule, resolve: toUrl }),
     )
   }
+  const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
+  // Listed before the entry is generated, so a file added in between is reconciled again, not lost.
+  const routeFiles = usePolling ? filesUnder(routesDir) : new Set<string>()
   writeClientEntry()
   const entryUrl = `/${DEV_ENTRY}`
 
@@ -578,7 +598,6 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // path-shaped `clientModule` (tests) names no package; there is then nothing to externalize.
   const adapterPackage = packageNameOf(options.clientModule)
   const ssrExternal = [...(adapterPackage !== undefined ? [adapterPackage] : []), "@nifrajs/web"]
-  const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
   // The feed writes its record and log under `.nifra/`: watching them would turn every log flush into
   // a "file change" that re-creates the app and marks every entry stale.
   const watch: { ignored: RegExp[]; usePolling?: boolean; interval?: number } = {
@@ -587,7 +606,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // Poll when native fs events aren't delivered (containers/sandboxes).
   if (usePolling) {
     watch.usePolling = true
-    watch.interval = 80
+    watch.interval = POLL_INTERVAL_MS
   }
   // Never `import("vite")` directly here: the guard in `importVite` has to run first, and the dev
   // server importing vite unguarded is precisely what poisoned the module for the whole process.
@@ -722,20 +741,43 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     session.markChange()
     refreshApp(normalizeFilePath(path))
   })
+  const onAddUnlink = (event: "add" | "unlink", path: string): void => {
+    const filePath = normalizeFilePath(path)
+    const inRoutes = pathInside(routesDir, filePath)
+    if (inRoutes && usePolling) {
+      const file = resolvePath(filePath)
+      // Whichever of the watcher and the rescan below reports a route file first handles it.
+      if (routeFiles.has(file) === (event === "add")) return
+      if (event === "add") routeFiles.add(file)
+      else routeFiles.delete(file)
+    }
+    session.markChange()
+    if (inRoutes) {
+      writeClientEntry()
+      // A newly added route is not in Vite's module graph yet, so invalidating only the
+      // route path cannot evict the cached generated entry that imports the route. Evict the
+      // generated entry after rewriting it before recreating the SSR app; this also prevents
+      // an unlink refresh from briefly loading an entry that still references the deleted file.
+      invalidateImporterClosure(resolvePath(root, DEV_ENTRY))
+    }
+    refreshApp(filePath)
+  }
   for (const event of ["add", "unlink"] as const) {
-    vite.watcher.on(event, (path) => {
-      session.markChange()
-      const filePath = normalizeFilePath(path)
-      if (pathInside(routesDir, filePath)) {
-        writeClientEntry()
-        // A newly added route is not in Vite's module graph yet, so invalidating only the
-        // route path cannot evict the cached generated entry that imports the route. Evict the
-        // generated entry after rewriting it before recreating the SSR app; this also prevents
-        // an unlink refresh from briefly loading an entry that still references the deleted file.
-        invalidateImporterClosure(resolvePath(root, DEV_ENTRY))
-      }
-      refreshApp(filePath)
-    })
+    vite.watcher.on(event, (path) => onAddUnlink(event, path))
+  }
+  // Chokidar reports ready before the poller has taken its baseline stat of a directory (Bun's
+  // fs.watchFile takes it asynchronously), and a route added or removed in that gap is folded into the
+  // baseline and never reported. The manifest comes from a directory scan, so a scan diffed against the
+  // route files already handled recovers those events.
+  const reconcileRouteFiles = (): void => {
+    const onDisk = filesUnder(routesDir)
+    try {
+      for (const file of onDisk) if (!routeFiles.has(file)) onAddUnlink("add", file)
+      for (const file of [...routeFiles]) if (!onDisk.has(file)) onAddUnlink("unlink", file)
+    } catch (err) {
+      console.error("[nifra/web/vite] route rescan failed:", err)
+      session.buildFailed(err, "route rescan failed")
+    }
   }
   await watcherReady
 
@@ -756,9 +798,11 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const address = server.address()
   const boundPort = typeof address === "object" && address !== null ? address.port : port
   session.listening(boundPort)
+  const routeRescan = usePolling ? setInterval(reconcileRouteFiles, POLL_INTERVAL_MS) : undefined
   return {
     port: boundPort,
     stop: async () => {
+      clearInterval(routeRescan)
       session.stop()
       // Cleared with the server that owns it: the slot is process-global, so a stopped server leaving
       // its loader behind would hand the next one's adapter a graph that is closed (tests start and

@@ -1,5 +1,22 @@
 # @nifrajs/cli
 
+## 4.0.2
+
+### Patch Changes
+
+- Updated dependencies [fcd6a5b]
+  - @nifrajs/web@4.0.2
+  - @nifrajs/agent-review@4.0.2
+  - @nifrajs/client@4.0.2
+  - @nifrajs/core@4.0.2
+  - @nifrajs/i18n@4.0.2
+  - @nifrajs/mcp@4.0.2
+  - @nifrajs/mcp-db@4.0.2
+  - @nifrajs/runner@4.0.2
+  - @nifrajs/schema@4.0.2
+  - @nifrajs/testing@4.0.2
+  - create-nifra@4.0.2
+
 ## 4.0.1
 
 ### Patch Changes

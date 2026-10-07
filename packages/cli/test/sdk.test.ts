@@ -139,7 +139,7 @@ describe("SDK generation", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 
   test("generated Python refuses a path parameter that is a dot segment", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))

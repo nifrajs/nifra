@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/workbench",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "private": true,
   "description": "Lightweight local Workbench client for nifra-agent.",
   "type": "module",

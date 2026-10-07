@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/content",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Typed, schema-validated content collections for nifra - Markdown + frontmatter, framework-agnostic.",
   "keywords": [
     "bun",

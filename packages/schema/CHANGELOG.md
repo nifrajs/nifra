@@ -1,5 +1,11 @@
 # @nifrajs/schema
 
+## 4.0.2
+
+### Patch Changes
+
+- @nifrajs/uploads@4.0.2
+
 ## 4.0.1
 
 ### Patch Changes

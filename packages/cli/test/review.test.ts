@@ -33,6 +33,26 @@ async function git(root: string, args: readonly string[]): Promise<void> {
   if (status !== 0) throw new Error(stderr)
 }
 
+async function commitBaseline(root: string): Promise<void> {
+  await git(root, ["init", "-q"])
+  await git(root, ["add", "."])
+  await git(root, [
+    "-c",
+    "user.email=test@example.invalid",
+    "-c",
+    "user.name=Nifra Test",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-qm",
+    "baseline",
+  ])
+}
+
+// A git-backed review spawns git and every collector: about 0.5 s on a Windows runner, and past the
+// default 5 s on a slow one.
+const GIT_REVIEW_TIMEOUT_MS = 30_000
+
 function reportKeys(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(reportKeys)
   if (typeof value !== "object" || value === null) return []
@@ -122,61 +142,61 @@ describe("nifra review command contract", () => {
     }
   })
 
-  test("filters unchanged file findings for a valid Git diff while retaining scope evidence", async () => {
-    const root = await reviewProject('const result = await fetch("/unchanged")\n')
-    try {
-      await git(root, ["init", "-q"])
-      await git(root, ["config", "user.email", "test@example.invalid"])
-      await git(root, ["config", "user.name", "Nifra Test"])
-      await git(root, ["add", "."])
-      await git(root, ["commit", "-qm", "baseline"])
-      await writeFile(join(root, "README.md"), "changed\n")
-      const baseline = await new Response(
-        Bun.spawn(["git", "-C", root, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "ignore" })
-          .stdout,
-      ).text()
-      const report = await runReview({ diff: baseline.trim() }, { cwd: root })
-      expect(report.scope.state).toBe("valid")
-      expect(report.scope.changedPaths).toContain("README.md")
-      expect(report.scope.outOfScopeCount).toBeGreaterThan(0)
-      expect(report.findings.some((finding) => finding.location?.path === "src/users.ts")).toBe(
-        false,
-      )
-      expect(
-        report.checks.find((check) => check.id === "typed-client")?.counts.outOfScope,
-      ).toBeGreaterThan(0)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
+  test(
+    "filters unchanged file findings for a valid Git diff while retaining scope evidence",
+    async () => {
+      const root = await reviewProject('const result = await fetch("/unchanged")\n')
+      try {
+        await commitBaseline(root)
+        await writeFile(join(root, "README.md"), "changed\n")
+        const baseline = await new Response(
+          Bun.spawn(["git", "-C", root, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "ignore" })
+            .stdout,
+        ).text()
+        const report = await runReview({ diff: baseline.trim() }, { cwd: root })
+        expect(report.scope.state).toBe("valid")
+        expect(report.scope.changedPaths).toContain("README.md")
+        expect(report.scope.outOfScopeCount).toBeGreaterThan(0)
+        expect(report.findings.some((finding) => finding.location?.path === "src/users.ts")).toBe(
+          false,
+        )
+        expect(
+          report.checks.find((check) => check.id === "typed-client")?.counts.outOfScope,
+        ).toBeGreaterThan(0)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    GIT_REVIEW_TIMEOUT_MS,
+  )
 
-  test("a type error in an unchanged file keeps a diff review inconclusive", async () => {
-    const root = await reviewProject("export const count: number = 1\n")
-    try {
-      await writeFile(
-        join(root, "node_modules", "typescript", "bin", "tsc"),
-        "console.log(\"src/users.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.\")\nprocess.exit(2)\n",
-      )
-      await git(root, ["init", "-q"])
-      await git(root, ["config", "user.email", "test@example.invalid"])
-      await git(root, ["config", "user.name", "Nifra Test"])
-      await git(root, ["add", "."])
-      await git(root, ["commit", "-qm", "baseline"])
-      await writeFile(join(root, "src", "caller.ts"), 'export const label = "changed"\n')
-      const report = await runReview({ diff: "HEAD" }, { cwd: root })
-      const typecheck = report.checks.find((check) => check.id === "typecheck")
-      expect(typecheck?.status).toBe("unavailable")
-      expect(typecheck?.reasonCode).toBe("filtered-out-of-scope")
-      expect(typecheck?.counts.outOfScope).toBe(1)
-      expect(report.status).toBe("inconclusive")
-      expect(report.ok).toBe(false)
-      expect(renderReviewReport(report)).toContain(
-        "  unavailable typecheck (filtered-out-of-scope)",
-      )
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
+  test(
+    "a type error in an unchanged file keeps a diff review inconclusive",
+    async () => {
+      const root = await reviewProject("export const count: number = 1\n")
+      try {
+        await writeFile(
+          join(root, "node_modules", "typescript", "bin", "tsc"),
+          "console.log(\"src/users.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.\")\nprocess.exit(2)\n",
+        )
+        await commitBaseline(root)
+        await writeFile(join(root, "src", "caller.ts"), 'export const label = "changed"\n')
+        const report = await runReview({ diff: "HEAD" }, { cwd: root })
+        const typecheck = report.checks.find((check) => check.id === "typecheck")
+        expect(typecheck?.status).toBe("unavailable")
+        expect(typecheck?.reasonCode).toBe("filtered-out-of-scope")
+        expect(typecheck?.counts.outOfScope).toBe(1)
+        expect(report.status).toBe("inconclusive")
+        expect(report.ok).toBe(false)
+        expect(renderReviewReport(report)).toContain(
+          "  unavailable typecheck (filtered-out-of-scope)",
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    GIT_REVIEW_TIMEOUT_MS,
+  )
 
   test("writes SARIF only for a completed review and uses static messages", async () => {
     const root = await reviewProject('const result = await fetch("/users")\n')
