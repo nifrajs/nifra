@@ -132,7 +132,8 @@ export interface Queue {
   /** Run ONE poll round: lease up to `concurrency` due jobs, run them, await them. Returns the count run.
    * Re-entrant-safe (a concurrent call returns the in-flight round). Used by `start()` and by Workers. */
   process(): Promise<number>
-  /** Process repeatedly until no job is due (one-shot batch drain). */
+  /** Process repeatedly until no job is due (one-shot batch drain). Rounds are shared with
+   * {@link process}, so a concurrent drain or poll never runs more than `concurrency` jobs. */
   drain(): Promise<number>
   /** Start the background worker (Bun/Node/Deno). */
   start(options?: WorkerOptions): Worker
@@ -374,7 +375,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
   async function processInner(): Promise<number> {
     const leased = await store.lease(now(), concurrency, leaseMs)
     if (leased.length === 0) return 0
-    await Promise.all(leased.map(runOne))
+    // The round outlives every handler it leased: a store failure in one job must not free the
+    // round (and its concurrency) or let `stop()` return while a sibling is still running.
+    const settled = await Promise.allSettled(leased.map(runOne))
+    for (const outcome of settled) if (outcome.status === "rejected") throw outcome.reason
     return leased.length
   }
 
@@ -387,9 +391,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
     return p
   }
 
+  // Through `process()`, so concurrent drains and the worker's polls share one round at a time.
   async function drain(): Promise<number> {
     let total = 0
-    for (let n = await processInner(); n > 0; n = await processInner()) total += n
+    for (let n = await process(); n > 0; n = await process()) total += n
     return total
   }
 

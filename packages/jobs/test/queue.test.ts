@@ -184,6 +184,74 @@ describe("createQueue - worker lifecycle (real timers)", () => {
   })
 })
 
+describe("a round holds its concurrency until every job settles", () => {
+  const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  test("a store failure in one job does not end the round while a sibling still runs", async () => {
+    const failed = deferred()
+    class DeadLetterOutage extends MemoryJobStore {
+      override deadLetter(): void {
+        failed.resolve()
+        throw new Error("dead-letter store unavailable")
+      }
+    }
+    const q = createQueue({ store: new DeadLetterOutage(), onError: () => {} })
+    const started = deferred()
+    const gate = deferred()
+    const job = q.define<{ fail: boolean }>("audit", {
+      retries: 1,
+      async handler({ fail }) {
+        if (fail) throw new Error("boom")
+        started.resolve()
+        await gate.promise
+      },
+    })
+    await job.enqueue({ fail: true })
+    await job.enqueue({ fail: false })
+    const worker = q.start({ concurrency: 2, pollIntervalMs: 60_000 })
+    const round = q.process()
+    const outcome = round.then(
+      () => "resolved",
+      (error: unknown) => String(error),
+    )
+    await Promise.all([failed.promise, started.promise])
+    await turn()
+    expect(q.process()).toBe(round)
+    let stopped = false
+    const stopping = worker.stop().then(() => {
+      stopped = true
+    })
+    await turn()
+    expect(stopped).toBe(false)
+    gate.resolve()
+    expect(await outcome).toContain("dead-letter store unavailable")
+    await stopping
+  })
+
+  test("concurrent drains run no more than the configured concurrency", async () => {
+    const q = createQueue()
+    const gate = deferred()
+    let live = 0
+    let peak = 0
+    const job = q.define("audit", {
+      async handler() {
+        live++
+        peak = Math.max(peak, live)
+        await gate.promise
+        live--
+      },
+    })
+    for (let i = 0; i < 3; i++) await job.enqueue({})
+    const drains = Promise.all([q.drain(), q.drain(), q.drain()])
+    await turn()
+    expect(live).toBe(1)
+    gate.resolve()
+    await drains
+    expect(peak).toBe(1)
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+})
+
 describe("worker polling survives a failing store", () => {
   test("without onPollError a failed poll is logged, and stop() waits out the failing round", async () => {
     const memory = new MemoryJobStore()
