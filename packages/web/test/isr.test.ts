@@ -639,6 +639,49 @@ describe("withISR", () => {
     expect((await store.get(pageKey("/")))?.body).toBe("PAGE")
   })
 
+  test("concurrent cold misses for one page share a single render", async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const app: ISRApp = {
+      fetch: async () => {
+        calls++
+        await gate
+        return html("PAGE")
+      },
+    }
+    const handler = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+    const pending = Array.from({ length: 8 }, () => handler(new Request("http://x/slow")))
+    release()
+    const responses = await Promise.all(pending)
+    expect(calls).toBe(1)
+    expect(await Promise.all(responses.map((res) => res.text()))).toEqual(Array(8).fill("PAGE"))
+    expect(responses.map((res) => res.headers.get("x-nifra-isr"))).toEqual(Array(8).fill("miss"))
+  })
+
+  test("a cold render that is not stored sends each waiting miss to render for itself", async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const app: ISRApp = {
+      fetch: async () => {
+        const call = ++calls
+        await gate
+        return html(`PRIVATE-${call}`, { "cache-control": "private" })
+      },
+    }
+    const handler = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+    const pending = Array.from({ length: 3 }, () => handler(new Request("http://x/me")))
+    release()
+    const bodies = await Promise.all((await Promise.all(pending)).map((res) => res.text()))
+    expect(calls).toBe(3)
+    expect(new Set(bodies).size).toBe(3)
+  })
+
   test("a regeneration that turns private or refused removes the stale entry; a 5xx keeps it", async () => {
     const withdrawals: readonly [string, () => Response][] = [
       ["private", () => html("mine", { "cache-control": "private, max-age=0" })],

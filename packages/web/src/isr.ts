@@ -770,6 +770,7 @@ export function withISR(
     platform: ISRPlatform | undefined,
     key: string,
     remember: boolean,
+    stored?: (entry: CachedResponse) => void,
   ): Promise<Response> => {
     const res = await app.fetch(req, platform)
     if (!isCacheablePage(judged(req), res)) {
@@ -788,12 +789,49 @@ export function withISR(
       ...(tags.length === 0 ? {} : { tags }),
     }
     await store.set(key, entry)
-    const fresh = new Response(body, {
-      status: res.status,
+    stored?.(entry)
+    return fresh(entry)
+  }
+
+  const fresh = (entry: CachedResponse): Response => {
+    const res = new Response(entry.body, {
+      status: entry.status,
       headers: { ...entry.headers, [ISR_STATUS_HEADER]: "miss" },
     })
-    advertise(fresh.headers, entry.revalidate, tags)
-    return fresh
+    advertise(res.headers, entry.revalidate, entry.tags ?? [])
+    return res
+  }
+
+  // Cold misses in flight per key. Concurrent misses wait for the first one's stored entry instead
+  // of each rendering the page; a render that is not stored (private, failed) sends each waiter to
+  // render for itself, so a waiter never receives a page that was not safe to share.
+  const coldRenders = new Map<string, Promise<CachedResponse | undefined>>()
+  const renderCold = async (
+    req: Request,
+    platform: ISRPlatform | undefined,
+    key: string,
+  ): Promise<Response> => {
+    const pending = coldRenders.get(key)
+    if (pending !== undefined) {
+      const entry = await pending
+      return entry === undefined ? render(req, platform, key, true) : fresh(entry)
+    }
+    let settle: (entry: CachedResponse | undefined) => void = () => {}
+    coldRenders.set(
+      key,
+      new Promise((resolve) => {
+        settle = resolve
+      }),
+    )
+    let entry: CachedResponse | undefined
+    try {
+      return await render(req, platform, key, true, (stored) => {
+        entry = stored
+      })
+    } finally {
+      coldRenders.delete(key)
+      settle(entry)
+    }
   }
 
   // Background regeneration (single-flight per key) - a failed regen keeps the stale entry; the next
@@ -873,7 +911,7 @@ export function withISR(
       else void task.catch(() => {})
       return served(hit, "stale")
     }
-    return render(req, platform, key, !personal)
+    return personal ? render(req, platform, key, false) : renderCold(req, platform, key)
   }
   Object.defineProperty(handler, CACHE_CHANNEL, {
     value: () => {
