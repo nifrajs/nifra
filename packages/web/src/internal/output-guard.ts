@@ -80,6 +80,8 @@ interface CompiledGuard {
   /** Undefined when the schema exposes no JSON Schema to project by. */
   readonly project: Project | undefined
   readonly validate: StandardSchemaV1["~standard"]["validate"]
+  /** Dev only: name the keys the guard dropped, so a schema missing a field is not a silent blank. */
+  readonly warnDropped: boolean
 }
 
 interface Deferred {
@@ -100,6 +102,10 @@ const isPlain = (value: object): boolean => {
   const proto = Object.getPrototypeOf(value)
   return proto === Object.prototype || proto === null
 }
+
+// Read once per schema at route load, never per request.
+const inDevelopment = (): boolean =>
+  typeof process !== "undefined" && process.env?.NODE_ENV === "development"
 
 /** Re-root the issues children pushed since `from` under `key`. Runs only on failure. */
 function prefix(state: RunState, from: number, key: string | number): void {
@@ -442,6 +448,7 @@ class Compiler {
     const inner: CompiledGuard = {
       project: this.compile(node.inner, where),
       validate: validate as CompiledGuard["validate"],
+      warnDropped: inDevelopment(),
     }
     return (value, state) => {
       if (!isDeferred(value)) return value
@@ -570,9 +577,50 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
       )
     }
   }
-  const guard: CompiledGuard = { project, validate: standard["~standard"].validate }
+  const guard: CompiledGuard = {
+    project,
+    validate: standard["~standard"].validate,
+    warnDropped: inDevelopment(),
+  }
   compiled.set(schema, guard)
   return guard
+}
+
+/** Where `before` held a key `after` lacks. Array indices collapse to `*`, so one field reads once. */
+function droppedPaths(before: unknown, after: unknown, path: string, out: Set<string>): void {
+  if (before === after || typeof before !== "object" || before === null) return
+  if (typeof after !== "object" || after === null || before instanceof Date) return
+  if (Array.isArray(before)) {
+    if (!Array.isArray(after)) return
+    const length = Math.min(before.length, after.length)
+    for (let i = 0; i < length; i++) droppedPaths(before[i], after[i], `${path}/*`, out)
+    return
+  }
+  const kept: Readonly<Record<string, unknown>> = Object.fromEntries(Object.entries(after))
+  for (const [key, value] of Object.entries(before)) {
+    // JSON drops an undefined value anyway; the guard dropping it changes nothing the page sees.
+    if (value === undefined) continue
+    if (!Object.hasOwn(kept, key)) out.add(`${path}/${key}`)
+    else droppedPaths(value, kept[key], `${path}/${key}`, out)
+  }
+}
+
+const warnedDrops = new Set<string>()
+
+function warnDropped(label: string, before: unknown, after: unknown): void {
+  const found = new Set<string>()
+  droppedPaths(before, after, "", found)
+  if (found.size === 0) return
+  const paths = [...found]
+  const key = `${label}\n${paths.join("\n")}`
+  if (warnedDrops.has(key)) return
+  if (warnedDrops.size >= 1000) warnedDrops.clear()
+  warnedDrops.add(key)
+  const shown = paths.slice(0, 10).join(", ")
+  const more = paths.length > 10 ? ` and ${paths.length - 10} more` : ""
+  console.warn(
+    `[nifra/web] ${label} returned field(s) its output schema does not declare, so they were dropped before the browser: ${shown}${more}. Declare a field in the schema if the page needs it. (Shown in development only.)`,
+  )
 }
 
 const pathOf = (issue: { readonly path?: ReadonlyArray<unknown> | undefined }): string =>
@@ -583,7 +631,12 @@ const pathOf = (issue: { readonly path?: ReadonlyArray<unknown> | undefined }): 
     )
     .join("") || "/"
 
-function settle(guard: CompiledGuard, result: StandardResult<unknown>, label: string): unknown {
+function settle(
+  guard: CompiledGuard,
+  result: StandardResult<unknown>,
+  label: string,
+  input: unknown,
+): unknown {
   if (result.issues !== undefined) {
     const paths = [...new Set(result.issues.map(pathOf))]
     throw new OutputGuardError(
@@ -595,6 +648,8 @@ function settle(guard: CompiledGuard, result: StandardResult<unknown>, label: st
     const state: RunState = { label, issues: [] }
     UNKNOWN(result.value, state)
     if (state.issues.length > 0) throw undeclaredDeferred(label, state.issues)
+    // No JSON Schema to project by: the schema's own validate stripped what it does not declare.
+    if (guard.warnDropped) warnDropped(label, input, result.value)
   }
   return result.value
 }
@@ -612,11 +667,13 @@ export function runGuard(guard: CompiledGuard, value: unknown, label: string): u
     const state: RunState = { label, issues: [] }
     projected = guard.project(value, state)
     if (state.issues.length > 0) throw undeclaredDeferred(label, state.issues)
+    // Copy-on-write: the same reference back means nothing was dropped anywhere below.
+    if (guard.warnDropped && projected !== value) warnDropped(label, value, projected)
   }
   const result = guard.validate(projected)
   return result instanceof Promise
-    ? result.then((settled) => settle(guard, settled, label))
-    : settle(guard, result, label)
+    ? result.then((settled) => settle(guard, settled, label, projected))
+    : settle(guard, result, label, projected)
 }
 
 /** What a browser-bound channel sends, and how it is named in errors. */

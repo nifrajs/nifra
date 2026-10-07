@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { status } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
@@ -206,6 +206,79 @@ describe("projection drops what the schema does not declare", () => {
       },
     }
     expect(guard(stripping, { id: "1", extra: 2 })).toEqual({ id: "1" })
+  })
+})
+
+describe("in development, dropped fields are named", () => {
+  const priorEnv = process.env.NODE_ENV
+  afterEach(() => {
+    if (priorEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = priorEnv
+  })
+
+  /** Compile a fresh schema under `env` (the guard reads it at compile), then run `value` twice. */
+  function warnings(env: string | undefined, schema: unknown, value: unknown): string[] {
+    if (env === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = env
+    const compiled = contract(schema)
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      guardValue(compiled, value)
+      guardValue(compiled, value)
+      return warn.mock.calls.map((args) => String(args[0]))
+    } finally {
+      warn.mockRestore()
+    }
+  }
+
+  test("names each dropped path once, collapses array indices, and never prints a value", () => {
+    const schema = t.object({
+      user: t.object({ name: t.string() }),
+      posts: t.array(t.object({ title: t.string() })),
+    })
+    const value = {
+      user: { name: "Ada", email: "ada@example.com" },
+      posts: [
+        { title: "a", draftNotes: "secret-note" },
+        { title: "b", draftNotes: "other" },
+      ],
+      skipped: undefined,
+    }
+    const logged = warnings("development", schema, value)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain('the loader of "page.tsx" returned field(s)')
+    expect(logged[0]).toContain("/user/email, /posts/*/draftNotes.")
+    expect(logged[0]).not.toContain("ada@example.com")
+    expect(logged[0]).not.toContain("secret-note")
+    expect(logged[0]).not.toContain("skipped")
+  })
+
+  test("a value holding only declared fields warns nothing", () => {
+    const schema = t.object({ id: t.string(), at: t.string() })
+    expect(warnings("development", schema, { id: "1", at: "x" })).toEqual([])
+  })
+
+  test("a schema that strips in its own validate is covered too", () => {
+    const stripping = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value: unknown) => ({
+          value: {
+            id: typeof value === "object" && value !== null && "id" in value ? value.id : 0,
+          },
+        }),
+      },
+    }
+    const logged = warnings("development", stripping, { id: 1, token: "t" })
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain(": /token.")
+  })
+
+  test("outside development nothing is logged", () => {
+    for (const env of ["production", "test", undefined]) {
+      expect(warnings(env, t.object({ id: t.string() }), { id: "1", extra: 1 })).toEqual([])
+    }
   })
 })
 

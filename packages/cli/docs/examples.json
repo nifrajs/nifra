@@ -585,7 +585,7 @@
     "name": "BACKEND_HALF",
     "topic": "Nifra - Project structure",
     "slug": "structure",
-    "code": "// routes/users/[id].backend.ts - the page's server half. It never reaches the browser.\nimport { t } from \"@nifrajs/schema\"\nimport { notFound } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\n// What the page receives - and the ONLY fields that leave the server. A field the loader returns\n// but the schema does not declare is dropped before rendering.\nexport const loaderOutput = t.object({ name: t.string(), avatarUrl: t.string() })\n\nexport async function loader({ params, api }: Route.LoaderArgs) {\n  const res = await api.users({ id: params.id }).get()\n  if (!res.ok) throw notFound()\n  return res.data\n}"
+    "code": "// routes/users/[id].backend.ts - the page's server half. It never reaches the browser.\nimport { t } from \"@nifrajs/schema\"\nimport { notFound } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\n// What the page receives - and the ONLY fields that leave the server. A field the loader returns\n// but the schema does not declare is dropped before rendering; in development the console names\n// each dropped field, so a missing declaration never shows up as a silently blank page.\nexport const loaderOutput = t.object({ name: t.string(), avatarUrl: t.string() })\n\nexport async function loader({ params, api }: Route.LoaderArgs) {\n  const res = await api.users({ id: params.id }).get()\n  if (!res.ok) throw notFound()\n  return res.data\n}"
   },
   {
     "name": "BASIC",

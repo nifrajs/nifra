@@ -43,7 +43,8 @@ import { notFound } from "@nifrajs/web"
 import type { Route } from "./+types/[id]"
 
 // What the page receives - and the ONLY fields that leave the server. A field the loader returns
-// but the schema does not declare is dropped before rendering.
+// but the schema does not declare is dropped before rendering; in development the console names
+// each dropped field, so a missing declaration never shows up as a silently blank page.
 export const loaderOutput = t.object({ name: t.string(), avatarUrl: t.string() })
 
 export async function loader({ params, api }: Route.LoaderArgs) {
