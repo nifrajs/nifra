@@ -31,6 +31,44 @@ function post(body: unknown, headers: Record<string, string> = {}): Request {
 }
 
 describe("respondGraphql HTTP", () => {
+  test("a POST that is not JSON is refused before the body is read, so a form cannot mutate", async () => {
+    let writes = 0
+    const writable = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: "Query",
+        fields: { ok: { type: GraphQLString, resolve: () => "ok" } },
+      }),
+      mutation: new GraphQLObjectType({
+        name: "Mutation",
+        fields: { write: { type: GraphQLString, resolve: () => String(++writes) } },
+      }),
+    })
+    const form = (type: string, body: string) =>
+      new Request("http://x/graphql", {
+        method: "POST",
+        headers: { "content-type": type, origin: "https://hostile.example" },
+        body,
+      })
+    for (const [type, body] of [
+      ["application/x-www-form-urlencoded", "query=mutation%20%7B%20write%20%7D"],
+      ["text/plain", JSON.stringify({ query: "mutation { write }" })],
+      [
+        "multipart/form-data; boundary=b",
+        '--b\r\nContent-Disposition: form-data; name="query"\r\n\r\nmutation { write }\r\n--b--',
+      ],
+    ] as const) {
+      const res = await respondGraphql(form(type, body), { schema: writable })
+      expect({ type, status: res.status }).toEqual({ type, status: 415 })
+    }
+    expect(writes).toBe(0)
+    const json = await respondGraphql(
+      form("application/json; charset=utf-8", JSON.stringify({ query: "mutation { write }" })),
+      { schema: writable },
+    )
+    expect(json.status).toBe(200)
+    expect(writes).toBe(1)
+  })
+
   test("executes a query", async () => {
     const res = await respondGraphql(post({ query: "{ hello }" }), { schema, rootValue })
     expect(res.status).toBe(200)

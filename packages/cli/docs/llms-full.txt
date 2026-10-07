@@ -12966,7 +12966,7 @@ With `subscriptions: true`, a socket is admitted only when `authorize` accepts i
 
 ## Responses
 
-By default responses use the `application/graphql-response+json` media type with spec status codes: `200` for an executed result (including field errors in `errors`), `400` for a parse or validation failure, `401` for a rejected `authorize`, `405` for a mutation attempted over GET. Set `legacyJsonResponse: true` for the older always-`200` `application/json` behavior some clients expect.
+By default responses use the `application/graphql-response+json` media type with spec status codes: `200` for an executed result (including field errors in `errors`), `400` for a parse or validation failure, `401` for a rejected `authorize`, `405` for a mutation attempted over GET, `415` for a POST whose body is not `application/json` (or another `+json` type). The last keeps a cross-site HTML form, which can send only urlencoded, multipart or plain-text bodies, from posting a mutation with the visitor's cookies. Set `legacyJsonResponse: true` for the older always-`200` `application/json` behavior some clients expect.
 
 ## License
 

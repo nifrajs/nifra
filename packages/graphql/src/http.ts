@@ -6,7 +6,8 @@
  * (`@nifrajs/core/edge-kit`'s {@link readBodyFramed}).
  *
  * Spec: https://graphql.github.io/graphql-over-http/draft/. POST carries `{query, operationName?,
- * variables?, extensions?}` as `application/json`; GET carries them as query-string params and may run
+ * variables?, extensions?}` as `application/json` (any other media type answers 415, so a cross-site
+ * form cannot post a mutation); GET carries them as query-string params and may run
  * **queries only** (never a mutation) so it stays a safe, cacheable idempotent method. Responses use the
  * `application/graphql-response+json` media type with spec status codes by default; set
  * `legacyJsonResponse` for the old always-200 `application/json` shape older clients expect.
@@ -193,6 +194,12 @@ function parseVariables(raw: unknown): Record<string, unknown> | null {
     throw new GraphQLError("Variables must be a JSON object.")
   }
   return parsed as Record<string, unknown>
+}
+
+/** `application/json` or a structured `+json` type, parameters ignored. */
+function isJsonMediaType(header: string | null): boolean {
+  const essence = header?.split(";", 1)[0]?.trim().toLowerCase() ?? ""
+  return essence === "application/json" || /^application\/[a-z0-9.+-]+\+json$/.test(essence)
 }
 
 /** Read `{query, operationName, variables}` from a parsed POST body. Throws GraphQLError when malformed. */
@@ -408,6 +415,19 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
       legacy,
       { ...cors, allow: "GET, POST" },
       [new GraphQLError("Only GET and POST are supported.")],
+      options.formatError,
+    )
+  }
+
+  // Checked before the body is read: urlencoded, multipart and text/plain are what a browser sends
+  // cross-site without a preflight, so accepting one would let a form run a mutation with cookies.
+  if (!isJsonMediaType(request.headers.get("content-type"))) {
+    return requestError(
+      "Unsupported media type.",
+      415,
+      legacy,
+      cors,
+      [new GraphQLError("A POST body must be sent as application/json.")],
       options.formatError,
     )
   }
