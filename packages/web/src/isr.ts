@@ -276,13 +276,22 @@ export interface KVCacheStoreOptions {
 const isCachedResponse = (value: unknown): value is CachedResponse => {
   if (typeof value !== "object" || value === null) return false
   const v = value as Record<string, unknown>
+  // Everything a replay hands to `new Response` must be legal there, or a corrupt record would throw
+  // on every hit instead of reading as a miss.
   if (
     typeof v.body !== "string" ||
     typeof v.status !== "number" ||
+    !Number.isInteger(v.status) ||
+    v.status < 200 ||
+    v.status > 599 ||
     typeof v.storedAt !== "number" ||
+    !Number.isFinite(v.storedAt) ||
     typeof v.revalidate !== "number" ||
+    !Number.isFinite(v.revalidate) ||
+    v.revalidate < 0 ||
     typeof v.headers !== "object" ||
-    v.headers === null
+    v.headers === null ||
+    Array.isArray(v.headers)
   ) {
     return false
   }
@@ -294,8 +303,15 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
       return false
     }
   }
-  for (const headerValue of Object.values(v.headers as Record<string, unknown>)) {
+  const headers: Record<string, string> = {}
+  for (const [name, headerValue] of Object.entries(v.headers)) {
     if (typeof headerValue !== "string") return false
+    headers[name] = headerValue
+  }
+  try {
+    new Headers(headers)
+  } catch {
+    return false
   }
   return true
 }

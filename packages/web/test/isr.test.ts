@@ -1046,6 +1046,39 @@ describe("KVCacheStore", () => {
     expect(await new KVCacheStore(kv).get("/p")).toBeUndefined()
   })
 
+  test("an entry Response could not replay reads as a miss, and withISR renders", async () => {
+    const valid = { body: "h", status: 200, storedAt: 0, revalidate: 60_000, headers: {} }
+    const corrupt: Record<string, unknown>[] = [
+      { ...valid, status: 999 },
+      { ...valid, status: 200.5 },
+      { ...valid, status: 101 },
+      { ...valid, storedAt: Number.NaN },
+      { ...valid, revalidate: -1 },
+      { ...valid, headers: ["content-type", "text/html"] },
+      { ...valid, headers: { "bad name": "x" } },
+      { ...valid, headers: { "x-a": "line\r\nbreak" } },
+    ]
+    for (const record of corrupt) {
+      const kv = new FakeKV()
+      kv.store.set("/p", JSON.stringify(record))
+      expect({ record, read: await new KVCacheStore(kv).get("/p") }).toEqual({
+        record,
+        read: undefined,
+      })
+    }
+    const kv = new FakeKV()
+    kv.store.set("http://x/p", JSON.stringify({ ...valid, status: 999 }))
+    const handler = withISR(
+      { fetch: async () => html("fresh") },
+      {
+        store: new KVCacheStore(kv),
+        revalidate: 60,
+        now: () => 0,
+      },
+    )
+    expect(await (await handler(new Request("http://x/p"))).text()).toBe("fresh")
+  })
+
   test("a valid-JSON but wrong-shape entry reads as a miss", async () => {
     const kv = new FakeKV()
     const store = new KVCacheStore(kv)
