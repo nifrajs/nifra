@@ -1,5 +1,11 @@
 # @nifrajs/mock
 
+## 4.0.2
+
+### Patch Changes
+
+- @nifrajs/core@4.0.2
+
 ## 4.0.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/devtools",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Interactive DevTools overlay for nifra dev - loader traces, ISR status, route metadata.",
   "keywords": [
     "bun",
