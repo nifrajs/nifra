@@ -348,6 +348,9 @@ export class OrchestrationHost {
   }
 
   private async drive(run: RunRecord): Promise<void> {
+    // One map for every layer, so a node reads what an earlier layer set. It lives only as long as
+    // this drive: values are never written into the run's evidence.
+    const values = new Map<string, unknown>()
     try {
       for (; run.layerIndex < run.layers.length; run.layerIndex++) {
         while (run.state === "paused") await run.gate?.promise
@@ -355,6 +358,7 @@ export class OrchestrationHost {
         const layer = run.layers[run.layerIndex] as WorkflowStep
         const result = await new WorkflowRunner({
           signal: run.controller.signal,
+          values,
           maxSteps: this.maxSteps,
           maxDepth: this.maxDepth,
           onEvent: (event) => this.project(run, event),

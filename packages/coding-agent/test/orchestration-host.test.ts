@@ -117,6 +117,45 @@ describe("OrchestrationHost lifecycle", () => {
     expect(result.completedNodeIds).toEqual(["a", "b"])
   })
 
+  test("a later layer reads the values an earlier one set, across a pause", async () => {
+    const gate = deferred()
+    const seen: unknown[] = []
+    const catalog = createStepCatalog({
+      seed: {
+        kind: "task",
+        run: async (ctx) => {
+          await gate.promise
+          ctx.set("value", 42)
+        },
+      },
+      consume: {
+        kind: "verify",
+        run: (ctx) => {
+          seen.push(ctx.values.get("value"))
+          return ctx.values.get("value") === 42
+        },
+      },
+    })
+    const host = new OrchestrationHost({ catalog })
+    const runId = await host.submit({
+      version: 1,
+      id: "p",
+      nodes: [
+        { id: "a", kind: "task", step: "seed" },
+        { id: "b", kind: "verify", step: "consume", dependsOn: ["a"] },
+      ],
+    })
+    host.start(runId)
+    host.pause(runId)
+    gate.resolve()
+    await tick()
+    host.resume(runId)
+    const result = await host.settled(runId)
+    expect(seen).toEqual([42])
+    expect(result.status).toBe("succeeded")
+    expect(result.failureCode).toBeUndefined()
+  })
+
   test("cancel reaches active work and a late completion cannot revive the run", async () => {
     const catalog = createStepCatalog({
       blocks: {

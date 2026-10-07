@@ -15730,7 +15730,7 @@
     "name": "WorkflowRunnerOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface WorkflowRunnerOptions {\n    readonly signal?: AbortSignal;\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    readonly onEvent?: (event: WorkflowEvent) => void | PromiseLike<void>;\n    readonly exposeErrorStacks?: boolean;\n}"
+    "signature": "export interface WorkflowRunnerOptions {\n    readonly signal?: AbortSignal;\n    /**\n     * The map steps read and write through `values` and `set`. Pass one map to several runners to\n     * carry values from one run into the next. Default: a fresh map per runner.\n     */\n    readonly values?: Map<string, unknown>;\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    readonly onEvent?: (event: WorkflowEvent) => void | PromiseLike<void>;\n    readonly exposeErrorStacks?: boolean;\n}"
   },
   {
     "name": "WorkflowStep",
