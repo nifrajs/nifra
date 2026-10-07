@@ -224,6 +224,16 @@ try {
   ])
   console.log(contracts.split("\n").slice(-6).join("\n"))
   if (!contractsOnly) await run([process.execPath, "scripts/check-server-components-types.ts"])
+  // `npm exec` downloads a pinned runtime on first use. Fetch each one here, so the bounded readiness
+  // probe in serve() times server startup rather than a cold download on a fresh runner.
+  for (const [bin, runtime, users] of [
+    ["node", "node@22.23.3", ["node", "vercel"]],
+    ["bun", "bun@1.3.0", ["bun"]],
+    ["deno", "deno@2.0.0", ["deno"]],
+  ] as const) {
+    if (!users.some((target) => targets.includes(target))) continue
+    await run(["npm", "exec", "--yes", `--package=${runtime}`, "--", bin, "--version"])
+  }
   for (const adapter of adapters)
     for (const target of targets) {
       if (target === "dev") {
