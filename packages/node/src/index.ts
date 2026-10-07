@@ -1261,7 +1261,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   // the optional `ws` package - lazy-imported (and the server lazily built) on the FIRST real WS
   // upgrade, so a non-WS Node app never loads `ws`.
   if (resolveWs !== undefined) {
-    let wssPromise: Promise<WsServer | undefined> | undefined
+    // One `ws` server per payload cap: its `maxPayload` bounds buffering before a frame is delivered,
+    // and mounted children can declare different caps.
+    const servers = new Map<number | undefined, Promise<WsServer | undefined>>()
     server.on("upgrade", (nodeReq, socket, head) => {
       void handleUpgrade(
         app,
@@ -1273,8 +1275,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
         socket,
         head,
         (maxPayloadBytes) => {
-          wssPromise ??= loadWsServer(maxPayloadBytes)
-          return wssPromise
+          let wss = servers.get(maxPayloadBytes)
+          if (wss === undefined) {
+            wss = loadWsServer(maxPayloadBytes)
+            servers.set(maxPayloadBytes, wss)
+          }
+          return wss
         },
       )
     })
@@ -2682,12 +2688,14 @@ async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefi
       default?: { WebSocketServer?: WsServerCtor }
     }
     const Ctor = mod.WebSocketServer ?? mod.default?.WebSocketServer
+    // `ws` reads `maxPayload: 0` as no limit, so a cap of 0 buffers at most a byte and the message
+    // check in `attachNodeWebSocket` refuses anything but an empty frame.
     return Ctor === undefined
       ? undefined
       : new Ctor(
           maxPayloadBytes === undefined
             ? { noServer: true }
-            : { noServer: true, maxPayload: maxPayloadBytes },
+            : { noServer: true, maxPayload: Math.max(maxPayloadBytes, 1) },
         )
   } catch {
     return undefined // `ws` not installed - caller responds 501
@@ -2774,8 +2782,10 @@ async function handleUpgrade(
     writeUpgradeRejection(socket, 501, "websocket_unavailable") // `ws` not installed
     return
   }
-  const { handler, data, pubsub } = outcome
-  wss.handleUpgrade(nodeReq, socket, head, (ws) => attachNodeWebSocket(ws, handler, data, pubsub))
+  const { handler, data, pubsub, maxPayloadBytes } = outcome
+  wss.handleUpgrade(nodeReq, socket, head, (ws) =>
+    attachNodeWebSocket(ws, handler, data, pubsub, maxPayloadBytes),
+  )
 }
 
 /** Wire a `ws` socket (already open in `handleUpgrade`'s callback) to a nifra WS handler. The Node copy
@@ -2786,6 +2796,7 @@ function attachNodeWebSocket(
   handler: NifraWsHandler,
   data: unknown,
   pubsub: WsPubSub,
+  maxPayloadBytes: number | undefined,
 ): void {
   const nifra: NifraWs = {
     send: (payload) => ws.send(payload),
@@ -2816,6 +2827,10 @@ function attachNodeWebSocket(
     }
   }
   ws.on("message", (raw, isBinary) => {
+    if (maxPayloadBytes !== undefined && raw.byteLength > maxPayloadBytes) {
+      ws.close(1009, "message too large")
+      return
+    }
     const payload: NifraWsData = isBinary
       ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
       : raw.toString()

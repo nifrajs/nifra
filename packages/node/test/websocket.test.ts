@@ -53,6 +53,58 @@ function rt(url: string, send: string[], count: number): Promise<string[]> {
   })
 }
 
+/** Send one text frame and report the echo, or the close code when the server closes instead. */
+function echoOrClose(url: string, message: string): Promise<{ echo: string } | { close: number }> {
+  return new Promise((resolve, reject) => {
+    const c = new WebSocket(url)
+    const timer = setTimeout(() => reject(new Error("timeout")), 4000)
+    c.addEventListener("open", () => c.send(message))
+    c.addEventListener("message", (e) => {
+      clearTimeout(timer)
+      c.close()
+      resolve({ echo: String(e.data) })
+    })
+    c.addEventListener("close", (e) => {
+      clearTimeout(timer)
+      resolve({ close: e.code })
+    })
+  })
+}
+
+describe("@nifrajs/node WebSocket payload caps", () => {
+  const echo = (cap: number) =>
+    server({ wsMaxPayloadBytes: cap })
+      .use(websocket())
+      .ws("/", { message: (ws, data) => ws.send(data) })
+
+  test("each mounted child keeps its own cap, whichever upgrades first", async () => {
+    const app = server()
+      .mount({ path: "/small", app: echo(4), stripPrefix: true })
+      .mount({ path: "/large", app: echo(64), stripPrefix: true })
+    for (const order of [
+      ["/large", "/small"],
+      ["/small", "/large"],
+    ]) {
+      running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+      const base = `ws://127.0.0.1:${running.port}`
+      const results = []
+      for (const path of order)
+        results.push([path, await echoOrClose(`${base}${path}`, "x".repeat(16))])
+      expect(Object.fromEntries(results)).toEqual({
+        "/small": { close: 1009 },
+        "/large": { echo: "x".repeat(16) },
+      })
+      await running.stop({ drainMs: 50 })
+      running = undefined
+    }
+  })
+
+  test("a cap of 0 refuses every non-empty message", async () => {
+    running = await serve(echo(0), { hostname: "127.0.0.1", port: 0 })
+    expect(await echoOrClose(`ws://127.0.0.1:${running.port}/`, "x")).toEqual({ close: 1009 })
+  })
+})
+
 describe("@nifrajs/node WebSockets", () => {
   test("echo: open → welcome, message → echo", async () => {
     running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
