@@ -339,6 +339,20 @@ describe("run_query (opt-in)", () => {
     expect(result.text).toContain("not exposed")
   })
 
+  test("a same-named table in another schema of the connection stays unexposed", async () => {
+    const db = seededDb()
+    db.run("ATTACH ':memory:' AS aux")
+    db.run("CREATE TABLE aux.habits (secret TEXT)")
+    db.run("INSERT INTO aux.habits VALUES ('attached-secret')")
+    const attached = serveDatabaseAsMcp(db, {
+      tables: ["habits"],
+      runQuery: { authorize: () => true },
+    })
+    const result = await call(attached, "run_query", { sql: "SELECT * FROM aux.habits" })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('query touches "<schema 2>", which is not exposed')
+  })
+
   test("WITH…SELECT over exposed tables works", async () => {
     const { isError, text } = await call(
       server,
@@ -392,6 +406,7 @@ describe("run_query (opt-in)", () => {
         return {
           all() {
             if (sql.startsWith("EXPLAIN QUERY PLAN")) return [{ detail: "SCAN TABLE habits" }]
+            if (sql.startsWith("EXPLAIN") || sql.includes("sqlite_master")) return []
             if (sql.includes("__nifra_total")) {
               countCalls += 1
               return [{ __nifra_total: 100_000 }]
@@ -444,6 +459,16 @@ describe("run_query (opt-in)", () => {
     ["schema-qualified and bracket-quoted", "SELECT * FROM main.[users] AS habits"],
     ["comment as the separator", "SELECT * FROM/**/users AS habits"],
     ["plain alias", "SELECT * FROM users AS habits"],
+    [
+      "a qualified table beside a CTE of the same name",
+      "WITH users AS (SELECT 1) SELECT * FROM main.users AS habits",
+    ],
+    [
+      "a qualified table beside a CTE, with a non-ASCII alias",
+      'WITH users AS (SELECT 1) SELECT * FROM main.users AS "☃"',
+    ],
+    ["a non-ASCII alias", 'SELECT * FROM users AS "☃"'],
+    ["an IN over a one-column table", "SELECT 1 AS hit FROM habits WHERE 1 IN constant"],
     ["aliased subquery", "SELECT * FROM (SELECT * FROM [users]) AS habits"],
     [
       "a CTE over the unexposed table",

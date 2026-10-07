@@ -8,7 +8,7 @@
  *
  * Read-only is enforced in layers, not promised: `PRAGMA query_only = ON` on the connection
  * (SQLite rejects every write at the engine), a single-statement gate, a SELECT/WITH-only gate,
- * and `EXPLAIN QUERY PLAN` verification that a query touches ONLY allowlisted tables. Results are
+ * and verification of the compiled statement that a query reads ONLY allowlisted tables. Results are
  * capped by rows and bytes (an LLM does not need 100k rows; a transport does not want them) with
  * an explicit `truncated` marker.
  *
@@ -31,6 +31,7 @@ import {
   gateSqliteStatement,
   type SqliteDatabaseLike,
   unexposedPlanRelation,
+  unexposedProgramRelation,
 } from "./internal/shared.ts"
 import {
   openQuerySession,
@@ -252,7 +253,22 @@ export function serveDatabaseAsMcp(
             if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
             return { isError: true, text: `query failed to plan: ${String(error)}` }
           }
-          const unexposed = unexposedPlanRelation(planRows, (relation) => allowlist.has(relation))
+          let catalog: unknown[]
+          let program: unknown[]
+          try {
+            catalog = await querySession.run(
+              "SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage > 0",
+              deadline,
+            )
+            program = await querySession.run(`EXPLAIN ${query}`, deadline)
+          } catch (error) {
+            if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
+            return { isError: true, text: `query failed to plan: ${String(error)}` }
+          }
+          // The plan names a scan by its alias; the program names the table by its root page.
+          const unexposed =
+            unexposedPlanRelation(planRows, (relation) => allowlist.has(relation)) ??
+            unexposedProgramRelation(program, catalog, (relation) => allowlist.has(relation))
           if (unexposed !== undefined) {
             return {
               isError: true,

@@ -30,6 +30,7 @@ import {
   toJsonCell,
   unexposedPlanRelation,
 } from "../src/engine.ts"
+import { unexposedProgramRelation } from "../src/internal/shared.ts"
 import { HOSTILE_CORPUS } from "./fixtures/hostile-corpus.ts"
 
 const scratch = mkdtempSync(join(tmpdir(), "nifra-mcp-db-engine-"))
@@ -129,6 +130,41 @@ describe("statement gates", () => {
     expect(unexposedPlanRelation([{ detail: "SCAN main.orders" }], exposed)).toBeUndefined()
     expect(unexposedPlanRelation([{ detail: "SEARCH users USING INDEX x" }], exposed)).toBe("users")
     expect(unexposedPlanRelation([{ detail: 7 }], exposed)).toBeUndefined()
+  })
+
+  test("the statement gate reads a qualified name beside a same-named CTE, and IN a table", () => {
+    const gate = (sql: string) => gateSqliteStatement(sql, exposed)
+    expect(gate("WITH users AS (SELECT 1) SELECT * FROM main.users AS orders")).toMatchObject({
+      ok: false,
+      relation: "users",
+    })
+    expect(gate("WITH users AS (SELECT 1) SELECT * FROM users")).toMatchObject({ ok: true })
+    expect(gate("SELECT 1 FROM orders WHERE 'x' IN users")).toMatchObject({
+      ok: false,
+      relation: "users",
+    })
+    expect(gate("SELECT 1 FROM orders WHERE id IN (1, 2)")).toMatchObject({ ok: true })
+  })
+
+  test("the program check names the table SQLite opens, whatever the SQL calls it", () => {
+    const db = new Database(":memory:")
+    db.run("CREATE TABLE orders (id INTEGER PRIMARY KEY)")
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)")
+    db.run("CREATE INDEX users_email ON users (email)")
+    db.run("ATTACH ':memory:' AS aux")
+    db.run("CREATE TABLE aux.orders (secret TEXT)")
+    const catalog = db
+      .query("SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage > 0")
+      .all()
+    const opened = (sql: string): string | undefined =>
+      unexposedProgramRelation(db.query(`EXPLAIN ${sql}`).all(), catalog, exposed)
+    expect(opened("SELECT * FROM orders AS o")).toBeUndefined()
+    expect(opened('WITH users AS (SELECT 1) SELECT * FROM main.users AS "☃"')).toBe("users")
+    expect(opened("SELECT email FROM users INDEXED BY users_email WHERE email > ''")).toBe("users")
+    expect(opened("SELECT * FROM aux.orders")).toBe("<schema 2>")
+    expect(unexposedProgramRelation([{ opcode: "OpenRead", p2: 999, p3: 0 }], [], exposed)).toBe(
+      "<root page 999>",
+    )
   })
 })
 
