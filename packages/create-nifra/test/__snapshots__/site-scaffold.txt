@@ -142,7 +142,7 @@ export const target = "bun"
   "scripts": {
     "dev": "nifra dev",
     "build": "nifra build",
-    "start": "bun dist/server.js",
+    "start": "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -350,7 +350,7 @@ export const target = "bun"
   "scripts": {
     "dev": "nifra dev",
     "build": "nifra build",
-    "start": "bun dist/server.js",
+    "start": "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -562,7 +562,7 @@ export const target = "bun"
   "scripts": {
     "dev": "nifra dev",
     "build": "nifra build",
-    "start": "bun dist/server.js",
+    "start": "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -769,7 +769,7 @@ export const target = "bun"
   "scripts": {
     "dev": "nifra dev",
     "build": "nifra build",
-    "start": "bun dist/server.js",
+    "start": "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -981,7 +981,7 @@ export const target = "bun"
   "scripts": {
     "dev": "nifra dev",
     "build": "nifra build",
-    "start": "bun dist/server.js",
+    "start": "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {

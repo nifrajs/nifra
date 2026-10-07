@@ -59,7 +59,7 @@ function targetSteps(target: DeployTarget, docker: boolean): string[] {
     "bun run build",
     ...(spec.deploy !== undefined
       ? [`bun run deploy       # ${spec.deploy}`]
-      : [`bun run start        # ${spec.start}, any host`]),
+      : ["bun run start        # run the build locally, one process"]),
   ]
 }
 

@@ -20,12 +20,22 @@ export interface TargetSpec {
   readonly docker: boolean
 }
 
+// The build is a production bundle, so the starter's in-memory rate-limit store refuses to boot unless
+// this is set. A local run is one process, the single instance that store is correct for; a deploy sets
+// it only for one instance and uses a shared store otherwise.
+const ONE_PROCESS = "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true"
+
 export const TARGETS: Readonly<Record<DeployTarget, TargetSpec>> = {
-  bun: { label: "Bun", start: "bun dist/server.js", docker: true },
-  node: { label: "Node", start: "node dist/server.js", runtime: ["node"], docker: true },
+  bun: { label: "Bun", start: `${ONE_PROCESS} bun dist/server.js`, docker: true },
+  node: {
+    label: "Node",
+    start: `${ONE_PROCESS} node dist/server.js`,
+    runtime: ["node"],
+    docker: true,
+  },
   deno: {
     label: "Deno Deploy",
-    start: "deno run --allow-net --allow-read --allow-env dist/server.js",
+    start: `${ONE_PROCESS} deno run --allow-net --allow-read --allow-env dist/server.js`,
     deploy: "deployctl deploy --prod --entrypoint=dist/server.js",
     docker: false,
   },
@@ -63,7 +73,7 @@ export function deployScript(
 ): string | undefined {
   const image = deployName(name)
   return docker
-    ? `docker build -t ${image} . && docker run -p 3000:3000 ${image}`
+    ? `docker build -t ${image} . && docker run -e ${ONE_PROCESS} -p 3000:3000 ${image}`
     : TARGETS[target].deploy
 }
 
@@ -79,7 +89,8 @@ export function renderDockerfile(target: "bun" | "node"): string {
   return `# Build with Bun (nifra's build toolchain), then run the self-contained bundle - the final image
 # carries no build tools or node_modules.
 #   docker build -t my-nifra-app .
-#   docker run -p 3000:3000 my-nifra-app
+#   docker run -e ${ONE_PROCESS} -p 3000:3000 my-nifra-app
+# That variable lets the in-memory rate limit run in one container; give more replicas a shared store.
 FROM oven/bun:1 AS build
 WORKDIR /app
 # Copy manifests first so the install layer caches across source-only changes.

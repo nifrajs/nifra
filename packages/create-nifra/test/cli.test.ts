@@ -113,7 +113,7 @@ describe("scaffold - templates", () => {
     expect((await readPkg(dir)).scripts).toEqual({
       dev: "nifra dev",
       build: "nifra build",
-      start: "bun dist/server.js",
+      start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
       check: "nifra check && nifra assure",
     })
   })
@@ -140,7 +140,7 @@ describe("scaffold - templates", () => {
     await scaffold({ target: docked, template: "site", deployTarget: "bun", docker: true })
     const pkg = await readPkg(docked)
     expect(pkg.scripts?.deploy).toBe(
-      "docker build -t dock-app . && docker run -p 3000:3000 dock-app",
+      "docker build -t dock-app . && docker run -e NIFRA_ALLOW_MEMORY_RATE_LIMIT=true -p 3000:3000 dock-app",
     )
     // The package keeps the name it was given.
     expect(pkg.name).toBe("Dock_App")
@@ -250,10 +250,19 @@ describe("scaffold - agent-discovery files (MCP auto-discovery)", () => {
 describe("scaffold - --target and --docker", () => {
   test("each target gets its scripts, its config file and its runtime package", async () => {
     const expected = {
-      bun: { start: "bun dist/server.js", deploy: undefined, files: [] },
-      node: { start: "node dist/server.js", deploy: undefined, files: [] },
+      bun: {
+        start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
+        deploy: undefined,
+        files: [],
+      },
+      node: {
+        start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true node dist/server.js",
+        deploy: undefined,
+        files: [],
+      },
       deno: {
-        start: "deno run --allow-net --allow-read --allow-env dist/server.js",
+        start:
+          "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true deno run --allow-net --allow-read --allow-env dist/server.js",
         deploy: "deployctl deploy --prod --entrypoint=dist/server.js",
         files: ["deno.json"],
       },
@@ -291,7 +300,7 @@ describe("scaffold - --target and --docker", () => {
     })
     expect(res.deploy).toEqual({ target: "node", label: "Node", docker: true })
     expect((await readPkg(dir)).scripts?.deploy).toBe(
-      "docker build -t dock-app . && docker run -p 3000:3000 dock-app",
+      "docker build -t dock-app . && docker run -e NIFRA_ALLOW_MEMORY_RATE_LIMIT=true -p 3000:3000 dock-app",
     )
     const dockerfile = await readFile(join(dir, "Dockerfile"), "utf8")
     expect(dockerfile).toContain("RUN bun run build")
