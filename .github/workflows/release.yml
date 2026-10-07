@@ -12,7 +12,8 @@ name: Release
 #
 # npm publishes through trusted publishing: every public package trusts this workflow file run in the
 # npm-publish environment, so there is no npm token to store or leak. Only a proven release enters
-# it, and only the publish job holds the identity npm trusts.
+# it, and only the publish job holds the identity npm trusts. Once npm has the version, it gets one
+# GitHub release, tagged v<version> at the merge.
 
 on:
   pull_request:
@@ -236,6 +237,43 @@ jobs:
         run: bun run changeset:publish
         env:
           NPM_CONFIG_PROVENANCE: "true"
+
+  # One GitHub release per version, tagged at the merge npm published. The only job that may write to
+  # the repository: it installs nothing and runs only the notes script, and a rerun finds the release.
+  github-release:
+    name: github-release
+    needs: [prove-release, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the validated merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prove-release.outputs.merge_sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+
+      - name: Publish the version's GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ needs.prove-release.outputs.merge_sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v$(bun scripts/release-notes.ts --version)"
+          if gh release view "$tag" --repo "$REPOSITORY" > /dev/null 2>&1; then
+            echo "${tag} already has a GitHub release."
+            exit 0
+          fi
+          bun scripts/release-notes.ts > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$tag" --repo "$REPOSITORY" --target "$MERGE_SHA" --title "$tag" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
 
   # The smoke test installs from the registry and the deploy runs wrangler: third-party code, kept out
   # of the job that can publish.
