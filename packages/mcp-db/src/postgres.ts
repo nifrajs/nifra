@@ -494,7 +494,7 @@ export async function explainPostgres(
   const explained = await gated(client, sql, options, (connection, statement) =>
     explainThroughServer(connection, statement, {
       analyze: options.analyze === true,
-      scope: checkScope(options),
+      scope: checkScope(options, options.redaction?.column),
     }),
   )
   if (isDbRefusal(explained)) return explained

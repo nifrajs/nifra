@@ -476,6 +476,15 @@ describe.skipIf(SKIP)(SUITE, () => {
         sql,
         code: "NIFRA_DB_COLUMN_REFUSED",
       })
+      // A plan's row counts and estimates answer questions about the column too.
+      for (const analyze of [false, true]) {
+        const explained = await explainPostgres(reader, sql, { ...masked, analyze })
+        expect({ sql, analyze, code: code(explained) }).toEqual({
+          sql,
+          analyze,
+          code: "NIFRA_DB_COLUMN_REFUSED",
+        })
+      }
     }
     for (const sql of [
       "SELECT count(*) FROM users",
@@ -487,6 +496,10 @@ describe.skipIf(SKIP)(SUITE, () => {
         sql,
         code: undefined,
       })
+      expect({
+        sql,
+        code: code(await explainPostgres(reader, sql, { ...masked, analyze: true })),
+      }).toEqual({ sql, code: undefined })
     }
   })
 

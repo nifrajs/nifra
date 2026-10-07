@@ -690,6 +690,50 @@ describe("query layers over a scripted client", () => {
       "NIFRA_DB_TABLE_EXCLUDED",
     )
   })
+
+  test("explain refuses a masked column the plan uses, analyzed or not, before planning it", async () => {
+    const reads = {
+      rows: [
+        {
+          "QUERY PLAN": [
+            {
+              Plan: {
+                "Node Type": "Seq Scan",
+                "Relation Name": "users",
+                Schema: "public",
+                Alias: "users",
+                Output: ["users.id"],
+                Filter: "((users.password_hash)::text ~~ 'h%'::text)",
+              },
+            },
+          ],
+        },
+      ],
+    }
+    for (const analyze of [false, true]) {
+      const { client, log } = fakeClient([
+        [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        [/^EXPLAIN \(VERBOSE/, reads],
+        [/WITH RECURSIVE planned/, { rows: [] }],
+        [
+          /pg_catalog\.pg_attribute/,
+          {
+            rows: [
+              { schema: "public", name: "users", column: "id" },
+              { schema: "public", name: "users", column: "password_hash" },
+            ],
+          },
+        ],
+      ])
+      const explained = await explainPostgres(
+        client,
+        "SELECT id FROM users WHERE password_hash LIKE 'h%'",
+        { ...QUERY, analyze, redaction: { column: (name) => name === "password_hash" } },
+      )
+      expect(code(explained)).toBe("NIFRA_DB_COLUMN_REFUSED")
+      expect(log.some((line) => /^EXPLAIN \((ANALYZE, )?FORMAT JSON\)/.test(line))).toBe(false)
+    }
+  })
 })
 
 describe("schema and role SQL over a scripted client", () => {
