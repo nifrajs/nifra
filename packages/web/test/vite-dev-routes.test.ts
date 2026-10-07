@@ -26,10 +26,13 @@ afterEach(async () => {
 const page = async (): Promise<string> =>
   (await fetch(`http://127.0.0.1:${server?.port ?? 0}/`)).text()
 
-const waitForPage = async (matches: (body: string) => boolean): Promise<string> => {
+const waitForPage = async (
+  matches: (body: string) => boolean,
+  timeoutMs = 15_000,
+): Promise<string> => {
   // Vite's polling watcher is asynchronous. Leave room for a loaded full-suite CI runner to
   // deliver add/unlink events instead of turning a slow notification into a flaky assertion.
-  const deadline = Date.now() + 15_000
+  const deadline = Date.now() + timeoutMs
   let body = await page()
   while (!matches(body) && Date.now() < deadline) {
     await Bun.sleep(50)
@@ -53,6 +56,19 @@ test("Vite route add and unlink events refresh both manifests without restart", 
     },
   })
   expect(await page()).toBe("index")
+
+  // Chokidar reports ready before Bun's fs.watchFile has taken its baseline stat of the directory, so a
+  // route written in that gap is folded into the baseline and never reported. Until one probe route is
+  // observed the poller may not have a baseline; a later probe changes the directory again past it.
+  const probes: string[] = []
+  for (let seen = false; !seen; ) {
+    const probe = join(routesDir, `probe-${probes.length}.tsx`)
+    writeFileSync(probe, "export default function Probe() { return null }\n")
+    probes.push(probe)
+    seen = (await waitForPage((body) => body.includes("probe"), 1_000)).includes("probe")
+  }
+  for (const probe of probes) rmSync(probe)
+  expect(await waitForPage((body) => !body.includes("probe"))).toBe("index")
 
   const about = join(routesDir, "about.tsx")
   writeFileSync(about, "export default function About() { return null }\n")
