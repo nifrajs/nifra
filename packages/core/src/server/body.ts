@@ -278,7 +278,9 @@ function cappedStreamOf(
         }
         total += value.byteLength
         if (total > maxBytes) {
-          await active.cancel().catch(() => {})
+          // Not awaited, as in drainCapped: on a teed body the cancel settles only once the other
+          // branch is read or cancelled too, and the 413 must not wait for an unread clone.
+          active.cancel().catch(() => {})
           controller.error(reject(413))
           return
         }

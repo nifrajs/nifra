@@ -196,6 +196,28 @@ describe("drainCapped", () => {
   })
 })
 
+describe("transport-capped request streams", () => {
+  test("an oversized stream answers 413 without waiting on an unread clone", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(16))
+      },
+    })
+    const init: RequestInit & { duplex: "half" } = { method: "POST", body: source, duplex: "half" }
+    const request = new Request("http://x/body", init)
+    markTransportCap(request, 4)
+    applyTransportCap(request, request)
+    const clone = request.clone()
+    const reader = request.body?.getReader()
+    const failure = await reader?.read().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(failure instanceof Response ? failure.status : failure).toBe(413)
+    await clone.body?.cancel().catch(() => {})
+  })
+})
+
 describe("JSON schema lane - the cap holds on real bytes", () => {
   test("an understated Content-Length cannot bypass the JSON body cap", async () => {
     const app = server({ maxBodyBytes: 1000 }).post(
