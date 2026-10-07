@@ -148,11 +148,12 @@ const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.(eyJ[A-Za-z0-9_-]{8,})\.[A-Za-z0-9_-]{16,}/
 const PLACEHOLDER =
   /^(?:user(?:name)?|pass(?:word)?|pwd|secret|admin|root|guest|test|demo|example|changeme|change-me|xxx+|\*+|\.\.\.+|my-?password|your-?password|<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|%[A-Za-z_]+%?)$/i
 
-/** A literal assigned to a name: `apiKey: "..."`, `const secret = '...'`. Template literals with an
- * interpolation are not literals. The lookbehind starts a name only where an identifier starts: a
- * match from inside a long word run backtracks the rest of that run, quadratic in its length. */
+/** A literal assigned to a name: `apiKey: "..."`, `const secret = '...'`, `"x-api-key": "..."`.
+ * Template literals with an interpolation are not literals. The lookbehind starts a name only where
+ * an identifier starts: a match from inside a long word run backtracks the rest of that run,
+ * quadratic in its length. A hyphenated name starts only right after a quote, for the same reason. */
 const ASSIGNED =
-  /(?<![\w$])([A-Za-z_$][\w$]*)(["']?)\s*([:=]|\?\?=|\|\|=)\s*(?:"([^"\\\r\n]{16,256})"|'([^'\\\r\n]{16,256})'|`([^`\\$\r\n]{16,256})`)/g
+  /(?<![\w$])((?<=["'])[A-Za-z_$][\w$-]*(?=["'])|[A-Za-z_$][\w$]*)(["']?)\s*([:=]|\?\?=|\|\|=)\s*(?:"([^"\\\r\n]{16,256})"|'([^'\\\r\n]{16,256})'|`([^`\\$\r\n]{16,256})`)/g
 
 /** Whether a match's name is what the literal is assigned to. A quoted name must be the whole string,
  * not the tail of one (`? "new-password" : "current-password"`), and a key is never preceded by a
@@ -170,6 +171,10 @@ function namesTheTarget(text: string, start: number, quote: string, operator: st
 
 const EXTRA_SECRET_NAME =
   /(?:accesskey|signingkey|encryptionkey|masterkey|serviceaccountkey|connectionstring)$/
+
+/** Header names whose value puts a scheme before the credential: `"Bearer <token>"`. */
+const AUTHORIZATION_NAME = /^(?:proxy)?authorization$/
+const AUTHORIZATION_VALUE = /^(?:(bearer)|basic) +(\S+)$/i
 
 /** Values that look like keys but are public by design. */
 const PUBLIC_VALUE =
@@ -198,6 +203,32 @@ function looksRandom(value: string, minLength: number): boolean {
     Number(/[0-9]/.test(value)) +
     Number(/[^A-Za-z0-9]/.test(value))
   return classes >= 2 && entropy(value) >= 3.5
+}
+
+/** A password the scanned text spells as a placeholder or a dev default. */
+function placeholderPassword(user: string, password: string): boolean {
+  // @nifra-gate-reviewed: a password equal to its user name is a placeholder in the text being
+  // scanned; nothing is authenticated here.
+  return PLACEHOLDER.test(password) || password === user || /[${}<>*]/.test(password)
+}
+
+/** The credential an `Authorization` literal carries: a Bearer token, or a Basic `user:password`
+ * that is not a placeholder. */
+function authorizationCredential(value: string): string | undefined {
+  const found = AUTHORIZATION_VALUE.exec(value)
+  if (found === null) return undefined
+  const credential = found[2] ?? ""
+  if (found[1] !== undefined) return credential
+  let decoded: string
+  try {
+    decoded = atob(credential)
+  } catch {
+    return undefined
+  }
+  const colon = decoded.indexOf(":")
+  if (colon === -1 || placeholderPassword(decoded.slice(0, colon), decoded.slice(colon + 1)))
+    return undefined
+  return credential
 }
 
 function jwtRole(payload: string): unknown {
@@ -231,11 +262,7 @@ function formatMatches(text: string): Match[] {
     matches.push({ rule: "private-key", index: found.index, text: found[0], what: "private key" })
   }
   for (const found of text.matchAll(CREDENTIAL_URL)) {
-    const user = found[1] ?? ""
-    const password = found[2] ?? ""
-    // @nifra-gate-reviewed: a password equal to its user name is a placeholder in the text being
-    // scanned; nothing is authenticated here.
-    if (PLACEHOLDER.test(password) || password === user || /[${}<>*]/.test(password)) continue
+    if (placeholderPassword(found[1] ?? "", found[2] ?? "")) continue
     matches.push({
       rule: "credential-url",
       index: found.index,
@@ -250,14 +277,24 @@ function assignedMatches(text: string): Match[] {
   const matches: Match[] = []
   for (const found of text.matchAll(ASSIGNED)) {
     const name = found[1] ?? ""
-    if (!isSensitiveFieldName(name) && !EXTRA_SECRET_NAME.test(name.toLowerCase())) continue
+    const key = name.toLowerCase().replace(/[-_]/g, "")
+    const header = AUTHORIZATION_NAME.test(key)
+    if (!header && !isSensitiveFieldName(name) && !EXTRA_SECRET_NAME.test(key)) continue
     if (!namesTheTarget(text, found.index, found[2] ?? "", found[3] ?? "")) continue
     const value = found[4] ?? found[5] ?? found[6] ?? ""
-    if (PUBLIC_VALUE.test(value) || PLACEHOLDER.test(value) || !looksRandom(value, 16)) continue
+    const secret = header ? authorizationCredential(value) : value
+    if (
+      secret === undefined ||
+      PUBLIC_VALUE.test(secret) ||
+      PLACEHOLDER.test(secret) ||
+      !looksRandom(secret, 16)
+    )
+      continue
     matches.push({
       rule: "assigned-secret",
-      index: found.index + found[0].indexOf(value),
-      text: value,
+      // The credential is the value's tail: a header value's scheme is not part of it.
+      index: found.index + found[0].indexOf(value) + value.length - secret.length,
+      text: secret,
       what: `literal assigned to "${name}"`,
     })
   }
