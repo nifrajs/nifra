@@ -1430,6 +1430,7 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       splits: { type: "array" },
       moves: { type: "array" },
       rewritten: { type: "array" },
+      tooling: { type: "array" },
     },
     required: ["ok", "write", "issues"],
   }),
@@ -1466,6 +1467,7 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
         ),
         ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
         ...out.rewritten.map((file) => `  edit  ${file} (imports)`),
+        ...out.tooling.map((edit) => `  edit  ${edit.file} (${edit.change})`),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]

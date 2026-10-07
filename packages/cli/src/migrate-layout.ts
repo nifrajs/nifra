@@ -10,8 +10,12 @@
  *   4. moves each `x.server.ts` under `backend/` without the retired suffix, and zones every other module
  *      by who imports it at runtime: only route frontends -> `frontend/`, only the server side ->
  *      `backend/`, both -> `shared/`;
- *   5. rewrites every relative import in the app to the new locations, `@nifrajs/web/server-only` to
- *      `@nifrajs/web/backend-only`, and `ServerOnly` to `BackendOnly`.
+ *   5. rewrites every relative import in the app to the new locations (test-runner mocks included),
+ *      `@nifrajs/web/server-only` to `@nifrajs/web/backend-only`, and `ServerOnly` to `BackendOnly`;
+ *   6. adds the zone folders moved TypeScript lands in to tsconfig `include`, and `.nifra/` to
+ *      `.gitignore`.
+ *
+ * Data files (JSON, YAML, CSV, ...) and folders the app zones in package.json stay where they are.
  *
  * It is a dry run unless `write` is set, and it reports what it could not decide (a frontend that uses
  * a moved name at runtime, a helper both halves need, a loader with no output schema) instead of
@@ -29,6 +33,7 @@ import {
 } from "node:fs"
 import { dirname, extname, join, posix, relative, resolve } from "node:path"
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
+import { parseZoneConfig, type ZoneConfig } from "@nifrajs/web/zones"
 import type * as TS from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
@@ -62,6 +67,22 @@ const TOOLING_FILE =
 const SELF_LOCATION = /\bimport\.meta\.(?:dirname|dir|filename|url)\b|\b__(?:dirname|filename)\b/
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage", ".git", ".vite", "public"])
 const ZONE_DIRS = new Set(["frontend", "backend", "shared", "routes", "public"])
+/** Data other tools may read by path too; reported, never moved. Images and fonts still move. */
+const DATA_FILE = /\.(?:json|jsonc|json5|ndjson|ya?ml|toml|csv|tsv|txt|xml|sql)$/
+/** Test-runner calls that name a module by path, as an import does. */
+const MOCK_CALLS: ReadonlySet<string> = new Set([
+  "mock.module",
+  "vi.mock",
+  "vi.doMock",
+  "vi.importActual",
+  "vi.importMock",
+  "jest.mock",
+  "jest.doMock",
+  "jest.requireActual",
+  "jest.requireMock",
+  "jest.unstable_mockModule",
+])
+const TAILWIND_CONFIG = /^tailwind\.config\.[cm]?[jt]s$/
 
 export interface LayoutMigrationIssue {
   readonly file: string
@@ -81,6 +102,8 @@ export interface LayoutMigrationResult {
   readonly moves: ReadonlyArray<{ readonly from: string; readonly to: string }>
   /** Files whose imports were rewritten (and were not otherwise created). */
   readonly rewritten: readonly string[]
+  /** Tooling config the migration updated so it still covers what moved. */
+  readonly tooling: ReadonlyArray<{ readonly file: string; readonly change: string }>
   readonly issues: readonly LayoutMigrationIssue[]
 }
 
@@ -579,6 +602,16 @@ interface ImportRef {
   readonly typeOnly: boolean
 }
 
+/** The path argument of `mock.module("./x", ...)` or a vitest/jest twin, when it is a literal. */
+function mockedSpecifier(ts: typeof TS, node: TS.CallExpression): TS.StringLiteralLike | undefined {
+  const callee = node.expression
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression))
+    return undefined
+  if (!MOCK_CALLS.has(`${callee.expression.text}.${callee.name.text}`)) return undefined
+  const arg = node.arguments[0]
+  return arg !== undefined && ts.isStringLiteralLike(arg) ? arg : undefined
+}
+
 function importsOf(ts: typeof TS, file: string, text: string): ImportRef[] {
   if (/\.(?:svelte|vue)$/.test(file)) {
     return scriptBlocks(text).flatMap((block) =>
@@ -635,6 +668,9 @@ function importsOf(ts: typeof TS, file: string, text: string): ImportRef[] {
       const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
       if ((isImport || isRequire) && arg !== undefined && ts.isStringLiteralLike(arg))
         refs.push({ specifier: arg.text, typeOnly: false })
+      // A test's mock names the module without loading it into the app: no runtime edge.
+      const mocked = mockedSpecifier(ts, node)
+      if (mocked !== undefined) refs.push({ specifier: mocked.text, typeOnly: true })
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
@@ -880,7 +916,7 @@ function rewriteImports(
       ) {
         const arg = node.arguments[0]
         if (arg !== undefined && ts.isStringLiteralLike(arg)) literal = arg
-      }
+      } else if (ts.isCallExpression(node)) literal = mockedSpecifier(ts, node)
       if (literal !== undefined) {
         const next = rewrite(literal.text)
         if (next !== undefined && next !== literal.text) {
@@ -995,6 +1031,10 @@ export async function migrateLayout(
     throw new Error("[nifra] `nifra migrate layout` needs TypeScript: bun add -d typescript")
   const root = resolve(appRoot)
   if (!existsSync(join(root, "routes"))) throw new Error(`[nifra] no routes/ directory in ${root}`)
+  const zones = appZones(root)
+  const configured = [...(zones.backend ?? []), ...(zones.frontend ?? []), ...(zones.shared ?? [])]
+  const inConfiguredFolder = (file: string): boolean =>
+    configured.some((folder) => file === folder || file.startsWith(`${folder}/`))
   const original: Files = new Map()
   const everyFile = listFiles(root)
   for (const file of everyFile) {
@@ -1145,7 +1185,8 @@ export async function migrateLayout(
       moveMap.has(file) ||
       isTestFile(file) ||
       file.endsWith(".d.ts") ||
-      file === "nifra.config.ts"
+      file === "nifra.config.ts" ||
+      inConfiguredFolder(file)
     )
       continue
     if (/\.(?:frontend|backend|shared|fn)\.[cm]?[jt]sx?$/.test(file)) continue
@@ -1153,7 +1194,16 @@ export async function migrateLayout(
     if (file.includes("/")) {
       if (ZONE_DIRS.has(top) || (!browser.has(file) && !server.has(file))) continue
     } else if (!browser.has(file) && !appServer.has(file)) continue
-    moveMap.set(file, `${zoneOf(file)}/${file}`)
+    const zone = zoneOf(file)
+    if (DATA_FILE.test(file)) {
+      const folder = file.includes("/") ? posix.dirname(file) : undefined
+      issues.push({
+        file,
+        reason: `is data ${zone === "shared" ? "both sides import" : `${zone} code imports`}, and a build only loads files in a zone; it stays here because other tools may read it by path. Move it to "${zone}/${file}" by hand, or ${folder === undefined ? "into a folder listed" : `list "${folder}"`} under "nifra": { "zones": { "${zone}": [...] } } in package.json`,
+      })
+      continue
+    }
+    moveMap.set(file, `${zone}/${file}`)
   }
   const claimed = new Map<string, string>()
   for (const [from, to] of moveMap) {
@@ -1261,7 +1311,8 @@ export async function migrateLayout(
       })
     }
     const dir = posix.dirname(move.from)
-    if (dir === "." || ZONE_DIRS.has(dir.split("/")[0] ?? "")) continue
+    if (dir === "." || ZONE_DIRS.has(dir.split("/")[0] ?? "") || inConfiguredFolder(move.from))
+      continue
     leaving.set(dir, [...(leaving.get(dir) ?? []), move])
   }
   for (const [dir, group] of leaving) {
@@ -1293,7 +1344,28 @@ export async function migrateLayout(
     }
   }
 
+  // Tooling that lists folders or globs, not files: the import rewrite above never sees it.
+  const tooling: Array<{ file: string; change: string }> = []
+  const toolingWrites = new Map<string, string>()
+  const tsconfig = coverMovedFiles(ts, root, moves)
+  if (tsconfig?.issue !== undefined) issues.push({ file: "tsconfig.json", reason: tsconfig.issue })
+  if (tsconfig?.text !== undefined) {
+    toolingWrites.set("tsconfig.json", tsconfig.text)
+    tooling.push({ file: "tsconfig.json", change: `include += ${tsconfig.added.join(", ")}` })
+  }
+  for (const file of everyFile) {
+    if (!TAILWIND_CONFIG.test(file)) continue
+    const reason = staleContentGlobs(ts, readFileSync(join(root, file), "utf8"), moves)
+    if (reason !== undefined) issues.push({ file, reason })
+  }
+  const gitignore = ignoreNifraState(root)
+  if (gitignore !== undefined) {
+    toolingWrites.set(".gitignore", gitignore)
+    tooling.push({ file: ".gitignore", change: "ignore .nifra/ (dev and build state)" })
+  }
+
   if (options.write === true) {
+    for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
     for (const [file, text] of final) {
       if (original.get(file) === text) continue
       const path = join(root, file)
@@ -1316,8 +1388,150 @@ export async function migrateLayout(
     splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
+    tooling,
     issues,
   }
+}
+
+/** The app's `"nifra": { "zones": ... }`, so folders it already zones are left where they are. */
+function appZones(root: string): ZoneConfig {
+  const manifest = join(root, "package.json")
+  if (!existsSync(manifest)) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(manifest, "utf8"))
+  } catch {
+    return {}
+  }
+  const nifra =
+    typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "nifra") : undefined
+  const zones =
+    typeof nifra === "object" && nifra !== null ? Reflect.get(nifra, "zones") : undefined
+  return zones === undefined ? {} : parseZoneConfig(zones, manifest)
+}
+
+/** Whether a tsconfig `include` entry takes in `file` (app-relative), the way tsc reads it. */
+function includes(pattern: string, file: string): boolean {
+  let spec = pattern.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "")
+  if (spec === "" || spec === ".") return true
+  if (!/[*?]/.test(spec)) return file === spec || file.startsWith(`${spec}/`)
+  if (spec.endsWith("**")) spec = `${spec}/*`
+  else if (!/[*?.][^/]*$/.test(spec.slice(spec.lastIndexOf("/") + 1))) spec = `${spec}/**/*`
+  return new Bun.Glob(spec).match(file)
+}
+
+/**
+ * Add each zone folder that receives moved TypeScript to tsconfig `include`, editing only that array
+ * so comments and layout survive. A tsconfig without `include` (or with only `extends`) is left
+ * alone: tsc's default, or the base config, decides, and `nifra check` reports any folder left out.
+ */
+function coverMovedFiles(
+  ts: typeof TS,
+  root: string,
+  moves: ReadonlyArray<{ readonly from: string; readonly to: string }>,
+): { text?: string; added: string[]; issue?: string } | undefined {
+  const path = join(root, "tsconfig.json")
+  if (!existsSync(path)) return undefined
+  const text = readFileSync(path, "utf8")
+  const source = ts.parseJsonText(path, text)
+  const top = source.statements[0]?.expression
+  if (top === undefined || !ts.isObjectLiteralExpression(top))
+    return { added: [], issue: "is not a JSON object; add the zone folders to its include by hand" }
+  const include = top.properties.find(
+    (property): property is TS.PropertyAssignment =>
+      ts.isPropertyAssignment(property) &&
+      ts.isStringLiteral(property.name) &&
+      property.name.text === "include",
+  )
+  if (include === undefined) return undefined
+  const array = include.initializer
+  if (!ts.isArrayLiteralExpression(array))
+    return { added: [], issue: '"include" is not an array; add the zone folders to it by hand' }
+  const patterns = array.elements.filter(ts.isStringLiteral).map((element) => element.text)
+  const added: string[] = []
+  for (const { to } of moves) {
+    if (!/\.(?:[cm]?ts|tsx)$/.test(to) || /\.d\.[cm]?ts$/.test(to)) continue
+    const folder = to.split("/")[0] ?? to
+    if (added.includes(folder) || patterns.some((pattern) => includes(pattern, to))) continue
+    added.push(folder)
+  }
+  if (added.length === 0) return undefined
+  added.sort(codeUnitOrder)
+  const quoted = added.map((folder) => JSON.stringify(folder))
+  const last = array.elements[array.elements.length - 1]
+  if (last === undefined) {
+    const at = array.getStart(source) + 1
+    return { text: `${text.slice(0, at)}${quoted.join(", ")}${text.slice(at)}`, added }
+  }
+  let at = last.end
+  const trailing = /^\s*,/.exec(text.slice(at))
+  if (trailing !== null) at += trailing[0].length
+  // A multi-line array gets one entry per line at the last element's indent, below any comment that
+  // closes the last element's line; anything else gets them inline.
+  if (text.slice(array.getStart(source), last.getStart(source)).includes("\n")) {
+    const lineStart = text.lastIndexOf("\n", last.getStart(source)) + 1
+    const indent = text.slice(lineStart, last.getStart(source)).match(/^\s*/)?.[0] ?? ""
+    const newline = text.indexOf("\n", at)
+    const eol = newline === -1 ? text.length : newline
+    if (/^\s*(?:\/\/.*|\/\*.*\*\/\s*)?$/.test(text.slice(at, eol))) {
+      const head =
+        trailing !== null
+          ? text.slice(0, eol)
+          : `${text.slice(0, last.end)},${text.slice(last.end, eol)}`
+      const entries = quoted.join(`,\n${indent}`)
+      return {
+        text: `${head}\n${indent}${entries}${trailing !== null ? "," : ""}${text.slice(eol)}`,
+        added,
+      }
+    }
+  }
+  const insert = trailing !== null ? ` ${quoted.join(", ")},` : `, ${quoted.join(", ")}`
+  return { text: `${text.slice(0, at)}${insert}${text.slice(at)}`, added }
+}
+
+/** Tailwind `content` globs that matched a moved file at its old path and match nothing at its new one. */
+function staleContentGlobs(
+  ts: typeof TS,
+  text: string,
+  moves: ReadonlyArray<{ readonly from: string; readonly to: string }>,
+): string | undefined {
+  const globs: string[] = []
+  const source = ts.createSourceFile("tailwind.config.ts", text, ts.ScriptTarget.Latest, true)
+  const visit = (node: TS.Node): void => {
+    if (ts.isStringLiteralLike(node) && /[*/]/.test(node.text) && !node.text.startsWith("!"))
+      globs.push(node.text.replace(/^\.\//, ""))
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  const matchers = globs.map((glob) => ({ glob, matcher: new Bun.Glob(glob) }))
+  const lost = moves.filter(
+    ({ from, to }) =>
+      matchers.some(({ matcher }) => matcher.match(from)) &&
+      !matchers.some(({ matcher }) => matcher.match(to)),
+  )
+  const first = lost[0]
+  if (first === undefined) return undefined
+  const folders = [...new Set(lost.map(({ to }) => to.split("/")[0] ?? to))].sort(codeUnitOrder)
+  return `its content globs matched ${lost.length} file(s) that move, but none of their new paths (such as "${first.from}" -> "${first.to}"), so Tailwind would stop seeing their classes. Add globs for ${folders.map((folder) => `"./${folder}/**/*"`).join(", ")} (with the extensions you use)`
+}
+
+/**
+ * `.nifra/` holds generated types, dev state and the dev server's launch token; none of it belongs in
+ * git. The new `.gitignore` text when it is not ignored yet, else `undefined`.
+ */
+function ignoreNifraState(root: string): string | undefined {
+  const probe = Bun.spawnSync(["git", "check-ignore", "-q", ".nifra/types"], {
+    cwd: root,
+    stdout: "ignore",
+    stderr: "ignore",
+  })
+  if (probe.exitCode === 0) return undefined
+  const path = join(root, ".gitignore")
+  const current = existsSync(path) ? readFileSync(path, "utf8") : ""
+  // Outside a git checkout `check-ignore` cannot answer; the app's own file decides.
+  if (probe.exitCode !== 1 && /^\/?\.nifra(?:\/|\*|\/\*\*)?\s*$/m.test(current)) return undefined
+  const separator = current === "" || current.endsWith("\n") ? "" : "\n"
+  return `${current}${separator}.nifra/\n`
 }
 
 function pruneEmptyDirs(root: string): void {

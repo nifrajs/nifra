@@ -244,7 +244,10 @@ export default function Structure() {
         The same rules run in <code>nifra dev</code> (a refused module is answered with a 403 before
         its source is sent), in both bundlers, for every framework, and in <code>nifra check</code>.
         An app on the older layout moves with <code>nifra migrate layout</code>: a dry run that
-        reports every move, then <code>--write</code>.
+        reports every move, then <code>--write</code>. It rewrites imports and test-runner mocks,
+        adds the zone folders to tsconfig <code>include</code> and <code>.nifra/</code> to{" "}
+        <code>.gitignore</code>, and leaves data files and folders zoned in{" "}
+        <code>package.json</code> where they are, reporting what still needs a hand.
       </p>
     </div>
   )

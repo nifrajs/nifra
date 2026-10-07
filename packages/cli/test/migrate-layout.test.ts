@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import * as ts from "typescript"
 import { middlewareSource, migrateLayout, splitRouteSource } from "../src/migrate-layout.ts"
 import {
@@ -254,13 +255,14 @@ describe("migrateLayout", () => {
       "backend/app.ts",
       "backend/db/migrate.ts",
       "backend/migrations/0002_backfill.ts",
-      "backend/release.json",
     ])
-    // `./release.json` from backend/app.ts moved with it, so that import is current and not reported.
+    // Data stays where other tools read it; backend/app.ts now reaches it as `../release.json`.
+    expect(read(dir, "backend/app.ts")).toContain('import release from "../release.json"')
     expect(result.issues).toEqual([
       {
-        file: "package.json",
-        reason: 'mentions "release.json" by path; it moved to "backend/release.json"',
+        file: "release.json",
+        reason:
+          'is data backend code imports, and a build only loads files in a zone; it stays here because other tools may read it by path. Move it to "backend/release.json" by hand, or into a folder listed under "nifra": { "zones": { "backend": [...] } } in package.json',
       },
       {
         file: "scripts/release.sh",
@@ -469,5 +471,166 @@ describe("migrateLayout", () => {
           "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... })",
       },
     ])
+  })
+
+  test("test-runner mocks follow the module they name", async () => {
+    const dir = app({
+      "backend.ts": 'import { db } from "./lib/db.ts"\nexport const backend = db\n',
+      "lib/db.ts": "export const db = 1\n",
+      "test/db.test.ts": [
+        'import { mock } from "bun:test"',
+        'mock.module("../lib/db.ts", () => ({ db: 2 }))',
+        'vi.mock("../lib/db")',
+        'jest.requireActual("../lib/db.ts")',
+        'other.mock("../lib/db.ts")',
+        "",
+      ].join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((m) => m.to)).toContain("backend/lib/db.ts")
+    expect(read(dir, "test/db.test.ts")).toBe(
+      [
+        'import { mock } from "bun:test"',
+        'mock.module("../backend/lib/db.ts", () => ({ db: 2 }))',
+        'vi.mock("../backend/lib/db")',
+        'jest.requireActual("../backend/lib/db.ts")',
+        'other.mock("../lib/db.ts")',
+        "",
+      ].join("\n"),
+    )
+  })
+
+  test("tsconfig include gains the zone folders moved code lands in, layout and comments kept", async () => {
+    const files = {
+      "backend.ts": 'import { db } from "./lib/db.ts"\nexport const backend = db\n',
+      "lib/db.ts": "export const db = 1\n",
+      "components/card.tsx": "export const Card = () => null\n",
+      "routes/index.tsx": 'import { Card } from "../components/card.tsx"\nexport default Card\n',
+    }
+    const multiline = app({
+      ...files,
+      "tsconfig.json": [
+        "{",
+        "  // app sources",
+        '  "include": [',
+        '    "routes",',
+        '    "lib",',
+        '    "components", // UI',
+        "  ],",
+        "}",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(multiline, { typescript: ts, write: true })
+    expect(result.tooling).toContainEqual({
+      file: "tsconfig.json",
+      change: "include += backend, frontend",
+    })
+    expect(read(multiline, "tsconfig.json")).toBe(
+      [
+        "{",
+        "  // app sources",
+        '  "include": [',
+        '    "routes",',
+        '    "lib",',
+        '    "components", // UI',
+        '    "backend",',
+        '    "frontend",',
+        "  ],",
+        "}",
+        "",
+      ].join("\n"),
+    )
+
+    const noTrailingComma = app({
+      ...files,
+      "tsconfig.json":
+        '{\n  "include": [\n    "routes",\n    "lib",\n    "components" // UI\n  ]\n}\n',
+    })
+    await migrateLayout(noTrailingComma, { typescript: ts, write: true })
+    expect(read(noTrailingComma, "tsconfig.json")).toBe(
+      '{\n  "include": [\n    "routes",\n    "lib",\n    "components", // UI\n    "backend",\n    "frontend"\n  ]\n}\n',
+    )
+
+    const inline = app({
+      ...files,
+      "tsconfig.json": '{ "include": ["routes", "lib", "components"] }\n',
+    })
+    await migrateLayout(inline, { typescript: ts, write: true })
+    expect(read(inline, "tsconfig.json")).toBe(
+      '{ "include": ["routes", "lib", "components", "backend", "frontend"] }\n',
+    )
+
+    // Already covered by a glob, or no include at all: tsc's own rules hold, so nothing changes.
+    const covered = app({ ...files, "tsconfig.json": '{ "include": ["**/*.ts", "**/*.tsx"] }\n' })
+    expect((await migrateLayout(covered, { typescript: ts })).tooling).toEqual([])
+    const open = app({ ...files, "tsconfig.json": '{ "compilerOptions": { "strict": true } }\n' })
+    expect((await migrateLayout(open, { typescript: ts })).tooling).toEqual([])
+  })
+
+  test("tailwind content globs that lose a moved file are reported", async () => {
+    const dir = app({
+      "components/card.tsx": "export const Card = () => null\n",
+      "routes/index.tsx": 'import { Card } from "../components/card.tsx"\nexport default Card\n',
+      "tailwind.config.ts":
+        'export default { content: ["./routes/**/*.tsx", "./components/**/*.tsx"] }\n',
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.issues).toContainEqual({
+      file: "tailwind.config.ts",
+      reason:
+        'its content globs matched 1 file(s) that move, but none of their new paths (such as "components/card.tsx" -> "frontend/components/card.tsx"), so Tailwind would stop seeing their classes. Add globs for "./frontend/**/*" (with the extensions you use)',
+    })
+  })
+
+  test("folders the app already zones in package.json stay where they are", async () => {
+    const dir = app({
+      "package.json": JSON.stringify({ nifra: { zones: { backend: ["migrations"] } } }),
+      "backend.ts":
+        'import { up } from "./migrations/0002_backfill.ts"\nexport const backend = up\n',
+      "migrations/0001_init.sql": "create table t (id int);\n",
+      "migrations/0002_backfill.ts": "export const up = () => 1\n",
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((m) => m.to)).toEqual(["backend/app.ts"])
+    expect(result.issues).toEqual([])
+    expect(read(dir, "backend/app.ts")).toContain('from "../migrations/0002_backfill.ts"')
+  })
+
+  test(".nifra/ is added to .gitignore unless it is already ignored", async () => {
+    // Outside any git checkout, so the app's own .gitignore is the only answer.
+    const make = (files: Record<string, string>): string => {
+      const dir = mkdtempSync(join(tmpdir(), "nifra-migrate-gitignore-"))
+      for (const [path, content] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, path)), { recursive: true })
+        writeFileSync(join(dir, path), content)
+      }
+      return dir
+    }
+    const page = { "routes/index.tsx": "export default () => null\n" }
+    const bare = make({ ...page, ".gitignore": "node_modules" })
+    const ignored = make({ ...page, ".gitignore": "dist\n/.nifra\n" })
+    const none = make(page)
+    try {
+      const result = await migrateLayout(bare, { typescript: ts, write: true })
+      expect(result.tooling).toContainEqual({
+        file: ".gitignore",
+        change: "ignore .nifra/ (dev and build state)",
+      })
+      expect(read(bare, ".gitignore")).toBe("node_modules\n.nifra/\n")
+      expect((await migrateLayout(ignored, { typescript: ts, write: true })).tooling).toEqual([])
+      expect(read(ignored, ".gitignore")).toBe("dist\n/.nifra\n")
+      await migrateLayout(none, { typescript: ts, write: true })
+      expect(read(none, ".gitignore")).toBe(".nifra/\n")
+      // A dry run reports the change and writes nothing.
+      const dry = make(page)
+      expect((await migrateLayout(dry, { typescript: ts })).tooling).toHaveLength(1)
+      expect(existsSync(join(dry, ".gitignore"))).toBe(false)
+      rmSync(dry, { recursive: true, force: true })
+    } finally {
+      for (const dir of [bare, ignored, none]) rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

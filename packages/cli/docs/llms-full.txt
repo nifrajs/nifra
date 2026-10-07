@@ -10553,7 +10553,10 @@ that contains what looks like a credential fails the build.
 The same rules run in `nifra dev` (a refused module is answered with a 403 before
 its source is sent), in both bundlers, for every framework, and in `nifra check`.
 An app on the older layout moves with `nifra migrate layout`: a dry run that
-reports every move, then `--write`.
+reports every move, then `--write`. It rewrites imports and test-runner mocks,
+adds the zone folders to tsconfig `include` and `.nifra/` to
+`.gitignore`, and leaves data files and folders zoned in
+`package.json` where they are, reporting what still needs a hand.
 
 ## Nifra - Contract-derived adversarial testing
 
