@@ -96,14 +96,12 @@ const project = async (
   return dir
 }
 
-/** Drive `nifra mcp` over stdio until every expected id answered (or the process exits). */
-const rpc = async (
+/** A live `nifra mcp` session over stdio: send messages, then await the answer to an id. */
+const session = (
   cwd: string,
   args: readonly string[],
-  messages: readonly object[],
-  ids: readonly number[],
   env: Readonly<Record<string, string>> = {},
-): Promise<Record<number, Record<string, unknown>>> => {
+) => {
   const childEnv: Record<string, string | undefined> = { ...process.env, ...env }
   if (env[MCP_DELEGATED_ENV] === undefined) delete childEnv[MCP_DELEGATED_ENV]
   const proc = Bun.spawn(
@@ -117,34 +115,68 @@ const rpc = async (
     },
   )
   const stdin = proc.stdin as { write(s: string): unknown }
-  for (const message of messages) stdin.write(`${JSON.stringify(message)}\n`)
   const byId: Record<number, Record<string, unknown>> = {}
+  const waiters = new Map<number, () => void>()
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
-  const decoder = new TextDecoder()
-  let buffered = ""
-  const deadline = Date.now() + 40_000
-  try {
-    while (ids.some((id) => byId[id] === undefined) && Date.now() < deadline) {
-      const chunk = await Promise.race([
-        reader.read(),
-        new Promise<{ done: true; value: undefined }>((r) =>
-          setTimeout(() => r({ done: true, value: undefined }), 40_000),
-        ),
-      ])
-      if (chunk.done) break
-      buffered += decoder.decode(chunk.value, { stream: true })
-      const lines = buffered.split("\n")
-      buffered = lines.pop() ?? ""
-      for (const line of lines) {
-        if (!line.startsWith("{")) continue
-        const parsed = JSON.parse(line) as Record<string, unknown>
-        if (typeof parsed.id === "number") byId[parsed.id] = parsed
+  const pumped = (async () => {
+    const decoder = new TextDecoder()
+    let buffered = ""
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        buffered += decoder.decode(chunk.value, { stream: true })
+        const lines = buffered.split("\n")
+        buffered = lines.pop() ?? ""
+        for (const line of lines) {
+          if (!line.startsWith("{")) continue
+          const parsed = JSON.parse(line) as Record<string, unknown>
+          if (typeof parsed.id !== "number") continue
+          byId[parsed.id] = parsed
+          waiters.get(parsed.id)?.()
+        }
       }
+    } catch {
+      // The process was killed mid-read: every pending answer stays undefined.
+    }
+  })()
+  return {
+    send(message: object): void {
+      stdin.write(`${JSON.stringify(message)}\n`)
+    },
+    async answer(id: number): Promise<Record<string, unknown> | undefined> {
+      if (byId[id] === undefined) {
+        const arrived = new Promise<void>((resolve) => waiters.set(id, resolve))
+        await Promise.race([arrived, pumped, Bun.sleep(40_000)])
+      }
+      return byId[id]
+    },
+    async close(): Promise<void> {
+      reader.cancel().catch(() => {})
+      proc.kill()
+      await proc.exited.catch(() => 0)
+    },
+  }
+}
+
+/** Drive `nifra mcp` over stdio until every expected id answered (or the process exits). */
+const rpc = async (
+  cwd: string,
+  args: readonly string[],
+  messages: readonly object[],
+  ids: readonly number[],
+  env: Readonly<Record<string, string>> = {},
+): Promise<Record<number, Record<string, unknown>>> => {
+  const live = session(cwd, args, env)
+  for (const message of messages) live.send(message)
+  const byId: Record<number, Record<string, unknown>> = {}
+  try {
+    for (const id of ids) {
+      const answer = await live.answer(id)
+      if (answer !== undefined) byId[id] = answer
     }
   } finally {
-    reader.cancel().catch(() => {})
-    proc.kill()
-    await proc.exited.catch(() => 0)
+    await live.close()
   }
   return byId
 }
@@ -243,6 +275,29 @@ describe("nifra mcp against a project on another nifra release", () => {
     const text = textOf(answered[2])
     expect(text).toContain(`@nifrajs/cli ${PROJECT_VERSION}`)
     expect(text).toContain("./node_modules/.bin/nifra mcp")
+  }, 45_000)
+
+  test("an install during the session is seen on the next call, so the tools refuse from then on", async () => {
+    const dir = await project("mid-session")
+    const core = join(dir, "node_modules", "@nifrajs", "core", "package.json")
+    const own: { version: string } = await Bun.file(
+      join(import.meta.dir, "..", "package.json"),
+    ).json()
+    await writeFile(core, JSON.stringify({ name: "@nifrajs/core", version: own.version }))
+    const live = session(dir, [])
+    try {
+      live.send(initialize)
+      live.send(call(2, "nifra_docs", { query: "routing" }))
+      expect(textOf(await live.answer(2))).not.toContain("refused")
+      await writeFile(core, JSON.stringify({ name: "@nifrajs/core", version: PROJECT_VERSION }))
+      live.send(call(3, "nifra_docs", { query: "routing" }))
+      const after = await live.answer(3)
+      expect(isErrorOf(after)).toBe(true)
+      expect(textOf(after)).toContain(`nifra_docs refused`)
+      expect(textOf(after)).toContain(`@nifrajs/core ${PROJECT_VERSION}`)
+    } finally {
+      await live.close()
+    }
   }, 45_000)
 
   test("a project CLI without a linked bin cannot take the session, so the tools refuse", async () => {

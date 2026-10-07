@@ -308,6 +308,9 @@ export async function runMcpServer(
     if (message.method === "initialize") {
       rootsSupported = clientSupportsRoots(message.params)
     }
+    // An install during the session changes the nifra the project builds with, and this process keeps
+    // the code it started with: re-read the installed version per call so no answer is for a stale one.
+    if (message.method === "tools/call") drift = await detectToolingDrift(rootState.root, version)
 
     let activeTools: McpTool[]
     if (ctx.apps) {
