@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { AgentEvent } from "@nifrajs/agent-protocol"
 import registerNifraTools from "../extensions/nifra.ts"
 import { PiBackend } from "../src/index.ts"
 
@@ -133,6 +134,63 @@ process.stdin.on("data", (chunk) => {
       collect(oversized.send({ sessionId: "oversized-jsonl", message: "hello" })),
     ).rejects.toMatchObject({ code: "PI_PROTOCOL" })
     await oversized.close("oversized-jsonl")
+  })
+
+  test("a turn whose model call failed fails, with Pi's error, instead of completing", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "OAuth refresh failed for openai-codex" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed], willRetry: false }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-failed" })
+      const events: AgentEvent[] = []
+      await expect(
+        (async () => {
+          for await (const event of backend.send({ sessionId: "model-failed", message: "hello" }))
+            events.push(event)
+        })(),
+      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      expect(events.some((event) => event.type === "session.completed")).toBe(false)
+      expect(events.find((event) => event.type === "session.failed")).toMatchObject({
+        error: { code: "PI_MODEL_FAILED", message: "OAuth refresh failed for openai-codex" },
+      })
+      expect((await backend.snapshot("model-failed")).status).toBe("failed")
+    } finally {
+      await backend.close("model-failed")
+    }
+  })
+
+  test("a model error Pi retries does not end the turn, and the retried answer completes it", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "overloaded" }
+  const answered = { role: "assistant", content: [{ type: "text", text: "retried" }], stopReason: "stop" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed], willRetry: true }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "auto_retry_start", attempt: 1 }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "message_end", message: answered }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [answered], willRetry: false }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-retried" })
+      const events = await collect(backend.send({ sessionId: "model-retried", message: "hello" }))
+      expect(events.find((event) => event.type === "assistant.message")).toMatchObject({
+        text: "retried",
+      })
+      expect(events.at(-1)?.type).toBe("session.completed")
+      expect(events.some((event) => event.type === "session.failed")).toBe(false)
+    } finally {
+      await backend.close("model-retried")
+    }
   })
 
   test("cancelling an idle session does not fabricate a stopped turn", async () => {

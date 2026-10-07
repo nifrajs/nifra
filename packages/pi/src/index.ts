@@ -54,6 +54,8 @@ interface PiSession {
   active: AgentEventStream | undefined
   seq: number
   turnId: string | undefined
+  /** Pi ends a turn whose model call failed with an ordinary `agent_end`; the error is on its last message. */
+  modelError: string | undefined
   turnAbortCleanup: (() => void) | undefined
   reloadRequested: boolean
   reloadRevision: number
@@ -178,6 +180,7 @@ export class PiBackend implements AgentBackend {
       active: undefined,
       seq: 0,
       turnId: undefined,
+      modelError: undefined,
       turnAbortCleanup: undefined,
       reloadRequested: false,
       reloadRevision: 0,
@@ -205,6 +208,7 @@ export class PiBackend implements AgentBackend {
     session.active = stream
     const turnId = crypto.randomUUID()
     session.turnId = turnId
+    session.modelError = undefined
     session.reloadRequested = false
     this.updateSnapshot(session, "running")
     this.emit(session, {
@@ -305,6 +309,7 @@ export class PiBackend implements AgentBackend {
     const stream = createAgentEventStream(this.options.maxEventQueueSize ?? 256)
     session.active = stream
     session.turnId = crypto.randomUUID()
+    session.modelError = undefined
     session.reloadRequested = true
     this.updateSnapshot(session, "running")
     this.emit(session, { type: "turn.started", turnId: session.turnId, prompt: "/reload" })
@@ -597,6 +602,11 @@ export class PiBackend implements AgentBackend {
         const message = record.message
         const text = assistantText(message)
         if (text.length > 0) this.emit(session, { type: "assistant.message", turnId, text })
+        if (isRecord(message) && message.role === "assistant")
+          session.modelError =
+            message.stopReason === "error"
+              ? boundedPiText(message.errorMessage, 1_024) || "Pi's model call failed"
+              : undefined
         return
       }
       case "tool_execution_start":
@@ -659,10 +669,12 @@ export class PiBackend implements AgentBackend {
         })
         return
       case "agent_settled":
-        this.finishTurn(session)
+        this.endTurn(session)
         return
       case "agent_end":
-        this.finishTurn(session)
+        // Pi runs the turn again after a retryable error and ends that run with its own agent_end.
+        if (record.willRetry === true) return
+        this.endTurn(session)
         return
       case "extension_reloaded": {
         const result = reloadInfo(record.data ?? record)
@@ -755,6 +767,11 @@ export class PiBackend implements AgentBackend {
     active.fail(error)
     this.clearTurn(session, active, turnId)
     session.reloadRequested = false
+  }
+
+  private endTurn(session: PiSession): void {
+    if (session.modelError === undefined) this.finishTurn(session)
+    else this.failActive(session, agentError("PI_MODEL_FAILED", session.modelError))
   }
 
   private finishTurn(session: PiSession): void {
