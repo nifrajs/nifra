@@ -47,6 +47,39 @@ describe("client links: onRequest / onResponse", () => {
     expect(seen).toBe("Bearer fresh")
   })
 
+  test("onRequest runs again for each retry, so a retry carries a refreshed header", async () => {
+    const sent: (string | undefined)[] = []
+    let hookCalls = 0
+    const fetch: FetchFn = async (_url, init) => {
+      sent.push(new Headers(init?.headers).get("authorization") ?? undefined)
+      return new Response("{}", {
+        status: sent.length === 1 ? 503 : 200,
+        headers: { "content-type": "application/json" },
+      })
+    }
+    const api = mk({
+      fetch,
+      retry: { attempts: 1, backoff: () => 0 },
+      onRequest: () => ({ authorization: `Bearer ${++hookCalls}` }),
+    })
+    const result = await api.thing.get()
+    expect(result.ok).toBe(true)
+    expect(sent).toEqual(["Bearer 1", "Bearer 2"])
+  })
+
+  test("a throwing onRequest fails the call instead of being retried as a network error", async () => {
+    const { fetch, calls } = scriptedFetch([200])
+    const api = mk({
+      fetch,
+      retry: { attempts: 2, backoff: () => 0 },
+      onRequest: () => {
+        throw new Error("no token")
+      },
+    })
+    await expect(api.thing.get()).rejects.toThrow("no token")
+    expect(calls).toBe(0)
+  })
+
   test("onResponse observes the final response", async () => {
     const statuses: number[] = []
     const api = mk({

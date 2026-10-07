@@ -588,27 +588,30 @@ async function execute(
   if (query !== "") url += `?${query}`
 
   const method = verb.toUpperCase()
-  const headers: Record<string, string> = { ...options.headers, ...callOptions?.headers }
-  if (options.onRequest !== undefined) {
-    const extra = await options.onRequest({ url, method, headers, body })
-    if (extra !== undefined) Object.assign(headers, extra)
-  }
-  const init: RequestInit = { method, headers }
-  if (body !== undefined) {
-    const form = formBody(body)
+  const baseHeaders: Record<string, string> = { ...options.headers, ...callOptions?.headers }
+  const init: RequestInit = { method }
+  const form = body === undefined ? undefined : formBody(body)
+  const codec = options.transport?.codec ?? plainJsonCodec
+  if (form !== undefined) init.body = form
+  else if (body !== undefined) init.body = codec.encode(body)
+  // Built for every attempt, so a retry carries what `onRequest` returns now (a refreshed token).
+  const headersFor = async (): Promise<Record<string, string>> => {
+    const headers = { ...baseHeaders }
+    if (options.onRequest !== undefined) {
+      const extra = await options.onRequest({ url, method, headers, body })
+      if (extra !== undefined) Object.assign(headers, extra)
+    }
     if (form !== undefined) {
-      init.body = form
       // The platform writes this header itself, boundary included; one set by hand would name a
       // boundary the body does not use and the server would refuse the request.
       for (const name of Object.keys(headers)) {
         if (name.toLowerCase() === "content-type") delete headers[name]
       }
-    } else {
-      const codec = options.transport?.codec ?? plainJsonCodec
-      init.body = codec.encode(body)
+    } else if (body !== undefined) {
       headers["content-type"] = codec.mediaType
       if (options.transport !== undefined) headers.accept ??= codec.mediaType
     }
+    return headers
   }
   const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)
   if (signal !== undefined) init.signal = signal
@@ -631,8 +634,9 @@ async function execute(
   let response: Response
   let attempt = 0
   for (;;) {
+    const attemptInit = { ...init, headers: await headersFor() }
     try {
-      response = await doFetch(url, init)
+      response = await doFetch(url, attemptInit)
     } catch (error) {
       // A contract violation is a test assertion (validateResponses), not a call outcome - let it
       // fail the test instead of degrading into a `Result` the test would happily branch on.
