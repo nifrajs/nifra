@@ -114,6 +114,66 @@ Deno.test("stop() force-closes a handler that outlives the drain deadline", asyn
   assert(elapsed < 1000, `stop should force-close near its deadline, took ${elapsed}ms`)
 })
 
+Deno.test("stop() force-closes a streamed body that outlives the drain deadline", async () => {
+  const encoder = new TextEncoder()
+  const app = {
+    fetch: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("first chunk\n"))
+          },
+        }),
+      ),
+  }
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const res = await fetch(`http://127.0.0.1:${running.port}/stream`)
+  const reader = res.body?.getReader()
+  await reader?.read()
+  const before = performance.now()
+  await running.stop({ drainMs: 10 })
+  const elapsed = performance.now() - before
+  await reader?.cancel().catch(() => {})
+  assert(
+    elapsed < 1000,
+    `stop should force-close a live stream near its deadline, took ${elapsed}ms`,
+  )
+})
+
+Deno.test("stop() lets a streamed body that ends within the deadline finish", async () => {
+  const encoder = new TextEncoder()
+  let finish: (() => void) | undefined
+  const app = {
+    fetch: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("first,"))
+            finish = () => {
+              controller.enqueue(encoder.encode("last"))
+              controller.close()
+            }
+          },
+        }),
+      ),
+  }
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const res = await fetch(`http://127.0.0.1:${running.port}/stream`)
+  const reader = res.body?.getReader()
+  const first = await reader?.read()
+  const stopped = running.stop({ drainMs: 5000 })
+  finish?.()
+  const decoder = new TextDecoder()
+  let body = decoder.decode(first?.value)
+  for (;;) {
+    const chunk = await reader?.read()
+    if (chunk === undefined || chunk.done) break
+    body += decoder.decode(chunk.value)
+  }
+  await stopped
+  assertEquals(body, "first,last")
+})
+
 Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", async () => {
   const app = server({ requestTimeoutMs: 40 }).get("/slow", async (c) => {
     // Respect the abort signal so the handler's timer clears on timeout - otherwise

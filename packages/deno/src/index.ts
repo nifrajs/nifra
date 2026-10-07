@@ -90,12 +90,15 @@ export interface DenoServer {
   readonly port: number
   /**
    * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then
-   * force-close stragglers. Mirrors nifra's Bun `stop()`.
+   * force-close stragglers. A request is in flight until its whole response body is sent, so a
+   * live stream is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: { drainMs?: number }): Promise<void>
 }
 
 const DEFAULT_DRAIN_MS = 10_000
+
+const noop = (): void => {}
 
 /** PEM as text - `Deno.serve` takes strings only. */
 const pemText = (value: string | Uint8Array): string =>
@@ -149,14 +152,25 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
         ? {}
         : { cert: pemText(options.tls.cert), key: pemText(options.tls.key) }),
     },
-    (request, info: { readonly remoteAddr?: { readonly hostname?: string } }) => {
+    (
+      request,
+      info: {
+        readonly remoteAddr?: { readonly hostname?: string }
+        readonly completed?: Promise<void>
+      },
+    ) => {
       // Deno has no separate "stop accepting" primitive: shutdown() starts closing the same
       // resource that the signal abort listener owns. Calling abort after shutdown began is a
       // BadResource on current Deno releases, so mark the adapter closed first and reject the tiny
       // window of requests that can arrive while existing handlers drain. The one abort in stop()
       // then owns the resource close for every Deno version.
       if (closed) return serverClosing()
+      // A request counts until Deno has sent its whole response, not until the handler returns: a
+      // streamed body is still in flight then, and once shutdown() starts nothing can force-close it.
       const release = beginRequest()
+      const completed = info.completed
+      if (completed !== undefined) completed.then(release, release)
+      const handled = completed === undefined ? release : noop
       // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
       // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
       //
@@ -174,16 +188,16 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
           if (outcome instanceof Promise) {
             return settleRequest(
               outcome.then((o) => finishWs(o, request, info)).catch(() => internalError()),
-              release,
+              handled,
             )
           }
-          return settleRequest(finishWs(outcome, request, info), release)
+          return settleRequest(finishWs(outcome, request, info), handled)
         } catch {
-          release()
+          handled()
           return internalError()
         }
       }
-      return settleRequest(runFetch(request, info), release)
+      return settleRequest(runFetch(request, info), handled)
     },
   )
 
