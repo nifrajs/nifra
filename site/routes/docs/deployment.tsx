@@ -208,8 +208,9 @@ export default function Deployment() {
           straight to the network.
         </li>
         <li>
-          <b>The cache name carries the build id</b>, and activation deletes every older cache - so a
-          stale worker cannot pin an old build indefinitely.
+          <b>The cache name carries the build id</b>, and activation deletes every older cache named{" "}
+          <code>&lt;cacheName&gt;:&lt;buildId&gt;</code> - so a stale worker cannot pin an old build
+          indefinitely, and the origin's other caches are left alone.
         </li>
       </ul>
       <p>

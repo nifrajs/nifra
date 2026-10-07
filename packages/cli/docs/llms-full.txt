@@ -5543,8 +5543,9 @@ for another.
 straight to the network.
 
 -
-**The cache name carries the build id**, and activation deletes every older cache - so a
-stale worker cannot pin an old build indefinitely.
+**The cache name carries the build id**, and activation deletes every older cache named
+`<cacheName>:<buildId>` - so a stale worker cannot pin an old build
+indefinitely, and the origin's other caches are left alone.
 
 Omit `offlineUrl` and a failed navigation simply fails, which is the honest default:
 an offline page you have not written is not better than a browser error.

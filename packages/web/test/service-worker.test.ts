@@ -30,8 +30,8 @@ describe("generateServiceWorker", () => {
   })
 
   test("the cache name carries the build id, so a deploy cannot be pinned", () => {
-    expect(generateServiceWorker(manifest, { buildId: "v1" })).toContain('"nifra-v1"')
-    expect(generateServiceWorker(manifest, { buildId: "v2" })).toContain('"nifra-v2"')
+    expect(generateServiceWorker(manifest, { buildId: "v1" })).toContain('const OWNED = "nifra:"')
+    expect(generateServiceWorker(manifest, { buildId: "v2" })).toContain('OWNED + "v2"')
   })
 
   describe("what it refuses to do", () => {
@@ -54,12 +54,6 @@ describe("generateServiceWorker", () => {
       expect(sw).toContain("response.ok")
       expect(sw).toContain('response.type === "basic"')
       expect(sw).toContain("no-store")
-    })
-
-    test("deletes every older cache on activate", () => {
-      expect(generateServiceWorker(manifest, { buildId: "v1" })).toContain(
-        "keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))",
-      )
     })
 
     test("without an offline page, a failed navigation is left to fail", () => {
@@ -147,7 +141,14 @@ describe("the generated worker, executed", () => {
     })
     const caches = {
       open: async (name: string) => cacheFor(name),
-      keys: async () => [...names, "nifra-old"],
+      keys: async () => [
+        ...names,
+        "nifra:v0",
+        "nifra-old",
+        "nifra-admin:v0",
+        "another-app-offline",
+        "user-data",
+      ],
       delete: async (name: string) => {
         deleted.push(name)
         return true
@@ -216,8 +217,15 @@ describe("the generated worker, executed", () => {
     expect(scope.store.has("/assets/entry-abc123.js")).toBe(true)
     expect(scope.store.has("/offline")).toBe(true)
     await run(scope, "activate", {})
-    expect(scope.deleted).toEqual(["nifra-old"])
+    expect(scope.deleted).toEqual(["nifra:v0"])
     expect(scope.claimed).toBe(true)
+  })
+
+  test("activate leaves caches outside its namespace alone", async () => {
+    const scope = boot(generateServiceWorker(manifest, { buildId: "v1", cacheName: "nifra-admin" }))
+    await run(scope, "install", {})
+    await run(scope, "activate", {})
+    expect(scope.deleted).toEqual(["nifra-admin:v0"])
   })
 
   test("serves a precached asset from cache", async () => {
