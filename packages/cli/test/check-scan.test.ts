@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import ts from "typescript"
 import {
+  codePositionMask,
   importSites,
   resolveServerOnlyChains,
   scanFetchText,
@@ -9,6 +10,7 @@ import {
   scanStaticRouteText,
   stripComments,
 } from "../src/check-scan.ts"
+import { scanUndeclaredImports } from "../src/doctor.ts"
 import { createSourceFacts } from "../src/internal/source-facts.ts"
 
 describe("check-scan", () => {
@@ -18,6 +20,37 @@ describe("check-scan", () => {
     expect(stripped.length).toBe(source.length)
     expect(stripped.slice(0, source.indexOf('fetch("/real")'))).not.toContain("/comment")
     expect(stripped).toContain('fetch("/real")')
+  })
+
+  test("a quote or backtick inside a regex literal does not open a string", () => {
+    const source = [
+      "const QUOTED = /(['\"`])x\\1/g",
+      '// an example: import("x") and require("y")',
+      'const fence = text.replace(/```[\\s\\S]*?```/g, " ")',
+      'fetch("/after-regex")',
+    ].join("\n")
+    const stripped = stripComments(source)
+    expect(stripped.length).toBe(source.length)
+    expect(stripped).not.toContain('import("x")')
+    expect(stripped).toContain('fetch("/after-regex")')
+    expect(scanFetchText("routes/index.tsx", source).map((f) => f.line)).toEqual([4])
+    const imports = scanUndeclaredImports("src/a.ts", source, new Set(), () => false)
+    expect(imports).toEqual([])
+  })
+
+  test("division and regex literals are told apart by what precedes the slash", () => {
+    const source = [
+      'const half = total / 2 / "x".length',
+      "const r = cond ? /'/ : /\"/",
+      "function f() { return /[/']/.test(s) }",
+      'import("real-dep")',
+    ].join("\n")
+    const mask = codePositionMask(source)
+    expect(mask.split("\n")[0]).toContain("total / 2 /")
+    expect(mask.split("\n")[1]).toBe("const r = cond ?     :    ")
+    expect(mask.split("\n")[2]).toContain(`return ${" ".repeat("/[/']/".length)}.test(s)`)
+    const imports = scanUndeclaredImports("src/a.ts", source, new Set(), () => false)
+    expect(imports.map((finding) => finding.line)).toEqual([4])
   })
 
   test("finds same-origin fetches while honoring external mounts", () => {

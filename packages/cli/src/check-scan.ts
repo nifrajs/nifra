@@ -306,25 +306,94 @@ function scanRoutePattern(
   return out
 }
 
+// Punctuators after which a `/` opens a regex literal rather than dividing. A `)` `]` or `}` is read
+// as the end of an operand, so `/` after it divides - the rare statement-leading regex after a block
+// is the cost of not tracking parser context.
+const REGEX_AFTER = new Set([
+  "(",
+  ",",
+  "=",
+  ":",
+  "[",
+  "!",
+  "&",
+  "|",
+  "?",
+  "{",
+  ";",
+  "+",
+  "-",
+  "*",
+  "%",
+  "<",
+  ">",
+  "~",
+  "^",
+])
+const REGEX_AFTER_WORD = new Set([
+  "return",
+  "typeof",
+  "case",
+  "do",
+  "else",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "yield",
+  "await",
+  "instanceof",
+])
+const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]/.test(c)
+
+/** Where a regex literal opened by the `/` at `i` ends (after its flags), or `undefined` when the
+ * literal does not close on its line - then the slash was division after all. */
+function regexLiteralEnd(src: string, i: number): number | undefined {
+  const n = src.length
+  let j = i + 1
+  let inClass = false
+  while (j < n) {
+    const c = src[j]
+    if (c === "\n" || c === "\r") return undefined
+    if (c === "\\") {
+      j += 2
+      continue
+    }
+    if (inClass) {
+      if (c === "]") inClass = false
+    } else if (c === "[") {
+      inClass = true
+    } else if (c === "/") {
+      break
+    }
+    j++
+  }
+  if (j >= n) return undefined
+  j++
+  while (j < n && isWordChar(src[j])) j++
+  return j
+}
+
 /**
- * Blank, with spaces (newlines preserved, so every byte offset - and line number - is unchanged):
- *   - `//` line comments and block comments;
- *   - the CONTENTS of backtick template literals - code-as-text (doc `CodeBlock` examples, code
- *     generators), never a real statement to lint.
- * Single/double-quoted strings are KEPT (a real import/Response specifier lives in one). A small
- * char-state machine, not a full lexer: it doesn't model regex literals, so a regex containing a quote
- * could mis-skip - in practice the constructs these scanners look for sit before any such regex.
- * Shared by the source scanners here and by `nifra doctor` ({@link ./doctor.ts}).
+ * Blank comments, template-literal contents and regex-literal contents (and, with `quoted: "blank"`,
+ * single/double-quoted strings and every delimiter) while preserving every offset and newline.
+ * A small lexer, not a parser: a `/` opens a regex where an operand may start - after a punctuator,
+ * an operator keyword, or at the start of the file - so a quote inside a regex no longer derails
+ * the string state that follows.
  */
-export function stripComments(src: string): string {
+function maskSource(src: string, quoted: "keep" | "blank"): string {
   const out = src.split("")
   const n = src.length
-  let i = 0
   const blank = (a: number, b: number): void => {
     for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " "
   }
+  // The last significant code token: a punctuator character, or a whole identifier/keyword.
+  let previous = ""
+  let i = 0
   while (i < n) {
-    const c = src[i]
+    const c = src.charAt(i)
     const d = src[i + 1]
     if (c === "/" && d === "/") {
       let j = i + 2
@@ -343,62 +412,66 @@ export function stripComments(src: string): string {
         if (src[j] === "\\") j++
         j++
       }
-      blank(i + 1, j) // keep the backticks, blank the code-as-text inside
+      if (quoted === "keep")
+        blank(i + 1, j) // keep the backticks, blank the code-as-text inside
+      else blank(i, Math.min(j + 1, n))
       i = j + 1
+      previous = "`"
     } else if (c === "'" || c === '"') {
       let j = i + 1
       while (j < n && src[j] !== c) {
         if (src[j] === "\\") j++ // skip the escaped char
         j++
       }
+      if (quoted === "blank") blank(i, Math.min(j + 1, n))
       i = j + 1
+      previous = c
+    } else if (
+      c === "/" &&
+      (previous === "" || REGEX_AFTER.has(previous) || REGEX_AFTER_WORD.has(previous))
+    ) {
+      const end = regexLiteralEnd(src, i)
+      if (end === undefined) {
+        previous = c
+        i++
+      } else {
+        if (quoted === "keep") blank(i + 1, end)
+        else blank(i, end)
+        previous = "/regex"
+        i = end
+      }
+    } else if (isWordChar(c)) {
+      let j = i + 1
+      while (j < n && isWordChar(src[j])) j++
+      previous = src.slice(i, j)
+      i = j
     } else {
+      if (!/\s/.test(c)) previous = c
       i++
     }
   }
   return out.join("")
 }
 
-/** Blank comments and every quoted/template literal while preserving offsets. Unlike
+/**
+ * Blank, with spaces (newlines preserved, so every byte offset - and line number - is unchanged):
+ *   - `//` line comments and block comments;
+ *   - the CONTENTS of backtick template literals - code-as-text (doc `CodeBlock` examples, code
+ *     generators), never a real statement to lint.
+ * Single/double-quoted strings are KEPT (a real import/Response specifier lives in one); a regex
+ * literal keeps its slashes and loses its contents, so a quote inside one cannot open a string.
+ * Shared by the source scanners here and by `nifra doctor` ({@link ./doctor.ts}).
+ */
+export function stripComments(src: string): string {
+  return maskSource(src, "keep")
+}
+
+/** Blank comments and every quoted/template/regex literal while preserving offsets. Unlike
  * {@link stripComments}, this is a code-position mask: scanners use it to find a call expression in
  * executable code, then inspect the original source for the call's literal argument. That prevents
  * documentation strings such as `const example = 'client("/")'` from becoming diagnostics. */
 export function codePositionMask(src: string): string {
-  const out = src.split("")
-  const n = src.length
-  let i = 0
-  const blank = (a: number, b: number): void => {
-    for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " "
-  }
-  while (i < n) {
-    const c = src[i]
-    const d = src[i + 1]
-    if (c === "/" && d === "/") {
-      let j = i + 2
-      while (j < n && src[j] !== "\n") j++
-      blank(i, j)
-      i = j
-    } else if (c === "/" && d === "*") {
-      let j = i + 2
-      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j++
-      j = Math.min(j + 2, n)
-      blank(i, j)
-      i = j
-    } else if (c === "'" || c === '"' || c === "`") {
-      const quote = c
-      let j = i + 1
-      while (j < n && src[j] !== quote) {
-        if (src[j] === "\\") j++
-        j++
-      }
-      j = Math.min(j + 1, n)
-      blank(i, j)
-      i = j
-    } else {
-      i++
-    }
-  }
-  return out.join("")
+  return maskSource(src, "blank")
 }
 
 const firstArgumentIndex = (content: string, callEnd: number): number => {
