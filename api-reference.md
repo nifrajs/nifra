@@ -4310,6 +4310,8 @@ _No named exports (side-effect entrypoint)._
 - **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory`
 - **ImportedRoute** _(interface)_ - `interface ImportedRoute`
 - **ImportedRouteQuery** _(interface)_ - `interface ImportedRouteQuery`
+- **JsonValue** _(type)_ - `type JsonValue = | string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }`
+  Any value that survives `JSON.stringify` and `JSON.parse` unchanged.
 - **NifraSchema** _(type)_ - `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }`
   A `t` schema. It is a Standard Schema (so any nifra route validates it with no special-casing) whose raw TypeBox definition stays reachable as `jsonSchema` - and because a TypeBox schema *is* a JSON Schema, that field is exactly what lets `toOpenAPI` emit a real request/response schema for the rout…
 - **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument`

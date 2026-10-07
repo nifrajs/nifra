@@ -103,8 +103,11 @@ export default function Data() {
         A route's <code>loader</code> runs on the server and calls your backend in-process during
         SSR - no network hop. Its <code>loaderOutput</code> schema is the contract with the page:
         the page receives that shape as <code>data</code>, and nothing else the loader returns
-        leaves the server. A <code>Date</code> travels as its ISO string, so declare a timestamp
-        column as <code>t.string()</code>. A loader without a schema is flagged by{" "}
+        leaves the server. Declare a timestamp as <code>t.date()</code> and the page gets a{" "}
+        <code>Date</code> in the server render and in the browser alike; under{" "}
+        <code>t.string()</code> it travels as its ISO string. <code>t.json()</code> declares a
+        field that is any JSON value, passed through whole - a tool-call payload or a settings blob
+        the page does not pick apart. A loader without a schema is flagged by{" "}
         <code>nifra check</code>. See{" "}
         <a href="/docs/structure">Project structure</a> for the route pair.
       </p>

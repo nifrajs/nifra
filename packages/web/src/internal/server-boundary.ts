@@ -14,6 +14,7 @@
 export const SERVER_FN_MODULE = /\.fn(\.[cm]?[jt]sx?)?$/
 
 import { jsStringLiteral } from "./js-string.ts"
+import { DATE_TAG, REVIVE_DATES_SOURCE } from "./revive-dates.ts"
 
 // ---------------------------------------------------------------------------------------------------
 // `.fn` - turn a server-function module into the client stubs that call it.
@@ -143,8 +144,13 @@ async function __nifraCall(name, input) {
     }
     throw new Error(\`[nifra/fn] \${name} failed: \${response.status}\${detail ? \` \${detail}\` : ""}\`)
   }
-  return response.status === 204 ? undefined : await response.json()
+  if (response.status === 204) return undefined
+  const text = await response.text()
+  const value = JSON.parse(text)
+  return text.includes('"${DATE_TAG}"') ? __nifraDates(value) : value
 }
+
+${REVIVE_DATES_SOURCE}
 
 ${calls}
 `

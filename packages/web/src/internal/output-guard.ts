@@ -14,6 +14,7 @@
  * its own `validate` output, as zod and valibot objects do by default.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
+import { WireDate } from "./wire-date.ts"
 
 // Registry symbols shared with core and `@nifrajs/schema`, so two copies of either still agree.
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
@@ -23,6 +24,7 @@ const DEFERRED_VALIDATE = Symbol.for("nifra.schema.deferredValidate")
 
 export const DECLASSIFIED_KEY = "x-nifra-declassified"
 const DEFERRED_KEY = "x-nifra-deferred"
+const DATE_KEY = "x-nifra-date"
 
 /** A field name that usually holds a credential or personal identifier. */
 export function isSensitiveFieldName(name: string): boolean {
@@ -148,6 +150,20 @@ const UNKNOWN: Project = (value, state) => {
  */
 const LEAF: Project = (value) => (value instanceof Date ? value.toJSON() : value)
 
+const ISO_DATE =
+  /^\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?$/
+// An invalid Date stays as it is, so the schema's own check refuses it by path.
+const toWireDate = (value: Date): unknown =>
+  Number.isNaN(value.getTime()) ? value : new WireDate(value.getTime())
+
+/** A `t.date()` field: a `Date` or an ISO 8601 string becomes a `WireDate` the browser rebuilds. */
+const DATE: Project = (value) =>
+  value instanceof Date
+    ? toWireDate(value)
+    : typeof value === "string" && ISO_DATE.test(value)
+      ? toWireDate(new Date(value))
+      : value
+
 /** An array whose items are all scalars, passed through whole. */
 const LEAF_ARRAY: Project = (value) => value
 
@@ -157,8 +173,11 @@ const typesOf = (node: Node): readonly unknown[] | undefined =>
 const COMBINATORS = ["anyOf", "oneOf", "allOf"] as const
 
 /** What a schema node (with no `$ref` or combinator) projects as. */
-function shapeOf(node: Node): "deferred" | "object" | "array" | "both" | "leaf" | "unknown" {
+function shapeOf(
+  node: Node,
+): "deferred" | "date" | "object" | "array" | "both" | "leaf" | "unknown" {
   if (node[DEFERRED_KEY] === true) return "deferred"
+  if (node[DATE_KEY] === true) return "date"
   const types = typesOf(node)
   const object =
     types?.includes("object") === true ||
@@ -235,6 +254,8 @@ class Compiler {
     switch (shapeOf(node)) {
       case "deferred":
         return this.deferred(node, where)
+      case "date":
+        return DATE
       case "both":
         return this.dispatch(this.object(node, where), this.array(node, where), undefined)
       case "object":
@@ -417,6 +438,8 @@ class Compiler {
       objects.length === 0 ? undefined : this.object(mergeObjects(objects), where),
       arrays.length === 0 ? undefined : this.array(mergeArrays(arrays), where),
       deferred === undefined ? undefined : this.compile(deferred, where),
+      // A union's string branch makes an ISO string ambiguous, so only a Date becomes a date here.
+      kinds.includes("date"),
     )
   }
 
@@ -424,10 +447,11 @@ class Compiler {
     object: Project | undefined,
     array: Project | undefined,
     deferred: Project | undefined,
+    date = false,
   ): Project {
     return (value, state) => {
       if (typeof value !== "object" || value === null) return value
-      if (value instanceof Date) return value.toJSON()
+      if (value instanceof Date) return date ? toWireDate(value) : value.toJSON()
       if (Array.isArray(value)) return array === undefined ? value : array(value, state)
       if (isDeferred(value)) {
         if (deferred !== undefined) return deferred(value, state)

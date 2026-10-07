@@ -146,3 +146,57 @@ describe("t.query (coercing query-slot schema)", () => {
     expect((await validateStandard(strict, { page: "2", utm: "x" })).ok).toBe(false)
   })
 })
+
+describe("t.json", () => {
+  test("accepts any JSON value at any depth", async () => {
+    for (const value of [null, "s", 0, -1.5, true, [], {}, { a: [1, { b: null }], c: "x" }]) {
+      expect(await validateStandard(t.json(), value)).toEqual({ ok: true, value })
+    }
+    // An undefined property is dropped by JSON, so it is no reason to refuse.
+    expect((await validateStandard(t.json(), { a: 1, b: undefined })).ok).toBe(true)
+  })
+
+  test("refuses what JSON would lose or change", async () => {
+    const cycle: Record<string, unknown> = {}
+    cycle.self = cycle
+    for (const value of [
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      () => 1,
+      10n,
+      new Date(0),
+      new Map(),
+      [undefined],
+      { nested: { at: new Date(0) } },
+      cycle,
+    ]) {
+      expect((await validateStandard(t.json(), value)).ok).toBe(false)
+    }
+  })
+
+  test("works as a field and describes itself as any value", async () => {
+    const schema = t.object({ payload: t.json() })
+    expect((await validateStandard(schema, { payload: { tool: "x", args: [1] } })).ok).toBe(true)
+    expect((await validateStandard(schema, { payload: () => 1 })).ok).toBe(false)
+    expect(JSON.parse(JSON.stringify(t.json().jsonSchema))).toEqual({ "x-nifra-json": true })
+  })
+})
+
+describe("t.date", () => {
+  test("accepts a valid Date and nothing else", async () => {
+    const at = new Date("2026-10-07T12:00:00.000Z")
+    expect(await validateStandard(t.date(), at)).toEqual({ ok: true, value: at })
+    for (const value of [new Date(Number.NaN), "2026-10-07T12:00:00Z", 0, null]) {
+      expect((await validateStandard(t.date(), value)).ok).toBe(false)
+    }
+  })
+
+  test("describes itself as a date-time string", () => {
+    expect(JSON.parse(JSON.stringify(t.date().jsonSchema))).toEqual({
+      type: "string",
+      format: "date-time",
+      "x-nifra-date": true,
+    })
+  })
+})

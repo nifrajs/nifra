@@ -1279,8 +1279,11 @@ the client never throws, it returns `{ data, error }`.
 A route's `loader` runs on the server and calls your backend in-process during
 SSR - no network hop. Its `loaderOutput` schema is the contract with the page:
 the page receives that shape as `data`, and nothing else the loader returns
-leaves the server. A `Date` travels as its ISO string, so declare a timestamp
-column as `t.string()`. A loader without a schema is flagged by
+leaves the server. Declare a timestamp as `t.date()` and the page gets a
+`Date` in the server render and in the browser alike; under
+`t.string()` it travels as its ISO string. `t.json()` declares a
+field that is any JSON value, passed through whole - a tool-call payload or a settings blob
+the page does not pick apart. A loader without a schema is flagged by
 `nifra check`. See
 [Project structure](/docs/structure) for the route pair.
 
@@ -15269,7 +15272,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
-`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
+`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `JsonValue`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
 
 ## @nifrajs/storage
 

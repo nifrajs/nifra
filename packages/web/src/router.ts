@@ -9,6 +9,7 @@ import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
+import { parsePageData } from "./internal/revive-dates.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -346,7 +347,7 @@ export interface MountRouterOptions {
 const readResponseData = (res: Response, signal?: AbortSignal): Promise<unknown> =>
   (res.headers.get("content-type") ?? "").includes("application/x-ndjson") && res.body !== null
     ? parseNdjsonData(res.body, signal)
-    : res.json()
+    : res.text().then(parsePageData)
 
 // Index scan, not `/\/+$/` - the unanchored-start trailing-run replace backtracks quadratically and
 // the pathname is caller-controlled.
