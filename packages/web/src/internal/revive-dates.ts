@@ -1,6 +1,6 @@
 /**
  * `t.date()` across the wire, browser half: every place the browser parses page data rebuilds the
- * `{ "__nifra_date": iso }` tags the server's `WireDate` wrote into `Date`s. Kept apart from
+ * `{ "__nifra_date": iso }` tags the server's `wireDate()` wrote into `Date`s. Kept apart from
  * `wire-date.ts` so client bundles never carry the server class.
  */
 

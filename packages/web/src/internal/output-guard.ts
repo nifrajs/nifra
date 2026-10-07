@@ -14,7 +14,7 @@
  * its own `validate` output, as zod and valibot objects do by default.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
-import { WireDate } from "./wire-date.ts"
+import { wireDate } from "./wire-date.ts"
 
 // Registry symbols shared with core and `@nifrajs/schema`, so two copies of either still agree.
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
@@ -154,9 +154,9 @@ const ISO_DATE =
   /^\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?$/
 // An invalid Date stays as it is, so the schema's own check refuses it by path.
 const toWireDate = (value: Date): unknown =>
-  Number.isNaN(value.getTime()) ? value : new WireDate(value.getTime())
+  Number.isNaN(value.getTime()) ? value : wireDate(value.getTime())
 
-/** A `t.date()` field: a `Date` or an ISO 8601 string becomes a `WireDate` the browser rebuilds. */
+/** A `t.date()` field: a `Date` or an ISO 8601 string becomes a tagged `Date` the browser rebuilds. */
 const DATE: Project = (value) =>
   value instanceof Date
     ? toWireDate(value)

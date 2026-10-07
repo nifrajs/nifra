@@ -5,7 +5,6 @@ import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } fro
 import { guardValue, OutputGuardError, outputGuard } from "../src/internal/output-guard.ts"
 import { DATE_TAG, parsePageData, REVIVE_DATES_SOURCE } from "../src/internal/revive-dates.ts"
 import { generateServerFnStub } from "../src/internal/server-boundary.ts"
-import { WireDate } from "../src/internal/wire-date.ts"
 import { DATA_HEADER } from "../src/router.ts"
 
 // `t.date()` page data: a Date on the server render, `{ "__nifra_date": iso }` on the wire, and a Date
@@ -34,25 +33,29 @@ const at = (value: unknown, ...path: ReadonlyArray<string | number>): unknown =>
 const isoOf = (value: unknown): string | undefined =>
   value instanceof Date ? value.toISOString() : undefined
 
+/** A `Date` for the server render that crosses JSON as its tag. */
+const tagged = (value: unknown): boolean =>
+  value instanceof Date && JSON.stringify(value) === `{"${DATE_TAG}":"${value.toISOString()}"}`
+
 describe("the output guard", () => {
-  test("a Date or an ISO string becomes a WireDate, at any depth", () => {
+  test("a Date or an ISO string becomes a tagged Date, at any depth", () => {
     const schema = t.object({
       at: t.date(),
       day: t.date(),
       events: t.array(t.object({ when: t.date() })),
     })
     const out = guard(schema, { at: new Date(AT), day: "2026-10-07", events: [{ when: AT }] })
-    expect(at(out, "at")).toBeInstanceOf(WireDate)
+    expect(tagged(at(out, "at"))).toBe(true)
     expect(isoOf(at(out, "at"))).toBe(AT)
-    expect(at(out, "day")).toBeInstanceOf(WireDate)
-    expect(at(out, "events", 0, "when")).toBeInstanceOf(WireDate)
+    expect(tagged(at(out, "day"))).toBe(true)
+    expect(tagged(at(out, "events", 0, "when"))).toBe(true)
     expect(JSON.stringify(at(out, "at"))).toBe(TAG)
   })
 
-  test("a nullable date keeps null and turns a Date into a WireDate", () => {
+  test("a nullable date keeps null and tags a Date", () => {
     const schema = t.object({ at: t.union([t.date(), t.null()]) })
     expect(guard(schema, { at: null })).toEqual({ at: null })
-    expect(at(guard(schema, { at: new Date(AT) }), "at")).toBeInstanceOf(WireDate)
+    expect(tagged(at(guard(schema, { at: new Date(AT) }), "at"))).toBe(true)
   })
 
   test("a value that is not a date fails by path, never by value", () => {
