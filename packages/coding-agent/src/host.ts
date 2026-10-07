@@ -60,6 +60,8 @@ export class CodingAgentHost {
   private readonly context: ContextWindow
   private readonly extensions: ExtensionHost | undefined
   readonly approvals: ApprovalManager
+  /** Approvals {@link resolveApproval} is settling; it forwards those itself, once the broker accepts. */
+  private readonly resolving = new Set<string>()
   private readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
   private readonly maxRepairAttempts: number
   private readonly exposeErrorStacks: boolean
@@ -72,7 +74,28 @@ export class CodingAgentHost {
     this.sessionStore = options.sessionStore
     this.context = new ContextWindow(options.contextWindow)
     this.extensions = options.extensions
-    this.approvals = new ApprovalManager(options.approvals)
+    const onResolved = options.approvals?.onResolved
+    this.approvals = new ApprovalManager({
+      ...options.approvals,
+      // A denial the broker reaches on its own (timeout, expiry, close) goes to the backend too, or a
+      // backend holding the approval open longer than the host could still act on it.
+      onResolved: async (decision) => {
+        const sessionId = this.session?.id
+        if (!decision.approved && !this.resolving.has(decision.approvalId) && sessionId) {
+          try {
+            await this.backend.resolveApproval?.(
+              sessionId,
+              decision.approvalId,
+              false,
+              decision.reason,
+            )
+          } catch {
+            // The broker's denial stands whether or not the backend still knew the approval.
+          }
+        }
+        await onResolved?.(decision)
+      },
+    })
     this.verifyAfterTurn = Object.freeze([...(options.verifyAfterTurn ?? [])])
     this.maxRepairAttempts = options.maxRepairAttempts ?? 2
     if (
@@ -420,10 +443,19 @@ export class CodingAgentHost {
     approved: boolean,
     reason?: string,
   ): Promise<ApprovalDecision | undefined> {
+    // The broker decides first: an approval it no longer holds (unknown, expired, already settled,
+    // or bound to a coordinate) never reaches the backend.
+    this.resolving.add(approvalId)
+    let decision: ApprovalDecision | undefined
+    try {
+      decision = this.approvals.resolve(approvalId, approved, reason)
+    } finally {
+      this.resolving.delete(approvalId)
+    }
+    if (decision === undefined) return undefined
     if (this.session !== undefined && this.backend.resolveApproval !== undefined)
-      await this.backend.resolveApproval(this.session.id, approvalId, approved, reason)
-    const decision = this.approvals.resolve(approvalId, approved, reason)
-    if (decision !== undefined && this.session !== undefined)
+      await this.backend.resolveApproval(this.session.id, approvalId, decision.approved, reason)
+    if (this.session !== undefined)
       await this.sessionStore?.append(this.session.id, "approval.resolved", decision, {
         pinned: true,
       })
