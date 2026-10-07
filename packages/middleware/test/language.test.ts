@@ -41,7 +41,17 @@ describe("language()", () => {
 
     const res = await app.fetch(new Request("http://x/", { headers: { "accept-language": "pt" } }))
     expect(res.headers.get("content-language")).toBe("pt-BR")
+    expect(res.headers.get("vary")).toBe("Accept-Language")
     expect(await res.json()).toEqual({ language: "pt-BR", match: "base" })
+  })
+
+  test("varies on Accept-Language even with header emission off", async () => {
+    const app = server()
+      .use(language({ supported, defaultLanguage: "en", header: false }))
+      .get("/", () => new Response("ok", { headers: { vary: "Origin" } }))
+    const res = await app.fetch(new Request("http://x/", { headers: { "accept-language": "fr" } }))
+    expect(res.headers.get("vary")).toBe("Origin, Accept-Language")
+    expect(res.headers.get("content-language")).toBeNull()
   })
 
   test("respects an existing Content-Language and can disable header emission", async () => {

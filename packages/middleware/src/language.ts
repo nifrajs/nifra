@@ -81,6 +81,15 @@ export function pickLanguage<const L extends readonly string[]>(
   return { language: defaultLanguage, matched: "default" }
 }
 
+/** `value` naming each of `names` once; `Vary: *` already covers every request header. */
+function varyOn(value: string | null, names: readonly string[]): string {
+  if (value === null || value.trim() === "") return names.join(", ")
+  const fields = value.split(",").map((field) => field.trim().toLowerCase())
+  if (fields.includes("*")) return value
+  const missing = names.filter((name) => !fields.includes(name.toLowerCase()))
+  return missing.length === 0 ? value : `${value}, ${missing.join(", ")}`
+}
+
 /**
  * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.
  *
@@ -114,6 +123,8 @@ export function language<const L extends readonly string[]>(
         .use(
           withResponseObserver<Middleware>({
             onResponseHeaders(headers, req) {
+              // The language is chosen from Accept-Language, so a shared cache must key on it.
+              headers.set("vary", varyOn(headers.get("vary"), ["Accept-Language"]))
               if (!emitHeader) return
               if (headers.has("content-language")) return
               const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
