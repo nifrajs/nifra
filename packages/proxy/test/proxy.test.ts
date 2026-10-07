@@ -130,6 +130,28 @@ describe("createProxy()", () => {
     expect(res.headers.get("x-public")).toBe("stays")
   })
 
+  test("a Connection-nominated Set-Cookie is dropped with every cookie it names", async () => {
+    const proxy = createProxy({ upstream: ORIGIN })
+    respond = () => {
+      const headers = new Headers({ connection: "Set-Cookie", "x-public": "stays" })
+      headers.append("set-cookie", "hop_only=1; Path=/")
+      headers.append("set-cookie", "hop_too=2; Path=/")
+      return new Response("ok", { headers })
+    }
+    const nominated = await proxy(new Request("http://edge.test/x"))
+    expect(nominated.headers.getSetCookie()).toEqual([])
+    expect(nominated.headers.get("x-public")).toBe("stays")
+
+    respond = () => {
+      const headers = new Headers()
+      headers.append("set-cookie", "a=1; Path=/")
+      headers.append("set-cookie", "b=2; Path=/")
+      return new Response("ok", { headers })
+    }
+    const kept = await proxy(new Request("http://edge.test/x"))
+    expect(kept.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"])
+  })
+
   test("forwarding metadata is stripped by default, replaced safely on opt-in", async () => {
     respond = () => new Response("ok")
     const forged = {

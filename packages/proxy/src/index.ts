@@ -307,7 +307,9 @@ function relayedResponseHeaders(upstreamHeaders: Headers, bodyEncoded: boolean):
     if (!isKeptResponseHeader(name, nominated, bodyEncoded)) continue
     out.append(name, value)
   }
-  for (const cookie of upstreamHeaders.getSetCookie()) out.append("set-cookie", cookie)
+  if (isKeptResponseHeader("set-cookie", nominated, bodyEncoded)) {
+    for (const cookie of upstreamHeaders.getSetCookie()) out.append("set-cookie", cookie)
+  }
   return out
 }
 
