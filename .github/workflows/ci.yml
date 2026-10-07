@@ -151,15 +151,15 @@ jobs:
           bun-version: 1.4.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 26.6.0
+          node-version: 26.10.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
-          deno-version: 2.9.4
+          deno-version: 2.9.7
       - run: bun install --frozen-lockfile
       - run: bun run build
       - name: Install required browser engines
         run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
-      - name: All four adapters and every runtime, browser and lifecycle row
+      - name: All five adapters and every runtime, browser and lifecycle row
         run: bun run check:server-components
       - name: Isolated packaged feature consumers
         run: bun run check:server-components:consumers
