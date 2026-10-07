@@ -370,6 +370,7 @@ describe("fused web lane parity (bare routes)", () => {
 })
 
 describe("listen({ hostname })", () => {
+  // Windows reports the refused connection below only after about 2 s.
   test("binds the given hostname, and defaults to every interface without it", async () => {
     const app = server().get("/x", () => "ok")
     const srv = app.listen(0, { hostname: "127.0.0.1" })
@@ -392,7 +393,7 @@ describe("listen({ hostname })", () => {
     const wideSrv = wide.listen(0)
     expect(await fetch(`http://${LOCAL_IPV4}:${wideSrv.port}/x`).then((r) => r.json())).toBe("ok")
     await wide.stop()
-  })
+  }, 30_000)
 })
 
 describe("listen() configuration seal", () => {
