@@ -218,6 +218,15 @@ function resetBrowser(): void {
     get origin() {
       return locationState.origin
     },
+    get protocol() {
+      return new URL(locationState.origin).protocol
+    },
+    get host() {
+      return new URL(locationState.origin).host
+    },
+    get href() {
+      return `${locationState.origin}${locationState.pathname}${locationState.search}${locationState.hash}`
+    },
     get pathname() {
       return locationState.pathname
     },
@@ -645,6 +654,55 @@ test("programmatic navigation hard-loads unmatched paths but rejects cross-origi
   expect(fallback).toEqual(["/outside"])
   expect(historyCalls).toEqual([])
   stop()
+})
+
+test("a page on a native webview's own scheme soft-navigates its links and navigate() calls", async () => {
+  resetBrowser()
+  // Capacitor on iOS serves the app from a non-special scheme, whose `URL.origin` reads "null".
+  locationState.origin = "capacitor://localhost"
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+
+  const click = fakeEvent(fakeAnchor("capacitor://localhost/about"))
+  document.emit("click", click)
+  await Bun.sleep(0)
+  expect(click.defaultPrevented).toBe(true)
+  expect(navigated).toEqual(["/about"])
+  expect(locationState.pathname).toBe("/about")
+
+  getBrowserNavigate()?.("/settings?tab=2")
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/about", "/settings?tab=2"])
+
+  const otherScheme = fakeEvent(fakeAnchor("https://localhost/about"))
+  document.emit("click", otherScheme)
+  expect(otherScheme.defaultPrevented).toBe(false)
+  getBrowserNavigate()?.("javascript:alert(1)")
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/about", "/settings?tab=2"])
+  expect(fallback).toEqual([])
+  stop()
+})
+
+test("an opaque or file: page leaves its links to the browser instead of swallowing them", async () => {
+  for (const [origin, href] of [
+    ["null", "capacitor://localhost/about"],
+    ["file://", "file:///about"],
+  ] as const) {
+    resetBrowser()
+    locationState.origin = origin
+    const { router, navigated } = makeRouter()
+    const stop = installHistory(router)
+    const click = fakeEvent(fakeAnchor(href))
+    document.emit("click", click)
+    getBrowserNavigate()?.("/about")
+    await Bun.sleep(0)
+    expect(click.defaultPrevented).toBe(false)
+    expect(navigated).toEqual([])
+    expect(historyCalls).toEqual([])
+    stop()
+  }
 })
 
 test("a malformed programmatic target is rejected before an active blocker inspects it", () => {

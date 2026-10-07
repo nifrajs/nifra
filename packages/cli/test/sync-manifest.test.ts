@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { generateServerManifest } from "@nifrajs/web"
 import { parseManifestRouteFiles } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
+import { applyDiagnosticRecipe } from "../src/fix-recipes.ts"
+import { catalogProjectTools } from "../src/mcp-exec.ts"
 import { syncServerManifests } from "../src/sync-manifest.ts"
+
+const CLI = resolve(import.meta.dir, "../src/cli.ts")
 
 // Build a fixture app: a routes/ tree + a committed server-manifest.ts generated from it (with baked
 // client assets), matching the layout `buildServer` produces (manifest next to serverEntry, `./routes/`).
@@ -111,6 +115,63 @@ describe("nifra sync-manifest", () => {
     expect(result?.refusedEmpty).toBe(true)
     expect(result?.changed).toBe(false)
     expect(await readFile(manifestPath, "utf8")).toBe(before) // untouched, not wiped
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("reports a route table that fails to build and fails the command", async () => {
+    const { dir, manifestPath, routesDir } = await fixture()
+    const before = await readFile(manifestPath, "utf8")
+    // Two routes of one shape both match every /docs/* path, so the route table refuses to build.
+    await mkdir(join(routesDir, "docs"))
+    await writeFile(join(routesDir, "docs", "[page].tsx"), "export default () => null")
+    await writeFile(join(routesDir, "docs", "[slug].tsx"), "export default () => null")
+
+    const results = await syncServerManifests(dir)
+    expect(results).toHaveLength(1)
+    expect(results[0]?.file).toBe("server-manifest.ts")
+    expect(results[0]?.changed).toBe(false)
+    expect(results[0]?.error).toContain("overlapping routes")
+    expect(await readFile(manifestPath, "utf8")).toBe(before)
+
+    const proc = Bun.spawn([process.execPath, CLI, "sync-manifest"], {
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, exit] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+    expect(exit).toBe(1)
+    expect(stdout).toContain("✖ server-manifest.ts")
+    expect(stdout).toContain('"docs/[page].tsx"')
+    expect(stdout).not.toContain("no generated server-manifest.ts found")
+
+    const tool = catalogProjectTools(dir).find((t) => t.name === "nifra_sync_manifest")
+    const answer = await tool?.handler(
+      {},
+      { signal: new AbortController().signal, requestId: 1, reportProgress: () => {} },
+    )
+    expect(JSON.parse(String(answer))).toMatchObject({
+      ok: false,
+      results: [
+        { file: "server-manifest.ts", error: expect.stringContaining("overlapping routes") },
+      ],
+    })
+
+    const drift = {
+      code: "NF-C012",
+      severity: "error",
+      message: "server manifest drift",
+      file: "server-manifest.ts",
+      fix: { recipe: "manifest.sync" },
+    } as const
+    await expect(applyDiagnosticRecipe(dir, drift)).rejects.toThrow("overlapping routes")
+    expect(await readFile(manifestPath, "utf8")).toBe(before)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("skips a generated manifest whose routes dir is gone", async () => {
+    const { dir, routesDir } = await fixture()
+    await rm(routesDir, { recursive: true })
+    expect(await syncServerManifests(dir)).toEqual([])
     await rm(dir, { recursive: true, force: true })
   })
 })

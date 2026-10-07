@@ -152,7 +152,21 @@ const PLACEHOLDER =
  * interpolation are not literals. The lookbehind starts a name only where an identifier starts: a
  * match from inside a long word run backtracks the rest of that run, quadratic in its length. */
 const ASSIGNED =
-  /(?<![\w$])([A-Za-z_$][\w$]*)["']?\s*(?:[:=]|\?\?=|\|\|=)\s*(?:"([^"\\\r\n]{16,256})"|'([^'\\\r\n]{16,256})'|`([^`\\$\r\n]{16,256})`)/g
+  /(?<![\w$])([A-Za-z_$][\w$]*)(["']?)\s*([:=]|\?\?=|\|\|=)\s*(?:"([^"\\\r\n]{16,256})"|'([^'\\\r\n]{16,256})'|`([^`\\$\r\n]{16,256})`)/g
+
+/** Whether a match's name is what the literal is assigned to. A quoted name must be the whole string,
+ * not the tail of one (`? "new-password" : "current-password"`), and a key is never preceded by a
+ * ternary's `?` or a member access's `.` (`ready ? config.apiKey : "..."`). */
+function namesTheTarget(text: string, start: number, quote: string, operator: string): boolean {
+  let before = start - 1
+  if (quote !== "") {
+    if (text[before] !== quote) return false
+    before--
+  }
+  if (operator !== ":") return true
+  while (before >= 0 && /\s/.test(text[before] ?? "")) before--
+  return text[before] !== "?" && text[before] !== "."
+}
 
 const EXTRA_SECRET_NAME =
   /(?:accesskey|signingkey|encryptionkey|masterkey|serviceaccountkey|connectionstring)$/
@@ -237,7 +251,8 @@ function assignedMatches(text: string): Match[] {
   for (const found of text.matchAll(ASSIGNED)) {
     const name = found[1] ?? ""
     if (!isSensitiveFieldName(name) && !EXTRA_SECRET_NAME.test(name.toLowerCase())) continue
-    const value = found[2] ?? found[3] ?? found[4] ?? ""
+    if (!namesTheTarget(text, found.index, found[2] ?? "", found[3] ?? "")) continue
+    const value = found[4] ?? found[5] ?? found[6] ?? ""
     if (PUBLIC_VALUE.test(value) || PLACEHOLDER.test(value) || !looksRandom(value, 16)) continue
     matches.push({
       rule: "assigned-secret",

@@ -1,5 +1,7 @@
 # @nifrajs/auth
 
+## 4.0.1
+
 ## 4.0.0
 
 ### Patch Changes

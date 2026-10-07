@@ -53,6 +53,7 @@ interface Manifest {
   optionalDependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   peerDependenciesMeta?: Record<string, { optional?: boolean }>
+  overrides?: Record<string, unknown>
 }
 
 interface Target {
@@ -361,6 +362,19 @@ while (queue.length > 0) {
   }
 }
 
+// The frozen lockfile was resolved through the root `overrides` (security pins), and only those versions
+// are served, so a consumer resolves through them too: `solid-js`'s own `seroval ~1.5.4` would otherwise
+// find no version here. npm refuses an override that differs from a direct dependency's range, and a
+// consumer's direct dependency resolves to the one served version anyway, so those are left out.
+const ROOT_OVERRIDES: Readonly<Record<string, unknown>> =
+  readManifest(join(ROOT, "package.json")).overrides ?? {}
+const consumerManifest = (dependencies: Readonly<Record<string, string>>): string => {
+  const overrides = Object.fromEntries(
+    Object.entries(ROOT_OVERRIDES).filter(([name]) => dependencies[name] === undefined),
+  )
+  return `${JSON.stringify({ private: true, type: "module", dependencies, overrides }, null, 2)}\n`
+}
+
 // External packages are served from the versions installed by the root frozen lockfile. Walking their
 // dependency closure lets isolated consumers resolve normally through a registry protocol without any
 // public network access or accidental use of a newer release.
@@ -580,10 +594,7 @@ try {
         dependencies[peer] = range
       }
       Object.assign(dependencies, target.consumerDependencies)
-      writeFileSync(
-        join(consumer, "package.json"),
-        `${JSON.stringify({ private: true, type: "module", dependencies }, null, 2)}\n`,
-      )
+      writeFileSync(join(consumer, "package.json"), consumerManifest(dependencies))
       writeFileSync(
         join(consumer, "consumer.ts"),
         `${target.entries.map((entry, index) => `import * as entry${index} from ${JSON.stringify(entry)}`).join("\n")}\n${target.typeProbe === undefined ? "" : `${target.typeProbe}\ndeclare const routerSearchProbe: RouterSearchProbe\nvoid routerSearchProbe\n`}const publicEntries = [${target.entries.map((_, index) => `entry${index}`).join(", ")}]\nvoid publicEntries\n`,
@@ -670,18 +681,10 @@ try {
             await $`mkdir -p ${negativeConsumer}`.quiet()
             writeFileSync(
               join(negativeConsumer, "package.json"),
-              `${JSON.stringify(
-                {
-                  private: true,
-                  type: "module",
-                  dependencies: {
-                    ...dependencies,
-                    [target.name]: `file:${join(negativeTarballs, negativeAdapterFilename)}`,
-                  },
-                },
-                null,
-                2,
-              )}\n`,
+              consumerManifest({
+                ...dependencies,
+                [target.name]: `file:${join(negativeTarballs, negativeAdapterFilename)}`,
+              }),
             )
             writeFileSync(
               join(negativeConsumer, "consumer.ts"),

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/testing",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Contract-derived adversarial tests, runtime-matrix response conformance, and cookie-aware in-process sessions for Nifra apps.",
   "keywords": [
     "bun",
