@@ -11902,7 +11902,7 @@ await cache.invalidateTag(`user:${id}`)
     **immediately** while a **background** refresh runs (deduped). Latency stays flat; data self-heals.
   - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
   - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
-- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**.
+- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. The check runs before the store write; with a store shared across processes, a refresh in another process is not fenced.
 - TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
 
 ## Stores

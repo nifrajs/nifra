@@ -9,6 +9,30 @@ function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number
 /** Let any fire-and-forget background revalidation settle. */
 const flush = (): Promise<void> => Bun.sleep(2)
 
+/** A loader the test finishes by hand, with a promise for the moment the cache called it. */
+function gatedLoader(): {
+  readonly load: () => Promise<string>
+  readonly started: Promise<void>
+  release(value: string): void
+} {
+  let begin = (): void => {}
+  const started = new Promise<void>((resolve) => {
+    begin = resolve
+  })
+  let finish: (value: string) => void = () => {}
+  const result = new Promise<string>((resolve) => {
+    finish = resolve
+  })
+  return {
+    load: () => {
+      begin()
+      return result
+    },
+    started,
+    release: (value) => finish(value),
+  }
+}
+
 describe("createCache - wrap (cache-aside)", () => {
   test("rejects non-finite TTL configuration", async () => {
     expect(() => createCache({ defaultTtlMs: Number.NaN })).toThrow(/defaultTtlMs/)
@@ -105,6 +129,65 @@ describe("createCache - invalidation", () => {
     await cache.set("x", 1)
     await cache.clear()
     expect(await cache.get("x")).toBeUndefined()
+  })
+
+  test("a stale refresh that started before invalidateTag does not write the old value back", async () => {
+    const clock = makeClock()
+    let refreshed: (() => void) | undefined
+    const settled = new Promise<void>((resolve) => {
+      refreshed = resolve
+    })
+    const cache = createCache({
+      now: clock.now,
+      observer: (event) => {
+        if (event.op === "revalidate") refreshed?.()
+      },
+    })
+    const opts = { ttlMs: 100, swrMs: 10_000, tags: ["user:1"] }
+    await cache.wrap("user:1", () => "v1", opts)
+    clock.advance(200)
+    const loader = gatedLoader()
+    expect(await cache.wrap("user:1", loader.load, opts)).toBe("v1")
+    await loader.started
+    await cache.invalidateTag("user:1")
+    loader.release("old-refresh")
+    await settled
+    expect(await cache.get("user:1")).toBeUndefined()
+  })
+
+  test("delete, clear or a newer set during a load keeps the load from storing", async () => {
+    const withdrawals: readonly [
+      string,
+      (cache: ReturnType<typeof createCache>) => Promise<void>,
+      unknown,
+    ][] = [
+      ["delete", (cache) => cache.delete("k"), undefined],
+      ["clear", (cache) => cache.clear(), undefined],
+      ["set", (cache) => cache.set("k", "newer"), "newer"],
+    ]
+    for (const [label, withdraw, expected] of withdrawals) {
+      const cache = createCache()
+      const loader = gatedLoader()
+      const pending = cache.wrap("k", loader.load)
+      await loader.started
+      await withdraw(cache)
+      loader.release("loaded")
+      expect(await pending).toBe("loaded")
+      expect({ label, stored: await cache.get("k") }).toEqual({ label, stored: expected })
+    }
+  })
+
+  test("a wrap after an invalidation runs its own load instead of joining the withdrawn one", async () => {
+    const cache = createCache()
+    const loader = gatedLoader()
+    const first = cache.wrap("k", loader.load, { tags: ["t"] })
+    await loader.started
+    await cache.invalidateTag("t")
+    const second = await cache.wrap("k", () => "fresh", { tags: ["t"] })
+    loader.release("old")
+    expect(await first).toBe("old")
+    expect(second).toBe("fresh")
+    expect(await cache.get<string>("k")).toBe("fresh")
   })
 })
 

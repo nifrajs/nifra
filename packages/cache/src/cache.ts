@@ -75,7 +75,21 @@ export function createCache(options: CacheOptions = {}): Cache {
 
   const observer = options.observer
   // Single-flight: concurrent loads for the same key share one promise (miss stampede + SWR dedup).
-  const inflight = new Map<string, Promise<unknown>>()
+  // A delete, tag invalidation, clear or newer set withdraws a load's right to store its result, so
+  // a refresh that started before the invalidation cannot write the old value back. The check runs
+  // before the store write: an async store still has that one write's latency as a window, and a
+  // store shared across processes needs its own conditional write to close it.
+  const inflight = new Map<
+    string,
+    { readonly promise: Promise<unknown>; readonly tags: readonly string[]; withdraw(): void }
+  >()
+  const withdraw = (matches: (key: string, tags: readonly string[]) => boolean): void => {
+    for (const [key, flight] of inflight) {
+      if (!matches(key, flight.tags)) continue
+      flight.withdraw()
+      inflight.delete(key)
+    }
+  }
 
   async function get<T = unknown>(key: string): Promise<T | undefined> {
     const entry = await store.get(key)
@@ -86,7 +100,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     return (await store.get(key)) !== undefined
   }
 
-  async function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
+  async function write<T>(key: string, value: T, opts: SetOptions): Promise<void> {
     const ttlMs = opts.ttlMs ?? defaultTtlMs
     const swrMs = opts.swrMs ?? 0
     assertDuration(ttlMs, "ttlMs")
@@ -99,17 +113,44 @@ export function createCache(options: CacheOptions = {}): Cache {
     )
   }
 
+  function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
+    withdraw((flightKey) => flightKey === key)
+    return write(key, value, opts)
+  }
+
+  function remove(key: string): Promise<void> {
+    withdraw((flightKey) => flightKey === key)
+    return Promise.resolve(store.delete(key))
+  }
+
+  function invalidateTag(tag: string): Promise<void> {
+    withdraw((_key, tags) => tags.includes(tag))
+    return Promise.resolve(store.invalidateTag(tag))
+  }
+
+  function clear(): Promise<void> {
+    withdraw(() => true)
+    return Promise.resolve(store.clear())
+  }
+
   function load(key: string, loader: () => unknown, opts: WrapOptions): Promise<unknown> {
     const existing = inflight.get(key)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) return existing.promise
+    let withdrawn = false
     const p = (async () => {
       const value = await loader()
-      await set(key, value, opts)
+      if (!withdrawn) await write(key, value, opts)
       return value
     })().finally(() => {
-      if (inflight.get(key) === p) inflight.delete(key)
+      if (inflight.get(key)?.promise === p) inflight.delete(key)
     })
-    inflight.set(key, p)
+    inflight.set(key, {
+      promise: p,
+      tags: opts.tags ?? [],
+      withdraw: () => {
+        withdrawn = true
+      },
+    })
     return p
   }
 
@@ -224,19 +265,10 @@ export function createCache(options: CacheOptions = {}): Cache {
           )
         }
       },
-      delete: (key) =>
-        settle("delete", key, undefined, 0, () => Promise.resolve(store.delete(key)), "ok"),
+      delete: (key) => settle("delete", key, undefined, 0, () => remove(key), "ok"),
       invalidateTag: (tag) =>
-        settle(
-          "invalidateTag",
-          undefined,
-          tag,
-          1,
-          () => Promise.resolve(store.invalidateTag(tag)),
-          "ok",
-        ),
-      clear: () =>
-        settle("clear", undefined, undefined, 0, () => Promise.resolve(store.clear()), "ok"),
+        settle("invalidateTag", undefined, tag, 1, () => invalidateTag(tag), "ok"),
+      clear: () => settle("clear", undefined, undefined, 0, clear, "ok"),
       for: bind,
     }
   }
@@ -251,9 +283,9 @@ export function createCache(options: CacheOptions = {}): Cache {
           has,
           set,
           wrap,
-          delete: (key) => Promise.resolve(store.delete(key)),
-          invalidateTag: (tag) => Promise.resolve(store.invalidateTag(tag)),
-          clear: () => Promise.resolve(store.clear()),
+          delete: remove,
+          invalidateTag,
+          clear,
           for: bind,
         }
       : observed(observer, undefined)
