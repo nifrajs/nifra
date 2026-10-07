@@ -29,6 +29,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C030": "Route data without an output schema",
   "NF-C031": "Sensitive field in an output schema",
   "NF-C032": "Credential in browser code",
+  "NF-C033": "Generated output schema out of date",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",

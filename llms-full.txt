@@ -1313,6 +1313,17 @@ export default function User({ data }: Route.ComponentProps) {
 }
 ```
 
+`nifra schemas` drafts the schemas from your code for review: it reads each
+loader's and action's TypeScript return type, and with `--write` puts a schema
+above every one that has none. It leaves out a field named like a credential and anything
+that is not JSON, says so in a comment, and marks what it wrote with a
+`nifra:generated` line. While that line stays, a later
+`nifra schemas --write` keeps the schema in step with the return type, and
+`nifra check` fails (NF-C033) when the two have drifted apart; delete the line to
+own the schema by hand. A hand-written schema is never rewritten: the report lists the
+returned fields it drops, by path. Nothing is derived at request time - the schema in the
+file is the one the guard enforces.
+
 A field named like a credential (`password`, `token`,
 `apiKey`) fails the route when it loads unless its schema is wrapped in
 `t.declassified("why it may reach the browser", ...)`; a schema library that
@@ -8932,7 +8943,8 @@ Route data failed the output guard that stands between loaders/actions and the b
 
 **Fix:** declare `loaderOutput`/`actionOutput` as a Standard
 Schema that describes exactly the fields the page needs. `nifra check` flags routes
-without one (NF-C030).
+without one (NF-C030), and `nifra schemas --write` drafts one from the loader's
+return type for review.
 
 ### Rendering and data
 

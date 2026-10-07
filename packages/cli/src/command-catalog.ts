@@ -25,6 +25,7 @@ import type { VerificationLevelsResult } from "./levels-tool.ts"
 import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import type { LayoutMigrationResult } from "./migrate-layout.ts"
+import type { OutputSchemaStatus, OutputSchemasReport } from "./output-schemas.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
@@ -386,6 +387,12 @@ interface TargetOutput {
 
 interface TypesInput {
   readonly check?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface SchemasInput {
+  readonly write?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -776,6 +783,17 @@ const TYPES_SCHEMA = input<TypesInput>(
     const raw = withDir(record(value))
     return {
       ...parseBooleanFlags(raw, ["check", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const SCHEMAS_SCHEMA = input<SchemasInput>(
+  objectSchema({ write: { type: "boolean" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  (value) => {
+    const raw = withDir(record(value))
+    return {
+      ...parseBooleanFlags(raw, ["write", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1588,6 +1606,71 @@ const typesSpec: CommandSpec<TypesInput, RouteTypesReport> = {
   success: (out) => out.ok,
 }
 
+const SCHEMA_STATUS_LINE: Readonly<Record<OutputSchemaStatus, string>> = {
+  missing: "+ would write",
+  generated: "+ wrote",
+  stale: "↻ stale",
+  regenerated: "↻ rewrote",
+  current: "✓ current",
+  declared: "· hand-written",
+  "no-data": "· no data",
+  unreadable: "⚠ unreadable",
+}
+
+const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
+  name: "schemas",
+  summary:
+    "Write a reviewable `loaderOutput`/`actionOutput` from the loader's or action's return type where a route has none (`--write`), keep generated ones current, and list returned fields a hand-written schema drops.",
+  input: SCHEMAS_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      write: { type: "boolean" },
+      entries: { type: "array" },
+      written: { type: "array" },
+      warnings: { type: "array" },
+    },
+    required: ["ok", "write", "entries", "written", "warnings"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "write", field: "write", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const { outputSchemas } = await import("./output-schemas.ts")
+    return outputSchemas(resolve(ctx.cwd, value.dir ?? "."), { write: value.write === true })
+  },
+  render: (out) => {
+    const shown = out.entries.filter(
+      (entry) =>
+        entry.status !== "current" &&
+        entry.status !== "no-data" &&
+        (entry.status !== "declared" || entry.dropped.length > 0),
+    )
+    const current = out.entries.filter((entry) => entry.status === "current").length
+    return [
+      ...out.warnings.map((warning) => `⚠ ${warning}`),
+      `${out.ok ? "✓" : "✖"} ${out.entries.length} output schema${out.entries.length === 1 ? "" : "s"} read, ${current} generated and current`,
+      ...shown.map((entry) => {
+        const detail =
+          entry.reason ??
+          (entry.dropped.length > 0 ? `drops ${entry.dropped.join(", ")}` : undefined)
+        return `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`
+      }),
+      ...(out.write || !out.entries.some((e) => e.status === "missing" || e.status === "stale")
+        ? []
+        : ["  dry run: pass --write to apply"]),
+    ]
+  },
+  success: (out) => out.ok,
+}
+
 const snapshotSpec: CommandSpec<SnapshotInput, SnapshotCommandOutput> = {
   name: "snapshot",
   summary: "Write the backend API contract as a versioned JSON baseline.",
@@ -1882,6 +1965,7 @@ export const commandSpecs = Object.freeze([
   migrateSpec,
   targetSpec,
   typesSpec,
+  schemasSpec,
   snapshotSpec,
   diffSpec,
   contractsSpec,

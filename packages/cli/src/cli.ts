@@ -276,6 +276,10 @@ Usage:
                                          params, the data its output schemas let through, and api typed
                                          by backend/app.ts. dev, build and check refresh them too;
                                          --check fails when one is stale.
+  nifra schemas [--write] [--json]       Draft loaderOutput/actionOutput from each loader's and
+                                         action's return type for review; --write adds the missing
+                                         ones (marked nifra:generated) and refreshes generated ones.
+                                         Lists the returned fields a hand-written schema drops.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-

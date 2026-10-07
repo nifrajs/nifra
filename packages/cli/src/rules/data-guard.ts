@@ -18,7 +18,8 @@ const lineAt = (text: string, index: number): number => text.slice(0, index).spl
 const byPlace = (a: Diagnostic, b: Diagnostic): number =>
   codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0)
 
-const exported = (mask: string, name: string): RegExpExecArray | null =>
+/** The export statement of `name` in a code-position mask: a declaration or an `export { }` list. */
+export const exported = (mask: string, name: string): RegExpExecArray | null =>
   new RegExp(
     `\\bexport\\s+(?:(?:async\\s+)?function\\s*\\*?\\s*|(?:const|let|var)\\s+)${name}\\b|\\bexport\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`,
   ).exec(mask)
@@ -70,7 +71,7 @@ function mayReturnData(js: string, name: string): boolean {
 }
 
 /** Where an expression starting at `start` ends: a `,`, `;` or closer at its own depth. */
-function expressionEnd(mask: string, start: number): number {
+export function expressionEnd(mask: string, start: number): number {
   let depth = 0
   for (let i = start; i < mask.length; i++) {
     const c = mask[i]
@@ -227,4 +228,66 @@ export const sensitiveOutputRule: CheckRule = {
   },
 }
 
-export const dataGuardRules = Object.freeze([missingOutputRule, sensitiveOutputRule])
+export const staleGeneratedOutputRule: CheckRule = {
+  code: "NF-C033",
+  title: "Generated output schema out of date",
+  async scan(ctx) {
+    const files = zonedFiles(ctx)
+      .files.filter((entry) => entry.classification.zone === "route-backend")
+      .map((entry) => entry.file)
+      .filter((file) => ctx.sources.read(file)?.includes("nifra:generated") === true)
+    if (files.length === 0) return []
+    const { staleGeneratedSchemas } = await import("../output-schemas.ts")
+    const { stale, unchecked, warnings } = await staleGeneratedSchemas(ctx.root, files, (file) =>
+      ctx.sources.read(file),
+    )
+    // A generated schema that could not be compared is reported, never passed silently.
+    const notChecked = [
+      ...warnings.map((warning) =>
+        diagnostic({
+          code: "NF-C033",
+          severity: "warn",
+          message: `${files.length} generated output schema(s) were not checked: ${warning}`,
+          evidence: files.map((file) => `file: ${file}`),
+          verify: "nifra schemas",
+        }),
+      ),
+      ...unchecked.map((entry) =>
+        diagnostic({
+          code: "NF-C033",
+          severity: "warn",
+          file: entry.file,
+          line: entry.line,
+          message: `${entry.file}'s generated ${entry.schema} was not checked: ${entry.reason ?? "its type could not be read"}`,
+          evidence: [`schema: ${entry.schema}`],
+          verify: "nifra schemas",
+        }),
+      ),
+    ]
+    return [
+      ...notChecked,
+      ...stale.map((entry) => {
+        const fn = entry.schema === "loaderOutput" ? "loader" : "action"
+        const change =
+          entry.dropped.length > 0
+            ? `it now returns ${entry.dropped.join(", ")}, which the schema drops`
+            : "what it returns has changed"
+        return diagnostic({
+          code: "NF-C033",
+          severity: "error",
+          file: entry.file,
+          line: entry.line,
+          message: `${entry.file}'s ${entry.schema} was generated from the ${fn}'s return type, and ${change}. Run \`nifra schemas --write\` to regenerate it, or delete its "nifra:generated" line to own it by hand.`,
+          evidence: [`schema: ${entry.schema}`, ...entry.dropped.map((path) => `dropped: ${path}`)],
+          verify: "nifra schemas",
+        })
+      }),
+    ]
+  },
+}
+
+export const dataGuardRules = Object.freeze([
+  missingOutputRule,
+  sensitiveOutputRule,
+  staleGeneratedOutputRule,
+])

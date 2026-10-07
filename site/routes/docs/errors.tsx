@@ -154,7 +154,8 @@ export default function Errors() {
       <p>
         <strong>Fix:</strong> declare <code>loaderOutput</code>/<code>actionOutput</code> as a Standard
         Schema that describes exactly the fields the page needs. <code>nifra check</code> flags routes
-        without one (NF-C030).
+        without one (NF-C030), and <code>nifra schemas --write</code> drafts one from the loader's
+        return type for review.
       </p>
       <FixPrompts code="NIFRA_OUTPUT_GUARD" />
 
