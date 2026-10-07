@@ -177,6 +177,32 @@ describe("assigned secrets", () => {
     }
   })
 
+  test("a header set by a call or written as a pair", () => {
+    for (const [text, name] of [
+      [`headers.set("x-api-key", "${KEY}")`, "x-api-key"],
+      [`init.headers?.append('x-auth-token', '${KEY}')`, "x-auth-token"],
+      [`new Headers([["accept", "application/json"], ["x-api-key", "${KEY}"]])`, "x-api-key"],
+      [`new Map([ [ "apiKey" , "${KEY}" ] ])`, "apiKey"],
+      [`cookies.set("session_token", "${KEY}", { secure: true })`, "session_token"],
+      ['request.headers.set("Authorization", "Bearer Zq8mW2vX9pLr4TbN7yKc3HdF")', "Authorization"],
+    ]) {
+      expect(rules(source(text))).toEqual([`assigned-secret: literal assigned to "${name}"`])
+    }
+    for (const text of [
+      'const pair = ["password", "passwordConfirmation"]',
+      'const rename = new Map([["refresh_token", "refresh_token_expiry"]])',
+      'const required = ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]',
+      `const fields = ["email", "token", "${KEY}"]`,
+      `log("x-api-key", "${KEY}")`,
+      `headers.reset("x-api-key", "${KEY}")`,
+      `headers.set("x-request-id", "${KEY}")`,
+      'headers.set("x-api-key", "<your-api-key-here>")',
+      `new Headers([["x-api-key", "${join2("AIza", "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY")}"]])`,
+    ]) {
+      expect(source(text)).toEqual([])
+    }
+  })
+
   test("an Authorization literal carrying a Bearer token or a Basic password", () => {
     const token = "Zq8mW2vX9pLr4TbN7yKc3HdF"
     const [bearer] = source(`const headers = { Authorization: "Bearer ${token}" }`)
@@ -190,6 +216,7 @@ describe("assigned secrets", () => {
     for (const text of [
       'const headers = { Authorization: "Bearer <your-access-token>" }',
       'const headers = { Authorization: "Bearer xxxxxxxxxxxxxxxxxxxx" }',
+      'const headers = { authorization: "Bearer definitely-wrong" }',
       `const headers = { Authorization: "Basic ${btoa("user:password")}" }`,
       `const headers = { Authorization: "Basic ${btoa("admin:admin")}" }`,
       `const headers = { Authorization: "${token}" }`,
