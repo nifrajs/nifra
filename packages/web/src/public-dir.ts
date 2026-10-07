@@ -12,12 +12,12 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
-import { constants as FS } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { extname, normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
+import { openResolved } from "./open-resolved.ts"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
  * user-authored file keeps its name across deploys, so it gets a day and a revalidation. */
@@ -192,11 +192,13 @@ export function servePublicDir(
     }
     // Open the canonical path once and stream from that descriptor. Reopening the pathname after
     // realpath containment checks would let a writable public tree swap a symlink between validation
-    // and the actual read. O_NOFOLLOW also rejects a final-component symlink if one appears before
-    // the open; the descriptor then pins the bytes for the lifetime of the response.
-    let handle: Awaited<ReturnType<typeof open>> | undefined
+    // and the actual read. openResolved also refuses the name once any component of it became a
+    // symlink; the descriptor then pins the bytes for the lifetime of the response.
+    let handle: Awaited<ReturnType<typeof openResolved>> | undefined
     try {
-      handle = await open(resolvedFile, FS.O_RDONLY | FS.O_NOFOLLOW)
+      // A name refused or gone since realpath falls through, as a failed realpath does.
+      handle = await openResolved(resolvedFile).catch(() => undefined)
+      if (handle === undefined) return undefined
       const stat = await handle.stat()
       if (!stat.isFile()) return undefined
       const size = stat.size

@@ -11,8 +11,7 @@
  * from `@nifrajs/image` instead. The dependency-free core (`@nifrajs/image`) never imports this module.
  */
 
-import { constants as FS } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { resolve as resolvePath, sep } from "node:path"
 
 import {
@@ -22,6 +21,7 @@ import {
   type OutputFormat,
 } from "./backend.ts"
 
+import { openResolved } from "./open-resolved.ts"
 import { verifyImageParams } from "./sign.ts"
 
 // The codec seam + every official backend (Bun/sharp/WASM) live in the edge-safe `./backend.ts`
@@ -374,7 +374,8 @@ async function readLocal(
     return { ok: false, status: 403, code: "source_not_allowed" }
   }
   // Resolve containment, then open that verified name exactly once. Reopening `resolved` after these
-  // checks would let a writable source tree swap a symlink between verification and read.
+  // checks would let a writable source tree swap a symlink between verification and read, and
+  // openResolved refuses the name once any component of it became one.
   let real: string
   try {
     real = await realpath(resolved)
@@ -385,9 +386,9 @@ async function readLocal(
   } catch {
     return { ok: false, status: 404, code: "source_not_found" }
   }
-  let handle: Awaited<ReturnType<typeof open>> | undefined
+  let handle: Awaited<ReturnType<typeof openResolved>> | undefined
   try {
-    handle = await open(real, FS.O_RDONLY | FS.O_NOFOLLOW)
+    handle = await openResolved(real)
     const info = await handle.stat()
     if (!info.isFile()) return { ok: false, status: 404, code: "source_not_found" }
     if (info.size > cfg.maxSourceBytes) {

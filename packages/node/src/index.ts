@@ -11,8 +11,7 @@
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
-import { constants as FS } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -31,6 +30,7 @@ import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { hasDotSegment, resolveDotSegments } from "./generated/request-target.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
+import { openResolved } from "./open-resolved.ts"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
@@ -1025,20 +1025,20 @@ async function readStatic(
   method: string,
   requestHeaders: IncomingHttpHeaders,
 ): Promise<NodeServeOutcome> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined
+  let handle: Awaited<ReturnType<typeof openResolved>> | undefined
   try {
     // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
     // points outside it. Resolve first, check containment on the RESOLVED name, and open that -
     // never open the requested path and re-resolve it afterwards. A local attacker who can write
     // inside the served tree wins that ordering: swap a link between the open and the lookup and the
     // descriptor already streaming refers to an external file while the lookup answers with a
-    // contained path. `O_NOFOLLOW` closes the remainder on the final component - `realpath` returned
-    // a name with no links left in it, so one appearing before the open is an attack, not a layout.
+    // contained path. openResolved closes the remainder - `realpath` returned a name with no links
+    // left in it, so one appearing in any component before the open is an attack, not a layout.
     const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
     if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
       return { kind: "response", response: new Response("Forbidden", { status: 403 }) }
     }
-    handle = await open(realFile, FS.O_RDONLY | FS.O_NOFOLLOW)
+    handle = await openResolved(realFile)
     const stat = await handle.stat()
     if (!stat.isFile()) {
       await handle.close()
