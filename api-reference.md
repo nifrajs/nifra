@@ -3511,6 +3511,8 @@ _No named exports (side-effect entrypoint)._
 - **BindableElement** _(interface)_ - `interface BindableElement`
   The element surface the walker needs - structural, so tests can drive it without a real DOM.
 - **BindableRoot** _(interface)_ - `interface BindableRoot`
+- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
+  A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
 - **IslandContext** _(interface)_ - `interface IslandContext`
 - **IslandHost** _(interface)_ - `interface IslandHost`
   The host-element surface `mountIslands` needs beyond bindings.
@@ -3526,8 +3528,8 @@ _No named exports (side-effect entrypoint)._
   Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
 - **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
   Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of the created effects (an island unmount can stop them; page-lifetime islands just drop them).
-- **computed** _(function)_ - `computed: <T>(fn: () => T) => () => T`
-  Derived value, cached into a signal - recomputes when its tracked inputs change.
+- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
+  Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed. Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
   Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
 - **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`

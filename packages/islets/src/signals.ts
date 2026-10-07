@@ -75,11 +75,22 @@ export function signal<T>(initial: T): Signal<T> {
   return read
 }
 
-/** Derived value, cached into a signal - recomputes when its tracked inputs change. */
-export function computed<T>(fn: () => T): () => T {
+/** A derived value: call it to read (tracking), `.dispose()` to stop recomputing it. */
+export type Computed<T> = {
+  (): T
+  dispose(): void
+}
+
+/**
+ * Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed.
+ * Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.
+ */
+export function computed<T>(fn: () => T): Computed<T> {
   const out = signal<T>(undefined as T)
-  effect(() => out.set(fn()))
-  return () => out()
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `dispose` is assigned on the next line
+  const read = (() => out()) as Computed<T>
+  read.dispose = effect(() => out.set(fn()))
+  return read
 }
 
 /**

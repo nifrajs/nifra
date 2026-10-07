@@ -3488,6 +3488,13 @@
     "signature": "export interface CompressionOptions {\n    /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body\n     * (see below) since runtimes rarely expose `Content-Length` on a constructed `Response`. */\n    readonly threshold?: number;\n    /** Decide whether a `Content-Type` is worth compressing. Default: text, JSON/+json, JS, XML/+xml,\n     * NDJSON, wasm, SVG. Already-compressed media (images, video, archives) is skipped. */\n    readonly compressible?: (contentType: string) => boolean;\n}"
   },
   {
+    "name": "Computed",
+    "kind": "type",
+    "package": "@nifrajs/islets",
+    "signature": "export type Computed<T> = {\n    (): T;\n    dispose(): void;\n};",
+    "doc": "/** A derived value: call it to read (tracking), `.dispose()` to stop recomputing it. */"
+  },
+  {
     "name": "ConditionalResponseOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -16867,8 +16874,8 @@
     "name": "computed",
     "kind": "function",
     "package": "@nifrajs/islets",
-    "signature": "export declare function computed<T>(fn: () => T): () => T;",
-    "doc": "/** Derived value, cached into a signal - recomputes when its tracked inputs change. */"
+    "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
+    "doc": "/**\n * Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed.\n * Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.\n */"
   },
   {
     "name": "computed",

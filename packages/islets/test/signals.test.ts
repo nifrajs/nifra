@@ -32,6 +32,33 @@ describe("signals core", () => {
     expect(seen).toEqual([5, 13])
   })
 
+  test("a disposed computed stops recomputing and leaves its input's subscribers", () => {
+    const input = signal(0)
+    let runs = 0
+    for (let round = 0; round < 3; round++) {
+      const handles = Array.from({ length: 100 }, () =>
+        computed(() => {
+          runs++
+          return input()
+        }),
+      )
+      for (const handle of handles) handle.dispose()
+    }
+    const created = runs
+    input.set(1)
+    expect(created).toBe(300)
+    expect(runs).toBe(created)
+  })
+
+  test("a disposed computed keeps its last value", () => {
+    const a = signal(1)
+    const double = computed(() => a() * 2)
+    a.set(2)
+    double.dispose()
+    a.set(3)
+    expect(double()).toBe(4)
+  })
+
   test("re-tracking: branch switches drop stale deps", () => {
     const flag = signal(true)
     const left = signal("L")

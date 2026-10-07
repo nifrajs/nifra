@@ -94,15 +94,14 @@ export function mountIslands(
     let seeded: Record<string, unknown> = {}
     const rawState = host.getAttribute("data-island-state")
     if (rawState !== null && rawState !== "") {
+      let parsed: unknown
       try {
-        const parsed: unknown = JSON.parse(rawState)
-        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-          seeded = parsed as Record<string, unknown>
-        } else {
-          console.error(`[nifra/islets] data-island-state on "${name}" must be a JSON object`)
-        }
-      } catch {
-        console.error(`[nifra/islets] malformed data-island-state JSON on island "${name}"`)
+        parsed = JSON.parse(rawState)
+      } catch {}
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        seeded = parsed as Record<string, unknown>
+      } else {
+        console.error(`[nifra/islets] data-island-state on "${name}" must be a JSON object`)
       }
     }
 

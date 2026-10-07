@@ -71,7 +71,8 @@ bind it, for example to show or hide the nested island.
 
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
-into one flush. Island-scale by design: if a widget outgrows this (lists, ownership trees,
+into one flush. A computed stays subscribed to its inputs until `.dispose()`, so call it when one
+derived from a longer-lived signal is dropped. Island-scale by design: if a widget outgrows this (lists, ownership trees,
 async orchestration), that's the signal to use the Solid adapter for that page - both tiers are
 first-class.
 
