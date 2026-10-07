@@ -53,6 +53,7 @@ interface Manifest {
   optionalDependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   peerDependenciesMeta?: Record<string, { optional?: boolean }>
+  overrides?: Record<string, unknown>
 }
 
 interface Target {
@@ -366,11 +367,7 @@ while (queue.length > 0) {
 // find no version here. npm refuses an override that differs from a direct dependency's range, and a
 // consumer's direct dependency resolves to the one served version anyway, so those are left out.
 const ROOT_OVERRIDES: Readonly<Record<string, unknown>> =
-  (
-    JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
-      overrides?: Record<string, unknown>
-    }
-  ).overrides ?? {}
+  readManifest(join(ROOT, "package.json")).overrides ?? {}
 const consumerManifest = (dependencies: Readonly<Record<string, string>>): string => {
   const overrides = Object.fromEntries(
     Object.entries(ROOT_OVERRIDES).filter(([name]) => dependencies[name] === undefined),
