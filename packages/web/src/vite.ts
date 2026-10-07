@@ -632,6 +632,10 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     // Ahead of the user's plugins: the zone guard refuses backend code before anything serves or
     // transforms it, and a `*.fn` module must be replaced before anything else reads it.
     plugins: [zoneGuard, viteServerFnStub(), ...plugins],
+    // Vite pre-bundles what it finds by crawling `index.html`, and this app has none: every dependency
+    // would be found mid-session instead, each one re-optimizing and reloading the page. The client
+    // entry imports every route's frontend module, so crawling it covers the whole route graph.
+    optimizeDeps: { entries: [DEV_ENTRY] },
     resolve: {
       conditions: resolveConditions,
       // Dedupe each framework runtime to ONE copy. In a multi-root workspace a shared package can pull
