@@ -70,6 +70,27 @@ describe("filesOutsideProgram", () => {
     expect(filesOutsideProgram(cwd, files, [])).toEqual(["apps/api/backend/app.ts"])
   })
 
+  test("a file the tsconfig excludes is out on purpose, through extends and folder patterns", () => {
+    const cwd = createFixtureProject(root, "exclude-")
+    writeAppFile(
+      cwd,
+      "config/base.json",
+      // A comment, a trailing comma, and patterns relative to this file.
+      '{\n  // shared\n  "exclude": ["../backend/worker.ts", "../backend/generated", "../shared/*.gen.ts",],\n}',
+    )
+    writeAppFile(cwd, "tsconfig.json", '{ "extends": "./config/base" }')
+    const files = [
+      "backend/worker.ts",
+      "backend/generated/routes.ts",
+      "backend/app.ts",
+      "shared/api.gen.ts",
+      "shared/api.ts",
+    ]
+    expect(filesOutsideProgram(cwd, files, [])).toEqual(["backend/app.ts", "shared/api.ts"])
+    writeAppFile(cwd, "tsconfig.json", '{ "extends": "./config/base", "exclude": [] }')
+    expect(filesOutsideProgram(cwd, files, [])).toEqual(files)
+  })
+
   test("matches a program that names files through a symlinked directory", () => {
     const real = createFixtureProject(root, "real-")
     const link = join(root, `link-${Date.now()}`)

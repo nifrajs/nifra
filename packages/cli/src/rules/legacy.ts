@@ -407,7 +407,7 @@ function outsideProgramFindings(files: readonly string[]): Diagnostic[] {
         title: "Bring the folder into the TypeScript program",
         steps: [
           `Add "${folder}" to the "include" array in tsconfig.json.`,
-          'Files kept out on purpose: list them under "typecheck": { "ignore": [...] } in nifra.check.json.',
+          'Files kept out on purpose: name them in the tsconfig "exclude", or under "typecheck": { "ignore": [...] } in nifra.check.json.',
           "Run `nifra check` again; the newly checked files may report type errors.",
         ],
       },

@@ -4,8 +4,9 @@
  * pass that checked nothing there. The check runs tsc with `--listFiles` and compares the program
  * against the app's zone folders.
  */
-import { existsSync, realpathSync } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { stripComments } from "./check-scan.ts"
 
 const ZONE_FOLDER = new Set(["routes", "frontend", "backend", "shared"])
 const TS_SOURCE = /\.(?:[cm]?ts|tsx)$/
@@ -61,9 +62,44 @@ function hasOwnProgram(cwd: string, app: string): boolean {
 }
 
 /**
+ * The `exclude` patterns of `<cwd>/tsconfig.json`, inherited through relative `extends` as tsc does,
+ * rewritten relative to `cwd`. A file a tsconfig excludes is out of the program on purpose.
+ */
+export function tsconfigExcludes(cwd: string): string[] {
+  let path = join(cwd, "tsconfig.json")
+  for (let depth = 0; depth < 8 && existsSync(path); depth++) {
+    let config: unknown
+    try {
+      config = JSON.parse(stripComments(readFileSync(path, "utf8")).replace(/,(\s*[}\]])/g, "$1"))
+    } catch {
+      return []
+    }
+    if (typeof config !== "object" || config === null) return []
+    const exclude: unknown = Reflect.get(config, "exclude")
+    if (Array.isArray(exclude)) {
+      const from = dirname(path)
+      return exclude
+        .filter((pattern): pattern is string => typeof pattern === "string")
+        .map((pattern) => relative(cwd, resolve(from, pattern)).replaceAll("\\", "/"))
+    }
+    const base: unknown = Reflect.get(config, "extends")
+    if (typeof base !== "string" || !base.startsWith(".")) return []
+    path = resolve(dirname(path), base.endsWith(".json") ? base : `${base}.json`)
+  }
+  return []
+}
+
+// tsc reads a pattern that names a folder as everything below it.
+const excludedBy = (patterns: readonly string[], file: string): boolean =>
+  patterns.some(
+    (pattern) => new Bun.Glob(pattern).match(file) || new Bun.Glob(`${pattern}/**`).match(file),
+  )
+
+/**
  * The TypeScript files under a zone folder that `programFiles` does not contain, project-relative and
  * in input order. Declaration files and tests are left out: a project may typecheck tests with a
- * separate config. So is an app nested under its own tsconfig, which this program does not own.
+ * separate config. So is an app nested under its own tsconfig, which this program does not own, and a
+ * file the tsconfig's `exclude` names.
  */
 export function filesOutsideProgram(
   cwd: string,
@@ -76,9 +112,11 @@ export function filesOutsideProgram(
     if (!file.includes("/node_modules/")) program.add(canonical(real(file)))
   }
   const ownProgram = new Map<string, boolean>()
+  const excluded = tsconfigExcludes(cwd)
   const outside: string[] = []
   for (const file of files) {
     if (!TS_SOURCE.test(file) || NOT_PROGRAM_CODE.test(file)) continue
+    if (excludedBy(excluded, file)) continue
     const folder = zoneFolderOf(file)
     if (folder === undefined) continue
     const app = dirname(folder)
