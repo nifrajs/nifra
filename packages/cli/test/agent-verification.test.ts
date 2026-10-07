@@ -7,8 +7,11 @@ import { t } from "@nifrajs/schema"
 import { collectAssureBundle } from "../src/assure.ts"
 import {
   buildContractsLock,
+  CONTRACT_DIGEST_FORMAT,
+  type ContractsLock,
   checkContractsLock,
   isVacuousLock,
+  parseContractsLock,
   snapshotContracts,
 } from "../src/contracts.ts"
 import { applyDiagnosticRecipe, listFixRecipes } from "../src/fix-recipes.ts"
@@ -53,6 +56,71 @@ describe("agent verification surfaces", () => {
       'import { server } from "@nifrajs/core"\nexport const backend = server().get("/users", () => ({ ok: false }))\n',
     )
     expect((await checkContractsLock(dir)).diagnostics).toHaveLength(0)
+  })
+
+  describe("contract digest format", () => {
+    async function locked(name: string): Promise<{ dir: string; lock: ContractsLock }> {
+      const dir = join(ROOT, name)
+      await mkdir(dir, { recursive: true })
+      writeAppFile(
+        dir,
+        "backend/app.ts",
+        'import { server } from "@nifrajs/core"\nimport { t } from "@nifrajs/schema"\nexport const backend = server().get("/users", { query: t.object({ q: t.string() }) }, () => 1)\n',
+      )
+      return { dir, lock: await snapshotContracts(dir) }
+    }
+    const write = (dir: string, lock: unknown): Promise<void> =>
+      writeFile(join(dir, "contracts.lock.json"), JSON.stringify(lock))
+
+    test("a snapshot records the format it was hashed with", async () => {
+      const { lock } = await locked("digest-recorded")
+      expect(lock.digest).toBe(CONTRACT_DIGEST_FORMAT)
+      expect(Object.keys(lock)).toEqual(["version", "digest", "routes"])
+    })
+
+    test("an older format fails as a re-snapshot, never as drift on each route", async () => {
+      const { dir, lock } = await locked("digest-older")
+      await write(dir, { ...lock, digest: CONTRACT_DIGEST_FORMAT - 1 })
+      const { diagnostics } = await checkContractsLock(dir)
+      expect(diagnostics).toHaveLength(1)
+      expect(diagnostics[0]?.route).toBeUndefined()
+      expect(diagnostics[0]?.message).toContain(
+        `written with contract digest format ${CONTRACT_DIGEST_FORMAT - 1}`,
+      )
+      expect(diagnostics[0]?.message).toContain("nifra contracts snapshot")
+      expect(diagnostics[0]?.message).not.toContain("newer")
+    })
+
+    test("a newer format names the CLI upgrade", async () => {
+      const { dir, lock } = await locked("digest-newer")
+      await write(dir, { ...lock, digest: CONTRACT_DIGEST_FORMAT + 1 })
+      const { diagnostics } = await checkContractsLock(dir)
+      expect(diagnostics).toHaveLength(1)
+      expect(diagnostics[0]?.message).toContain("a newer @nifrajs/cli wrote it")
+    })
+
+    test("a lock without a format still compares, and drift there notes the format may be the cause", async () => {
+      const { dir, lock } = await locked("digest-absent")
+      const { digest: _digest, ...legacy } = lock
+      await write(dir, legacy)
+      expect((await checkContractsLock(dir)).diagnostics).toEqual([])
+      const users = legacy.routes["GET /users"]
+      await write(dir, {
+        ...legacy,
+        routes: { "GET /users": { response: users?.response, request: "0".repeat(64) } },
+      })
+      const { diagnostics } = await checkContractsLock(dir)
+      expect(diagnostics.map((d) => d.route)).toEqual(["GET /users", undefined])
+      expect(diagnostics[1]?.message).toContain("records no contract digest format")
+    })
+
+    test("a malformed format is refused", () => {
+      for (const digest of ["2", 0, -1, 1.5]) {
+        expect(() => parseContractsLock({ version: 1, digest, routes: {} })).toThrow(
+          "digest must be a positive integer",
+        )
+      }
+    })
   })
 
   test("the contracts lock lists routes in code-unit order, the same in every locale", async () => {

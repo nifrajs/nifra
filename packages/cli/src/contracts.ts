@@ -16,8 +16,17 @@ export interface ContractDigest {
 
 export interface ContractsLock {
   readonly version: 1
+  /** The {@link CONTRACT_DIGEST_FORMAT} that produced `routes`. Absent in a lock written before it was recorded. */
+  readonly digest?: number
   readonly routes: Readonly<Record<string, ContractDigest>>
 }
+
+/**
+ * Bumped whenever {@link digestRoute} hashes the same schema differently. The lock records it, so a
+ * format change reads as "re-snapshot" instead of as drift on every route. 2: properties named like
+ * annotation keywords are hashed (4.0.1).
+ */
+export const CONTRACT_DIGEST_FORMAT = 2
 
 export const DEFAULT_CONTRACTS_LOCK = "contracts.lock.json"
 const DIGEST = /^[a-f0-9]{64}$/
@@ -146,6 +155,7 @@ export async function buildContractsLock(
   )
   return {
     version: 1,
+    digest: CONTRACT_DIGEST_FORMAT,
     routes: Object.fromEntries(Object.entries(routes).sort(([a], [b]) => codeUnitOrder(a, b))),
   }
 }
@@ -176,6 +186,9 @@ export function parseContractsLock(value: unknown): ContractsLock {
   const routesRecord = recordOf(routesValue)
   if (record.version !== 1 || routesRecord === undefined)
     throw new TypeError("contracts lock must have version 1 and routes")
+  const digest = record.digest
+  if (digest !== undefined && !(Number.isSafeInteger(digest) && Number(digest) > 0))
+    throw new TypeError("contracts lock digest must be a positive integer")
   const routes: Record<string, ContractDigest> = {}
   for (const [key, raw] of Object.entries(routesRecord)) {
     const item = recordOf(raw)
@@ -192,7 +205,7 @@ export function parseContractsLock(value: unknown): ContractsLock {
       throw new TypeError(`invalid contract ${key}`)
     routes[key] = { request, response }
   }
-  return { version: 1, routes }
+  return typeof digest === "number" ? { version: 1, digest, routes } : { version: 1, routes }
 }
 
 export async function checkContractsLock(
@@ -209,6 +222,14 @@ export async function checkContractsLock(
   const current = await buildContractsLock(await loadBackend(cwd))
   const vacuous = await isVacuousLock(current)
   const diagnostics: Array<{ route?: string; message: string }> = []
+  // Digests of two formats never compare, so this still fails; it just names the real cause.
+  if (parsed.digest !== undefined && parsed.digest !== CONTRACT_DIGEST_FORMAT) {
+    const newer = parsed.digest > CONTRACT_DIGEST_FORMAT
+    diagnostics.push({
+      message: `${file} was written with contract digest format ${parsed.digest}, but this nifra computes format ${CONTRACT_DIGEST_FORMAT}${newer ? " (a newer @nifrajs/cli wrote it; upgrade this one)" : ""}, so no route could be compared. Review the route schema changes since the lock was written, then run \`nifra contracts snapshot\` and commit the lock.`,
+    })
+    return { present: true, vacuous, diagnostics }
+  }
   const keys = new Set([...Object.keys(parsed.routes), ...Object.keys(current.routes)])
   for (const key of [...keys].sort()) {
     const before = parsed.routes[key]
@@ -224,6 +245,11 @@ export async function checkContractsLock(
         message: `contract changed for ${key}; if intentional run \`nifra contracts snapshot\` and include the lock update in the same change.`,
       })
     }
+  }
+  if (diagnostics.length > 0 && parsed.digest === undefined) {
+    diagnostics.push({
+      message: `${file} records no contract digest format. A lock written before nifra 4.0.1 hashed schemas differently, so a route reported above may not have changed. Review them, then run \`nifra contracts snapshot\` to record the format.`,
+    })
   }
   return { present: true, vacuous, diagnostics }
 }
