@@ -159,6 +159,12 @@ export interface ZoneConfig {
 /** A `"nifra": { "zones": ... }` setting that cannot be applied. Thrown when a classifier is created. */
 export class ZoneConfigError extends Error {
   override readonly name = "ZoneConfigError"
+  /** The file holding the setting, as the caller named it. */
+  readonly source: string
+  constructor(source: string, problem: string) {
+    super(`[nifra] ${source} "nifra.zones": ${problem}`)
+    this.source = source
+  }
 }
 
 const FOLDER_SIDES = ["backend", "frontend", "shared"] as const
@@ -186,7 +192,7 @@ const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined
  */
 export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
   const fail = (message: string): never => {
-    throw new ZoneConfigError(`[nifra] ${source} "nifra.zones": ${message}`)
+    throw new ZoneConfigError(source, message)
   }
   const record = recordOf(value) ?? fail("must be an object")
   const config: {

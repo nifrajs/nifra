@@ -277,6 +277,11 @@ describe("app zone settings", () => {
   ] as const)("refuses %j", (zones, message) => {
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(ZoneConfigError)
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(message)
+    try {
+      parseZoneConfig(zones, "app/package.json")
+    } catch (error) {
+      expect(error instanceof ZoneConfigError && error.source).toBe("app/package.json")
+    }
   })
 })
 
