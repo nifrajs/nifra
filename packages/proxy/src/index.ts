@@ -184,7 +184,7 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
   "upgrade",
 ])
 
-/** Forwarding metadata is an explicit opt-in (`forwardClientIp` / `forwardedHost`), never passthrough. */
+/** Forwarding headers with a dedicated option (`forwardClientIp` / `forwardedHost`); refused as static headers. */
 const FORWARDING: ReadonlySet<string> = new Set([
   "forwarded",
   "x-forwarded-for",
@@ -217,11 +217,17 @@ function dropHeader(name: string, nominated: ReadonlySet<string>): boolean {
 
 /**
  * A request header dropped before the hop: it names the proxy (`host`, which the transport derives
- * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, or is forwarding metadata that
- * only explicit proxy options may reintroduce. The single predicate both lanes filter through.
+ * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, or is forwarding metadata
+ * (`Forwarded` or any `X-Forwarded-*`) that only explicit proxy options may reintroduce. The single
+ * predicate both lanes filter through.
  */
 function isDroppedRequestHeader(name: string, nominated: ReadonlySet<string>): boolean {
-  return name === "host" || dropHeader(name, nominated) || FORWARDING.has(name)
+  return (
+    name === "host" ||
+    dropHeader(name, nominated) ||
+    name === "forwarded" ||
+    name.startsWith("x-forwarded-")
+  )
 }
 
 /**

@@ -135,12 +135,24 @@ describe("createProxy()", () => {
     const forged = {
       "x-forwarded-for": "1.2.3.4",
       "x-forwarded-host": "admin.internal",
+      "x-forwarded-port": "12345",
+      "X-Forwarded-Prefix": "/fake",
+      "x-forwarded-ssl": "on",
       forwarded: "for=1.2.3.4",
     }
     await createProxy({ upstream: ORIGIN })(new Request("http://edge.test/x", { headers: forged }))
     expect(seen?.headers["x-forwarded-for"]).toBeUndefined()
     expect(seen?.headers["x-forwarded-host"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-port"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-prefix"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-ssl"]).toBeUndefined()
     expect(seen?.headers.forwarded).toBeUndefined()
+
+    // A fixed static header is the explicit way to emit the rest of the namespace.
+    await createProxy({ upstream: ORIGIN, headers: { "x-forwarded-prefix": "/api" } })(
+      new Request("http://edge.test/x", { headers: forged }),
+    )
+    expect(seen?.headers["x-forwarded-prefix"]).toBe("/api")
 
     await createProxy({ upstream: ORIGIN, forwardClientIp: true })({
       req: new Request("http://edge.test/x", {
