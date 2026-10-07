@@ -42,6 +42,12 @@ describe("otlpExporter", () => {
   ] as const
   const batchOptions = ["maxBatch", "maxQueue", "flushIntervalMs"] as const
 
+  test("rejects a timeoutMs that is not a positive safe integer", () => {
+    expect(() => otlpExporter({ url: "http://c", timeoutMs: 0 })).toThrow(
+      "otlpExporter: timeoutMs must be a positive safe integer",
+    )
+  })
+
   for (const option of batchOptions) {
     for (const [category, value] of invalidBatchNumbers) {
       test(`rejects ${category} batch.${option}`, () => {
@@ -250,6 +256,55 @@ describe("otlpExporter", () => {
     exp.onEnd(span())
     exp.onEnd(span()) // overflow
     expect(errors.map(String).some((e) => e.includes("overflow"))).toBe(true)
+  })
+
+  test("one export is in flight at a time and the queue stays bounded behind it", async () => {
+    const errors: unknown[] = []
+    const releases: Array<() => void> = []
+    let started = 0
+    const exp = otlpExporter({
+      url: "http://c",
+      batch: { maxBatch: 1, maxQueue: 1 },
+      onError: (e) => errors.push(e),
+      fetch: () => {
+        started++
+        return new Promise((resolve) => releases.push(() => resolve({ ok: true, status: 200 })))
+      },
+    })
+    for (let i = 0; i < 20; i++) exp.onEnd(span())
+    expect(started).toBe(1)
+    expect(errors.filter((e) => String(e).includes("overflow"))).toHaveLength(18)
+
+    let shut = false
+    const shutdown = exp.shutdown().then(() => {
+      shut = true
+    })
+    await Promise.resolve()
+    expect(shut).toBe(false)
+    releases.shift()?.()
+    while (started < 2) await Promise.resolve()
+    expect(shut).toBe(false)
+    releases.shift()?.()
+    await shutdown
+    expect(started).toBe(2)
+  })
+
+  test("an export past timeoutMs is aborted, reported, and lets flush resolve", async () => {
+    const errors: unknown[] = []
+    let signal: AbortSignal | undefined
+    const exp = otlpExporter({
+      url: "http://c",
+      timeoutMs: 5,
+      onError: (e) => errors.push(e),
+      fetch: (_url, init) => {
+        signal = init.signal ?? undefined
+        return new Promise(() => {})
+      },
+    })
+    exp.onEnd(span())
+    await exp.flush()
+    expect(signal?.aborted).toBe(true)
+    expect(String(errors[0])).toContain("otlp_export_timeout")
   })
 
   test("shutdown flushes the tail", async () => {
