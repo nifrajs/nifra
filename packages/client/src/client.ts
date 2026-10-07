@@ -488,9 +488,22 @@ function createProxy(
           ? Object.values(first as Record<string, unknown>)[0]
           : first
       if (value === undefined || value === null) return createProxy(base, path, options, false)
-      return createProxy(base, `${path}/${encodeURIComponent(String(value))}`, options, false)
+      return createProxy(base, `${path}/${encodeSegment(String(value))}`, options, false)
     },
   })
+}
+
+/**
+ * A path segment, percent-encoded. A value with an unpaired surrogate has no UTF-8 spelling and
+ * `encodeURIComponent` throws on it; it becomes a `..` segment instead, which every call refuses as
+ * `invalid_path` before anything is sent, so the call still resolves to a Result.
+ */
+function encodeSegment(value: string): string {
+  try {
+    return encodeURIComponent(value)
+  } catch {
+    return ".."
+  }
 }
 
 /** Resolve one get-trap key on a proxy node - the (memoizable) body of the `get` trap above. */

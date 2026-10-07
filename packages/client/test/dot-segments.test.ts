@@ -132,6 +132,19 @@ describe("a `.` or `..` param value is refused, not sent to another route", () =
     expect(hooks).toBe(0)
   })
 
+  test("a value with an unpaired surrogate resolves to invalid_path instead of throwing", async () => {
+    let fetches = 0
+    const guarded = client<typeof app>("http://localhost:1", {
+      fetch: () => {
+        fetches += 1
+        return Promise.resolve(new Response("{}"))
+      },
+    })
+    expect(await guarded.users({ id: "\ud800" }).get()).toEqual(REFUSED)
+    expect(await guarded.users({ id: "a\udfffb" }).delete()).toEqual(REFUSED)
+    expect(fetches).toBe(0)
+  })
+
   test("a pre-encoded spelling is sent as text, so it stays the param value", async () => {
     const res = await api.users({ id: "%2e%2e" }).get()
     expect(res.ok && res.data).toEqual({ route: "user", id: "%2e%2e" })
