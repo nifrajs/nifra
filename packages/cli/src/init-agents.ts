@@ -9,8 +9,8 @@
  *                                   `## Project structure` section, appended when missing (or a minimal
  *                                   file if none exists)
  *
- * The generators are imported from `create-nifra/agent-files` - the SAME source of truth `create-nifra`
- * uses at scaffold time - so a retrofitted app and a freshly scaffolded one get byte-identical configs.
+ * The generators come from `./agent-files.ts`, a byte-identical copy of the module `create-nifra` uses at
+ * scaffold time, so a retrofitted app and a freshly scaffolded one get byte-identical configs.
  *
  * Safety: this writes into the user's existing tree, so it NEVER silently clobbers a file they may have
  * customized. By default an existing `.mcp.json` / `CLAUDE.md` / `.cursor/mcp.json` is SKIPPED with a
@@ -44,7 +44,7 @@ import {
   MCP_SERVER_COMMAND,
   mcpJson,
   STRUCTURE_HEADING,
-} from "create-nifra/agent-files"
+} from "./agent-files.ts"
 import { installedNifraVersion, resolveRootState } from "./mcp-root.ts"
 
 /** What happened to one file during the retrofit, for the printed report + the `--json` shape. */

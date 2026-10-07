@@ -9,10 +9,10 @@
  *   .github/copilot-instructions.md   - GitHub Copilot: points at AGENTS.md
  *   .mcp.json, .cursor/mcp.json       - the nifra MCP server, registered for Claude Code and Cursor
  *
- * Both `create-nifra` (scaffold time) and `@nifrajs/cli`'s `nifra init-agents` (retrofit an existing app)
- * import these, so the files can never drift apart. This module is dependency-free (pure string + object
- * generation) on purpose - `create-nifra` ships with no runtime deps, and `@nifrajs/cli` imports it as a
- * workspace dependency.
+ * `create-nifra` (scaffold time) and `@nifrajs/cli`'s `nifra init-agents` (retrofit an existing app) each
+ * ship this file byte-identical - `packages/cli/test/init-agents.test.ts` holds the two copies equal - so
+ * the generated files can never drift apart and neither package needs the other at runtime. It stays
+ * dependency-free (pure string + object generation) on purpose: `create-nifra` ships with no runtime deps.
  *
  * Why `bunx @nifrajs/cli mcp` (not `bunx nifra mcp`): the `nifra` binary is provided by the
  * `@nifrajs/cli` package, and the bare npm package literally named `nifra` (this monorepo's
@@ -49,11 +49,21 @@ export const MCP_SERVER_COMMAND = "bunx" as const
  * at its scaffold-time version until `nifra init-agents --sync-mcp` re-pins it to the nifra the project
  * installs - an acceptable, deterministic trade.
  */
-export const MCP_CLI_VERSION: string = (
-  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-    version: string
-  }
-).version
+export const MCP_CLI_VERSION: string = ownVersion()
+
+function ownVersion(): string {
+  const manifest: unknown = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  )
+  if (
+    typeof manifest === "object" &&
+    manifest !== null &&
+    "version" in manifest &&
+    typeof manifest.version === "string"
+  )
+    return manifest.version
+  throw new Error("[nifra] agent-files: this package's package.json has no version")
+}
 export const MCP_SERVER_ARGS = [`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"] as const
 
 /** The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config. */

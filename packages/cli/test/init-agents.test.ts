@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { MCP_CLI_VERSION } from "create-nifra/agent-files"
+import { MCP_CLI_VERSION } from "../src/agent-files.ts"
 import {
   collectStaleMcpPins,
   type InitAgentsResult,
@@ -617,5 +617,24 @@ describe("CLI dispatch (subprocess)", () => {
       `Launch \`bunx @nifrajs/cli@${MCP_CLI_VERSION} mcp\`.\n`,
     )
     expect(existsSync(join(dir, ".mcp.json"))).toBe(false)
+  })
+})
+
+describe("agent-files copy", () => {
+  test("is byte-identical to create-nifra's, so a retrofit writes what a scaffold writes", async () => {
+    const here = resolve(import.meta.dir, "../src/agent-files.ts")
+    const canonical = resolve(import.meta.dir, "../../create-nifra/src/agent-files.ts")
+    const [copy, source] = await Promise.all([Bun.file(here).text(), Bun.file(canonical).text()])
+    if (copy !== source)
+      throw new Error(
+        "packages/cli/src/agent-files.ts differs from packages/create-nifra/src/agent-files.ts - edit one, then copy it over the other",
+      )
+  })
+
+  test("@nifrajs/cli does not depend on create-nifra at runtime", async () => {
+    const manifest: { dependencies?: Record<string, string> } = await Bun.file(
+      resolve(import.meta.dir, "../package.json"),
+    ).json()
+    expect(Object.keys(manifest.dependencies ?? {})).not.toContain("create-nifra")
   })
 })

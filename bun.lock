@@ -277,7 +277,6 @@
         "@nifrajs/schema": "workspace:*",
         "@nifrajs/testing": "workspace:*",
         "@nifrajs/web": "workspace:*",
-        "create-nifra": "workspace:*",
       },
       "devDependencies": {
         "typescript": "^6.0.3",
