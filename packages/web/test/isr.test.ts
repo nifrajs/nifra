@@ -571,6 +571,74 @@ describe("withISR", () => {
     expect((await store.get(pageKey("/p")))?.body).toBe("v1")
   })
 
+  test("a cookie request is not served the anonymous page, and does not evict it", async () => {
+    const store = new MemoryCacheStore()
+    const { app, calls } = trackApp((req) =>
+      req.headers.has("cookie")
+        ? html("ACCOUNT", { "cache-control": "private, no-store" })
+        : html("LANDING"),
+    )
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0 })
+    await handler(new Request("http://x/"))
+    const signedIn = await handler(new Request("http://x/", { headers: { cookie: "sid=a" } }))
+    expect(await signedIn.text()).toBe("ACCOUNT")
+    expect(signedIn.headers.get("cache-control")).toBe("private, no-store")
+    const anonymous = await handler(new Request("http://x/"))
+    expect(await anonymous.text()).toBe("LANDING")
+    expect(anonymous.headers.get("x-nifra-isr")).toBe("hit")
+    expect(calls()).toBe(2)
+  })
+
+  test("only anonymousCookies keep a cookie request on the cache; a custom key decides for itself", async () => {
+    const store = new MemoryCacheStore()
+    const { app, calls } = trackApp(() => html("SHARED", { "cache-control": "public, max-age=0" }))
+    const handler = withISR(app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      anonymousCookies: ["consent", "_ga"],
+    })
+    await handler(new Request("http://x/"))
+    const consented = await handler(
+      new Request("http://x/", { headers: { cookie: "consent=yes; _ga=GA1" } }),
+    )
+    expect(consented.headers.get("x-nifra-isr")).toBe("hit")
+    const session = await handler(
+      new Request("http://x/", { headers: { cookie: "consent=yes; sid=a" } }),
+    )
+    expect(session.headers.get("x-nifra-isr")).toBe("miss")
+    const bearer = await handler(
+      new Request("http://x/", { headers: { authorization: "Bearer a" } }),
+    )
+    expect(bearer.headers.get("x-nifra-isr")).toBe("miss")
+    expect(calls()).toBe(3)
+
+    const keyed = trackApp(() => html("KEYED"))
+    const custom = withISR(keyed.app, {
+      store: new MemoryCacheStore(),
+      revalidate: 60,
+      now: () => 0,
+      key: (req) => new URL(req.url).pathname,
+    })
+    await custom(new Request("http://x/"))
+    const hit = await custom(new Request("http://x/", { headers: { cookie: "sid=a" } }))
+    expect(hit.headers.get("x-nifra-isr")).toBe("hit")
+    expect(keyed.calls()).toBe(1)
+  })
+
+  test("a page rendered for consent-only cookies is stored like an anonymous one", async () => {
+    const store = new MemoryCacheStore()
+    const { app } = trackApp(() => html("PAGE"))
+    const handler = withISR(app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      anonymousCookies: ["consent"],
+    })
+    await handler(new Request("http://x/", { headers: { cookie: "consent=yes" } }))
+    expect((await store.get(pageKey("/")))?.body).toBe("PAGE")
+  })
+
   test("a regeneration that turns private or refused removes the stale entry; a 5xx keeps it", async () => {
     const withdrawals: readonly [string, () => Response][] = [
       ["private", () => html("mine", { "cache-control": "private, max-age=0" })],

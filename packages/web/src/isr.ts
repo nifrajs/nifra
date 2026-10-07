@@ -473,8 +473,17 @@ export interface ISROptions {
   readonly now: () => number
   /** Cache key for a request. Default: `origin + pathname`, plus the query parameters `query` admits,
    * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for
-   * this request (it goes straight to the app, uncached). Replaces `query` entirely. */
+   * this request (it goes straight to the app, uncached). Replaces `query` entirely. Under the default
+   * key a request carrying `Authorization` or a cookie outside `anonymousCookies` never reads the
+   * store; a custom key takes that decision over, so include whatever identifies the visitor in it. */
   readonly key?: (req: Request) => string | null
+  /**
+   * Cookie names that never change the page, such as a consent or analytics cookie. Under the default
+   * key a request carrying `Authorization` or any other cookie skips the stored page and renders fresh,
+   * because a signed-in visitor's page can differ from the anonymous one; a request whose cookies are
+   * all listed here is served from the cache like one with none. Default none.
+   */
+  readonly anonymousCookies?: readonly string[]
   /**
    * How the query string reaches the default key. Default `"bypass"`: a request carrying any query
    * parameter skips the cache - rendered fresh, never stored - so `?a=1`, `?a=2`, ... cannot each
@@ -553,6 +562,15 @@ const cacheControlHas = (headers: Headers, names: readonly string[]): boolean =>
 
 const hasSetCookie = (headers: Headers): boolean =>
   headers.has("set-cookie") || (headers.getSetCookie?.().length ?? 0) > 0
+
+/** Whether every cookie in a `Cookie` header is named in `names`. */
+const cookieNamesWithin = (header: string, names: ReadonlySet<string>): boolean => {
+  for (const pair of header.split(";")) {
+    const name = pair.split("=", 1)[0]?.trim() ?? ""
+    if (name !== "" && !names.has(name)) return false
+  }
+  return true
+}
 
 const requestCarriesPrivateState = (req: Request): boolean =>
   req.headers.has("authorization") || req.headers.has("cookie")
@@ -689,6 +707,16 @@ export function withISR(
   assertRevalidate(options.revalidate, "revalidate")
   const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
+  const anonymousCookies = new Set(options.anonymousCookies ?? [])
+  // A request whose cookies are all anonymous is judged for storage as if it carried none.
+  const judged = (req: Request): Request => {
+    if (anonymousCookies.size === 0 || req.headers.has("authorization")) return req
+    const cookie = req.headers.get("cookie")
+    if (cookie === null || !cookieNamesWithin(cookie, anonymousCookies)) return req
+    const headers = new Headers(req.headers)
+    headers.delete("cookie")
+    return new Request(req.url, { method: req.method, headers })
+  }
   const regenerating = new Set<string>()
   openCacheChannel(app)
   // An outer cache layer (`withCdn`) opens this wrapper's own channel: cached responses then carry how
@@ -741,10 +769,11 @@ export function withISR(
     req: Request,
     platform: ISRPlatform | undefined,
     key: string,
+    remember: boolean,
   ): Promise<Response> => {
     const res = await app.fetch(req, platform)
-    if (!isCacheablePage(req, res)) {
-      rememberUncacheable(key, res)
+    if (!isCacheablePage(judged(req), res)) {
+      if (remember) rememberUncacheable(key, res)
       return withoutCacheChannel(res)
     }
     uncacheable.delete(key)
@@ -778,7 +807,7 @@ export function withISR(
     regenerating.add(key)
     try {
       const res = await app.fetch(req, platform)
-      if (isCacheablePage(req, res)) {
+      if (isCacheablePage(judged(req), res)) {
         const tags = tagsOf(res)
         await store.set(key, {
           body: await res.text(),
@@ -788,7 +817,7 @@ export function withISR(
           revalidate: ttlMs(res),
           ...(tags.length === 0 ? {} : { tags }),
         })
-      } else if (isInvalidationResponse(req, res)) {
+      } else if (isInvalidationResponse(judged(req), res)) {
         // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
         // publicly visible forever, because every stale request would retry the same non-cacheable
         // response while continuing to serve the old body.
@@ -825,13 +854,17 @@ export function withISR(
       return withoutCacheChannel(await app.fetch(req, platform))
     }
 
+    // A cookie or Authorization request may be personalized: under the default key it never reads
+    // the store, and its private render never marks the URL uncacheable for everyone else.
+    const personal = options.key === undefined && requestCarriesPrivateState(judged(req))
+
     const until = uncacheable.get(key)
     if (until !== undefined) {
-      if (now() < until) return render(req, platform, key)
+      if (now() < until) return render(req, platform, key, !personal)
       uncacheable.delete(key)
     }
 
-    const hit = await store.get(key)
+    const hit = personal ? undefined : await store.get(key)
     if (hit !== undefined) {
       if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).
@@ -840,7 +873,7 @@ export function withISR(
       else void task.catch(() => {})
       return served(hit, "stale")
     }
-    return render(req, platform, key)
+    return render(req, platform, key, !personal)
   }
   Object.defineProperty(handler, CACHE_CHANNEL, {
     value: () => {
