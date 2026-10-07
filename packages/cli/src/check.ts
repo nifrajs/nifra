@@ -26,6 +26,7 @@ import {
   type CheckResult,
   collectCheckDiagnostics,
   type RuleOverride,
+  safeIgnoreGlobMatch,
 } from "./check-diagnostics.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
@@ -36,6 +37,7 @@ import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
+import { filesOutsideProgram, splitListedFiles } from "./typecheck-coverage.ts"
 
 export type {
   CheckAnalysisInput,
@@ -80,6 +82,10 @@ interface TypecheckResult {
   /** tsconfig.json exists but no `typescript` install was found walking up from cwd. The contract
    * gate could not run - the caller surfaces this as a FAILING diagnostic, never a silent skip. */
   readonly missingTypeScript?: boolean
+  /** Every file in the compiler's program, absolute. Absent when the compiler listed none. */
+  readonly programFiles?: readonly string[]
+  /** Zoned TypeScript files outside the program, project-relative: the typecheck never read them. */
+  readonly outsideProgram?: readonly string[]
 }
 
 /**
@@ -117,8 +123,24 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
       note: "typescript not installed (run: bun add -d typescript)",
     }
   }
+  const first = await runTsc(cwd, tscBin, tsconfig, true, signal)
+  // A compiler that rejects `--listFiles` still gets its typecheck; only the coverage check is lost.
+  if (!first.ok && !first.cancelled && /TS50(?:23|25)\b[^\n]*listFiles/.test(first.output ?? ""))
+    return runTsc(cwd, tscBin, tsconfig, false, signal)
+  return first
+}
+
+async function runTsc(
+  cwd: string,
+  tscBin: string,
+  tsconfig: string,
+  listFiles: boolean,
+  signal?: AbortSignal,
+): Promise<TypecheckResult> {
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
-  const proc = Bun.spawn([process.execPath, tscBin, "--noEmit", "-p", tsconfig], {
+  const args = [process.execPath, tscBin, "--noEmit", "-p", tsconfig]
+  if (listFiles) args.push("--listFiles")
+  const proc = Bun.spawn(args, {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -144,11 +166,15 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
   } finally {
     signal?.removeEventListener("abort", abort)
   }
+  if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
+  const listed = listFiles ? splitListedFiles(out) : undefined
   return {
     ran: true,
-    ok: code === 0 && !cancelled,
-    output: cancelled ? "cancelled" : `${out}${err}`.trim(),
-    ...(cancelled ? { cancelled: true } : {}),
+    ok: code === 0,
+    output: `${listed?.output ?? out}${err}`.trim(),
+    ...(listed !== undefined && listed.programFiles.length > 0
+      ? { programFiles: listed.programFiles }
+      : {}),
   }
 }
 
@@ -263,6 +289,24 @@ async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
   }
 }
 
+/** Record the zoned files the compiler's program left out, minus the typecheck rule's `ignore` globs. */
+function withProgramCoverage(
+  cwd: string,
+  result: TypecheckResult,
+  sourceFiles: ReadonlyArray<{ readonly file: string }>,
+  checkConfig: CheckConfig,
+): TypecheckResult {
+  const { programFiles, ...rest } = result
+  if (programFiles === undefined) return result
+  const ignore = (checkConfig.rules.typecheck ?? checkConfig.rules["NF-C001"])?.ignore
+  const outside = filesOutsideProgram(
+    cwd,
+    sourceFiles.map((source) => source.file),
+    programFiles,
+  ).filter((file) => !ignore?.some((pattern) => safeIgnoreGlobMatch(pattern, file)))
+  return outside.length === 0 ? rest : { ...rest, outsideProgram: outside }
+}
+
 /** Build the rule input from one source walk and the other check-wide scans. */
 async function buildProjectScan(
   cwd: string,
@@ -283,7 +327,7 @@ async function buildProjectScan(
     error: checkConfigError,
     warnings: checkConfigWarnings,
   } = await loadCheckConfig(cwd)
-  const [typecheckResult, _, doctor, manifestDrift, contracts] = await Promise.all([
+  const [typecheckRun, _, doctor, manifestDrift, contracts] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
       : typecheck(cwd, opts.signal),
@@ -299,6 +343,8 @@ async function buildProjectScan(
     scanServerManifestDrift(cwd),
     collectContractFacts(cwd),
   ])
+
+  const typecheckResult = withProgramCoverage(cwd, typecheckRun, sourceFiles, checkConfig)
 
   // TypeScript 7's unstable API materializes source files through one project session. Build the
   // source index first so every syntax-backed scanner (including the independent rule registry)
@@ -425,7 +471,7 @@ export function renderCheckReport(result: CheckResult): string[] {
     result.typecheck === "pass"
       ? "✓ typecheck passed"
       : result.typecheck === "fail"
-        ? "✗ typecheck failed - the frontend/backend contract is broken"
+        ? `✗ typecheck failed - ${result.typecheckNote ?? "the frontend/backend contract is broken"}`
         : `⚠ typecheck SKIPPED - ${result.typecheckNote ?? "no tsconfig / typescript not installed"} (the contract gate did not run)`,
   )
   // Stated on every run, passing or not. "Which bundler is this app on" decides which plugin slot is

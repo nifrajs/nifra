@@ -72,8 +72,9 @@ export type CheckSuggestion = DiagnosticSuggestion
 export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
-  /** Why `typecheck` is `"skipped"` (no tsconfig.json, typescript not installed, lints-only mode).
-   * Absent when the typecheck ran. Echoed in the human report so a skip is never a dim mystery. */
+  /** Why `typecheck` is `"skipped"` (no tsconfig.json, typescript not installed, lints-only mode), or
+   * why it failed when the compiler itself passed (zoned files outside its program). Echoed in the
+   * human report so a skip is never a dim mystery. */
   readonly typecheckNote?: string
   readonly diagnostics: readonly CheckDiagnostic[]
   /** Normalized diagnostics with stable codes for agents and external renderers. */
@@ -172,7 +173,7 @@ const MAX_IGNORE_GLOB_ALTERNATIVES = 64
  * The matcher supports the portable glob forms users expect here: `*`, `?`, `**`, character
  * classes, and brace alternatives.
  */
-function safeIgnoreGlobMatch(pattern: string, file: string): boolean {
+export function safeIgnoreGlobMatch(pattern: string, file: string): boolean {
   if (pattern.length === 0 || pattern.length > MAX_IGNORE_GLOB_LENGTH) return false
   for (const alternative of expandIgnoreGlobBraces(pattern)) {
     if (matchIgnoreGlobPath(alternative, file)) return true
@@ -356,6 +357,7 @@ export interface CheckTypecheckResult {
   readonly note?: string
   readonly output?: string
   readonly missingTypeScript?: boolean
+  readonly outsideProgram?: readonly string[]
 }
 
 export interface CheckAnalysisInput {
@@ -583,17 +585,22 @@ export async function collectCheckDiagnostics(
     shown.length < total ? shown.length + nonLegacyStructuredCount : finalStructured.length
 
   const doctor = projectFacts.packages.doctor
+  const outsideProgram = projectFacts.check.typecheck.outsideProgram?.length ?? 0
   const knownGaps = projectFacts.policies.capability?.report.gaps ?? []
   const result: CheckResult = {
     ok: !finalDiagnostics.some((value) => value.severity === "error"),
-    typecheck: projectFacts.check.typecheck.ran
-      ? projectFacts.check.typecheck.ok
+    typecheck: !projectFacts.check.typecheck.ran
+      ? "skipped"
+      : projectFacts.check.typecheck.ok && outsideProgram === 0
         ? "pass"
-        : "fail"
-      : "skipped",
+        : "fail",
     ...(!projectFacts.check.typecheck.ran && projectFacts.check.typecheck.note !== undefined
       ? { typecheckNote: projectFacts.check.typecheck.note }
-      : {}),
+      : outsideProgram > 0
+        ? {
+            typecheckNote: `${outsideProgram} file(s) in zone folders are outside tsc's program, so the typecheck never read them`,
+          }
+        : {}),
     diagnostics: shown,
     ...(projectFacts.pipeline !== undefined ? { pipeline: projectFacts.pipeline } : {}),
     ...(doctor.ran

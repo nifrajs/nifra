@@ -23,6 +23,7 @@ import {
 import type { DuplicateInstallFinding } from "../doctor.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
+import { zoneFolderOf } from "../typecheck-coverage.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /** Legacy rule name → stable NF- code. Exported so `nifra.check.json` rule overrides can be keyed
@@ -378,8 +379,40 @@ const typecheckRule: CheckRule = {
         )
       }
     }
+    findings.push(...outsideProgramFindings(tc.outsideProgram ?? []))
     return findings
   },
+}
+
+/** One finding per zone folder: the fix (tsconfig `include`) is per folder, not per file. */
+function outsideProgramFindings(files: readonly string[]): Diagnostic[] {
+  const byFolder = new Map<string, { readonly first: string; readonly group: string[] }>()
+  for (const file of files) {
+    const folder = zoneFolderOf(file) ?? file
+    const entry = byFolder.get(folder)
+    if (entry === undefined) byFolder.set(folder, { first: file, group: [file] })
+    else entry.group.push(file)
+  }
+  return [...byFolder].map(([folder, { first, group }]) => {
+    const shown = group.slice(0, 3).join(", ")
+    const more = group.length > 3 ? ` and ${group.length - 3} more` : ""
+    return legacyDiagnostic("typecheck", {
+      severity: "error",
+      file: first,
+      message: `${group.length} file(s) under ${folder}/ are outside tsc's program, so the typecheck passed without reading them: ${shown}${more}`,
+      evidence: group,
+      fix: `Add "${folder}" to tsconfig.json "include" (or list the files), then run \`nifra check\` again`,
+      suggestion: {
+        kind: "manual",
+        title: "Bring the folder into the TypeScript program",
+        steps: [
+          `Add "${folder}" to the "include" array in tsconfig.json.`,
+          'Files kept out on purpose: list them under "typecheck": { "ignore": [...] } in nifra.check.json.',
+          "Run `nifra check` again; the newly checked files may report type errors.",
+        ],
+      },
+    })
+  })
 }
 
 const typedClientRule: CheckRule = {
