@@ -166,6 +166,35 @@ process.stdin.on("data", (chunk) => {
     }
   })
 
+  test("a model error keeps its reason and not a credential the provider echoed", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234. Authorization: Bearer eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed] }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-key-echo" })
+      const events: AgentEvent[] = []
+      await expect(
+        (async () => {
+          for await (const event of backend.send({ sessionId: "model-key-echo", message: "hello" }))
+            events.push(event)
+        })(),
+      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      const failed = events.find((event) => event.type === "session.failed")
+      const message = failed?.type === "session.failed" ? failed.error.message : ""
+      expect(message).toContain("401 Incorrect API key provided: [REDACTED]")
+      expect(message).not.toContain("abcdefghijklmnop")
+      expect(message).not.toContain("eyJ")
+    } finally {
+      await backend.close("model-key-echo")
+    }
+  })
+
   test("a model error Pi retries does not end the turn, and the retried answer completes it", async () => {
     const script = `
 process.stdin.on("data", (chunk) => {

@@ -604,9 +604,7 @@ export class PiBackend implements AgentBackend {
         if (text.length > 0) this.emit(session, { type: "assistant.message", turnId, text })
         if (isRecord(message) && message.role === "assistant")
           session.modelError =
-            message.stopReason === "error"
-              ? boundedPiText(message.errorMessage, 1_024) || "Pi's model call failed"
-              : undefined
+            message.stopReason === "error" ? modelErrorText(message.errorMessage) : undefined
         return
       }
       case "tool_execution_start":
@@ -991,6 +989,23 @@ function numberOrZero(value: unknown): number {
 
 function boundedPiToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
+}
+
+// A provider's error can echo a credential back; the turn's error keeps the reason, not the key.
+const CREDENTIAL_PATTERNS: readonly RegExp[] = [
+  /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi,
+  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  /\bsk-[A-Za-z0-9_-]{8,}/g,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+]
+
+function modelErrorText(value: unknown): string {
+  if (typeof value !== "string") return "Pi's model call failed"
+  let text = value
+  for (const pattern of CREDENTIAL_PATTERNS) text = text.replace(pattern, "[REDACTED]")
+  return boundedPiText(text, 1_024) || "Pi's model call failed"
 }
 
 function boundedPiText(value: unknown, maxChars: number): string {
