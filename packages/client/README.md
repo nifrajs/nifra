@@ -25,7 +25,8 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
   `api.files("report.json").get()`.
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
-  pass `{ query, headers, signal }` as call options. A call that gets no HTTP answer has
+  pass `{ query, headers, signal }` as call options. A DELETE route with a body schema takes
+  its body as an option: `api.items.delete({ body: { ids } })`. A call that gets no HTTP answer has
   `status: 0` and the code `network_error`, `timeout`, `response_too_large` or `invalid_path`.
 - **A param value is never a path step.** `.` and `..` are resolved by URL parsing in every
   encoding, so `api.users({ id: ".." }).delete()` sends nothing and returns `invalid_path`

@@ -211,6 +211,8 @@ interface CallOptions {
   readonly query?: Record<string, unknown>
   readonly headers?: Record<string, string>
   readonly signal?: AbortSignal
+  /** A DELETE's body; the body verbs take theirs positionally. */
+  readonly body?: unknown
 }
 
 /**
@@ -580,8 +582,8 @@ async function execute(
     return { ok: false, status: 0, data: null, error: { error: "invalid_path" } }
   }
   const isBodyVerb = BODY_VERBS.has(verb)
-  const body = isBodyVerb ? args[0] : undefined
   const callOptions = (isBodyVerb ? args[1] : args[0]) as CallOptions | undefined
+  const body = isBodyVerb ? args[0] : verb === "delete" ? callOptions?.body : undefined
 
   let url = base + (path === "" ? "/" : path)
   const query = callOptions?.query ? buildQuery(callOptions.query) : ""
