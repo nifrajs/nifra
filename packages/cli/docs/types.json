@@ -9468,7 +9468,7 @@
     "name": "NodeServer",
     "kind": "interface",
     "package": "@nifrajs/node",
-    "signature": "export interface NodeServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then\n     * force-close stragglers + idle keep-alives. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: {\n        drainMs?: number;\n    }): Promise<void>;\n}"
+    "signature": "export interface NodeServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then\n     * force-close stragglers + idle keep-alives. Open WebSockets get a 1001 close at once and are\n     * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: {\n        drainMs?: number;\n    }): Promise<void>;\n}"
   },
   {
     "name": "NonceContext",

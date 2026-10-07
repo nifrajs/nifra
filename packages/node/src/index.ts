@@ -97,6 +97,7 @@ type WsUpgradeOutcome =
 interface WsSocket {
   send(data: string | ArrayBufferView | ArrayBuffer): void
   close(code?: number, reason?: string): void
+  terminate(): void
   readonly readyState: number
   on(event: "message", listener: (data: Buffer, isBinary: boolean) => void): void
   on(event: "close", listener: (code: number, reason: Buffer) => void): void
@@ -723,7 +724,8 @@ export interface NodeServer {
   readonly port: number
   /**
    * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then
-   * force-close stragglers + idle keep-alives. Mirrors nifra's Bun `stop()`.
+   * force-close stragglers + idle keep-alives. Open WebSockets get a 1001 close at once and are
+   * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: { drainMs?: number }): Promise<void>
 }
@@ -1190,6 +1192,14 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   // Upgrade sockets an HTTP route answers instead: Node's server no longer tracks them, so stop()
   // drains and closes them itself.
   const answering = new Set<Duplex>()
+  // Upgraded WebSockets: Node's server stops tracking a socket once `ws` takes it over.
+  const upgraded = new Set<WsSocket>()
+  const adopt = (ws: WsSocket): boolean => {
+    if (closed) return false
+    upgraded.add(ws)
+    ws.on("close", () => upgraded.delete(ws))
+    return true
+  }
   const protocol = protocolResolver(
     options.protocol ?? (options.tls === undefined ? undefined : "https"),
   )
@@ -1268,6 +1278,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       void handleUpgrade(
         app,
         answering,
+        adopt,
         resolveWs,
         protocol,
         hostPolicy,
@@ -1301,12 +1312,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       process.removeListener("SIGINT", onSignal)
     }
     server.close() // stop accepting new connections; existing requests continue
+    // A WebSocket gets a close handshake now and the drain window to finish it.
+    for (const ws of upgraded) ws.close(1001, "server shutting down")
     const deadline = Date.now() + drainMs
-    while ((inFlight > 0 || answering.size > 0) && Date.now() < deadline) {
+    while ((inFlight > 0 || answering.size > 0 || upgraded.size > 0) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, DRAIN_POLL_MS))
     }
     server.closeAllConnections() // force-close stragglers + idle keep-alive sockets
     for (const socket of answering) socket.destroy()
+    for (const ws of upgraded) ws.terminate()
   }
 
   return new Promise((resolve) => {
@@ -2717,6 +2731,7 @@ const WS_STATUS_TEXT: Readonly<Record<number, string>> = {
 async function handleUpgrade(
   app: FetchHandler,
   answering: Set<Duplex>,
+  adopt: (ws: WsSocket) => boolean,
   resolveWs: (
     request: Request,
     platform?: NodePlatform,
@@ -2783,9 +2798,14 @@ async function handleUpgrade(
     return
   }
   const { handler, data, pubsub, maxPayloadBytes } = outcome
-  wss.handleUpgrade(nodeReq, socket, head, (ws) =>
-    attachNodeWebSocket(ws, handler, data, pubsub, maxPayloadBytes),
-  )
+  wss.handleUpgrade(nodeReq, socket, head, (ws) => {
+    // An upgrade still resolving when stop() ran must not outlive it.
+    if (!adopt(ws)) {
+      ws.terminate()
+      return
+    }
+    attachNodeWebSocket(ws, handler, data, pubsub, maxPayloadBytes)
+  })
 }
 
 /** Wire a `ws` socket (already open in `handleUpgrade`'s callback) to a nifra WS handler. The Node copy

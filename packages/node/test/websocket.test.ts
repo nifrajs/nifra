@@ -106,6 +106,19 @@ describe("@nifrajs/node WebSocket payload caps", () => {
 })
 
 describe("@nifrajs/node WebSockets", () => {
+  test("stop() closes an open WebSocket with 1001 instead of leaving it serving", async () => {
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
+    const c = new WebSocket(`ws://127.0.0.1:${running.port}/echo`)
+    const closed = new Promise<number>((resolve) =>
+      c.addEventListener("close", (e) => resolve(e.code)),
+    )
+    await new Promise((resolve) => c.addEventListener("message", resolve, { once: true }))
+    await running.stop({ drainMs: 2000 })
+    running = undefined
+    expect(await closed).toBe(1001)
+    expect(c.readyState).toBe(WebSocket.CLOSED)
+  })
+
   test("echo: open → welcome, message → echo", async () => {
     running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual(["welcome", "hi"])
