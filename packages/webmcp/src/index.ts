@@ -187,12 +187,20 @@ function validateStatePaths(paths: readonly string[], label: string): readonly s
   return [...unique]
 }
 
+/** What a WebMCP host passes as `execute`'s second argument; its `signal` cancels the call. */
+export interface WebMcpExecuteContext {
+  readonly signal?: AbortSignal
+}
+
 export interface WebMcpToolDefinition {
   readonly name: string
   readonly description: string
   readonly inputSchema: Record<string, unknown>
   readonly annotations: AgentCapability<unknown, unknown>["tool"]["annotations"]
-  readonly execute: (input: unknown) => unknown | PromiseLike<unknown>
+  readonly execute: (
+    input: unknown,
+    context?: WebMcpExecuteContext,
+  ) => unknown | PromiseLike<unknown>
 }
 
 export interface WebMcpExecutionOptions extends Omit<ToolCallOptions, "signal" | "capabilities"> {
@@ -229,7 +237,8 @@ export function toWebMcpTool<Input, Output, State>(
     description: entry.description,
     inputSchema: entry.inputSchema,
     annotations: entry.annotations,
-    execute: async (input) => {
+    execute: async (input, context) => {
+      const signal = context?.signal instanceof AbortSignal ? context.signal : undefined
       if (options.authorize !== undefined) {
         let authorized = false
         try {
@@ -244,6 +253,7 @@ export function toWebMcpTool<Input, Output, State>(
       const result = await executeAgentCapability(capability, input, {
         ...options,
         capabilities: fixedCapabilities,
+        ...(signal === undefined ? {} : { signal }),
       })
       const receipt = toReceipt(result, maxReceiptBytes)
       // Raw output mode is explicitly opt-in and exists for hosts that already impose their own

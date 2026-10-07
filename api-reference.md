@@ -6925,6 +6925,8 @@ _No named exports (side-effect entrypoint)._
 - **ToolContractOptions** _(interface)_ - `interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **ToolError** _(interface)_ - `interface ToolError`
 - **ToolEvidence** _(interface)_ - `interface ToolEvidence`
+- **WebMcpExecuteContext** _(interface)_ - `interface WebMcpExecuteContext`
+  What a WebMCP host passes as `execute`'s second argument; its `signal` cancels the call.
 - **WebMcpExecutionOptions** _(interface)_ - `interface WebMcpExecutionOptions`
 - **WebMcpModelContext** _(interface)_ - `interface WebMcpModelContext`
 - **WebMcpReceipt** _(interface)_ - `interface WebMcpReceipt<Output = unknown>`

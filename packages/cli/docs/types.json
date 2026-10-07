@@ -15462,6 +15462,13 @@
     "doc": "/**\n * Pluggable WASM codec set - decode/resize/encode. Declared structurally so `@nifrajs/image` depends on no\n * WASM library; wire your own (jSquash is the common pure-WASM, edge-safe choice). The handler probes\n * dimensions from the source header (bomb-safe), so `decode` runs only inside `transform`.\n */"
   },
   {
+    "name": "WebMcpExecuteContext",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpExecuteContext {\n    readonly signal?: AbortSignal;\n}",
+    "doc": "/** What a WebMCP host passes as `execute`'s second argument; its `signal` cancels the call. */"
+  },
+  {
     "name": "WebMcpExecutionOptions",
     "kind": "interface",
     "package": "@nifrajs/webmcp",
@@ -15501,7 +15508,7 @@
     "name": "WebMcpToolDefinition",
     "kind": "interface",
     "package": "@nifrajs/webmcp",
-    "signature": "export interface WebMcpToolDefinition {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly annotations: AgentCapability<unknown, unknown>[\"tool\"][\"annotations\"];\n    readonly execute: (input: unknown) => unknown | PromiseLike<unknown>;\n}"
+    "signature": "export interface WebMcpToolDefinition {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly annotations: AgentCapability<unknown, unknown>[\"tool\"][\"annotations\"];\n    readonly execute: (input: unknown, context?: WebMcpExecuteContext) => unknown | PromiseLike<unknown>;\n}"
   },
   {
     "name": "WebSocketContext",

@@ -14960,7 +14960,8 @@ const registration = await registerWebMcpTools([addItem])
 
 The returned WebMCP `execute` function runs Nifra's existing input validation, capability, approval,
 idempotency, budget, cancellation, output validation, and evidence path. By default it returns a bounded
-receipt envelope so an agent can verify whether the operation committed. The normal human UI remains the
+receipt envelope so an agent can verify whether the operation committed. A `signal` the host passes as
+`execute`'s second argument reaches the executor as `ctx.signal`. The normal human UI remains the
 source of page rendering and works when WebMCP is absent.
 
 Receipt output is retained only while its JSON encoding stays within the bounded `maxReceiptBytes`
@@ -15367,7 +15368,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/webmcp
 
-`AgentCapability`, `AgentCapabilityReference`, `AgentSurfaceAuthoritativeState`, `AgentSurfaceConformanceCase`, `AgentSurfaceConformanceOptions`, `AgentSurfaceConformanceResult`, `AgentSurfaceDescriptor`, `AgentSurfacePrediction`, `AgentSurfacePredictionContext`, `AgentSurfacePredictor`, `AgentSurfaceReconcileContext`, `AgentSurfaceReconciler`, `AgentSurfaceScope`, `AgentSurfaceSnapshot`, `DefineAgentCapabilityOptions`, `ExecutePredictedOptions`, `PredictedExecutionResult`, `PredictionCommitOptions`, `PredictionPatchOperation`, `PredictionStore`, `PredictionStoreEvent`, `PredictionStoreResult`, `PredictionStoreSnapshot`, `ReconciliationMode`, `ToolApproval`, `ToolCallOptions`, `ToolCallResult`, `ToolContract`, `ToolContractOptions`, `ToolError`, `ToolEvidence`, `WebMcpExecutionOptions`, `WebMcpModelContext`, `WebMcpReceipt`, `WebMcpRegistrationFailure`, `WebMcpRegistrationReport`, `WebMcpTarget`, `WebMcpToolDefinition`, `createPredictionStore`, `defineAgentCapability`, `executeAgentCapability`, `executePredicted`, `registerWebMcpTools`, `runAgentSurfaceConformance`, `toWebMcpTool`
+`AgentCapability`, `AgentCapabilityReference`, `AgentSurfaceAuthoritativeState`, `AgentSurfaceConformanceCase`, `AgentSurfaceConformanceOptions`, `AgentSurfaceConformanceResult`, `AgentSurfaceDescriptor`, `AgentSurfacePrediction`, `AgentSurfacePredictionContext`, `AgentSurfacePredictor`, `AgentSurfaceReconcileContext`, `AgentSurfaceReconciler`, `AgentSurfaceScope`, `AgentSurfaceSnapshot`, `DefineAgentCapabilityOptions`, `ExecutePredictedOptions`, `PredictedExecutionResult`, `PredictionCommitOptions`, `PredictionPatchOperation`, `PredictionStore`, `PredictionStoreEvent`, `PredictionStoreResult`, `PredictionStoreSnapshot`, `ReconciliationMode`, `ToolApproval`, `ToolCallOptions`, `ToolCallResult`, `ToolContract`, `ToolContractOptions`, `ToolError`, `ToolEvidence`, `WebMcpExecuteContext`, `WebMcpExecutionOptions`, `WebMcpModelContext`, `WebMcpReceipt`, `WebMcpRegistrationFailure`, `WebMcpRegistrationReport`, `WebMcpTarget`, `WebMcpToolDefinition`, `createPredictionStore`, `defineAgentCapability`, `executeAgentCapability`, `executePredicted`, `registerWebMcpTools`, `runAgentSurfaceConformance`, `toWebMcpTool`
 
 ## @nifrajs/workers
 
