@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { beforeAll, expect, test } from "bun:test"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { mdxBunPlugin } from "../src/mdx.ts"
@@ -16,6 +16,10 @@ async function captureMdxLoad(): Promise<MdxLoad> {
   if (load === undefined) throw new Error("mdx plugin did not register an onLoad handler")
   return load
 }
+
+// setup() imports the compiler, a few hundred modules read from disk the first time. A slow Windows
+// runner has spent past a test's 5 s on that alone, so it is paid once here instead.
+beforeAll(captureMdxLoad, 60_000)
 
 test("mdxBunPlugin compiles a .mdx file to a component module (default export + exports)", async () => {
   const built = await Bun.build({
