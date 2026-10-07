@@ -69,6 +69,24 @@ describe("release anchor and changed files", () => {
     expect(lastReleaseCommit(root)).toBe(release)
   })
 
+  test("a squash-merged release that bumps a version is a release though it deletes no changeset", async () => {
+    const root = await repository()
+    const manifest = (version: string): string =>
+      `{\n  "name": "@nifrajs/core",\n  "version": "${version}"\n}\n`
+    await put(root, "packages/core/package.json", manifest("1.0.0"))
+    await put(root, "packages/core/test/fixture/package.json", manifest("0.0.0"))
+    await put(root, "packages/core/CHANGELOG.md", "# @nifrajs/core\n")
+    commitAll(root, "start")
+    // The release branch added its changeset and consumed it, so the squash keeps only its outcome.
+    await put(root, "packages/core/package.json", manifest("1.0.1"))
+    await put(root, "packages/core/CHANGELOG.md", "# @nifrajs/core\n\n## 1.0.1\n\nA.\n")
+    const release = commitAll(root, "chore(release): prepare (#2)")
+    await put(root, "packages/core/CHANGELOG.md", "# @nifrajs/core\n\n## 1.0.1\n\nA, reworded.\n")
+    await put(root, "packages/core/test/fixture/package.json", manifest("0.0.1"))
+    commitAll(root, "reword a note and bump a fixture")
+    expect(lastReleaseCommit(root)).toBe(release)
+  })
+
   test("a file moved out of a package's src counts against the package it left", async () => {
     const root = await repository()
     await put(root, "packages/core/src/moved.ts", "export const moved = 1\n".repeat(20))
