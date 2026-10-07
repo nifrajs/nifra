@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { discoverRoutes } from "../src/fs.ts"
 import { createViteDevServer, type ViteDevServer } from "../src/vite.ts"
 
@@ -26,28 +26,32 @@ afterEach(async () => {
 const page = async (): Promise<string> =>
   (await fetch(`http://127.0.0.1:${server?.port ?? 0}/`)).text()
 
-const waitForPage = async (
-  matches: (body: string) => boolean,
-  timeoutMs = 15_000,
-): Promise<string> => {
-  // Vite's polling watcher is asynchronous. Leave room for a loaded full-suite CI runner to
-  // deliver add/unlink events instead of turning a slow notification into a flaky assertion.
-  const deadline = Date.now() + timeoutMs
-  let body = await page()
-  while (!matches(body) && Date.now() < deadline) {
-    await Bun.sleep(50)
-    body = await page()
-  }
-  return body
+/** Both manifests at once: the app's route ids, and whether the client entry imports `about`. */
+const manifests = async (): Promise<string> => {
+  const entry = readFileSync(join(root, ".nifra-vite-entry.tsx"), "utf8")
+  return `${await page()} | ${entry.includes("/routes/about.tsx") ? "about" : "-"}`
 }
 
-test("Vite route add and unlink events refresh both manifests without restart", async () => {
+const waitForManifests = async (expected: string): Promise<string> => {
+  // Vite's polling watcher is asynchronous. Leave room for a loaded full-suite CI runner to
+  // deliver add/unlink events instead of turning a slow notification into a flaky assertion.
+  const deadline = Date.now() + 15_000
+  let seen = await manifests()
+  while (seen !== expected && Date.now() < deadline) {
+    await Bun.sleep(50)
+    seen = await manifests()
+  }
+  return seen
+}
+
+const startPolling = async (plugins: readonly unknown[] = []): Promise<void> => {
   server = await createViteDevServer({
     root,
     routesDir,
     clientModule: join(root, "client.ts"),
     port: 0,
     poll: true,
+    plugins,
     createApp: () => {
       const ids = discoverRoutes(routesDir)
         .routes.map((route) => route.id)
@@ -55,25 +59,36 @@ test("Vite route add and unlink events refresh both manifests without restart", 
       return { fetch: () => new Response(ids.join(",")) }
     },
   })
-  expect(await page()).toBe("index")
+}
 
-  // Chokidar reports ready before Bun's fs.watchFile has taken its baseline stat of the directory, so a
-  // route written in that gap is folded into the baseline and never reported. Until one probe route is
-  // observed the poller may not have a baseline; a later probe changes the directory again past it.
-  const probes: string[] = []
-  for (let seen = false; !seen; ) {
-    const probe = join(routesDir, `probe-${probes.length}.tsx`)
-    writeFileSync(probe, "export default function Probe() { return null }\n")
-    probes.push(probe)
-    seen = (await waitForPage((body) => body.includes("probe"), 1_000)).includes("probe")
-  }
-  for (const probe of probes) rmSync(probe)
-  expect(await waitForPage((body) => !body.includes("probe"))).toBe("index")
+test("Vite route add and unlink events refresh both manifests without restart", async () => {
+  await startPolling()
+  expect(await manifests()).toBe("index | -")
 
   const about = join(routesDir, "about.tsx")
   writeFileSync(about, "export default function About() { return null }\n")
-  expect(await waitForPage((body) => body.includes("about"))).toContain("about")
+  expect(await waitForManifests("about,index | about")).toBe("about,index | about")
 
   rmSync(about)
-  expect(await waitForPage((body) => !body.includes("about"))).not.toContain("about")
+  expect(await waitForManifests("index | -")).toBe("index | -")
+}, 60_000)
+
+test("a polled route add or unlink the watcher never reports still refreshes both manifests", async () => {
+  // Stands in for the poller's late baseline: a change folded into it is never reported, exactly as
+  // one in an ignored directory is not.
+  const routesUnwatched = {
+    name: "routes-unwatched",
+    config: () => ({
+      server: { watch: { ignored: [(path: string) => resolve(path).startsWith(routesDir)] } },
+    }),
+  }
+  await startPolling([routesUnwatched])
+  expect(await manifests()).toBe("index | -")
+
+  const about = join(routesDir, "about.tsx")
+  writeFileSync(about, "export default function About() { return null }\n")
+  expect(await waitForManifests("about,index | about")).toBe("about,index | about")
+
+  rmSync(about)
+  expect(await waitForManifests("index | -")).toBe("index | -")
 }, 60_000)
