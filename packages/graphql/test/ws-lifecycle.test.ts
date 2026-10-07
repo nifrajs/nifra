@@ -14,6 +14,9 @@ interface Frame {
 // Nothing is ever published, so a subscription to it stays live until the client completes it.
 const quiet = createPubSub<string>()
 
+// A subscription whose source arrives only when the test releases it, recording its own return().
+const late = { release: () => {}, returned: 0 }
+
 const schema = new GraphQLSchema({
   query: new GraphQLObjectType({
     name: "Query",
@@ -31,6 +34,22 @@ const schema = new GraphQLSchema({
       live: {
         type: GraphQLString,
         subscribe: () => quiet.subscribe("live"),
+        resolve: (payload: string) => payload,
+      },
+      late: {
+        type: GraphQLString,
+        subscribe: () =>
+          new Promise<AsyncIterableIterator<string>>((resolve) => {
+            const source: AsyncIterableIterator<string> = {
+              [Symbol.asyncIterator]: () => source,
+              next: () => new Promise<IteratorResult<string>>(() => {}),
+              return: async () => {
+                late.returned++
+                return { done: true, value: undefined }
+              },
+            }
+            late.release = () => resolve(source)
+          }),
         resolve: (payload: string) => payload,
       },
       broken: {
@@ -195,5 +214,17 @@ describe("graphql-ws failures stay on the socket", () => {
       expect(socket.closes).toEqual([])
     })
     expect(unhandled).toEqual([])
+  })
+
+  test("a subscription source that arrives after its timeout is returned, not left open", async () => {
+    const handler = graphqlWebSocket({ schema, executionTimeoutMs: 20 })
+    late.returned = 0
+    const socket = await acknowledged(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
+    await until(ended(socket.frames, "1"))
+    expect(late.returned).toBe(0)
+    late.release()
+    await until(() => late.returned === 1)
+    expect(socket.closes).toEqual([])
   })
 })

@@ -185,9 +185,18 @@ function outboundFrame(message: string, subscriptions: Set<string>): string {
   return message
 }
 
+/** Close a result that arrived after its operation timed out, if it is a stream nobody will read. */
+function disposeLate(result: unknown): void {
+  if (typeof result !== "object" || result === null || !(Symbol.asyncIterator in result)) return
+  const iterator = recordOf(result)
+  if (iterator === undefined || typeof iterator.return !== "function") return
+  Promise.resolve(iterator.return.call(result)).catch(() => {})
+}
+
 /**
  * A timeout is that operation's error result. graphql-ws does not catch a rejected execute or
- * subscribe, so a rejection would end the whole socket instead of the one operation.
+ * subscribe, so a rejection would end the whole socket instead of the one operation. Work that
+ * settles after the timeout is not abandoned open: a late subscription stream is returned.
  */
 async function withWsTimeout<T>(
   work: T | Promise<T>,
@@ -195,16 +204,18 @@ async function withWsTimeout<T>(
 ): Promise<T | ExecutionResult> {
   if (!(work instanceof Promise) || timeoutMs === 0) return work
   let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
   const timeout = new Promise<ExecutionResult>((resolve) => {
-    timer = setTimeout(
-      () => resolve({ errors: [new GraphQLError("Execution timed out.")] }),
-      timeoutMs,
-    )
+    timer = setTimeout(() => {
+      timedOut = true
+      resolve({ errors: [new GraphQLError("Execution timed out.")] })
+    }, timeoutMs)
   })
   try {
     return await Promise.race([work, timeout])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    if (timedOut) work.then(disposeLate, () => {})
   }
 }
 
