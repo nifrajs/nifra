@@ -17,6 +17,7 @@ import {
   privateEnvReads,
   privateEnvReason,
   type ZoneClassifier,
+  ZoneConfigError,
 } from "@nifrajs/web/zones"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { importSites, stripComments } from "../check-scan.ts"
@@ -48,28 +49,47 @@ interface ZonedFile {
 export function zonedFiles(ctx: RuleContext): {
   readonly files: readonly ZonedFile[]
   readonly classifierFor: (app: string) => ZoneClassifier
+  /** Apps whose `nifra.zones` setting is invalid; their files are left out of `files`. */
+  readonly configErrors: ReadonlyArray<{ readonly app: string; readonly message: string }>
 } {
-  const classifiers = new Map<string, ZoneClassifier>()
-  const classifierFor = (app: string): ZoneClassifier => {
+  const classifiers = new Map<string, ZoneClassifier | ZoneConfigError>()
+  const load = (app: string): ZoneClassifier | ZoneConfigError => {
     let classifier = classifiers.get(app)
     if (classifier === undefined) {
       const appRoot = join(ctx.root, app)
-      classifier = createZoneClassifier({
-        appRoot,
-        generatedFiles: [join(appRoot, "server-manifest.ts")],
-      })
+      try {
+        classifier = createZoneClassifier({
+          appRoot,
+          generatedFiles: [join(appRoot, "server-manifest.ts")],
+        })
+      } catch (error) {
+        if (!(error instanceof ZoneConfigError)) throw error
+        classifier = error
+      }
       classifiers.set(app, classifier)
     }
     return classifier
   }
+  const classifierFor = (app: string): ZoneClassifier => {
+    const classifier = load(app)
+    if (classifier instanceof ZoneConfigError) throw classifier
+    return classifier
+  }
   const files: ZonedFile[] = []
+  const configErrors: Array<{ app: string; message: string }> = []
   for (const file of ctx.sources.files) {
     if (!CODE_FILE.test(file)) continue
     const app = appOf(file)
     if (app === undefined) continue
-    files.push({ file, app, classification: classifierFor(app).classify(join(ctx.root, file)) })
+    const classifier = load(app)
+    if (classifier instanceof ZoneConfigError) {
+      if (!configErrors.some((entry) => entry.app === app))
+        configErrors.push({ app, message: classifier.message })
+      continue
+    }
+    files.push({ file, app, classification: classifier.classify(join(ctx.root, file)) })
   }
-  return { files, classifierFor }
+  return { files, classifierFor, configErrors }
 }
 
 const real = (path: string): string => {
@@ -102,8 +122,18 @@ export const zoneImportRule: CheckRule = {
   code: "NF-C028",
   title: "Zone import check",
   async scan(ctx) {
-    const { files, classifierFor } = zonedFiles(ctx)
-    const findings: Diagnostic[] = []
+    const { files, classifierFor, configErrors } = zonedFiles(ctx)
+    const findings: Diagnostic[] = configErrors.map(({ app, message }) =>
+      diagnostic({
+        code: "NF-C028",
+        severity: "error",
+        file: app === "" ? "package.json" : `${app}/package.json`,
+        message,
+        verify: "nifra check",
+      }),
+    )
+    // An undeclared package is one fact, however many files import it.
+    const reportedPackages = new Set<string>()
     for (const { file, app, classification: from } of files) {
       if (from.zone === "error" || from.zone === "library" || from.zone === "generated") continue
       const content = ctx.sources.read(file)
@@ -114,8 +144,13 @@ export const zoneImportRule: CheckRule = {
         const to = classifierFor(app).classify(target)
         const targetName = display(ctx.root, target)
         let message: string
-        if (to.zone === "error") message = `${file} imports ${targetName}: ${to.reason}`
-        else if (
+        if (to.zone === "error") {
+          if (to.package !== undefined) {
+            if (reportedPackages.has(to.package)) continue
+            reportedPackages.add(to.package)
+          }
+          message = `${file} imports ${targetName}: ${to.reason}`
+        } else if (
           (SERVER.has(from.zone) && FRONTEND.has(to.zone)) ||
           // Shared code reaching backend code is NF-C004's, reported there with the chain.
           (from.zone === "shared" && !importAllowed(from.zone, to.zone) && !BACKEND.has(to.zone))

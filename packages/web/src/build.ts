@@ -1009,11 +1009,22 @@ function withEmittedImports(
   return { ...graph, chunks }
 }
 
-/** Refusals the bundler stopped on before it produced a graph, so without import chains. */
+/**
+ * Refusals the bundler stopped on before it produced a graph, so without import chains. Files sharing
+ * one reason share one line: with no chain to tell them apart, 50 lines would say one thing 50 times.
+ */
 function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string): string {
-  const lines = [...refused].map(([file, reason]) => {
+  const byReason = new Map<string, string[]>()
+  for (const [file, reason] of refused) {
     const rel = relative(root, file).replaceAll("\\", "/")
-    return `  - ${rel.startsWith("..") ? file : rel}: ${reason}`
+    const shown = rel.startsWith("..") ? file : rel
+    const files = byReason.get(reason)
+    if (files === undefined) byReason.set(reason, [shown])
+    else files.push(shown)
+  }
+  const lines = [...byReason].map(([reason, files]) => {
+    const more = files.length > 5 ? ` and ${files.length - 5} more` : ""
+    return `  - ${files.slice(0, 5).join(", ")}${more}: ${reason}`
   })
   return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
 }

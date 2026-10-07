@@ -10431,6 +10431,27 @@ in its `package.json`:
 `{'"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }'}`.
 A file in no zone is a build error, so nothing is ever classified by accident.
 
+The app's own `package.json` can set sides too, so a folder that has to stay
+where it is, or a family of workspace packages, needs no edit of its own:
+
+```ts
+{
+  "name": "my-app",
+  "nifra": {
+    "zones": {
+      "packages": { "@shop/*": "library", "@shop/db": "backend" },
+      "backend": ["migrations"]
+    }
+  }
+}
+```
+
+`packages` gives a side to a package that does not declare one, by exact name or
+by a prefix ending in `*`; a package's own declaration always wins.
+`backend`, `frontend` and `shared` list app folders that
+count as that zone folder. Builds, dev servers, `nifra check` and the editor
+plugin all read this setting.
+
 ### A route is two files
 
 The page renders; its backend half loads. A server-only export (`loader`,

@@ -3121,7 +3121,7 @@
     "name": "Classification",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type Classification = {\n    readonly zone: Zone;\n    /** The package a `library` file belongs to. */\n    readonly packageName?: string;\n    /** A `library` package's own declaration, when it made one. */\n    readonly declared?: PackageEnvironment;\n    /** A third-party file's path inside `node_modules`: `drizzle-orm/node-postgres/index.js`. */\n    readonly modulePath?: string;\n} | {\n    readonly zone: \"error\";\n    readonly reason: string;\n};"
+    "signature": "export type Classification = {\n    readonly zone: Zone;\n    /** The package a `library` file belongs to. */\n    readonly packageName?: string;\n    /** A `library` package's own declaration, when it made one. */\n    readonly declared?: PackageEnvironment;\n    /** A third-party file's path inside `node_modules`: `drizzle-orm/node-postgres/index.js`. */\n    readonly modulePath?: string;\n} | {\n    readonly zone: \"error\";\n    readonly reason: string;\n    /** The undeclared package this error is about: every file in it shares the one fix. */\n    readonly package?: string;\n};"
   },
   {
     "name": "ClassifiedSchema",
@@ -15478,7 +15478,21 @@
     "name": "ZoneClassifierOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ZoneClassifierOptions {\n    /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/`. */\n    readonly appRoot: string;\n    /** The routes directory (default `<appRoot>/routes`). */\n    readonly routesDir?: string;\n    /** Extra absolute files treated as `generated` - a build's own entry modules. */\n    readonly generatedFiles?: readonly string[];\n}"
+    "signature": "export interface ZoneClassifierOptions {\n    /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/`. */\n    readonly appRoot: string;\n    /** The routes directory (default `<appRoot>/routes`). */\n    readonly routesDir?: string;\n    /** Extra absolute files treated as `generated` - a build's own entry modules. */\n    readonly generatedFiles?: readonly string[];\n    /** The app's zone settings. Default: `\"nifra\": { \"zones\": ... }` in the app's package.json. */\n    readonly zones?: ZoneConfig;\n}"
+  },
+  {
+    "name": "ZoneConfig",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ZoneConfig {\n    /**\n     * The side of a package that does not declare one in its own package.json, by name: exact\n     * (`\"@shop/db\"`) or a trailing-`*` prefix (`\"@shop/*\"`). The exact name wins over a prefix, the\n     * longest prefix over a shorter one, and a package's own declaration over all of them.\n     */\n    readonly packages?: Readonly<Record<string, PackageEnvironment>>;\n    /** App-relative folders holding backend code, beside `backend/` (`\"migrations\"`). */\n    readonly backend?: readonly string[];\n    /** App-relative folders holding frontend code, beside `frontend/`. */\n    readonly frontend?: readonly string[];\n    /** App-relative folders holding code both sides import, beside `shared/`. */\n    readonly shared?: readonly string[];\n}",
+    "doc": "/**\n * App-side zone settings, read from `\"nifra\": { \"zones\": ... }` in the app's package.json so every\n * build, dev server, `nifra check` and the editor plugin see the same ones without running app code.\n */"
+  },
+  {
+    "name": "ZoneConfigError",
+    "kind": "class",
+    "package": "@nifrajs/web",
+    "signature": "export declare class ZoneConfigError extends Error {\n    readonly name = \"ZoneConfigError\";\n}",
+    "doc": "/** A `\"nifra\": { \"zones\": ... }` setting that cannot be applied. Thrown when a classifier is created. */"
   },
   {
     "name": "admitCapability",
@@ -19759,6 +19773,13 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function parseTransportContentLength(value: string | null): number | undefined;",
     "doc": "/** Parse a decimal Content-Length without allowing malformed or unsafe values to pass as a size. */"
+  },
+  {
+    "name": "parseZoneConfig",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseZoneConfig(value: unknown, source: string): ZoneConfig;",
+    "doc": "/**\n * Validate a `zones` setting. `source` names where it came from in the error. Folders are plain\n * app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a\n * pattern can never match less than its author meant without saying so.\n */"
   },
   {
     "name": "pathTag",

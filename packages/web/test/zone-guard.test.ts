@@ -144,6 +144,41 @@ describe("buildClient refuses", () => {
     }
   })
 
+  test("an undeclared workspace package as one line, and the app's zones setting clears it", async () => {
+    const pkg = mkdtempSync(`${import.meta.dir}/.tmp-zone-guard-pkg-`)
+    try {
+      writeFileSync(join(pkg, "package.json"), '{ "name": "@ws/ui" }\n')
+      for (const name of ["a", "b", "c", "d"])
+        writeFileSync(join(pkg, `${name}.ts`), `export const ${name} = "${name}"\n`)
+      mkdirSync(join(root, "node_modules/@ws"), { recursive: true })
+      symlinkSync(pkg, join(root, "node_modules/@ws/ui"))
+      write(
+        "routes/index.tsx",
+        [
+          'import { a } from "@ws/ui/a.ts"',
+          'import { b } from "@ws/ui/b.ts"',
+          'import { c } from "@ws/ui/c.ts"',
+          'import { d } from "@ws/ui/d.ts"',
+          "export default () => [a, b, c, d]",
+          "",
+        ].join("\n"),
+      )
+      const message = await refusal()
+      const lines = message.split("\n").filter((line) => line.startsWith("  - "))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain("4 files (")
+      expect(lines[0]).toContain("and 1 more)")
+      expect(lines[0]).toContain('package "@ws/ui" is first-party code outside the app')
+      write(
+        "package.json",
+        JSON.stringify({ name: "app", nifra: { zones: { packages: { "@ws/*": "library" } } } }),
+      )
+      await build()
+    } finally {
+      rmSync(pkg, { recursive: true, force: true })
+    }
+  })
+
   test("a backend asset", async () => {
     write("backend/private.png", "\x89PNG")
     write(

@@ -2625,6 +2625,45 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("an undeclared package is one finding, and the app's zones setting gives it a side", async () => {
+    const files = {
+      "packages/loose/package.json": '{ "name": "@ws/loose" }',
+      "packages/loose/src/a.ts": "export const a = 1\n",
+      "packages/loose/src/b.ts": "export const b = 2\n",
+      "app/routes/index.tsx":
+        'import { a } from "../../packages/loose/src/a"\nexport default () => a\n',
+      "app/frontend/card.tsx":
+        'import { b } from "../../packages/loose/src/b"\nexport const Card = () => b\n',
+    }
+    const undeclared = await project(files)
+    const found = await findings(undeclared, "NF-C028")
+    expect(found).toHaveLength(1)
+    expect(found[0]).toContain('package "@ws/loose" is first-party code outside the app')
+    expect(found[0]).toContain('"packages": { "@ws/*": "backend" }')
+    const mapped = await project({
+      ...files,
+      "app/package.json": JSON.stringify({
+        nifra: { zones: { packages: { "@ws/*": "library" } } },
+      }),
+    })
+    expect(await findings(mapped, "NF-C028")).toEqual([])
+    await rm(undeclared, { recursive: true, force: true })
+    await rm(mapped, { recursive: true, force: true })
+  })
+
+  test("an invalid zones setting is one finding on the app's package.json", async () => {
+    const dir = await project({
+      "app/package.json": JSON.stringify({ nifra: { zones: { backend: "migrations" } } }),
+      "app/routes/index.tsx": "export default () => null\n",
+      "app/frontend/card.tsx": "export const Card = () => null\n",
+    })
+    const found = await findings(dir, "NF-C028")
+    expect(found).toHaveLength(1)
+    expect(found[0]).toStartWith("app/package.json:undefined [nifra]")
+    expect(found[0]).toContain('"backend" must be an array')
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("browser code reading a private variable, under the app's declared prefix", async () => {
     const dir = await project({
       "backend/framework.ts": 'export const publicEnvPrefix = "APP_PUBLIC_"\n',

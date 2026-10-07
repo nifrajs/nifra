@@ -60,6 +60,38 @@ export interface ZoneLeak {
   readonly reason: string
   /** Shortest import path from an entry: `[entry, ...as-written specifiers]`. */
   readonly chain: readonly string[]
+  /** The undeclared package the refusal is about; its files share one line in the report. */
+  readonly package?: string
+}
+
+const leakLine = (leak: ZoneLeak, module = leak.module): string =>
+  `  - ${module}: ${leak.reason}${leak.chain.length > 1 ? `\n      via ${leak.chain.join(" → ")}` : ""}`
+
+/** One line per leak, except that the files of one undeclared package share a single line. */
+function leakLines(leaks: readonly ZoneLeak[]): string[] {
+  const byPackage = new Map<string, ZoneLeak[]>()
+  for (const leak of leaks) {
+    if (leak.package === undefined) continue
+    const group = byPackage.get(leak.package)
+    if (group === undefined) byPackage.set(leak.package, [leak])
+    else group.push(leak)
+  }
+  const lines: string[] = []
+  for (const leak of leaks) {
+    const group = leak.package === undefined ? undefined : byPackage.get(leak.package)
+    if (group === undefined || group.length < 2) {
+      lines.push(leakLine(leak))
+      continue
+    }
+    if (group[0] !== leak) continue
+    const shown = group
+      .slice(0, 3)
+      .map((item) => item.module)
+      .join(", ")
+    const more = group.length > 3 ? ` and ${group.length - 3} more` : ""
+    lines.push(leakLine(leak, `${group.length} files (${shown}${more})`))
+  }
+  return lines
 }
 
 export interface ClientGraphVerdict {
@@ -192,6 +224,7 @@ export function verifyClientGraph(
   }
 
   const denied = new Map<string, string>()
+  const deniedPackage = new Map<string, string>()
   for (const id of [...Object.keys(graph.modules), ...dropped]) {
     const source = sourceOf(id)
     const file = source.kind === "builtin" ? undefined : source.file
@@ -202,6 +235,8 @@ export function verifyClientGraph(
     if (reason === undefined && BROWSER_CODE.has(classification.zone))
       reason = options.privateEnv?.(file)
     if (reason !== undefined) denied.set(id, reason)
+    if (classification.zone === "error" && classification.package !== undefined)
+      deniedPackage.set(id, classification.package)
   }
 
   // Chains start at a route file where they can: a lazily split module is an entry of its own chunk,
@@ -225,11 +260,15 @@ export function verifyClientGraph(
       : entries
   const chains = denied.size === 0 ? new Map<string, string[]>() : shortestChains(roots, edges)
   const leaks = [...denied]
-    .map(([id, reason]) => ({
-      module: labelOf(id),
-      reason,
-      chain: (chains.get(id) ?? [id]).map((label, i) => (i === 0 ? labelOf(label) : label)),
-    }))
+    .map(([id, reason]): ZoneLeak => {
+      const leak = {
+        module: labelOf(id),
+        reason,
+        chain: (chains.get(id) ?? [id]).map((label, i) => (i === 0 ? labelOf(label) : label)),
+      }
+      const pkg = deniedPackage.get(id)
+      return pkg === undefined ? leak : { ...leak, package: pkg }
+    })
     .sort((a, b) => codeUnitOrder(a.module, b.module))
 
   const misplacedExports: string[] = []
@@ -333,10 +372,14 @@ export function verifyServerGraph(
     readonly module: string
     readonly reason: string
     readonly tail?: string
+    readonly package?: string
   }> = []
   for (const [id, module] of Object.entries(graph.modules)) {
     const from = classOf(id)
-    if (from?.zone === "error") found.push({ at: id, module: labelOf(id), reason: from.reason })
+    if (from?.zone === "error") {
+      const at = { at: id, module: labelOf(id), reason: from.reason }
+      found.push(from.package === undefined ? at : { ...at, package: from.package })
+    }
     const file = fileOf(id)
     const env =
       from !== undefined && file !== undefined && BROWSER_CODE.has(from.zone)
@@ -386,9 +429,10 @@ export function verifyServerGraph(
   ]
   const chains = shortestChains(entries, edges)
   const violations = found
-    .map(({ at, module, reason, tail }) => {
+    .map(({ at, module, reason, tail, package: pkg }): ZoneLeak => {
       const chain = (chains.get(at) ?? [at]).map((label, i) => (i === 0 ? labelOf(label) : label))
-      return { module, reason, chain: tail === undefined ? chain : [...chain, tail] }
+      const violation = { module, reason, chain: tail === undefined ? chain : [...chain, tail] }
+      return pkg === undefined ? violation : { ...violation, package: pkg }
     })
     .sort((a, b) => codeUnitOrder(a.module, b.module) || codeUnitOrder(a.reason, b.reason))
   return { violations }
@@ -397,11 +441,7 @@ export function verifyServerGraph(
 /** The build-failing message for a server graph that breaks the zone rules. */
 export function formatServerGraphVerdict(verdict: ServerGraphVerdict): string | undefined {
   if (verdict.violations.length === 0) return undefined
-  const lines = verdict.violations.map(
-    (v) =>
-      `  - ${v.module}: ${v.reason}${v.chain.length > 1 ? `\n      via ${v.chain.join(" → ")}` : ""}`,
-  )
-  return `[nifra/web] the server build breaks the zone rules:\n${lines.join("\n")}`
+  return `[nifra/web] the server build breaks the zone rules:\n${leakLines(verdict.violations).join("\n")}`
 }
 
 /** One emitted file, as the accounting sees it. */
@@ -561,12 +601,8 @@ const indent = (lines: readonly string[]): string => lines.map((line) => `  - ${
 export function formatClientGraphVerdict(verdict: ClientGraphVerdict): string | undefined {
   const sections: string[] = []
   if (verdict.leaks.length > 0) {
-    const lines = verdict.leaks.map(
-      (leak) =>
-        `  - ${leak.module}: ${leak.reason}${leak.chain.length > 1 ? `\n      via ${leak.chain.join(" → ")}` : ""}`,
-    )
     sections.push(
-      `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}\n` +
+      `[nifra/web] the browser build reached code that may not ship to a browser:\n${leakLines(verdict.leaks).join("\n")}\n` +
         "Reach backend code through a route's backend half (x.backend.ts) or a *.fn.ts server function; " +
         "code both sides need belongs in shared/.",
     )

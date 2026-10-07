@@ -5997,6 +5997,10 @@ _No named exports (side-effect entrypoint)._
 - **Zone** _(type)_ - `type Zone`
 - **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
 - **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
+- **ZoneConfig** _(interface)_ - `interface ZoneConfig`
+  App-side zone settings, read from `"nifra": { "zones": ... }` in the app's package.json so every build, dev server, `nifra check` and the editor plugin see the same ones without running app code.
+- **ZoneConfigError** _(class)_ - `class ZoneConfigError`
+  A `"nifra": { "zones": ... }` setting that cannot be applied. Thrown when a classifier is created.
 - **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined`
   Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver entry is recognized by the import as written (`specifier`) or by the file's path in the package.
 - **createZoneClassifier** _(function)_ - `createZoneClassifier: (options: ZoneClassifierOptions) => ZoneClassifier`
@@ -6007,6 +6011,8 @@ _No named exports (side-effect entrypoint)._
   The message for an import {@link importAllowed} refuses.
 - **isSensitiveFieldName** _(function)_ - `isSensitiveFieldName: (name: string) => boolean`
   A field name that usually holds a credential or personal identifier.
+- **parseZoneConfig** _(function)_ - `parseZoneConfig: (value: unknown, source: string) => ZoneConfig`
+  Validate a `zones` setting. `source` names where it came from in the error. Folders are plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a pattern can never match less than its author meant without saying so.
 - **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`
   The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
 - **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`

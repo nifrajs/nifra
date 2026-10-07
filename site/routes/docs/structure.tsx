@@ -53,6 +53,16 @@ export async function loader({ params, api }: Route.LoaderArgs) {
   return res.data
 }`
 
+const ZONES_SETTING = `{
+  "name": "my-app",
+  "nifra": {
+    "zones": {
+      "packages": { "@shop/*": "library", "@shop/db": "backend" },
+      "backend": ["migrations"]
+    }
+  }
+}`
+
 const REFUSED = `[nifra/web] the browser build reached code that may not ship to a browser:
   - backend/db/index.ts: routes/users/[id].tsx (a route's frontend half) imports
     backend/db/index.ts (backend code): frontend code may not import backend code; reach it
@@ -140,6 +150,18 @@ export default function Structure() {
         in its <code>package.json</code>:{" "}
         <code>{'"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }'}</code>.
         A file in no zone is a build error, so nothing is ever classified by accident.
+      </p>
+      <p>
+        The app's own <code>package.json</code> can set sides too, so a folder that has to stay
+        where it is, or a family of workspace packages, needs no edit of its own:
+      </p>
+      <CodeBlock code={ZONES_SETTING} lang="json" />
+      <p>
+        <code>packages</code> gives a side to a package that does not declare one, by exact name or
+        by a prefix ending in <code>*</code>; a package's own declaration always wins.{" "}
+        <code>backend</code>, <code>frontend</code> and <code>shared</code> list app folders that
+        count as that zone folder. Builds, dev servers, <code>nifra check</code> and the editor
+        plugin all read this setting.
       </p>
 
       <h2>A route is two files</h2>
