@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import {
   changedPublicPackageVersions,
@@ -345,3 +346,68 @@ test("a failed publish is retried from main for a merged release SHA, under the 
   // Every later step reads the validated SHA, not the trigger's.
   expect(release.match(/workflow_run\.head_sha/g)).toHaveLength(1)
 })
+
+const GITHUB_RELEASE = "Publish the version's GitHub release"
+
+test("a published version gets its GitHub release from the only job that may write", () => {
+  const jobs = workflowJobs("release.yml")
+  const release = jobs["github-release"]
+  expect(release?.needs).toEqual(["prove-release", "publish"])
+  expect(release?.permissions).toEqual({ contents: "write" })
+  expect(
+    Object.entries(jobs)
+      .filter(([, job]) => job?.permissions?.contents === "write")
+      .map(([id]) => id),
+  ).toEqual(["github-release"])
+  const checkout = release?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
+  expect(checkout?.with?.ref).toBe(`\${{ needs.prove-release.outputs.merge_sha }}`)
+  expect(checkout?.with?.["persist-credentials"]).toBe(false)
+  expect(release?.steps?.filter((step) => step.run?.includes("install"))).toEqual([])
+  expect(release?.steps?.find((step) => step.name === GITHUB_RELEASE)?.env?.MERGE_SHA).toBe(
+    `\${{ needs.prove-release.outputs.merge_sha }}`,
+  )
+})
+
+test.skipIf(process.platform === "win32")(
+  "the release step creates the version's release once, at the merge, from its notes",
+  () => {
+    const step = releaseStep("github-release", GITHUB_RELEASE)
+    expect(step).not.toBe("")
+    const root = fileURLToPath(new URL("..", import.meta.url))
+    const { version } = JSON.parse(readFileSync(join(root, "packages/core/package.json"), "utf8"))
+    const dir = mkdtempSync(join(tmpdir(), "release-github-"))
+    try {
+      const log = join(dir, "gh.log")
+      const PATH = fakeBin(dir, {
+        gh: `#!/bin/sh\necho "$*" >> "${log}"\nif [ "$1 $2" = "release view" ]; then exit "$VIEW_EXIT"; fi\n`,
+      })
+      const sha = "a".repeat(40)
+      const run = (viewExit: string) =>
+        Bun.spawnSync(["bash", "-c", step], {
+          cwd: root,
+          env: {
+            HOME: dir,
+            PATH,
+            GH_TOKEN: "test",
+            MERGE_SHA: sha,
+            REPOSITORY: "nifrajs/nifra",
+            RUNNER_TEMP: dir,
+            VIEW_EXIT: viewExit,
+          },
+        })
+      // A rerun finds the release a first run made and leaves it alone.
+      expect(run("0").exitCode).toBe(0)
+      expect(readFileSync(log, "utf8")).not.toContain("release create")
+      expect(run("1").exitCode).toBe(0)
+      const notes = join(dir, "release-notes.md")
+      expect(readFileSync(log, "utf8").trim().split("\n").at(-1)).toBe(
+        `release create v${version} --repo nifrajs/nifra --target ${sha} --title v${version} --notes-file ${notes}`,
+      )
+      expect(readFileSync(notes, "utf8")).toStartWith(
+        `All public packages are released together at ${version}.`,
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
