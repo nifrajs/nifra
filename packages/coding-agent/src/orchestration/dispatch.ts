@@ -15,7 +15,11 @@ export const DISPATCH_JOB_NAME = "nifra.agent.run-node"
 export const MAX_DISPATCH_STRING = 256
 export const MAX_DISPATCH_ATTEMPTS = 16
 
-export type DispatchBoundary = "before-effect" | "after-effect"
+/**
+ * `before-effect`: no side effect has happened, so a redelivery may run the effect. `effect-started`:
+ * the effect was invoked and may have acted, so a redelivery needs a proof. `after-effect`: it acted.
+ */
+export type DispatchBoundary = "before-effect" | "effect-started" | "after-effect"
 export type DispatchState =
   | "queued"
   | "leased"
@@ -300,7 +304,7 @@ export function parseRunCheckpoint(value: unknown): RunCheckpoint {
   if (input.version !== RUN_DISPATCH_VERSION)
     throw new TypeError("run checkpoint.version is unsupported")
   const boundary = input.boundary
-  if (boundary !== "before-effect" && boundary !== "after-effect")
+  if (boundary !== "before-effect" && boundary !== "effect-started" && boundary !== "after-effect")
     throw new TypeError("run checkpoint.boundary is invalid")
   return Object.freeze({
     version: RUN_DISPATCH_VERSION,

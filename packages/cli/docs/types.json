@@ -4932,7 +4932,8 @@
     "name": "DispatchBoundary",
     "kind": "type",
     "package": "@nifrajs/coding-agent",
-    "signature": "export type DispatchBoundary = \"before-effect\" | \"after-effect\";"
+    "signature": "export type DispatchBoundary = \"before-effect\" | \"effect-started\" | \"after-effect\";",
+    "doc": "/**\n * `before-effect`: no side effect has happened, so a redelivery may run the effect. `effect-started`:\n * the effect was invoked and may have acted, so a redelivery needs a proof. `after-effect`: it acted.\n */"
   },
   {
     "name": "DispatchInspection",
@@ -12552,7 +12553,7 @@
     "name": "RunEffectContext",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface RunEffectContext {\n    readonly lease: RunLease;\n    readonly signal: AbortSignal;\n    /** Persist a content-free safe boundary; a failed write prevents the next unsafe step. */\n    readonly checkpoint: (boundary: \"before-effect\" | \"after-effect\") => Promise<boolean>;\n}"
+    "signature": "export interface RunEffectContext {\n    readonly lease: RunLease;\n    readonly signal: AbortSignal;\n    /**\n     * Persist a content-free safe boundary; a failed write prevents the next unsafe step. Recovery\n     * marks the effect started before invoking it, so a worker lost mid-effect is dead-lettered\n     * unless proven; `before-effect` declares nothing has acted yet, so a redelivery may rerun it.\n     */\n    readonly checkpoint: (boundary: \"before-effect\" | \"after-effect\") => Promise<boolean>;\n}"
   },
   {
     "name": "RunEvidence",

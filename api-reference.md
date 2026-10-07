@@ -1204,7 +1204,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CompileOptions** _(interface)_ - `interface CompileOptions`
   Wiring the compiler injects into every node closure.
 - **DISPATCH_JOB_NAME** _(const)_ - `DISPATCH_JOB_NAME: "nifra.agent.run-node"`
-- **DispatchBoundary** _(type)_ - `type DispatchBoundary = "before-effect" | "after-effect"`
+- **DispatchBoundary** _(type)_ - `type DispatchBoundary = "before-effect" | "effect-started" | "after-effect"`
+  `before-effect`: no side effect has happened, so a redelivery may run the effect. `effect-started`: the effect was invoked and may have acted, so a redelivery needs a proof. `after-effect`: it acted.
 - **DispatchInspection** _(interface)_ - `interface DispatchInspection`
 - **DispatchResultCode** _(type)_ - `type DispatchResultCode = | "accepted" | "stale_lease" | "cancelled" | "terminal" | "invalid_checkpoint" | "idempotency_required"`
 - **DispatchState** _(type)_ - `type DispatchState = | "queued" | "leased" | "checkpointed" | "retrying" | "succeeded" | "failed" | "cancelled" | "dead-lettered"`
