@@ -129,6 +129,16 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
     const pending = new Map<number, (message: CdpMessage) => void>()
     const listeners = new Set<(message: CdpMessage) => void>()
     let nextId = 0
+    // Bun's test runner kills every child process when a test times out, Chrome included. A call left
+    // waiting on it, and every later one, then fails at once instead of running out its own budget.
+    const closed = new Promise<never>((_, reject) => {
+      socket.addEventListener(
+        "close",
+        () => reject(new Error("headless Chrome closed its DevTools connection")),
+        { once: true },
+      )
+    })
+    closed.catch(() => undefined)
     socket.addEventListener("message", (event) => {
       const message: CdpMessage = JSON.parse(String(event.data))
       if (message.id !== undefined) {
@@ -145,7 +155,7 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
       sessionId?: string,
     ): Promise<T> => {
       const id = ++nextId
-      return new Promise((resolve, reject) => {
+      const reply = new Promise<T>((resolve, reject) => {
         pending.set(id, (message) => {
           if (message.error !== undefined) reject(new Error(`${method}: ${message.error.message}`))
           // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a CDP reply is untyped JSON; each caller names the documented result shape of the method it sent
@@ -153,6 +163,7 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
         })
         socket.send(JSON.stringify({ id, method, params, sessionId }))
       })
+      return Promise.race([reply, closed])
     }
 
     // The initial about:blank tab, not a new target: a target created later starts out backgrounded.
@@ -202,7 +213,7 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
           listeners.add(onLoad)
         })
         await send("Page.navigate", { url }, sessionId)
-        await loaded
+        await Promise.race([loaded, closed])
       },
       evaluate,
       async waitFor(expression, timeoutMs = 15_000) {
