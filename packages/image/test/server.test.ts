@@ -266,6 +266,44 @@ describe("remote source SSRF guards", () => {
       headers: { "content-type": "image/png" },
     })) as unknown as typeof fetch
 
+  test("a source rejected before its body is read is cancelled and its fetch aborted", async () => {
+    const cases: readonly [string, number, ResponseInit][] = [
+      ["declared too large", 413, { headers: { "content-length": "11" } }],
+      ["upstream error", 502, { status: 500 }],
+    ]
+    for (const [label, status, init] of cases) {
+      let cancelled = 0
+      let signal: AbortSignal | undefined
+      const fetchImpl = Object.assign(
+        async (_url: RequestInfo | URL, requestInit?: RequestInit) => {
+          signal = requestInit?.signal ?? undefined
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                cancelled++
+              },
+            }),
+            init,
+          )
+        },
+        { preconnect: () => {} },
+      )
+      const h = createImageHandler({
+        backend: makeStub().backend,
+        allowedOrigins: ["https://cdn.example"],
+        maxSourceBytes: 10,
+        fetch: fetchImpl,
+      })
+      const res = await h(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))
+      expect({ label, status: res.status, cancelled, aborted: signal?.aborted }).toEqual({
+        label,
+        status,
+        cancelled: 1,
+        aborted: true,
+      })
+    }
+  })
+
   test("remote disabled by default (empty allowlist) → 403", async () => {
     const h = createImageHandler({ backend: makeStub().backend, fetch: okFetch })
     expect((await h(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))).status).toBe(403)

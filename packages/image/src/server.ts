@@ -335,8 +335,9 @@ async function fetchRemote(
     timedOut = true
     controller.abort()
   }, cfg.fetchTimeoutMs)
+  let res: Response | undefined
   try {
-    const res = await cfg.fetchImpl(url, {
+    res = await cfg.fetchImpl(url, {
       redirect: "error", // a redirect could bounce to a disallowed origin - refuse it.
       signal: controller.signal,
       headers: { Accept: "image/*" },
@@ -355,6 +356,10 @@ async function fetchRemote(
   } finally {
     clearTimeout(timer)
     requestSignal.removeEventListener("abort", onRequestAbort)
+    // A rejection before the body was read (status, declared size, cancellation) leaves the
+    // exchange open; cancel what is left and abort the fetch so it ends with the admission slot.
+    if (res !== undefined && !res.bodyUsed) res.body?.cancel().catch(() => {})
+    controller.abort()
   }
 }
 
@@ -431,15 +436,19 @@ async function readBoundedBytes(res: Response, limit: number): Promise<Uint8Arra
   }
   const chunks: Uint8Array[] = []
   let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > limit) {
-      await reader.cancel()
-      return null
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > limit) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
     }
-    chunks.push(value)
+  } finally {
+    reader.releaseLock()
   }
   const out = new Uint8Array(total)
   let offset = 0
