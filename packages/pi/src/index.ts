@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url"
 import {
   type AgentBackend,
   type AgentBackendInfo,
+  type AgentError,
   type AgentEvent,
   type AgentEventStream,
   type AgentSessionSnapshot,
@@ -55,6 +56,8 @@ interface PiSession {
   seq: number
   turnId: string | undefined
   turnAbortCleanup: (() => void) | undefined
+  /** How the turn's latest assistant message stopped short; applied once Pi settles the run. */
+  modelStop: AssistantStop | undefined
   reloadRequested: boolean
   reloadRevision: number
   restarting: boolean
@@ -179,6 +182,7 @@ export class PiBackend implements AgentBackend {
       seq: 0,
       turnId: undefined,
       turnAbortCleanup: undefined,
+      modelStop: undefined,
       reloadRequested: false,
       reloadRevision: 0,
       restarting: false,
@@ -205,6 +209,7 @@ export class PiBackend implements AgentBackend {
     session.active = stream
     const turnId = crypto.randomUUID()
     session.turnId = turnId
+    session.modelStop = undefined
     session.reloadRequested = false
     this.updateSnapshot(session, "running")
     this.emit(session, {
@@ -597,6 +602,10 @@ export class PiBackend implements AgentBackend {
         const message = record.message
         const text = assistantText(message)
         if (text.length > 0) this.emit(session, { type: "assistant.message", turnId, text })
+        // The latest assistant message decides the turn, so a successful auto-retry clears an
+        // earlier error.
+        if (isRecord(message) && message.role === "assistant")
+          session.modelStop = assistantStop(message)
         return
       }
       case "tool_execution_start":
@@ -659,10 +668,12 @@ export class PiBackend implements AgentBackend {
         })
         return
       case "agent_settled":
-        this.finishTurn(session)
+        this.settleTurn(session)
         return
       case "agent_end":
-        this.finishTurn(session)
+        // Pi retries a transient model error after this record; the retry's run settles the turn.
+        if (record.willRetry === true) return
+        this.settleTurn(session)
         return
       case "extension_reloaded": {
         const result = reloadInfo(record.data ?? record)
@@ -767,6 +778,26 @@ export class PiBackend implements AgentBackend {
     active.complete()
     this.clearTurn(session, active, turnId)
     session.reloadRequested = false
+  }
+
+  private stopTurn(session: PiSession, reason: string): void {
+    const active = session.active
+    if (active === undefined) return
+    const turnId = session.turnId
+    this.clearTurnSignal(session)
+    this.updateSnapshot(session, "stopped")
+    this.emit(session, { type: "session.stopped", reason })
+    active.complete()
+    this.clearTurn(session, active, turnId)
+    session.reloadRequested = false
+  }
+
+  private settleTurn(session: PiSession): void {
+    const stop = session.modelStop
+    session.modelStop = undefined
+    if (stop === undefined) this.finishTurn(session)
+    else if (stop === "aborted") this.stopTurn(session, "aborted")
+    else this.failActive(session, stop)
   }
 
   private async cancelTurn(
@@ -954,6 +985,28 @@ function assistantText(value: unknown): string {
     .filter((item) => item.type === "text" && typeof item.text === "string")
     .map((item) => item.text as string)
     .join("")
+}
+
+type AssistantStop = AgentError | "aborted"
+
+// Matched against Pi's whole error text: provider auth codes sit in the body below the first line.
+const PI_AUTH_FAILURE =
+  /oauth refresh failed|invalid_refresh_token|refresh token|no api key|invalid[_ ]?(?:api[_ ]?key|x-api-key)|incorrect api key|authentication_error|unauthori[sz]ed|re-?authenticate|(?:sign(?:ing)?|log(?:ging)?)\s+in\s+again/i
+
+/** Pi's documented assistant `stopReason`s that end a run without an answer. */
+function assistantStop(message: Record<string, unknown>): AssistantStop | undefined {
+  if (message.stopReason === "aborted") return "aborted"
+  if (message.stopReason !== "error") return undefined
+  const detail =
+    typeof message.errorMessage === "string" ? message.errorMessage.slice(0, 4_096) : ""
+  // Only the first line leaves the adapter; the rest can echo a provider response body.
+  const newline = detail.indexOf("\n")
+  let end = newline === -1 ? detail.length : newline
+  while (end > 0 && " \t\r:{[".includes(detail.charAt(end - 1))) end--
+  return agentError(
+    PI_AUTH_FAILURE.test(detail) ? "PI_AUTH_REQUIRED" : "PI_MODEL_FAILED",
+    boundedPiText(detail.slice(0, end), 512) || "Pi model request failed",
+  )
 }
 
 function resultText(value: unknown): string {
