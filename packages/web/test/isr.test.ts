@@ -571,6 +571,64 @@ describe("withISR", () => {
     expect((await store.get(pageKey("/p")))?.body).toBe("v1")
   })
 
+  test("a regeneration that turns private or refused removes the stale entry; a 5xx keeps it", async () => {
+    const withdrawals: readonly [string, () => Response][] = [
+      ["private", () => html("mine", { "cache-control": "private, max-age=0" })],
+      ["no-store", () => html("mine", { "cache-control": "no-store" })],
+      [
+        "401",
+        () => new Response("sign in", { status: 401, headers: { "content-type": "text/html" } }),
+      ],
+      ["403", () => new Response("no", { status: 403, headers: { "content-type": "text/html" } })],
+    ]
+    for (const [label, withdrawn] of withdrawals) {
+      const store = new MemoryCacheStore()
+      let t = 0
+      let changed = false
+      const { app } = trackApp(() => (changed ? withdrawn() : html("PREVIOUS_PUBLIC")))
+      const handler = withISR(app, { store, revalidate: 1, now: () => t })
+      await handler(new Request("http://x/p"))
+      changed = true
+      t = 2000
+      const plat = collectWaitUntil()
+      await handler(new Request("http://x/p"), plat)
+      await plat.settle()
+      expect({ label, stored: await store.get(pageKey("/p")) }).toEqual({
+        label,
+        stored: undefined,
+      })
+      expect(await (await handler(new Request("http://x/p"))).text()).not.toBe("PREVIOUS_PUBLIC")
+    }
+    // Kept: a server failure, and a signed-in visitor's own private copy or refusal.
+    const kept: readonly [string, () => Response, Record<string, string>][] = [
+      [
+        "503",
+        () => new Response("down", { status: 503, headers: { "content-type": "text/html" } }),
+        {},
+      ],
+      [
+        "signed-in private",
+        () => html("mine", { "cache-control": "private" }),
+        { cookie: "sid=a" },
+      ],
+      ["signed-in 403", () => new Response("no", { status: 403 }), { authorization: "Bearer a" }],
+    ]
+    for (const [label, answer, headers] of kept) {
+      const store = new MemoryCacheStore()
+      let t = 0
+      let changed = false
+      const { app } = trackApp(() => (changed ? answer() : html("v1")))
+      const handler = withISR(app, { store, revalidate: 1, now: () => t })
+      await handler(new Request("http://x/p"))
+      changed = true
+      t = 2000
+      const plat = collectWaitUntil()
+      await handler(new Request("http://x/p", { headers }), plat)
+      await plat.settle()
+      expect({ label, body: (await store.get(pageKey("/p")))?.body }).toEqual({ label, body: "v1" })
+    }
+  })
+
   test("a regeneration that becomes a redirect removes the stale entry", async () => {
     const store = new MemoryCacheStore()
     let cacheable = true

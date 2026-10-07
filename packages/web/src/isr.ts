@@ -653,8 +653,22 @@ function sanitizeCachedHeaders(headers: Readonly<Record<string, string>>): Recor
   return out
 }
 
-const isInvalidationResponse = (res: Response): boolean =>
-  res.status === 404 || res.status === 410 || (res.status >= 300 && res.status < 400)
+/**
+ * Whether a regeneration's answer withdraws the stored page: it is gone or moved, or, rendered for a
+ * request with no cookie or Authorization, refused (401, 403) or declared `private`/`no-store`. A
+ * signed-in visitor's own 403 or private copy says nothing about the shared page. A 5xx or 429 keeps
+ * serving the stale copy.
+ */
+const isInvalidationResponse = (req: Request, res: Response): boolean => {
+  if (res.status === 404 || res.status === 410 || (res.status >= 300 && res.status < 400))
+    return true
+  if (requestCarriesPrivateState(req)) return false
+  return (
+    res.status === 401 ||
+    res.status === 403 ||
+    (res.status >= 200 && res.status < 300 && cacheControlHas(res.headers, ["private", "no-store"]))
+  )
+}
 
 /**
  * Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from
@@ -774,10 +788,11 @@ export function withISR(
           revalidate: ttlMs(res),
           ...(tags.length === 0 ? {} : { tags }),
         })
-      } else if (isInvalidationResponse(res)) {
-        // A successful deletion or redirect is authoritative. Keeping the old entry would make a
-        // withdrawn page stay publicly visible forever because every stale request would retry the same
-        // non-cacheable response while continuing to serve the old body.
+      } else if (isInvalidationResponse(req, res)) {
+        // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
+        // publicly visible forever, because every stale request would retry the same non-cacheable
+        // response while continuing to serve the old body.
+        await res.body?.cancel()
         await store.delete(key)
       } else {
         await res.body?.cancel()
