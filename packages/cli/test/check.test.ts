@@ -255,6 +255,7 @@ describe("release verification", () => {
         "middleware-performance",
         "output-guard-performance",
         "edge-startup",
+        "server-components-performance",
       ])
       expect(result.ok).toBe(true)
       expect(result.localGateIds).toEqual(local)
