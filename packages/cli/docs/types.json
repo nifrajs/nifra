@@ -84,6 +84,20 @@
     "signature": "export declare const AGENT_CARD_WELL_KNOWN_PATH = \"/.well-known/agent-card.json\";"
   },
   {
+    "name": "AGENT_MAX_EVENT_TEXT",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const AGENT_MAX_EVENT_TEXT: number;",
+    "doc": "/** Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units. */"
+  },
+  {
+    "name": "AGENT_MAX_PAYLOAD_STRING",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const AGENT_MAX_PAYLOAD_STRING: number;",
+    "doc": "/** Longest string an event's `input`, `output`, or `details` value may carry. */"
+  },
+  {
     "name": "AGENT_POINTERS",
     "kind": "const",
     "package": "create-nifra",
@@ -9206,7 +9220,7 @@
     "name": "NifraBackendOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    /** Maximum time a protocol-visible native approval may remain unresolved. */\n    readonly approvalTimeoutMs?: number;\n    readonly maxSteps?: number;\n    readonly maxMessageChars?: number;\n    /**\n     * Character budget for the conversation a session sends to the model (default 1 MiB). Past it,\n     * whole earlier turns are dropped, oldest first; the current turn is always sent in full.\n     */\n    readonly maxHistoryChars?: number;\n    readonly now?: () => number;\n}"
+    "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    /** Maximum time a protocol-visible native approval may remain unresolved. */\n    readonly approvalTimeoutMs?: number;\n    readonly maxSteps?: number;\n    /** Longest message `send` accepts (default 64 KiB). */\n    readonly maxMessageChars?: number;\n    /**\n     * Longest reply the model may give in one turn (default 1 MiB); past it the reply is cut with\n     * a marker. A reply longer than one event's text travels as consecutive `assistant.message`\n     * events, and the model's history keeps it whole.\n     */\n    readonly maxReplyChars?: number;\n    /**\n     * Character budget for the conversation a session sends to the model (default 1 MiB). Past it,\n     * whole earlier turns are dropped, oldest first; the current turn is always sent in full.\n     */\n    readonly maxHistoryChars?: number;\n    readonly now?: () => number;\n}"
   },
   {
     "name": "NifraContextLike",
@@ -16187,6 +16201,20 @@
     "doc": "/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive). */"
   },
   {
+    "name": "boundAgentText",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function boundAgentText(text: string, maxChars?: number): string;",
+    "doc": "/**\n * Bound text for one event field: NUL becomes U+FFFD and text past `maxChars` is cut, ending\n * in a truncation marker, never between the halves of a surrogate pair.\n */"
+  },
+  {
+    "name": "boundAgentValue",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function boundAgentValue(value: unknown): unknown;",
+    "doc": "/**\n * A copy of a JSON-like value that fits an event's `input`, `output`, or `details`, for display\n * only: the tool, model, or store keeps the full value. Strings are cut with a truncation marker\n * (and their NULs replaced); arrays keep their first items and end with a marker string; objects\n * keep their first keys and drop entries whose key the protocol refuses; a container too deep\n * becomes a marker string; numbers past the safe-integer range become strings, non-finite ones\n * null; functions, symbols, bigints, and `undefined` are dropped (null inside an array). Returns\n * `undefined` when the value itself is one of those.\n */"
+  },
+  {
     "name": "boundaryCommands",
     "kind": "function",
     "package": "@nifrajs/agent-app",
@@ -22180,6 +22208,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function specifierPackage(specifier: string): string | undefined;",
     "doc": "/** The package name a bare specifier names, or `undefined` for a relative path, a builtin, a\n * subpath import (`#x`) or a bundler-virtual id. */"
+  },
+  {
+    "name": "splitAgentText",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function splitAgentText(text: string, maxChars?: number): string[];",
+    "doc": "/**\n * Split text into pieces that each fit an event's text field, so a long reply travels as\n * consecutive events instead of failing validation. Joined, the pieces give back the text with\n * each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last\n * quarter, and never between the halves of a surrogate pair. Empty text gives one empty piece.\n */"
   },
   {
     "name": "sqliteRelations",

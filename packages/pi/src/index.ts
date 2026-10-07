@@ -1,16 +1,20 @@
 import { fileURLToPath } from "node:url"
 import {
+  AGENT_MAX_PAYLOAD_STRING,
   type AgentBackend,
   type AgentBackendInfo,
   type AgentEvent,
   type AgentEventStream,
   type AgentSessionSnapshot,
   agentError,
+  boundAgentText,
+  boundAgentValue,
   type CreateSessionInput,
   createAgentEventStream,
   isAgentEvent,
   type ReloadResult,
   type SendMessageInput,
+  splitAgentText,
 } from "@nifrajs/agent-protocol"
 
 export interface PiBackendOptions {
@@ -214,7 +218,7 @@ export class PiBackend implements AgentBackend {
     this.emit(session, {
       type: "turn.started",
       turnId: session.turnId,
-      prompt: input.message,
+      prompt: boundAgentText(input.message),
     })
     if (input.signal !== undefined) {
       const externalSignal = input.signal
@@ -594,37 +598,50 @@ export class PiBackend implements AgentBackend {
       case "message_update": {
         const delta = record.assistantMessageEvent
         if (isRecord(delta) && delta.type === "text_delta" && typeof delta.delta === "string") {
-          this.emit(session, { type: "assistant.delta", turnId, text: delta.delta })
+          for (const text of splitAgentText(delta.delta))
+            this.emit(session, { type: "assistant.delta", turnId, text })
         }
         return
       }
       case "message_end": {
         const message = record.message
         const text = assistantText(message)
-        if (text.length > 0) this.emit(session, { type: "assistant.message", turnId, text })
+        if (text.length > 0)
+          for (const piece of splitAgentText(text))
+            this.emit(session, { type: "assistant.message", turnId, text: piece })
         if (isRecord(message) && message.role === "assistant")
           session.modelError =
             message.stopReason === "error" ? modelErrorText(message.errorMessage) : undefined
         return
       }
       case "tool_execution_start":
-        if (typeof record.toolCallId === "string" && typeof record.toolName === "string")
-          this.emit(session, {
+        if (typeof record.toolCallId === "string" && typeof record.toolName === "string") {
+          const started: ToolStartedPayload = {
             type: "tool.started",
             turnId,
             callId: record.toolCallId,
             name: record.toolName,
-            input: record.args,
-          })
+          }
+          const input = boundAgentValue(record.args)
+          if (input !== undefined) started.input = input
+          this.emit(session, started)
+        }
         return
       case "tool_execution_update": {
         const text = resultText(record.partialResult)
         if (typeof record.toolCallId === "string" && text.length > 0)
-          this.emit(session, { type: "tool.delta", turnId, callId: record.toolCallId, text })
+          for (const piece of splitAgentText(text))
+            this.emit(session, {
+              type: "tool.delta",
+              turnId,
+              callId: record.toolCallId,
+              text: piece,
+            })
         return
       }
       case "tool_execution_end": {
         const result = isRecord(record.result) ? record.result : undefined
+        const text = resultText(result)
         if (typeof record.toolCallId === "string" && typeof record.toolName === "string")
           this.emit(session, {
             type: "tool.completed",
@@ -632,9 +649,11 @@ export class PiBackend implements AgentBackend {
             callId: record.toolCallId,
             name: record.toolName,
             ok: record.isError !== true,
-            ...(result === undefined ? {} : { output: resultText(result) }),
+            ...(result === undefined
+              ? {}
+              : { output: boundAgentText(text, AGENT_MAX_PAYLOAD_STRING) }),
             ...(record.isError === true
-              ? { error: agentError("PI_TOOL_FAILED", resultText(result) || "Pi tool failed") }
+              ? { error: agentError("PI_TOOL_FAILED", boundAgentText(text || "Pi tool failed")) }
               : {}),
           })
         return
@@ -959,6 +978,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
+interface ToolStartedPayload {
+  type: "tool.started"
+  turnId: string
+  callId: string
+  name: string
+  input?: unknown
+}
+
 function assistantText(value: unknown): string {
   if (!isRecord(value) || value.role !== "assistant") return ""
   const content = value.content
@@ -1010,8 +1037,9 @@ function modelErrorText(value: unknown): string {
 
 function boundedPiText(value: unknown, maxChars: number): string {
   if (typeof value !== "string") return ""
-  if (value.length <= maxChars) return value
-  return `${value.slice(0, Math.max(0, maxChars - 1))}…`
+  const text = value.replaceAll("\0", "\uFFFD")
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, Math.max(0, maxChars - 1))}…`
 }
 
 interface PiReloadInfo {

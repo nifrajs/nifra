@@ -13,6 +13,8 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
 - **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
+- **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string`
+- **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown`
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
@@ -22,10 +24,8 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
 - **negotiateFeatures** _(function)_ - `negotiateFeatures: (offered: readonly string[], requested: readonly string[]) => FeatureNegotiation`
 - **nextApprovalState** _(function)_ - `nextApprovalState: (from: ApprovalLifecycleState, op: BoundaryOp) => ApprovalLifecycleState | undefined`
-- **nextHandoffState** _(function)_ - `nextHandoffState: (from: HandoffLifecycleState, op: BoundaryOp) => HandoffLifecycleState | undefined`
-- **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
 
-_…and 94 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 99 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

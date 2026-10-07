@@ -5,17 +5,21 @@ import {
   structuredOutputParser,
 } from "@nifrajs/agent"
 import {
+  AGENT_MAX_PAYLOAD_STRING,
   type AgentBackend,
   type AgentBackendInfo,
   type AgentEvent,
   type AgentEventStream,
   type AgentSessionSnapshot,
   agentError,
+  boundAgentText,
+  boundAgentValue,
   type CreateSessionInput,
   createAgentEventStream,
   isAgentEvent,
   type ReloadResult,
   type SendMessageInput,
+  splitAgentText,
 } from "@nifrajs/agent-protocol"
 
 export interface NativeMessage {
@@ -122,7 +126,14 @@ export interface NifraBackendOptions {
   /** Maximum time a protocol-visible native approval may remain unresolved. */
   readonly approvalTimeoutMs?: number
   readonly maxSteps?: number
+  /** Longest message `send` accepts (default 64 KiB). */
   readonly maxMessageChars?: number
+  /**
+   * Longest reply the model may give in one turn (default 1 MiB); past it the reply is cut with
+   * a marker. A reply longer than one event's text travels as consecutive `assistant.message`
+   * events, and the model's history keeps it whole.
+   */
+  readonly maxReplyChars?: number
   /**
    * Character budget for the conversation a session sends to the model (default 1 MiB). Past it,
    * whole earlier turns are dropped, oldest first; the current turn is always sent in full.
@@ -186,7 +197,7 @@ export class NifraBackend implements AgentBackend {
     capabilities: Object.freeze(["sessions", "extensions", "reload", "approvals", "streaming"]),
   })
   private readonly options: Required<
-    Pick<NifraBackendOptions, "maxSteps" | "maxMessageChars" | "maxHistoryChars">
+    Pick<NifraBackendOptions, "maxSteps" | "maxMessageChars" | "maxReplyChars" | "maxHistoryChars">
   > &
     NifraBackendOptions
   private readonly sessions = new Map<string, NativeSession>()
@@ -197,6 +208,7 @@ export class NifraBackend implements AgentBackend {
       ...options,
       maxSteps: options.maxSteps ?? 32,
       maxMessageChars: options.maxMessageChars ?? 64 * 1024,
+      maxReplyChars: options.maxReplyChars ?? 1024 * 1024,
       maxHistoryChars: options.maxHistoryChars ?? 1024 * 1024,
       tools: Object.freeze([...(options.tools ?? [])]),
     })
@@ -208,6 +220,8 @@ export class NifraBackend implements AgentBackend {
       throw new RangeError("nifra backend: maxSteps must be between 1 and 512")
     if (!Number.isSafeInteger(this.options.maxMessageChars) || this.options.maxMessageChars < 256)
       throw new RangeError("nifra backend: maxMessageChars must be at least 256")
+    if (!Number.isSafeInteger(this.options.maxReplyChars) || this.options.maxReplyChars < 256)
+      throw new RangeError("nifra backend: maxReplyChars must be at least 256")
     if (!Number.isSafeInteger(this.options.maxHistoryChars) || this.options.maxHistoryChars < 256)
       throw new RangeError("nifra backend: maxHistoryChars must be at least 256")
     if (
@@ -387,9 +401,10 @@ export class NifraBackend implements AgentBackend {
       return
     }
     this.update(session, "running", turnId)
-    this.emit(session, { type: "turn.started", turnId, prompt: message })
-    this.remember(session, { role: "user", text: message })
     try {
+      // The event carries a display copy; the model gets the whole message.
+      this.emit(session, { type: "turn.started", turnId, prompt: boundAgentText(message) })
+      this.remember(session, { role: "user", text: message })
       for (let step = 0; step < this.options.maxSteps; step++) {
         this.assertCurrentTurn(session, stream, turnId, signal)
         this.trimHistory(session)
@@ -409,9 +424,10 @@ export class NifraBackend implements AgentBackend {
         const response = await this.consumeModel(raw, session, stream, turnId, signal)
         this.assertCurrentTurn(session, stream, turnId, signal)
         if (response.type === "text") {
-          const text = boundedText(response.text, this.options.maxMessageChars)
+          const text = boundedText(response.text, this.options.maxReplyChars)
           this.remember(session, { role: "assistant", text })
-          this.emit(session, { type: "assistant.message", turnId, text })
+          for (const piece of splitAgentText(text))
+            this.emit(session, { type: "assistant.message", turnId, text: piece })
           this.finish(session, stream)
           return
         }
@@ -421,22 +437,28 @@ export class NifraBackend implements AgentBackend {
             type: "tool.completed",
             turnId,
             callId: crypto.randomUUID(),
-            name: response.name,
+            name: boundedApprovalToken(response.name) ? response.name : "unknown",
             ok: false,
-            error: agentError("UNKNOWN_TOOL", `unknown native tool: ${response.name}`),
+            error: agentError(
+              "UNKNOWN_TOOL",
+              boundAgentText(`unknown native tool: ${response.name}`, 512),
+            ),
           })
           this.remember(session, { role: "tool", name: response.name, text: "unknown tool" })
           continue
         }
         const callId = crypto.randomUUID()
         const execute = tool.execute
-        this.emit(session, {
+        // The event carries a display copy; the approval and the tool get the whole input.
+        const started: ToolStartedPayload = {
           type: "tool.started",
           turnId,
           callId,
           name: tool.name,
-          input: response.input,
-        })
+        }
+        const shown = boundAgentValue(response.input)
+        if (shown !== undefined) started.input = shown
+        this.emit(session, started)
         const needsApproval =
           typeof tool.requiresApproval === "function"
             ? await tool.requiresApproval(response.input)
@@ -477,14 +499,12 @@ export class NifraBackend implements AgentBackend {
             callId,
             name: tool.name,
             ok: true,
-            output: text,
+            output: boundAgentText(text, AGENT_MAX_PAYLOAD_STRING),
           })
         } catch (error) {
           if (signal.aborted || !this.isCurrentTurn(session, stream, turnId, signal)) throw error
-          const message = boundedText(
-            error instanceof Error ? error.message : error,
-            this.options.maxMessageChars,
-          )
+          const message =
+            boundedText(error instanceof Error ? error.message : error) || "native tool failed"
           this.remember(session, { role: "tool", name: tool.name, text: message })
           this.emit(session, {
             type: "tool.completed",
@@ -492,7 +512,7 @@ export class NifraBackend implements AgentBackend {
             callId,
             name: tool.name,
             ok: false,
-            error: agentError("TOOL_FAILED", message),
+            error: agentError("TOOL_FAILED", boundAgentText(message)),
           })
         }
       }
@@ -511,7 +531,10 @@ export class NifraBackend implements AgentBackend {
         type: "session.failed",
         error: agentError(
           "NATIVE_TURN_FAILED",
-          boundedText(error instanceof Error ? error.message : error, 4_096),
+          boundAgentText(
+            boundedText(error instanceof Error ? error.message : error, 4_096) ||
+              "native turn failed",
+          ),
         ),
         recoverable: true,
       })
@@ -529,11 +552,19 @@ export class NifraBackend implements AgentBackend {
   ): Promise<NativeModelResponse> {
     if (isAsyncIterable<NativeModelChunk>(raw)) {
       let response: NativeModelResponse | undefined
+      // Streamed text stops where the final reply is cut, so the deltas never outgrow it.
+      let room = this.options.maxReplyChars
       for await (const chunk of raw) {
         this.assertCurrentTurn(session, stream, turnId, signal)
-        if (chunk.type === "text_delta")
-          this.emit(session, { type: "assistant.delta", turnId, text: chunk.text })
-        else response = chunk.response
+        if (chunk.type !== "text_delta") {
+          response = chunk.response
+          continue
+        }
+        if (room <= 0) continue
+        const text = chunk.text.slice(0, room)
+        room -= text.length
+        for (const piece of splitAgentText(text))
+          this.emit(session, { type: "assistant.delta", turnId, text: piece })
       }
       if (response === undefined) throw new Error("native model stream ended without a response")
       this.assertCurrentTurn(session, stream, turnId, signal)
@@ -692,7 +723,7 @@ export class NifraBackend implements AgentBackend {
       return
     const stream = session.active
     const turnId = session.turnId
-    const stopReason = boundedText(reason, 512) || "cancelled"
+    const stopReason = boundAgentText(boundedText(reason, 512) || "cancelled")
     session.cancelled = true
     this.clearTurnSignal(session)
     try {
@@ -810,6 +841,14 @@ export class NifraBackend implements AgentBackend {
         session.historyChars -= messageChars(item)
     }
   }
+}
+
+interface ToolStartedPayload {
+  type: "tool.started"
+  turnId: string
+  callId: string
+  name: string
+  input?: unknown
 }
 
 function messageChars(message: NativeMessage): number {

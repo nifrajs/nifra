@@ -421,6 +421,164 @@ const AGENT_COMPACTION_REASONS: ReadonlySet<string> = new Set([
   "workflow",
 ])
 
+/** Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units. */
+export const AGENT_MAX_EVENT_TEXT = AGENT_MAX_TEXT
+/** Longest string an event's `input`, `output`, or `details` value may carry. */
+export const AGENT_MAX_PAYLOAD_STRING = AGENT_MAX_PAYLOAD_TEXT
+
+const AGENT_TRUNCATED = "…[truncated]"
+const AGENT_REPLACEMENT = String.fromCodePoint(0xfffd)
+// Soft budget for the strings of one bounded value, so a display copy stays near one text field.
+const AGENT_MAX_VALUE_CHARS = AGENT_MAX_TEXT
+
+/**
+ * Split text into pieces that each fit an event's text field, so a long reply travels as
+ * consecutive events instead of failing validation. Joined, the pieces give back the text with
+ * each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last
+ * quarter, and never between the halves of a surrogate pair. Empty text gives one empty piece.
+ */
+export function splitAgentText(text: string, maxChars: number = AGENT_MAX_TEXT): string[] {
+  if (!Number.isSafeInteger(maxChars) || maxChars < 2 || maxChars > AGENT_MAX_TEXT)
+    throw new RangeError(`splitAgentText: maxChars must be between 2 and ${AGENT_MAX_TEXT}`)
+  const clean = text.replaceAll("\0", AGENT_REPLACEMENT)
+  if (clean.length <= maxChars) return [clean]
+  const pieces: string[] = []
+  let start = 0
+  while (clean.length - start > maxChars) {
+    let end = start + maxChars
+    const searchFrom = start + Math.floor((maxChars * 3) / 4)
+    const lineEnd = clean.slice(searchFrom, end).lastIndexOf("\n")
+    if (lineEnd !== -1) end = searchFrom + lineEnd + 1
+    else if (isHighSurrogate(clean.charCodeAt(end - 1)) && isLowSurrogate(clean.charCodeAt(end)))
+      end -= 1
+    pieces.push(clean.slice(start, end))
+    start = end
+  }
+  pieces.push(clean.slice(start))
+  return pieces
+}
+
+/**
+ * Bound text for one event field: NUL becomes U+FFFD and text past `maxChars` is cut, ending
+ * in a truncation marker, never between the halves of a surrogate pair.
+ */
+export function boundAgentText(text: string, maxChars: number = AGENT_MAX_TEXT): string {
+  if (
+    !Number.isSafeInteger(maxChars) ||
+    maxChars < AGENT_TRUNCATED.length ||
+    maxChars > AGENT_MAX_TEXT
+  )
+    throw new RangeError(
+      `boundAgentText: maxChars must be between ${AGENT_TRUNCATED.length} and ${AGENT_MAX_TEXT}`,
+    )
+  const clean = text.replaceAll("\0", AGENT_REPLACEMENT)
+  return clean.length <= maxChars ? clean : truncateAgentText(clean, maxChars)
+}
+
+/**
+ * A copy of a JSON-like value that fits an event's `input`, `output`, or `details`, for display
+ * only: the tool, model, or store keeps the full value. Strings are cut with a truncation marker
+ * (and their NULs replaced); arrays keep their first items and end with a marker string; objects
+ * keep their first keys and drop entries whose key the protocol refuses; a container too deep
+ * becomes a marker string; numbers past the safe-integer range become strings, non-finite ones
+ * null; functions, symbols, bigints, and `undefined` are dropped (null inside an array). Returns
+ * `undefined` when the value itself is one of those.
+ */
+export function boundAgentValue(value: unknown): unknown {
+  const copy = copyBoundedAgentValue(value, 0, { nodes: 2_048, chars: AGENT_MAX_VALUE_CHARS })
+  return copy === AGENT_OMIT ? undefined : copy
+}
+
+interface AgentValueBudget {
+  nodes: number
+  chars: number
+}
+
+const AGENT_OMIT: unique symbol = Symbol("omit")
+
+function copyBoundedAgentValue(
+  value: unknown,
+  depth: number,
+  budget: AgentValueBudget,
+): unknown | typeof AGENT_OMIT {
+  if (
+    value === undefined ||
+    typeof value === "function" ||
+    typeof value === "symbol" ||
+    typeof value === "bigint"
+  )
+    return AGENT_OMIT
+  if (budget.nodes <= 0) return AGENT_OMIT
+  budget.nodes -= 1
+  if (value === null || typeof value === "boolean") return value
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null
+    return Math.abs(value) <= Number.MAX_SAFE_INTEGER ? value : String(value)
+  }
+  if (typeof value === "string") {
+    const clean = value.replaceAll("\0", AGENT_REPLACEMENT)
+    const limit = Math.max(AGENT_TRUNCATED.length, Math.min(AGENT_MAX_PAYLOAD_TEXT, budget.chars))
+    const bounded = clean.length <= limit ? clean : truncateAgentText(clean, limit)
+    budget.chars = Math.max(0, budget.chars - bounded.length)
+    return bounded
+  }
+  if (typeof value !== "object") return AGENT_OMIT
+  if (Array.isArray(value)) {
+    if (depth >= AGENT_MAX_PAYLOAD_DEPTH) return value.length === 0 ? [] : AGENT_TRUNCATED
+    const copy: unknown[] = []
+    for (const [index, item] of value.entries()) {
+      if (copy.length === AGENT_MAX_ARRAY - 1 && value.length > AGENT_MAX_ARRAY) {
+        const marker = copyBoundedAgentValue(
+          `…[${value.length - index} more items]`,
+          depth + 1,
+          budget,
+        )
+        if (marker !== AGENT_OMIT) copy.push(marker)
+        break
+      }
+      // An item JSON has no form for stands as null, which costs a node like any other.
+      const child = copyBoundedAgentValue(item, depth + 1, budget)
+      const kept = child === AGENT_OMIT ? copyBoundedAgentValue(null, depth + 1, budget) : child
+      if (kept === AGENT_OMIT) break
+      copy.push(kept)
+    }
+    return copy
+  }
+  const entries = Object.entries(value)
+  if (depth >= AGENT_MAX_PAYLOAD_DEPTH) return entries.length === 0 ? {} : AGENT_TRUNCATED
+  const copy: Record<string, unknown> = {}
+  let keys = 0
+  for (const [key, item] of entries) {
+    if (keys === AGENT_MAX_OBJECT_KEYS || budget.nodes <= 0) break
+    if (!agentText(key, 128, false)) continue
+    const child = copyBoundedAgentValue(item, depth + 1, budget)
+    if (child === AGENT_OMIT) continue
+    // A "__proto__" key from parsed JSON must stay an own entry, not replace the prototype.
+    Object.defineProperty(copy, key, {
+      value: child,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+    keys += 1
+  }
+  return copy
+}
+
+function truncateAgentText(text: string, maxChars: number): string {
+  let end = Math.max(0, maxChars - AGENT_TRUNCATED.length)
+  if (end > 0 && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1
+  return `${text.slice(0, end)}${AGENT_TRUNCATED}`
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
+}
+
 function agentRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }

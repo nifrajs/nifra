@@ -11519,6 +11519,12 @@ const events = createAgentEventStream(256)
 events.push(/* a versioned AgentEvent */)
 ```
 
+`isAgentEvent` refuses an event past the protocol's bounds: 256 KiB characters of `text`, `prompt`, or
+error message, and 64 KiB per string inside `input`, `output`, or `details`. A backend keeps its
+events inside them with `splitAgentText` (a long reply as consecutive events that join back),
+`boundAgentText` (one field, cut with a marker), and `boundAgentValue` (a display copy of a tool's
+input or output; the tool itself still gets the whole value).
+
 Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
 runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI
 clients can share it without pulling in the Nifra application framework.
@@ -12261,7 +12267,10 @@ loading code you do not trust.
 an injected model implementation and bounded tools without importing a provider
 SDK. The conversation it sends the model is capped by `maxHistoryChars` (default
 1 MiB): past it, whole earlier turns are dropped, oldest first, and the current
-turn is always sent in full. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+turn is always sent in full. `maxMessageChars` (default 64 KiB) caps the message `send` accepts and
+`maxReplyChars` (default 1 MiB) the model's reply; a reply longer than one event's text arrives as
+consecutive `assistant.message` events, and a tool's event shows a bounded copy of its input while
+the tool runs with all of it. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
 ## At-least-once run dispatch
@@ -15171,7 +15180,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-protocol
 
-`AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `ReloadResult`, `SendMessageInput`, `agentError`, `createAgentEventStream`, `isAgentEvent`
+`AGENT_MAX_EVENT_TEXT`, `AGENT_MAX_PAYLOAD_STRING`, `AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `ReloadResult`, `SendMessageInput`, `agentError`, `boundAgentText`, `boundAgentValue`, `createAgentEventStream`, `isAgentEvent`, `splitAgentText`
 
 ## @nifrajs/agent-review
 

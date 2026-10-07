@@ -47,7 +47,10 @@ loading code you do not trust.
 an injected model implementation and bounded tools without importing a provider
 SDK. The conversation it sends the model is capped by `maxHistoryChars` (default
 1 MiB): past it, whole earlier turns are dropped, oldest first, and the current
-turn is always sent in full. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+turn is always sent in full. `maxMessageChars` (default 64 KiB) caps the message `send` accepts and
+`maxReplyChars` (default 1 MiB) the model's reply; a reply longer than one event's text arrives as
+consecutive `assistant.message` events, and a tool's event shows a bounded copy of its input while
+the tool runs with all of it. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
 ## At-least-once run dispatch

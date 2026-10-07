@@ -386,6 +386,10 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-protocol
 
+- **AGENT_MAX_EVENT_TEXT** _(const)_ - `AGENT_MAX_EVENT_TEXT: number`
+  Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units.
+- **AGENT_MAX_PAYLOAD_STRING** _(const)_ - `AGENT_MAX_PAYLOAD_STRING: number`
+  Longest string an event's `input`, `output`, or `details` value may carry.
 - **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
   Backend-neutral protocol for local coding-agent hosts.
 - **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
@@ -515,6 +519,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
+- **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string`
+  Bound text for one event field: NUL becomes U+FFFD and text past `maxChars` is cut, ending in a truncation marker, never between the halves of a surrogate pair.
+- **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown`
+  A copy of a JSON-like value that fits an event's `input`, `output`, or `details`, for display only: the tool, model, or store keeps the full value. Strings are cut with a truncation marker (and their NULs replaced); arrays keep their first items and end with a marker string; objects keep their firs…
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
   True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed.
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
@@ -557,6 +565,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Read a Web stream under one byte cap, canceling the source as soon as the cap is exceeded.
 - **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
   Resume an ordered, seq-keyed window from a cursor.
+- **splitAgentText** _(function)_ - `splitAgentText: (text: string, maxChars?: number) => string[]`
+  Split text into pieces that each fit an event's text field, so a long reply travels as consecutive events instead of failing validation. Joined, the pieces give back the text with each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last quarter, and never between the …
 - **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`
   Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any boundary has opened for the run.
 

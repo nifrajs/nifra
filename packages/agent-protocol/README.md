@@ -13,6 +13,12 @@ const events = createAgentEventStream(256)
 events.push(/* a versioned AgentEvent */)
 ```
 
+`isAgentEvent` refuses an event past the protocol's bounds: 256 KiB characters of `text`, `prompt`, or
+error message, and 64 KiB per string inside `input`, `output`, or `details`. A backend keeps its
+events inside them with `splitAgentText` (a long reply as consecutive events that join back),
+`boundAgentText` (one field, cut with a marker), and `boundAgentValue` (a display copy of a tool's
+input or output; the tool itself still gets the whole value).
+
 Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
 runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI
 clients can share it without pulling in the Nifra application framework.
