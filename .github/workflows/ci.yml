@@ -140,6 +140,9 @@ jobs:
         run: bun run check:server-components:contracts
 
   server-components:
+    # The browser x runtime matrix runs once per release, in release verification. This job is the
+    # manual pre-release run for a branch; PRs keep the contracts step and the component unit tests.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
