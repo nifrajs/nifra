@@ -12947,6 +12947,8 @@ pubsub.publish("count", 1)
 
 The route must negotiate the `graphql-transport-ws` subprotocol at the WebSocket layer for a browser `graphql-ws` client to connect.
 
+With `subscriptions: true`, a socket is admitted only when `authorize` accepts its upgrade request, and operations over it get the same query limits as HTTP. A browser cannot set headers on a WebSocket upgrade, so cookie auth carries over and bearer-header auth does not; for a token sent in `connection_init`, pass WS options with `onConnect` instead. When `authorize` is set, WS options must have their own `authorize` or `onConnect` (`onConnect: () => true` admits every socket on purpose), or `mountGraphql` throws.
+
 ## Options
 
 | Option | Default | Purpose |
@@ -12959,7 +12961,7 @@ The route must negotiate the `graphql-transport-ws` subprotocol at the WebSocket
 | `allowedOrigins` | reflect `*` | CORS origin allowlist. |
 | `authorize` | - | Per-request guard; return `false` for 401. |
 | `enableGet` | `true` | Serve `GET /graphql` (queries only). |
-| `subscriptions` | `false` | `true` (reuse schema/context) or explicit WS options. |
+| `subscriptions` | `false` | `true` (reuse schema, context, `authorize` and limits) or explicit WS options. |
 | `legacyJsonResponse` | `false` | Old always-200 `application/json` shape. |
 
 ## Responses

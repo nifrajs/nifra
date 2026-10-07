@@ -59,6 +59,11 @@ export interface GraphqlWsOptions<
   /** Build the resolver `contextValue` from the upgrade request. Shared with the HTTP transport. */
   readonly context?: GraphqlContextBuilder<Context>
   /**
+   * Admit a socket from its upgrade request, before {@link onConnect}; return `false` (or throw) to
+   * reject the connection. `mountGraphql({ subscriptions: true })` passes its HTTP `authorize` here.
+   */
+  readonly authorize?: (request: Request) => boolean | Promise<boolean>
+  /**
    * Called once per connection with the client's `connection_init` payload; return `false` (or throw)
    * to reject the connection. The seam for authenticating a socket from an init token.
    */
@@ -237,18 +242,23 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
     schema: options.schema,
     execute: executeWithTimeout,
     subscribe: subscribeWithTimeout,
-    onConnect: options.onConnect
-      ? async (ctx: GraphqlWsContext<Record<string, unknown>, { request: Request }>) => {
-          try {
-            return await options.onConnect?.(
-              ctx.connectionParams as ConnectionInitMessage["payload"],
-              ctx.extra.request,
-            )
-          } catch {
-            return false
+    onConnect:
+      options.onConnect || options.authorize
+        ? async (ctx: GraphqlWsContext<Record<string, unknown>, { request: Request }>) => {
+            try {
+              if (options.authorize !== undefined && !(await options.authorize(ctx.extra.request)))
+                return false
+              return (
+                (await options.onConnect?.(
+                  ctx.connectionParams as ConnectionInitMessage["payload"],
+                  ctx.extra.request,
+                )) ?? true
+              )
+            } catch {
+              return false
+            }
           }
-        }
-      : undefined,
+        : undefined,
     context: options.context
       ? async (ctx: GraphqlWsContext<Record<string, unknown>, { request: Request }>) =>
           await buildContext(options.context, { request: ctx.extra.request })

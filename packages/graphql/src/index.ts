@@ -43,10 +43,39 @@ export interface MountGraphqlOptions<Context = unknown, Env = unknown>
   /** Enable `GET /graphql` (queries only). Default `true`. */
   readonly enableGet?: boolean
   /**
-   * Enable `graphql-transport-ws` subscriptions on the same path. Pass the WS options (or `true` to
-   * reuse `schema`/`context`). Requires the app to have `.use(websocket())` and `graphql-ws` installed.
+   * Enable `graphql-transport-ws` subscriptions on the same path. Pass `true` to reuse `schema`,
+   * `context`, `authorize` (run on the upgrade request) and the query limits, or pass the WS options.
+   * With `authorize` set, WS options must bring their own `authorize` or `onConnect`; the mount throws
+   * otherwise, since every socket would be admitted. Requires `.use(websocket())` and `graphql-ws`.
    */
   readonly subscriptions?: boolean | GraphqlWsOptions<Record<string, unknown>>
+}
+
+type Writable<T> = { -readonly [K in keyof T]: T[K] }
+
+const SHARED_LIMITS = [
+  "maxQueryBytes",
+  "maxVariablesBytes",
+  "maxDepth",
+  "maxAliases",
+  "maxComplexity",
+  "maxOperations",
+  "executionTimeoutMs",
+] as const
+
+/** The socket transport of `subscriptions: true`: the HTTP endpoint's schema, context, authorization and limits. */
+function sharedWsOptions<Context, Env>(
+  options: MountGraphqlOptions<Context, Env>,
+): GraphqlWsOptions<Record<string, unknown>> {
+  const shared: Writable<GraphqlWsOptions<Record<string, unknown>>> = { schema: options.schema }
+  const ctx = options.context as GraphqlContextBuilder<Record<string, unknown>> | undefined
+  if (ctx !== undefined) shared.context = ctx
+  if (options.authorize !== undefined) shared.authorize = options.authorize
+  for (const limit of SHARED_LIMITS) {
+    const value = options[limit]
+    if (value !== undefined) shared[limit] = value
+  }
+  return shared
 }
 
 /**
@@ -87,13 +116,18 @@ export function mountGraphql<Context = unknown, Env = unknown>(
         "mountGraphql: subscriptions require a WebSocket-enabled app - call `.use(websocket())` first.",
       )
     }
-    let wsOptions: GraphqlWsOptions<Record<string, unknown>>
-    if (options.subscriptions === true) {
-      const ctx = options.context as GraphqlContextBuilder<Record<string, unknown>> | undefined
-      wsOptions =
-        ctx !== undefined ? { schema: options.schema, context: ctx } : { schema: options.schema }
-    } else {
-      wsOptions = options.subscriptions
+    const wsOptions =
+      options.subscriptions === true ? sharedWsOptions(options) : options.subscriptions
+    if (
+      options.authorize !== undefined &&
+      wsOptions.authorize === undefined &&
+      wsOptions.onConnect === undefined
+    ) {
+      throw new Error(
+        "mountGraphql: `authorize` guards the HTTP endpoint only, and these subscription options " +
+          "admit every socket. Give them their own `authorize` or `onConnect`, or pass " +
+          "`subscriptions: true` to reuse `authorize`.",
+      )
     }
     app.ws(path, graphqlWebSocket(wsOptions))
   }
