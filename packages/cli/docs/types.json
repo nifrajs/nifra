@@ -6103,7 +6103,7 @@
     "name": "GenerateRegressionTestOptions",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface GenerateRegressionTestOptions {\n    /** Import specifier for the app under test. Default `\"../src/app\"`. */\n    readonly importPath?: string;\n    /** Named export of the app. Default `\"app\"`. */\n    readonly appExport?: string;\n    /** Also assert the response shape. Default false (status-only is the robust regression signal). */\n    readonly assertShape?: boolean;\n    /** Dotted key paths in the request body whose string values are safe to embed verbatim. */\n    readonly allow?: readonly string[];\n}"
+    "signature": "export interface GenerateRegressionTestOptions {\n    /** Import specifier for the app under test. Default `\"../src/app\"`. */\n    readonly importPath?: string;\n    /** Named export of the app. Default `\"app\"`. */\n    readonly appExport?: string;\n    /** Also assert the response shape. Default false (status-only is the robust regression signal). */\n    readonly assertShape?: boolean;\n    /** Dotted key paths in the request body whose string values are safe to embed verbatim. */\n    readonly allow?: readonly string[];\n    /** Query parameter names whose values are safe to embed verbatim. Default none. */\n    readonly allowQuery?: readonly string[];\n    /** Header names (any case) whose values are safe to embed verbatim. Default `[\"content-type\"]`. */\n    readonly allowHeaders?: readonly string[];\n    /** Embed the capsule's `note` verbatim. Default false: a note is free text and is redacted. */\n    readonly keepNote?: boolean;\n}"
   },
   {
     "name": "GenerateRouteSearchTypesOptions",
@@ -18667,7 +18667,7 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function generateRegressionTest(capsule: IncidentCapsule, options?: GenerateRegressionTestOptions): string;",
-    "doc": "/**\n * Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with\n * a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you\n * commit. The test asserts the response contract via {@link assertIncidentReplays}.\n */"
+    "doc": "/**\n * Emit a committable regression test from a capsule. Body strings, query values, header values (bar\n * `content-type`) and the note are redacted BY DEFAULT with a sanitize banner - replace the\n * `<redacted>` placeholders with safe, reproducing values before you commit. The path is kept\n * verbatim because it selects the route, so the file always asks for it to be reviewed. The test\n * asserts the response contract via {@link assertIncidentReplays}.\n */"
   },
   {
     "name": "generateRouteSearchTypes",

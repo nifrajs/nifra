@@ -159,6 +159,34 @@ describe("generateRegressionTest", () => {
     expect(code).toContain("reproduces status 200")
   })
 
+  test("query values, header values and the note are redacted unless allow-listed", async () => {
+    const capsule = await captureIncident(
+      new Request("http://x/reset?token=SYNTHETIC_TOKEN_ONLY&page=2", {
+        headers: { authorization: "Bearer SYNTHETIC_BEARER", "content-type": "text/plain" },
+      }),
+      { status: 400 },
+      { headerAllowList: ["authorization", "content-type"], note: "user SYNTHETIC_NOTE" },
+    )
+    const code = generateRegressionTest(capsule, { allowQuery: ["page"] })
+    expect(code).toContain("SANITIZE BEFORE COMMITTING")
+    for (const secret of ["SYNTHETIC_TOKEN_ONLY", "SYNTHETIC_BEARER", "SYNTHETIC_NOTE"]) {
+      expect(code).not.toContain(secret)
+    }
+    expect(code).toContain('"page": "2"')
+    expect(code).toContain('"content-type": "text/plain"')
+    expect(code).toContain("Review the request path")
+
+    const kept = generateRegressionTest(capsule, {
+      allowQuery: ["token", "page"],
+      allowHeaders: ["Authorization", "content-type"],
+      keepNote: true,
+    })
+    expect(kept).toContain("SYNTHETIC_TOKEN_ONLY")
+    expect(kept).toContain("SYNTHETIC_BEARER")
+    expect(kept).toContain("SYNTHETIC_NOTE")
+    expect(kept).not.toContain("SANITIZE BEFORE COMMITTING")
+  })
+
   test("allow-list keeps a safe value verbatim and drops the banner when nothing was redacted", async () => {
     const capsule = await captureIncident(
       { method: "GET", path: "/ping" },

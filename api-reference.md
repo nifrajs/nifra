@@ -4612,7 +4612,7 @@ _No named exports (side-effect entrypoint)._
 - **gatewayCertificationProfile** _(function)_ - `gatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
   Certification for provider-neutral gateways. It never emits request or response content.
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
-  Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
+  Emit a committable regression test from a capsule. Body strings, query values, header values (bar `content-type`) and the note are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The path is kept verbatim because it…
 - **httpToolAdapter** _(function)_ - `httpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
   Exercise the Web adapter while returning the same normalized result shape as direct calls.
 - **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
