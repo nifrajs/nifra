@@ -116,6 +116,16 @@ describe("bindScope - the closed attribute set", () => {
     expect(el.textContent).toBe("server-rendered") // static content untouched
   })
 
+  test("a name an object inherits is unknown too", () => {
+    const el = new FakeElement({
+      "data-bind-text": "constructor",
+      "data-bind-on": "click:toString",
+    })
+    el.textContent = "server-rendered"
+    bindScope(new FakeRoot([el]), scopeOf({}))
+    expect(el.textContent).toBe("server-rendered")
+  })
+
   test("disposers stop updates", () => {
     const count = signal(1)
     const el = new FakeElement({ "data-bind-text": "count" })

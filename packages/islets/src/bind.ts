@@ -40,10 +40,11 @@ function warnOnce(kind: string, name: string): void {
   console.warn(`[nifra/islets] unknown ${kind} ${JSON.stringify(name)} - binding skipped`)
 }
 
-function signalOf(scope: IslandScope, name: string): Signal<unknown> | undefined {
-  const s = scope.signals[name]
-  if (s === undefined) warnOnce("signal", name)
-  return s
+// Own keys only: a name such as `constructor` must not resolve to what a plain object inherits.
+function named<V>(kind: string, record: Readonly<Record<string, V>>, name: string): V | undefined {
+  if (Object.hasOwn(record, name)) return record[name]
+  warnOnce(kind, name)
+  return undefined
 }
 
 /** Parse a `"key:name,key2:name2"` pair list (whitespace-tolerant). Malformed entries skip. */
@@ -102,7 +103,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     ].map((el) => [el, el.getAttribute(`data-bind-${kind}`) ?? ""])
 
   for (const [el, name] of each("text")) {
-    const s = signalOf(scope, name)
+    const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -113,7 +114,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
   }
 
   for (const [el, name] of each("show")) {
-    const s = signalOf(scope, name)
+    const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -125,7 +126,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
 
   for (const [el, spec] of each("class")) {
     for (const [className, name] of pairs(spec)) {
-      const s = signalOf(scope, name)
+      const s = named("signal", scope.signals, name)
       if (s) {
         stops.push(
           effect(() => {
@@ -139,7 +140,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
   for (const [el, spec] of each("attr")) {
     for (const [attr, name] of pairs(spec)) {
       if (!bindableAttribute(attr)) continue
-      const s = signalOf(scope, name)
+      const s = named("signal", scope.signals, name)
       if (s) {
         const isUrl = URL_ATTRIBUTE.test(attr)
         stops.push(
@@ -155,7 +156,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
   }
 
   for (const [el, name] of each("value")) {
-    const s = signalOf(scope, name)
+    const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
         effect(() => {
@@ -170,11 +171,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
 
   for (const [el, spec] of each("on")) {
     for (const [event, name] of pairs(spec)) {
-      const handler = scope.handlers[name]
-      if (handler === undefined) {
-        warnOnce("handler", name)
-        continue
-      }
+      const handler = named("handler", scope.handlers, name)
+      if (handler === undefined) continue
       el.addEventListener(event, handler)
     }
   }

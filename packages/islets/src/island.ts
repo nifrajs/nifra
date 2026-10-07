@@ -107,7 +107,8 @@ export function mountIslands(
     }
 
     const run = (): void => {
-      const signals: Record<string, Signal<unknown>> = {}
+      // No prototype: a state key like `constructor` or `__proto__` is an entry like any other.
+      const signals: Record<string, Signal<unknown>> = Object.create(null)
       const ctx: IslandContext = {
         root: host,
         state<T>(key: string, fallback: T): Signal<T> {

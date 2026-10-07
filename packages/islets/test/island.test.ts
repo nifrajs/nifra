@@ -87,6 +87,30 @@ describe("islands", () => {
     expect((first as () => string)()).toBe("fallback")
   })
 
+  test("state(): a key named like an Object.prototype member is a signal of its own", () => {
+    const name = uniqueName()
+    const text = new FakeElement({ "data-bind-text": "__proto__" })
+    const host = new FakeHost(
+      { "data-island": name, "data-island-state": '{"constructor":5,"__proto__":7}' },
+      [text],
+    )
+    const seen: Array<[unknown, boolean]> = []
+    island(name, ({ state }) => {
+      for (const key of ["constructor", "__proto__", "toString"]) {
+        const s = state(key, 3)
+        seen.push([s(), typeof s.set === "function"])
+      }
+      return undefined
+    })
+    mountIslands(new FakeRoot([host]))
+    expect(seen).toEqual([
+      [5, true],
+      [7, true],
+      [3, true],
+    ])
+    expect(text.textContent).toBe("7")
+  })
+
   test("mounting is idempotent; unregistered islands are skipped", () => {
     const name = uniqueName()
     let mounts = 0
