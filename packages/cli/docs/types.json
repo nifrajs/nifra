@@ -15764,7 +15764,7 @@
     "name": "ZoneConfigError",
     "kind": "class",
     "package": "@nifrajs/web",
-    "signature": "export declare class ZoneConfigError extends Error {\n    readonly name = \"ZoneConfigError\";\n}",
+    "signature": "export declare class ZoneConfigError extends Error {\n    readonly name = \"ZoneConfigError\";\n    /** The file holding the setting, as the caller named it. */\n    readonly source: string;\n    constructor(source: string, problem: string);\n}",
     "doc": "/** A `\"nifra\": { \"zones\": ... }` setting that cannot be applied. Thrown when a classifier is created. */"
   },
   {
