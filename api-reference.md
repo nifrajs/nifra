@@ -3537,7 +3537,7 @@ _No named exports (side-effect entrypoint)._
 - **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
   Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of the created effects (an island unmount can stop them; page-lifetime islands just drop them).
 - **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
-  Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed. One created in an island's setup stops when the island unmounts; elsewhere its inputs hold it, so one derived from a longer-lived signal needs `dispose()`.
+  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
   Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
 - **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`

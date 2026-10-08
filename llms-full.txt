@@ -13182,7 +13182,7 @@ framework runtime. The client companion to `@nifrajs/web-vanilla`: the server re
 (zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
-The full island bundle is just under 2 KB gzipped, and a size test keeps it there. Use
+The full island bundle is about 2 KB gzipped (2,080 B at most), and a size test keeps it there. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
 ## Server side (any adapter - `@nifrajs/web-vanilla` shown)
@@ -13248,9 +13248,10 @@ bind it, for example to show or hide the nested island.
 
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
-into one flush. Every effect and computed an island's setup creates stops when `mountIslands`'
-disposer unmounts it; one created outside an island stays subscribed to its inputs until
-`.dispose()`. Island-scale by design: if a widget outgrows this (lists, ownership trees,
+into one flush. A `computed` runs on first read and stops by itself once nothing reads it: the
+next change to its inputs stops it instead of recomputing, and reading it again computes it afresh.
+Every effect an island's setup creates stops when `mountIslands`' disposer unmounts it; one created
+outside an island runs until its disposer is called. Island-scale by design: if a widget outgrows this (lists, ownership trees,
 async orchestration), that's the signal to use the Solid adapter for that page - both tiers are
 first-class.
 
