@@ -31,6 +31,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C032": "Credential in browser code",
   "NF-C033": "Generated output schema out of date",
   "NF-C034": "Root status page outside the root layout",
+  "NF-C035": "Backend mounted at the implicit /api",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",

@@ -171,6 +171,16 @@ export default function Backends() {
         loader-only client.
       </p>
       <p>
+        The mount happens whenever <code>api</code> is mountable, even with no <code>apiPrefix</code>{" "}
+        given. An app that also serves the same backend behind its own server - with that server's rate
+        limits and guards - then has a second path to it at <code>/api</code> that skips them. So when{" "}
+        <code>api</code> comes without an explicit <code>apiPrefix</code>, <code>createWebApp</code>{" "}
+        warns once in development and <code>nifra check</code> reports <code>NF-C035</code> for a{" "}
+        <code>backend/framework.ts</code> that sets none. Set <code>apiPrefix: "/api"</code> to keep the
+        mount or <code>""</code> to drop it; a future major mounts the backend only when{" "}
+        <code>apiPrefix</code> is set.
+      </p>
+      <p>
         Because the backend answers first and its 404 is final, a page file under the prefix (
         <code>routes/api/report.tsx</code>) could never render. Nifra refuses it instead of serving a
         silent 404: <code>createWebApp</code> throws at startup naming the file, <code>nifra build</code>{" "}

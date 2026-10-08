@@ -242,9 +242,13 @@ describe("readStaticApiPrefix", () => {
 })
 
 describe("NF-C027", () => {
-  const scan = (dir: string) => {
+  const scan = async (dir: string) => {
     const facts = projectFacts("backend/app.ts", "", [])
-    return runRuleRegistry({ root: dir, sources: facts.source, project: facts }, pageRules)
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C027")
   }
   const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
 
@@ -389,5 +393,48 @@ describe("NF-C034", () => {
         }),
       ),
     ).toEqual([])
+  })
+})
+
+describe("NF-C035", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("backend/app.ts", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C035")
+  }
+  const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
+
+  test("the implicit /api mount of the backend is reported where apiPrefix would go", async () => {
+    const findings = await scan(
+      project({
+        "backend/app.ts": backendSource,
+        "backend/framework.ts": adapterSource.join("\n"),
+        "routes/index.tsx": "export default () => null\n",
+      }),
+    )
+    expect(findings.map((finding) => [finding.severity, finding.file])).toEqual([
+      ["info", "backend/framework.ts"],
+    ])
+    expect(findings[0]?.message).toContain('export const apiPrefix = "/api"')
+    expect(findings[0]?.message).toContain('export const apiPrefix = ""')
+  })
+
+  test("an explicit apiPrefix, or no backend, is not reported", async () => {
+    for (const prefix of ['"/api"', '""', '"/rpc"']) {
+      expect(
+        await scan(
+          project({
+            "backend/app.ts": backendSource,
+            "backend/framework.ts": [...adapterSource, `export const apiPrefix = ${prefix}`].join(
+              "\n",
+            ),
+          }),
+        ),
+      ).toEqual([])
+    }
+    expect(await scan(project({ "backend/framework.ts": adapterSource.join("\n") }))).toEqual([])
   })
 })

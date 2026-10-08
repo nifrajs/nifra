@@ -143,4 +143,37 @@ export const statusLayoutRule: CheckRule = {
   },
 }
 
-export const pageRules = Object.freeze([shadowedPageRule, statusLayoutRule])
+/**
+ * NF-C035: `backend/app.ts` exports a backend and the framework config sets no `apiPrefix`, so the
+ * backend is also served over HTTP at `/api`. That mount is intended in most apps; the finding makes it
+ * explicit, because a future major mounts the backend only when `apiPrefix` is set. An unreadable
+ * `apiPrefix` is NF-C027's to report.
+ */
+export const implicitApiMountRule: CheckRule = {
+  code: "NF-C035",
+  title: "Backend mounted at the implicit /api",
+  async scan(ctx) {
+    const backendFile = join(ctx.root, BACKEND_APP_FILE)
+    if (!existsSync(backendFile)) return []
+    if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
+    const configFile = CONFIG_FILES.find((file) => existsSync(join(ctx.root, file)))
+    if (
+      configFile !== undefined &&
+      readStaticApiPrefix(readFileSync(join(ctx.root, configFile), "utf8")).kind !== "default"
+    ) {
+      return []
+    }
+    const file = configFile ?? FRAMEWORK_FILE
+    return [
+      diagnostic({
+        code: "NF-C035",
+        severity: "info",
+        file,
+        message: `${BACKEND_APP_FILE}'s backend is also served over HTTP at /api, ahead of page routing, because ${file} sets no apiPrefix. If this app serves the backend elsewhere too, /api is a second path to it that skips that server's hooks. Add \`export const apiPrefix = "/api"\` to ${file} to keep the mount, or \`export const apiPrefix = ""\` to turn it off. A future major mounts the backend only when apiPrefix is set.`,
+        verify: "nifra check",
+      }),
+    ]
+  },
+}
+
+export const pageRules = Object.freeze([shadowedPageRule, statusLayoutRule, implicitApiMountRule])

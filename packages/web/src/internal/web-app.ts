@@ -275,6 +275,18 @@ function mountPathPrefix(path: string): string {
   return withoutWildcard.slice(0, end)
 }
 
+let warnedImplicitApiMount = false
+
+/** Development only, once per process: the default mount gives the backend an HTTP path at `/api`. */
+function warnImplicitApiMount(): void {
+  if (warnedImplicitApiMount) return
+  if (typeof process === "undefined" || process.env?.NODE_ENV !== "development") return
+  warnedImplicitApiMount = true
+  console.warn(
+    '[nifra/web] createWebApp serves `api` over HTTP at /api, ahead of page routing, because no apiPrefix was given. If this app serves the backend elsewhere too, /api is a second path to it that skips that server\'s hooks. Pass apiPrefix: "/api" to keep the mount, or apiPrefix: "" to turn it off. A future major mounts the backend only when apiPrefix is set.',
+  )
+}
+
 /**
  * Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`,
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
@@ -366,6 +378,7 @@ export function createWebApp<Env = unknown>(
   const apiPrefix = options.apiPrefix ?? "/api"
   const apiStrip = options.apiStrip === true
   const mountedApi = backendMountOf<Env>(api)
+  if (mountedApi !== undefined && options.apiPrefix === undefined) warnImplicitApiMount()
   // Longest path first, so a more specific mount (`/api/auth`) is tried before a broader one (`/api`)
   // regardless of the order they were declared in.
   const configuredMounts: readonly MountOptions<Env>[] = Object.freeze(
