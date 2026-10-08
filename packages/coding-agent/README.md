@@ -72,7 +72,8 @@ Legacy `FileSessionStore` files remain supported for explicit local compatibilit
 `nifra-agent --migrate-session <id> --migrate-from <legacy-dir> --migrate-to <evidence-dir>` to
 create a separately validated, evidence-only target. The source is left untouched and the command
 does not switch an active configuration pointer: after reviewing its report, point the host at the
-new directory yourself. To roll back, point it at the legacy directory again and remove the new
+new directory yourself. `FileSessionStore` reads the migrated rows as content-free entries whose
+type is the stable event code, and new appends continue the sequence. To roll back, point it at the legacy directory again and remove the new
 target; a failed or interrupted migration leaves the active choice unchanged.
 
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus

@@ -456,6 +456,33 @@ function isSessionLogEntry(value: unknown, sessionId: string): value is SessionL
   )
 }
 
+/**
+ * A row `migrateLegacySession` wrote: the same identity and order, with the event type as `code` and
+ * no payload. Read as an entry of that type, so a host pointed at a migrated directory keeps the
+ * history and continues its sequence.
+ */
+function evidenceEntry(value: unknown, sessionId: string): SessionLogEntry | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+  const field = (key: string): unknown => Reflect.get(value, key)
+  const seq = field("seq")
+  const at = field("at")
+  const code = field("code")
+  if (
+    field("version") !== 1 ||
+    field("sessionId") !== sessionId ||
+    typeof seq !== "number" ||
+    !Number.isSafeInteger(seq) ||
+    typeof at !== "number" ||
+    typeof code !== "string" ||
+    field("count") !== 1 ||
+    typeof field("digest") !== "string" ||
+    "type" in value
+  )
+    return undefined
+  const entry = { version: 1, sessionId, seq, at, type: code } as const
+  return field("pinned") === true ? { ...entry, pinned: true } : entry
+}
+
 function parseSessionEntries(text: string, sessionId: string): SessionLogEntry[] {
   const entries: SessionLogEntry[] = []
   for (const line of text.split("\n")) {
@@ -463,6 +490,10 @@ function parseSessionEntries(text: string, sessionId: string): SessionLogEntry[]
     try {
       const value: unknown = JSON.parse(line)
       if (isSessionLogEntry(value, sessionId)) entries.push(Object.freeze(value))
+      else {
+        const migrated = evidenceEntry(value, sessionId)
+        if (migrated !== undefined) entries.push(Object.freeze(migrated))
+      }
     } catch {
       // A tail read can begin in the middle of an old line. Invalid records are ignored so a
       // damaged/partially rotated log cannot turn every history request into an unbounded retry.
