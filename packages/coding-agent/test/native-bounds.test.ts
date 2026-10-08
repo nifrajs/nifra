@@ -51,11 +51,11 @@ describe("native backend event bounds", () => {
     })
     const events = await run(backend, "write it")
     expect(last(events)?.type).toBe("session.completed")
-    expect((written as { content: string }).content).toBe(content)
+    expect(written).toEqual({ path: "big.txt", content })
     const started = events.find((event) => event.type === "tool.started")
-    const shown = (started as { input?: { path: string; content: string } }).input
-    expect(shown?.path).toBe("big.txt")
-    expect(shown?.content).toHaveLength(AGENT_MAX_PAYLOAD_STRING)
+    if (started?.type !== "tool.started") throw new Error("expected a tool.started event")
+    expect(started.input).toMatchObject({ path: "big.txt" })
+    expect(started.input).toHaveProperty("content.length", AGENT_MAX_PAYLOAD_STRING)
     expect(events.every(isAgentEvent)).toBe(true)
   })
 
@@ -132,7 +132,8 @@ describe("native backend event bounds", () => {
     expect(last(events)?.type).toBe("session.completed")
     expect(received).toBe(message)
     const started = events.find((event) => event.type === "turn.started")
-    expect((started as { prompt: string }).prompt).toHaveLength(AGENT_MAX_EVENT_TEXT)
+    if (started?.type !== "turn.started") throw new Error("expected a turn.started event")
+    expect(started.prompt).toHaveLength(AGENT_MAX_EVENT_TEXT)
   })
 
   test("NUL in a prompt, reply, or tool output does not break the turn", async () => {
@@ -180,7 +181,7 @@ describe("native backend event bounds", () => {
     expect(failures.map((event) => event.name)).toEqual(["unknown", "fail"])
     expect(failures[1]?.error?.message).toBe("native tool failed")
     const end = last(events)
-    expect(end?.type).toBe("session.failed")
-    expect((end as { error: { message: string } }).error.message).toBe("native turn failed")
+    if (end?.type !== "session.failed") throw new Error("expected the turn to fail")
+    expect(end.error.message).toBe("native turn failed")
   })
 })

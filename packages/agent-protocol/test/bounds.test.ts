@@ -110,11 +110,13 @@ describe("boundAgentValue", () => {
   test("a write_file input with a large body becomes a valid display copy", () => {
     const input = { path: "big.txt", content: "y".repeat(100_000) }
     expect(isAgentEvent(toolStarted(input))).toBe(false)
-    const bounded = boundAgentValue(input) as { path: string; content: string }
+    const bounded = boundAgentValue(input)
     expect(isAgentEvent(toolStarted(bounded))).toBe(true)
-    expect(bounded.path).toBe("big.txt")
-    expect(bounded.content).toHaveLength(AGENT_MAX_PAYLOAD_STRING)
-    expect(bounded.content.endsWith("…[truncated]")).toBe(true)
+    const marker = "…[truncated]"
+    expect(bounded).toEqual({
+      path: "big.txt",
+      content: `${"y".repeat(AGENT_MAX_PAYLOAD_STRING - marker.length)}${marker}`,
+    })
     expect(input.content).toHaveLength(100_000)
   })
 
@@ -124,7 +126,8 @@ describe("boundAgentValue", () => {
   })
 
   test("long arrays end with a marker for the items left out", () => {
-    const bounded = boundAgentValue(Array.from({ length: 300 }, (_, index) => index)) as unknown[]
+    const bounded = boundAgentValue(Array.from({ length: 300 }, (_, index) => index))
+    if (!Array.isArray(bounded)) throw new Error("expected an array")
     expect(bounded).toHaveLength(256)
     expect(bounded.at(-1)).toBe("…[45 more items]")
     expect(isAgentEvent(toolStarted(bounded))).toBe(true)
@@ -145,18 +148,20 @@ describe("boundAgentValue", () => {
 
   test("many large strings share one budget", () => {
     const many = Array.from({ length: 40 }, () => "z".repeat(AGENT_MAX_PAYLOAD_STRING))
-    const bounded = boundAgentValue(many) as string[]
-    const chars = bounded.reduce((total, item) => total + item.length, 0)
+    const bounded = boundAgentValue(many)
+    if (!Array.isArray(bounded)) throw new Error("expected an array")
+    const chars = bounded.reduce((total: number, item: unknown) => total + String(item).length, 0)
     expect(chars).toBeLessThan(AGENT_MAX_EVENT_TEXT + 40 * 16)
     expect(isAgentEvent(toolStarted(bounded))).toBe(true)
   })
 
   test("keys the protocol refuses are dropped and __proto__ stays an own key", () => {
     const parsed = JSON.parse(`{"__proto__":{"polluted":true},"":1,"${"k".repeat(129)}":2,"ok":3}`)
-    const bounded = boundAgentValue(parsed) as Record<string, unknown>
+    const bounded = boundAgentValue(parsed)
+    if (typeof bounded !== "object" || bounded === null) throw new Error("expected an object")
     expect(Object.keys(bounded)).toEqual(["__proto__", "ok"])
     expect(Object.getPrototypeOf(bounded)).toBe(Object.prototype)
-    expect(({} as { polluted?: unknown }).polluted).toBeUndefined()
+    expect(Object.prototype).not.toHaveProperty("polluted")
     expect(isAgentEvent(toolStarted(bounded))).toBe(true)
   })
 
