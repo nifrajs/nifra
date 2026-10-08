@@ -4586,7 +4586,8 @@ _No named exports (side-effect entrypoint)._
 - **assertPredictionLab** _(function)_ - `assertPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>`
   Run the lab and throw a joined error on failure - the `assertAdversarialContract` shape.
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
-- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
+- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: (options?: { readonly fencing?: boolean; }) => AdapterCertificationProfile<CertifiableCacheStore>`
+  The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence` refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load …
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
@@ -4698,7 +4699,8 @@ _No named exports (side-effect entrypoint)._
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
-- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
+- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: (options?: { readonly fencing?: boolean; }) => AdapterCertificationProfile<CertifiableCacheStore>`
+  The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence` refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load …
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.

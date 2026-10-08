@@ -8,6 +8,32 @@ const entry = (value: unknown, expiresAt: number, staleAt = expiresAt) => ({
 })
 
 describe("MemoryCache", () => {
+  test("setIfFence writes only when nothing a load must respect changed since the fence", () => {
+    const changes: readonly [string, (store: MemoryCache) => void, boolean][] = [
+      ["unrelated set", (store) => store.set("other", entry(1, 10), ["other"]), true],
+      ["set of the key", (store) => store.set("k", entry("newer", 10), []), false],
+      ["delete of the key", (store) => store.delete("k"), false],
+      ["invalidateTag of its tag", (store) => store.invalidateTag("t"), false],
+      ["clear", (store) => store.clear(), false],
+    ]
+    for (const [, change, writes] of changes) {
+      const store = new MemoryCache({ now: () => 0 })
+      const token = store.fence()
+      change(store)
+      expect(store.setIfFence("k", entry("loaded", 10), ["t"], token)).toBe(writes)
+      expect(store.get("k")?.value === "loaded").toBe(writes)
+    }
+  })
+
+  test("a fence older than the change log is refused, never trusted", () => {
+    const store = new MemoryCache({ now: () => 0 })
+    const token = store.fence()
+    for (let i = 0; i <= 1024; i++) store.set(`other-${i}`, entry(i, 10), [])
+    expect(store.setIfFence("k", entry("loaded", 10), [], token)).toBe(false)
+    expect(store.setIfFence("k", entry("loaded", 10), [], "not-a-token")).toBe(false)
+    expect(store.setIfFence("k", entry("loaded", 10), [], store.fence())).toBe(true)
+  })
+
   test("rejects a non-finite entry cap", () => {
     expect(() => new MemoryCache({ maxEntries: Number.NaN })).toThrow(/maxEntries/)
   })

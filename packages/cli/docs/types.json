@@ -2407,7 +2407,7 @@
     "name": "CacheStore",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface CacheStore {\n    /** The live entry for `key`, or `undefined` if missing or hard-expired (`now >= expiresAt`). */\n    get(key: string): StoredEntry | undefined | Promise<StoredEntry | undefined>;\n    /** Store `entry` under `key`, indexed by `tags` for {@link CacheStore.invalidateTag}. */\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    /** Drop every entry carrying `tag`. */\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n}",
+    "signature": "export interface CacheStore {\n    /** The live entry for `key`, or `undefined` if missing or hard-expired (`now >= expiresAt`). */\n    get(key: string): StoredEntry | undefined | Promise<StoredEntry | undefined>;\n    /** Store `entry` under `key`, indexed by `tags` for {@link CacheStore.invalidateTag}. */\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    /** Drop every entry carrying `tag`. */\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n    /**\n     * Optional, with {@link CacheStore.setIfFence}, for a store several caches or processes share. An\n     * opaque token naming this moment for `key` and `tags`. A `wrap` load takes one before it starts.\n     */\n    fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>;\n    /**\n     * Optional, with {@link CacheStore.fence}. Store `entry` only when nothing has run since `fence`\n     * returned `token` that a load must not overwrite: a `set` or `delete` of `key`, an `invalidateTag`\n     * of one of `tags`, or a `clear`, from any cache sharing the store. The check and the write are one\n     * atomic step. Resolves `true` when it wrote. A store that cannot tell may refuse; the load's value\n     * still reaches its caller, it is just not cached.\n     */\n    setIfFence?(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean | Promise<boolean>;\n}",
     "doc": "/**\n * Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV /\n * Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.\n */"
   },
   {
@@ -2954,7 +2954,7 @@
     "name": "CertifiableCacheStore",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface CertifiableCacheStore {\n    get(key: string): CertifiableCacheEntry | undefined | Promise<CertifiableCacheEntry | undefined>;\n    set(key: string, entry: CertifiableCacheEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n}"
+    "signature": "export interface CertifiableCacheStore {\n    get(key: string): CertifiableCacheEntry | undefined | Promise<CertifiableCacheEntry | undefined>;\n    set(key: string, entry: CertifiableCacheEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n    fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>;\n    setIfFence?(key: string, entry: CertifiableCacheEntry, tags: readonly string[], token: unknown): boolean | Promise<boolean>;\n}"
   },
   {
     "name": "CertifiableDeploymentAdapter",
@@ -8256,7 +8256,7 @@
     "name": "MemoryCache",
     "kind": "class",
     "package": "@nifrajs/cache",
-    "signature": "export declare class MemoryCache implements CacheStore {\n    private readonly rows;\n    private readonly tagIndex;\n    private expirySweep;\n    private readonly maxEntries;\n    private readonly now;\n    constructor(options?: MemoryCacheOptions);\n    get(key: string): StoredEntry | undefined;\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void;\n    delete(key: string): void;\n    invalidateTag(tag: string): void;\n    clear(): void;\n    /** Live entry count (for observability/tests). */\n    size(): number;\n    /** Remove a key and unlink it from every tag set it belonged to. */\n    private evict;\n    private sweepExpired;\n}"
+    "signature": "export declare class MemoryCache implements CacheStore {\n    private readonly rows;\n    private readonly tagIndex;\n    private expirySweep;\n    private readonly maxEntries;\n    private readonly now;\n    private readonly changes;\n    private epoch;\n    constructor(options?: MemoryCacheOptions);\n    get(key: string): StoredEntry | undefined;\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void;\n    delete(key: string): void;\n    invalidateTag(tag: string): void;\n    clear(): void;\n    /** The current epoch: {@link MemoryCache.setIfFence} compares what changed after it. */\n    fence(): number;\n    setIfFence(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean;\n    /** Live entry count (for observability/tests). */\n    size(): number;\n    private record;\n    /** Remove a key and unlink it from every tag set it belonged to. */\n    private evict;\n    private sweepExpired;\n}"
   },
   {
     "name": "MemoryCacheOptions",
@@ -16452,7 +16452,8 @@
     "name": "cacheStoreCertificationProfile",
     "kind": "function",
     "package": "@nifrajs/testing",
-    "signature": "export declare function cacheStoreCertificationProfile(): AdapterCertificationProfile<CertifiableCacheStore>;"
+    "signature": "export declare function cacheStoreCertificationProfile(options?: {\n    readonly fencing?: boolean;\n}): AdapterCertificationProfile<CertifiableCacheStore>;",
+    "doc": "/**\n * The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence`\n * refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its\n * `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load\n * running in one cache can store a value another cache just invalidated.\n */"
   },
   {
     "name": "cacheTracing",

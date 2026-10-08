@@ -252,57 +252,98 @@ export interface CertifiableCacheStore {
   delete(key: string): void | Promise<void>
   invalidateTag(tag: string): void | Promise<void>
   clear(): void | Promise<void>
+  fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>
+  setIfFence?(
+    key: string,
+    entry: CertifiableCacheEntry,
+    tags: readonly string[],
+    token: unknown,
+  ): boolean | Promise<boolean>
 }
 
-export function cacheStoreCertificationProfile(): AdapterCertificationProfile<CertifiableCacheStore> {
+/**
+ * The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence`
+ * refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its
+ * `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load
+ * running in one cache can store a value another cache just invalidated.
+ */
+export function cacheStoreCertificationProfile(
+  options: { readonly fencing?: boolean } = {},
+): AdapterCertificationProfile<CertifiableCacheStore> {
   const entry = (value: unknown): CertifiableCacheEntry => ({
     value,
     staleAt: 5_000_000,
     expiresAt: 6_000_000,
   })
-  return {
-    id: "cache-store",
-    version: 1,
-    capabilities: ["roundtrip", "tag-invalidation", "clear"],
-    checks: [
-      {
-        id: "set-get-delete",
-        capability: "roundtrip",
-        async run(store, context) {
-          const key = context.key("roundtrip")
-          await store.set(key, entry({ answer: 42 }), [])
-          const found = await store.get(key)
-          if (JSON.stringify(found?.value) !== '{"answer":42}') throw new Error("CacheRoundtrip")
+  const capabilities = ["roundtrip", "tag-invalidation", "clear"]
+  const checks: CertificationCheck<CertifiableCacheStore>[] = [
+    {
+      id: "set-get-delete",
+      capability: "roundtrip",
+      async run(store, context) {
+        const key = context.key("roundtrip")
+        await store.set(key, entry({ answer: 42 }), [])
+        const found = await store.get(key)
+        if (JSON.stringify(found?.value) !== '{"answer":42}') throw new Error("CacheRoundtrip")
+        await store.delete(key)
+        if ((await store.get(key)) !== undefined) throw new Error("CacheDelete")
+      },
+    },
+    {
+      id: "invalidate-tag",
+      capability: "tag-invalidation",
+      async run(store, context) {
+        const tagged = context.key("tagged")
+        const other = context.key("other")
+        const tag = context.key("tag")
+        await store.set(tagged, entry(1), [tag])
+        await store.set(other, entry(2), [context.key("other-tag")])
+        await store.invalidateTag(tag)
+        if ((await store.get(tagged)) !== undefined || (await store.get(other))?.value !== 2)
+          throw new Error("CacheTagInvalidation")
+      },
+    },
+    {
+      id: "clear",
+      capability: "clear",
+      async run(store, context) {
+        const key = context.key("clear")
+        await store.set(key, entry(1), [])
+        await store.clear()
+        if ((await store.get(key)) !== undefined) throw new Error("CacheClear")
+      },
+    },
+  ]
+  if (options.fencing === true) {
+    capabilities.push("fenced-write")
+    checks.push({
+      id: "fenced-write",
+      capability: "fenced-write",
+      async run(store, context) {
+        if (store.fence === undefined || store.setIfFence === undefined)
+          throw new Error("CacheFenceMissing")
+        const key = context.key("fenced")
+        const tag = context.key("fenced-tag")
+        const changes: readonly [() => void | Promise<void>, boolean][] = [
+          [() => store.set(context.key("unrelated"), entry(0), []), true],
+          [() => store.invalidateTag(tag), false],
+          [() => store.delete(key), false],
+          [() => store.set(key, entry("newer"), []), false],
+          [() => store.clear(), false],
+        ]
+        for (const [change, writes] of changes) {
           await store.delete(key)
-          if ((await store.get(key)) !== undefined) throw new Error("CacheDelete")
-        },
+          const token = await store.fence(key, [tag])
+          await change()
+          if ((await store.setIfFence(key, entry("loaded"), [tag], token)) !== writes)
+            throw new Error("CacheFencedWrite")
+          if (((await store.get(key))?.value === "loaded") !== writes)
+            throw new Error("CacheFencedWriteStored")
+        }
       },
-      {
-        id: "invalidate-tag",
-        capability: "tag-invalidation",
-        async run(store, context) {
-          const tagged = context.key("tagged")
-          const other = context.key("other")
-          const tag = context.key("tag")
-          await store.set(tagged, entry(1), [tag])
-          await store.set(other, entry(2), [context.key("other-tag")])
-          await store.invalidateTag(tag)
-          if ((await store.get(tagged)) !== undefined || (await store.get(other))?.value !== 2)
-            throw new Error("CacheTagInvalidation")
-        },
-      },
-      {
-        id: "clear",
-        capability: "clear",
-        async run(store, context) {
-          const key = context.key("clear")
-          await store.set(key, entry(1), [])
-          await store.clear()
-          if ((await store.get(key)) !== undefined) throw new Error("CacheClear")
-        },
-      },
-    ],
+    })
   }
+  return { id: "cache-store", version: 1, capabilities, checks }
 }
 
 export interface CertifiableStoredJob {

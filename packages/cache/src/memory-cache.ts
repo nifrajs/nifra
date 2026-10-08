@@ -12,6 +12,10 @@ interface Row {
   tags: readonly string[]
 }
 
+// How many changes a fence can look back over. A load that outlives this many writes and
+// invalidations is refused its write, which costs one cache miss, never a stale value.
+const MAX_CHANGES = 1024
+
 export interface MemoryCacheOptions {
   /** Evict the least-recently-used entry once the count exceeds this. Default 10,000; `0` explicitly
    * opts into an unbounded cache. */
@@ -27,6 +31,10 @@ export class MemoryCache implements CacheStore {
   private expirySweep = this.rows.entries()
   private readonly maxEntries: number
   private readonly now: () => number
+  // What each set, delete, invalidateTag and clear touched, oldest first; `changes[i]` happened at
+  // epoch `epoch - changes.length + i + 1`. Bounded: a fence older than the log is refused.
+  private readonly changes: Array<readonly ["key" | "tag", string] | "all"> = []
+  private epoch = 0
 
   constructor(options: MemoryCacheOptions = {}) {
     this.maxEntries = options.maxEntries ?? 10_000
@@ -50,6 +58,7 @@ export class MemoryCache implements CacheStore {
   }
 
   set(key: string, entry: StoredEntry, tags: readonly string[]): void {
+    this.record(["key", key])
     // Incremental expiry keeps cold, high-cardinality keys from occupying the entire bound until
     // their exact key is read. A fixed batch avoids an O(n) latency spike on a write.
     this.sweepExpired(8)
@@ -75,24 +84,52 @@ export class MemoryCache implements CacheStore {
   }
 
   delete(key: string): void {
+    this.record(["key", key])
     this.evict(key)
   }
 
   invalidateTag(tag: string): void {
+    this.record(["tag", tag])
     const keys = this.tagIndex.get(tag)
     if (keys === undefined) return
     for (const key of [...keys]) this.evict(key)
   }
 
   clear(): void {
+    this.record("all")
     this.rows.clear()
     this.tagIndex.clear()
     this.expirySweep = this.rows.entries()
   }
 
+  /** The current epoch: {@link MemoryCache.setIfFence} compares what changed after it. */
+  fence(): number {
+    return this.epoch
+  }
+
+  setIfFence(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean {
+    if (typeof token !== "number" || !Number.isSafeInteger(token) || token > this.epoch)
+      return false
+    const since = this.epoch - token
+    if (since > this.changes.length) return false
+    for (const change of this.changes.slice(this.changes.length - since)) {
+      if (change === "all") return false
+      const [kind, name] = change
+      if (kind === "key" ? name === key : tags.includes(name)) return false
+    }
+    this.set(key, entry, tags)
+    return true
+  }
+
   /** Live entry count (for observability/tests). */
   size(): number {
     return this.rows.size
+  }
+
+  private record(change: readonly ["key" | "tag", string] | "all"): void {
+    this.epoch++
+    this.changes.push(change)
+    if (this.changes.length > MAX_CHANGES) this.changes.shift()
   }
 
   /** Remove a key and unlink it from every tag set it belonged to. */

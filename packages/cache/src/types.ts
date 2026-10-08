@@ -28,6 +28,24 @@ export interface CacheStore {
   /** Drop every entry carrying `tag`. */
   invalidateTag(tag: string): void | Promise<void>
   clear(): void | Promise<void>
+  /**
+   * Optional, with {@link CacheStore.setIfFence}, for a store several caches or processes share. An
+   * opaque token naming this moment for `key` and `tags`. A `wrap` load takes one before it starts.
+   */
+  fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>
+  /**
+   * Optional, with {@link CacheStore.fence}. Store `entry` only when nothing has run since `fence`
+   * returned `token` that a load must not overwrite: a `set` or `delete` of `key`, an `invalidateTag`
+   * of one of `tags`, or a `clear`, from any cache sharing the store. The check and the write are one
+   * atomic step. Resolves `true` when it wrote. A store that cannot tell may refuse; the load's value
+   * still reaches its caller, it is just not cached.
+   */
+  setIfFence?(
+    key: string,
+    entry: StoredEntry,
+    tags: readonly string[],
+    token: unknown,
+  ): boolean | Promise<boolean>
 }
 
 export interface SetOptions {
