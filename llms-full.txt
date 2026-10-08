@@ -405,6 +405,19 @@ both has one too. `gone()`, `statusPage()` and the
 `_410.tsx`-style pages stay at the root, as does the 404 of a static export.
 
 -
+A root status page (`_404.tsx`, `_503.tsx`, ...) or an
+`_error.tsx` that exports `inLayouts = true` renders inside the
+layouts above it with their loader data, and the server puts its `meta` in the
+head. For a request no route ran (an unmatched URL) the root middleware and layout loaders
+run first; otherwise the page reuses the data the request already loaded. When those
+layouts cannot render it - a loader throws, a `gate` or the middleware refuses
+- the page renders alone with the same status, so a status page never fails into a
+second error. The response is `private, no-store` once a layout loaded data,
+and a navigation that lands on one loads the URL as a document. Without the export a root
+status page renders alone and an `_error` renders inside its layouts without
+their data; `nifra check` reports each such page as `NF-C034`.
+
+-
 `_loading.tsx` is what the page slot shows while a client navigation loads. A
 navigation still waiting on its data after about 120 ms swaps the page for the target
 route's nearest `_loading`: the innermost one above it whose layouts are already

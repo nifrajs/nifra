@@ -233,6 +233,19 @@ export default function Routing() {
           <code>_410.tsx</code>-style pages stay at the root, as does the 404 of a static export.
         </li>
         <li>
+          A root status page (<code>_404.tsx</code>, <code>_503.tsx</code>, ...) or an{" "}
+          <code>_error.tsx</code> that exports <code>inLayouts = true</code> renders inside the
+          layouts above it with their loader data, and the server puts its <code>meta</code> in the
+          head. For a request no route ran (an unmatched URL) the root middleware and layout loaders
+          run first; otherwise the page reuses the data the request already loaded. When those
+          layouts cannot render it - a loader throws, a <code>gate</code> or the middleware refuses
+          - the page renders alone with the same status, so a status page never fails into a
+          second error. The response is <code>private, no-store</code> once a layout loaded data,
+          and a navigation that lands on one loads the URL as a document. Without the export a root
+          status page renders alone and an <code>_error</code> renders inside its layouts without
+          their data; <code>nifra check</code> reports each such page as <code>NF-C034</code>.
+        </li>
+        <li>
           <code>_loading.tsx</code> is what the page slot shows while a client navigation loads. A
           navigation still waiting on its data after about 120 ms swaps the page for the target
           route's nearest <code>_loading</code>: the innermost one above it whose layouts are already

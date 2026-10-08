@@ -385,6 +385,14 @@ export interface RouteModule {
    */
   readonly handle?: unknown
   /**
+   * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`: `true` renders it inside
+   * the layouts above it with their loader data and `meta`, as a nested `_404` renders. When those
+   * layouts cannot render it - a loader throws, a gate or the middleware refuses - the page renders
+   * alone, with the same status. Without it, a root status page renders alone and an `_error` renders
+   * inside its layouts without their data, as before.
+   */
+  readonly inLayouts?: boolean
+  /**
    * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`
    * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build
    * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a

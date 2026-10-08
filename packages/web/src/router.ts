@@ -313,6 +313,10 @@ export interface ClientRouterOptions {
   /** Terminal status → client route id. Generated entries populate this from `_404` and
    * `_<status>` files so soft navigation renders the same boundary as a hard request. */
   readonly statusRoutes?: Readonly<Record<number, string>>
+  /** Status route ids whose page renders inside layouts (`inLayouts`), filled in by the generated entry's
+   * `loadModule`. A soft navigation that ends on one loads the URL as a document, as one ending on a
+   * nested `_404` does: only the server runs those layouts' loaders. */
+  readonly layoutStatusRoutes?: Readonly<Record<string, true>>
   /** routeId → the route's client-only search keys (its `searchClientKeys` export). When a soft
    * navigation stays on the same route + pathname and changes ONLY these keys, `navigate` publishes the
    * new URL WITHOUT re-running the loader (re-render, not revalidate). Populated lazily by the generated
@@ -794,7 +798,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           () => loadRouteData(at, route, signal, keepLayouts),
           prefetchedData,
         )
-        if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
+        if (loaded.terminalRouteId !== undefined) {
+          await loadModule?.(loaded.terminalRouteId)
+          if (options.layoutStatusRoutes?.[loaded.terminalRouteId] === true) {
+            throw new Error(
+              `[nifra/web] ${loaded.terminalRouteId} renders inside layouts; loading ${at} as a document`,
+            )
+          }
+        }
         return [at, route, loaded]
       } catch (error) {
         const next = hops < 20 ? appRedirect(redirectOf(error)) : undefined

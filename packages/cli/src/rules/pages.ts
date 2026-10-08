@@ -96,4 +96,51 @@ export const shadowedPageRule: CheckRule = {
   },
 }
 
-export const pageRules = Object.freeze([shadowedPageRule])
+const IN_LAYOUTS = /\binLayouts\b/
+
+/**
+ * NF-C034: a root status page (`_404`, `_<status>`) or `_error` beside a root `_layout` that does not
+ * export `inLayouts = true`. Such a page renders alone (an `_error` inside the layout but without its
+ * loader data or `meta`); the export renders it inside the layout with both. A page that names
+ * `inLayouts` at all has decided, so it is not reported.
+ */
+export const statusLayoutRule: CheckRule = {
+  code: "NF-C034",
+  title: "Root status page outside the root layout",
+  async scan(ctx) {
+    const routesDir = join(ctx.root, "routes")
+    if (!existsSync(routesDir)) return []
+    let manifest: ReturnType<typeof discoverRoutes>
+    try {
+      manifest = discoverRoutes(routesDir)
+    } catch {
+      return []
+    }
+    const layout = manifest.layouts._layout
+    if (layout === undefined) return []
+    const pages = [
+      ...(manifest.notFound === undefined ? [] : [manifest.notFound.file]),
+      ...Object.values(manifest.statusPages ?? {}).map((page) => page.file),
+      ...(manifest.errors?._error === undefined ? [] : [manifest.errors._error.file]),
+    ]
+    const findings: Diagnostic[] = []
+    for (const file of pages.sort()) {
+      const source = stripComments(readFileSync(join(routesDir, file), "utf8"))
+      if (IN_LAYOUTS.test(source)) continue
+      const isError = file === manifest.errors?._error?.file
+      findings.push(
+        diagnostic({
+          code: "NF-C034",
+          severity: "info",
+          file: `routes/${file}`,
+          message: `routes/${file} renders ${isError ? `inside routes/${layout.file} without its loader data or meta` : `without routes/${layout.file}`}. Add \`export const inLayouts = true\` to render it inside the layout with its loader data and the page's meta; when the layout cannot render (a loader throws, a gate or middleware refuses) the page renders alone with the same status. If the page wraps the layout itself, remove that wrap when you add the export. A future major renders status pages inside their layouts by default.`,
+          evidence: [`layout: routes/${layout.file}`],
+          verify: "nifra check",
+        }),
+      )
+    }
+    return findings
+  },
+}
+
+export const pageRules = Object.freeze([shadowedPageRule, statusLayoutRule])

@@ -48,8 +48,13 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('import("/routes/_layout.tsx")')
   expect(code).toContain('"index": () => Promise.all([')
   expect(code).toContain('"users/[id]": () => Promise.all([')
-  expect(code).toContain('"_404": () => Promise.all([')
-  expect(code).toContain('"_410": () => Promise.all([')
+  // A status page loads first; the root layout follows only for one that exports `inLayouts`.
+  expect(code).toContain(
+    '"_404": () => import("/routes/_404.tsx").then((page) => withRootLayout("_404", page))',
+  )
+  expect(code).toContain(
+    '"_410": () => import("/routes/_410.tsx").then((page) => withRootLayout("_410", page))',
+  )
   // loadModule caches the component chain + the chain's meta list (layouts→page) per route, so a
   // soft-nav merges the layout chain's head with the page's (matching the SSR <head>) - #3.
   expect(code).toContain("const loadModule = async (id) =>")
@@ -69,7 +74,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("createMatcher(patterns)(location.pathname)")
   expect(code).toContain('const statusRoutes = {"404":"_404","410":"_410"}')
   expect(code).toContain(
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, layoutStatusRoutes, searchClientKeys, routeHooks })",
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")

@@ -346,3 +346,48 @@ describe("nifra routes reads the configured prefix", () => {
     expect(rows).toEqual([{ kind: "api", path: "/x", methods: ["GET"], autoMounted: true }])
   })
 })
+
+describe("NF-C034", () => {
+  const scan = (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    return runRuleRegistry({ root: dir, sources: facts.source, project: facts }, pageRules)
+  }
+
+  test("root status pages and _error beside a root layout are reported until they opt in", async () => {
+    const findings = await scan(
+      project({
+        "routes/_layout.tsx": "export default () => null\n",
+        "routes/_404.tsx": "export default () => null\n",
+        "routes/_503.tsx":
+          "// inLayouts in a comment is not an opt-in\nexport default () => null\n",
+        "routes/_error.tsx": "export default () => null\n",
+        "routes/_410.tsx": "export const inLayouts = true\nexport default () => null\n",
+        "routes/_451.tsx": "export const inLayouts = false\nexport default () => null\n",
+        "routes/admin/_404.tsx": "export default () => null\n",
+        "routes/index.tsx": "export default () => null\n",
+      }),
+    )
+    expect(findings.map((finding) => [finding.code, finding.severity, finding.file])).toEqual([
+      ["NF-C034", "info", "routes/_404.tsx"],
+      ["NF-C034", "info", "routes/_503.tsx"],
+      ["NF-C034", "info", "routes/_error.tsx"],
+    ])
+    expect(findings[0]?.message).toContain("renders without routes/_layout.tsx")
+    expect(findings[0]?.message).toContain("export const inLayouts = true")
+    expect(findings[2]?.message).toContain(
+      "inside routes/_layout.tsx without its loader data or meta",
+    )
+  })
+
+  test("without a root layout there is nothing to render inside", async () => {
+    expect(
+      await scan(
+        project({
+          "routes/admin/_layout.tsx": "export default () => null\n",
+          "routes/_404.tsx": "export default () => null\n",
+          "routes/index.tsx": "export default () => null\n",
+        }),
+      ),
+    ).toEqual([])
+  })
+})

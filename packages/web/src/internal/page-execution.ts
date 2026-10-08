@@ -244,6 +244,18 @@ type LayoutRun = {
   readonly pending: Promise<unknown> | undefined
 }
 
+/** Layouts whose loaders settled for this request: what an `inLayouts` status or error page renders in. */
+type LayoutChain = {
+  readonly modules: LoadedLayoutModules
+  readonly layoutData: readonly unknown[] | undefined
+}
+
+/**
+ * Called only for a page that exports `inLayouts`, so no other status page runs a layout loader.
+ * `undefined` renders the page alone.
+ */
+type LayoutChainSource = (page: RouteModule, count: number) => Promise<LayoutChain | undefined>
+
 /**
  * Own the page request program behind one private seam.
  *
@@ -335,15 +347,18 @@ export function createPageRequestExecutor<Env = unknown>(
   ): string | undefined | Promise<string | undefined> =>
     options.nonce === undefined ? undefined : options.nonce({ request, env })
 
-  const stylesOf = (id: string): { styles?: readonly string[]; cssLoading?: CssLoadingMode } => {
-    const perRoute = options.routeStyles?.[id]
-    const styles = perRoute ?? options.styles
+  const stylesFrom = (
+    styles: readonly string[] | undefined,
+  ): { styles?: readonly string[]; cssLoading?: CssLoadingMode } => {
     if (styles === undefined || styles.length === 0) return {}
     return {
       styles,
       ...(cssLoading === "deferred" ? { cssLoading } : {}),
     }
   }
+
+  const stylesOf = (id: string): { styles?: readonly string[]; cssLoading?: CssLoadingMode } =>
+    stylesFrom(options.routeStyles?.[id] ?? options.styles)
 
   // Load a route's layout modules once for the current execution. The render path needs each whole
   // module for its component + meta, while the data path also needs loader/gate/boundary declarations.
@@ -660,49 +675,157 @@ export function createPageRequestExecutor<Env = unknown>(
     }
   }
 
+  /** What a status or error page's `meta` receives: no route params, and its own data. */
+  const statusMetaArgs = (req: Request, data: unknown, nonce: string | undefined): MetaArgs =>
+    nonce === undefined
+      ? { data, params: {}, origin: originOf(req) }
+      : { data, params: {}, origin: originOf(req), nonce }
+
   const renderError = async (
+    req: Request,
     route: RouteEntry,
     errorId: string,
     err: unknown,
     personalized: boolean,
     nonce?: string,
+    layouts?: LayoutChainSource,
   ): Promise<PageResponse> => {
     const errDir = dirOfId(errorId, "_error")
     const keptLayoutIds = route.layoutIds.filter((id) => {
       const ld = dirOfId(id, "_layout")
       return ld === "" || ld === errDir || errDir.startsWith(`${ld}/`)
     })
-    const layouts = await Promise.all(
+    const errorModule = await (manifest.errors?.[errorId] as LayoutEntry).load()
+    const e = err instanceof Error ? err : new Error(String(err))
+    // An error's text can carry a connection string or a query, so a production page gets neither.
+    const production = typeof process === "undefined" || process.env.NODE_ENV === "production"
+    const data = production
+      ? { name: "Error", message: "Internal Server Error" }
+      : { name: e.name, message: e.message }
+    const inLayouts = errorModule.inLayouts === true
+    const chain =
+      inLayouts && layouts !== undefined && keptLayoutIds.length > 0
+        ? await layouts(errorModule, keptLayoutIds.length)
+        : undefined
+    const render = (components: unknown[], wrapped?: { head: Meta; chain: LayoutChain }) => {
+      const layoutData = wrapped?.chain.layoutData
+      return renderPageResult({
+        adapter,
+        chain: components,
+        data,
+        ...(wrapped === undefined ? {} : { head: wrapped.head }),
+        clientEntry,
+        routeId: errorId,
+        status: 500,
+        hydrate: false,
+        ...(layoutData === undefined ? {} : { layoutData }),
+        ...(personalized || layoutData !== undefined ? { headers: PRIVATE_PAGE_HEADERS } : {}),
+        ...(nonce === undefined ? {} : { nonce }),
+        ...cspOption,
+        ...titleOption,
+      })
+    }
+    if (chain !== undefined) {
+      const resolved = resolveChainAndHead(
+        chain.modules,
+        errorModule,
+        statusMetaArgs(req, data, nonce),
+      )
+      try {
+        return await render(resolved.chain, { head: resolved.head, chain })
+      } catch {
+        // A layout that fails to render leaves the error page alone, never a second error.
+        return render([errorModule.default])
+      }
+    }
+    if (inLayouts) return render([errorModule.default])
+    const layoutComponents = await Promise.all(
       keptLayoutIds.map((id) =>
         (manifest.layouts[id] as LayoutEntry).load().then((m) => m.default),
       ),
     )
-    const { default: errComp } = await (manifest.errors?.[errorId] as LayoutEntry).load()
-    const e = err instanceof Error ? err : new Error(String(err))
-    // An error's text can carry a connection string or a query, so a production page gets neither.
-    const production = typeof process === "undefined" || process.env.NODE_ENV === "production"
-    return renderPageResult({
-      adapter,
-      chain: [...layouts, errComp],
-      data: production
-        ? { name: "Error", message: "Internal Server Error" }
-        : { name: e.name, message: e.message },
-      clientEntry,
-      routeId: errorId,
-      status: 500,
-      hydrate: false,
-      ...(personalized ? { headers: PRIVATE_PAGE_HEADERS } : {}),
-      ...(nonce === undefined ? {} : { nonce }),
-      ...cspOption,
-      ...titleOption,
-    })
+    return render([...layoutComponents, errorModule.default])
   }
+
+  /** The leading `count` layouts of `modules`, unless one of them answered with a status or redirect. */
+  const settledLayouts = (
+    modules: LoadedLayoutModules,
+    layoutData: readonly unknown[] | undefined,
+    count: number,
+  ): LayoutChain | undefined => {
+    if (modules.length < count) return undefined
+    const data = layoutData?.slice(0, count)
+    if (data?.some((value) => isControlFlow(value) || isStatusSignal(value))) return undefined
+    return { modules: modules.slice(0, count), layoutData: data }
+  }
+
+  /** A run's leading layouts once all of its loaders settle - never when a layout or middleware refused. */
+  const leadingLayouts =
+    (run: LayoutRun | undefined, err?: unknown): LayoutChainSource =>
+    async (_page, count) => {
+      if (run === undefined || (err !== undefined && layoutErrorId(err) !== undefined)) {
+        return undefined
+      }
+      try {
+        await run.pending
+      } catch {
+        return undefined
+      }
+      return settledLayouts(run.modules, run.layoutData, count)
+    }
+
+  const rootLayoutIds: readonly string[] = manifest.layouts._layout === undefined ? [] : ["_layout"]
+  const rootMiddlewareIds: readonly string[] =
+    manifest.middlewares?._middleware === undefined ? [] : ["_middleware"]
+  /**
+   * Run the root middleware and layouts for a request no route ran them for (an unmatched URL), as a
+   * nested `_404` runs its own. Any refusal or failure renders the page alone.
+   */
+  const rootLayoutsFor =
+    (c: PageRouteContext<Env>, controls: PageResponseControls): LayoutChainSource =>
+    async (page) => {
+      const entry = manifest.statusPages?.["404"] ?? manifest.notFound
+      if (rootLayoutIds.length === 0 || entry === undefined) return undefined
+      const layoutsOnly: RouteEntry = {
+        id: "_404",
+        pattern: "/*",
+        layoutIds: rootLayoutIds,
+        errorIds: [],
+        file: entry.file,
+        load: entry.load,
+      }
+      const route: RouteEntry =
+        rootMiddlewareIds.length === 0
+          ? layoutsOnly
+          : { ...layoutsOnly, middlewareIds: rootMiddlewareIds }
+      try {
+        const draft = await draftFlag(c.req)
+        if (draft) controls.personalize()
+        const ctx: LoaderContext = {
+          params: {},
+          request: c.req,
+          req: c.req,
+          api: apiFor(c),
+          env: c.env,
+          draft,
+          search: loaderSearch(page.searchSchema, c.req),
+          set: controls.scope(PAGE_SCOPE),
+        }
+        if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls)
+        const run = await runLayoutChain(route, ctx, controls)
+        await run.pending
+        return settledLayouts(run.modules, run.layoutData, rootLayoutIds.length)
+      } catch {
+        return undefined
+      }
+    }
 
   const renderTerminalStatus = async (
     status: number,
-    path?: string,
+    req: Request,
     extraHeaders?: HeadersLike,
     nonce?: string,
+    layouts?: LayoutChainSource,
   ): Promise<PageResponse> => {
     const page = manifest.statusPages?.[String(status)] ?? manifest.notFound
     if (page === undefined) {
@@ -711,36 +834,56 @@ export function createPageRequestExecutor<Env = unknown>(
       return new Response(STATUS_TEXT[status] ?? "Error", { status, headers })
     }
     const routeId = manifest.statusPages?.[String(status)] !== undefined ? `_${status}` : "_404"
-    const loaded = (await page.load()) as {
-      readonly default: unknown
-      readonly searchSchema?: RouteModule["searchSchema"]
-      readonly handle?: unknown
+    const loaded = await page.load()
+    const wraps = loaded.inLayouts === true && rootLayoutIds.length > 0
+    const chain =
+      wraps && layouts !== undefined ? await layouts(loaded, rootLayoutIds.length) : undefined
+    const modules = chain?.modules ?? []
+    const layoutIds = chain === undefined ? [] : rootLayoutIds
+    const { chain: components, head } = resolveChainAndHead(
+      modules,
+      loaded,
+      statusMetaArgs(req, null, nonce),
+    )
+    const layoutData = chain?.layoutData
+    let headers = extraHeaders
+    if (layoutData !== undefined) {
+      // The page now shows what a layout loaded for this visitor.
+      const privateHeaders = new Headers(extraHeaders)
+      privateHeaders.set("cache-control", PRIVATE_NO_STORE)
+      headers = privateHeaders
     }
-    return renderPageResult({
+    const statusPage = {
       adapter,
-      chain: [loaded.default],
+      chain: components,
       data: null,
+      head,
       clientEntry,
       routeId,
-      matchChain: { ids: [routeId], handles: [loaded.handle] },
-      ...(path !== undefined
-        ? {
-            search: searchOf(
-              loaded.searchSchema,
-              path.includes("?") ? path.slice(path.indexOf("?")) : "",
-            ),
-          }
-        : {}),
-      ...(path !== undefined ? { path } : {}),
+      matchChain: matchChainOf(layoutIds, modules, routeId, loaded),
+      search: searchChainOf(modules, loaded, req),
+      path: pathOf(req),
       status,
-      ...(extraHeaders !== undefined ? { headers: extraHeaders } : {}),
+      // The browser renders this page inside the root layout, so a page that had to render alone
+      // stays server-only, as a nested `_404` does.
+      ...(wraps && chain === undefined ? { hydrate: false } : {}),
+      ...(layoutData === undefined ? {} : { layoutData }),
+      ...(headers !== undefined ? { headers } : {}),
       ...(nonce === undefined ? {} : { nonce }),
       ...cspOption,
       ...preloadOf(routeId),
-      ...stylesOf(routeId),
+      // The build keys stylesheets by route, so a page inside the root layout links the whole-app one.
+      ...(chain === undefined ? stylesOf(routeId) : stylesFrom(options.styles)),
       ...prerenderedHandover,
       ...titleOption,
-    })
+    }
+    if (chain === undefined) return renderPageResult(statusPage)
+    try {
+      return await renderPageResult(statusPage)
+    } catch {
+      // A layout that fails to render leaves the status page alone, never a second error.
+      return renderTerminalStatus(status, req, extraHeaders, nonce)
+    }
   }
 
   const renderStatusSignal = async (
@@ -748,6 +891,7 @@ export function createPageRequestExecutor<Env = unknown>(
     env: Env,
     signal: StatusSignal,
     personalized: boolean,
+    layouts?: LayoutChainSource,
   ): Promise<PageResponse> => {
     const { status, headers } = signal[STATUS_SIGNAL]
     if (req.headers.get(DATA_HEADER) !== null) {
@@ -761,7 +905,7 @@ export function createPageRequestExecutor<Env = unknown>(
     }
     const nonce = await resolveNonce(req, env)
     if (headers === undefined && !personalized) {
-      return renderTerminalStatus(status, pathOf(req), undefined, nonce)
+      return renderTerminalStatus(status, req, undefined, nonce, layouts)
     }
     const documentHeaders = new Headers(headers)
     if (headers !== undefined) {
@@ -769,7 +913,7 @@ export function createPageRequestExecutor<Env = unknown>(
     }
     // A cookie queued before the signal makes the status page specific to this visitor.
     if (personalized) documentHeaders.set("cache-control", PRIVATE_NO_STORE)
-    return renderTerminalStatus(status, pathOf(req), documentHeaders, nonce)
+    return renderTerminalStatus(status, req, documentHeaders, nonce, layouts)
   }
 
   const reportLoaderError = (
@@ -802,7 +946,10 @@ export function createPageRequestExecutor<Env = unknown>(
     personalized: boolean,
     serverComponents?: import("../server-components/types.ts").ComponentState,
   ): Promise<PageResponse> => {
-    if (isStatusSignal(data)) return renderStatusSignal(req, env, data, personalized)
+    // Every layout loader settled before the page rendered, so a status or error page can reuse them.
+    const settled: LayoutChainSource = async (_page, count) =>
+      settledLayouts(layoutModules, layoutData, count)
+    if (isStatusSignal(data)) return renderStatusSignal(req, env, data, personalized, settled)
     if (isControlFlow(data)) return data
     if (req.headers.get(DATA_HEADER) !== null) {
       const pageSplit = prepareDeferred(data)
@@ -897,12 +1044,20 @@ export function createPageRequestExecutor<Env = unknown>(
         ...(assemblyCache === undefined ? {} : { assemblyCache }),
       })
     } catch (err) {
-      if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized)
+      if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized, settled)
       if (isControlFlow(err)) throw err
       reportLoaderError(route, req, { ...params }, err)
       const errorId = boundaryFor(route, err)
       if (errorId === undefined) throw err
-      return renderError(route, errorId, withDuplicateInstanceHint(err), personalized, nonce)
+      return renderError(
+        req,
+        route,
+        errorId,
+        withDuplicateInstanceHint(err),
+        personalized,
+        nonce,
+        settled,
+      )
     }
   }
 
@@ -914,6 +1069,7 @@ export function createPageRequestExecutor<Env = unknown>(
     params: Record<string, string>,
     err: unknown,
     personalized: boolean,
+    layouts?: LayoutChainSource,
   ): Promise<PageResponse> => {
     if (isControlFlow(err)) throw err
     reportLoaderError(route, req, params, err)
@@ -926,11 +1082,13 @@ export function createPageRequestExecutor<Env = unknown>(
       })
     }
     return renderError(
+      req,
       route,
       errorId,
       withDuplicateInstanceHint(err),
       personalized,
       options.nonce === undefined ? undefined : await resolveNonce(req, env),
+      layouts,
     )
   }
 
@@ -1033,17 +1191,17 @@ export function createPageRequestExecutor<Env = unknown>(
   }
 
   const renderNotFound = async (
-    request: Request,
-    env: Env,
-    path?: string,
+    c: PageRouteContext<Env>,
+    controls: PageResponseControls,
   ): Promise<PageResponse> => {
     const page = manifest.statusPages?.["404"] ?? manifest.notFound
-    if (page === undefined) return renderTerminalStatus(404, path)
+    if (page === undefined) return renderTerminalStatus(404, c.req)
     return renderTerminalStatus(
       404,
-      path,
+      c.req,
       undefined,
-      options.nonce === undefined ? undefined : await resolveNonce(request, env),
+      options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
+      rootLayoutsFor(c, controls),
     )
   }
 
@@ -1111,7 +1269,7 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         if (componentOwner || componentRequest !== undefined) controls.personalize()
         if (!componentOwner && is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
-          return renderNotFound(c.req, c.env, pathOf(c.req))
+          return renderNotFound(c, controls)
         }
         const mod = await route.load()
         const draft = await draftFlag(c.req)
@@ -1238,10 +1396,19 @@ export function createPageRequestExecutor<Env = unknown>(
                 err,
                 run,
                 controls.personalized,
-              )) ?? renderStatusSignal(c.req, c.env, err, controls.personalized)
+              )) ??
+              renderStatusSignal(c.req, c.env, err, controls.personalized, leadingLayouts(run, err))
             )
           }
-          return renderLoaderFailure(route, c.req, c.env, c.params, err, controls.personalized)
+          return renderLoaderFailure(
+            route,
+            c.req,
+            c.env,
+            c.params,
+            err,
+            controls.personalized,
+            leadingLayouts(run, err),
+          )
         }
         if (componentRequest !== undefined && componentState !== undefined) {
           const answer = componentRuntime!.response(componentState, componentRequest)
@@ -1442,7 +1609,7 @@ export function createPageRequestExecutor<Env = unknown>(
       const match = matchNotFoundScope?.(pathOf(c.req)) ?? null
       const target = match === null ? undefined : notFoundTargets[Number(match.routeId)]
       if (match === null || target === undefined) {
-        return renderNotFound(c.req, c.env, pathOf(c.req))
+        return renderNotFound(c, controls)
       }
       const params: Record<string, string> = {}
       for (let i = 0; i < target.names.length; i++) {
@@ -1451,7 +1618,7 @@ export function createPageRequestExecutor<Env = unknown>(
       const mod = await target.page.load()
       const draft = await draftFlag(c.req)
       if (draft) controls.personalize()
-      let run: LayoutRun
+      let run: LayoutRun | undefined
       try {
         const ctx: LoaderContext = {
           params,
@@ -1470,9 +1637,23 @@ export function createPageRequestExecutor<Env = unknown>(
         await run.pending
       } catch (err) {
         if (isStatusSignal(err)) {
-          return renderStatusSignal(c.req, c.env, err, controls.personalized)
+          return renderStatusSignal(
+            c.req,
+            c.env,
+            err,
+            controls.personalized,
+            leadingLayouts(run, err),
+          )
         }
-        return renderLoaderFailure(target.route, c.req, c.env, params, err, controls.personalized)
+        return renderLoaderFailure(
+          target.route,
+          c.req,
+          c.env,
+          params,
+          err,
+          controls.personalized,
+          leadingLayouts(run, err),
+        )
       }
       return renderNestedNotFound(
         c.req,

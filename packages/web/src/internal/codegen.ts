@@ -90,15 +90,37 @@ export function generateClientEntry(
       `  { routeId: ${JSON.stringify(route.id)}, pattern: ${JSON.stringify(route.pattern)} },`,
     )
   }
+  // A root status page renders inside the root layout when it exports `inLayouts`, which only its
+  // module says - so the layout loads after the page, and only for a page that asks for it.
+  const rootLayout = manifest.layouts._layout
+  const statusLoader = (routeId: string, file: string): string =>
+    rootLayout === undefined
+      ? lazyLoader([file])
+      : `() => import(${jsStringLiteral(resolve(file))}).then((page) => withRootLayout(${JSON.stringify(routeId)}, page))`
   if (manifest.notFound !== undefined) {
-    loaderRows.push(`  "_404": ${lazyLoader([manifest.notFound.file])},`)
+    loaderRows.push(`  "_404": ${statusLoader("_404", manifest.notFound.file)},`)
     statusRoutes[404] = "_404"
   }
   for (const [status, entry] of Object.entries(manifest.statusPages ?? {})) {
     const routeId = `_${status}`
-    loaderRows.push(`  ${JSON.stringify(routeId)}: ${lazyLoader([entry.file])},`)
+    loaderRows.push(`  ${JSON.stringify(routeId)}: ${statusLoader(routeId, entry.file)},`)
     statusRoutes[Number(status)] = routeId
   }
+  const layoutStatusLines =
+    rootLayout === undefined || Object.keys(statusRoutes).length === 0
+      ? []
+      : [
+          "const layoutStatusRoutes = {}",
+          "const withRootLayout = (id, page) => {",
+          "  if (page.inLayouts !== true) return [page]",
+          `  return import(${jsStringLiteral(resolve(rootLayout.file))}).then((layout) => {`,
+          "    layoutStatusRoutes[id] = true",
+          '    layoutIdsOf[id] = ["_layout"]',
+          "    return [layout, page]",
+          "  })",
+          "}",
+        ]
+  const routerStatusOption = layoutStatusLines.length === 0 ? "" : ", layoutStatusRoutes"
   // `_loading` pages. Emitted only when the app has one, so an app without them imports nothing extra.
   // Each is its own lazy chunk; a route row carries its layout ids and the loading pages above it with
   // the number of those layouts each sits under - all the runtime needs to choose one.
@@ -179,6 +201,7 @@ export function generateClientEntry(
     // Each route is a lazy loader: dynamic imports → Bun.build (splitting) emits one chunk per
     // route, shared layouts/deps deduped into shared chunks, so a route's code loads only when
     // visited. loadModule caches the [layouts…, page] component chain + the chain's meta list per id.
+    ...layoutStatusLines,
     "const loaders = {",
     ...loaderRows,
     "}",
@@ -287,8 +310,8 @@ export function generateClientEntry(
     // With `_loading` pages the store is wrapped: a slow navigation then names a loading chain (the
     // shared layouts + the `_loading` component) for the mounted view to render in the meantime.
     loadings.length > 0
-      ? "const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })"
-      : "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
+      ? `const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })`
+      : `const router = createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks })`,
     ...(options.serverComponents ? ["bindComponentRouter(router)"] : []),
     "installHistory(router)",
     "installForms(router)",
