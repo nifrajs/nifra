@@ -77,14 +77,9 @@ const now = (): number =>
 
 const METHODS_WITHOUT_BODY: ReadonlySet<string> = new Set(["GET", "HEAD"])
 
-/** A plain JSON-ish object/array (encode it as JSON) - vs a string/binary body we pass through. */
+/** Any object that is not a native Fetch body; callers check `isRequestBody` first. */
 function isJsonBody(body: unknown): body is Record<string, unknown> | unknown[] {
-  if (body === null || typeof body !== "object") return false
-  if (body instanceof Uint8Array || body instanceof ArrayBuffer || body instanceof Blob)
-    return false
-  if (typeof FormData !== "undefined" && body instanceof FormData) return false
-  if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) return false
-  return true
+  return body !== null && typeof body === "object"
 }
 
 type RequestBody = Exclude<RequestInit["body"], undefined>
@@ -108,14 +103,15 @@ function buildRequest(spec: RequestSpec, origin: string): Request {
   const init: RequestInit = { method, headers }
 
   if (spec.body !== undefined && !METHODS_WITHOUT_BODY.has(method)) {
-    if (isJsonBody(spec.body)) {
+    // A native Fetch body (URLSearchParams, FormData, a typed array) is an object too, so it is
+    // matched first and sent with the content type Fetch gives it.
+    if (isRequestBody(spec.body)) {
+      init.body = spec.body
+    } else if (isJsonBody(spec.body)) {
       if (!headers.has("content-type")) headers.set("content-type", "application/json")
       init.body = JSON.stringify(spec.body)
     } else {
-      if (!isRequestBody(spec.body)) {
-        throw new TypeError("@nifrajs/runner: body must be a Fetch Request body")
-      }
-      init.body = spec.body
+      throw new TypeError("@nifrajs/runner: body must be a Fetch Request body")
     }
   }
   return new Request(url, init)
@@ -163,9 +159,8 @@ async function readBoundedText(response: Response, maxChars: number): Promise<Bo
       // while the final string slice preserves the public character-count contract.
       const byteBudget = Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, remaining * 4))
       const allowed = Math.min(value.byteLength, byteBudget)
-      const chunk = decoder.decode(value.subarray(0, allowed), {
-        stream: allowed < value.byteLength,
-      })
+      // Always streamed: a character split across two chunks decodes once the second arrives.
+      const chunk = decoder.decode(value.subarray(0, allowed), { stream: true })
       chunks.push(chunk)
       totalChars += chunk.length
       if (allowed < value.byteLength || chunk.length > remaining) {

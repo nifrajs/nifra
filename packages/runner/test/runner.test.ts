@@ -169,6 +169,34 @@ describe("runRequest", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a character split across two chunks decodes whole", async () => {
+    const euro = new TextEncoder().encode("€")
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(euro.subarray(0, 1))
+        controller.enqueue(euro.subarray(1))
+        controller.close()
+      },
+    })
+    const result = await runRequest({ fetch: () => new Response(body) }, { path: "/" })
+    expect(result.bodyText).toBe("€")
+    expect(result.truncated).toBeUndefined()
+  })
+
+  test("URLSearchParams is sent form-encoded, not as JSON", async () => {
+    const result = await runRequest(
+      {
+        fetch: async (req) =>
+          Response.json({ type: req.headers.get("content-type"), body: await req.text() }),
+      },
+      { method: "POST", path: "/", body: new URLSearchParams({ q: "x" }) },
+    )
+    expect(result.body).toEqual({
+      type: "application/x-www-form-urlencoded;charset=UTF-8",
+      body: "q=x",
+    })
+  })
+
   test("echoes the label", async () => {
     const r = await runRequest(echoApp, { path: "/users/1", label: "fetch user" })
     expect(r.label).toBe("fetch user")
