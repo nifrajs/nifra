@@ -185,7 +185,7 @@ describe("assigned secrets", () => {
       [`new Map([ [ "apiKey" , "${KEY}" ] ])`, "apiKey"],
       [`cookies.set("session_token", "${KEY}", { secure: true })`, "session_token"],
       ['request.headers.set("Authorization", "Bearer Zq8mW2vX9pLr4TbN7yKc3HdF")', "Authorization"],
-    ]) {
+    ] as const) {
       expect(rules(source(text))).toEqual([`assigned-secret: literal assigned to "${name}"`])
     }
     for (const text of [
