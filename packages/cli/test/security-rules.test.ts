@@ -301,6 +301,107 @@ function project(files: Record<string, string>): string {
 const manifest = (dependencies: Record<string, string>) => JSON.stringify({ dependencies })
 const webApp = () => project({ "nifra.config.ts": "export default {}" })
 
+describe("NF-S002 precision", () => {
+  const linesOf = async (content: string) =>
+    (await scan("server/auth.ts", content)).filter((f) => f.code === "NF-S002").map((f) => f.line)
+
+  test("a comparison against a boolean is a flag check", async () => {
+    expect(
+      await linesOf(
+        [
+          "if (persistRefreshToken === true) keep()",
+          "if (options.persistRefreshToken !== false) keep()",
+          "if (true == hasToken) keep()",
+        ].join("\n"),
+      ),
+    ).toEqual([])
+  })
+
+  test("a name whose last word states a fact about the secret is not secret material", async () => {
+    const names = [
+      "tokenType",
+      "secretKind",
+      "apiKeyName",
+      "apiKeyHeaderName",
+      "TOKEN_HEADER_NAME",
+      "tokenId",
+      "apiKeyIds",
+      "passwordLength",
+      "secretLen",
+      "tokenCount",
+      "secretSize",
+      "signatureMode",
+      "passwordPolicy",
+      "tokenVersion",
+      "SECRET_CAP_SQLSTATE",
+      "tokenStatus",
+      "hmacEnabled",
+      "passwordRequired",
+      "tokenTTL",
+      "tokenExpiry",
+      "tokenExpires",
+    ]
+    expect(await linesOf(names.map((name) => `if (${name} === input) x()`).join("\n"))).toEqual([])
+    expect(await linesOf("if (error.code === SECRET_CAP_SQLSTATE) retry()")).toEqual([])
+  })
+
+  test("the secret word anywhere but the last word still flags", async () => {
+    const names = [
+      "tokenValue",
+      "passwordHash",
+      "secretBytes",
+      "apiKeyHeader",
+      "secretCode",
+      "webhookSecretPath",
+      "tokenPrefix",
+      "signatureHex",
+      "tokenIdHash",
+    ]
+    expect(await linesOf(names.map((name) => `if (${name} === input) x()`).join("\n"))).toEqual(
+      names.map((_, index) => index + 1),
+    )
+  })
+
+  test("two configuration reads are no timing oracle", async () => {
+    expect(
+      await linesOf(
+        [
+          "if (process.env.JWT_SECRET === process.env.SESSION_SECRET) throw new Error('keys must differ')",
+          "if (Bun.env.A_TOKEN === process.env['B_TOKEN']) throw new Error('keys must differ')",
+          "if (Deno.env.get('A_SECRET') !== import.meta.env.B_SECRET) ok()",
+          "function boot(env: Env) { if (env.JWT_SECRET === env.SESSION_SECRET) throw new Error('x') }",
+          "app.get('/', (c) => c.env.A_TOKEN === c.env.B_TOKEN)",
+          "export default { fetch(req: Request, env: Env) { return env.A_SECRET == env.B_SECRET } }",
+        ].join("\n"),
+      ),
+    ).toEqual([])
+  })
+
+  test("a configuration read compared with anything else still flags", async () => {
+    expect(
+      await linesOf(
+        [
+          "if (token === header) x()",
+          "if (secret == input) x()",
+          'if (apiKey !== req.headers.get("x-api-key")) x()',
+          "if (signatureHex === expected) x()",
+          'const API_TOKEN = "hard-coded"',
+          "if (API_TOKEN === input) x()",
+          'if (process.env.API_TOKEN === req.headers.get("x-token")) x()',
+          "const env = { A_TOKEN: input, B_TOKEN: other }",
+          "if (env.A_TOKEN === env.B_TOKEN) x()",
+          "function f(env: Env, list: Env[]) { for (const env of list) if (env.A_TOKEN === env.B_TOKEN) x() }",
+          "function g(env: Env) { { const env = build(); if (env.A_TOKEN === env.B_TOKEN) x() } }",
+          "function h({ env }: Ctx) { if (env.A_TOKEN === env.B_TOKEN) x() }",
+          "if (body.env.API_TOKEN === process.env.API_TOKEN) x()",
+          "const c = parse(input); if (c.env.A_TOKEN === c.env.B_TOKEN) x()",
+          "app.get('/', (c) => c.env.apiToken === c.env.otherToken)",
+        ].join("\n"),
+      ),
+    ).toEqual([1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15])
+  })
+})
+
 describe("NF-S002 severity by file role", () => {
   const compare = "if (token === expected) deny()"
   const severityOf = async (file: string, root: string) =>

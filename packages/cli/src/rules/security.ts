@@ -161,13 +161,16 @@ function secretName(ts: typeof TSApi, node: TSApi.Node): string | undefined {
  * Presence checks (`token === undefined`, `secret == null`, `apiKey !== ""`) and `typeof` guards are
  * not equality over secret material - rewriting them to a timing-safe comparison would break the code.
  * A comparison against a numeric literal (`signature !== 1`, `signatureLength !== 64`) is a
- * length/version/discriminant check, never a secret: secrets are strings or bytes, so a number on
- * either side proves this is not the compare a timing oracle applies to.
+ * length/version/discriminant check, and one against `true`/`false` (`persistRefreshToken === true`)
+ * is a flag check: secrets are strings or bytes, so a number or a boolean on either side proves this
+ * is not the compare a timing oracle applies to.
  */
 function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): boolean {
   for (const side of [node.left, node.right]) {
     if (ts.isIdentifier(side) && side.text === "undefined") return true
     if (side.kind === ts.SyntaxKind.NullKeyword) return true
+    if (side.kind === ts.SyntaxKind.TrueKeyword || side.kind === ts.SyntaxKind.FalseKeyword)
+      return true
     if (ts.isStringLiteralLike(side) && side.text === "") return true
     if (ts.isTypeOfExpression(side)) return true
     if (ts.isVoidExpression(side)) return true
@@ -208,6 +211,139 @@ interface SecretComparison {
   readonly line: number
 }
 
+// The last word of a name that states a fact about a secret rather than holding it: `tokenType`,
+// `SECRET_CAP_SQLSTATE`, `apiKeyIds`, `apiKeyHeaderName`. Exact words only, so the secret word anywhere
+// else still matches (`tokenValue`, `passwordHash`, `apiKeyHeader`). `code`, `url`, `path` and `prefix`
+// stay out: an OTP, a capability URL and a prefix compare all leak secret material.
+const NON_MATERIAL_WORD: ReadonlySet<string> = new Set([
+  "type",
+  "kind",
+  "name",
+  "id",
+  "ids",
+  "length",
+  "len",
+  "count",
+  "size",
+  "mode",
+  "policy",
+  "version",
+  "sqlstate",
+  "status",
+  "enabled",
+  "required",
+  "ttl",
+  "expiry",
+  "expires",
+])
+
+function lastWord(name: string): string {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(/[\s_$-]+/)
+  return (words.findLast((word) => word !== "") ?? "").toLowerCase()
+}
+
+function isSecretName(name: string | undefined): boolean {
+  return name !== undefined && SECRET.test(name) && !NON_MATERIAL_WORD.has(lastWord(name))
+}
+
+/** Whether `name` binds a declaration in `statements` itself (not in a nested scope). */
+function declaresIn(
+  ts: typeof TSApi,
+  statements: TSApi.NodeArray<TSApi.Statement>,
+  name: string,
+): boolean {
+  return statements.some((statement) => {
+    if (ts.isVariableStatement(statement))
+      return statement.declarationList.declarations.some((d) => bindsName(ts, d.name, name))
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement))
+      return statement.name?.text === name
+    return false
+  })
+}
+
+function bindsName(ts: typeof TSApi, binding: TSApi.BindingName, name: string): boolean {
+  if (ts.isIdentifier(binding)) return binding.text === name
+  return binding.elements.some(
+    (element) => !ts.isOmittedExpression(element) && bindsName(ts, element.name, name),
+  )
+}
+
+/**
+ * Whether `id` names a plain parameter of an enclosing function, not a value the file builds: the
+ * nearest declaration of the name, walking out, must be that parameter. A loop or catch variable, a
+ * local or a destructured parameter in between disproves it.
+ */
+function isParameterRef(ts: typeof TSApi, id: TSApi.Identifier): boolean {
+  for (let node: TSApi.Node | undefined = id.parent; node !== undefined; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      for (const parameter of node.parameters) {
+        if (ts.isIdentifier(parameter.name)) {
+          if (parameter.name.text === id.text) return true
+        } else if (bindsName(ts, parameter.name, id.text)) return false
+      }
+    }
+    if ((ts.isBlock(node) || ts.isSourceFile(node)) && declaresIn(ts, node.statements, id.text))
+      return false
+    if (
+      (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      node.initializer !== undefined &&
+      ts.isVariableDeclarationList(node.initializer) &&
+      node.initializer.declarations.some((d) => bindsName(ts, d.name, id.text))
+    )
+      return false
+    if (
+      ts.isCatchClause(node) &&
+      node.variableDeclaration !== undefined &&
+      bindsName(ts, node.variableDeclaration.name, id.text)
+    )
+      return false
+  }
+  return false
+}
+
+const CONFIG_KEY = /^[A-Z][A-Z0-9_]*$/
+const CONTEXT_NAMES: ReadonlySet<string> = new Set(["c", "ctx", "context"])
+
+/**
+ * Whether `node` reads deployment configuration: `process.env.X`, `Bun.env.X`, `import.meta.env.X`,
+ * `Deno.env.get("X")`, `c.env.UPPER_SNAKE` (also `ctx`/`context`), or `env.X`, where `c` and `env` must
+ * be parameters of an enclosing function, never values the file builds. Comparing two such reads
+ * involves no request value, so it is no timing oracle (a startup "keys must differ" check).
+ */
+function isConfigRead(ts: typeof TSApi, node: TSApi.Expression): boolean {
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression
+    const [key] = node.arguments
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "get" &&
+      ts.isPropertyAccessExpression(callee.expression) &&
+      callee.expression.name.text === "env" &&
+      ts.isIdentifier(callee.expression.expression) &&
+      callee.expression.expression.text === "Deno" &&
+      node.arguments.length === 1 &&
+      key !== undefined &&
+      ts.isStringLiteralLike(key)
+    )
+  }
+  let key: string
+  if (ts.isPropertyAccessExpression(node)) key = node.name.text
+  else if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression))
+    key = node.argumentExpression.text
+  else return false
+  const object = node.expression
+  if (ts.isIdentifier(object)) return object.text === "env" && isParameterRef(ts, object)
+  if (!ts.isPropertyAccessExpression(object) || object.name.text !== "env") return false
+  const owner = object.expression
+  if (ts.isMetaProperty(owner)) return owner.name.text === "meta"
+  if (!ts.isIdentifier(owner)) return false
+  if (owner.text === "process" || owner.text === "Bun") return true
+  return CONTEXT_NAMES.has(owner.text) && CONFIG_KEY.test(key) && isParameterRef(ts, owner)
+}
+
 function secretComparisons(
   ts: typeof TSApi,
   tree: TSApi.SourceFile,
@@ -229,9 +365,9 @@ function secretComparisons(
       const left = secretName(ts, node.left)
       const right = secretName(ts, node.right)
       if (
-        ((left !== undefined && SECRET.test(left)) ||
-          (right !== undefined && SECRET.test(right))) &&
-        !isClientConfirmationPair(browser, left, right)
+        (isSecretName(left) || isSecretName(right)) &&
+        !isClientConfirmationPair(browser, left, right) &&
+        !(isConfigRead(ts, node.left) && isConfigRead(ts, node.right))
       ) {
         const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
         found.push({ node, left, right, line })
