@@ -488,17 +488,13 @@ export class PiBackend implements AgentBackend {
   }
 
   private consumeText(session: PiSession, text: string): void {
-    session.buffer += text
-    if (Buffer.byteLength(session.buffer, "utf8") > this.maxRecordBytes) {
-      session.buffer = ""
-      this.failActive(session, agentError("PI_PROTOCOL", "Pi emitted an oversized JSONL record"))
-      return
-    }
+    const buffered = session.buffer + text
+    let start = 0
     for (;;) {
-      const newline = session.buffer.indexOf("\n")
-      if (newline === -1) return
-      let line = session.buffer.slice(0, newline)
-      session.buffer = session.buffer.slice(newline + 1)
+      const newline = buffered.indexOf("\n", start)
+      if (newline === -1) break
+      let line = buffered.slice(start, newline)
+      start = newline + 1
       if (line.endsWith("\r")) line = line.slice(0, -1)
       if (line.length === 0) continue
       if (Buffer.byteLength(line, "utf8") > this.maxRecordBytes) {
@@ -517,6 +513,13 @@ export class PiBackend implements AgentBackend {
         continue
       }
       this.consumeRecord(session, value as PiRpcRecord)
+    }
+    // The cap is per record: complete lines were each measured above, and what remains is the one
+    // record still arriving.
+    session.buffer = buffered.slice(start)
+    if (Buffer.byteLength(session.buffer, "utf8") > this.maxRecordBytes) {
+      session.buffer = ""
+      this.failActive(session, agentError("PI_PROTOCOL", "Pi emitted an oversized JSONL record"))
     }
   }
 

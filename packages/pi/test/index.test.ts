@@ -136,6 +136,26 @@ process.stdin.on("data", (chunk) => {
     await oversized.close("oversized-jsonl")
   })
 
+  test("the record cap applies to each JSONL record, not to a chunk holding several", async () => {
+    const fakeBatched = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const delta = (text) => JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } })
+  process.stdout.write([delta("x".repeat(700)), delta("y".repeat(700)), JSON.stringify({ type: "agent_end" }), JSON.stringify({ type: "agent_settled" })].join("\\n") + "\\n")
+})
+`
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", fakeBatched],
+      maxRecordBytes: 1_024,
+    })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "batched-jsonl" })
+    const events = await collect(backend.send({ sessionId: "batched-jsonl", message: "hello" }))
+    await backend.close("batched-jsonl")
+    expect(events.filter((event) => event.type === "assistant.delta")).toHaveLength(2)
+    expect(events.some((event) => event.type === "session.failed")).toBe(false)
+  })
+
   test("a turn whose model call failed fails, with Pi's error, instead of completing", async () => {
     const script = `
 process.stdin.on("data", (chunk) => {
