@@ -752,7 +752,9 @@ export default function Security() {
         every socket too. A handshake runs the auth guards registered before the socket and the
         app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
         It never claims evidence whose enforcement its message handlers bypass, such as a durable
-        command journal. Capability assurance does not cover sockets: they declare no capabilities.
+        command journal. A socket declares its effects with{" "}
+        <code>app.ws(path, {"{ capabilities }"})</code>, and capability assurance checks them against
+        the module that registers it.
       </p>
 
       <h2>Effect assurance - declared capability versus provenance</h2>

@@ -18,7 +18,7 @@ import {
 } from "@nifrajs/core/capabilities"
 import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
-import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
+import { scanStaticRouteText, scanStaticSocketText, stripComments, walkSource } from "./check.ts"
 
 // Import and re-export clauses are spelled out (a default binding, then `* as ns` or a `{ … }` list)
 // rather than scanned lazily, which is quadratic on a long semicolon-free module.
@@ -338,7 +338,10 @@ export async function collectCapabilityProjectReport(
   const sources = await readSources(cwd)
   const automatic = new Map<string, Set<string>>()
   for (const [file, content] of sources) {
-    for (const route of scanStaticRouteText(file, content)) {
+    for (const route of [
+      ...scanStaticRouteText(file, content),
+      ...scanStaticSocketText(file, content),
+    ]) {
       // A path ending in optional params is reflected as one route per form it serves.
       for (const path of staticRouteForms(route.path)) {
         const modules = automatic.get(routeKey(route.method, path)) ?? new Set<string>()
@@ -353,7 +356,6 @@ export async function collectCapabilityProjectReport(
   const truncations: CapabilityProvenanceTruncation[] = []
   const reflectedRoutes = options.routes ?? reflectRoutes(source)
   for (const route of reflectedRoutes) {
-    if (route.method === "WS") continue
     const modules = new Set(automatic.get(routeKey(route.method, route.path)) ?? [])
     for (const association of policy.provenance.routeModules ?? []) {
       if (

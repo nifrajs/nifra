@@ -874,9 +874,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
-  /** Each socket path and the evidence declarations its handshake captured; reflection reads it. */
+  /** Each socket path, its declared capabilities and the evidence declarations its handshake
+   * captured; reflection reads it. */
   private readonly wsRoutes: {
     readonly path: string
+    readonly capabilities: readonly string[] | undefined
     readonly assurance: readonly AssuranceDeclaration[]
   }[]
   /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
@@ -1998,13 +2000,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // The chain an HTTP `GET` to `form` would capture now, ending in `upgrade()` instead of a
       // handler. `afterHandle` and `around` are left out: they wrap a response, and an accepted
       // handshake has none.
-      const { entry, assurance } = this.prepareRoute("GET", form, undefined, upgrade)
+      const { entry, assurance, descriptor } = this.prepareRoute(
+        "WS",
+        form,
+        wrapped.capabilities === undefined ? undefined : { capabilities: wrapped.capabilities },
+        upgrade,
+      )
       const chain = { ...entry, afterHandle: [] }
       this.wsRouter.add("GET", form, {
         handler: wrapped,
         chain: { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) },
       })
-      this.wsRoutes.push({ path: form, assurance })
+      this.wsRoutes.push({ path: form, capabilities: descriptor.capabilities, assurance })
     }
     wsChanges += 1
     return this as never

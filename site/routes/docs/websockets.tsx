@@ -124,6 +124,13 @@ export default function WebSockets() {
         first. A socket registered before a guard stays public, like an HTTP route there.
       </p>
       <CodeBlock code={GUARDED} />
+      <p>
+        A socket declares the effects its code may reach with <code>capabilities</code>, as an HTTP
+        route does. <code>nifra capabilities check</code> compares them with what the registering
+        module can reach, and the handshake context carries the runtime guard for{" "}
+        <code>upgrade()</code>. Reflection lists every socket under the pseudo-method{" "}
+        <code>"WS"</code>, so <code>nifra assure</code> classifies sockets too.
+      </p>
 
       <h2>NifraWebSocket</h2>
       <p>

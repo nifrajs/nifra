@@ -279,13 +279,14 @@ function scanRoutePattern(
   code: string,
   pattern: RegExp,
   facts?: SourceFacts,
+  verbs: ReadonlySet<string> = HTTP_VERBS,
 ): StaticRouteFinding[] {
   const out: StaticRouteFinding[] = []
   const lines = content.split("\n")
   pattern.lastIndex = 0
   for (let m = pattern.exec(code); m !== null; m = pattern.exec(code)) {
     const method = (m[1] ?? "").toUpperCase()
-    if (!HTTP_VERBS.has(method)) continue
+    if (!verbs.has(method)) continue
     const path = parseQuotedLiteral(
       `${pattern === ROUTE_REGISTRATION_DQ ? '"' : "'"}${m[2] ?? ""}${pattern === ROUTE_REGISTRATION_DQ ? '"' : "'"}`,
     )
@@ -643,6 +644,22 @@ export function scanStaticRouteText(
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
     ...(code.includes(METHODS_SUBPATH) ? scanMethodRoutes(file, content, code, facts) : []),
+  ].sort(bySite)
+}
+
+const SOCKET_VERB: ReadonlySet<string> = new Set(["WS"])
+
+/** `app.ws("/path", ...)` registrations, as routes under the pseudo-method `"WS"` reflection uses. */
+export function scanStaticSocketText(
+  file: string,
+  content: string,
+  facts?: SourceFacts,
+): StaticRouteFinding[] {
+  const code = stripComments(content)
+  if (!isPotentialBackendSource(code)) return []
+  return [
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts, SOCKET_VERB),
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts, SOCKET_VERB),
   ].sort(bySite)
 }
 

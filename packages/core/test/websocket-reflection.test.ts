@@ -5,6 +5,7 @@ import {
   NIFRA_ASSURANCE,
   withRouteAssurance,
 } from "../src/assurance.ts"
+import { useCapability } from "../src/capabilities.ts"
 import { authenticated, rejected, server, status } from "../src/index.ts"
 import { reflectRoutes } from "../src/reflection.ts"
 import { websocket } from "../src/ws.ts"
@@ -117,5 +118,48 @@ describe("WebSocket routes in reflection", () => {
     expect(evaluateRouteAssurance(app, policy).findings).toMatchObject([
       { code: "unclassified-route", method: "WS", path: "/socket" },
     ])
+  })
+
+  test("a socket's declared capabilities are reflected and guard its handshake context", async () => {
+    const app = server()
+      .use(websocket())
+      .ws("/chat", {
+        capabilities: ["db.read"],
+        upgrade: (c) => {
+          useCapability(c, "db.read")
+          return {}
+        },
+      })
+      .ws("/rogue", {
+        capabilities: ["db.read"],
+        upgrade: (c) => {
+          useCapability(c, "db.write")
+          return {}
+        },
+      })
+      .ws("/bare", { upgrade: (c) => useCapability(c, "db.read") })
+    expect(socketsOf(app).map((route) => route.capabilities)).toEqual([
+      ["db.read"],
+      ["db.read"],
+      undefined,
+    ])
+    const handshake = (path: string) =>
+      app.resolveWebSocketUpgrade(
+        new Request(`http://t${path}`, { headers: { upgrade: "websocket" } }),
+      )
+    expect((await handshake("/chat")).kind).toBe("upgrade")
+    for (const path of ["/rogue", "/bare"]) {
+      const refused = await handshake(path)
+      if (refused.kind !== "reject") throw new Error(`expected a rejection, got ${refused.kind}`)
+      expect(refused.response.status).toBe(500)
+    }
+  })
+
+  test("an invalid capability id fails at registration", () => {
+    expect(() =>
+      server()
+        .use(websocket())
+        .ws("/chat", { capabilities: ["Not Valid"] }),
+    ).toThrow(/invalid capability id/)
   })
 })

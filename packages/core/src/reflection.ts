@@ -284,17 +284,23 @@ const reflectedSockets = (source: unknown): ReflectedRoute[] => {
   for (const candidate of sockets) {
     const socket = recordOf(candidate)
     if (typeof socket?.path !== "string" || !Array.isArray(socket.assurance)) continue
+    // The server stored them normalized at registration.
+    const capabilities = Array.isArray(socket.capabilities)
+      ? socket.capabilities.filter((id): id is string => typeof id === "string")
+      : []
     // Declarations scoped by method match the `GET` a handshake is.
     const evidence = reflectedAssurance(
       assuranceEvidenceFor([...socket.assurance, ...global], "GET", socket.path).filter((item) =>
         HANDSHAKE_EVIDENCE.has(item.id),
       ),
     )
-    reflected.push(
-      evidence === undefined
-        ? { method: "WS", path: socket.path }
-        : { method: "WS", path: socket.path, assurance: evidence },
-    )
+    const route: { -readonly [K in keyof ReflectedRoute]: ReflectedRoute[K] } = {
+      method: "WS",
+      path: socket.path,
+    }
+    if (evidence !== undefined) route.assurance = evidence
+    if (capabilities.length > 0) route.capabilities = capabilities
+    reflected.push(route)
   }
   return reflected
 }

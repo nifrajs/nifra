@@ -172,27 +172,60 @@ describe("project provenance firewall", () => {
     expect(project.report).toMatchObject({ ok: true, findings: [] })
   })
 
-  test("a socket is outside the capability policy: no route, no finding", async () => {
+  test("a socket is covered by the module that registers it and declares what it reaches", async () => {
     const cwd = join(FIXTURES, "socket")
     await mkdir(join(cwd, "src"), { recursive: true })
     await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    const source = (declared: string) =>
+      `import { server } from "@nifrajs/core"
+       import "app-db/read"
+       export const backend = server().ws("/chat", { ${declared} })`
+    const app = (capabilities?: readonly string[]) =>
+      server()
+        .use(websocket())
+        .ws("/chat", capabilities === undefined ? {} : { capabilities })
+
+    await writeFile(join(cwd, "backend.ts"), source('capabilities: ["db.read"]'))
+    const declared = await collectCapabilityProjectReport(cwd, app(["db.read"]), policy)
+    expect(declared.report.routes).toMatchObject([
+      { method: "WS", path: "/chat", covered: true, declared: ["db.read"] },
+    ])
+    expect(declared.report).toMatchObject({ ok: true, findings: [] })
+
+    await writeFile(join(cwd, "backend.ts"), source(""))
+    const undeclared = await collectCapabilityProjectReport(cwd, app(), policy)
+    expect(undeclared.report.findings).toMatchObject([
+      {
+        code: "undeclared-capability-evidence",
+        method: "WS",
+        path: "/chat",
+        capability: "db.read",
+      },
+    ])
+  })
+
+  test("a socket write that needs request idempotency fails: a socket message carries none", async () => {
+    const cwd = join(FIXTURES, "socket-write")
+    await mkdir(cwd, { recursive: true })
     await writeFile(
       join(cwd, "backend.ts"),
       `import { server } from "@nifrajs/core"
        import "app-db/read"
-       export const backend = server()
-         .get("/orders", { capabilities: ["db.read"] }, () => [])
-         .ws("/chat", {})`,
+       import "app-db/write"
+       export const backend = server().ws("/chat", { capabilities: ["db.read", "db.write"] })`,
     )
     const app = server()
       .use(websocket())
-      .get("/orders", { capabilities: ["db.read"] }, () => [])
-      .ws("/chat", {})
+      .ws("/chat", { capabilities: ["db.read", "db.write"] })
     const project = await collectCapabilityProjectReport(cwd, app, policy)
-    expect(project.report.routes.map((route) => `${route.method} ${route.path}`)).toEqual([
-      "GET /orders",
+    expect(project.report.findings).toMatchObject([
+      {
+        code: "missing-request-idempotency",
+        method: "WS",
+        path: "/chat",
+        capability: "db.write",
+      },
     ])
-    expect(project.report).toMatchObject({ ok: true, findings: [] })
   })
 
   test("explicit routeModules cover contract-style registrations", async () => {

@@ -3845,7 +3845,9 @@ WebSocket routes are reflected under the pseudo-method `"WS"`, so a policy class
 every socket too. A handshake runs the auth guards registered before the socket and the
 app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
 It never claims evidence whose enforcement its message handlers bypass, such as a durable
-command journal. Capability assurance does not cover sockets: they declare no capabilities.
+command journal. A socket declares its effects with
+`app.ws(path, { capabilities })`, and capability assurance checks them against
+the module that registers it.
 
 ### Effect assurance - declared capability versus provenance
 
@@ -5281,6 +5283,12 @@ app
     upgrade: (c) => ({ user: c.principal.id }),
   })
 ```
+
+A socket declares the effects its code may reach with `capabilities`, as an HTTP
+route does. `nifra capabilities check` compares them with what the registering
+module can reach, and the handshake context carries the runtime guard for
+`upgrade()`. Reflection lists every socket under the pseudo-method
+`"WS"`, so `nifra assure` classifies sockets too.
 
 ### NifraWebSocket
 

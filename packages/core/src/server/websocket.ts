@@ -152,6 +152,13 @@ export interface WebSocketHandler<
    */
   allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean)
   /**
+   * The capability ids this socket's code may reach, exactly as an HTTP route's `capabilities`.
+   * `nifra capabilities check` compares them with the effects reachable from the module that
+   * registers the socket. The handshake context carries the guard, so a runtime beacon in `upgrade()`
+   * (or one that keeps `c`) fails closed on an undeclared capability.
+   */
+  capabilities?: readonly string[]
+  /**
    * Runs in the HTTP request context **before** the upgrade, last in the chain an HTTP `GET` to the
    * same path runs: after {@link allowedOrigins}, then the `authenticate()` stages, `derive`s and
    * `beforeHandle`s registered before this route, any of which can refuse the handshake. `c` carries
