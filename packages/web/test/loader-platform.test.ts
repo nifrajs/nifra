@@ -61,6 +61,7 @@ const ipLoader: Loader = async (ctx) => {
 
 test("a loader call sees the visitor's clientIp derived under the page app's trust declaration", async () => {
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(ipLoader),
     clientEntry: "/c.js",
@@ -75,6 +76,7 @@ test("a backend with its own header trust keeps the already-derived clientIp", a
   // The synthesized loader request carries no cf-connecting-ip header; re-deriving from it would
   // collapse every SSR caller into `undefined`.
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(ipLoader),
     clientEntry: "/c.js",
@@ -92,6 +94,7 @@ test("a backend with its own header trust keeps the already-derived clientIp", a
 
 test("concurrent renders from different visitors each see their own clientIp", async () => {
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(async (ctx) => {
       const api = ctx.api as Api
@@ -114,6 +117,7 @@ test("concurrent renders from different visitors each see their own clientIp", a
 test("env and waitUntil reach a backend handler called from a loader", async () => {
   const scheduled: unknown[] = []
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(async (ctx) => (await (ctx.api as Api).api.platform.get()).data),
     clientEntry: "/c.js",
@@ -135,6 +139,7 @@ test("loader and action calls never carry the page request's cookie or authoriza
   const headersOf = async (ctx: Parameters<Loader>[0]) =>
     (await (ctx.api as Api).api.headers.get()).data
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(headersOf, headersOf),
     clientEntry: "/c.js",
@@ -158,6 +163,7 @@ test("a loader call does not resolve the socket peer unless the backend reads c.
     },
   }
   const plain = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(async (ctx) => (await (ctx.api as Api).api.plain.get()).data),
     clientEntry: "/c.js",
@@ -167,6 +173,7 @@ test("a loader call does not resolve the socket peer unless the backend reads c.
   expect(peerReads).toBe(0)
 
   const reading = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestWith(ipLoader),
     clientEntry: "/c.js",

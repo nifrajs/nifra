@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   assertFrameworkOptionsEdgeExported,
   assertNoShadowedPages,
   showsIndicator,
 } from "../src/cli.ts"
+import { getFixRecipe } from "../src/fix-recipes.ts"
 import { buildRouteTable } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
@@ -109,8 +110,9 @@ describe("forwarding helpers", () => {
 
   test("frameworkMountPaths: each mount, plus the backend at apiPrefix when a backend exists", () => {
     const mounts = [{ path: "/hooks", app: { fetch: () => new Response() } }]
-    expect(frameworkMountPaths(fw({ mounts }), true)).toEqual(["/hooks", "/api"])
-    expect(frameworkMountPaths(fw({ mounts }), false)).toEqual(["/hooks"])
+    expect(frameworkMountPaths(fw({ mounts, apiPrefix: "/api" }), true)).toEqual(["/hooks", "/api"])
+    expect(frameworkMountPaths(fw({ mounts, apiPrefix: "/api" }), false)).toEqual(["/hooks"])
+    expect(frameworkMountPaths(fw({ mounts }), true)).toEqual(["/hooks"])
     expect(frameworkMountPaths(fw({ apiPrefix: "" }), true)).toEqual([])
     expect(frameworkMountPaths(fw({ apiPrefix: "/rpc" }), true)).toEqual(["/rpc"])
   })
@@ -184,16 +186,17 @@ describe("nifra build refuses a page under a mount", () => {
       backend,
     }) as LoadedApp
 
-  test("a page under the backend's default prefix blocks the build", () => {
+  test("a page under the backend's apiPrefix blocks the build", () => {
     const dir = project({ "routes/api/report.tsx": "export default () => null\n" })
-    expect(() => assertNoShadowedPages(loaded(dir, {}, {}))).toThrow(
+    expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "/api" }, {}))).toThrow(
       "build blocked: 1 page route can never render",
     )
   })
 
-  test("no backend, an empty prefix, or a page outside the prefix builds", () => {
+  test("no backend, no or an empty prefix, or a page outside the prefix builds", () => {
     const dir = project({ "routes/api/report.tsx": "export default () => null\n" })
-    expect(() => assertNoShadowedPages(loaded(dir, {}, undefined))).not.toThrow()
+    expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "/api" }, undefined))).not.toThrow()
+    expect(() => assertNoShadowedPages(loaded(dir, {}, {}))).not.toThrow()
     expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "" }, {}))).not.toThrow()
     expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "/rpc" }, {}))).not.toThrow()
   })
@@ -252,12 +255,19 @@ describe("NF-C027", () => {
   }
   const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
 
-  test("a page under the default backend prefix is an error naming the file", async () => {
-    const dir = project({
+  test("a page under the backend's apiPrefix is an error naming the file", async () => {
+    const files = {
       "backend/app.ts": backendSource,
-      "backend/framework.ts": adapterSource.join("\n"),
       "routes/index.tsx": "export default () => null\n",
       "routes/api/report.tsx": "export default () => null\n",
+    }
+    // Without an apiPrefix the backend is not mounted, so nothing is shadowed.
+    expect(
+      await scan(project({ ...files, "backend/framework.ts": adapterSource.join("\n") })),
+    ).toEqual([])
+    const dir = project({
+      ...files,
+      "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/api"'].join("\n"),
     })
     const findings = await scan(dir)
     expect(findings).toHaveLength(1)
@@ -404,19 +414,33 @@ describe("NF-C035", () => {
   }
   const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
 
-  test("the implicit /api mount of the backend is reported where apiPrefix would go", async () => {
-    const findings = await scan(
-      project({
-        "backend/app.ts": backendSource,
-        "backend/framework.ts": adapterSource.join("\n"),
-        "routes/index.tsx": "export default () => null\n",
-      }),
-    )
-    expect(findings.map((finding) => [finding.severity, finding.file])).toEqual([
-      ["info", "backend/framework.ts"],
+  test("a backend with no apiPrefix is reported as not served over HTTP, with a fix", async () => {
+    const dir = project({
+      "backend/app.ts": backendSource,
+      "backend/framework.ts": adapterSource.join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const findings = await scan(dir)
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.fix])).toEqual([
+      [
+        "info",
+        "backend/framework.ts",
+        { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
+      ],
     ])
+    expect(findings[0]?.message).toContain("not served over HTTP")
     expect(findings[0]?.message).toContain('export const apiPrefix = "/api"')
     expect(findings[0]?.message).toContain('export const apiPrefix = ""')
+    const recipe = getFixRecipe("framework.api-prefix")
+    const finding = findings[0]
+    if (recipe === undefined || finding === undefined) throw new Error("no fix recipe")
+    expect(await recipe.apply(dir, finding)).toEqual(["backend/framework.ts"])
+    expect(readStaticApiPrefix(readFileSync(join(dir, "backend/framework.ts"), "utf8"))).toEqual({
+      kind: "literal",
+      value: "/api",
+    })
+    expect(await scan(dir)).toEqual([])
+    expect(await recipe.apply(dir, finding)).toEqual([])
   })
 
   test("an explicit apiPrefix, or no backend, is not reported", async () => {

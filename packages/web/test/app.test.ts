@@ -610,7 +610,13 @@ test("createWebApp injects the api into the loader context", async () => {
     ],
     layouts: {},
   }
-  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", api: { tag: "API!" } })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest,
+    clientEntry: "/c.js",
+    api: { tag: "API!" },
+  })
   const html = await (await app.fetch(new Request("http://x/"))).text()
   expect(html).toContain('chain=1:{"tag":"API!"}') // the injected api reached the loader
 })
@@ -813,7 +819,13 @@ test("an action receives the route params + the injected api", async () => {
     ],
     layouts: {},
   }
-  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", api: { tag: "API!" } })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest,
+    clientEntry: "/c.js",
+    api: { tag: "API!" },
+  })
   const html = await (await app.fetch(new Request("http://x/users/7", { method: "POST" }))).text()
   expect(html).toContain(':action={"id":"7","tag":"API!"}')
 })
@@ -1071,7 +1083,13 @@ const apiBackend = (): { fetch(request: Request): Response | Promise<Response> }
 
 test("createWebApp auto-mounts the api backend: POST /api/echo reaches the backend", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(
     new Request("http://x/api/echo", {
       method: "POST",
@@ -1099,6 +1117,7 @@ test("createWebApp auto-mount forwards platform env and waitUntil to the backend
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api: inProcessClient(backend),
+    apiPrefix: "/api",
   })
 
   const res = await app.fetch(new Request("http://x/api/platform"), {
@@ -1124,7 +1143,13 @@ const inProcessBridgeFn = (app: { fetch(request: Request): Response | Promise<Re
 test("createWebApp auto-mount: a FUNCTION-typed api (real inProcessClient proxy shape) still mounts", async () => {
   const api = inProcessBridgeFn(apiBackend())
   expect(typeof api).toBe("function") // the regression: an object-only guard skips this
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api/x"))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ x: 1 }) // reached the backend, not the page router
@@ -1132,7 +1157,13 @@ test("createWebApp auto-mount: a FUNCTION-typed api (real inProcessClient proxy 
 
 test("createWebApp auto-mount: GET /api/x reaches the backend (not the page router)", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api/x"))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ x: 1 })
@@ -1155,7 +1186,13 @@ test("createWebApp explicit mounts forward the outer platform", async () => {
 
 test("createWebApp auto-mount: a normal page path still SSRs (mount only claims the prefix)", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/"))
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("text/html")
@@ -1164,7 +1201,13 @@ test("createWebApp auto-mount: a normal page path still SSRs (mount only claims 
 
 test("createWebApp auto-mount: an unknown /api path returns the BACKEND 404, not the page 404", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api/none"))
   expect(res.status).toBe(404)
   // The page 404 (`_404` route) renders the not-found *component* as HTML; the backend 404 is the
@@ -1210,7 +1253,13 @@ test("createWebApp auto-mount: a sibling path sharing the prefix string is NOT c
   // `/apidocs` shares "/api" as a string head but is NOT under the `/api/` boundary - it must reach
   // the page router (here: the `_404` page), not the backend. Guards the off-by-one prefix bug.
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/apidocs"))
   expect(res.status).toBe(404)
   expect(await res.text()).toContain("chain=") // the SSR'd `_404` page, i.e. the page router handled it
@@ -1218,7 +1267,13 @@ test("createWebApp auto-mount: a sibling path sharing the prefix string is NOT c
 
 test("createWebApp auto-mount: exactly the prefix path (no trailing slash) dispatches to the backend", async () => {
   const api = inProcessBridge(server().get("/api", () => ({ root: true })))
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api"))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ root: true })
@@ -1228,6 +1283,7 @@ test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (n
   // A plain object passed as `ctx.api` (not an in-process bridge) must NOT be mounted - the app serves
   // pages, and `/api/*` falls through to the page router exactly as before the auto-mount existed.
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1241,6 +1297,7 @@ test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (n
 test("webProjectEvidence composes page and stripped API routes", async () => {
   const backend = server().get("/health", () => ({ ok: true }))
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1339,6 +1396,7 @@ test("webProjectEvidence composes wildcard mounts and rejects an API without evi
       Response.json({ path: new URL(request.url).pathname }),
   }
   const apiApp = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1386,6 +1444,7 @@ test("llms.txt lists backend routes only when the backend is served over HTTP", 
   // The same backend both ways: its routes are reflected, and the bridge makes it HTTP-mountable.
   const api = Object.assign(backend, inProcessBridge(backend))
   const mounted = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",

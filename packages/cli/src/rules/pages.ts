@@ -1,7 +1,7 @@
 /**
  * NF-C027: a page file whose URL sits under the backend's mount path.
  *
- * `backend/app.ts`'s backend is mounted at `apiPrefix` (default `/api`) ahead of page routing, and
+ * `backend/app.ts`'s backend is mounted at `apiPrefix`, when one is set, ahead of page routing, and
  * its 404 is final, so `routes/api/report.tsx` never renders - every request for it gets the
  * backend's 404. `createWebApp` refuses such an app at startup and `nifra build` refuses to build
  * it; this reports it earlier, without running app code (check's pre-`loadApp` invariant): the
@@ -51,7 +51,7 @@ export const shadowedPageRule: CheckRule = {
     if (!existsSync(backendFile) || !existsSync(routesDir)) return []
     if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
 
-    let apiPrefix = "/api"
+    let apiPrefix = ""
     // backend/framework.ts first: the generated server entry imports from it, and the build refuses
     // a nifra.config.ts whose forwarded fields differ from it.
     const configFile = CONFIG_FILES.find((file) => existsSync(join(ctx.root, file)))
@@ -156,13 +156,12 @@ export const statusLayoutRule: CheckRule = {
 
 /**
  * NF-C035: `backend/app.ts` exports a backend and the framework config sets no `apiPrefix`, so the
- * backend is also served over HTTP at `/api`. That mount is intended in most apps; the finding makes it
- * explicit, because a future major mounts the backend only when `apiPrefix` is set. An unreadable
- * `apiPrefix` is NF-C027's to report.
+ * backend is not served over HTTP - a browser call to `/api` reaches page routing. Loader-only is a
+ * valid choice; the finding asks for it to be stated. An unreadable `apiPrefix` is NF-C027's to report.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",
-  title: "Backend mounted at the implicit /api",
+  title: "Backend not served over HTTP",
   async scan(ctx) {
     const backendFile = join(ctx.root, BACKEND_APP_FILE)
     if (!existsSync(backendFile)) return []
@@ -180,11 +179,20 @@ export const implicitApiMountRule: CheckRule = {
         code: "NF-C035",
         severity: "info",
         file,
-        message: `${BACKEND_APP_FILE}'s backend is also served over HTTP at /api, ahead of page routing, because ${file} sets no apiPrefix. If this app serves the backend elsewhere too, /api is a second path to it that skips that server's hooks. Add \`export const apiPrefix = "/api"\` to ${file} to keep the mount, or \`export const apiPrefix = ""\` to turn it off. A future major mounts the backend only when apiPrefix is set.`,
+        message: `${BACKEND_APP_FILE}'s backend is not served over HTTP, because ${file} sets no apiPrefix: a browser call to /api reaches page routing instead. Add \`export const apiPrefix = "/api"\` to ${file} to serve it there, as 4.x did by default, or \`export const apiPrefix = ""\` to keep it loader-only.`,
+        fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
         verify: "nifra check",
       }),
     ]
   },
+}
+
+/** Append `export const apiPrefix = "/api"` to a framework config that sets none, creating it if needed. */
+export function withDefaultApiPrefix(source: string | undefined): string | undefined {
+  if (source !== undefined && readStaticApiPrefix(source).kind !== "default") return undefined
+  const line = 'export const apiPrefix = "/api"\n'
+  if (source === undefined || source === "") return line
+  return `${source}${source.endsWith("\n") ? "" : "\n"}${line}`
 }
 
 export const pageRules = Object.freeze([shadowedPageRule, statusLayoutRule, implicitApiMountRule])

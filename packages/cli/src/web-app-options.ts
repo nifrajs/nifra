@@ -39,7 +39,7 @@ export function frameworkMountPaths(fw: NifraFramework, hasBackend: boolean): st
   for (const mount of fw.mounts ?? []) {
     if (typeof mount?.path === "string") paths.push(mount.path)
   }
-  const apiPrefix = fw.apiPrefix ?? "/api"
+  const apiPrefix = fw.apiPrefix ?? ""
   if (hasBackend && apiPrefix !== "") paths.push(apiPrefix)
   return paths
 }

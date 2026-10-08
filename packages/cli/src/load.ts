@@ -91,9 +91,9 @@ export interface NifraFramework {
   readonly cssCodeSplit?: boolean
   /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
   readonly cssLoading?: CssLoadingMode
-  /** Path `backend/app.ts`'s backend is served at (default `"/api"`; `""` turns the mount off). A
-   * page file under it can never render, so the app refuses to start and `nifra build` refuses to
-   * build.
+  /** Path `backend/app.ts`'s backend is served at over HTTP, such as `"/api"`; unset or `""`, it is
+   * not mounted. A page file under it can never render, so the app refuses to start and `nifra build`
+   * refuses to build.
    *
    * The fields from here down reach the generated server entry, so like `use` they MUST be exported
    * from `backend/framework.ts` (re-export them from `nifra.config.ts` when both exist). */

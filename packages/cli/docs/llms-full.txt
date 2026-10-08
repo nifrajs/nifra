@@ -7687,13 +7687,14 @@ package ships a tight `LLM.md` contract card.
 
 ## Nifra - Backends & API (dev and prod)
 
-> How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* - in `nifra dev` and production alike, no hand-dispatch.
+> How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp serves the backend over HTTP at the apiPrefix you set - in `nifra dev` and production alike, no hand-dispatch.
 
 Your `@nifrajs/core` backend reaches a Nifra app two ways from a single wiring.
 `inProcessClient(backend)` is fed to every loader and action as
-`ctx.api` - and `createWebApp` now **auto-mounts** that
-backend over HTTP at `/api/*`, so the browser can call the very same routes. No
-hand-written `if (pathname.startsWith("/api/"))` branch in your server entry.
+`ctx.api` - and, given an `apiPrefix`, `createWebApp`
+**mounts** that backend over HTTP there, so the browser can call the very same
+routes. No hand-written `if (pathname.startsWith("/api/"))` branch in your server
+entry.
 
 ### One backend, two call paths
 
@@ -7733,20 +7734,19 @@ export async function loader({ api }: Route.LoaderArgs) {
 }
 ```
 
-### The auto-mounted /api/* (the new part)
+### The mounted /api/*
 
-Before, `inProcessClient` fed `ctx.api` but did _not_ serve the
-backend over HTTP - so a browser `POST /api/sync` hit the page router and 404/405'd
-until you hand-wrote a dispatch branch in `server-bun.ts`. Now
-`createWebApp` mounts it for you: a request whose pathname is exactly
-`apiPrefix` (default `/api`) or starts with
+Without an `apiPrefix`, `inProcessClient` feeds `ctx.api` but
+the backend is _not_ served over HTTP, so a browser `POST /api/sync` reaches
+the page router. Set `apiPrefix: "/api"` and `createWebApp` mounts it: a
+request whose pathname is exactly `apiPrefix` or starts with
 `apiPrefix + "/"` is dispatched through Nifra's platform-aware backend mount
 interface **before** page routing. The backend receives the same Workers
 `env` bindings and `waitUntil` lifetime as the web app, and its
 `Response` is returned untouched (the request body is passed through, never pre-read).
 
 ```ts
-// backend/server.ts - a hand-written server: createWebApp serves pages AND auto-mounts the
+// backend/server.ts - a hand-written server: createWebApp serves pages AND mounts the
 // backend at /api/*. (`nifra build` emits this wiring for you; write it only for a custom host.)
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
@@ -7758,8 +7758,8 @@ export const app = createWebApp({
   adapter: reactAdapter,
   manifest,
   clientEntry,
-  api: inProcessClient(backend), // → ctx.api in loaders/actions AND auto-mounted at /api/*
-  // apiPrefix: "/api",          // the default; pass "" to disable the HTTP mount (pages only)
+  api: inProcessClient(backend), // → ctx.api in loaders/actions
+  apiPrefix: "/api", // AND served over HTTP at /api/*; without it the backend is loader-only
 })
 
 // Bun: Bun.serve({ fetch: app.fetch }). No `if (pathname.startsWith("/api/")) …` branch needed -
@@ -7771,17 +7771,16 @@ for **every method** - so `GET`/`POST`/`PUT`/… all
 reach the backend, and an unknown `/api/…` path returns the _backend's_ 404,
 not the page's. A sibling path that merely shares the prefix string (e.g.
 `/apidocs`) is **not** captured - only the `/api` boundary
-is. Pass `apiPrefix: ""` to turn the mount off and keep `ctx.api` as a
-loader-only client.
+is. Leave `apiPrefix` unset, or set it to `""`, to keep
+`ctx.api` as a loader-only client.
 
-The mount happens whenever `api` is mountable, even with no `apiPrefix`
-given. An app that also serves the same backend behind its own server - with that server's rate
-limits and guards - then has a second path to it at `/api` that skips them. So when
-`api` comes without an explicit `apiPrefix`, `createWebApp`
-warns once in development and `nifra check` reports `NF-C035` for a
-`backend/framework.ts` that sets none. Set `apiPrefix: "/api"` to keep the
-mount or `""` to drop it; a future major mounts the backend only when
-`apiPrefix` is set.
+Loader-only is the default because an app that also serves the same backend behind its own
+server - with that server's rate limits and guards - would otherwise get a second path to it
+that skips them. `nifra check` reports `NF-C035` for a
+`backend/framework.ts` that sets no `apiPrefix`, so the choice is
+written down: `nifra fix --code NF-C035` adds
+`export const apiPrefix = "/api"`, which is what 4.x mounted by default, and
+`""` keeps the backend loader-only.
 
 Because the backend answers first and its 404 is final, a page file under the prefix (
 `routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
@@ -7816,8 +7815,8 @@ export const use = (app: { get(path: string, handler: () => Response): unknown }
 
 [!NOTE] The mount lives in `createWebApp`, and `nifra dev` (the
 Vite-backed dev server) routes every request through that same app's `fetch`. So
-the `/api/*` routes are served identically in development and production - there is
-nothing extra to wire for the dev loop.
+the mounted routes are served identically in development and production - there is nothing
+extra to wire for the dev loop.
 
 ### Events that survive the transport
 

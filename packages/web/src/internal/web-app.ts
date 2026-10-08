@@ -102,10 +102,11 @@ export interface CreateWebAppOptions<Env = unknown> {
    * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.
    *
    * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend
-   * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at
-   * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
-   * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`
-   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it.
+   * mount interface from `@nifrajs/core/mount`; given an {@link apiPrefix}, `createWebApp` also serves
+   * that backend over HTTP there: a request whose pathname starts with the prefix is dispatched before
+   * page routing with the same `env`/`waitUntil` platform context, and the backend's `Response` is
+   * returned untouched. The mount runs in `nifra dev` too. Without `apiPrefix` the backend is
+   * loader-only.
    *
    * **Request-scoped loader calls.** While a page renders, its loaders, actions and boundaries get a
    * `ctx.api` bound to that request's platform identity: a backend handler reached through it sees the
@@ -115,12 +116,12 @@ export interface CreateWebAppOptions<Env = unknown> {
    * does not lose it. Headers do NOT travel: the page request's `cookie` and `authorization` are never
    * copied, so a loader call is anonymous unless the loader passes headers on the call itself. */
   readonly api?: unknown
-  /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
+  /** HTTP path prefix the {@link api} backend is mounted at, such as `"/api"`. A request whose
    * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
    * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
-   * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
-   * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
-   * is also a no-op when `api` does not expose the symbol mount.
+   * sync", …)`), matching the in-process `inProcessClient` call sites. Unset or `""`, nothing is
+   * mounted: the app serves pages only and `api` stays a loader-only `ctx.api`. Mounting is also a
+   * no-op when `api` does not expose the symbol mount.
    *
    * A page file under the prefix (`routes/api/report.tsx`) could never render - the backend answers
    * first and its 404 is final - so `createWebApp` throws, naming the file. The same holds for every
@@ -276,18 +277,6 @@ function mountPathPrefix(path: string): string {
   return withoutWildcard.slice(0, end)
 }
 
-let warnedImplicitApiMount = false
-
-/** Development only, once per process: the default mount gives the backend an HTTP path at `/api`. */
-function warnImplicitApiMount(): void {
-  if (warnedImplicitApiMount) return
-  if (typeof process === "undefined" || process.env?.NODE_ENV !== "development") return
-  warnedImplicitApiMount = true
-  console.warn(
-    '[nifra/web] createWebApp serves `api` over HTTP at /api, ahead of page routing, because no apiPrefix was given. If this app serves the backend elsewhere too, /api is a second path to it that skips that server\'s hooks. Pass apiPrefix: "/api" to keep the mount, or apiPrefix: "" to turn it off. A future major mounts the backend only when apiPrefix is set.',
-  )
-}
-
 /**
  * Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`,
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
@@ -368,18 +357,17 @@ export function createWebApp<Env = unknown>(
       cacheChannel.enabled = true
     },
   })
-  // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
+  // Mount the in-process backend over HTTP at `apiPrefix`, when one is given, BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
   // The mount handles every HTTP method and preserves backend 404 responses instead of letting the
   // page catch-all render them. We dispatch the same `Request` object (its body unread), so
   // streamed/large bodies pass through untouched. The backend defines full prefixed paths
-  // (`server().post("/api/sync", …)`) unless `apiStrip` is enabled. `apiPrefix: ""` opts out;
-  // a non-mountable `api` remains loader-only and pages-only apps keep the no-mount fast path.
-  const apiPrefix = options.apiPrefix ?? "/api"
+  // (`server().post("/api/sync", …)`) unless `apiStrip` is enabled. Without a prefix, or with a
+  // non-mountable `api`, the backend is loader-only and pages-only apps keep the no-mount fast path.
+  const apiPrefix = options.apiPrefix ?? ""
   const apiStrip = options.apiStrip === true
   const mountedApi = backendMountOf<Env>(api)
-  if (mountedApi !== undefined && options.apiPrefix === undefined) warnImplicitApiMount()
   // Longest path first, so a more specific mount (`/api/auth`) is tried before a broader one (`/api`)
   // regardless of the order they were declared in.
   const configuredMounts: readonly MountOptions<Env>[] = Object.freeze(

@@ -156,6 +156,7 @@ test("use option covers the 404 catch-all", async () => {
 test("use option covers a mounted backend response", async () => {
   const backend = server().get("/api/ping", () => ({ pong: true }))
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestOf(),
     clientEntry: "/c.js",
@@ -179,6 +180,7 @@ test("an onRequest middleware short-circuits ahead of the mount", async () => {
       req.headers.has("x-key") ? undefined : new Response("denied", { status: 401 }),
   }
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifestOf(),
     clientEntry: "/c.js",

@@ -401,7 +401,7 @@ export function routesToJson(
 // `nifra routes` answers a different question: "what does this app actually serve, and with which
 // methods?" - so an agent sees instantly that `POST /api/explain` is (or isn't) mounted, instead of
 // discovering it via a 405. It marks which backend routes are AUTO-MOUNTED under the page router's
-// `apiPrefix` (default `/api`), and `--json` makes it machine-consumable. The table-building +
+// `apiPrefix`, and `--json` makes it machine-consumable. The table-building +
 // rendering are pure (no fs / no module loads), so they're unit-tested; the cwd gathering is the thin
 // async wrapper `describeRoutes`.
 // ===================================================================================================
@@ -435,7 +435,7 @@ export interface PageRouteInput {
 export interface RouteTableInput {
   readonly pages: readonly PageRouteInput[]
   readonly api: ReadonlyArray<Pick<ReflectedRoute, "method" | "path">>
-  /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `""`
+  /** The page router's `apiPrefix`; an API route at/under it is auto-mounted. Unset or `""`
    * disables the auto-mount, so no API route is marked auto-mounted. */
   readonly apiPrefix?: string
   /** The backend declares its routes without the prefix and is served at `apiPrefix + path`: every API
@@ -459,7 +459,7 @@ function isUnderPrefix(path: string, prefix: string): boolean {
  * joined methods, for stable output.
  */
 export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
-  const configured = input.apiPrefix ?? "/api"
+  const configured = input.apiPrefix ?? ""
   // Read the prefix as the server's mount table does (`/api/` and `/api/*` are `/api`).
   const apiPrefix = configured === "" ? "" : (normalizeMountPath(configured) ?? configured)
   const stripped = input.apiStrip === true && apiPrefix !== ""

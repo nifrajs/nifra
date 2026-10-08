@@ -219,6 +219,7 @@ describe("agent verification surfaces", () => {
     expect(listFixRecipes().map((recipe) => recipe.id)).toEqual([
       "security.timing-safe-equal",
       "manifest.sync",
+      "framework.api-prefix",
       "contracts.snapshot",
       "workspace-dist.rebuild",
       "imports.moved-export",

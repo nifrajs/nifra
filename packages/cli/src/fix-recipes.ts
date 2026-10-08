@@ -75,6 +75,24 @@ registerFixRecipe({
 })
 
 registerFixRecipe({
+  id: "framework.api-prefix",
+  description:
+    "Serve the backend over HTTP at /api by exporting apiPrefix from the framework config.",
+  verify: "nifra check",
+  async apply(root, diagnostic) {
+    if (diagnostic.file === undefined) return []
+    const path = await resolveInsideProject(root, diagnostic.file)
+    if (path === undefined) return []
+    const { withDefaultApiPrefix } = await import("./rules/pages.ts")
+    const file = Bun.file(path)
+    const next = withDefaultApiPrefix((await file.exists()) ? await file.text() : undefined)
+    if (next === undefined) return []
+    await writeFile(path, next, "utf8")
+    return [diagnostic.file]
+  },
+})
+
+registerFixRecipe({
   id: "contracts.snapshot",
   description: "Refresh the opt-in contract lock after reviewing an intentional route change.",
   verify: "nifra contracts check",
