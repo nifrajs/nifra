@@ -15,8 +15,6 @@ export interface TriggerOptions {
   readonly target?: object
 }
 
-const NOOP = (): void => {}
-
 /** Structural event shape used instead of a DOM lib type so this package stays runtime-neutral. */
 interface MediaQueryChangeEvent {
   readonly matches: boolean
@@ -67,71 +65,67 @@ export function scheduleTrigger(
   // Cast through unknown so a consumer's DOM lib cannot merge its stricter Element signatures into
   // this structural, DOM-free contract.
   const browser = globalThis as unknown as BrowserCapabilities
-  let fired = false
   let disposed = false
   let cleanup: (() => void) | undefined
 
-  const fire = (): void => {
-    if (fired || disposed) return
-    fired = true
+  // The one disposer every pending strategy returns; `cleanup` holds what that strategy registered.
+  const stop = (): void => {
+    disposed = true
     cleanup?.()
     cleanup = undefined
+  }
+  // Firing stops the trigger first, so a late event (or a dispose) finds it already done.
+  const fire = (): void => {
+    if (disposed) return
+    stop()
     run()
   }
 
   if (strategy === "load") {
     fire()
-    return NOOP
+    return stop
   }
 
   if (strategy === "idle") {
     const ric = browser.requestIdleCallback
     if (ric === undefined) {
-      const handle = globalThis.setTimeout(fire, 1)
-      return () => {
-        disposed = true
-        globalThis.clearTimeout(handle)
-      }
+      const handle = setTimeout(fire, 1)
+      cleanup = () => clearTimeout(handle)
+    } else {
+      const handle = ric(fire)
+      cleanup = () => browser.cancelIdleCallback?.(handle)
     }
-    const handle = ric(fire)
-    return () => {
-      disposed = true
-      browser.cancelIdleCallback?.(handle)
-    }
+    return stop
   }
 
   if (strategy === "visible") {
     const Observer = browser.IntersectionObserver
     if (options.target === undefined || Observer === undefined) {
       fire()
-      return NOOP
+      return stop
     }
     const observer = new Observer((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) fire()
     })
     observer.observe(options.target)
     cleanup = () => observer.disconnect()
-    return () => {
-      disposed = true
-      cleanup?.()
-      cleanup = undefined
-    }
+    return stop
   }
 
   const query = mediaQuery(strategy)
   const matchMedia = browser.matchMedia
-  if (query === undefined) return NOOP
+  if (query === undefined) return stop
   if (matchMedia === undefined) {
     // No matchMedia means the browser cannot honor a conditional trigger. Immediate activation is
     // the availability fallback; malformed/oversized queries remain inert above.
     fire()
-    return NOOP
+    return stop
   }
 
   const list = matchMedia(query)
   if (list.matches) {
     fire()
-    return NOOP
+    return stop
   }
 
   const onChange = (event: MediaQueryChangeEvent): void => {
@@ -144,11 +138,7 @@ export function scheduleTrigger(
     list.addListener(onChange)
     cleanup = () => list.removeListener?.(onChange)
   } else {
-    return NOOP
+    return stop
   }
-  return () => {
-    disposed = true
-    cleanup?.()
-    cleanup = undefined
-  }
+  return stop
 }

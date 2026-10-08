@@ -16883,7 +16883,7 @@
     "kind": "function",
     "package": "@nifrajs/islets",
     "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
-    "doc": "/**\n * Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed.\n * Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.\n */"
+    "doc": "/**\n * Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed.\n * One created in an island's setup stops when the island unmounts; elsewhere its inputs hold it, so\n * one derived from a longer-lived signal needs `dispose()`.\n */"
   },
   {
     "name": "computed",

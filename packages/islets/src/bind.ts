@@ -55,7 +55,7 @@ function pairs(spec: string): Array<[string, string]> {
     if (sep <= 0) continue
     const key = part.slice(0, sep).trim()
     const name = part.slice(sep + 1).trim()
-    if (key.length > 0 && name.length > 0) out.push([key, name])
+    if (key && name) out.push([key, name])
   }
   return out
 }
@@ -130,7 +130,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       if (s) {
         stops.push(
           effect(() => {
-            el.classList.toggle(className, Boolean(s()))
+            el.classList.toggle(className, !!s())
           }),
         )
       }

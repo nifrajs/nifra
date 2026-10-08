@@ -19,7 +19,7 @@ import {
 } from "@nifrajs/island-trigger"
 import { type BindableElement, type BindableRoot, bindScope, type IslandScope } from "./bind.ts"
 import type { Signal } from "./signals.ts"
-import { signal } from "./signals.ts"
+import { owned, signal } from "./signals.ts"
 
 export { type IslandStrategy, MAX_MEDIA_QUERY_LENGTH }
 
@@ -93,7 +93,7 @@ export function mountIslands(
     // the console, mount with fallbacks only (the static markup stays usable).
     let seeded: Record<string, unknown> = {}
     const rawState = host.getAttribute("data-island-state")
-    if (rawState !== null && rawState !== "") {
+    if (rawState) {
       let parsed: unknown
       try {
         parsed = JSON.parse(rawState)
@@ -119,9 +119,11 @@ export function mountIslands(
           return s
         },
       }
-      const handlers = setup(ctx) ?? {}
-      const scope: IslandScope = { signals, handlers }
-      disposers.push(...bindScope(host, scope))
+      // Every effect and computed setup and the bindings create joins this mount's disposers.
+      owned(disposers, () => {
+        const scope: IslandScope = { signals, handlers: setup(ctx) ?? {} }
+        bindScope(host, scope)
+      })
     }
     disposers.push(
       scheduleTrigger(strategy, run, {

@@ -15,6 +15,21 @@ interface EffectNode {
 
 let currentEffect: EffectNode | undefined
 
+// Collects the disposers of the effects (so also computeds) created while an island's setup and
+// bindings run, so unmounting the island stops them.
+let owner: Array<() => void> | undefined
+
+/** Run `fn` with the disposer of every effect and computed it creates pushed onto `kids`. */
+export function owned(kids: Array<() => void>, fn: () => void): void {
+  const prev = owner
+  owner = kids
+  try {
+    fn()
+  } finally {
+    owner = prev
+  }
+}
+
 let batchDepth = 0
 const pendingEffects = new Set<EffectNode>()
 
@@ -83,7 +98,8 @@ export type Computed<T> = {
 
 /**
  * Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed.
- * Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.
+ * One created in an island's setup stops when the island unmounts; elsewhere its inputs hold it, so
+ * one derived from a longer-lived signal needs `dispose()`.
  */
 export function computed<T>(fn: () => T): Computed<T> {
   const out = signal<T>(undefined as T)
@@ -98,11 +114,15 @@ export function computed<T>(fn: () => T): Computed<T> {
  * re-track on every run, so conditional reads subscribe to exactly the live branch.
  */
 export function effect(fn: () => void): () => void {
+  const stop = (): void => {
+    for (const subs of e.deps) subs.delete(e)
+    e.deps.clear()
+    pendingEffects.delete(e)
+  }
   const e: EffectNode = {
     deps: new Set(),
     run: () => {
-      for (const subs of e.deps) subs.delete(e)
-      e.deps.clear()
+      stop()
       const prev = currentEffect
       currentEffect = e
       try {
@@ -112,10 +132,7 @@ export function effect(fn: () => void): () => void {
       }
     },
   }
+  owner?.push(stop)
   e.run()
-  return () => {
-    for (const subs of e.deps) subs.delete(e)
-    e.deps.clear()
-    pendingEffects.delete(e)
-  }
+  return stop
 }
