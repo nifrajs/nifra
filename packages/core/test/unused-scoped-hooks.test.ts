@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { Logger } from "../src/index.ts"
 import { FrameworkError, server } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { websocket } from "../src/ws.ts"
 
 /** Capture `console.warn` for one act, restoring it after. Returns every message it received. */
 const withWarnSpy = async (act: () => unknown | Promise<unknown>): Promise<string[]> => {
@@ -37,6 +38,31 @@ describe("unused order-scoped hooks", () => {
     const withRoute = app.get("/a", () => "ok")
     const warnings = await withWarnSpy(() => withRoute.fetch(GET("/a")))
     expect(warnings.length).toBe(0)
+  })
+
+  test("a guard followed only by a socket applies to its handshake and does not warn", async () => {
+    const app = server()
+      .use(websocket())
+      .get("/a", () => "ok")
+      .beforeHandle(() => undefined)
+      .derive(() => ({ user: "u1" }))
+      .ws("/socket", {})
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings).toEqual([])
+  })
+
+  test("afterHandle() and around() followed only by a socket still warn: a handshake runs neither", async () => {
+    const app = server()
+      .use(websocket())
+      .get("/a", () => "ok")
+      .afterHandle((result) => result)
+      .around((_c, next) => next())
+      .ws("/socket", {})
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("2 order-scoped hook(s)")
+    expect(warnings[0]).toContain("afterHandle()")
+    expect(warnings[0]).toContain("around()")
   })
 
   test("legitimate group scoping does not warn (the no-false-positive case)", async () => {

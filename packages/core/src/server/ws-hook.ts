@@ -13,6 +13,7 @@ import type {
   NifraWebSocket,
   StandardWebSocket,
   TopicRegistry,
+  WebSocketContext,
   WebSocketHandler,
 } from "./websocket.ts"
 
@@ -29,6 +30,10 @@ export interface BunWsHandlers {
 export interface WsRuntime {
   /** `wrapWebSocketMessageValidation` - applied once at `app.ws()` registration. */
   wrapHandler(handler: WebSocketHandler, protoPoisoning: ProtoPoisoning): WebSocketHandler
+  /** `handshakeUpgradeStep` - the step a handshake's route chain ends in. */
+  upgradeStep(handler: WebSocketHandler): (ctx: WebSocketContext) => unknown
+  /** `acceptedHandshake` - the acceptance a chain ended in, `undefined` when it refused. */
+  accepted(result: unknown): { readonly data: unknown } | undefined
   /** One in-process pub/sub registry per app (backs `ws.subscribe` + `app.publish`). */
   createTopics(): TopicRegistry
   /** The Bun `websocket` config for `listen()` when the app has WS routes. `nativePubsub` routes

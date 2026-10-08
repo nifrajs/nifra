@@ -1683,7 +1683,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -2254,7 +2254,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
   Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
-- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
+- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request) => Response`
+  Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again.
 
 ### `@nifrajs/core/effect-ledger`
 
@@ -2628,7 +2629,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
-  Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
+  Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing `routes()` method yields only the sockets.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
 
@@ -2918,7 +2919,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -3152,7 +3153,7 @@ _No named exports (side-effect entrypoint)._
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -3161,7 +3162,6 @@ _No named exports (side-effect entrypoint)._
 - **websocket** _(function)_ - `websocket: () => IdentityPlugin`
   Enable WebSocket routes on a server: `.use(websocket())` turns on `app.ws()`. Applying it twice is a no-op (named plugin dedupe).
 - **wrapWebSocketMessageValidation** _(function)_ - `wrapWebSocketMessageValidation: (handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning) => WebSocketHandler`
-  If the handler declares a `messageSchema`, return a copy whose `message` validates each frame - parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at `app.ws(…
 
 ## @nifrajs/cron
 
@@ -7257,7 +7257,7 @@ _No named exports (side-effect entrypoint)._
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…

@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server, status } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
@@ -271,6 +271,27 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
     assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/health`)).json(), {
       ok: true,
     })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a socket registered after a guard refuses a handshake without credentials", async () => {
+  const app = server()
+    .use(websocket())
+    .beforeHandle((c) =>
+      c.req.headers.get("authorization") === "Bearer good"
+        ? undefined
+        : status(401, { error: "no" }),
+    )
+    .ws("/socket", {})
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    assertEquals(await rawUpgradeStatus(running.port, "/socket"), 401)
+    assertEquals(
+      await rawUpgradeStatus(running.port, "/socket", { authorization: "Bearer good" }),
+      101,
+    )
   } finally {
     await running.stop({ drainMs: 0 })
   }

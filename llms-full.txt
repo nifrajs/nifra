@@ -3922,6 +3922,9 @@ export default defineAssuranceConfig({
           NIFRA_ASSURANCE.BODY_BOUNDED] },
       { name: "read", match: { methods: ["GET", "HEAD"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      // WebSocket routes reflect under the pseudo-method "WS".
+      { name: "socket", match: { methods: ["WS"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED] },
     ],
   },
 })
@@ -3934,6 +3937,14 @@ Evidence follows real lifecycle semantics: pre-routing and response hooks cover 
 while authentication and other order-scoped hooks cover only routes registered after them.
 Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
 runs only through reflection or `nifra assure`, so requests pay no assurance cost.
+
+WebSocket routes are reflected under the pseudo-method `"WS"`, so a policy classifies
+every socket too. A handshake runs the auth guards registered before the socket and the
+app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
+It never claims evidence whose enforcement its message handlers bypass, such as a durable
+command journal. A socket declares its effects with
+`app.ws(path, { capabilities })`, and capability assurance checks them against
+the module that registers it.
 
 ### Effect assurance - declared capability versus provenance
 
@@ -5413,15 +5424,16 @@ app.listen(3000) // Bun
 ### Lifecycle
 
 Every callback is optional - `{ message }` alone is a valid echo server.
-`upgrade` is the only one that runs before the socket opens, so it’s the one place
-to reject a connection.
+`upgrade` is the only callback that runs before the socket opens, so it’s where a
+route rejects a connection or seeds its data.
 
 ```ts
 // doc-check: skip - illustrative lifecycle (empty close/error bodies, cookie shape).
 app.ws<{ user: string }>("/chat", {
-  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens -
-  // authenticate, check origin, rate-limit. Return the per-connection data (→ ws.data,
-  // typed), or a Response to REJECT the upgrade. A thrown error rejects with 500.
+  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens, after the
+  // guards registered before this route. Return the per-connection data (→ ws.data, typed),
+  // or a Response or status(...) to REJECT the upgrade. A thrown Response rejects with it;
+  // any other throw goes to onError, then a 500.
   upgrade(c) {
     const user = c.cookies.session
     if (user === undefined) return new Response("unauthorized", { status: 401 })
@@ -5433,6 +5445,34 @@ app.ws<{ user: string }>("/chat", {
   error: (ws, err) => {}, // a throw in any callback routes here, never crashing the connection
 })
 ```
+
+### Guards
+
+A handshake is a `GET`, and it runs the chain an HTTP `GET` registered
+at the same point runs: the `authenticate()` stages, `derive`s and
+`beforeHandle`s added before `app.ws()`, then `upgrade`. So
+auth middleware such as `basicAuth` or `jwt` guards the sockets
+registered after it, any guard can refuse the handshake with the response it would send an
+HTTP request, and `upgrade` reads what the guards derived. The origin check runs
+first. A socket registered before a guard stays public, like an HTTP route there.
+
+```ts
+// doc-check: skip - illustrative: an existing auth guard and session lookup.
+app
+  .ws("/status", {})                       // registered before the guard: public
+  .authenticate(sessionAuth)               // or .use(basicAuth(...)), .derive(...), .beforeHandle(...)
+  .get("/me", (c) => c.principal)
+  .ws("/chat", {
+    // Reached only when sessionAuth accepted the handshake, exactly as GET /me is.
+    upgrade: (c) => ({ user: c.principal.id }),
+  })
+```
+
+A socket declares the effects its code may reach with `capabilities`, as an HTTP
+route does. `nifra capabilities check` compares them with what the registering
+module can reach, and the handshake context carries the runtime guard for
+`upgrade()`. Reflection lists every socket under the pseudo-method
+`"WS"`, so `nifra assure` classifies sockets too.
 
 ### NifraWebSocket
 

@@ -14,6 +14,8 @@ export type HandlerResult = Response | unknown
 export const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
 export const CONTEXT_SET = Symbol("nifra.context.set")
 export const CONTEXT_SEARCH = Symbol("nifra.context.search")
+/** The request a context answers, read without the transport cap `req` applies for user code. */
+export const CONTEXT_REQUEST = Symbol("nifra.context.request")
 
 /**
  * A transport codec (or other pre-parsing hook) that already decoded the body stashes the value

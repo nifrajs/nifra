@@ -177,8 +177,8 @@ export function assure(
 }
 
 export interface AssuranceRouteSelector {
-  /** Omit for every method. */
-  readonly methods?: readonly Method[]
+  /** Omit for every method. `"WS"` selects WebSocket routes. */
+  readonly methods?: readonly (Method | "WS")[]
   /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */
   readonly paths?: readonly string[]
   /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */
@@ -479,7 +479,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     }
     const methods = rule.match.methods?.map((method) => method.toUpperCase())
     for (const method of methods ?? []) {
-      if (!validMethod(method)) {
+      if (method !== "WS" && !validMethod(method)) {
         throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
       }
     }
@@ -555,7 +555,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     return Object.freeze({
       name,
       match: Object.freeze({
-        ...(methods !== undefined ? { methods: Object.freeze(methods as Method[]) } : {}),
+        ...(methods !== undefined ? { methods: Object.freeze(methods as (Method | "WS")[]) } : {}),
         ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
         ...(rule.match.tools !== undefined ? { tools: rule.match.tools } : {}),
         ...(capabilities !== undefined ? { capabilities: Object.freeze([...capabilities]) } : {}),
@@ -784,7 +784,7 @@ export function matchesAssuranceSelector(
 ): boolean {
   const { methods, paths, tools, capabilities, access, zone, classificationAtLeast } = selector
   const { hasBody, bodyLimit } = selector
-  if (methods !== undefined && !methods.includes(route.method as Method)) return false
+  if (methods !== undefined && !methods.includes(route.method as Method | "WS")) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false

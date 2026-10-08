@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { server } from "@nifrajs/core"
+import { server, status } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
 import { type NodeServer, serve } from "../src/index.ts"
@@ -324,5 +324,23 @@ describe("@nifrajs/node WebSockets", () => {
       })
     })
     expect(outcome).toBe("rejected")
+  })
+})
+
+describe("@nifrajs/node: the handshake runs the route chain", () => {
+  test("a socket registered after a guard answers a handshake without credentials with 401", async () => {
+    const app = server()
+      .use(websocket())
+      .beforeHandle((c) =>
+        c.req.headers.get("authorization") === "Bearer good"
+          ? undefined
+          : status(401, { error: "no" }),
+      )
+      .ws("/socket", {})
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+    expect(await rawUpgradeStatus(running.port, "/socket")).toBe(401)
+    expect(await rawUpgradeStatus(running.port, "/socket", { authorization: "Bearer good" })).toBe(
+      101,
+    )
   })
 })

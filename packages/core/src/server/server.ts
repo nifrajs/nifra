@@ -126,6 +126,7 @@ import type {
   ResponseObserverRuntime,
 } from "./response-observer-runtime.ts"
 import {
+  CONTEXT_REQUEST,
   CONTEXT_SEARCH,
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
@@ -217,12 +218,7 @@ import type {
 } from "./server-types.ts"
 import type { SSEInit, TypedSSEStream } from "./sse.ts"
 import type { SseRuntime } from "./sse-hook.ts"
-import type {
-  TopicRegistry,
-  WebSocketContext,
-  WebSocketHandler,
-  WebSocketUpgradeOutcome,
-} from "./websocket.ts"
+import type { TopicRegistry, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
 import type { BunWsData } from "./ws-bun.ts"
 import type { WsRuntime } from "./ws-hook.ts"
 
@@ -297,6 +293,7 @@ export interface RawContext {
   readonly jsonReply?: Response | undefined
   readonly jsonBody?: unknown
   readonly [CONTEXT_SEARCH]: string
+  readonly [CONTEXT_REQUEST]: Request
   readonly signal: AbortSignal
   readonly budget: RequestBudget
   readonly env: unknown
@@ -316,9 +313,11 @@ type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnReques
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
 
-/** A registered WebSocket route - just its handler; matching reuses {@link Router} under the GET verb. */
+/** A registered WebSocket route and the route chain its handshake runs; matching reuses
+ * {@link Router} under the GET verb. */
 interface WsEntry {
   readonly handler: WebSocketHandler
+  readonly chain: RouteEntry
 }
 
 /** Structural view of the socket-peer lookup on the Bun `Server`, so any Bun `Server` (WS or not)
@@ -424,6 +423,7 @@ function outranks(
 }
 
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
+
 const DEFAULT_WS_UPGRADE_TIMEOUT_MS = 10_000
 /** Counts `ws()` routes and `mount()`s across every app in this copy of core: the only
  * changes that can make a mounted app take WebSocket upgrades. An app's answer to that question
@@ -826,7 +826,8 @@ const beginHookAudit = (
 }
 
 /** Record one order-scoped hook push: the route count at that moment (so `routesAtPush === total` at
- * seal means no route was declared after it) and the caller's frame. */
+ * seal means no route was declared after it) and the caller's frame. Hooks a WebSocket handshake runs
+ * count sockets as routes; `around` and `afterHandle` wrap a response, so they count HTTP routes only. */
 const recordScopedHook = (key: object, routesAtPush: number, kind: string): void => {
   const state = hookAudit.get(key)
   if (state === undefined || state.policy === "off") return
@@ -860,13 +861,20 @@ const tagAdopted = (
 const sealHookAudit = (
   key: object,
   total: number,
+  sockets: number,
   logger: { warn(message: string): void },
 ): void => {
   const state = hookAudit.get(key)
   if (state === undefined || state.checked) return
   state.checked = true
-  if (state.policy === "off" || total === 0) return
-  const dead = state.sites.filter((hook) => hook.routesAtPush === total)
+  if (state.policy === "off" || total + sockets === 0) return
+  const dead = state.sites.filter(
+    (hook) =>
+      hook.routesAtPush ===
+      (hook.kind === "around" || hook.kind === "aroundCapability" || hook.kind === "afterHandle"
+        ? total
+        : total + sockets),
+  )
   if (dead.length === 0) return
   const detail = dead.map((hook) => `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}`).join("\n")
   const message =
@@ -901,7 +909,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
-  private wsRouteCount: number
+  /** Each socket path, its declared capabilities and the evidence declarations its handshake
+   * captured; reflection reads it. */
+  private readonly wsRoutes: {
+    readonly path: string
+    readonly capabilities: readonly string[] | undefined
+    readonly assurance: readonly AssuranceDeclaration[]
+  }[]
   /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
   private wsMountsCheckedAt = -1
   /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
@@ -1016,8 +1030,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
   private readonly responseBodyOwners: Set<object>
-  private readonly finalizeResponse = (result: unknown, set: CtxSet): Response =>
-    toResponse(result as HandlerResult, set, this.responseBodyTag, this.staticResponseHeaders)
+  private readonly finalizeResponse = (result: unknown, set: CtxSet, ctx?: RawContext): Response =>
+    toResponse(
+      result as HandlerResult,
+      set,
+      this.responseBodyTag,
+      this.staticResponseHeaders,
+      // Response hooks write next, and they run for this same request object.
+      ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
+    )
   private readonly responseRequests: WeakMap<Request, Request>
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
@@ -1042,7 +1063,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.routePrefix = ""
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
-    this.wsRouteCount = 0
+    this.wsRoutes = []
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
@@ -1251,7 +1272,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
-      recordScopedHook(this, this.catalog.size, "derive")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "derive")
       tagHook(fn, "derive", this)
     }
     return this as unknown as Server<
@@ -1299,7 +1320,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size, "decorate")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "decorate")
     return this as unknown as Server<R, Ctx & Record<K, V>, HookOutput>
   }
 
@@ -1331,7 +1352,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
-      recordScopedHook(this, this.catalog.size, "beforeHandle")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "beforeHandle")
       tagHook(fn, "beforeHandle", this)
     }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
@@ -1417,7 +1438,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
-      recordScopedHook(this, this.catalog.size, "onError")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "onError")
       tagHook(fn, "onError", this)
     }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
@@ -1490,7 +1511,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // reconstructing a `Response` here would strip that marker and reclassify the Node outcome from
       // `json` to a generic `response`. A body-less or guarded response is copied, marker included.
       const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
-      this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
+      this.onResponseHooks.push((response, req) =>
+        applyStaticResponseHeaders(response, statics, req),
+      )
       if (hookAuditRuntime && process.env.NODE_ENV !== "production")
         tagHook(this.onResponseHooks.at(-1), "responseHeaders", this)
       this.onNodeResponseHooks.push(undefined)
@@ -1994,8 +2017,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /**
    * Register a **WebSocket** route. The connection upgrades on a `GET` to `path` carrying
-   * `Upgrade: websocket`; the optional `handler.upgrade(c)` runs in the request context first and may
-   * reject (return a `Response`) or seed per-connection `ws.data`. WebSockets are served by the
+   * `Upgrade: websocket`. The handshake runs the chain an HTTP `GET` registered here would: the
+   * `authenticate()` stages, `derive`s and `beforeHandle`s added before this call, then the optional
+   * `handler.upgrade(c)`. Any of them may reject (a `Response`, a `status(...)`, a failed auth stage);
+   * `upgrade()` may seed per-connection `ws.data`. To keep a socket public, register it before the
+   * guard. WebSockets are served by the
    * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) - not by bare `app.fetch`, which
    * has no socket (a WS path through `app.fetch` is a normal HTTP response).
    *
@@ -2014,7 +2040,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     Path extends string = string,
   >(
     path: Path,
-    handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema, Send>,
+    handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema, Send, Ctx>,
   ): string extends Path
     ? Server<R, Ctx, HookOutput>
     : Server<AddRoute<R, "WS", Path, WsRouteInfoFor<Path, Schema, Send>>, Ctx, HookOutput> {
@@ -2034,9 +2060,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
-    const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning) }
-    for (const form of expandOptionalParams(path)) this.wsRouter.add("GET", form, entry)
-    this.wsRouteCount += 1
+    const wrapped = runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning)
+    const upgrade = runtime.upgradeStep(wrapped)
+    for (const form of expandOptionalParams(path)) {
+      // The chain an HTTP `GET` to `form` would capture now, ending in `upgrade()` instead of a
+      // handler. `afterHandle` and `around` are left out: they wrap a response, and an accepted
+      // handshake has none.
+      const { entry, assurance, descriptor } = this.prepareRoute(
+        "WS",
+        form,
+        wrapped.capabilities === undefined ? undefined : { capabilities: wrapped.capabilities },
+        upgrade,
+      )
+      const chain = { ...entry, afterHandle: [] }
+      this.wsRouter.add("GET", form, {
+        handler: wrapped,
+        chain: { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) },
+      })
+      this.wsRoutes.push({ path: form, capabilities: descriptor.capabilities, assurance })
+    }
     wsChanges += 1
     return this as never
   }
@@ -2432,7 +2474,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * counts. `seen` ends a mount cycle (an app mounted under itself to alias a prefix).
    */
   [GET_WS_RUNTIME](seen?: Set<unknown>): WsRuntime | null | undefined {
-    return this.wsRouteCount > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
+    return this.wsRoutes.length > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
   }
 
   /** The `[GET_WS_RUNTIME]` answer for the apps mounted here alone, whatever this app's own routes. */
@@ -2501,7 +2543,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     const source = other as unknown as Server<Registry, EmptyContext>
-    if (source.wsRouteCount > 0) {
+    if (source.wsRoutes.length > 0) {
       throw new RouteConfigError(
         "INVALID_PATH",
         "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
@@ -2590,7 +2632,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError(`${label} builder must return its group synchronously`)
     }
     if (
-      scope.wsRouteCount > 0 ||
+      scope.wsRoutes.length > 0 ||
       scope.fetchMounts.length > 0 ||
       scope.catalog.entries().some((route) => route.descriptor.tool !== undefined)
     ) {
@@ -2600,7 +2642,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(scope, scope.catalog.size, this.logger)
+      sealHookAudit(scope, scope.catalog.size, scope.wsRoutes.length, this.logger)
     this.adopt(scope, fullPrefix, this.globalAssurance.length)
     return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
   }
@@ -2669,7 +2711,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         // The static tier is folded into EVERY response this server builds, so a group's static
         // headers cannot join it. A hook ahead of the group's own (the sealed scope is discarded
         // after adoption) keeps their meaning - defaults a value already on the response wins over.
-        source.onResponseHooks.unshift((response) => applyStaticResponseHeaders(response, statics))
+        source.onResponseHooks.unshift((response, req) =>
+          applyStaticResponseHeaders(response, statics, req),
+        )
         if (hookAuditRuntime && process.env.NODE_ENV !== "production")
           tagHook(source.onResponseHooks[0], "responseHeaders", source, true)
         source.onNodeResponseHooks.unshift(undefined)
@@ -2882,7 +2926,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Seal once on the first request so test servers (no `listen()`) still get the dead-hook check.
     // After that it is a single boolean read - the per-request cost the option promises to keep at zero.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
     return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
@@ -3066,7 +3110,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<NodeServeOutcome> {
     // Seal once on the Node-direct lane too - it can bypass `fetchSource` entirely (hookless outcome).
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
     // be materialized with a direct-write marker and return to the socket path when the hook mutates
@@ -3354,7 +3398,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<WebSocketUpgradeOutcome> {
     // Before any header is read: Deno only materializes a request's headers when asked, and that
     // costs a plain request measurably.
-    if (this.wsRouteCount === 0 && !this.mountsTakeUpgrades()) return WS_PASS
+    if (this.wsRoutes.length === 0 && !this.mountsTakeUpgrades()) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
     // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
     // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
@@ -3391,10 +3435,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // already did and made every plain dynamic route pay for unrelated static path bytes.
       const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
       if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
-      const handler = match.payload.handler
-      // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
+      const { handler, chain } = match.payload
+      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
       const pubsub = this.topics as TopicRegistry
-      const attach = (this.wsRuntime as WsRuntime).attach
+      const runtime = this.wsRuntime as WsRuntime
       // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
       // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
       // blocks cross-site authenticated sockets when the route opts in via `allowedOrigins`.
@@ -3412,16 +3456,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         // specific cross-origin clients (or `() => true` for a genuinely public socket).
         return { kind: "reject", response: jsonError(403, "forbidden_origin") }
       }
-      if (handler.upgrade === undefined) {
-        return {
-          kind: "upgrade",
-          handler,
-          data: undefined,
-          pubsub,
-          attach,
-          maxPayloadBytes: this.wsMaxPayloadBytes,
-        }
-      }
       const budget =
         controller === undefined
           ? createUnboundedRequestBudget(signal)
@@ -3436,28 +3470,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.maxBodyBytes,
         this.protoPoisoning,
       )
-      const settle = (value: unknown): WebSocketUpgradeOutcome =>
-        value instanceof Response
-          ? { kind: "reject", response: value }
+      // Rendered as the same chain on an HTTP `GET` renders its early results.
+      const finalize = (result: unknown, set: CtxSet): WebSocketUpgradeOutcome => {
+        const accepted = runtime.accepted(result)
+        return accepted === undefined
+          ? { kind: "reject", response: this.finalizeResponse(result, set) }
           : {
               kind: "upgrade",
               handler,
-              data: value,
+              data: accepted.data,
               pubsub,
-              attach,
+              attach: runtime.attach,
               maxPayloadBytes: this.wsMaxPayloadBytes,
             }
+      }
+      const wrap = (response: Response | ResponseResult): WebSocketUpgradeOutcome =>
+        finalize(response, EMPTY_RESPONSE_CONTROLS)
+      let outcome: MaybePromise<WebSocketUpgradeOutcome>
       try {
-        const result = handler.upgrade(ctx as unknown as WebSocketContext<EnvOf<Ctx>>)
-        if (!(result instanceof Promise)) return settle(result)
-        const pending = result.then(settle, () => ({
-          kind: "reject" as const,
-          response: jsonError(500, "internal_error"),
-        }))
-        return bounded(pending, onTimeout)
+        outcome = executeRouteProgram(this, chain, chain.program, request, ctx, finalize, wrap)
       } catch {
         return { kind: "reject", response: jsonError(500, "internal_error") }
       }
+      if (!(outcome instanceof Promise)) return outcome
+      const pending = outcome.then(undefined, () => ({
+        kind: "reject" as const,
+        response: jsonError(500, "internal_error"),
+      }))
+      return bounded(pending, onTimeout)
     }
 
     const resolveMounted = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
@@ -3595,7 +3635,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private dispatch<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     // True only from the Web `fetch` path - unlocks each route's fused lane, whose output type IS
@@ -3626,7 +3666,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithNodeRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): MaybePromise<T> {
@@ -3660,7 +3700,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     request: NodeRequestContext,
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): Promise<T> {
@@ -3688,7 +3728,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithOnRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3737,7 +3777,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     originalRequest: Request,
     sourceAtAwait: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3834,7 +3874,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private routeAndRun<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3984,7 +4024,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4046,7 +4086,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4157,7 +4197,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     signal: AbortSignal,
     budget: RequestBudget,
     platform: Platform | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4234,7 +4274,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4247,11 +4287,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (result instanceof Promise) {
       // Async handler on an otherwise-bare route: finish on a microtask, with the same error handling.
       return result.then(
-        (value) => finalize(value, responseSet(ctx)),
+        (value) => finalize(value, responseSet(ctx), ctx),
         (err) => this.bareError(err, ctx, finalize, wrapResponse),
       )
     }
-    return finalize(result, responseSet(ctx))
+    return finalize(result, responseSet(ctx), ctx)
   }
 
   /** Bare-route error rendering - identical to the compiled route program's catch minus the (absent) onError
@@ -4319,6 +4359,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 this.responseBodyTag,
                 this.staticResponseHeaders,
                 this.onResponseHooks.length === 0,
+                this.onResponseHooks.length === 0 ? undefined : requestOf(source),
               ),
             (err) =>
               logError(
@@ -4350,6 +4391,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           this.responseBodyTag,
           this.staticResponseHeaders,
           this.onResponseHooks.length === 0,
+          this.onResponseHooks.length === 0 ? undefined : requestOf(source),
         )
       }
     }
@@ -5450,7 +5492,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     run: () => MaybePromise<T>,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let outcome: MaybePromise<T>
@@ -5470,7 +5512,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return executeRouteProgram(this, entry, entry.program, source, ctx, finalize, wrapResponse)
@@ -5514,7 +5556,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     error: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse)
@@ -5526,7 +5568,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     result: unknown,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
@@ -5555,7 +5597,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     return readBodyFramed(
@@ -5576,7 +5618,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     parsed: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5611,14 +5653,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private executeHandler<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse?: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
     const handlerOutput = entry.handler(ctx)
     if (handlerOutput instanceof Promise) {
       return handlerOutput.then(
-        (value) => finalize(value, responseSet(ctx)),
+        (value) => finalize(value, responseSet(ctx), ctx),
         (err) => {
           if (wrapResponse) {
             return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
@@ -5627,14 +5669,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         },
       )
     }
-    return finalize(handlerOutput, responseSet(ctx))
+    return finalize(handlerOutput, responseSet(ctx), ctx)
   }
 
   private handleValidationErrorRecovery<T>(
     entry: RouteEntry,
     recovery: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     originalIssues: ReadonlyArray<StandardIssue>,
     kind: "body" | "query",
@@ -5684,7 +5726,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -5724,7 +5766,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5762,7 +5804,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -5928,13 +5970,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private finishLifecycleContract<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     result: unknown,
   ): MaybePromise<T> {
     try {
       const contract = entry.responseContract
-      if (contract === undefined) return finalize(result, responseSet(ctx))
+      if (contract === undefined) return finalize(result, responseSet(ctx), ctx)
       const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
@@ -5950,7 +5992,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private finishContractOutcome<T>(
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     outcome: {
       readonly kind: "ok" | "warn" | "violation"
@@ -5973,7 +6015,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         detail: outcome.message,
       })
     }
-    return finalize(outcome.value, responseSet(ctx))
+    return finalize(outcome.value, responseSet(ctx), ctx)
   }
 
   /** Synchronous by design, and `MaybePromise` rather than `Promise` for the same reason: control flow
@@ -5985,7 +6027,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
@@ -5993,7 +6035,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // SvelteKit semantics): as built, plus the cookies the request queued, so a session set or
     // cleared before `throw redirect(...)` / `requireSession(...)` ships. Don't run onError or log
     // it as a 500.
-    if (err instanceof Response) return finalize(err, responseSet(ctx))
+    if (err instanceof Response) return finalize(err, responseSet(ctx), ctx)
     // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
     // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
     if (isResponseResult(err))
@@ -6013,7 +6055,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
@@ -6021,7 +6063,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (let i = 0; i < entry.onError.length; i++) {
       const outcome = entry.onError[i]!(err, ctx)
       const handled = outcome instanceof Promise ? await outcome : outcome
-      if (handled !== undefined) return finalize(handled, responseSet(ctx))
+      if (handled !== undefined) return finalize(handled, responseSet(ctx), ctx)
     }
     this.logRequestError(err, ctx)
     return wrapResponse(plainError(500, "internal_error"))
@@ -6222,7 +6264,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
-      this.wsRouteCount > 0 ||
+      this.wsRoutes.length > 0 ||
       this.preRouteMountCount > 0 ||
       this.clientIpTrust !== undefined
     ) {
@@ -6379,7 +6421,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     // Seal before Bun.serve: in `"error"` mode this throws instead of leaving a bound port behind.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Bun's `Server` is the concrete handle; we expose the stable `RunningServer`
     // subset so the public types don't depend on the ambient `Bun` global. The cast
     // bridges them - Bun's `.port` is `number | undefined` (undefined only for unix
@@ -6390,7 +6432,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // `websocket` handlers are one shared dispatcher - each connection's `ws.data.handler` is the
     // matched route's handler, set by `server.upgrade`.
     // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
-    // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
+    // because a socket route means ws() ran, and ws() requires the runtime at registration.
     // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
     // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
     // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
@@ -6407,7 +6449,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
     // the parent.
     const nativePubsub =
-      this.wsRouteCount > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
+      this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
     // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
     // an explicit undefined as a value on some option paths, and omitting is what selects its own
