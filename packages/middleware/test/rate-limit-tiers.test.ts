@@ -119,6 +119,23 @@ describe("rateLimitTiers", () => {
     expect(store.hits).toEqual(["tier:/api/public:client", "tier:/api/public:client"])
   })
 
+  test("over a real socket, any method the HTTP parser accepts is charged, its 405 included", async () => {
+    const store = recordingStore()
+    const app = server()
+      .use(tiered(store))
+      .get("/api/public/feed", () => "feed")
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      for (const method of ["PROPFIND", "M-SEARCH", "DELETE"]) {
+        const res = await fetch(`http://127.0.0.1:${running.port}/api/public/feed`, { method })
+        expect([method, res.status]).toEqual([method, 405])
+      }
+      expect(store.hits).toEqual(Array(3).fill("tier:/api/public:client"))
+    } finally {
+      await app.stop()
+    }
+  })
+
   test("a malformed body is charged before validation runs", async () => {
     const store = recordingStore()
     const app = server()
