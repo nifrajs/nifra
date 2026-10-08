@@ -867,7 +867,7 @@ answers `422`.
 
 Other param modifiers (`:id+`, `:id*`, `:id(\\d+)`) are not
 part of the path grammar and match as literal text. Where that text is intended, put
-`// nifra-expect param-modifier` above the registration.
+`// nifra-expect NF-C026: ` above the registration.
 
 ### Param constraints
 
@@ -945,7 +945,7 @@ not look for another split.
 `/users/:id{[0-9]+}` serve no request in common, so `nifra check`
 (`NF-C024`) has nothing to report. A constrained route beside a bare
 `:param` route still overlaps and is still reported; mark the pair with
-`// nifra-expect route-overlap` where it is intended.
+`// nifra-expect NF-C024: ` where it is intended.
 
 -
 **OpenAPI and the typed client use the bare name.** The path is
@@ -1239,7 +1239,7 @@ same call params use, accepting exactly the colliding segment names. The client 
 the dot access at compile time with that guidance, and `nifra check` reports the
 collision (`NF-C018`, advisory). Prefer a verb-free segment
 (e.g. `/api/remove`) when you control the path; mark a route served only to
-non-typed-client consumers with `// nifra-expect reserved-segment` above its
+non-typed-client consumers with `// nifra-expect NF-C018: ` above its
 registration.
 
 ### Results never throw
@@ -9272,6 +9272,22 @@ serving the old page until its freshness runs out. The revalidate endpoint answe
 permission for this zone, project or service; a 5xx or `network_error` is retried on
 its own.
 
+### Silencing a nifra check finding
+
+`nifra check` names each finding with an `NF-` code. Where a finding is
+reviewed and intended, a comment on the flagged line, or anywhere in the comment block directly
+above it, says so and why:
+
+The comment answers only the code it names. A finding that fails the check, and every security
+finding, is silenced only with a reason after the colon; an advisory also accepts the comment
+without one. A blank line or a line of code ends the block, so a comment never reaches the next
+statement. A silenced security finding stays in the report as information, with the comment and
+its reason as evidence. Some codes also answer to a name: `sql-dynamic` (NF-C006),
+`raw-response` (NF-C007), `reserved-segment` (NF-C018),
+`route-overlap` (NF-C024 and NF-C025) and `param-modifier` (NF-C026).
+`@nifra-gate-reviewed` silences nothing; a finding under it names the comment to
+write instead.
+
 ## Nifra - Failure laboratory
 
 > Replayable durable-failure schedules on virtual time: crash after commit, duplicate delivery, reordering, budget expiry, and checkpoint contention.
@@ -10831,8 +10847,10 @@ page, `frontend/` or `shared/` fails the build.
 that contains what looks like a credential fails the build.
 
 The same rules run in `nifra dev` (a refused module is answered with a 403 before
-its source is sent), in both bundlers, for every framework, and in `nifra check`.
-An app on the older layout moves with `nifra migrate layout`: a dry run that
+its source is sent), in both bundlers, for every framework, and in `nifra check`,
+which follows the imports the bundler follows: relative paths, tsconfig `paths`
+and `baseUrl`, `package.json` `imports`, and the
+`clientModule` the browser entry loads. An app on the older layout moves with `nifra migrate layout`: a dry run that
 reports every move, then `--write`. It rewrites imports and test-runner mocks,
 adds the zone folders to tsconfig `include` and `.nifra/` to
 `.gitignore`, and leaves data files and folders zoned in

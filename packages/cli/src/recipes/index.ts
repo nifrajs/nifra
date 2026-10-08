@@ -31,11 +31,19 @@ export interface ImportMove {
   readonly to: string
 }
 
+/** A source comment a release stopped honoring. The runner lists each one; it never rewrites it. */
+export interface RetiredMarker {
+  readonly marker: string
+  /** What to write instead, printed beside each comment. */
+  readonly instead: string
+}
+
 export interface UpgradeRecipe {
   readonly version: string
   readonly pins: readonly PinRule[]
   readonly dependencyMoves?: readonly DependencyMove[]
   readonly importMoves: readonly ImportMove[]
+  readonly retiredMarkers?: readonly RetiredMarker[]
   /** Human notes printed after the plan - e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]
 }

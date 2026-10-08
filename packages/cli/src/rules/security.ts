@@ -1,8 +1,14 @@
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import type * as TSApi from "typescript"
 import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
-import { commentBlockHasMarker } from "./comment-markers.ts"
+import {
+  commentBlockExpectation,
+  commentBlockHasMarker,
+  MISSING_EXPECTATION_REASON,
+} from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -25,35 +31,115 @@ function didNotRun(code: string, title: string): readonly Diagnostic[] {
 
 const SECRET = /(?:token|secret|apiKey|api_key|signature|hmac|password)/i
 const PII = /(?:email|phone|ssn|password|token|authorization)/i
-const REVIEWED = "@nifra-gate-reviewed"
+// Retired in 5.0.0: it silenced any security finding without a reason. It now silences nothing and
+// only makes the finding name the form that replaced it.
+const RETIRED_REVIEW_MARKER = "@nifra-gate-reviewed"
 const parseCache = new WeakMap<
   SourceIndex,
   Map<string, { readonly tree: TSApi.SourceFile; readonly lines: readonly string[] }>
 >()
 
-// The marker counts anywhere in the contiguous comment block above the finding (or trailing on its
-// line) - a human writing the multi-line justification the hatch asks for must not un-suppress the
-// finding by growing the comment past two lines.
-function hasReview(lines: readonly string[], line: number): boolean {
-  return commentBlockHasMarker(lines, line, REVIEWED)
+/**
+ * The reason a `nifra-expect <code>: <reason>` comment on or above `line` gives for a security
+ * finding. Every security hatch needs the reason: a comment without one silences nothing.
+ */
+function expectedReason(lines: readonly string[], line: number, code: string): string | undefined {
+  return commentBlockExpectation(lines, line, [code])?.reason
 }
 
-function reviewedEvidence(lines: readonly string[], line: number): readonly string[] {
-  return hasReview(lines, line) ? [REVIEWED] : []
+/** The evidence a silenced finding carries: the comment that silenced it, reason included. */
+function expectationEvidence(
+  lines: readonly string[],
+  line: number,
+  code: string,
+): readonly string[] {
+  const reason = expectedReason(lines, line, code)
+  return reason === undefined ? [] : [`nifra-expect ${code}: ${reason}`]
+}
+
+/** An unsilenced finding's message, plus why a hatch comment written for it does not count. */
+function unexpectedMessage(
+  message: string,
+  lines: readonly string[],
+  line: number,
+  code: string,
+): string {
+  if (commentBlockExpectation(lines, line, [code]) !== undefined)
+    return `${message}; ${MISSING_EXPECTATION_REASON}`
+  if (commentBlockHasMarker(lines, line, RETIRED_REVIEW_MARKER))
+    return `${message}; ${RETIRED_REVIEW_MARKER} no longer silences a finding - after review, write // nifra-expect ${code}: <reason>`
+  return message
+}
+
+const WEB_PACKAGE = /^@nifrajs\/web(?:-[a-z0-9-]+)?$/
+const DEPENDENCY_FIELDS = new Set([
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+])
+
+/** Whether a package.json text names `@nifrajs/web` or a `@nifrajs/web-*` adapter as a dependency. */
+function declaresWeb(manifest: string): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(manifest)
+  } catch {
+    return false
+  }
+  if (typeof parsed !== "object" || parsed === null) return false
+  for (const [field, deps] of Object.entries(parsed)) {
+    if (!DEPENDENCY_FIELDS.has(field) || typeof deps !== "object" || deps === null) continue
+    if (Object.keys(deps).some((name) => WEB_PACKAGE.test(name))) return true
+  }
+  return false
+}
+
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8")
+  } catch {
+    return undefined
+  }
+}
+
+const parentOf = (dir: string): string => dir.slice(0, Math.max(dir.lastIndexOf("/"), 0))
+
+/**
+ * Whether the project-relative `dir` ("" for the root) is inside a nifra web app. Walking up, the first
+ * directory with `nifra.config.ts` or `backend/framework.ts` makes it one; the first package.json
+ * decides instead by naming `@nifrajs/web` or an adapter. Nothing up to the root means no.
+ */
+function inWebApp(root: string, dir: string, cache: Map<string, boolean>): boolean {
+  const cached = cache.get(dir)
+  if (cached !== undefined) return cached
+  const at = join(root, dir)
+  let web: boolean
+  if (existsSync(join(at, "nifra.config.ts")) || existsSync(join(at, "backend", "framework.ts")))
+    web = true
+  else if (existsSync(join(at, "package.json")))
+    web = declaresWeb(readText(join(at, "package.json")) ?? "")
+  else web = dir !== "" && inWebApp(root, parentOf(dir), cache)
+  cache.set(dir, web)
+  return web
 }
 
 /**
- * NF-S002 severity by file role. Server-side code compares real secret material - a timing oracle
- * there is exploitable, so it fails the gate. Browser code (a route's frontend half, `frontend/`)
- * compares values the client already holds, so the same shape is advisory rather than a gate
- * failure. `shared/` also runs on the server, and a file that cannot be classified is treated as
- * server - fail closed.
+ * Whether NF-S002 may treat `file` as browser code, which compares values the client already holds,
+ * so a finding there is advisory. It must be browser code by path (a route's frontend half,
+ * `frontend/`) and sit inside a nifra web app: a `routes/` folder in an API-only project or a package
+ * without a web dependency runs on the server. `shared/` also runs on the server, and a file that
+ * cannot be classified is treated as server - fail closed.
  */
-function secretComparisonSeverity(file: string): "error" | "warn" {
+export function provenBrowserFile(
+  root: string,
+  file: string,
+  cache: Map<string, boolean> = new Map(),
+): boolean {
   const path = file.replaceAll("\\", "/")
-  if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
-  if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return "error"
-  return "warn"
+  if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return false
+  if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return false
+  return inWebApp(root, parentOf(path), cache)
 }
 
 const CONFIRMATION_NAME =
@@ -61,11 +147,11 @@ const CONFIRMATION_NAME =
 
 /** Client form confirmation compares two values already held by the browser, not secret material. */
 function isClientConfirmationPair(
-  file: string,
+  browser: boolean,
   left: string | undefined,
   right: string | undefined,
 ): boolean {
-  if (secretComparisonSeverity(file) !== "warn") return false
+  if (!browser) return false
   const names = [left, right]
   return (
     names.some((name) => name?.toLowerCase() === "password") &&
@@ -102,13 +188,16 @@ function secretName(ts: typeof TSApi, node: TSApi.Node): string | undefined {
  * Presence checks (`token === undefined`, `secret == null`, `apiKey !== ""`) and `typeof` guards are
  * not equality over secret material - rewriting them to a timing-safe comparison would break the code.
  * A comparison against a numeric literal (`signature !== 1`, `signatureLength !== 64`) is a
- * length/version/discriminant check, never a secret: secrets are strings or bytes, so a number on
- * either side proves this is not the compare a timing oracle applies to.
+ * length/version/discriminant check, and one against `true`/`false` (`persistRefreshToken === true`)
+ * is a flag check: secrets are strings or bytes, so a number or a boolean on either side proves this
+ * is not the compare a timing oracle applies to.
  */
 function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): boolean {
   for (const side of [node.left, node.right]) {
     if (ts.isIdentifier(side) && side.text === "undefined") return true
     if (side.kind === ts.SyntaxKind.NullKeyword) return true
+    if (side.kind === ts.SyntaxKind.TrueKeyword || side.kind === ts.SyntaxKind.FalseKeyword)
+      return true
     if (ts.isStringLiteralLike(side) && side.text === "") return true
     if (ts.isTypeOfExpression(side)) return true
     if (ts.isVoidExpression(side)) return true
@@ -149,10 +238,143 @@ interface SecretComparison {
   readonly line: number
 }
 
+// The last word of a name that states a fact about a secret rather than holding it: `tokenType`,
+// `SECRET_CAP_SQLSTATE`, `apiKeyIds`, `apiKeyHeaderName`. Exact words only, so the secret word anywhere
+// else still matches (`tokenValue`, `passwordHash`, `apiKeyHeader`). `code`, `url`, `path` and `prefix`
+// stay out: an OTP, a capability URL and a prefix compare all leak secret material.
+const NON_MATERIAL_WORD: ReadonlySet<string> = new Set([
+  "type",
+  "kind",
+  "name",
+  "id",
+  "ids",
+  "length",
+  "len",
+  "count",
+  "size",
+  "mode",
+  "policy",
+  "version",
+  "sqlstate",
+  "status",
+  "enabled",
+  "required",
+  "ttl",
+  "expiry",
+  "expires",
+])
+
+function lastWord(name: string): string {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(/[\s_$-]+/)
+  return (words.findLast((word) => word !== "") ?? "").toLowerCase()
+}
+
+function isSecretName(name: string | undefined): boolean {
+  return name !== undefined && SECRET.test(name) && !NON_MATERIAL_WORD.has(lastWord(name))
+}
+
+/** Whether `name` binds a declaration in `statements` itself (not in a nested scope). */
+function declaresIn(
+  ts: typeof TSApi,
+  statements: TSApi.NodeArray<TSApi.Statement>,
+  name: string,
+): boolean {
+  return statements.some((statement) => {
+    if (ts.isVariableStatement(statement))
+      return statement.declarationList.declarations.some((d) => bindsName(ts, d.name, name))
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement))
+      return statement.name?.text === name
+    return false
+  })
+}
+
+function bindsName(ts: typeof TSApi, binding: TSApi.BindingName, name: string): boolean {
+  if (ts.isIdentifier(binding)) return binding.text === name
+  return binding.elements.some(
+    (element) => !ts.isOmittedExpression(element) && bindsName(ts, element.name, name),
+  )
+}
+
+/**
+ * Whether `id` names a plain parameter of an enclosing function, not a value the file builds: the
+ * nearest declaration of the name, walking out, must be that parameter. A loop or catch variable, a
+ * local or a destructured parameter in between disproves it.
+ */
+function isParameterRef(ts: typeof TSApi, id: TSApi.Identifier): boolean {
+  for (let node: TSApi.Node | undefined = id.parent; node !== undefined; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      for (const parameter of node.parameters) {
+        if (ts.isIdentifier(parameter.name)) {
+          if (parameter.name.text === id.text) return true
+        } else if (bindsName(ts, parameter.name, id.text)) return false
+      }
+    }
+    if ((ts.isBlock(node) || ts.isSourceFile(node)) && declaresIn(ts, node.statements, id.text))
+      return false
+    if (
+      (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      node.initializer !== undefined &&
+      ts.isVariableDeclarationList(node.initializer) &&
+      node.initializer.declarations.some((d) => bindsName(ts, d.name, id.text))
+    )
+      return false
+    if (
+      ts.isCatchClause(node) &&
+      node.variableDeclaration !== undefined &&
+      bindsName(ts, node.variableDeclaration.name, id.text)
+    )
+      return false
+  }
+  return false
+}
+
+const CONFIG_KEY = /^[A-Z][A-Z0-9_]*$/
+const CONTEXT_NAMES: ReadonlySet<string> = new Set(["c", "ctx", "context"])
+
+/**
+ * Whether `node` reads deployment configuration: `process.env.X`, `Bun.env.X`, `import.meta.env.X`,
+ * `Deno.env.get("X")`, `c.env.UPPER_SNAKE` (also `ctx`/`context`), or `env.X`, where `c` and `env` must
+ * be parameters of an enclosing function, never values the file builds. Comparing two such reads
+ * involves no request value, so it is no timing oracle (a startup "keys must differ" check).
+ */
+function isConfigRead(ts: typeof TSApi, node: TSApi.Expression): boolean {
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression
+    const [key] = node.arguments
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "get" &&
+      ts.isPropertyAccessExpression(callee.expression) &&
+      callee.expression.name.text === "env" &&
+      ts.isIdentifier(callee.expression.expression) &&
+      callee.expression.expression.text === "Deno" &&
+      node.arguments.length === 1 &&
+      key !== undefined &&
+      ts.isStringLiteralLike(key)
+    )
+  }
+  let key: string
+  if (ts.isPropertyAccessExpression(node)) key = node.name.text
+  else if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression))
+    key = node.argumentExpression.text
+  else return false
+  const object = node.expression
+  if (ts.isIdentifier(object)) return object.text === "env" && isParameterRef(ts, object)
+  if (!ts.isPropertyAccessExpression(object) || object.name.text !== "env") return false
+  const owner = object.expression
+  if (ts.isMetaProperty(owner)) return owner.name.text === "meta"
+  if (!ts.isIdentifier(owner)) return false
+  if (owner.text === "process" || owner.text === "Bun") return true
+  return CONTEXT_NAMES.has(owner.text) && CONFIG_KEY.test(key) && isParameterRef(ts, owner)
+}
+
 function secretComparisons(
   ts: typeof TSApi,
-  file: string,
   tree: TSApi.SourceFile,
+  browser: boolean,
 ): readonly SecretComparison[] {
   const operators = [
     ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -170,9 +392,9 @@ function secretComparisons(
       const left = secretName(ts, node.left)
       const right = secretName(ts, node.right)
       if (
-        ((left !== undefined && SECRET.test(left)) ||
-          (right !== undefined && SECRET.test(right))) &&
-        !isClientConfirmationPair(file, left, right)
+        (isSecretName(left) || isSecretName(right)) &&
+        !isClientConfirmationPair(browser, left, right) &&
+        !(isConfigRead(ts, node.left) && isConfigRead(ts, node.right))
       ) {
         const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
         found.push({ node, left, right, line })
@@ -203,11 +425,19 @@ function timingSafeHelper(file: string): string {
  * Rewrite every unreviewed NF-S002 comparison in one file to `nifraTimingSafeEqual(left, right)` and
  * add the helper once. Sites come from the syntax tree, not a reported line: the helper lands above
  * them, so a line number a check run reported no longer names the same statement after the first fix.
+ * `browser` is {@link provenBrowserFile} for the file, so the fix rewrites exactly what check reported.
  */
-export function rewriteSecretComparisons(ts: typeof TSApi, file: string, source: string): string {
+export function rewriteSecretComparisons(
+  ts: typeof TSApi,
+  file: string,
+  source: string,
+  browser: boolean,
+): string {
   const tree = parse(ts, file, source)
   const lines = tree.text.split("\n")
-  const sites = secretComparisons(ts, file, tree).filter((site) => !hasReview(lines, site.line))
+  const sites = secretComparisons(ts, tree, browser).filter(
+    (site) => expectedReason(lines, site.line, "NF-S002") === undefined,
+  )
   // A comparison nested inside another (`(token === a) === flag`) is left for the next run, so every
   // edit below covers a disjoint range and applying them from the end keeps earlier offsets valid.
   const outer = sites.filter(
@@ -246,22 +476,32 @@ export const secretComparisonRule: CheckRule = {
     const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
     const findings: Diagnostic[] = []
+    const webDirs = new Map<string, boolean>()
     for (const file of ctx.project.source.files) {
       const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
-      for (const { left, right, line } of secretComparisons(ts, file, tree)) {
-        const reviewed = hasReview(lines, line)
+      const browser = provenBrowserFile(ctx.root, file, webDirs)
+      for (const { left, right, line } of secretComparisons(ts, tree, browser)) {
+        const reviewed = expectedReason(lines, line, "NF-S002") !== undefined
         findings.push(
           diagnostic({
             code: "NF-S002",
-            severity: reviewed ? "info" : secretComparisonSeverity(file),
+            severity: reviewed ? "info" : browser ? "warn" : "error",
             file,
             line,
             message: reviewed
-              ? "secret comparison is explicitly marked as reviewed"
-              : "secret-like values must use a length check and timing-safe comparison",
-            evidence: [left ?? right ?? "secret comparison", ...reviewedEvidence(lines, line)],
+              ? "secret comparison is expected here"
+              : unexpectedMessage(
+                  "secret-like values must use a length check and timing-safe comparison",
+                  lines,
+                  line,
+                  "NF-S002",
+                ),
+            evidence: [
+              left ?? right ?? "secret comparison",
+              ...expectationEvidence(lines, line, "NF-S002"),
+            ],
             ...(reviewed
               ? {}
               : {
@@ -303,7 +543,7 @@ export const piiLogRule: CheckRule = {
               const name = nameOf(ts, arg)
               if (name !== undefined && PII.test(name)) {
                 const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-                const reviewed = hasReview(lines, line)
+                const reviewed = expectedReason(lines, line, "NF-S003") !== undefined
                 findings.push(
                   diagnostic({
                     code: "NF-S003",
@@ -311,9 +551,14 @@ export const piiLogRule: CheckRule = {
                     file,
                     line,
                     message: reviewed
-                      ? "sensitive value in log call is explicitly marked as reviewed"
-                      : "PII-shaped values must not be passed directly to log calls",
-                    evidence: [name, ...reviewedEvidence(lines, line)],
+                      ? "sensitive value in log call is expected here"
+                      : unexpectedMessage(
+                          "PII-shaped values must not be passed directly to log calls",
+                          lines,
+                          line,
+                          "NF-S003",
+                        ),
+                    evidence: [name, ...expectationEvidence(lines, line, "NF-S003")],
                     verify: "nifra check --lints-only",
                   }),
                 )
@@ -389,7 +634,7 @@ export const failOpenGateRule: CheckRule = {
               !/(?:^|[^.\w])(?:fail|deny|reject|forbid|unauthorized|abort)\s*\(/s.test(text)
             ) {
               const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-              const reviewed = hasReview(lines, line)
+              const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
               findings.push(
                 diagnostic({
                   code: "NF-S001",
@@ -397,12 +642,17 @@ export const failOpenGateRule: CheckRule = {
                   file,
                   line,
                   message: reviewed
-                    ? "gate catch block is explicitly marked as reviewed"
-                    : "gate catch blocks must rethrow or return an explicit denial",
+                    ? "gate catch block is expected here"
+                    : unexpectedMessage(
+                        "gate catch blocks must rethrow or return an explicit denial",
+                        lines,
+                        line,
+                        "NF-S001",
+                      ),
                   evidence: [
                     name,
                     "catch block has no denial or rethrow",
-                    ...reviewedEvidence(lines, line),
+                    ...expectationEvidence(lines, line, "NF-S001"),
                   ],
                   verify: "nifra check --lints-only",
                 }),
@@ -469,7 +719,7 @@ export const corsOriginPredicateRule: CheckRule = {
                       : false
                 if (ignoresOrigin) {
                   const line = tree.getLineAndCharacterOfPosition(prop.getStart(tree)).line + 1
-                  const reviewed = hasReview(lines, line)
+                  const reviewed = expectedReason(lines, line, "NF-S004") !== undefined
                   findings.push(
                     diagnostic({
                       code: "NF-S004",
@@ -477,9 +727,17 @@ export const corsOriginPredicateRule: CheckRule = {
                       file,
                       line,
                       message: reviewed
-                        ? "constant CORS origin predicate is explicitly marked as reviewed"
-                        : "CORS origin predicate never inspects the origin - it allows every origin; list explicit origins or use the argument",
-                      evidence: ["origin predicate", ...reviewedEvidence(lines, line)],
+                        ? "constant CORS origin predicate is expected here"
+                        : unexpectedMessage(
+                            "CORS origin predicate never inspects the origin - it allows every origin; list explicit origins or use the argument",
+                            lines,
+                            line,
+                            "NF-S004",
+                          ),
+                      evidence: [
+                        "origin predicate",
+                        ...expectationEvidence(lines, line, "NF-S004"),
+                      ],
                       verify: "nifra check --lints-only",
                     }),
                   )
@@ -520,7 +778,7 @@ export const externalRedirectRule: CheckRule = {
                 prop.initializer.kind === ts.SyntaxKind.TrueKeyword
               ) {
                 const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-                const reviewed = hasReview(lines, line)
+                const reviewed = expectedReason(lines, line, "NF-S005") !== undefined
                 findings.push(
                   diagnostic({
                     code: "NF-S005",
@@ -528,9 +786,14 @@ export const externalRedirectRule: CheckRule = {
                     file,
                     line,
                     message: reviewed
-                      ? "external redirect is explicitly marked as reviewed"
-                      : "redirect opts out of the same-origin default - verify the target can never be derived from request input (open-redirect risk)",
-                    evidence: ["external: true", ...reviewedEvidence(lines, line)],
+                      ? "external redirect is expected here"
+                      : unexpectedMessage(
+                          "redirect opts out of the same-origin default - verify the target can never be derived from request input (open-redirect risk)",
+                          lines,
+                          line,
+                          "NF-S005",
+                        ),
+                    evidence: ["external: true", ...expectationEvidence(lines, line, "NF-S005")],
                     verify: "nifra check --lints-only",
                   }),
                 )
@@ -574,7 +837,7 @@ export const assuranceEscapeHatchRule: CheckRule = {
           const consequence = name !== undefined ? ESCAPE_HATCHES[name] : undefined
           if (name !== undefined && consequence !== undefined) {
             const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-            const reviewed = hasReview(lines, line)
+            const reviewed = expectedReason(lines, line, "NF-S006") !== undefined
             findings.push(
               diagnostic({
                 code: "NF-S006",
@@ -582,9 +845,9 @@ export const assuranceEscapeHatchRule: CheckRule = {
                 file,
                 line,
                 message: reviewed
-                  ? `${name} escape hatch is explicitly marked as reviewed`
-                  : `${name}: ${consequence}`,
-                evidence: [name, ...reviewedEvidence(lines, line)],
+                  ? `${name} escape hatch is expected here`
+                  : unexpectedMessage(`${name}: ${consequence}`, lines, line, "NF-S006"),
+                evidence: [name, ...expectationEvidence(lines, line, "NF-S006")],
                 verify: "nifra check --lints-only",
               }),
             )

@@ -17,7 +17,7 @@ import {
   type TypeScriptApi,
   type TypeScriptSourceIndex,
 } from "./internal/typescript-import.ts"
-import { commentBlockMarkerReason } from "./rules/comment-markers.ts"
+import { commentBlockExpectation } from "./rules/comment-markers.ts"
 
 export interface SourceFinding {
   readonly file: string
@@ -1604,10 +1604,10 @@ function sqlMethod(
 
 const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
 
-/** The opt-out pragma that silences one interpolated-SQL finding. Written `// nifra-expect sql-dynamic:
- * <reason>` on the flagged line or in the comment block directly above it; the reason after the colon
- * is mandatory (see {@link commentBlockMarkerReason}). Scoped to the single statement it sits on. */
-const SQL_DYNAMIC_PRAGMA = "nifra-expect sql-dynamic"
+/** What silences one interpolated-SQL finding: `// nifra-expect NF-C006: <reason>` (or the
+ * `sql-dynamic` slug) on the flagged line or in the comment block directly above it. The reason after
+ * the colon is mandatory (see {@link commentBlockExpectation}). Scoped to the single statement it sits on. */
+const SQL_DYNAMIC_EXPECTATION = ["NF-C006", "sql-dynamic"]
 
 /**
  * Scan one file's text for SQL assembled by interpolation. Pure + line-accurate.
@@ -1649,9 +1649,10 @@ export function scanInterpolatedSql(
           const line = source.getLineAndCharacterOfPosition(index).line + 1
           // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (batch VALUES placeholder
           // generation, an allowlisted identifier). The reason is mandatory: a bare `// nifra-expect
-          // sql-dynamic` with no reason after the colon does NOT silence, so the hatch always leaves a
+          // NF-C006` with no reason after the colon does NOT silence, so the hatch always leaves a
           // greppable audit trail instead of becoming a second laundering trick.
-          const silenced = commentBlockMarkerReason(lines, line, SQL_DYNAMIC_PRAGMA) !== undefined
+          const silenced =
+            commentBlockExpectation(lines, line, SQL_DYNAMIC_EXPECTATION)?.reason !== undefined
           if (!silenced) out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
         }
       }
@@ -1971,8 +1972,7 @@ const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|serve
 const TRANSITIVE_MAX_DEPTH = 8
 const TRANSITIVE_MAX_VISITED = 200
 
-/** A relative module specifier (`./x`, `../y`) - the only kind we resolve + walk into (a bare specifier
- * is either a sink we recognise by name or a third-party dep we don't follow into node_modules). */
+/** A relative module specifier (`./x`, `../y`) - the only kind the SQL import lookup follows. */
 const isRelativeSpecifier = (spec: string): boolean =>
   spec.startsWith("./") || spec.startsWith("../")
 
@@ -2093,9 +2093,9 @@ export interface TransitiveServerImportFinding extends ServerImportFinding {
   readonly fallback: boolean
 }
 
-/** A resolver from `(fromFile, specifier)` to an absolute module path, or `undefined` when it can't be
- * resolved precisely (bare pkg, path alias, missing file). Abstracted so the BFS is unit-testable with a
- * fake graph (no real fs). The production resolver wraps `Bun.resolveSync`. */
+/** A resolver from `(fromFile, specifier)` to a project module path, or `undefined` when it names no
+ * project file (a package, a missing file). Abstracted so the BFS is unit-testable with a fake graph (no
+ * real fs). The production resolver follows relative paths, tsconfig `paths` and package.json `imports`. */
 export type ModuleResolver = (fromFile: string, specifier: string) => string | undefined
 /** Reads a resolved module's source, or `undefined` if unreadable. Abstracted for the same reason. */
 export type ModuleReader = (absPath: string) => string | undefined
@@ -2103,9 +2103,9 @@ export type ModuleReader = (absPath: string) => string | undefined
 /**
  * BFS the LOCAL module graph from a route file for the SHORTEST import chain that reaches a server-only
  * sink, returning `[routeFile, …as-written specifiers…, sink]` or `undefined` if none is reachable. A
- * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when it's a RELATIVE specifier
- * that `resolve` maps to a readable local file (so the walk never descends into node_modules or chases an
- * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
+ * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when
+ * `resolve` maps it to a readable project file, an alias included (so the walk never descends into
+ * node_modules). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
  * `server-only`-marked dependency terminates the chain; a `*.server` dependency is never entered, since
  * the client build empties it. Bounded by depth + a visited set, so
  * it's linear and cycle-free. `routeFile`/`routeContent` seed the walk; `resolve`/`read` supply the graph
@@ -2139,9 +2139,8 @@ export function walkServerOnlyChain(
         // since BFS reaches the nearest sink before any deeper one).
         const sink = directSinkSpecifier(spec)
         if (sink !== undefined) return [...node.chain, sink]
-        // (b) Only relative specifiers are local source we resolve + walk into. A bare third-party
-        // specifier that isn't a known sink is a leaf - don't follow it into node_modules.
-        if (!isRelativeSpecifier(spec)) continue
+        // (b) Project source is walked into, through an alias as the bundler does; a package that is
+        // not a known sink resolves to nothing and stays a leaf.
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
         if (componentReceipts.has(abs)) continue
@@ -2170,7 +2169,8 @@ export function walkServerOnlyChain(
  * finding carries the full chain; otherwise - when the first hop is itself a direct by-name sink the
  * regex scan already flags, or when a relative import can't be resolved - it falls back to the DIRECT
  * edge (`fallback: true`), never a fabricated chain. Returns one finding per offending top-level import,
- * de-duplicated to the shortest chain per first-hop specifier. Non-route files yield `[]`.
+ * de-duplicated to the shortest chain per first-hop specifier. A file that is not browser source
+ * yields `[]`, unless `browserRoot` says the browser bundle loads it anyway (an app's `clientModule`).
  */
 export function resolveServerOnlyChains(
   file: string,
@@ -2179,8 +2179,9 @@ export function resolveServerOnlyChains(
   read: ModuleReader,
   facts?: SourceFacts,
   componentReceipts: ReadonlySet<string> = new Set(),
+  browserRoot = false,
 ): TransitiveServerImportFinding[] {
-  if (!isBrowserSource(file)) return []
+  if (!browserRoot && !isBrowserSource(file)) return []
   const lines = content.split("\n")
   const out: TransitiveServerImportFinding[] = []
   const flaggedSpecifiers = new Set<string>()
@@ -2198,52 +2199,50 @@ export function resolveServerOnlyChains(
       out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
       continue
     }
-    // (2) A relative local import - try the transitive walk from the resolved dependency. If it reaches
-    // a sink, emit the full chain rooted at THIS route's import line.
-    if (isRelativeSpecifier(specifier)) {
-      const abs = resolve(file, specifier)
-      if (abs === undefined) {
-        // Unresolvable relative import. If it's the known server-only `../db` convention the regex scan
-        // flags directly, fall back to the direct edge (precise resolve impossible - say so via
-        // `fallback`). Any other unresolvable relative import we can't assert is server-only - skip it.
-        if (SERVER_ONLY.test(specifier)) {
-          flaggedSpecifiers.add(specifier)
-          out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
-        }
-        continue
-      }
-      if (componentReceipts.has(abs)) continue
-      // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
-      if (isBackendModule(abs)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
-      if (SERVER_FN_FILE.test(abs)) continue
-      const depContent = read(abs)
-      if (depContent === undefined) continue
-      if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
-      // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
-      const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts, componentReceipts)
-      if (subChain !== undefined) {
-        flaggedSpecifiers.add(specifier)
-        // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the
-        // route's as-written specifier so the chain reads `routes/x → ../data → ../db → node:crypto`.
-        const chain = [file, specifier, ...subChain.slice(1)]
-        out.push({ file, line, snippet, specifier, chain, fallback: false })
-        continue
-      }
-      // (3) The relative `../db`-style convention the regex scan flags directly, but where the walk
-      // found no deeper sink (e.g. the file wasn't readable past the first hop) - fall back to the
-      // direct edge so we still surface the known-server-only convention rather than going silent.
+    // (2) A project import, relative or through an alias - try the transitive walk from the resolved
+    // dependency. If it reaches a sink, emit the full chain rooted at THIS route's import line.
+    const abs = resolve(file, specifier)
+    if (abs === undefined) {
+      // Unresolvable import. If it's the known server-only `../db` convention the regex scan flags
+      // directly, fall back to the direct edge (precise resolve impossible - say so via `fallback`).
+      // Anything else that names no project file we can't assert is server-only - skip it.
       if (SERVER_ONLY.test(specifier)) {
         flaggedSpecifiers.add(specifier)
         out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
       }
+      continue
+    }
+    if (componentReceipts.has(abs)) continue
+    // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
+    if (isBackendModule(abs)) {
+      flaggedSpecifiers.add(specifier)
+      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
+      continue
+    }
+    if (SERVER_FN_FILE.test(abs)) continue
+    const depContent = read(abs)
+    if (depContent === undefined) continue
+    if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
+      flaggedSpecifiers.add(specifier)
+      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
+      continue
+    }
+    // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
+    const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts, componentReceipts)
+    if (subChain !== undefined) {
+      flaggedSpecifiers.add(specifier)
+      // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the
+      // route's as-written specifier so the chain reads `routes/x → ../data → ../db → node:crypto`.
+      const chain = [file, specifier, ...subChain.slice(1)]
+      out.push({ file, line, snippet, specifier, chain, fallback: false })
+      continue
+    }
+    // (3) The relative `../db`-style convention the regex scan flags directly, but where the walk
+    // found no deeper sink (e.g. the file wasn't readable past the first hop) - fall back to the
+    // direct edge so we still surface the known-server-only convention rather than going silent.
+    if (SERVER_ONLY.test(specifier)) {
+      flaggedSpecifiers.add(specifier)
+      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
     }
   }
   return out
@@ -2277,23 +2276,19 @@ export function scanResponseRoutes(
       if (source !== undefined && facts.isResponseSyntaxAt(source, m.index) !== true) continue
     }
     const line = lineAt(content, m.index)
-    // A `// nifra-expect raw-response` pragma marks an intentional raw Response (a file/redirect that can't
-    // be a typed route), silencing this advisory. Honor it on the return line itself, OR on the line above
-    // ONLY when that line is a standalone comment - so a TRAILING pragma on one route's return line can't
-    // leak down and suppress the very next route's genuine advisory. `stripComments` blanks the pragma in
-    // `code` (so it never affects the match); the raw `lines` still carry it.
-    const thisLine = lines[line - 1] ?? ""
-    const aboveLine = lines[line - 2] ?? ""
-    const aboveSuppresses =
-      aboveLine.trimStart().startsWith("//") && aboveLine.includes(RAW_RESPONSE_PRAGMA)
-    if (thisLine.includes(RAW_RESPONSE_PRAGMA) || aboveSuppresses) continue
-    out.push({ file, line, snippet: thisLine.trim() })
+    // A `// nifra-expect NF-C007` comment (or the `raw-response` slug) marks an intentional raw Response
+    // (a file/redirect that can't be a typed route), silencing this advisory with or without a reason.
+    // It counts on the return line or in the comment block directly above, so a TRAILING comment on one
+    // route's return line can't leak down onto the next route. `stripComments` blanks it in `code` (so it
+    // never affects the match); the raw `lines` still carry it.
+    if (commentBlockExpectation(lines, line, RAW_RESPONSE_EXPECTATION) !== undefined) continue
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
   return out
 }
 
-/** The opt-out pragma that suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
-const RAW_RESPONSE_PRAGMA = "nifra-expect raw-response"
+/** What suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
+const RAW_RESPONSE_EXPECTATION = ["NF-C007", "raw-response"]
 
 /** Walk the project's `.ts`/`.tsx` source (skipping deps and build output), calling `visit` per file.
  * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`.

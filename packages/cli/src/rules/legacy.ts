@@ -96,7 +96,7 @@ const STREAM_HINT =
 const SERVER_IMPORT_HINT =
   "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too"
 const RESPONSE_ROUTE_HINT =
-  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
+  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect NF-C007: <reason>` comment to mark it and silence this"
 const PIPELINE_DOC_HINT =
   "nifra runs one bundler per phase - `vitePlugins` feed Vite, `clientPlugins`/`serverPlugins` feed Bun, and the file `nifra build` imports the adapter from is bundled into the server. See the Gotchas section of the Dev & HMR guide."
 const UNDECLARED_DEP_HINT =
@@ -313,7 +313,7 @@ function responseRouteSuggestion(): DiagnosticSuggestion {
     steps: [
       "Prefer returning a plain object from JSON routes; nifra serializes it for you.",
       "For a stream, use a typed SSE route - `app.sse(...)` (or `sse(c, run)` from `@nifrajs/core/server`) - which keeps typed events instead of collapsing the client to `data: never`.",
-      "If this route must return a raw Response (redirect, file), declare an explicit response schema, or add a `// nifra-expect raw-response` comment above the return to mark it intentional and silence this advisory.",
+      "If this route must return a raw Response (redirect, file), declare an explicit response schema, or add a `// nifra-expect NF-C007: <reason>` comment above the return to mark it intentional and silence this advisory.",
     ],
   }
 }
@@ -555,7 +555,7 @@ const interpolatedSqlRule: CheckRule = {
               "Pass the value as an argument alongside the statement, so the driver binds it.",
               `Or switch to the driver's tagged template (sql\`… ${SQL_INTERPOLATION_EXAMPLE} …\`): the tag receives substitutions separately and binds them.`,
               "An identifier that genuinely cannot be bound (a table or column name) must be checked against an allowlist you control, never taken from the request.",
-              "If the statement is dynamic but every value is already bound (generating `($1),($2),…` for a batch insert), mark it with a `// nifra-expect sql-dynamic: <reason>` comment on the line above - the reason is required.",
+              "If the statement is dynamic but every value is already bound (generating `($1),($2),…` for a batch insert), mark it with a `// nifra-expect NF-C006: <reason>` comment on the line above - the reason is required.",
             ],
           },
         }),

@@ -175,7 +175,7 @@ function references(ts: typeof TS, node: TS.Node): { value: Set<string>; type: S
     const typed =
       inType ||
       ts.isTypeNode(current) ||
-      // @nifra-gate-reviewed: `token` is the heritage clause's syntax kind, not a credential.
+      // nifra-expect NF-S002: `token` is the heritage clause's syntax kind, not a credential.
       (ts.isHeritageClause(current) && current.token === ts.SyntaxKind.ImplementsKeyword)
     if (ts.isIdentifier(current)) {
       const parent = current.parent

@@ -42,10 +42,15 @@ registerFixRecipe({
         "[nifra] the timing-safe fix finds each comparison in the syntax tree, so it needs TypeScript - run `bun add -d typescript`, then rerun the fix",
       )
     try {
-      const { rewriteSecretComparisons } = await import("./rules/security.ts")
+      const { provenBrowserFile, rewriteSecretComparisons } = await import("./rules/security.ts")
       const source = await readFile(path, "utf8")
       // Every site in the file at once, so the rest of that file's diagnostics find nothing left.
-      const rewritten = rewriteSecretComparisons(loaded.compiler, diagnostic.file, source)
+      const rewritten = rewriteSecretComparisons(
+        loaded.compiler,
+        diagnostic.file,
+        source,
+        provenBrowserFile(root, diagnostic.file),
+      )
       if (rewritten === source) return []
       await writeFile(path, rewritten, "utf8")
       return [diagnostic.file]
