@@ -1,14 +1,17 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import { parseCompatibleReplayFile } from "@nifrajs/core/replay"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { securityRules } from "../src/rules/security.ts"
 import { projectFacts } from "./rule-facts.ts"
 
-async function scan(file: string, content: string) {
+async function scan(file: string, content: string, root = "/tmp/project") {
   const facts = projectFacts(file, content)
   return runRuleRegistry(
     {
-      root: "/tmp/project",
+      root,
       sources: facts.source,
       project: facts,
     },
@@ -279,8 +282,29 @@ test("shares source reads across built-in security rules", async () => {
   expect(reads).toBe(1)
 })
 
+const projects: string[] = []
+afterAll(() => {
+  for (const root of projects) rmSync(root, { recursive: true, force: true })
+})
+
+/** A project on disk holding only `files` (path to content), so web-app detection reads real files. */
+function project(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "nifra-s002-"))
+  projects.push(root)
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true })
+    writeFileSync(join(root, path), content)
+  }
+  return root
+}
+
+const manifest = (dependencies: Record<string, string>) => JSON.stringify({ dependencies })
+const webApp = () => project({ "nifra.config.ts": "export default {}" })
+
 describe("NF-S002 severity by file role", () => {
   const compare = "if (token === expected) deny()"
+  const severityOf = async (file: string, root: string) =>
+    (await scan(file, compare, root)).find((f) => f.code === "NF-S002")?.severity
 
   test("server-side comparisons fail the gate", async () => {
     for (const file of [
@@ -295,10 +319,45 @@ describe("NF-S002 severity by file role", () => {
     }
   })
 
-  test("browser code comparisons are advisory", async () => {
+  test("browser code in a web app is advisory", async () => {
+    const root = webApp()
     for (const file of ["routes/login.tsx", "frontend/Login.tsx", "app/Form.frontend.jsx"]) {
-      const findings = await scan(file, compare)
-      expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("warn")
+      expect(await severityOf(file, root)).toBe("warn")
+    }
+  })
+
+  test("each web app marker proves a web app", async () => {
+    for (const files of [
+      { "backend/framework.ts": "export {}" },
+      { "package.json": manifest({ "@nifrajs/web": "5.0.0" }) },
+      { "package.json": manifest({ "@nifrajs/web-react": "5.0.0" }) },
+    ]) {
+      expect(await severityOf("routes/login.tsx", project(files))).toBe("warn")
+    }
+  })
+
+  test("routes/ in an API-only project is server code", async () => {
+    const root = project({ "package.json": manifest({ "@nifrajs/core": "5.0.0" }) })
+    expect(await severityOf("src/routes/auth.ts", root)).toBe("error")
+    expect(await severityOf("routes/auth.ts", "/tmp/project")).toBe("error")
+  })
+
+  test("the nearest package.json decides, so a web dependency at the root covers no other package", async () => {
+    const root = project({
+      "package.json": manifest({ "@nifrajs/web": "5.0.0" }),
+      "apps/site/nifra.config.ts": "export default {}",
+      "packages/api/package.json": manifest({ "@nifrajs/core": "5.0.0" }),
+      "packages/shared/package.json": manifest({}),
+    })
+    expect(await severityOf("apps/site/routes/login.tsx", root)).toBe("warn")
+    expect(await severityOf("packages/api/src/routes/auth.ts", root)).toBe("error")
+    expect(await severityOf("packages/shared/x.ts", root)).toBe("error")
+    expect(await severityOf("packages/shared/frontend/x.tsx", root)).toBe("error")
+  })
+
+  test("an unreadable or malformed package.json proves nothing", async () => {
+    for (const text of ["{", "null", JSON.stringify({ dependencies: "@nifrajs/web" })]) {
+      expect(await severityOf("routes/login.tsx", project({ "package.json": text }))).toBe("error")
     }
   })
 
@@ -308,18 +367,20 @@ describe("NF-S002 severity by file role", () => {
   })
 
   test("treats client-side password confirmation pairs as local validation", async () => {
-    const findings = await scan(
-      "frontend/ConfirmPassword.tsx",
-      [
-        "if (password !== confirm) return false",
-        "if (password !== confirmPassword) return false",
-        "if (input.password === input.passwordConfirmation) return true",
-        "if (password === expectedPassword) return false",
-      ].join("\n"),
-    )
-
+    const confirmations = [
+      "if (password !== confirm) return false",
+      "if (password !== confirmPassword) return false",
+      "if (input.password === input.passwordConfirmation) return true",
+      "if (password === expectedPassword) return false",
+    ].join("\n")
+    const findings = await scan("frontend/ConfirmPassword.tsx", confirmations, webApp())
     expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([4])
     expect(findings.find((finding) => finding.code === "NF-S002")?.severity).toBe("warn")
+
+    const outsideWebApp = await scan("frontend/ConfirmPassword.tsx", confirmations)
+    expect(
+      outsideWebApp.filter((finding) => finding.code === "NF-S002").map((f) => f.severity),
+    ).toEqual(["error", "error", "error", "error"])
   })
 
   test("does not weaken confirmation comparisons on the server", async () => {

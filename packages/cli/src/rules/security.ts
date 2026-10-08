@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import type * as TSApi from "typescript"
 import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
@@ -42,18 +44,75 @@ function reviewedEvidence(lines: readonly string[], line: number): readonly stri
   return hasReview(lines, line) ? [REVIEWED] : []
 }
 
+const WEB_PACKAGE = /^@nifrajs\/web(?:-[a-z0-9-]+)?$/
+const DEPENDENCY_FIELDS = new Set([
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+])
+
+/** Whether a package.json text names `@nifrajs/web` or a `@nifrajs/web-*` adapter as a dependency. */
+function declaresWeb(manifest: string): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(manifest)
+  } catch {
+    return false
+  }
+  if (typeof parsed !== "object" || parsed === null) return false
+  for (const [field, deps] of Object.entries(parsed)) {
+    if (!DEPENDENCY_FIELDS.has(field) || typeof deps !== "object" || deps === null) continue
+    if (Object.keys(deps).some((name) => WEB_PACKAGE.test(name))) return true
+  }
+  return false
+}
+
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8")
+  } catch {
+    return undefined
+  }
+}
+
+const parentOf = (dir: string): string => dir.slice(0, Math.max(dir.lastIndexOf("/"), 0))
+
 /**
- * NF-S002 severity by file role. Server-side code compares real secret material - a timing oracle
- * there is exploitable, so it fails the gate. Browser code (a route's frontend half, `frontend/`)
- * compares values the client already holds, so the same shape is advisory rather than a gate
- * failure. `shared/` also runs on the server, and a file that cannot be classified is treated as
- * server - fail closed.
+ * Whether the project-relative `dir` ("" for the root) is inside a nifra web app. Walking up, the first
+ * directory with `nifra.config.ts` or `backend/framework.ts` makes it one; the first package.json
+ * decides instead by naming `@nifrajs/web` or an adapter. Nothing up to the root means no.
  */
-function secretComparisonSeverity(file: string): "error" | "warn" {
+function inWebApp(root: string, dir: string, cache: Map<string, boolean>): boolean {
+  const cached = cache.get(dir)
+  if (cached !== undefined) return cached
+  const at = join(root, dir)
+  let web: boolean
+  if (existsSync(join(at, "nifra.config.ts")) || existsSync(join(at, "backend", "framework.ts")))
+    web = true
+  else if (existsSync(join(at, "package.json")))
+    web = declaresWeb(readText(join(at, "package.json")) ?? "")
+  else web = dir !== "" && inWebApp(root, parentOf(dir), cache)
+  cache.set(dir, web)
+  return web
+}
+
+/**
+ * Whether NF-S002 may treat `file` as browser code, which compares values the client already holds,
+ * so a finding there is advisory. It must be browser code by path (a route's frontend half,
+ * `frontend/`) and sit inside a nifra web app: a `routes/` folder in an API-only project or a package
+ * without a web dependency runs on the server. `shared/` also runs on the server, and a file that
+ * cannot be classified is treated as server - fail closed.
+ */
+export function provenBrowserFile(
+  root: string,
+  file: string,
+  cache: Map<string, boolean> = new Map(),
+): boolean {
   const path = file.replaceAll("\\", "/")
-  if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
-  if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return "error"
-  return "warn"
+  if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return false
+  if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return false
+  return inWebApp(root, parentOf(path), cache)
 }
 
 const CONFIRMATION_NAME =
@@ -61,11 +120,11 @@ const CONFIRMATION_NAME =
 
 /** Client form confirmation compares two values already held by the browser, not secret material. */
 function isClientConfirmationPair(
-  file: string,
+  browser: boolean,
   left: string | undefined,
   right: string | undefined,
 ): boolean {
-  if (secretComparisonSeverity(file) !== "warn") return false
+  if (!browser) return false
   const names = [left, right]
   return (
     names.some((name) => name?.toLowerCase() === "password") &&
@@ -151,8 +210,8 @@ interface SecretComparison {
 
 function secretComparisons(
   ts: typeof TSApi,
-  file: string,
   tree: TSApi.SourceFile,
+  browser: boolean,
 ): readonly SecretComparison[] {
   const operators = [
     ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -172,7 +231,7 @@ function secretComparisons(
       if (
         ((left !== undefined && SECRET.test(left)) ||
           (right !== undefined && SECRET.test(right))) &&
-        !isClientConfirmationPair(file, left, right)
+        !isClientConfirmationPair(browser, left, right)
       ) {
         const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
         found.push({ node, left, right, line })
@@ -203,11 +262,17 @@ function timingSafeHelper(file: string): string {
  * Rewrite every unreviewed NF-S002 comparison in one file to `nifraTimingSafeEqual(left, right)` and
  * add the helper once. Sites come from the syntax tree, not a reported line: the helper lands above
  * them, so a line number a check run reported no longer names the same statement after the first fix.
+ * `browser` is {@link provenBrowserFile} for the file, so the fix rewrites exactly what check reported.
  */
-export function rewriteSecretComparisons(ts: typeof TSApi, file: string, source: string): string {
+export function rewriteSecretComparisons(
+  ts: typeof TSApi,
+  file: string,
+  source: string,
+  browser: boolean,
+): string {
   const tree = parse(ts, file, source)
   const lines = tree.text.split("\n")
-  const sites = secretComparisons(ts, file, tree).filter((site) => !hasReview(lines, site.line))
+  const sites = secretComparisons(ts, tree, browser).filter((site) => !hasReview(lines, site.line))
   // A comparison nested inside another (`(token === a) === flag`) is left for the next run, so every
   // edit below covers a disjoint range and applying them from the end keeps earlier offsets valid.
   const outer = sites.filter(
@@ -246,16 +311,18 @@ export const secretComparisonRule: CheckRule = {
     const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
     const findings: Diagnostic[] = []
+    const webDirs = new Map<string, boolean>()
     for (const file of ctx.project.source.files) {
       const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
-      for (const { left, right, line } of secretComparisons(ts, file, tree)) {
+      const browser = provenBrowserFile(ctx.root, file, webDirs)
+      for (const { left, right, line } of secretComparisons(ts, tree, browser)) {
         const reviewed = hasReview(lines, line)
         findings.push(
           diagnostic({
             code: "NF-S002",
-            severity: reviewed ? "info" : secretComparisonSeverity(file),
+            severity: reviewed ? "info" : browser ? "warn" : "error",
             file,
             line,
             message: reviewed
