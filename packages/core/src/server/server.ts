@@ -117,6 +117,7 @@ import type {
   ResponseObserverRuntime,
 } from "./response-observer-runtime.ts"
 import {
+  CONTEXT_REQUEST,
   CONTEXT_SEARCH,
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
@@ -286,6 +287,7 @@ export interface RawContext {
   readonly jsonReply?: Response | undefined
   readonly jsonBody?: unknown
   readonly [CONTEXT_SEARCH]: string
+  readonly [CONTEXT_REQUEST]: Request
   readonly signal: AbortSignal
   readonly budget: RequestBudget
   readonly env: unknown
@@ -981,8 +983,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
   private readonly responseBodyOwners: Set<object>
-  private readonly finalizeResponse = (result: unknown, set: CtxSet): Response =>
-    toResponse(result as HandlerResult, set, this.responseBodyTag, this.staticResponseHeaders)
+  private readonly finalizeResponse = (result: unknown, set: CtxSet, ctx?: RawContext): Response =>
+    toResponse(
+      result as HandlerResult,
+      set,
+      this.responseBodyTag,
+      this.staticResponseHeaders,
+      // Response hooks write next, and they run for this same request object.
+      ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
+    )
   private readonly responseRequests: WeakMap<Request, Request>
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
@@ -1434,7 +1443,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // reconstructing a `Response` here would strip that marker and reclassify the Node outcome from
       // `json` to a generic `response`. A body-less or guarded response is copied, marker included.
       const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
-      this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
+      this.onResponseHooks.push((response, req) =>
+        applyStaticResponseHeaders(response, statics, req),
+      )
       this.onNodeResponseHooks.push(undefined)
       this.nodeResponseHooksComplete = false
       return this
@@ -2599,7 +2610,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         // The static tier is folded into EVERY response this server builds, so a group's static
         // headers cannot join it. A hook ahead of the group's own (the sealed scope is discarded
         // after adoption) keeps their meaning - defaults a value already on the response wins over.
-        source.onResponseHooks.unshift((response) => applyStaticResponseHeaders(response, statics))
+        source.onResponseHooks.unshift((response, req) =>
+          applyStaticResponseHeaders(response, statics, req),
+        )
         source.onNodeResponseHooks.unshift(undefined)
         source.nodeResponseHooksComplete = false
       }
@@ -3513,7 +3526,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private dispatch<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     // True only from the Web `fetch` path - unlocks each route's fused lane, whose output type IS
@@ -3544,7 +3557,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithNodeRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): MaybePromise<T> {
@@ -3578,7 +3591,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     request: NodeRequestContext,
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): Promise<T> {
@@ -3606,7 +3619,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithOnRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3655,7 +3668,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     originalRequest: Request,
     sourceAtAwait: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3752,7 +3765,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private routeAndRun<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3902,7 +3915,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3964,7 +3977,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4075,7 +4088,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     signal: AbortSignal,
     budget: RequestBudget,
     platform: Platform | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4152,7 +4165,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4165,11 +4178,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (result instanceof Promise) {
       // Async handler on an otherwise-bare route: finish on a microtask, with the same error handling.
       return result.then(
-        (value) => finalize(value, responseSet(ctx)),
+        (value) => finalize(value, responseSet(ctx), ctx),
         (err) => this.bareError(err, ctx, finalize, wrapResponse),
       )
     }
-    return finalize(result, responseSet(ctx))
+    return finalize(result, responseSet(ctx), ctx)
   }
 
   /** Bare-route error rendering - identical to the compiled route program's catch minus the (absent) onError
@@ -4237,6 +4250,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 this.responseBodyTag,
                 this.staticResponseHeaders,
                 this.onResponseHooks.length === 0,
+                this.onResponseHooks.length === 0 ? undefined : requestOf(source),
               ),
             (err) =>
               logError(
@@ -4268,6 +4282,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           this.responseBodyTag,
           this.staticResponseHeaders,
           this.onResponseHooks.length === 0,
+          this.onResponseHooks.length === 0 ? undefined : requestOf(source),
         )
       }
     }
@@ -5368,7 +5383,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     run: () => MaybePromise<T>,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let outcome: MaybePromise<T>
@@ -5388,7 +5403,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return executeRouteProgram(this, entry, entry.program, source, ctx, finalize, wrapResponse)
@@ -5432,7 +5447,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     error: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse)
@@ -5444,7 +5459,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     result: unknown,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
@@ -5473,7 +5488,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     return readBodyFramed(
@@ -5494,7 +5509,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     parsed: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5529,14 +5544,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private executeHandler<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse?: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
     const handlerOutput = entry.handler(ctx)
     if (handlerOutput instanceof Promise) {
       return handlerOutput.then(
-        (value) => finalize(value, responseSet(ctx)),
+        (value) => finalize(value, responseSet(ctx), ctx),
         (err) => {
           if (wrapResponse) {
             return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
@@ -5545,14 +5560,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         },
       )
     }
-    return finalize(handlerOutput, responseSet(ctx))
+    return finalize(handlerOutput, responseSet(ctx), ctx)
   }
 
   private handleValidationErrorRecovery<T>(
     entry: RouteEntry,
     recovery: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     originalIssues: ReadonlyArray<StandardIssue>,
     kind: "body" | "query",
@@ -5602,7 +5617,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -5642,7 +5657,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5680,7 +5695,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -5846,13 +5861,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private finishLifecycleContract<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     result: unknown,
   ): MaybePromise<T> {
     try {
       const contract = entry.responseContract
-      if (contract === undefined) return finalize(result, responseSet(ctx))
+      if (contract === undefined) return finalize(result, responseSet(ctx), ctx)
       const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
@@ -5868,7 +5883,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private finishContractOutcome<T>(
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     outcome: {
       readonly kind: "ok" | "warn" | "violation"
@@ -5891,7 +5906,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         detail: outcome.message,
       })
     }
-    return finalize(outcome.value, responseSet(ctx))
+    return finalize(outcome.value, responseSet(ctx), ctx)
   }
 
   /** Synchronous by design, and `MaybePromise` rather than `Promise` for the same reason: control flow
@@ -5903,7 +5918,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
@@ -5911,7 +5926,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // SvelteKit semantics): as built, plus the cookies the request queued, so a session set or
     // cleared before `throw redirect(...)` / `requireSession(...)` ships. Don't run onError or log
     // it as a 500.
-    if (err instanceof Response) return finalize(err, responseSet(ctx))
+    if (err instanceof Response) return finalize(err, responseSet(ctx), ctx)
     // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
     // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
     if (isResponseResult(err))
@@ -5931,7 +5946,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
@@ -5939,7 +5954,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (let i = 0; i < entry.onError.length; i++) {
       const outcome = entry.onError[i]!(err, ctx)
       const handled = outcome instanceof Promise ? await outcome : outcome
-      if (handled !== undefined) return finalize(handled, responseSet(ctx))
+      if (handled !== undefined) return finalize(handled, responseSet(ctx), ctx)
     }
     this.logRequestError(err, ctx)
     return wrapResponse(plainError(500, "internal_error"))

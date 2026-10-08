@@ -22692,7 +22692,8 @@
     "name": "toResponse",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders): Response;"
+    "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request): Response;",
+    "doc": "/**\n * Render a handler's result. `request` is the request being answered, given when response hooks will\n * write next: a copy or body-less response built here is then recorded as that request's own, so the\n * hooks write it in place instead of copying it again.\n */"
   },
   {
     "name": "toReviewView",

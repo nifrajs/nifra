@@ -3,6 +3,9 @@ import { type AnyServer, server, silentLogger, writableResponse } from "../src/i
 import { nodeDirect } from "../src/node-direct.ts"
 import { responseObserver } from "../src/response-observer.ts"
 import { nodeOutcomeToResponse } from "../src/server/node-outcome.ts"
+import { buildStaticResponseHeaders, fusedRespondNoSet, toResponse } from "../src/server/respond.ts"
+import { EMPTY_RESPONSE_CONTROLS } from "../src/server/runtime-core.ts"
+import type { CtxSet } from "../src/server/server.ts"
 
 /**
  * A handler may hand the same `Response` object to many requests: a module-level `204`, a shared
@@ -222,5 +225,165 @@ describe("writableResponse", () => {
     expect(own.headers.get("x-a")).toBe("1")
     expect(own.headers.get("x-b")).toBe("2")
     expect(await own.text()).toBe("guarded")
+  })
+})
+
+/**
+ * A copy or body-less render nifra makes while answering a request is that request's own: the response
+ * hooks that run next for the same request write it in place, while any other request handed the same
+ * object copies it. One copy per shared Response, never two.
+ */
+for (const lane of LANES) {
+  describe(`a response nifra built for a request belongs to that request - ${lane.name}`, () => {
+    const SHARED_PATHS = ["/shared", "/shared-cookie", "/undef", "/redirect-cookie"] as const
+
+    function ownershipApp(observed: Map<string, boolean>, withOnRequest: boolean) {
+      const shared = new Response(null, { status: 204 })
+      const redirect = new Response(null, { status: 302, headers: { location: "/home" } })
+      const base = server({ logger: silentLogger }).use(nodeDirect()).responseHeaders({
+        "x-frame-options": "DENY",
+      })
+      const app = (withOnRequest ? base.onRequest(() => undefined) : base)
+        .onResponse((res, req) => {
+          const path = new URL(req.url).pathname
+          observed.set(
+            path,
+            writableResponse(res, req) === res &&
+              writableResponse(res, new Request(req.url)) !== res,
+          )
+          return res
+        })
+        .get("/shared", () => shared)
+        .get("/shared-cookie", (c) => {
+          c.set.cookie("sid", "s")
+          return shared
+        })
+        .get("/undef", () => undefined)
+        .get("/redirect-cookie", (c) => {
+          c.set.cookie("sid", "s")
+          return redirect
+        })
+      return { app, shared, redirect }
+    }
+
+    for (const withOnRequest of [false, true]) {
+      test(`hooks write in place, another request copies${withOnRequest ? " (with onRequest)" : ""}`, async () => {
+        const observed = new Map<string, boolean>()
+        const { app, shared, redirect } = ownershipApp(observed, withOnRequest)
+        const { send, close } = lane.open(app)
+        try {
+          for (const path of SHARED_PATHS) {
+            const res = await send(path, "alice")
+            expect(res.headers.get("x-frame-options")).toBe("DENY")
+          }
+        } finally {
+          await close()
+        }
+        expect(Object.fromEntries(observed)).toEqual(
+          Object.fromEntries(SHARED_PATHS.map((path) => [path, true])),
+        )
+        expect(headersOf(shared)).toEqual([])
+        expect(headersOf(redirect)).toEqual([["location", "/home"]])
+      })
+    }
+
+    test("a response a hook kept from one request is copied when it hands it back on another", async () => {
+      let kept: Response | undefined
+      const app = server({ logger: silentLogger })
+        .use(nodeDirect())
+        .responseHeaders({ "x-frame-options": "DENY" })
+        .onResponse((res, req) => {
+          if (kept === undefined) {
+            kept = res
+            return res
+          }
+          return req.headers.get("x-user") === "bob" ? kept : res
+        })
+        .onResponse((res, req) => {
+          res.headers.set("x-hook-user", req.headers.get("x-user") ?? "none")
+          return res
+        })
+        .get("/undef", (c) => {
+          c.set.cookie("sid", `${c.header("x-user")}-session`)
+          return undefined
+        })
+      const { send, close } = lane.open(app)
+      try {
+        const alice = await send("/undef", "alice")
+        expect(alice.headers.get("x-hook-user")).toBe("alice")
+        const keptResponse = (): Response => {
+          if (kept === undefined) throw new Error("the hook kept no response")
+          return kept
+        }
+        const keptHeaders = headersOf(keptResponse())
+        const bob = await send("/undef", "bob")
+        expect(bob.headers.get("x-hook-user")).toBe("bob")
+        expect(headersOf(keptResponse())).toEqual(keptHeaders)
+      } finally {
+        await close()
+      }
+    })
+  })
+}
+
+describe("toResponse records the copies it makes for the request it is given", () => {
+  const statics = buildStaticResponseHeaders({ "x-frame-options": "DENY" })
+  const cookies: CtxSet = { ...EMPTY_RESPONSE_CONTROLS, _cookies: ["sid=s; Path=/"] }
+  const cases: ReadonlyArray<
+    readonly [
+      string,
+      () => unknown,
+      CtxSet,
+      ReturnType<typeof buildStaticResponseHeaders> | undefined,
+    ]
+  > = [
+    [
+      "a shared 204 with static headers",
+      () => new Response(null, { status: 204 }),
+      EMPTY_RESPONSE_CONTROLS,
+      statics,
+    ],
+    [
+      "a shared 302 with a cookie",
+      () => new Response(null, { status: 302, headers: { location: "/" } }),
+      cookies,
+      undefined,
+    ],
+    [
+      "a 204 carrying content-length",
+      () => new Response(null, { status: 204, headers: { "content-length": "0" } }),
+      EMPTY_RESPONSE_CONTROLS,
+      undefined,
+    ],
+    ["the framework's own 204", () => undefined, EMPTY_RESPONSE_CONTROLS, statics],
+  ]
+  for (const [name, result, set, declared] of cases) {
+    test(name, () => {
+      const handed = result()
+      const request = new Request("http://t/")
+      const out = toResponse(handed, set, false, declared, request)
+      expect(out).not.toBe(handed)
+      expect(writableResponse(out, request)).toBe(out)
+      expect(writableResponse(out, new Request("http://t/"))).not.toBe(out)
+      expect(writableResponse(out)).not.toBe(out)
+      const unowned = toResponse(result(), set, false, declared)
+      expect(writableResponse(unowned, request)).not.toBe(unowned)
+    })
+    if (set === EMPTY_RESPONSE_CONTROLS) {
+      test(`${name}, rendered by the fused lane`, () => {
+        const request = new Request("http://t/")
+        const out = fusedRespondNoSet(result(), false, declared, false, request)
+        expect(writableResponse(out, request)).toBe(out)
+        expect(writableResponse(out, new Request("http://t/"))).not.toBe(out)
+      })
+    }
+  }
+
+  test("a handler's own Response is never recorded, even when nothing is written to it", () => {
+    const handed = new Response(null, { status: 204 })
+    const request = new Request("http://t/")
+    const out = toResponse(handed, EMPTY_RESPONSE_CONTROLS, false, undefined, request)
+    expect(out).toBe(handed)
+    expect(writableResponse(out, request)).not.toBe(out)
   })
 })
