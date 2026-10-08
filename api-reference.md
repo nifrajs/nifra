@@ -1726,6 +1726,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.
 
 ### `@nifrajs/core/assurance`
 
@@ -2220,6 +2222,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
   The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries.
+- **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
+  Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
 
@@ -2924,6 +2928,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.
 
 ### `@nifrajs/core/single-copy`
 
@@ -7249,3 +7255,5 @@ _No named exports (side-effect entrypoint)._
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.

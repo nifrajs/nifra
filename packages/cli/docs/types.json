@@ -21044,6 +21044,13 @@
     "signature": "export declare function renderPageResult(options: RenderPageInput): MaybePromise<RenderedPage>;"
   },
   {
+    "name": "renderResult",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function renderResult(result: ResponseResult): Response;",
+    "doc": "/**\n * Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no\n * request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a\n * handler's `Response`, so a compact server rendering only its own rejections ships none of the code\n * that adopts one.\n */"
+  },
+  {
     "name": "renderRich",
     "kind": "function",
     "package": "@nifrajs/i18n",
@@ -23593,6 +23600,20 @@
     "package": "@nifrajs/core",
     "signature": "export declare function wrapWebSocketMessageValidation(handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning): WebSocketHandler;",
     "doc": "/**\n * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -\n * parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or\n * `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at\n * `app.ws()` registration, so every adapter dispatches validated messages with no per-adapter code.\n * `protoPoisoning` is the app's body policy: a frame with a `__proto__` key gets what a JSON body\n * with one gets, and under `\"reject\"` reads as invalid JSON.\n */"
+  },
+  {
+    "name": "writableResponse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function writableResponse(response: Response, request?: Request): Response;",
+    "doc": "/**\n * The response to write headers on for the request being answered: `response` itself, or a copy.\n *\n * A Response without a body can be sent any number of times, so the object a handler, hook or cache\n * hands over may be answering other requests too - a module-level `new Response(null, { status: 204 })`,\n * a kept redirect, even one nifra rendered earlier. A cookie or per-request header written onto it would\n * ship with every later request it answers, so it is always copied, whoever built it. One with a body\n * can be sent only once, so it already belongs to this request and is written in place; a copy would\n * cost Bun's file responses their sendfile path and buy nothing. Guarded `Headers`\n * (`Response.redirect()`, a raw `fetch()` result) reject writes, so those are copied as well.\n *\n * Pass the `request` being answered and a copy made for it is written in place by its later writers;\n * handed back on any other request, that copy is copied again.\n */"
+  },
+  {
+    "name": "writableResponse",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function writableResponse(response: Response, request?: Request): Response;",
+    "doc": "/**\n * The response to write headers on for the request being answered: `response` itself, or a copy.\n *\n * A Response without a body can be sent any number of times, so the object a handler, hook or cache\n * hands over may be answering other requests too - a module-level `new Response(null, { status: 204 })`,\n * a kept redirect, even one nifra rendered earlier. A cookie or per-request header written onto it would\n * ship with every later request it answers, so it is always copied, whoever built it. One with a body\n * can be sent only once, so it already belongs to this request and is written in place; a copy would\n * cost Bun's file responses their sendfile path and buy nothing. Guarded `Headers`\n * (`Response.redirect()`, a raw `fetch()` result) reject writes, so those are copied as well.\n *\n * Pass the `request` being answered and a copy made for it is written in place by its later writers;\n * handed back on any other request, that copy is copied again.\n */"
   },
   {
     "name": "writeDevFiles",

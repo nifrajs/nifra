@@ -15,7 +15,6 @@
 import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   answerNotFound,
-  EMPTY_RESPONSE_CONTROLS,
   type NotFoundHandler,
   type NotFoundInput,
   notFoundInput,
@@ -26,8 +25,8 @@ import {
   queryObjectOf,
   type ResponseResult,
   readBodyFramed,
+  renderResult,
   searchOf,
-  toResponse,
 } from "@nifrajs/core/edge-kit"
 import { decodeRouteParams, expandOptionalParams } from "@nifrajs/core/pattern"
 import { Router } from "@nifrajs/core/router"
@@ -86,7 +85,7 @@ export type EdgeNotFound = ((
 /** Render a rejection - a `Response` passes through, a plain `ResponseResult` (413 / 415 / 422 / 404
  * / 405 / 500) goes through the SAME renderer the full Server uses, so the wire bytes match. */
 const render = (r: Response | ResponseResult): Response =>
-  r instanceof Response ? r : toResponse(r, EMPTY_RESPONSE_CONTROLS)
+  r instanceof Response ? r : renderResult(r)
 
 /** A body-schema wrapper: `{ body }` narrows `c.body` to the schema's output type. */
 interface BodySchema<Body> {

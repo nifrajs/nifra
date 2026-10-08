@@ -116,6 +116,7 @@ export type {
   RouteInfoFor,
 } from "./server/registry.ts"
 export { replacedRequestOf } from "./server/request-lineage.ts"
+export { writableResponse } from "./server/respond.ts"
 export {
   type PlainRender,
   type ResponseResult,

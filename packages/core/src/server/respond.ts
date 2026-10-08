@@ -5,6 +5,7 @@
  */
 
 import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
+import { plainError } from "./http.ts"
 import {
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
@@ -12,6 +13,7 @@ import {
   isResponseResult,
   type PlainRender,
   plainRenderHeaders,
+  type ResponseResult,
 } from "./runtime-core.ts"
 import type { CtxSet, RawContext } from "./server.ts"
 import { mergeStaticHeaderRecord, type StaticResponseHeaders } from "./static-headers.ts"
@@ -76,28 +78,24 @@ export function buildStaticResponseHeaders(
 /**
  * Apply the static defaults to an ALREADY-BUILT response - the framework's error/404/timeout renders
  * and a handler-returned `Response`, none of which go through the header init below. Defaults, so a
- * name the response already carries is left alone. A guarded `Headers` (a raw `fetch()` result a
- * handler returned) rejects every write, so the first `set` throws with nothing applied and the
- * retry lands on a mutable copy.
+ * name the response already carries is left alone, and a response needing none is returned untouched.
+ * The writes land on {@link writableResponse}'s answer, never on an object other requests may share.
  */
 export function applyStaticResponseHeaders(
   response: Response,
   statics: StaticResponseHeaders,
 ): Response {
-  const headers = response.headers
-  if (knownMutableHeaders(headers)) {
-    applyStaticDefaults(headers, statics)
-    return response
+  let target = response
+  const entries = statics.entries
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!
+    const current = response.headers.get(entry[0])
+    // Set by the request, or already the declared value: nothing to write.
+    if (current === entry[1] || current !== (statics.inherited?.[entry[0]] ?? null)) continue
+    if (target === response) target = writableResponse(response)
+    target.headers.set(entry[0], entry[1])
   }
-  try {
-    applyStaticDefaults(headers, statics)
-  } catch {
-    const clone = new Response(response.body, response)
-    applyStaticDefaults(clone.headers, statics)
-    return stamped(clone)
-  }
-  rememberMutableHeaders(headers)
-  return response
+  return target
 }
 
 /**
@@ -212,7 +210,7 @@ function jsonResponseWithOwnHeaders(
 ): Response {
   const response = status === 200 ? Response.json(result) : Response.json(result, { status })
   for (const name of Object.keys(headers)) response.headers.set(name, headers[name]!)
-  return stamped(response)
+  return withBody(response)
 }
 
 // The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
@@ -221,26 +219,90 @@ function jsonResponseWithOwnHeaders(
 const RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
 
 /**
- * Headers objects the framework itself constructed - guaranteed mutable, no guard. Response
- * middleware adapters consult this before falling back to a mutability probe, so the hot path
- * (every framework-rendered response) never pays per-request `Headers` operations to learn what
- * construction already knew; only a handler-returned foreign `Response` (a raw `fetch()` result,
- * whose headers are guarded immutable) reaches the probe.
+ * Responses known to carry a body and take header writes: framework renders built with one, and
+ * foreign ones `writableResponse` has already checked. A body is sent once, so such a response belongs
+ * to whichever request holds it and is written in place without reading `.body` again - on Bun that
+ * read turns a string body into a stream, measured at about 6% of a request.
  */
-const MUTABLE_RESPONSE_HEADERS = new WeakSet<Headers>()
+const WRITABLE_BODY_RESPONSES = new WeakSet<Response>()
 
-export function knownMutableHeaders(headers: Headers): boolean {
-  return MUTABLE_RESPONSE_HEADERS.has(headers)
-}
+/** Body-less copies `writableResponse` made, by the request they were made for. */
+const REQUEST_COPIES = new WeakMap<Response, Request>()
 
-export function rememberMutableHeaders(headers: Headers): void {
-  MUTABLE_RESPONSE_HEADERS.add(headers)
-}
-
-/** Stamp a framework-constructed Response's headers as known-mutable, and return it. */
-function stamped(response: Response): Response {
-  MUTABLE_RESPONSE_HEADERS.add(response.headers)
+/** Record a Response the framework constructed: one built with a body is single-use and writable. */
+export function rememberRenderedResponse(response: Response, hasBody: boolean): Response {
+  if (hasBody) WRITABLE_BODY_RESPONSES.add(response)
   return response
+}
+
+/** `rememberRenderedResponse` for a Response the framework constructed with a body. */
+function withBody(response: Response): Response {
+  WRITABLE_BODY_RESPONSES.add(response)
+  return response
+}
+
+const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
+
+/** Whether `headers` takes writes. A guarded `Headers` rejects the first one, so the probe changes
+ * nothing either way. */
+function headersTakeWrites(headers: Headers): boolean {
+  try {
+    const previous = headers.get(HEADER_MUTABILITY_PROBE)
+    headers.set(HEADER_MUTABILITY_PROBE, "1")
+    if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
+    else headers.set(HEADER_MUTABILITY_PROBE, previous)
+  } catch {
+    return false
+  }
+  return true
+}
+
+/**
+ * The response to write headers on for the request being answered: `response` itself, or a copy.
+ *
+ * A Response without a body can be sent any number of times, so the object a handler, hook or cache
+ * hands over may be answering other requests too - a module-level `new Response(null, { status: 204 })`,
+ * a kept redirect, even one nifra rendered earlier. A cookie or per-request header written onto it would
+ * ship with every later request it answers, so it is always copied, whoever built it. One with a body
+ * can be sent only once, so it already belongs to this request and is written in place; a copy would
+ * cost Bun's file responses their sendfile path and buy nothing. Guarded `Headers`
+ * (`Response.redirect()`, a raw `fetch()` result) reject writes, so those are copied as well.
+ *
+ * Pass the `request` being answered and a copy made for it is written in place by its later writers;
+ * handed back on any other request, that copy is copied again.
+ */
+export function writableResponse(response: Response, request?: Request): Response {
+  if (WRITABLE_BODY_RESPONSES.has(response)) return response
+  if (response.body === null) {
+    // A 101 upgrade and the status-0 `Response.error()` cannot be constructed, and a runtime makes
+    // them per request.
+    if (response.status < 200) return response
+    if (request !== undefined && REQUEST_COPIES.get(response) === request) return response
+    const copy = copiedResponse(
+      response,
+      new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      }),
+      false,
+    )
+    if (request !== undefined) REQUEST_COPIES.set(copy, request)
+    return copy
+  }
+  if (headersTakeWrites(response.headers)) {
+    WRITABLE_BODY_RESPONSES.add(response)
+    return response
+  }
+  return copiedResponse(response, new Response(response.body, response), true)
+}
+
+/** `copy`, recorded and carrying `original`'s buffered-body marker: the Node writer still sends the
+ * serialized bytes directly, and a marked body-less Response keeps the body only the marker holds. */
+function copiedResponse(original: Response, copy: Response, hasBody: boolean): Response {
+  const marker: unknown = Reflect.get(original, RESPONSE_BODY)
+  if (marker !== undefined) Object.defineProperty(copy, RESPONSE_BODY, { value: marker })
+  return rememberRenderedResponse(copy, hasBody)
 }
 
 function isBodylessStatus(status: number): boolean {
@@ -253,13 +315,11 @@ export function normalizeBodylessResponse(response: Response): Response {
   if (response.body === null && !response.headers.has("content-length")) return response
   const headers = new Headers(response.headers)
   headers.delete("content-length")
-  return stamped(
-    new Response(null, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    }),
-  )
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 type TaggedResponseMarker = {
@@ -321,7 +381,7 @@ function tagged(
   body: string,
   tagResponseBody: ResponseBodyTagOption,
 ): Response {
-  stamped(response)
+  withBody(response)
   return tagResponseBody === false || tagResponseBody === undefined
     ? response
     : markTaggedResponse(
@@ -340,13 +400,13 @@ export function fusedRespondNoSet(
   statics?: StaticResponseHeaders,
   unstamped = false,
 ): Response {
-  // With no response hook registered, no code path ever asks whether these headers are mutable, so
-  // stamping the Headers object into the mutability WeakSet is dead work - `Response.json` alone is
-  // cheaper on Bun than the same construction plus the WeakSet write. `unstamped` is the caller's
-  // assertion that the hook walk is empty; an app that registers ANY response hook keeps the stamp,
-  // because the alternative is the set/delete mutability probe on every single response (each one
-  // carries a fresh `Headers`, so the probe's memo never amortizes) - measured 19% slower than
-  // stamping. Default false: an unknown caller pays one WeakSet write rather than a probe per response.
+  // With no response hook registered, no code path ever asks whether this response takes writes in
+  // place, so recording it in the body WeakSet is dead work - `Response.json` alone is cheaper on Bun
+  // than the same construction plus the WeakSet write. `unstamped` is the caller's assertion that the
+  // hook walk is empty; an app that registers ANY response hook keeps the record, because the
+  // alternative is `writableResponse` reading `.body` and probing the headers of every response (each
+  // one is fresh, so nothing amortizes) - the probe alone measured 19% slower than the WeakSet write.
+  // Default false: an unknown caller pays one WeakSet write rather than a probe per response.
   if (
     unstamped &&
     (tagResponseBody === false || tagResponseBody === undefined) &&
@@ -379,7 +439,7 @@ export function fusedRespondNoSet(
         const entry = statics.entries[i]!
         response.headers.set(entry[0], entry[1])
       }
-      return stamped(response)
+      return withBody(response)
     }
     // With declared static headers the prebuilt init already carries them plus the JSON
     // content-type, so this lane still constructs the response in one call - the whole point of
@@ -406,7 +466,7 @@ export function fusedRespondNoSet(
           tagResponseBody,
         )
     }
-    return stamped(
+    return withBody(
       statics === undefined
         ? Response.json(result)
         : Response.json(result, statics.responseJsonInit200()),
@@ -454,8 +514,33 @@ export function toResponse(
     )
   }
   if (result instanceof Response) {
+    if (result.bodyUsed) return toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, statics)
     return withStatics(appendCookiesToResponse(normalizeBodylessResponse(result), set), statics)
   }
+  return renderValue(result, set, tagResponseBody, statics)
+}
+
+/**
+ * Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no
+ * request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a
+ * handler's `Response`, so a compact server rendering only its own rejections ships none of the code
+ * that adopts one.
+ */
+export function renderResult(result: ResponseResult): Response {
+  const plain = result.plain
+  return plain === undefined
+    ? normalizeBodylessResponse(result.toResponse())
+    : renderValue(plain.body, plainRenderSet(plain, EMPTY_RESPONSE_CONTROLS), false, undefined)
+}
+
+/** The JSON lane: a value that is neither a `Response` nor a response result, rendered with the
+ * request's status, headers and cookies. */
+function renderValue(
+  result: unknown,
+  set: CtxSet,
+  tagResponseBody: ResponseBodyTagOption,
+  statics: StaticResponseHeaders | undefined,
+): Response {
   // The static tier only changes WHICH prebuilt header shape the branches below reach for: the
   // request's own headers are folded on top of the declared defaults once, here.
   const own = headersInit(set)
@@ -463,7 +548,7 @@ export function toResponse(
   const jsonCtHeaders = statics === undefined ? JSON_CT_HEADERS : statics.jsonHeaders
   const status = set.status ?? (result === undefined ? 204 : 200)
   if (status === 204 || status === 205 || status === 304) {
-    return stamped(new Response(null, headers === undefined ? { status } : { status, headers }))
+    return new Response(null, headers === undefined ? { status } : { status, headers })
   }
   // Bun and Deno both make a JSON response first and then accept a few header mutations more cheaply
   // than ingesting the same plain record in the constructor. This is the common dynamic-header
@@ -505,7 +590,7 @@ export function toResponse(
     }
   }
   const init: ResponseInit = headers === undefined ? { status } : { status, headers }
-  if (result === undefined) return stamped(new Response(null, init))
+  if (result === undefined) return new Response(null, init)
   if (tagResponseBody) {
     const body = JSON.stringify(result) as string | undefined
     if (body !== undefined) {
@@ -528,9 +613,9 @@ export function toResponse(
   }
   if (IS_DENO && headers !== undefined && !(headers instanceof Headers)) {
     const body = JSON.stringify(result) as string | undefined
-    if (body !== undefined) return stamped(denoResponseWithJsonBody(body, status, headers))
+    if (body !== undefined) return withBody(denoResponseWithJsonBody(body, status, headers))
   }
-  return stamped(Response.json(result, init))
+  return withBody(Response.json(result, init))
 }
 
 // Add a JSON content-type without pre-building a `Headers` instance just to check-and-set one key:
@@ -557,17 +642,16 @@ export function appendCookiesToResponse(response: Response, set: CtxSet): Respon
   // A handler may queue cookies (`c.set.cookie` - e.g. a session cookie) AND return its own Response
   // (e.g. `redirect("/")` after login). Cookies accumulate additively, so append them to the
   // returned Response - otherwise the canonical set-session-then-redirect pattern would silently drop
-  // the cookie. (Other `c.set` fields stay the returned Response's own concern.)
+  // the cookie. (Other `c.set` fields stay the returned Response's own concern.) They are this
+  // request's cookies, so they go on `writableResponse`'s answer, never on an object another request
+  // may be served from.
   const cookies = set._cookies
   if (cookies === undefined || cookies.length === 0) return response
-  try {
-    for (const cookie of cookies) response.headers.append("set-cookie", cookie)
-    return response
-  } catch {
-    // Guarded `Headers` (`Response.redirect()`, a raw `fetch()` result) reject every write, so the
-    // first append throws with nothing applied and the cookies land on a mutable copy instead.
-    const clone = new Response(response.body, response)
-    for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
-    return stamped(clone)
-  }
+  const target = writableResponse(response)
+  for (const cookie of cookies) target.headers.append("set-cookie", cookie)
+  return target
 }
+
+/** What a handler's Response renders as when its body was already sent: a runtime refuses to send it
+ * again, and the headers it carries were written for the request it already answered. */
+export const SENT_BODY = plainError(500, "internal_error")

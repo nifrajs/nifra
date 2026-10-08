@@ -6,6 +6,7 @@
  *
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
+import { writableResponse } from "@nifrajs/core/server"
 import { isDraftEnabled } from "./draft.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
@@ -466,17 +467,10 @@ export function withoutCacheChannel(res: Response): Response {
   if (!res.headers.has(ISR_REVALIDATE_HEADER) && !res.headers.has(ISR_REVALIDATE_TAGS_HEADER)) {
     return res
   }
-  try {
-    res.headers.delete(ISR_REVALIDATE_HEADER)
-    res.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
-    return res
-  } catch {
-    // A `fetch()` response has immutable headers: rebuild it around the same body instead.
-    const headers = new Headers(res.headers)
-    headers.delete(ISR_REVALIDATE_HEADER)
-    headers.delete(ISR_REVALIDATE_TAGS_HEADER)
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-  }
+  const target = writableResponse(res)
+  target.headers.delete(ISR_REVALIDATE_HEADER)
+  target.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+  return target
 }
 
 export interface ISROptions {

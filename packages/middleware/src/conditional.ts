@@ -55,10 +55,14 @@ export function conditionalResponse(
   if (response.status < 200 || response.status >= 300) return response
   if (!isFresh(request, options)) {
     if (options.etag === undefined && modified === undefined) return response
-    return withHeaders(response, (headers) => {
-      if (options.etag !== undefined) headers.set("etag", options.etag)
-      if (modified !== undefined) headers.set("last-modified", modified)
-    })
+    return withHeaders(
+      response,
+      (headers) => {
+        if (options.etag !== undefined) headers.set("etag", options.etag)
+        if (modified !== undefined) headers.set("last-modified", modified)
+      },
+      request,
+    )
   }
   const headers = new Headers(response.headers)
   if (options.etag !== undefined) headers.set("etag", options.etag)

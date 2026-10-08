@@ -257,9 +257,10 @@ function withStatusHeader(
   res: Response,
   header: string | false,
   status: "HIT" | "MISS" | "BYPASS",
+  request?: Request,
 ): Response {
   if (header === false) return res
-  return withHeaders(res, (headers) => headers.set(header, status))
+  return withHeaders(res, (headers) => headers.set(header, status), request)
 }
 
 /**
@@ -343,19 +344,19 @@ export function cache(options: CacheOptions): Middleware {
       if (!methods.has(req.method.toUpperCase())) return res
       if (!statusOk(res.status)) return res
       if (respectRequestCacheControl && cacheControlHas(req.headers, ["no-store"])) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       if (respectResponseCacheControl && cacheControlHas(res.headers, ["private", "no-store"])) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       if (!cacheSetCookie && res.headers.has("set-cookie")) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       // A response-declared Vary must be represented in the lookup key. If the caller did not opt
       // those request headers into `vary`, bypass storage instead of replaying one representation to
       // another request. `Vary: *` is never cacheable by a shared cache.
       if (!responseVaryMatchesKey(res.headers, vary)) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       // Shared-cache safety (RFC 9111 §3.5): never store a response to an authenticated request
       // (Authorization or Cookie) unless it's explicitly public - otherwise a personalized 200 leaks
@@ -365,15 +366,15 @@ export function cache(options: CacheOptions): Middleware {
         hasAuthentication(req) &&
         !cacheControlHas(res.headers, ["public", "s-maxage"])
       ) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       const declared = parseLength(res.headers.get("content-length"))
       if (declared !== undefined && declared > maxBytes) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       const captured = await readBytesCapped(res, maxBytes)
       if (!("bytes" in captured)) {
-        return withStatusHeader(captured.response, cacheStatusHeader, "BYPASS")
+        return withStatusHeader(captured.response, cacheStatusHeader, "BYPASS", req)
       }
       const body = captured.bytes
       const capturedResponse = captured.response

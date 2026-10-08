@@ -65,9 +65,13 @@ export function requestId(options: RequestIdOptions = {}): ContextPlugin<{ reque
           // The id the derive generated; else the inbound header, then a fresh id - so a response
           // no derive saw (a 404, an earlier middleware's short-circuit) is still covered.
           const echo = id ?? inboundOf(req.headers.get(header)) ?? generate()
-          return withHeaders(res, (headers) => {
-            headers.set(header, echo)
-          })
+          return withHeaders(
+            res,
+            (headers) => {
+              headers.set(header, echo)
+            },
+            req,
+          )
         },
         onNodeResponse(res, req) {
           // The common node path (a handler route, whose derive wrote the id through `c.set`) pays

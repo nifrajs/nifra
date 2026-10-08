@@ -296,11 +296,15 @@ export function rateLimit(options: RateLimitOptions): Middleware {
       const info = quota.get(req)
       if (info === undefined) return res
       quota.delete(req)
-      return withHeaders(res, (headers) => {
-        headers.set("RateLimit-Limit", String(max))
-        headers.set("RateLimit-Remaining", String(info.remaining))
-        headers.set("RateLimit-Reset", String(info.resetSeconds))
-      })
+      return withHeaders(
+        res,
+        (headers) => {
+          headers.set("RateLimit-Limit", String(max))
+          headers.set("RateLimit-Remaining", String(info.remaining))
+          headers.set("RateLimit-Reset", String(info.resetSeconds))
+        },
+        req,
+      )
     },
     // Node twins exist only for the built-in header/XFF key derivation - a custom `key` callback
     // takes a real `Request`, which is exactly the object the native lane avoids building.
