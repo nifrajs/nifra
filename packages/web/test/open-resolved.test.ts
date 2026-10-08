@@ -1,8 +1,18 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { openResolved } from "../src/open-resolved.ts"
+import { openResolved, opensAt } from "../src/open-resolved.ts"
 
 const withTree = async (fn: (root: string, outside: string) => Promise<void>): Promise<void> => {
   const base = await realpath(await mkdtemp(join(tmpdir(), "nifra-open-resolved-")))
@@ -47,6 +57,23 @@ test("refuses a resolved name once its final component became a symlink", async 
     await expect(openResolved(join(root, "assets", "app.js"))).rejects.toMatchObject({
       code: "ELOOP",
     })
+  })
+})
+
+// The check every platform without a race-free open relies on: an open file is refused once a
+// directory on its name was swapped for a link out of the root.
+test("an opened file no longer at its name behind a swapped directory is refused", async () => {
+  await withTree(async (root, outside) => {
+    const name = join(root, "assets", "app.js")
+    const handle = await open(name, "r")
+    try {
+      expect(await opensAt(handle, name)).toBe(true)
+      await rename(join(root, "assets"), join(root, "assets-moved"))
+      await symlink(outside, join(root, "assets"))
+      expect(await opensAt(handle, name)).toBe(false)
+    } finally {
+      await handle.close()
+    }
   })
 })
 
