@@ -50,7 +50,9 @@ export function defineEnv<S extends EnvShape>(shape: S, options?: DefineEnvOptio
     const result = schema["~standard"].validate(source[key])
     if (result instanceof Promise) {
       // Env validation must be synchronous (it runs once, at import) - an async validator is a
-      // configuration mistake, surfaced as a problem rather than an unhandled promise.
+      // configuration mistake, surfaced as a problem. Its promise is observed so a rejection is not
+      // reported as unhandled after the caller catches the refusal.
+      result.catch(() => {})
       problems.push(`  ${key}: async validators are not supported in defineEnv`)
       continue
     }

@@ -1,6 +1,23 @@
 import { describe, expect, test } from "bun:test"
 import { defineEnv, env, type StandardSchemaV1 } from "../src/index.ts"
 
+/**
+ * A rejected promise that counts the handlers `catch` attaches to it. The refusal is caught with
+ * try/catch: Bun's `toThrow` reports a promise rejected inside its callback even once it is handled.
+ */
+function watchedRejection(): { promise: Promise<never>; observed: () => number } {
+  let observed = 0
+  class Watched<T> extends Promise<T> {
+    override catch<R = never>(
+      onRejected?: ((reason: unknown) => R | PromiseLike<R>) | null,
+    ): Promise<T | R> {
+      observed++
+      return super.catch(onRejected)
+    }
+  }
+  return { promise: Watched.reject(new Error("synthetic async failure")), observed: () => observed }
+}
+
 describe("env coercing helpers", () => {
   test("string: required / default / optional", () => {
     expect(defineEnv({ A: env.string() }, { source: { A: "x" } }).A).toBe("x")
@@ -132,5 +149,20 @@ describe("defineEnv", () => {
     expect(() => defineEnv({ A: asyncSchema }, { source: { A: "x" } })).toThrow(
       /async validators are not supported/,
     )
+  })
+
+  test("a rejecting async validator is observed, so it is not left unhandled", () => {
+    const rejection = watchedRejection()
+    const rejecting: StandardSchemaV1<string> = {
+      "~standard": { version: 1 as const, vendor: "test", validate: () => rejection.promise },
+    }
+    let refusal = ""
+    try {
+      defineEnv({ A: rejecting }, { source: { A: "x" } })
+    } catch (error) {
+      refusal = String(error)
+    }
+    expect(refusal).toContain("async validators are not supported")
+    expect(rejection.observed()).toBeGreaterThan(0)
   })
 })

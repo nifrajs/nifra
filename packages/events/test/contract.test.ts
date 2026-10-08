@@ -3,6 +3,23 @@ import { continueCausality, startCausality } from "@nifrajs/core/causality"
 import { t } from "@nifrajs/schema"
 import { createEventRegistry, defineEventContract, EventContractError } from "../src/index.ts"
 
+/**
+ * A rejected promise that counts the handlers `catch` attaches to it. The refusal is caught with
+ * try/catch: Bun's `toThrow` reports a promise rejected inside its callback even once it is handled.
+ */
+function watchedRejection(): { promise: Promise<never>; observed: () => number } {
+  let observed = 0
+  class Watched<T> extends Promise<T> {
+    override catch<R = never>(
+      onRejected?: ((reason: unknown) => R | PromiseLike<R>) | null,
+    ): Promise<T | R> {
+      observed++
+      return super.catch(onRejected)
+    }
+  }
+  return { promise: Watched.reject(new Error("synthetic async failure")), observed: () => observed }
+}
+
 const OrderPaid = defineEventContract({
   type: "order.paid",
   version: 1,
@@ -83,6 +100,31 @@ describe("@nifrajs/events - defineEventContract", () => {
 
 describe("@nifrajs/events - parse (untrusted input)", () => {
   const valid = OrderPaid.create({ orderId: "o_1", cents: 1 })
+
+  test("a rejecting async payload schema is refused and observed, not left unhandled", () => {
+    const rejection = watchedRejection()
+    const Async = defineEventContract({
+      type: "test.async",
+      version: 1,
+      payload: {
+        "~standard": { version: 1 as const, vendor: "test", validate: () => rejection.promise },
+      },
+    })
+    let refusal = ""
+    try {
+      Async.parse({
+        id: "evt_1",
+        type: "test.async",
+        version: 1,
+        occurredAt: "2025-01-01T00:00:00Z",
+        payload: {},
+      })
+    } catch (error) {
+      refusal = String(error)
+    }
+    expect(refusal).toContain("async payload schemas are not supported")
+    expect(rejection.observed()).toBeGreaterThan(0)
+  })
 
   test("round-trips a valid envelope", () => {
     const result = OrderPaid.parse(JSON.parse(JSON.stringify(valid)))

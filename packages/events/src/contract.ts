@@ -122,6 +122,8 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
   ): { ok: true; value: InferOutput<Schema> } | { ok: false; issues: readonly StandardIssue[] } {
     const outcome = validateStandard(payload, value)
     if (outcome instanceof Promise) {
+      // Observed so a rejecting schema does not also surface as an unhandled rejection.
+      outcome.catch(() => {})
       throw new Error(
         `event contract ${type}@${version}: async payload schemas are not supported - use a sync schema`,
       )
