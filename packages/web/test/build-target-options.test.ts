@@ -104,7 +104,7 @@ test('clientIp "platform": a built edge entry keys the backend rate limit on the
       'import { MemoryStore, rateLimit } from "@nifrajs/middleware"',
       "export const backend = server()",
       "  .use(rateLimit({ store: new MemoryStore({ allowInProduction: true }), max: 1, windowMs: 60_000 }))",
-      '  .get("/api/ip", (c) => ({ ip: c.clientIp ?? null }))',
+      '  .get("/rpc/ip", (c) => ({ ip: c.clientIp ?? null }))',
     ].join("\n"),
   )
   const build = async (target: "cloudflare" | "vercel", clientIp?: "platform") => {
@@ -116,6 +116,8 @@ test('clientIp "platform": a built edge entry keys the backend rate limit on the
       clientModule: join(projectRoot, "frontend/client-stub.ts"),
       adapterImport: join(projectRoot, "backend/framework.ts"),
       backendImport: join(projectRoot, "backend/limited.ts"),
+      // The fixture's framework.ts mounts the backend at /rpc.
+      optionImports: { apiPrefix: join(projectRoot, "backend/framework.ts") },
       ...(clientIp !== undefined ? { clientIp } : {}),
     })
     return outDir
@@ -125,7 +127,7 @@ test('clientIp "platform": a built edge entry keys the backend rate limit on the
       default: { fetch(request: Request, env: unknown, ctx: unknown): Promise<Response> }
     }
     return (headers: Record<string, string>) =>
-      worker.default.fetch(new Request("http://x/api/ip", { headers }), {}, { waitUntil() {} })
+      worker.default.fetch(new Request("http://x/rpc/ip", { headers }), {}, { waitUntil() {} })
   }
   const keyUnavailable = { ok: false, error: "rate_limit_key_unavailable" }
 
@@ -153,7 +155,7 @@ test('clientIp "platform": a built edge entry keys the backend rate limit on the
     default(request: Request): Promise<Response>
   }
   const viaVercel = (headers: Record<string, string>) =>
-    fn.default(new Request("http://x/api/ip", { headers }))
+    fn.default(new Request("http://x/rpc/ip", { headers }))
   expect(await (await viaVercel({ "x-real-ip": "203.0.113.9" })).json()).toEqual({
     ip: "203.0.113.9",
   })
