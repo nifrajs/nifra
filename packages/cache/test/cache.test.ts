@@ -298,29 +298,33 @@ describe("createCache - a store shared by several caches", () => {
     }
   })
 
-  test("an invalidation waits for this cache's async write it covers", async () => {
-    const memory = new MemoryCache()
-    let land = (): void => {}
-    const landed = new Promise<void>((resolve) => {
-      land = resolve
-    })
-    // An async store that applies a write only when the test lets it, after a later invalidation
-    // would otherwise already have run.
-    const store: CacheStore = {
-      get: (key) => memory.get(key),
-      set: async (key, entry, tags) => {
-        await landed
-        memory.set(key, entry, tags)
-      },
-      delete: (key) => memory.delete(key),
-      invalidateTag: (tag) => memory.invalidateTag(tag),
-      clear: () => memory.clear(),
+  test("a delete, invalidation or clear waits for this cache's async write it covers", async () => {
+    const changes: readonly ((cache: ReturnType<typeof createCache>) => Promise<void>)[] = [
+      (cache) => cache.delete("k"),
+      (cache) => cache.invalidateTag("t"),
+      (cache) => cache.clear(),
+    ]
+    for (const change of changes) {
+      const memory = new MemoryCache()
+      const landed = Promise.withResolvers<void>()
+      // An async store that applies a write only when the test lets it, after a later invalidation
+      // would otherwise already have run.
+      const store: CacheStore = {
+        get: (key) => memory.get(key),
+        set: async (key, entry, tags) => {
+          await landed.promise
+          memory.set(key, entry, tags)
+        },
+        delete: (key) => memory.delete(key),
+        invalidateTag: (tag) => memory.invalidateTag(tag),
+        clear: () => memory.clear(),
+      }
+      const cache = createCache({ store })
+      const write = cache.set("k", "v", { tags: ["t"] })
+      const changed = change(cache)
+      landed.resolve()
+      await Promise.all([write, changed])
+      expect(await cache.get("k")).toBeUndefined()
     }
-    const cache = createCache({ store })
-    const write = cache.set("k", "v", { tags: ["t"] })
-    const invalidated = cache.invalidateTag("t")
-    land()
-    await Promise.all([write, invalidated])
-    expect(await cache.get("k")).toBeUndefined()
   })
 })
