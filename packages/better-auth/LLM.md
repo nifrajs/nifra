@@ -20,10 +20,12 @@ Mount better-auth into a nifra app - one app.use() wires /api/auth/*, plus typed
 - **BetterAuthOptions** _(interface)_ - `interface BetterAuthOptions`
 - **Principal** _(interface)_ - `interface Principal<User>`
 - **RequireSessionOptions** _(interface)_ - `interface RequireSessionOptions`
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
 - **PrincipalFor** _(type)_ - `type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant extends true ? Principal<User> & { readonly tenantId: string } : Pri…`
 - **SessionOf** _(type)_ - `type SessionOf<A extends BetterAuthLike> = NonNullable< Awaited<ReturnType<A["api"]["getSession"]>> >`
 - **SessionUserOf** _(type)_ - `type SessionUserOf<A extends BetterAuthLike> = SessionOf<A> extends { user: infer U } ? U : unknown`
-- **WithPrincipal** _(type)_ - `type WithPrincipal<S extends AnyServer, P> = S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never`
+
+_…and 1 more - see [`api-reference.md`](../../api-reference.md#nifrajsbetterauth) for the complete list._
 
 ## Footguns
 

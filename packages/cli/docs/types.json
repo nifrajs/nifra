@@ -1375,8 +1375,8 @@
     "name": "AuthGuardOptions",
     "kind": "interface",
     "package": "@nifrajs/authjs",
-    "signature": "export interface AuthGuardOptions extends Pick<AuthJSOptions, \"basePath\" | \"authUrl\" | \"trustProxy\"> {\n    readonly redirectTo?: string;\n    /** Secret override for this call. */\n    readonly secret?: string | string[];\n    /** Platform binding object used when `config.secret` is not present. */\n    readonly env?: unknown;\n    /** Secret key in `env`; defaults to `AUTH_SECRET`. */\n    readonly secretEnv?: string;\n}",
-    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON.\n * Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on\n * the origin and path the mount serves it from. */"
+    "signature": "export interface AuthGuardOptions extends Pick<AuthJSOptions, \"basePath\" | \"authUrl\" | \"trustProxy\"> {\n    readonly redirectTo?: string;\n    readonly unauthenticated?: UnauthenticatedResponse;\n    /** Secret override for this call. */\n    readonly secret?: string | string[];\n    /** Platform binding object used when `config.secret` is not present. */\n    readonly env?: unknown;\n    /** Secret key in `env`; defaults to `AUTH_SECRET`. */\n    readonly secretEnv?: string;\n}",
+    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else the\n * `unauthenticated` response, by default a 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy`\n * the mount was given, so the session is read on the origin and path the mount serves it from. */"
   },
   {
     "name": "AuthHeaders",
@@ -1462,7 +1462,7 @@
     "name": "AuthedOptions",
     "kind": "interface",
     "package": "@nifrajs/better-auth",
-    "signature": "export interface AuthedOptions<User> {\n    /** Require a resolvable tenant. When set and no tenant resolves, fail closed with `403`. */\n    readonly requireTenant?: boolean;\n    /** Browser redirect target (`302`) for a missing session, instead of the default `401` JSON. Same-origin. */\n    readonly redirectTo?: string;\n    /** Resolve the tenant id from the user. Default: `user.tenantId ?? user.orgId` (string-valued only). */\n    readonly tenantOf?: (user: User) => string | undefined;\n}",
+    "signature": "export interface AuthedOptions<User> {\n    /** Require a resolvable tenant. When set and no tenant resolves, fail closed with `403`. */\n    readonly requireTenant?: boolean;\n    /** Browser redirect target (`302`) for a missing session, instead of the default `401` JSON. Same-origin. */\n    readonly redirectTo?: string;\n    /** The response for a missing session when there is no `redirectTo`. Default `401` JSON. */\n    readonly unauthenticated?: UnauthenticatedResponse;\n    /** Resolve the tenant id from the user. Default: `user.tenantId ?? user.orgId` (string-valued only). */\n    readonly tenantOf?: (user: User) => string | undefined;\n}",
     "doc": "/**\n * Options for {@link requirePrincipal} / {@link authed}.\n */"
   },
   {
@@ -6214,8 +6214,8 @@
     "name": "GuardOptions",
     "kind": "interface",
     "package": "@nifrajs/auth",
-    "signature": "export interface GuardOptions {\n    readonly redirectTo?: string;\n}",
-    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a\n * 401 JSON (`{ ok: false, error: \"unauthorized\" }`). */"
+    "signature": "export interface GuardOptions {\n    readonly redirectTo?: string;\n    readonly unauthenticated?: UnauthenticatedResponse;\n}",
+    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - the\n * `unauthenticated` response, by default a 401 JSON (`{ ok: false, error: \"unauthorized\" }`). */"
   },
   {
     "name": "HANDOVER_ID",
@@ -11656,8 +11656,8 @@
     "name": "RequireSessionOptions",
     "kind": "interface",
     "package": "@nifrajs/better-auth",
-    "signature": "export interface RequireSessionOptions {\n    readonly redirectTo?: string;\n}",
-    "doc": "/**\n * What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path),\n * or - when omitted - a `401` JSON (`{ ok: false, error: \"unauthorized\" }`). Mirrors `@nifrajs/auth` guards.\n */"
+    "signature": "export interface RequireSessionOptions {\n    readonly redirectTo?: string;\n    readonly unauthenticated?: UnauthenticatedResponse;\n}",
+    "doc": "/**\n * What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path),\n * or - when omitted - the `unauthenticated` response, by default a `401` JSON\n * (`{ ok: false, error: \"unauthorized\" }`). Mirrors `@nifrajs/auth` guards.\n */"
   },
   {
     "name": "ResizeInput",
@@ -15335,6 +15335,27 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface UiThemeDescriptor {\n    readonly name: string;\n    readonly accent?: string;\n    readonly density?: \"compact\" | \"comfortable\";\n}"
+  },
+  {
+    "name": "UnauthenticatedResponse",
+    "kind": "interface",
+    "package": "@nifrajs/auth",
+    "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
+    "doc": "/** The response a guard denies a missing session with, in place of the default `401` JSON. */"
+  },
+  {
+    "name": "UnauthenticatedResponse",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
+    "doc": "/** The response a guard denies a missing session with, in place of the default `401` JSON. */"
+  },
+  {
+    "name": "UnauthenticatedResponse",
+    "kind": "interface",
+    "package": "@nifrajs/better-auth",
+    "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
+    "doc": "/** The response a guard denies a missing session with, in place of the default `401` JSON. */"
   },
   {
     "name": "UndiciTransportOptions",

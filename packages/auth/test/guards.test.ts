@@ -100,3 +100,48 @@ describe("requireUser", () => {
     expect(rejectionOf(caught(() => requireUser(empty, "userId"))).plain?.status).toBe(401)
   })
 })
+
+describe("unauthenticated", () => {
+  test("sets the status, body and headers of the denial", async () => {
+    const empty = await freshSession()
+    const custom = rejectionOf(
+      caught(() =>
+        requireSession(empty, {
+          unauthenticated: { status: 403, body: { error: "login_required" } },
+        }),
+      ),
+    )
+    expect(custom.plain).toEqual({ status: 403, body: { error: "login_required" } })
+    const challenge = rejectionOf(
+      caught(() =>
+        requireUser(empty, "userId", {
+          unauthenticated: { headers: { "www-authenticate": 'Bearer realm="api"' } },
+        }),
+      ),
+    )
+    expect(challenge.plain).toEqual({
+      status: 401,
+      headers: { "www-authenticate": 'Bearer realm="api"' },
+      body: { ok: false, error: "unauthorized" },
+    })
+    expect(
+      rejectionOf(caught(() => requireSession(empty, { unauthenticated: { body: undefined } })))
+        .plain,
+    ).toEqual({ status: 401, body: undefined })
+  })
+
+  test("refuses a status that is not an error, and redirectTo beside it", async () => {
+    const empty = await freshSession()
+    for (const code of [200, 302, 399, 600, 401.5]) {
+      expect(() => requireSession(empty, { unauthenticated: { status: code } })).toThrow(
+        /unauthenticated.status must be an integer 400-599/,
+      )
+    }
+    expect(() =>
+      requireSession(empty, { redirectTo: "/login", unauthenticated: { status: 403 } }),
+    ).toThrow(/redirectTo or unauthenticated, not both/)
+    const s = await freshSession()
+    s.set("userId", "u1")
+    expect(() => requireSession(s, { unauthenticated: { status: 200 } })).toThrow(/400-599/)
+  })
+})

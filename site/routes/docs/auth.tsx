@@ -97,6 +97,36 @@ export async function loader({ request }: Route.LoaderArgs) {
   return { userId }
 }`
 
+const FRAME = `// doc-check: skip - fragment: \`app\`, \`readSession\`, \`Note\`, and \`db\` are your application's.
+import { AsyncLocalStorage } from "node:async_hooks"
+import { authenticated, rejected } from "@nifrajs/core"
+
+const frame = new AsyncLocalStorage<{ userId?: string }>()
+
+app.group("/api", (api) =>
+  api
+    // Opens before authentication and closes after the response: validation, derive and the
+    // handler all run inside it, and so does a thrown Response.
+    .around((_c, next) => frame.run({}, next))
+    // Resolves the caller once: typed as c.principal, and written into the open frame.
+    .authenticate({
+      id: "session",
+      run: async (input) => {
+        const session = await readSession(input.headers.get("cookie"))
+        if (session === null) return rejected()
+        const store = frame.getStore()
+        if (store !== undefined) store.userId = session.userId
+        return authenticated(session)
+      },
+    })
+    .post("/notes", { body: Note }, (c) => db.notes.insert({ ...c.body, owner: c.principal.userId })),
+)`
+
+const DENIAL = `// doc-check: skip - fragment: \`session\` is the request's session.
+requireUser(session, "userId", {
+  unauthenticated: { status: 403, body: { error: "login_required" }, headers: { "www-authenticate": "Session" } },
+})`
+
 export default function Auth() {
   return (
     <div className="prose">
@@ -181,6 +211,27 @@ export default function Auth() {
         directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
+      <p>
+        Without <code>redirectTo</code>, a guard denies with a 401 JSON{" "}
+        <code>{`{ ok: false, error: "unauthorized" }`}</code>. <code>unauthenticated</code> sets that
+        response's status (400-599), body and headers instead; the same option exists on{" "}
+        <code>@nifrajs/better-auth</code>'s <code>requireSession</code>, <code>requirePrincipal</code>{" "}
+        and <code>authed</code>, and on <code>@nifrajs/authjs</code>'s <code>requireAuthUser</code>. A
+        guard given both <code>redirectTo</code> and <code>unauthenticated</code> throws.
+      </p>
+      <CodeBlock code={DENIAL} />
+
+      <h2 id="request-frame">One request-scoped context from authentication to the handler</h2>
+      <p>
+        <code>around</code> wraps everything after routing for the routes declared after it:
+        authentication, body validation, <code>derive</code> and the handler. An{" "}
+        <code>AsyncLocalStorage</code> frame or a database session setting opened there stays open
+        until the response is decided. <code>authenticate</code> runs inside that frame before
+        validation, resolves the caller once and types it as <code>c.principal</code>, so it can write
+        what it resolved into the frame instead of a second lookup in a <code>derive</code>. Both are
+        order-scoped, so inside a <code>group</code> they cover only its routes.
+      </p>
+      <CodeBlock code={FRAME} />
 
       <h2 id="server-only">Session code stays in the backend</h2>
       <p>

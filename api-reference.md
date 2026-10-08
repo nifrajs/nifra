@@ -646,7 +646,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Authorizer** _(type)_ - `type Authorizer<Subject = unknown, Resource = unknown> = ( request: AuthorizationRequest<Subject, Resource>, ) => boolean | Promise<boolean>`
 - **CsrfOptions** _(interface)_ - `interface CsrfOptions`
 - **GuardOptions** _(interface)_ - `interface GuardOptions`
-  What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a 401 JSON (`{ ok: false, error: "unauthorized" }`).
+  What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - the `unauthenticated` response, by default a 401 JSON (`{ ok: false, error: "unauthorized" }`).
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVSessionStore} uses. Structural (no `@cloudflare/workers-types` dependency) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
@@ -666,6 +666,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
   Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun.
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
 - **csrf** _(function)_ - `csrf: (options?: CsrfOptions) => Middleware`
 - **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<boolean>`
@@ -682,12 +684,14 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/authjs`
 
 - **AuthGuardOptions** _(interface)_ - `interface AuthGuardOptions`
-  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on the origin and path the mount serves it from.
+  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else the `unauthenticated` response, by default a 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on the origin and path the mount serves it from.
 - **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">`
   The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`.
 - **AuthJSOptions** _(interface)_ - `interface AuthJSOptions`
 - **Session** _(interface)_ - `interface Session`
   The active session of the logged in user.
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON.
 - **authjs** _(function)_ - `authjs: (config: AuthJSConfig, options?: AuthJSOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Mount an Auth.js instance into a nifra app: serves `${basePath}/*` (default `/api/auth/*`) for `GET` + `POST`, so sign-in, OAuth callbacks, session, sign-out, and CSRF all run on your server through `@auth/core` itself. A type-IDENTITY plugin (see `defineIdentityPlugin`): mounting never changes the…
 - **getSession** _(function)_ - `getSession: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<Session | null>`
@@ -742,11 +746,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **PrincipalFor** _(type)_ - `type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant extends true ? Principal<User> & { readonly tenantId: string } : Principal<User>`
   The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowe…
 - **RequireSessionOptions** _(interface)_ - `interface RequireSessionOptions`
-  What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path), or - when omitted - a `401` JSON (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
+  What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path), or - when omitted - the `unauthenticated` response, by default a `401` JSON (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
 - **SessionOf** _(type)_ - `type SessionOf<A extends BetterAuthLike> = NonNullable< Awaited<ReturnType<A["api"]["getSession"]>> >`
   The non-null session payload of a concrete better-auth instance `A`, inferred from its `api.getSession` return type (typically `{ user: User; session: Session }`).
 - **SessionUserOf** _(type)_ - `type SessionUserOf<A extends BetterAuthLike> = SessionOf<A> extends { user: infer U } ? U : unknown`
   The non-null user type of a concrete better-auth instance `A` (`SessionOf<A>["user"]`). Collapses to `unknown` only for the erased structural `BetterAuthLike`; a real instance recovers the concrete user.
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON.
 - **WithPrincipal** _(type)_ - `type WithPrincipal<S extends AnyServer, P> = S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never`
   Add `{ principal: P }` to a server's context while preserving its route registry `R` (no collapse to `any`). This is the type that makes `.use(authed(auth))` thread a NON-NULL `c.principal`.
 - **authed** _(function)_ - `authed: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => <S extends AnyServer>(app: S) => WithP…`

@@ -107,6 +107,20 @@ describe("requireSession() guard", () => {
     }
   })
 
+  test("unauthenticated sets the status and body of the denial", async () => {
+    try {
+      await requireSession(stubAuth, new Request("http://x/me"), {
+        unauthenticated: { status: 403, body: { error: "login_required" } },
+      })
+      throw new Error("expected requireSession to throw")
+    } catch (err) {
+      expect(rejectionOf(err).plain).toEqual({ status: 403, body: { error: "login_required" } })
+    }
+    await expect(
+      requireSession(stubAuth, new Request("http://x/me"), { unauthenticated: { status: 200 } }),
+    ).rejects.toThrow(/400-599/)
+  })
+
   test("rejects an off-origin redirectTo (config bug - fails loud, not a redirect)", async () => {
     await expect(
       requireSession(stubAuth, new Request("http://x/me"), { redirectTo: "//evil.com" }),

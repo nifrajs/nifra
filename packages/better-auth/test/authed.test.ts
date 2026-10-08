@@ -87,6 +87,20 @@ describe("authed() plugin - fail closed", () => {
     expect(ran).toBe(false)
   })
 
+  test("no session with unauthenticated -> that status and body", async () => {
+    const app = server()
+      .use(
+        authed(plainAuth, { unauthenticated: { status: 403, body: { error: "login_required" } } }),
+      )
+      .get("/me", (c) => ({ id: c.principal.userId }))
+    const res = await app.fetch(anon("/me"))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: "login_required" })
+    expect(() => authed(plainAuth, { redirectTo: "/login", unauthenticated: {} })).toThrow(
+      /not both/,
+    )
+  })
+
   test("valid session -> handler runs with a populated c.principal", async () => {
     const app = server()
       .use(authed(plainAuth))

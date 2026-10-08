@@ -4512,6 +4512,57 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 ```
 
+Without `redirectTo`, a guard denies with a 401 JSON
+`{ ok: false, error: "unauthorized" }`. `unauthenticated` sets that
+response's status (400-599), body and headers instead; the same option exists on
+`@nifrajs/better-auth`'s `requireSession`, `requirePrincipal`
+and `authed`, and on `@nifrajs/authjs`'s `requireAuthUser`. A
+guard given both `redirectTo` and `unauthenticated` throws.
+
+```ts
+// doc-check: skip - fragment: `session` is the request's session.
+requireUser(session, "userId", {
+  unauthenticated: { status: 403, body: { error: "login_required" }, headers: { "www-authenticate": "Session" } },
+})
+```
+
+### One request-scoped context from authentication to the handler
+
+`around` wraps everything after routing for the routes declared after it:
+authentication, body validation, `derive` and the handler. An
+`AsyncLocalStorage` frame or a database session setting opened there stays open
+until the response is decided. `authenticate` runs inside that frame before
+validation, resolves the caller once and types it as `c.principal`, so it can write
+what it resolved into the frame instead of a second lookup in a `derive`. Both are
+order-scoped, so inside a `group` they cover only its routes.
+
+```ts
+// doc-check: skip - fragment: `app`, `readSession`, `Note`, and `db` are your application's.
+import { AsyncLocalStorage } from "node:async_hooks"
+import { authenticated, rejected } from "@nifrajs/core"
+
+const frame = new AsyncLocalStorage<{ userId?: string }>()
+
+app.group("/api", (api) =>
+  api
+    // Opens before authentication and closes after the response: validation, derive and the
+    // handler all run inside it, and so does a thrown Response.
+    .around((_c, next) => frame.run({}, next))
+    // Resolves the caller once: typed as c.principal, and written into the open frame.
+    .authenticate({
+      id: "session",
+      run: async (input) => {
+        const session = await readSession(input.headers.get("cookie"))
+        if (session === null) return rejected()
+        const store = frame.getStore()
+        if (store !== undefined) store.userId = session.userId
+        return authenticated(session)
+      },
+    })
+    .post("/notes", { body: Note }, (c) => db.notes.insert({ ...c.body, owner: c.principal.userId })),
+)
+```
+
 ### Session code stays in the backend
 
 The session manager, an auth instance and their secrets live in `backend/`, and only
@@ -15321,11 +15372,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/auth
 
-`AuthorizationRequest`, `Authorizer`, `CsrfOptions`, `GuardOptions`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`, `createSessions`, `csrf`, `isAuthorized`, `requireAuthorization`, `requireSession`, `requireUser`
+`AuthorizationRequest`, `Authorizer`, `CsrfOptions`, `GuardOptions`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`, `UnauthenticatedResponse`, `createSessions`, `csrf`, `isAuthorized`, `requireAuthorization`, `requireSession`, `requireUser`
 
 ## @nifrajs/authjs
 
-`AuthGuardOptions`, `AuthJSConfig`, `AuthJSOptions`, `Session`, `app`, `authjs`, `getSession`, `requireAuthUser`
+`AuthGuardOptions`, `AuthJSConfig`, `AuthJSOptions`, `Session`, `UnauthenticatedResponse`, `app`, `authjs`, `getSession`, `requireAuthUser`
 
 ## @nifrajs/aws-lambda
 
@@ -15333,7 +15384,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/better-auth
 
-`AuthedOptions`, `BetterAuthLike`, `BetterAuthOptions`, `Principal`, `PrincipalFor`, `RequireSessionOptions`, `SessionOf`, `SessionUserOf`, `WithPrincipal`, `authed`, `betterAuth`, `getSession`, `requirePrincipal`, `requireSession`
+`AuthedOptions`, `BetterAuthLike`, `BetterAuthOptions`, `Principal`, `PrincipalFor`, `RequireSessionOptions`, `SessionOf`, `SessionUserOf`, `UnauthenticatedResponse`, `WithPrincipal`, `authed`, `betterAuth`, `getSession`, `requirePrincipal`, `requireSession`
 
 ## @nifrajs/cache
 
