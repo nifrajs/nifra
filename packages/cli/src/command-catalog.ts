@@ -329,6 +329,8 @@ interface RoutesInput {
   readonly json?: boolean | undefined
   readonly graph?: boolean | undefined
   readonly modes?: boolean | undefined
+  readonly hooks?: boolean | undefined
+  readonly since?: string | undefined
   readonly target?: string | undefined
   readonly dir?: string | undefined
 }
@@ -465,7 +467,7 @@ interface AssureCommandOutput {
 interface LevelsCommandOutput extends VerificationLevelsResult {}
 interface RoutesCommandOutput {
   readonly ok: boolean
-  readonly mode: "default" | "graph" | "modes"
+  readonly mode: "default" | "graph" | "modes" | "hooks"
   readonly data: unknown
   readonly text: string
 }
@@ -654,15 +656,20 @@ const ROUTES_SCHEMA = input<RoutesInput>(
     json: { type: "boolean" },
     graph: { type: "boolean" },
     modes: { type: "boolean" },
+    hooks: { type: "boolean" },
+    since: { type: "string" },
     target: { type: "string" },
     dir: { type: "string" },
   }),
   (value) => {
     const raw = withDir(record(value))
-    if (raw.graph === true && raw.modes === true)
-      throw new TypeError("graph and modes cannot be combined")
+    if ([raw.graph, raw.modes, raw.hooks].filter((flag) => flag === true).length > 1)
+      throw new TypeError("graph, modes and hooks cannot be combined")
+    if (raw.since !== undefined && raw.hooks !== true)
+      throw new TypeError("since compares hook reports and needs hooks")
     return {
-      ...parseBooleanFlags(raw, ["json", "graph", "modes"]),
+      ...parseBooleanFlags(raw, ["json", "graph", "modes", "hooks"]),
+      since: optionalString(raw.since, "since"),
       target: optionalString(raw.target, "target"),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
@@ -1213,7 +1220,8 @@ const manifestSpec: CommandSpec<ManifestInput, ManifestEmitCommandResult | DiffC
 
 const routesSpec: CommandSpec<RoutesInput, RoutesCommandOutput> = {
   name: "routes",
-  summary: "List, graph, or target-check every page and API route the app serves.",
+  summary:
+    "List, graph, or target-check every page and API route the app serves, or the hooks each runs.",
   input: ROUTES_SCHEMA,
   output: output({
     type: "object",
@@ -1227,10 +1235,44 @@ const routesSpec: CommandSpec<RoutesInput, RoutesCommandOutput> = {
       { name: "json", field: "json", type: "boolean" },
       { name: "graph", field: "graph", type: "boolean" },
       { name: "modes", field: "modes", type: "boolean" },
+      { name: "hooks", field: "hooks", type: "boolean" },
+      { name: "since", field: "since", type: "string" },
       { name: "target", field: "target", type: "string" },
     ],
   },
   async run(value, ctx) {
+    if (value.hooks === true) {
+      // Hooks live on the backend server, so an API-only app (no web config) is reported too.
+      const app =
+        ctx.loadApp !== undefined
+          ? await ctx.loadApp()
+          : await import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
+      const hooks = await import("./hooks-report.ts")
+      const report = await hooks.collectHookReport(app.backend)
+      if (value.since === undefined) {
+        return { ok: true, mode: "hooks", data: report, text: hooks.renderHookReport(report) }
+      }
+      const saved = hooks.parseHookReport(
+        await Bun.file(resolve(ctx.cwd, value.since))
+          .text()
+          .catch(() => ""),
+      )
+      if (saved === undefined) {
+        return {
+          ok: false,
+          mode: "hooks",
+          data: { report, error: `${value.since} is not a saved hook report` },
+          text: `[nifra] ${value.since} is not a saved hook report (write one with \`nifra routes --hooks --json\`)`,
+        }
+      }
+      const changes = hooks.diffHookReports(saved, report)
+      return {
+        ok: true,
+        mode: "hooks",
+        data: { report, changes },
+        text: hooks.renderHookDiff(changes),
+      }
+    }
     const app = await loadAppFor(ctx)
     if (value.modes === true) {
       const { buildRouteManifest, renderRouteManifest } = await import(

@@ -165,6 +165,10 @@ Usage:
                                          against it: a route the target can't honour (an ssr route on a
                                          static build, ISR where there's no revalidation) exits nonzero
                                          with the consequence - run in CI so it fails the build, not prod.
+  nifra routes --hooks [--json]          List the hooks each backend route and each prefix's unmatched
+               [--since <file>]          paths actually run: kind, plugin name, and where it was
+                                         registered (app, group, merge, mount). --since diffs against a
+                                         saved --json report.
   nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent files a new app ships:
                                          .mcp.json + .cursor/mcp.json (register this project's nifra MCP),
                                          each agent's pointer to AGENTS.md (CLAUDE.md, GEMINI.md,
@@ -262,7 +266,8 @@ Usage:
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                                         to skip). --list shows available targets. A version newer than
+                [--no-hooks]             to skip), then prints how hook scope changed (--no-hooks to
+                                         skip). --list shows available targets. A version newer than
                                          this CLI prints the command for that release's CLI. Fail-closed
                                          on an unknown version or a rollback (--allow-downgrade
                                          overrides). Deterministic + idempotent.
@@ -1220,6 +1225,7 @@ async function main(): Promise<void> {
         json: argv.includes("--json"),
         list: argv.includes("--list"),
         verify: !argv.includes("--no-verify"),
+        hooks: !argv.includes("--no-hooks"),
         allowDowngrade: argv.includes("--allow-downgrade"),
         exact: argv.includes("--exact"),
         cliVersion: CLI_VERSION,

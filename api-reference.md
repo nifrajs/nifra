@@ -2586,16 +2586,26 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/reflection`
 
+- **HookKind** _(type)_ - `type HookKind = | "onRequest" | "around" | "authenticate" | "derive" | "beforeHandle" | "afterHandle" | "onError" | "onResponse" | "responseHeaders" | "onResponseFinalized"`
+  Where each registered hook came from, for `reflectHooks` (`nifra routes --hooks`). Development-only: every write sits behind the inline `process.env.NODE_ENV !== "production"` guard at its call site in `server.ts`, so a production define folds the writes away and this module drops out of the bundle…
 - **JsonSchema** _(type)_ - `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
+- **ReflectedHook** _(interface)_ - `interface ReflectedHook`
+  One hook that runs for a route or an unmatched path: what it is, who added it, and where.
+- **ReflectedHookReport** _(interface)_ - `interface ReflectedHookReport`
 - **ReflectedMount** _(interface)_ - `interface ReflectedMount`
   A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
 - **ReflectedRoute** _(interface)_ - `interface ReflectedRoute`
+- **ReflectedRouteHooks** _(interface)_ - `interface ReflectedRouteHooks`
 - **ReflectedRouteSchema** _(interface)_ - `interface ReflectedRouteSchema`
 - **ReflectedSchemaField** _(interface)_ - `interface ReflectedSchemaField`
   One top-level property of an introspectable object schema.
+- **ReflectedUnmatchedHooks** _(interface)_ - `interface ReflectedUnmatchedHooks`
+  The hooks a path under `prefix` that no route matches still runs - its 404s and 405s.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **reflectHooks** _(function)_ - `reflectHooks: (source: unknown) => ReflectedHookReport`
+  Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server'…
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`

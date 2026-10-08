@@ -10,6 +10,7 @@ import { join } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import type { CapabilityGap } from "@nifrajs/core/capabilities"
 import type { ProjectEvidenceSnapshot } from "@nifrajs/core/evidence"
+import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import {
   type Diagnostic,
@@ -109,6 +110,13 @@ export interface CheckResult {
    * the `duplicate-install` diagnostics; this field is what `--json` consumers parse instead.
    */
   readonly identityPreflight?: IdentityPreflightResult
+  /**
+   * The hooks each backend route and each prefix's unmatched paths run (`nifra routes --hooks`), read
+   * from the `source` of `nifra.assurance.ts`, which check already loads - check runs no other app
+   * code. Omitted without that config, and when `maxDiagnostics` caps the output for the MCP transport,
+   * where `nifra_routes` with `hooks` returns it.
+   */
+  readonly hooks?: ReflectedHookReport
 }
 
 /** The `identityPreflight` slice of {@link CheckResult}. */
@@ -587,6 +595,11 @@ export async function collectCheckDiagnostics(
   const doctor = projectFacts.packages.doctor
   const outsideProgram = projectFacts.check.typecheck.outsideProgram?.length ?? 0
   const knownGaps = projectFacts.policies.capability?.report.gaps ?? []
+  const hookSource = projectFacts.policies.assurance?.config?.source
+  const hooks =
+    hookSource === undefined || opts.maxDiagnostics !== undefined
+      ? undefined
+      : (await import("@nifrajs/core/reflection")).reflectHooks(hookSource)
   const result: CheckResult = {
     ok: !finalDiagnostics.some((value) => value.severity === "error"),
     typecheck: !projectFacts.check.typecheck.ran
@@ -617,6 +630,7 @@ export async function collectCheckDiagnostics(
       ? {}
       : { externalMounts: checkConfig.externalMounts }),
     ...(knownGaps.length === 0 ? {} : { knownGaps }),
+    ...(hooks === undefined ? {} : { hooks }),
     ...(Object.keys(checkConfig.rules).length === 0 ? {} : { ruleOverrides: checkConfig.rules }),
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }

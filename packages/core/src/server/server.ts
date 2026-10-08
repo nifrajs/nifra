@@ -18,6 +18,15 @@ import {
   type RegisteredCapabilityInterceptor,
 } from "../internal/capability-runtime.ts"
 import {
+  adoptStaticTags,
+  enterPlugin,
+  leavePlugin,
+  tagAdoption,
+  tagHook,
+  tagScoped,
+  tagStatic,
+} from "../internal/hook-origins.ts"
+import {
   type AssuranceDeclaration,
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
@@ -817,6 +826,26 @@ const recordScopedHook = (key: object, routesAtPush: number, kind: string): void
   state.sites.push({ kind, routesAtPush, site: captureCallerSite() })
 }
 
+/** Hook provenance for an adoption (dev only, see `internal/hook-origins.ts`): which scope each
+ * wrapper just appended to a hook list gates its hook by. `pairs` holds each source list with the target list it
+ * was appended to, read right after the append so the wrappers are the target list's tail. */
+const tagAdopted = (
+  target: object,
+  source: object,
+  prefix: string | undefined,
+  routes: readonly CatalogRoute[],
+  pairs: readonly (readonly [readonly unknown[], readonly unknown[]])[],
+): void => {
+  tagAdoption(target, source, prefix)
+  const scope =
+    prefix !== undefined
+      ? { prefix }
+      : { routes: routes.map((route) => ({ method: route.method, path: route.path })) }
+  for (const [originals, appended] of pairs) {
+    if (originals.length > 0) tagScoped(originals, appended.slice(-originals.length), scope)
+  }
+}
+
 /** Run the deadness check exactly once. A hook whose recorded route count equals the final route count
  * had no route declared after it - unambiguously dead, since the scoping feature (a hook that covers
  * only later routes) always leaves at least one such route. Zero-route apps are exempt (different
@@ -1214,8 +1243,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   > {
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "derive")
+      tagHook(fn, "derive", this)
+    }
     return this as unknown as Server<
       R,
       Ctx & ContextExtensionOf<ReturnType<H>>,
@@ -1252,6 +1283,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError('authenticate() stage mode must be "sync" or "async"')
     }
     this.authStages.push(stage as unknown as RawAuthStage)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      tagHook(stage, "authenticate", this)
     return this as unknown as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
   }
 
@@ -1272,6 +1305,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): this {
     this.assertConfigurable("onRequest()")
     this.onRequestHooks.push(fn as RawOnRequest)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") tagHook(fn, "onRequest", this)
     this.onNodeRequestHooks.push(undefined)
     this.nodeRequestHooksComplete = false
     this.bunNativeRequestHooksSafe = false
@@ -1288,8 +1322,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "beforeHandle")
+      tagHook(fn, "beforeHandle", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1306,8 +1342,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   >(fn: H): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "around")
+      tagHook(fn, "around", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1355,8 +1393,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("afterHandle()")
     this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "afterHandle")
+      tagHook(fn, "afterHandle", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1368,8 +1408,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "onError")
+      tagHook(fn, "onError", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1377,6 +1419,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
     this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") tagHook(fn, "onResponse", this)
     this.onNodeResponseHooks.push(undefined)
     this.nodeResponseHooksComplete = false
     this.bunNativeResponseHeadersOnly = false
@@ -1409,6 +1452,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   responseHeaders(record: Readonly<Record<string, string>>): this {
     this.assertConfigurable("responseHeaders()")
+    if (
+      hookAuditRuntime &&
+      process.env.NODE_ENV !== "production" &&
+      this.onResponseHooks.length === 0
+    )
+      tagStatic(this, Object.keys(record), record)
     return this.addStaticResponseHeaders(normalizeStaticResponseHeaders(record))
   }
 
@@ -1434,6 +1483,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // outcome from `json` to a generic `response`. A guarded foreign response takes its clone path.
       const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
       this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+        tagHook(this.onResponseHooks.at(-1), "responseHeaders", this)
       this.onNodeResponseHooks.push(undefined)
       this.nodeResponseHooksComplete = false
       return this
@@ -1478,6 +1529,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): this {
     this.assertConfigurable("onResponseFinalized()")
     this.onResponseFinalizedHooks.push(fn)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      tagHook(fn, "onResponseFinalized", this)
     return this
   }
 
@@ -1570,9 +1623,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.activeAssurance.push(...pluginOnly)
       const inherited = this.inheritedPlugins
       this.inheritedPlugins = undefined
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production") enterPlugin(name)
       try {
         return arg(this)
       } finally {
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production") leavePlugin()
         this.inheritedPlugins = inherited
         // Remove only this plugin's temporary evidence. Nested assured plugins may deliberately leave
         // subsequent evidence active, so truncating the whole array would lose real ordering semantics.
@@ -1602,6 +1657,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (arg.onRequest !== undefined) {
       this.assertConfigurable("onRequest()")
       this.onRequestHooks.push(arg.onRequest as RawOnRequest)
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+        tagHook(arg.onRequest, "onRequest", this)
       this.onNodeRequestHooks.push(arg.onNodeRequest)
       if (arg.onNodeRequest === undefined) this.nodeRequestHooksComplete = false
       if (!(arg as unknown as Record<symbol, unknown>)[BUN_NATIVE_REQUEST_SAFE]) {
@@ -1616,6 +1673,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (arg.onResponse !== undefined) {
       this.assertConfigurable("onResponse()")
       this.onResponseHooks.push(arg.onResponse)
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+        tagHook(arg.onResponse, "onResponse", this)
       this.onNodeResponseHooks.push(arg.onNodeResponse)
       if (arg.onNodeResponse === undefined) this.nodeResponseHooksComplete = false
       else this.hasRawNodeResponseHook = true
@@ -2302,6 +2361,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       assertConfigurable: (operation) => this.assertConfigurable(operation),
       addResponseHook: (web, node, headerOnly = false) => {
         this.onResponseHooks.push(web)
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+          tagHook(web, headerOnly ? "responseHeaders" : "onResponse", this)
         this.onNodeResponseHooks.push(node)
         if (node === undefined) this.nodeResponseHooksComplete = false
         if (!headerOnly) this.bunNativeResponseHeadersOnly = false
@@ -2593,12 +2654,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         // The group's static declarations came before its own response hooks, so they are folded in
         // first - and fold themselves into a hook here if this server already has one (same ordering
         // rule as a direct `responseHeaders()` call).
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+          adoptStaticTags(this, source, this.onResponseHooks.length > 0)
         this.addStaticResponseHeaders({ ...statics.record })
       } else {
         // The static tier is folded into EVERY response this server builds, so a group's static
         // headers cannot join it. A hook ahead of the group's own (the sealed scope is discarded
         // after adoption) keeps their meaning - defaults a value already on the response wins over.
         source.onResponseHooks.unshift((response) => applyStaticResponseHeaders(response, statics))
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+          tagHook(source.onResponseHooks[0], "responseHeaders", source, true)
         source.onNodeResponseHooks.unshift(undefined)
         source.nodeResponseHooksComplete = false
       }
@@ -2608,6 +2673,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.onResponseFinalizedHooks.push(
       ...scopeHooks(source.onResponseFinalizedHooks, responseScope, 1),
     )
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      // Read before anything else is appended: the wrappers are still each list's tail.
+      const pairs: (readonly [readonly unknown[], readonly unknown[]])[] = []
+      if (inScope !== undefined) pairs.push([source.onRequestHooks, this.onRequestHooks])
+      if (responseScope !== undefined) {
+        pairs.push([source.onResponseHooks, this.onResponseHooks])
+        pairs.push([source.onResponseFinalizedHooks, this.onResponseFinalizedHooks])
+      }
+      tagAdopted(this, source, prefix, sourceRoutes, pairs)
+    }
     this.nodeResponseHooksComplete &&= source.nodeResponseHooksComplete
     this.bunNativeResponseHeadersOnly &&= source.bunNativeResponseHeadersOnly
     this.hasRawNodeResponseHook ||= source.hasRawNodeResponseHook

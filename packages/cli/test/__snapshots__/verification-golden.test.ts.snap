@@ -29,7 +29,23 @@ exports[`verification golden output: nifra check full assurance project: --json 
   "ok": true,
   "typecheck": "skipped",
   "typecheckNote": "no tsconfig.json",
-  "diagnostics": []
+  "diagnostics": [],
+  "hooks": {
+    "complete": true,
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/pay",
+        "hooks": []
+      }
+    ],
+    "unmatched": [
+      {
+        "prefix": "/",
+        "hooks": []
+      }
+    ]
+  }
 }"
 `;
 

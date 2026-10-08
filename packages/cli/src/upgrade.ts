@@ -22,9 +22,19 @@
  * transforms are a future addition - a recipe that needs one is the signal to add the engine, not before.
  */
 
-import { readFileSync, writeFileSync } from "node:fs"
-import { join, relative } from "node:path"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join, relative } from "node:path"
+import { fileURLToPath } from "node:url"
+import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
+import {
+  collectHookReport,
+  diffHookReports,
+  HOOKS_BEFORE_UPGRADE_FILE,
+  type HookReportChange,
+  parseHookReport,
+  renderHookDiff,
+} from "./hooks-report.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
 
 export interface UpgradeOptions {
@@ -44,6 +54,11 @@ export interface UpgradeOptions {
   readonly exact?: boolean
   /** The running CLI's version: the newest target it applies. Default: its newest recipe. */
   readonly cliVersion?: string
+  /**
+   * With `--write`, capture `nifra routes --hooks` before and after the edits and print the diff, so a
+   * change in which hooks run where is visible. Loads the backend. Default true; `--no-hooks` skips it.
+   */
+  readonly hooks?: boolean
 }
 
 export interface PinChange {
@@ -593,6 +608,74 @@ function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[
   ].join("\n")
 }
 
+/** The hook report around `--write`: the diff and where the pre-upgrade report was saved, or why not. */
+export type UpgradeHookScope =
+  | { readonly saved: string; readonly changes: readonly HookReportChange[] }
+  | { readonly error: string; readonly saved?: string }
+
+async function hookReportBefore(cwd: string): Promise<ReflectedHookReport | { error: string }> {
+  try {
+    const { loadBackendApp } = await import("./load.ts")
+    const { backend } = await loadBackendApp(cwd)
+    return await collectHookReport(backend)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** The report after the edits, from a fresh process: the edited sources must not come from this one's
+ * module cache. Saves the pre-upgrade report for `nifra routes --hooks --since` after an install. */
+async function hookScopeAcross(
+  cwd: string,
+  before: ReflectedHookReport | { error: string },
+): Promise<UpgradeHookScope> {
+  if ("error" in before) return { error: before.error }
+  const saved = join(cwd, HOOKS_BEFORE_UPGRADE_FILE)
+  mkdirSync(dirname(saved), { recursive: true })
+  writeFileSync(saved, `${JSON.stringify(before, null, 2)}\n`)
+  const entry = fileURLToPath(
+    new URL(import.meta.url.endsWith(".ts") ? "./cli.ts" : "./cli.js", import.meta.url),
+  )
+  const child = Bun.spawn([process.execPath, entry, "routes", "--hooks", "--json"], {
+    cwd,
+    env: process.env,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [text, , code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  const after = parseHookReport(text)
+  if (after === undefined) {
+    return {
+      error: `\`nifra routes --hooks\` exited ${code} after the edits`,
+      saved: HOOKS_BEFORE_UPGRADE_FILE,
+    }
+  }
+  return { saved: HOOKS_BEFORE_UPGRADE_FILE, changes: diffHookReports(before, after) }
+}
+
+function renderHookScope(scope: UpgradeHookScope): string {
+  const since = (saved: string): string[] => [
+    "The new release's hooks run once its packages are installed. After installing, compare against the report saved before the edits:",
+    `  nifra routes --hooks --since ${saved}`,
+  ]
+  if ("error" in scope) {
+    const head = `Hook scope: not captured (${scope.error}).`
+    return scope.saved === undefined ? head : [head, ...since(scope.saved)].join("\n")
+  }
+  return [
+    "Hook scope across the edits (nifra routes --hooks):",
+    renderHookDiff(scope.changes)
+      .split("\n")
+      .map((line) => `  ${line}`)
+      .join("\n"),
+    ...since(scope.saved),
+  ].join("\n")
+}
+
 /** The targets this CLI applies: each release recipe up to its own version, and that version. */
 export function upgradeTargets(cliVersion: string): string[] {
   const versions = listRecipeVersions().filter(
@@ -609,6 +692,7 @@ function newerCliCommand(version: string, options: UpgradeOptions): string {
     options.exact === true ? "--exact" : "",
     options.allowDowngrade === true ? "--allow-downgrade" : "",
     options.verify === false ? "--no-verify" : "",
+    options.hooks === false ? "--no-hooks" : "",
     options.json === true ? "--json" : "",
   ].filter((flag) => flag !== "")
   return ["bunx", `@nifrajs/cli@${version}`, "upgrade", version, ...flags].join(" ")
@@ -697,12 +781,22 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     return false
   }
 
+  const captureHooks = write && options.hooks !== false
+  const before = captureHooks ? await hookReportBefore(cwd) : undefined
   const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact) : preview
+  const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
 
   if (options.json) {
-    console.log(JSON.stringify({ ...plan, from, steps: recipe.steps, write }, null, 2))
+    console.log(
+      JSON.stringify(
+        { ...plan, from, steps: recipe.steps, write, ...(hooks === undefined ? {} : { hooks }) },
+        null,
+        2,
+      ),
+    )
   } else {
     console.log(renderPlan(plan, write, from, recipe.steps))
+    if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
   }
 
   // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.

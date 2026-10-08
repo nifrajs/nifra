@@ -233,6 +233,39 @@ export default function Plugins() {
       </p>
       <CodeBlock code={MIDDLEWARE} />
 
+      <h3>Which hooks run where</h3>
+      <p>
+        Where a hook is registered decides which requests it sees. <code>nifra routes --hooks</code>{" "}
+        prints, for every backend route and for each prefix's unmatched paths, the hooks that run
+        and the site that registered them (<code>app</code>, <code>group /admin</code>,{" "}
+        <code>merge #1</code>, <code>mount /m</code>), named by plugin where one registered them:
+      </p>
+      <ul>
+        <li>
+          A <b>group</b>'s hooks cover its whole prefix, including that prefix's 404 and 405
+          responses.
+        </li>
+        <li>
+          A <b>merged</b> server's <code>onRequest</code> runs only for its own routes; its
+          response hooks and static headers become app-wide.
+        </li>
+        <li>
+          A <b>mount</b> runs the child's full lifecycle inside the parent's request and response
+          hooks.
+        </li>
+        <li>
+          <code>around</code>, <code>derive</code>, and <code>beforeHandle</code> apply only to
+          routes declared after them.
+        </li>
+      </ul>
+      <p>
+        <code>nifra routes --hooks --json</code> writes the report; <code>--since &lt;file&gt;</code>{" "}
+        prints what runs differently from a saved one. <code>nifra upgrade --write</code> saves the
+        report before it edits anything and prints the scope diff, and <code>nifra check --json</code>{" "}
+        includes it as <code>hooks</code> when <code>nifra.assurance.ts</code> names a{" "}
+        <code>source</code>. Origins are recorded only outside production builds.
+      </p>
+
       <h2>Header middleware: one portable hook, fast everywhere</h2>
       <p>
         Most response middleware only reads or writes <b>headers</b> - security headers, CORS

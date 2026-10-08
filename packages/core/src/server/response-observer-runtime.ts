@@ -1,3 +1,4 @@
+import { tagSource } from "../internal/hook-origins.ts"
 import type {
   NodeRequestContext,
   NodeResponseBodyHook,
@@ -18,6 +19,9 @@ export type {
   ResponseBodyHook,
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
+
+// Deno reports `process.env` reads as `NotCapable` without --allow-env; read it only off Deno.
+declare const Deno: unknown
 
 export interface ResponseObserverHost {
   assertConfigurable(operation: string): void
@@ -100,12 +104,16 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
           node?: NodeResponseHook,
         ): ResponseObserverMethods {
           host.assertConfigurable("onResponseHeaders()")
+          const web: Parameters<typeof host.addResponseHook>[0] = (response, req) => {
+            const view = webHeadersView(response, req)
+            const out = fn(view.headers, view.request, response.status)
+            return out instanceof Promise ? out.then(() => view.response) : view.response
+          }
+          // Development-only provenance for `reflectHooks`; a production define folds it away.
+          if (typeof Deno === "undefined" && process.env.NODE_ENV !== "production")
+            tagSource(web, fn)
           host.addResponseHook(
-            (response, req) => {
-              const view = webHeadersView(response, req)
-              const out = fn(view.headers, view.request, response.status)
-              return out instanceof Promise ? out.then(() => view.response) : view.response
-            },
+            web,
             node ?? ((response, req) => fn(recordHeadersView(response), req, response.status)),
             true,
           )

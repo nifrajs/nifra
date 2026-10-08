@@ -6345,6 +6345,13 @@
     "doc": "/** Latency-style distribution over fixed buckets (seconds). Renders Prometheus cumulative buckets. */"
   },
   {
+    "name": "HookKind",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type HookKind = \"onRequest\" | \"around\" | \"authenticate\" | \"derive\" | \"beforeHandle\" | \"afterHandle\" | \"onError\" | \"onResponse\" | \"responseHeaders\" | \"onResponseFinalized\";",
+    "doc": "/**\n * Where each registered hook came from, for `reflectHooks` (`nifra routes --hooks`). Development-only:\n * every write sits behind the inline `process.env.NODE_ENV !== \"production\"` guard at its call site in\n * `server.ts`, so a production define folds the writes away and this module drops out of the bundle.\n * Reads happen only from reflection, never on the request path.\n */"
+  },
+  {
     "name": "HostPolicy",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -11249,6 +11256,19 @@
     "doc": "/** Options for {@link redirect}. */"
   },
   {
+    "name": "ReflectedHook",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedHook {\n    readonly kind: HookKind;\n    /** The plugin that registered it, else the function's own name, else `(anonymous)`. */\n    readonly name: string;\n    /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`. */\n    readonly site: string;\n    /** The header names a static `responseHeaders()` declaration sets. */\n    readonly headers?: readonly string[];\n}",
+    "doc": "/** One hook that runs for a route or an unmatched path: what it is, who added it, and where. */"
+  },
+  {
+    "name": "ReflectedHookReport",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedHookReport {\n    /**\n     * False when a hook has no recorded origin and is listed with site `unknown`. Origins are recorded\n     * only outside production builds, so reflect a development load of the app.\n     */\n    readonly complete: boolean;\n    readonly routes: readonly ReflectedRouteHooks[];\n    readonly unmatched: readonly ReflectedUnmatchedHooks[];\n}"
+  },
+  {
     "name": "ReflectedMount",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -11262,6 +11282,12 @@
     "signature": "export interface ReflectedRoute {\n    readonly method: string;\n    readonly path: string;\n    readonly schema?: ReflectedRouteSchema;\n    /** Runtime response-contract mode, when a response-contract plugin covered the route. */\n    readonly responseContract?: \"warn\" | \"enforce\";\n    readonly assurance?: readonly AssuranceEvidence[];\n    readonly capabilities?: readonly string[];\n    /** Set when the route is a declared dynamic route family (a runtime-resolved template like\n     * `/api/:slug/:resource`) - so the assurance gate treats it as one classified family, not a single route. */\n    readonly family?: boolean;\n    /** Field-level response classification plus the highest sensitivity present. */\n    readonly classification?: ResponseClassification;\n    readonly tool?: {\n        readonly name: string;\n        readonly description: string;\n        readonly annotations?: ToolAnnotations;\n    };\n}"
   },
   {
+    "name": "ReflectedRouteHooks",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedRouteHooks {\n    readonly method: string;\n    readonly path: string;\n    /** In the order they run: request hooks, the route chain, then response hooks innermost first. */\n    readonly hooks: readonly ReflectedHook[];\n}"
+  },
+  {
     "name": "ReflectedRouteSchema",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -11273,6 +11299,13 @@
     "package": "@nifrajs/core",
     "signature": "export interface ReflectedSchemaField {\n    readonly name: string;\n    readonly required: boolean;\n    readonly schema: JsonSchema;\n}",
     "doc": "/** One top-level property of an introspectable object schema. */"
+  },
+  {
+    "name": "ReflectedUnmatchedHooks",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedUnmatchedHooks {\n    readonly prefix: string;\n    readonly hooks: readonly ReflectedHook[];\n}",
+    "doc": "/** The hooks a path under `prefix` that no route matches still runs - its 404s and 405s. */"
   },
   {
     "name": "Register",
@@ -21019,6 +21052,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function reflectClassification(schema: unknown): ResponseClassification | undefined;",
     "doc": "/** Read field-level metadata from an introspectable response schema. Never invokes its validator. */"
+  },
+  {
+    "name": "reflectHooks",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reflectHooks(source: unknown): ReflectedHookReport;",
+    "doc": "/**\n * Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin\n * that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It\n * follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server's\n * request hooks cover only its own routes, a mount runs its child's whole lifecycle inside the app's\n * global hooks - and reads the provenance a development load records, so reflect the app outside\n * production. Anything that is not a nifra server yields an empty report.\n */"
   },
   {
     "name": "reflectMounts",

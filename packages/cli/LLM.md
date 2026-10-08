@@ -45,7 +45,7 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra levels [--config <value>] [--seed <value>] [--min <value>] [--json] - Compute the cumulative L0 typed-contract through L4 invariant verification ladder.
 - nifra capabilities <action> <method> <path> [--config <value>] [--out <value>] [--lockfile <value>] [--json] - Snapshot, check, or explain token-only capability provenance and lockfile drift.
 - nifra manifest <action> <before> <after> [--config <value>] [--out <value>] [--sign <value>] [--json] - Emit or diff the hash-verified route trust manifest.
-- nifra routes [--json] [--graph] [--modes] [--target <value>] - List, graph, or target-check every page and API route the app serves.
+- nifra routes [--json] [--graph] [--modes] [--hooks] [--since <value>] [--target <value>] - List, graph, or target-check every page and API route the app serves, or the hooks each runs.
 - nifra context [--path <value>] [--kind <value>] - Print the project route index and framework conventions for an agent.
 - nifra openapi [--format <value>] [--path <value>] - Generate the backend OpenAPI document, including supported build-time response inference.
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.

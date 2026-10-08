@@ -2898,6 +2898,35 @@ const app = server()
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
 ```
 
+#### Which hooks run where
+
+Where a hook is registered decides which requests it sees. `nifra routes --hooks`
+prints, for every backend route and for each prefix's unmatched paths, the hooks that run
+and the site that registered them (`app`, `group /admin`,
+`merge #1`, `mount /m`), named by plugin where one registered them:
+
+-
+A **group**'s hooks cover its whole prefix, including that prefix's 404 and 405
+responses.
+
+-
+A **merged** server's `onRequest` runs only for its own routes; its
+response hooks and static headers become app-wide.
+
+-
+A **mount** runs the child's full lifecycle inside the parent's request and response
+hooks.
+
+-
+`around`, `derive`, and `beforeHandle` apply only to
+routes declared after them.
+
+`nifra routes --hooks --json` writes the report; `--since <file>`
+prints what runs differently from a saved one. `nifra upgrade --write` saves the
+report before it edits anything and prints the scope diff, and `nifra check --json`
+includes it as `hooks` when `nifra.assurance.ts` names a
+`source`. Origins are recorded only outside production builds.
+
 ### Header middleware: one portable hook, fast everywhere
 
 Most response middleware only reads or writes **headers** - security headers, CORS
