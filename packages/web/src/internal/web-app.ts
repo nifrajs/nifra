@@ -147,7 +147,8 @@ export interface CreateWebAppOptions<Env = unknown> {
    * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend
    * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:
    * leave it off to pass the full path through. `opaque` states why a mount whose routes nifra cannot
-   * read (better-auth's handler) is outside assurance; it is then listed as a known gap.
+   * read (better-auth's handler) is outside assurance; it is then listed as a known gap, with any
+   * routes it declares reported as declared.
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string
@@ -155,7 +156,7 @@ export interface CreateWebAppOptions<Env = unknown> {
     readonly stripPrefix?: boolean
     readonly priority?: number
     readonly fallbackOn?: 404
-    readonly opaque?: string
+    readonly opaque?: MountOptions<Env>["opaque"]
   }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).

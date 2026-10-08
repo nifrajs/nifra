@@ -13,7 +13,7 @@ import {
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
 import { compileRoutePattern, type RoutePatternSegment } from "@nifrajs/core/pattern"
-import type { ReflectedRoute } from "@nifrajs/core/reflection"
+import type { ReflectedMount, ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { normalizeMountPath } from "@nifrajs/web/route-manifest"
@@ -225,6 +225,22 @@ export function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string
   return `## API routes (backend/app.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
 }
 
+/** The routes opaque mounts declare, under `prefix`, or `undefined` when there are none. Listed apart
+ * from the API routes: nifra serves them but never analyzed them. */
+function declaredMountRoutesSection(
+  mounts: readonly ReflectedMount[],
+  prefix: string | undefined,
+): string | undefined {
+  const lines = mounts.flatMap((mount) =>
+    (mount.routes ?? [])
+      .filter((route) => prefix === undefined || route.path.startsWith(prefix))
+      .map((route) => `- \`${route.method} ${route.path}\` - ${mount.path} (${mount.opaque})`),
+  )
+  return lines.length === 0
+    ? undefined
+    : `## Declared by opaque mounts (not analyzed)\n\n${lines.join("\n")}`
+}
+
 /** Markdown section listing the file-routed pages (URL pattern → source file). */
 export function pageRoutesSection(manifest: Manifest | undefined): string {
   if (!manifest || manifest.routes.length === 0) {
@@ -282,7 +298,8 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
     // No (or unreadable) routes/ - the page-routes section reports that.
   }
   const prefix = filter?.path
-  let routes = backendRoutes(app.backend)
+  const evidence = snapshotProjectEvidence(app.backend)
+  let routes = reflectedRoutesFromEvidence(evidence)
   let pages = manifest
   if (prefix !== undefined && prefix !== "") {
     routes = routes.filter((r) => r.path.startsWith(prefix))
@@ -310,6 +327,8 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
   if (filter?.kind !== "pages") {
     // Index → compact `METHOD path` list; a slice → the full schema + call-form detail.
     sections.push(isIndex ? apiRoutesIndexSection(routes) : apiRoutesSection(routes))
+    const declared = declaredMountRoutesSection(evidence.mounts ?? [], prefix || undefined)
+    if (declared !== undefined) sections.push(declared)
   }
   if (filter?.kind !== "api") sections.push(pageRoutesSection(pages))
   if (isIndex) sections.push(CONVENTIONS)

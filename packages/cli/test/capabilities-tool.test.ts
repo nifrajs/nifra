@@ -544,4 +544,38 @@ describe("opaque mounts", () => {
     expect(check.ok).toBe(false)
     expect(check.knownGaps).toBeUndefined()
   })
+
+  test("routes the mount declares are reported as declared, beside the gap", async () => {
+    const cwd = await project(
+      "opaque-declared-routes",
+      `, opaque: { reason: "a third-party auth handler", routes: [{ method: "GET", path: "/api/auth/session", capabilities: ["db.read"] }] }`,
+    )
+    const check = await collectCheckResult(cwd, { lintsOnly: true })
+    expect(check.diagnostics.filter((item) => item.rule === "capability-assurance")).toEqual([])
+    expect(check.knownGaps).toEqual([
+      { kind: "opaque-mount", path: "/api/auth/*", reason: "a third-party auth handler" },
+    ])
+
+    expect(await runCapabilitySnapshot(cwd)).toBe(true)
+    const lock = JSON.parse(await Bun.file(join(cwd, "capabilities.lock.json")).text())
+    expect(lock.routes).toContainEqual({
+      method: "GET",
+      path: "/api/auth/session",
+      declared: ["db.read"],
+      evidenced: [],
+      unproven: ["db.read"],
+      analysis: "declared",
+    })
+    const log = spyOn(console, "log").mockImplementation(() => {})
+    let printed: string[]
+    try {
+      expect(await runCapabilityCheck(cwd)).toBe(true)
+      printed = log.mock.calls.map((call) => String(call[0]))
+    } finally {
+      log.mockRestore()
+    }
+    expect(printed).toContain(
+      "• declared by an opaque mount, not analyzed: GET /api/auth/session [db.read]",
+    )
+  })
 })

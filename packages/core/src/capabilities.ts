@@ -195,6 +195,9 @@ export interface AssuredCapabilityRoute {
   readonly covered: boolean
   /** Highest data-sensitivity the response carries, when the route declares it. */
   readonly classification?: DataClassification
+  /** `"declared"` for a route an opaque mount states it serves: listed on the mount's word, never
+   * analyzed. Absent on an analyzed route. */
+  readonly analysis?: "declared"
 }
 
 /**
@@ -225,6 +228,7 @@ export interface CapabilitySnapshotRoute {
   readonly unproven: readonly string[]
   /** Recorded so a route that starts returning `pii`/`secret` flips the lockfile and forces a review. */
   readonly classification?: DataClassification
+  readonly analysis?: "declared"
 }
 
 export interface CapabilitySnapshot {
@@ -513,6 +517,45 @@ export function evaluateCapabilityAssurance(
   for (const mount of evidenceSet.mounts ?? reflectMounts(source)) {
     if (mount.opaque !== undefined) {
       gaps.push(Object.freeze({ kind: "opaque-mount", path: mount.path, reason: mount.opaque }))
+      for (const route of mount.routes ?? []) {
+        // Only what a declaration alone can contradict: an id the policy lacks, or a write a safe
+        // method can never carry. Evidence-backed checks have nothing to read here.
+        for (const id of route.capabilities) {
+          const definition = definitions.get(id)
+          if (definition === undefined) {
+            findings.push({
+              code: "unknown-capability",
+              method: route.method,
+              path: route.path,
+              capability: id,
+              message: `${route.method} ${route.path} (declared by mount ${mount.path}) declares unknown capability ${id}`,
+            })
+          } else if (
+            SAFE_METHODS.has(route.method) &&
+            definition.zone === "domain" &&
+            definition.access === "write"
+          ) {
+            findings.push({
+              code: "safe-method-domain-write",
+              method: route.method,
+              path: route.path,
+              capability: id,
+              message: `${route.method} ${route.path} (declared by mount ${mount.path}) cannot carry domain write capability ${id}`,
+            })
+          }
+        }
+        routes.push(
+          Object.freeze({
+            method: route.method,
+            path: route.path,
+            declared: route.capabilities,
+            evidence: Object.freeze([]),
+            unproven: route.capabilities,
+            covered: false,
+            analysis: "declared",
+          }),
+        )
+      }
       continue
     }
     findings.push({
@@ -929,6 +972,7 @@ export function snapshotCapabilities(report: CapabilityAssuranceReport): Capabil
         evidenced: Object.freeze([...new Set(route.evidence.map((item) => item.id))].sort()),
         unproven: Object.freeze([...route.unproven].sort()),
         ...(route.classification !== undefined ? { classification: route.classification } : {}),
+        ...(route.analysis !== undefined ? { analysis: route.analysis } : {}),
       }),
     )
     .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))

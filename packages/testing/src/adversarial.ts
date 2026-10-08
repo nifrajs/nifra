@@ -23,6 +23,7 @@ import {
 import {
   type JsonSchema,
   type ReflectedRoute,
+  reflectMounts,
   reflectRoutes,
   type SchemaReflection,
 } from "@nifrajs/core/reflection"
@@ -1257,6 +1258,14 @@ export async function runAdversarialContract(
         "conformance checked 0 targets. Response types inferred from a handler's return are a client-side " +
         "contract only - declare `response:` or `errors:` on the routes you want the laboratory to verify.",
     )
+  }
+  // Declared on an opaque mount's word: listed so the run states what it could not test.
+  for (const mount of reflectMounts(app)) {
+    for (const route of mount.routes ?? []) {
+      advisories.push(
+        `${route.method} ${route.path} is declared by the opaque mount ${mount.path} (${mount.opaque}) and has no contract to test`,
+      )
+    }
   }
   return {
     ok: failures.length === 0 && !fatalGap && (!coverageRequired || gaps.length === 0),

@@ -4321,6 +4321,33 @@ $ nifra check
 • known gap, not capability-analyzed: /api/auth/* - better-auth's own handler; its effects are its own
 ```
 
+A mount can also state the routes it serves and the capabilities each one exercises. Pass an
+object with the `reason` and a `routes` list. Each path is the full
+request path and must sit under the mount:
+
+```ts
+export const app = server().mount({
+  path: "/api/auth",
+  app: authHandler,
+  opaque: {
+    reason: "better-auth's own handler; its effects are its own",
+    routes: [
+      { method: "POST", path: "/api/auth/sign-in/email", capabilities: ["session.write"] },
+      { method: "GET", path: "/api/auth/get-session", capabilities: ["session.read"] },
+    ],
+  },
+})
+```
+
+Assurance lists these routes with `analysis: "declared"`, apart from the routes it
+analyzed. The mount stays a known gap with its reason. A declared capability the policy does
+not define fails, as it does on a route, and so does a domain write declared on
+`GET`. Nothing else is checked, because there is no evidence to read. The routes
+also appear in the capability lockfile, so a changed declaration shows up in review. They
+appear in the `nifra context` route index too. An L4 run lists them as having no
+contract to test. A malformed entry, or a path outside the mount, stops the analysis with an
+error that names it.
+
 ### The lockfile
 
 Once assurance passes, snapshot the result. The lockfile is a review artifact: a route that
@@ -15427,7 +15454,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`
 
 ## @nifrajs/cron
 

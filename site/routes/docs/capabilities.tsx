@@ -116,6 +116,18 @@ export const app = server().mount({
 const OPAQUE_CHECK = `$ nifra check
 • known gap, not capability-analyzed: /api/auth/* - better-auth's own handler; its effects are its own`
 
+const OPAQUE_ROUTES = `export const app = server().mount({
+  path: "/api/auth",
+  app: authHandler,
+  opaque: {
+    reason: "better-auth's own handler; its effects are its own",
+    routes: [
+      { method: "POST", path: "/api/auth/sign-in/email", capabilities: ["session.write"] },
+      { method: "GET", path: "/api/auth/get-session", capabilities: ["session.read"] },
+    ],
+  },
+})`
+
 const LEVELS = `$ nifra capabilities snapshot   # writes capabilities.lock.json
 $ nifra levels
 ✓ L0 typed contract
@@ -286,6 +298,22 @@ export default function Capabilities() {
         <code>opaque</code> field works on a <code>createWebApp</code> <code>mounts</code> entry.
       </p>
       <CodeBlock code={OPAQUE_CHECK} lang="bash" />
+      <p>
+        A mount can also state the routes it serves and the capabilities each one exercises. Pass an
+        object with the <code>reason</code> and a <code>routes</code> list. Each path is the full
+        request path and must sit under the mount:
+      </p>
+      <CodeBlock code={OPAQUE_ROUTES} lang="ts" />
+      <p>
+        Assurance lists these routes with <code>analysis: "declared"</code>, apart from the routes it
+        analyzed. The mount stays a known gap with its reason. A declared capability the policy does
+        not define fails, as it does on a route, and so does a domain write declared on{" "}
+        <code>GET</code>. Nothing else is checked, because there is no evidence to read. The routes
+        also appear in the capability lockfile, so a changed declaration shows up in review. They
+        appear in the <code>nifra context</code> route index too. An L4 run lists them as having no
+        contract to test. A malformed entry, or a path outside the mount, stops the analysis with an
+        error that names it.
+      </p>
 
       <h2>The lockfile</h2>
       <p>

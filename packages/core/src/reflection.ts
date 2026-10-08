@@ -314,6 +314,66 @@ export interface ReflectedMount {
   readonly path: string
   /** Why the child is not analyzed, as declared by `opaque` on the mount. */
   readonly opaque?: string
+  /** The routes the mount declares it serves. Declared, not analyzed. */
+  readonly routes?: readonly ReflectedMountRoute[]
+}
+
+/** A route an opaque mount declares, normalized: method upper-cased, capabilities deduplicated. */
+export interface ReflectedMountRoute {
+  readonly method: string
+  readonly path: string
+  readonly capabilities: readonly string[]
+}
+
+const METHOD_TOKEN = /^[A-Za-z]+$/
+
+/** The declared routes of the mount at `prefix`, or a TypeError naming the first bad entry: a
+ * declaration assurance reads must say exactly what it claims. */
+function declaredMountRoutes(
+  prefix: string,
+  shown: string,
+  value: unknown,
+): readonly ReflectedMountRoute[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new TypeError(`mount ${shown}: opaque routes must be an array`)
+  const routes: ReflectedMountRoute[] = []
+  const seen = new Set<string>()
+  value.forEach((candidate: unknown, index) => {
+    const at = `mount ${shown}: declared route ${index + 1}`
+    const entry = recordOf(candidate)
+    if (entry === undefined) throw new TypeError(`${at} is not an object`)
+    const { method, path, capabilities = [] } = entry
+    if (typeof method !== "string" || !METHOD_TOKEN.test(method)) {
+      throw new TypeError(`${at} has no valid method`)
+    }
+    if (typeof path !== "string" || !path.startsWith("/") || /[?#]/.test(path)) {
+      throw new TypeError(`${at} needs a path starting with "/", without a query or fragment`)
+    }
+    if (prefix !== "/" && path !== prefix && !path.startsWith(`${prefix}/`)) {
+      throw new TypeError(`${at} path ${path} is outside the mount`)
+    }
+    if (
+      !Array.isArray(capabilities) ||
+      !capabilities.every((id: unknown) => typeof id === "string")
+    ) {
+      throw new TypeError(`${at} capabilities must be an array of capability ids`)
+    }
+    const key = `${method.toUpperCase()} ${path}`
+    if (seen.has(key)) throw new TypeError(`mount ${shown} declares ${key} twice`)
+    seen.add(key)
+    routes.push(
+      Object.freeze({
+        method: method.toUpperCase(),
+        path,
+        capabilities: Object.freeze([...new Set<string>(capabilities)]),
+      }),
+    )
+  })
+  return Object.freeze(
+    routes.sort((a, b) =>
+      a.path < b.path ? -1 : a.path > b.path ? 1 : a.method < b.method ? -1 : 1,
+    ),
+  )
 }
 
 /**
@@ -333,11 +393,18 @@ export function reflectMounts(source: unknown): readonly ReflectedMount[] {
     const app = mount.app as { readonly [NIFRA_BACKEND_EVIDENCE]?: unknown } | undefined
     if (typeof app?.[NIFRA_BACKEND_EVIDENCE] === "function") continue
     // Checked here, at analysis time, so serving pays nothing: a blank reason is no reason.
-    const opaque = typeof mount.opaque === "string" ? mount.opaque.trim() || undefined : undefined
+    const declaration = recordOf(mount.opaque)
+    const reason = typeof mount.opaque === "string" ? mount.opaque : declaration?.reason
+    const opaque = typeof reason === "string" ? reason.trim() || undefined : undefined
+    const shown = mount.path === "/" ? "/*" : `${mount.path}/*`
+    // Routes count only beside a reason: without one the mount stays undeclared and fails as before.
+    const routes =
+      opaque === undefined ? undefined : declaredMountRoutes(mount.path, shown, declaration?.routes)
     reflected.push(
       Object.freeze({
-        path: mount.path === "/" ? "/*" : `${mount.path}/*`,
+        path: shown,
         ...(opaque !== undefined ? { opaque } : {}),
+        ...(routes !== undefined ? { routes } : {}),
       }),
     )
   }

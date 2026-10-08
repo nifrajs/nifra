@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { server } from "@nifrajs/core"
 import {
   apiRoutesSection,
   buildRouteGraph,
@@ -565,4 +566,23 @@ describe("describeProject - nifra_context index vs slice", () => {
     expect(out).not.toContain("## Page routes")
     expect(out).not.toContain("## Conventions (summary)")
   })
+})
+
+test("the index lists the routes an opaque mount declares, marked as not analyzed", () => {
+  const backend = server()
+    .get("/health", () => "ok")
+    .mount({
+      path: "/auth",
+      app: { fetch: () => new Response("third party") },
+      opaque: {
+        reason: "a third-party auth handler",
+        routes: [{ method: "POST", path: "/auth/sign-in", capabilities: ["session.write"] }],
+      },
+    })
+  const out = describeProject({ ...projectWith([]), backend })
+  expect(out).toContain("`GET /health`")
+  expect(out).toContain(
+    "## Declared by opaque mounts (not analyzed)\n\n- `POST /auth/sign-in` - /auth/* (a third-party auth handler)",
+  )
+  expect(describeProject(projectWith([]))).not.toContain("opaque mounts")
 })

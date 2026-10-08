@@ -1513,6 +1513,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **DeclaredMountRoute** _(interface)_ - `interface DeclaredMountRoute`
+  One route an opaque mount serves, as the app states it.
 - **DefinePluginResult** _(type)_ - `type DefinePluginResult<In extends AnyServer, Out extends AnyServer> = ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>`
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -1579,6 +1581,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
   What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
+- **OpaqueMountDeclaration** _(interface)_ - `interface OpaqueMountDeclaration`
+  An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not analyzed: their capabilities are the mount's word, checked against the policy but never proven.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -2602,6 +2606,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ReflectedHookReport** _(interface)_ - `interface ReflectedHookReport`
 - **ReflectedMount** _(interface)_ - `interface ReflectedMount`
   A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
+- **ReflectedMountRoute** _(interface)_ - `interface ReflectedMountRoute`
+  A route an opaque mount declares, normalized: method upper-cased, capabilities deduplicated.
 - **ReflectedRoute** _(interface)_ - `interface ReflectedRoute`
 - **ReflectedRouteHooks** _(interface)_ - `interface ReflectedRouteHooks`
 - **ReflectedRouteSchema** _(interface)_ - `interface ReflectedRouteSchema`
@@ -2743,6 +2749,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **DeclaredMountRoute** _(interface)_ - `interface DeclaredMountRoute`
+  One route an opaque mount serves, as the app states it.
 - **DefinePluginResult** _(type)_ - `type DefinePluginResult<In extends AnyServer, Out extends AnyServer> = ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>`
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -2807,6 +2815,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
   What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
+- **OpaqueMountDeclaration** _(interface)_ - `interface OpaqueMountDeclaration`
+  An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not analyzed: their capabilities are the mount's word, checked against the policy but never proven.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -7069,6 +7079,8 @@ _No named exports (side-effect entrypoint)._
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **DeclaredMountRoute** _(interface)_ - `interface DeclaredMountRoute`
+  One route an opaque mount serves, as the app states it.
 - **DefinePluginResult** _(type)_ - `type DefinePluginResult<In extends AnyServer, Out extends AnyServer> = ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>`
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -7135,6 +7147,8 @@ _No named exports (side-effect entrypoint)._
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
   What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
+- **OpaqueMountDeclaration** _(interface)_ - `interface OpaqueMountDeclaration`
+  An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not analyzed: their capabilities are the mount's word, checked against the policy but never proven.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`

@@ -703,6 +703,12 @@ export async function runCapabilityCheck(
     // Stated on every run, passing or not: a gap is the report's own boundary, not a failure.
     for (const gap of result.report.gaps ?? [])
       console.log(`• known gap, not analyzed: ${gap.path} - ${gap.reason}`)
+    for (const route of result.report.routes) {
+      if (route.analysis === "declared")
+        console.log(
+          `• declared by an opaque mount, not analyzed: ${route.method} ${route.path} [${route.declared.join(", ")}]`,
+        )
+    }
     for (const finding of result.report.findings) console.log(`✖ ${finding.message}`)
     for (const violation of result.violations)
       console.log(

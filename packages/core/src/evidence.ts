@@ -328,9 +328,14 @@ function remapEvidenceSnapshot(
     const key = route(item.method, item.path)
     return Object.freeze({ ...item, ...key })
   })
-  const mounts = evidence.mounts?.map((item) =>
-    Object.freeze({ ...item, path: composedPath(pathPrefix, item.path) }),
-  )
+  const mounts = evidence.mounts?.map((item) => {
+    const path = composedPath(pathPrefix, item.path)
+    if (item.routes === undefined) return Object.freeze({ ...item, path })
+    const routes = item.routes.map((declared) =>
+      Object.freeze({ ...declared, path: composedPath(pathPrefix, declared.path) }),
+    )
+    return Object.freeze({ ...item, path, routes: Object.freeze(routes) })
+  })
   const assurance =
     evidence.assurance === undefined
       ? undefined

@@ -195,6 +195,7 @@ import type {
 import type {
   AdmissionController,
   AdmissionDecision,
+  DeclaredMountRoute,
   FetchHandler,
   ListenTlsOptions,
   McpPromptDescriptor,
@@ -203,6 +204,7 @@ import type {
   MountableApp,
   MountFetchOptions,
   MountOptions,
+  OpaqueMountDeclaration,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
@@ -364,8 +366,8 @@ interface FetchMount<Env = unknown> {
   readonly fallbackOn404: boolean
   readonly beforeRoutes: boolean
   readonly order: number
-  /** The declared reason this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
-  readonly opaque: string | undefined
+  /** Why this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
+  readonly opaque: string | OpaqueMountDeclaration | undefined
   /** The mounted app (`mount()` only), for reflection to tell a composed child from an opaque one. */
   readonly app?: object
 }
@@ -506,6 +508,7 @@ export type Handler<
 export type {
   AdmissionController,
   AdmissionDecision,
+  DeclaredMountRoute,
   FetchHandler,
   ListenTlsOptions,
   McpPromptDescriptor,
@@ -514,6 +517,7 @@ export type {
   MountableApp,
   MountFetchOptions,
   MountOptions,
+  OpaqueMountDeclaration,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
