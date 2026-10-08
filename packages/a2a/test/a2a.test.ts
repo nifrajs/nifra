@@ -276,6 +276,50 @@ describe("mountA2A", () => {
     expect(resumed.result.task.status.state).toBe("TASK_STATE_COMPLETED")
   })
 
+  test("a task suspended on a model failure resumes with its echoed continuation", async () => {
+    const { app, callPost } = captureApp()
+    let calls = 0
+    mountA2A(app, {
+      agent: definition(),
+      card: cardInfo,
+      ports: ports({
+        model: {
+          complete: () => {
+            calls += 1
+            if (calls === 1) throw new Error("provider unavailable")
+            return { kind: "output", value: { answer: "recovered" } }
+          },
+        },
+        state: new MemoryAgentStateStore(),
+      }),
+    })
+    const first: {
+      result: {
+        task: { id: string; status: { message: { metadata: { continuation: unknown } } } }
+      }
+    } = await (
+      await callPost(rpc("SendMessage", message([], { metadata: { input: { prompt: "go" } } })))
+    ).json()
+    const task = first.result.task
+    const resumed: { result: { task: { status: { state: string } } } } = await (
+      await callPost(
+        rpc(
+          "SendMessage",
+          message([], {
+            taskId: task.id,
+            metadata: {
+              input: { prompt: "go" },
+              resume: { continuation: task.status.message.metadata.continuation },
+            },
+          }),
+          2,
+        ),
+      )
+    ).json()
+    expect(resumed.result.task.status.state).toBe("TASK_STATE_COMPLETED")
+    expect(calls).toBe(2)
+  })
+
   test("a task id without resume metadata is rejected", async () => {
     const { app, callPost } = captureApp()
     mountA2A(app, { agent: definition(), card: cardInfo, ports: ports() })

@@ -621,7 +621,19 @@ export async function turn<
   if (signal.aborted) return suspended(state, { kind: "cancelled", effectId: newId() }, "cancelled")
 
   if (state.status === "suspended") {
-    if (input.resume !== undefined) {
+    if (input.resume !== undefined && state.pending?.tool === undefined) {
+      // A model, budget or cancelled suspension has nothing to replay: echoing its continuation back
+      // retries the model step, as omitting `resume` does. Any other continuation is refused.
+      const pending = state.pending
+      const continuation = input.resume.continuation
+      if (
+        pending === undefined ||
+        continuation.tool !== undefined ||
+        continuation.kind !== pending.kind ||
+        continuation.effectId !== pending.effectId
+      )
+        throw new AgentResumeMismatchError()
+    } else if (input.resume !== undefined) {
       return resumeTool(
         definition,
         state,

@@ -465,6 +465,49 @@ describe("agent turns", () => {
     ).toBe(true)
   })
 
+  test("echoing a model suspension's continuation retries the model step", async () => {
+    const store = new MemoryAgentStateStore()
+    let calls = 0
+    const ports = {
+      model: {
+        complete: () => {
+          calls += 1
+          if (calls === 1) throw new Error("provider unavailable")
+          return { kind: "output" as const, value: { answer: "ok" } }
+        },
+      },
+      capabilities: [],
+      state: store,
+      clock: () => 1,
+    }
+    const first = await turn(
+      definition(),
+      createAgentState("model-retry"),
+      { value: { prompt: "hello" } },
+      ports,
+    )
+    if (first.status !== "suspended") throw new Error("expected a suspension")
+    await expect(
+      resumeAgent(
+        definition(),
+        "model-retry",
+        {
+          value: { prompt: "hello" },
+          resume: { continuation: { ...first.pending, effectId: "another" } },
+        },
+        ports,
+      ),
+    ).rejects.toBeInstanceOf(AgentResumeMismatchError)
+    const resumed = await resumeAgent(
+      definition(),
+      "model-retry",
+      { value: { prompt: "hello" }, resume: { continuation: first.pending } },
+      ports,
+    )
+    expect(resumed.status).toBe("completed")
+    expect(calls).toBe(2)
+  })
+
   test("bounds a loop that never reaches its goal", async () => {
     const calls = { count: 0 }
     const result = await runAgent(
