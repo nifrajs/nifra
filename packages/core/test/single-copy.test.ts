@@ -14,6 +14,7 @@ import {
   SINGLE_COPY_STRICT_ENV,
   type SingleCopyPlugin,
   type SingleCopySkip,
+  singleCopyPackageNames,
   singleCopyPlugin,
 } from "../src/single-copy.ts"
 
@@ -919,5 +920,21 @@ test("with nothing declared the registrar installs no plugin and still records i
     })
   } finally {
     await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("singleCopyPackageNames lists each exact name and every package installed under a declared scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-single-copy-names-"))
+  try {
+    expect(singleCopyPackageNames(root)).toEqual([])
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", nifra: { singleCopy: ["@fixture/*", "shared-lib"] } }),
+    )
+    await mkdir(join(root, "node_modules/@fixture/one"), { recursive: true })
+    await mkdir(join(root, "node_modules/@fixture/two"), { recursive: true })
+    expect(singleCopyPackageNames(root)).toEqual(["@fixture/one", "@fixture/two", "shared-lib"])
+  } finally {
+    await rm(root, { recursive: true, force: true })
   }
 })

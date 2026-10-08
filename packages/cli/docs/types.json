@@ -22317,6 +22317,13 @@
     "doc": "/** Discards everything - for tests, or when log output is handled elsewhere. */"
   },
   {
+    "name": "singleCopyPackageNames",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function singleCopyPackageNames(cwd: string): readonly string[];",
+    "doc": "/**\n * The installed package names the app's declaration covers: each exact name, and each package\n * installed under a declared `@scope/*`. Empty without a declaration. A bundler that pins packages by\n * name, such as Vite's `resolve.dedupe`, takes this list.\n */"
+  },
+  {
     "name": "singleCopyPlugin",
     "kind": "function",
     "package": "@nifrajs/core",

@@ -17,8 +17,10 @@
  * error the Bun build raises. A second production pipeline without those guards is exactly the hole the
  * bundler-neutral module graph was built to close.
  */
+
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve as resolvePath } from "node:path"
+import { singleCopyPackageNames } from "@nifrajs/core/single-copy"
 import {
   type BuildClientOptions,
   type BuildTargetOptions,
@@ -251,7 +253,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
           // Same framework coverage as the Bun build's dedupe plugins, from the one policy table: one
           // physical copy of react/react-dom, preact, and svelte, or a hook-using route gets a second
           // dispatcher/options global. No-op per framework the app does not use.
-          dedupe: [...viteDedupePackages()],
+          dedupe: [...viteDedupePackages(), ...singleCopyPackageNames(root)],
           ...(options.conditions ? { conditions: [...options.conditions] } : {}),
         },
         css: {
@@ -574,7 +576,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
           "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
         },
         resolve: {
-          dedupe: ["react", "react-dom"],
+          dedupe: ["react", "react-dom", ...singleCopyPackageNames(root)],
           conditions: [...conditions],
         },
         plugins: [...(options.vitePlugins ?? [])],

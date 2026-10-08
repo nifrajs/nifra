@@ -412,6 +412,17 @@ const declaredNames = (root: string, declared: readonly string[]): readonly stri
 }
 
 /**
+ * The installed package names the app's declaration covers: each exact name, and each package
+ * installed under a declared `@scope/*`. Empty without a declaration. A bundler that pins packages by
+ * name, such as Vite's `resolve.dedupe`, takes this list.
+ */
+export function singleCopyPackageNames(cwd: string): readonly string[] {
+  const root = realpathOrSelf(resolve(cwd))
+  const declared = readSingleCopyDeclaration(root)
+  return declared === undefined ? [] : declaredNames(root, declared)
+}
+
+/**
  * Work out which foreign copies exist and which of them may be redirected.
  *
  * Pure discovery: it reads `package.json` files and symlink targets, never application source, and

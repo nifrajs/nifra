@@ -3011,6 +3011,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Whether the declaration's object form asks for strict mode (`"strict": true`).
 - **registerSingleCopy** _(function)_ - `registerSingleCopy: (options?: SingleCopyOptions) => SingleCopyPlan`
   Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a `bunfig.toml` preload rather than calling this from application code: a resolver installed from inside a module cannot affect the imports that module already resolved.
+- **singleCopyPackageNames** _(function)_ - `singleCopyPackageNames: (cwd: string) => readonly string[]`
+  The installed package names the app's declaration covers: each exact name, and each package installed under a declared `@scope/*`. Empty without a declaration. A bundler that pins packages by name, such as Vite's `resolve.dedupe`, takes this list.
 - **singleCopyPlugin** _(function)_ - `singleCopyPlugin: (options?: SingleCopyOptions) => SingleCopyPlugin`
   Pin every declared package to the app's copy.
 

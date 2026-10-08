@@ -7475,7 +7475,10 @@ classes with separate request state. The second copy prints
 `buildClient` and `buildServer` inject the resolver, so bundled output
 already loads one copy, and so does the browser bundle `nifra dev` serves on Bun.
 Listing `singleCopyPlugin()` in `clientPlugins` as well is harmless: dev
-runs that instance in the resolver's place instead of a second one. Unbundled phases do not: Bun's _runtime_ resolver never offers a
+runs that instance in the resolver's place instead of a second one. On Vite, the dev server and
+both Vite builds add each declared package to `resolve.dedupe`, a
+`@scope/*` pattern as every package installed under that scope. Unbundled phases do
+not: Bun's _runtime_ resolver never offers a
 bare specifier to a plugin, so `bun test`, `bun run`, and preloaded
 scripts still load both copies unless you preload the registrar:
 
