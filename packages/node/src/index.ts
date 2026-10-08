@@ -654,6 +654,12 @@ export interface ServeStaticOptions {
   readonly prefix?: string
   /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */
   readonly immutable?: boolean
+  /**
+   * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,
+   * `immutable` applies only to these; any other file is sent with its validators and no
+   * `cache-control`, so a file that keeps its name across deploys still revalidates.
+   */
+  readonly hashedFiles?: Iterable<string>
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
   /**
@@ -857,6 +863,7 @@ interface StaticState {
   readonly root: string
   readonly prefix: string // normalized: "/assets" (no trailing slash) or "/"
   readonly immutable: boolean
+  readonly hashedFiles: ReadonlySet<string> | undefined
   readonly headers: Readonly<Record<string, string>> | undefined
   readonly denyDotfiles: boolean
 }
@@ -883,6 +890,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
     root,
     prefix,
     immutable: options.immutable !== false,
+    hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
     headers: staticHeadersOf(options.headers),
     denyDotfiles: options.dotfiles !== "allow",
   }
@@ -896,7 +904,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
 function staticMatch(
   state: StaticState,
   rawUrl: string,
-): "pass" | { readonly reject: Response } | { readonly file: string } {
+): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
   const query = rawUrl.indexOf("?")
   const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
   const underPrefix =
@@ -935,7 +943,9 @@ function staticMatch(
   if (contained.startsWith("..") || isAbsolute(contained)) {
     return { reject: new Response("Forbidden", { status: 403 }) }
   }
-  return { file }
+  const immutable =
+    state.immutable && (state.hashedFiles === undefined || state.hashedFiles.has(path))
+  return { file, immutable }
 }
 
 /** Strong validator from mtime + size (the nginx scheme): rewriting a file changes at least one. */
@@ -1023,6 +1033,7 @@ function staticByteRange(
 
 async function readStatic(
   file: string,
+  immutable: boolean,
   state: StaticState,
   method: string,
   requestHeaders: IncomingHttpHeaders,
@@ -1047,7 +1058,7 @@ async function readStatic(
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
     const headers: Record<string, string> = { ...state.headers }
-    if (state.immutable && headers["cache-control"] === undefined) {
+    if (immutable && headers["cache-control"] === undefined) {
       headers["cache-control"] = "public, max-age=31536000, immutable"
     }
     headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
@@ -1467,7 +1478,13 @@ function handle(
     const matched = staticMatch(staticState, nodeReq.url ?? "/")
     if (matched !== "pass") {
       if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
-      return readStatic(matched.file, staticState, nodeReq.method ?? "GET", nodeReq.headers).then(
+      return readStatic(
+        matched.file,
+        matched.immutable,
+        staticState,
+        nodeReq.method ?? "GET",
+        nodeReq.headers,
+      ).then(
         (outcome) => writeOutcomeSafely(outcome, nodeRes, nodeReq.method),
         () => failWrite(nodeRes),
       )

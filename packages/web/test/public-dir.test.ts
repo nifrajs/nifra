@@ -89,6 +89,24 @@ test("cache-control differs by subtree: hashed immutable, public/ revalidating",
   })
 })
 
+test("with hashedFiles, only the listed files are immutable, under the prefix or not", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, "assets"), { recursive: true })
+    await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
+    await writeFile(join(dir, "assets", "logo.png"), "png")
+    const serve = servePublicDir({ dir, hashedFiles: new Set(["/assets/app-a1b2c3.js"]) })
+    const cacheOf = async (path: string) => (await serve(get(path)))?.headers.get("cache-control")
+
+    expect(await cacheOf("/assets/app-a1b2c3.js")).toBe("public, max-age=31536000, immutable")
+    expect(await cacheOf("/assets/logo.png")).toBe("public, max-age=86400")
+    // Without the list the prefix still decides, as before.
+    const byPrefix = servePublicDir({ dir })
+    expect((await byPrefix(get("/assets/logo.png")))?.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    )
+  })
+})
+
 test("path traversal is rejected, including encoded and NUL forms", async () => {
   await withDir(async (dir) => {
     const root = join(dir, "public")

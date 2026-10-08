@@ -5719,6 +5719,14 @@ content-typed, with an immutable cache - before the app runs, leaving the SSR fa
 untouched: `serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})`.
 On Cloudflare/Vercel the platform serves assets, so you don't need it there.
 
+Every file under the mount is cached as immutable by default. If the directory also holds
+files that keep their name across deploys, pass the build manifest's `assets` as
+`hashedFiles`: only those URL paths stay immutable, and every other file is sent
+with its validators so the browser revalidates it. The server that
+`nifra build --target bun` or `node` generates does this already. It
+caches only the client build's own content-hashed outputs as immutable. A file copied from
+`public/`, even under `public/assets/`, gets a one-day policy.
+
 ### HTTPS without a proxy
 
 Most deploys end TLS in front of the app - a load balancer, a CDN, the platform - and the app

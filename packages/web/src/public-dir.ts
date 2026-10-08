@@ -31,8 +31,15 @@ export interface PublicDirCache {
 export interface ServePublicDirOptions {
   /** Absolute path of the directory to serve. */
   readonly dir: string
-  /** URL prefix whose files are content-hashed and may be cached immutably (default `"/assets/"`). */
+  /** URL prefix whose files are content-hashed and may be cached immutably (default `"/assets/"`).
+   * Ignored when `hashedFiles` is set. */
   readonly hashedPrefix?: string
+  /**
+   * Encoded URL paths of the content-hashed files, such as a build manifest's `assets`. When set, only
+   * these are cached immutably and every other file gets the `assets` policy, so a user-authored file
+   * that happens to sit under the hashed prefix still revalidates.
+   */
+  readonly hashedFiles?: ReadonlySet<string>
   readonly cache?: PublicDirCache
   /** Optional encoded URL-path allowlist. When present, route misses avoid a filesystem probe. */
   readonly files?: ReadonlySet<string>
@@ -166,6 +173,7 @@ export function servePublicDir(
   const root = resolve(options.dir)
   const rootReal = realpath(root).catch(() => undefined)
   const hashedPrefix = options.hashedPrefix ?? "/assets/"
+  const hashedFiles = options.hashedFiles
   const hashed = options.cache?.hashed ?? IMMUTABLE
   const assets = options.cache?.assets ?? ONE_DAY
 
@@ -203,7 +211,13 @@ export function servePublicDir(
       if (!stat.isFile()) return undefined
       const size = stat.size
       const headers = new Headers({
-        "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,
+        "cache-control": (
+          hashedFiles === undefined
+            ? pathname.startsWith(hashedPrefix)
+            : hashedFiles.has(pathname)
+        )
+          ? hashed
+          : assets,
         // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
         // so a video or audio file under `public/` is scrubbable only once this header is present.
         "accept-ranges": "bytes",

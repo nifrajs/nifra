@@ -1248,6 +1248,9 @@ export function generateServerEntry(options: {
   readonly title?: string
   /** Encoded root-relative public file paths copied into the deploy directory. */
   readonly publicFiles?: readonly string[]
+  /** URL paths of the content-hashed client outputs (the build manifest's `assets`). When given, a
+   * self-hosted entry caches only these immutably; otherwise every file under `/assets/` is. */
+  readonly hashedFiles?: readonly string[]
   /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
 }): string {
@@ -1259,6 +1262,7 @@ export function generateServerEntry(options: {
     optionImports = {},
     title = "nifra",
     publicFiles = [],
+    hashedFiles,
     clientIp,
   } = options
   if (clientIp !== undefined && clientIp !== "platform") {
@@ -1356,6 +1360,9 @@ export function generateServerEntry(options: {
     "// The client bundle and public files live next to this entry; serve only manifest-approved paths.",
     'const STATIC_ROOT = new URL("./", import.meta.url)',
     `const PUBLIC_FILES = new Set(${JSON.stringify(publicFiles)})`,
+    ...(hashedFiles !== undefined
+      ? [`const HASHED_FILES = new Set(${JSON.stringify(hashedFiles)})`]
+      : []),
     "const staticPath = (pathname: string): string | undefined => {",
     "  if (PUBLIC_FILES.has(pathname)) return '.' + pathname",
     '  if (!pathname.startsWith("/assets/")) return undefined',
@@ -1372,7 +1379,7 @@ export function generateServerEntry(options: {
     `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
     "const staticHeaders = (pathname: string): Record<string, string> => ({",
     '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
-    `  "cache-control": pathname.startsWith("/assets/") ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
+    `  "cache-control": ${hashedFiles !== undefined ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
     '  "x-content-type-options": "nosniff",',
     "})",
   )
@@ -1735,6 +1742,7 @@ export async function buildTargetWith(
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
+      hashedFiles: client.assets,
       ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
     }),
   )

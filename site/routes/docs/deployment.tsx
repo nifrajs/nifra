@@ -260,6 +260,15 @@ export default function Deployment() {
         untouched: <code>serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})</code>.
         On Cloudflare/Vercel the platform serves assets, so you don't need it there.
       </p>
+      <p>
+        Every file under the mount is cached as immutable by default. If the directory also holds
+        files that keep their name across deploys, pass the build manifest's <code>assets</code> as{" "}
+        <code>hashedFiles</code>: only those URL paths stay immutable, and every other file is sent
+        with its validators so the browser revalidates it. The server that{" "}
+        <code>nifra build --target bun</code> or <code>node</code> generates does this already. It
+        caches only the client build's own content-hashed outputs as immutable. A file copied from{" "}
+        <code>public/</code>, even under <code>public/assets/</code>, gets a one-day policy.
+      </p>
 
       <h2>HTTPS without a proxy</h2>
       <p>

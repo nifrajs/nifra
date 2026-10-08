@@ -201,3 +201,51 @@ test("--target static with no prerenderable route throws a clear error", async (
   })
   await expect(promise).rejects.toThrow(/no routes were prerendered/)
 }, 60_000)
+
+// The built Bun server's URL, read from its startup line rather than polled.
+async function listening(stdout: ReadableStream<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder()
+  let seen = ""
+  for await (const chunk of stdout) {
+    seen += decoder.decode(chunk, { stream: true })
+    const port = /localhost:(\d+)/.exec(seen)?.[1]
+    if (port !== undefined) return `http://127.0.0.1:${port}`
+  }
+  throw new Error(`the built server exited before listening:\n${seen}`)
+}
+
+test("--target bun caches only the build's content-hashed files as immutable", async () => {
+  mkdirSync(join(projectRoot, "public", "assets"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "assets", "logo.png"), "png")
+  writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *\n")
+  const outDir = join(projectRoot, "dist-bun-hashed")
+  const result = await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-hashed"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    const cacheOf = async (path: string) => {
+      const res = await fetch(`${base}${path}`)
+      expect(res.status).toBe(200)
+      await res.arrayBuffer()
+      return res.headers.get("cache-control")
+    }
+    expect(await cacheOf(result.client.entry)).toBe("public, max-age=31536000, immutable")
+    // A public file copied under /assets/ keeps its name across deploys, so it must revalidate.
+    expect(await cacheOf("/assets/logo.png")).toBe("public, max-age=86400")
+    expect(await cacheOf("/assets/manifest.json")).toBe("public, max-age=86400")
+    expect(await cacheOf("/robots.txt")).toBe("public, max-age=86400")
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
