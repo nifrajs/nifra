@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { type CachedResponse, MemoryCacheStore } from "../src/isr.ts"
+import { type CachedResponse, type CacheStore, MemoryCacheStore } from "../src/isr.ts"
 
 const entry = (body: string): CachedResponse => ({
   body,
@@ -1414,5 +1414,196 @@ describe("revalidateEndpoint batches and the CDN after it", () => {
       expect([res.status, (await res.json()).error]).toEqual([400, error])
     }
     expect((await store.get("http://x/a"))?.body).toBe("A")
+  })
+})
+
+describe("withISR store failures", () => {
+  type Op = "get" | "set" | "delete"
+  // `fail` answers for the store: a promise it returns stands in for the call, undefined passes through.
+  const failing = (
+    fail: (op: Op) => Promise<never> | undefined,
+    base = new MemoryCacheStore(),
+  ): CacheStore => ({
+    get: (key) => fail("get") ?? base.get(key),
+    set: (key, value) => fail("set") ?? base.set(key, value),
+    delete: (key) => fail("delete") ?? base.delete(key),
+  })
+  const quiet = (): {
+    seen: { op: Op; error: unknown }[]
+    onStoreError: NonNullable<ISROptions["onStoreError"]>
+  } => {
+    const seen: { op: Op; error: unknown }[] = []
+    return { seen, onStoreError: (error, { op }) => void seen.push({ op, error }) }
+  }
+
+  test("a get that throws is a miss and the page renders", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = {
+      get: () => {
+        throw new Error("offline")
+      },
+      set: async () => {},
+      delete: async () => {},
+    }
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["get"])
+  })
+
+  test("a get that rejects is a miss and the page renders", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => (op === "get" ? Promise.reject(new Error("offline")) : undefined))
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["get"])
+  })
+
+  test("a get that hangs past storeTimeoutMs is a miss", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => (op === "get" ? new Promise<never>(() => {}) : undefined))
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      storeTimeoutMs: 5,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["get"])
+  })
+
+  test("a set that throws still returns the rendered page", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => {
+      if (op === "set") throw new Error("read-only replica")
+      return undefined
+    })
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, res.headers.get("x-nifra-isr"), await res.text()]).toEqual([
+      200,
+      "miss",
+      "PAGE",
+    ])
+    expect(seen.map((s) => s.op)).toEqual(["set"])
+  })
+
+  test("a set that hangs past storeTimeoutMs does not hold the response", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => (op === "set" ? new Promise<never>(() => {}) : undefined))
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      storeTimeoutMs: 5,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["set"])
+  })
+
+  test("concurrent misses during a set outage still share one render", async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const app: ISRApp = {
+      fetch: async () => {
+        calls++
+        await gate
+        return html("PAGE")
+      },
+    }
+    const store = failing((op) => (op === "set" ? Promise.reject(new Error("down")) : undefined))
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0, onStoreError: () => {} })
+    const pending = Array.from({ length: 4 }, () => handler(new Request("http://x/p")))
+    release()
+    const bodies = await Promise.all((await Promise.all(pending)).map((res) => res.text()))
+    expect([calls, bodies]).toEqual([1, Array(4).fill("PAGE")])
+  })
+
+  test("a failed regeneration write keeps the stale entry and is reported", async () => {
+    const base = new MemoryCacheStore()
+    let broken = false
+    const store = failing(
+      (op) => (broken && op === "set" ? Promise.reject(new Error("down")) : undefined),
+      base,
+    )
+    const { seen, onStoreError } = quiet()
+    let t = 0
+    let version = 1
+    const handler = withISR(trackApp(() => html(`v${version}`)).app, {
+      store,
+      revalidate: 1,
+      now: () => t,
+      onStoreError,
+    })
+    await handler(new Request("http://x/p"))
+    broken = true
+    version = 2
+    t = 2000
+    const plat = collectWaitUntil()
+    const res = await handler(new Request("http://x/p"), plat)
+    expect(await res.text()).toBe("v1")
+    await plat.settle()
+    expect((await base.get(pageKey("/p")))?.body).toBe("v1")
+    expect(seen.map((s) => s.op)).toEqual(["set"])
+  })
+
+  test("the default report is rate-limited and never prints the key", async () => {
+    const lines: string[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void lines.push(args.map(String).join(" "))
+    try {
+      let t = 0
+      const store = failing(() => Promise.reject(new Error("GET http://x/secret-path failed")))
+      const handler = withISR(trackApp(() => html("PAGE")).app, {
+        store,
+        revalidate: 60,
+        now: () => t,
+      })
+      for (let i = 0; i < 5; i++) await handler(new Request("http://x/secret-path"))
+      expect(lines.length).toBe(2) // one get + one set report inside the window
+      t = 120_000
+      await handler(new Request("http://x/secret-path"))
+      expect(lines.length).toBe(4)
+      expect(lines.join("\n")).not.toContain("secret-path")
+    } finally {
+      console.error = original
+    }
+  })
+
+  test("storeTimeoutMs must be a positive finite number", () => {
+    const store = new MemoryCacheStore()
+    for (const storeTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        withISR(trackApp(() => html("x")).app, {
+          store,
+          revalidate: 60,
+          now: () => 0,
+          storeTimeoutMs,
+        }),
+      ).toThrow(/storeTimeoutMs/)
+    }
   })
 })

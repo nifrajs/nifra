@@ -276,6 +276,14 @@ export default function Rendering() {
         broken.
       </p>
       <CodeBlock code={KV} />
+      <p>
+        A store outage never fails a page. A read that throws, rejects, or outlives{" "}
+        <code>storeTimeoutMs</code> is a miss and the page renders; a failed write still returns the
+        rendered page; a failed background regeneration keeps the stale entry. Each failure goes to{" "}
+        <code>onStoreError(error, &#123; op &#125;)</code>, which by default logs one line per operation
+        per minute without the cache key. Set <code>storeTimeoutMs</code> for a network store, so a
+        hung connection costs a miss rather than the request.
+      </p>
 
       <h2>On-demand revalidation</h2>
       <p>

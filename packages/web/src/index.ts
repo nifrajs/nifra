@@ -141,6 +141,7 @@ export {
   type ISROptions,
   type ISRPlatform,
   type ISRQuery,
+  type ISRStoreOp,
   isCacheablePage,
   KVCacheStore,
   type KVCacheStoreOptions,

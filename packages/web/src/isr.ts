@@ -513,6 +513,41 @@ export interface ISROptions {
    * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
+  /**
+   * Called when a store call fails: it throws, rejects, or outlives {@link storeTimeoutMs}. The request
+   * is served without the cache either way - a failed read is a miss, a failed write still returns the
+   * rendered page, a failed regeneration keeps the stale entry - so a store outage never changes a
+   * status. Default: one `console.error` line per operation per minute, never naming the cache key.
+   */
+  readonly onStoreError?: (error: unknown, info: { readonly op: ISRStoreOp }) => void
+  /**
+   * Longest a store call may take (ms) before it counts as failed. Default none, so a hung store holds
+   * the request; set it when the store is a network service.
+   */
+  readonly storeTimeoutMs?: number
+}
+
+/** The store operation an {@link ISROptions.onStoreError} report is about. */
+export type ISRStoreOp = "get" | "set" | "delete"
+
+const STORE_FAILED = Symbol("nifra.isr.store-failed")
+const STORE_REPORT_INTERVAL_MS = 60_000
+const STORE_REPORT_DETAIL_CHARS = 200
+
+/** The error's own words with the cache key cut out, since a store may name the key it failed on. */
+function storeErrorDetail(error: unknown, key: string): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  let path: string | undefined
+  try {
+    path = new URL(key).pathname
+  } catch {
+    path = undefined
+  }
+  let redacted = text.split(key).join("<key>")
+  if (path !== undefined && path.length > 1) redacted = redacted.split(path).join("<key>")
+  return redacted.length > STORE_REPORT_DETAIL_CHARS
+    ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
+    : redacted
 }
 
 /** `createWebApp`'s marker for how its documents meet a CSP (see `DOCUMENT_POLICY` in ./csp.ts). Read
@@ -721,6 +756,53 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
+  const storeTimeoutMs = options.storeTimeoutMs
+  if (storeTimeoutMs !== undefined && !(Number.isFinite(storeTimeoutMs) && storeTimeoutMs > 0)) {
+    throw new RangeError("[nifra/web] ISR storeTimeoutMs must be a positive finite number")
+  }
+  const lastReport = new Map<ISRStoreOp, number>()
+  const reportStoreError = (op: ISRStoreOp, key: string, error: unknown): void => {
+    try {
+      if (options.onStoreError !== undefined) {
+        options.onStoreError(error, { op })
+        return
+      }
+      const last = lastReport.get(op)
+      const at = now()
+      if (last !== undefined && at - last < STORE_REPORT_INTERVAL_MS) return
+      lastReport.set(op, at)
+      console.error(
+        `[nifra/web] ISR store ${op} failed; serving without the cache (${storeErrorDetail(error, key)})`,
+      )
+    } catch {
+      // A failing reporter must not turn a served page into an error.
+    }
+  }
+  // Runs one store call; a throw, a rejection or a timeout is reported and answered with STORE_FAILED.
+  const attempt = async <T>(
+    op: ISRStoreOp,
+    key: string,
+    call: () => Promise<T>,
+  ): Promise<T | typeof STORE_FAILED> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const pending = call()
+      if (storeTimeoutMs === undefined) return await pending
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error(`ISR store ${op} exceeded storeTimeoutMs (${storeTimeoutMs} ms)`)
+          error.name = "TimeoutError"
+          reject(error)
+        }, storeTimeoutMs)
+      })
+      return await Promise.race([pending, timeout])
+    } catch (error) {
+      reportStoreError(op, key, error)
+      return STORE_FAILED
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
   const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
   const anonymousCookies = new Set(options.anonymousCookies ?? [])
@@ -804,7 +886,9 @@ export function withISR(
       revalidate: ttlMs(res),
       ...(tags.length === 0 ? {} : { tags }),
     }
-    await store.set(key, entry)
+    // A failed write still answers with the page, and still hands it to concurrent misses: whether it
+    // may be shared was decided above, not by the store.
+    await attempt("set", key, () => store.set(key, entry))
     stored?.(entry)
     return fresh(entry)
   }
@@ -863,20 +947,21 @@ export function withISR(
       const res = await app.fetch(req, platform)
       if (isCacheablePage(judged(req), res)) {
         const tags = tagsOf(res)
-        await store.set(key, {
+        const entry: CachedResponse = {
           body: await res.text(),
           status: res.status,
           headers: headersOf(res),
           storedAt: now(),
           revalidate: ttlMs(res),
           ...(tags.length === 0 ? {} : { tags }),
-        })
+        }
+        await attempt("set", key, () => store.set(key, entry))
       } else if (isInvalidationResponse(judged(req), res)) {
         // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
         // publicly visible forever, because every stale request would retry the same non-cacheable
         // response while continuing to serve the old body.
         await res.body?.cancel()
-        await store.delete(key)
+        await attempt("delete", key, () => store.delete(key))
       } else {
         await res.body?.cancel()
       }
@@ -918,7 +1003,8 @@ export function withISR(
       uncacheable.delete(key)
     }
 
-    const hit = personal ? undefined : await store.get(key)
+    const read = personal ? undefined : await attempt("get", key, () => store.get(key))
+    const hit = read === STORE_FAILED ? undefined : read
     if (hit !== undefined) {
       if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).
