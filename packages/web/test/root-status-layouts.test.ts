@@ -58,7 +58,7 @@ type Modules = Record<
   }
 >
 
-const appOf = (modules: Modules) => {
+const appOf = (modules: Modules, adapter: RenderAdapter = stub) => {
   const halves = splitRouteHalves(modules)
   const manifest = buildManifest(Object.keys(halves), (file) => () => {
     const half = halves[file]
@@ -68,7 +68,7 @@ const appOf = (modules: Modules) => {
       (isBackendHalf(file) ? { ...half } : { default: file, ...half }) as RouteModule,
     )
   })
-  return createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  return createWebApp({ adapter, manifest, clientEntry: "/c.js" })
 }
 
 const get = (
@@ -120,6 +120,38 @@ describe("a root status page with inLayouts", () => {
 
   test("statusPage(503) from a loader renders _503 inside the layout data the request loaded", async () => {
     const res = await get(appOf(site()), "/maintenance")
+    expect(res.status).toBe(503)
+    const html = await res.text()
+    expect(renderedOf(html)).toMatchObject({
+      chain: ["_layout.tsx", "_503.tsx"],
+      layoutData: [{ site: "root" }],
+    })
+    expect(html).toContain("<title>Down for maintenance</title>")
+  })
+
+  test("statusPage(503) returned from a loader renders _503 inside the settled layout data", async () => {
+    const res = await get(
+      appOf(site({ "paused.tsx": { loader: () => statusPage(503) } })),
+      "/paused",
+    )
+    expect(res.status).toBe(503)
+    const html = await res.text()
+    expect(renderedOf(html)).toMatchObject({
+      chain: ["_layout.tsx", "_503.tsx"],
+      layoutData: [{ site: "root" }],
+    })
+    expect(html).toContain("<title>Down for maintenance</title>")
+  })
+
+  test("statusPage(503) thrown while rendering renders _503 inside the layouts that loaded", async () => {
+    const throwing: RenderAdapter = {
+      ...stub,
+      renderToStream: (chain, props) => {
+        if (chain.includes("paused.tsx")) throw statusPage(503)
+        return stub.renderToStream(chain, props)
+      },
+    }
+    const res = await get(appOf(site({ "paused.tsx": {} }), throwing), "/paused")
     expect(res.status).toBe(503)
     const html = await res.text()
     expect(renderedOf(html)).toMatchObject({
