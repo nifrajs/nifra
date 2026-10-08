@@ -32,10 +32,11 @@ await cache.invalidateTag(`user:${id}`)
   - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
   - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
   - **Store outage**: a store `get` that throws or rejects is a miss, so the loader answers; a `set` that
-    fails still returns the loaded value. Each failure goes to `onStoreError(error, { op })`, which by
-    default logs one line per operation per minute without the key. The explicit `get`, `set`,
-    `delete`, `invalidateTag` and `clear` still reject, so a failed invalidation is never silent.
-- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. The check runs before the store write; with a store shared across processes, a refresh in another process is not fenced.
+    fails still returns the loaded value, and a `fence` that fails leaves that load uncached. Each
+    failure goes to `onStoreError(error, { op })`, which by default logs one line per operation per
+    minute without the key. The explicit `get`, `set`, `delete`, `invalidateTag` and `clear` still
+    reject, so a failed invalidation is never silent.
+- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. A `delete`, `invalidateTag` or `clear` runs after this cache's own async store writes it covers, so a store that applies requests out of order cannot land one after it.
 - TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
 
 ## Stores
@@ -48,6 +49,14 @@ opt-in. For a cache shared across instances, implement `CacheStore`
 ```ts
 const cache = createCache({ store: new RedisCacheStore(redis) })
 ```
+
+A store several caches or processes share should also implement the optional `fence(key, tags)` and
+`setIfFence(key, entry, tags, token)`. A `wrap` load takes a fence before it runs and stores its result
+through `setIfFence`, which must refuse, in one atomic step, when a `set` or `delete` of the key, an
+`invalidateTag` of one of its tags, or a `clear` ran since that fence, from any cache. Without them, a
+load running in one process can store a value another process invalidated meanwhile. `MemoryCache`
+implements both, and `cacheStoreCertificationProfile({ fencing: true })` from
+`@nifrajs/testing/certification` checks a store's implementation.
 
 On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived - back it with **CF KV** (or
 the Cache API) via a `CacheStore` for anything that should survive across requests/instances.

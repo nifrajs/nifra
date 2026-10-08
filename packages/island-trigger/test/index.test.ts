@@ -86,6 +86,46 @@ describe("scheduleTrigger", () => {
     }
   })
 
+  test("media fires at once without matchMedia, uses a legacy listener list, and stays inert without one", () => {
+    const original = Reflect.get(globalThis, "matchMedia")
+    try {
+      let runs = 0
+      Reflect.set(globalThis, "matchMedia", undefined)
+      scheduleTrigger({ media: "(min-width: 1px)" }, () => {
+        runs++
+      })
+      expect(runs).toBe(1)
+
+      let listener: ((event: MediaQueryChangeEvent) => void) | undefined
+      let removed = 0
+      Reflect.set(globalThis, "matchMedia", () => ({
+        matches: false,
+        addListener: (next: (event: MediaQueryChangeEvent) => void) => {
+          listener = next
+        },
+        removeListener: () => {
+          removed++
+        },
+      }))
+      scheduleTrigger({ media: "(min-width: 1px)" }, () => {
+        runs++
+      })
+      listener?.({ matches: false })
+      expect(runs).toBe(1)
+      listener?.({ matches: true })
+      expect({ runs, removed }).toEqual({ runs: 2, removed: 1 })
+
+      Reflect.set(globalThis, "matchMedia", () => ({ matches: false }))
+      const dispose = scheduleTrigger({ media: "(min-width: 1px)" }, () => {
+        runs++
+      })
+      dispose()
+      expect(runs).toBe(2)
+    } finally {
+      Reflect.set(globalThis, "matchMedia", original)
+    }
+  })
+
   test("visible falls back to immediate without a target", () => {
     let runs = 0
     scheduleTrigger("visible", () => {

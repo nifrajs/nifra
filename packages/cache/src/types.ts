@@ -28,10 +28,28 @@ export interface CacheStore {
   /** Drop every entry carrying `tag`. */
   invalidateTag(tag: string): void | Promise<void>
   clear(): void | Promise<void>
+  /**
+   * Optional, with {@link CacheStore.setIfFence}, for a store several caches or processes share. An
+   * opaque token naming this moment for `key` and `tags`. A `wrap` load takes one before it starts.
+   */
+  fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>
+  /**
+   * Optional, with {@link CacheStore.fence}. Store `entry` only when nothing has run since `fence`
+   * returned `token` that a load must not overwrite: a `set` or `delete` of `key`, an `invalidateTag`
+   * of one of `tags`, or a `clear`, from any cache sharing the store. The check and the write are one
+   * atomic step. Resolves `true` when it wrote. A store that cannot tell may refuse; the load's value
+   * still reaches its caller, it is just not cached.
+   */
+  setIfFence?(
+    key: string,
+    entry: StoredEntry,
+    tags: readonly string[],
+    token: unknown,
+  ): boolean | Promise<boolean>
 }
 
 /** The store call a {@link CacheOptions.onStoreError} report is about. */
-export type CacheStoreOp = "get" | "set"
+export type CacheStoreOp = "get" | "set" | "fence"
 
 export interface SetOptions {
   /** Time-to-live (ms) before the value goes stale. Default: the cache's `defaultTtlMs`. */
@@ -128,8 +146,8 @@ export interface CacheOptions {
   readonly onError?: (error: unknown, key: string) => void
   /**
    * Called when `wrap` meets a store failure: a `get` that throws or rejects is answered as a miss, so
-   * the loader runs, and a `set` that fails still returns the loaded value. Other operations reject
-   * as before. Default: one `console.error` line per operation per minute, never naming the key.
+   * the loader runs, and a `set` that fails still returns the loaded value. A `fence` that fails
+   * leaves that load uncached. Other operations reject as before. Default: one `console.error` line per operation per minute, never naming the key.
    */
   readonly onStoreError?: (error: unknown, info: { readonly op: CacheStoreOp }) => void
   /**

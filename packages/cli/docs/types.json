@@ -2388,7 +2388,7 @@
     "name": "CacheOptions",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface CacheOptions {\n    /** Storage adapter. Default: a fresh {@link MemoryCache}. */\n    readonly store?: CacheStore;\n    /**\n     * Make cache operations produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const cache = createCache({ beacon: useCapability })\n     *\n     * Then `cache.for(context)` announces its capability before each operation. Evidence from the CALL is\n     * per-route and exact, where evidence from an import is per-module and therefore as broad as the\n     * module - which is why a beacon can say something a provenance rule cannot.\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced tokens when the app names its capabilities differently. */\n    readonly capabilities?: CacheCapabilities;\n    /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */\n    readonly defaultTtlMs?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Called when a background SWR revalidation throws. Default: `console.error`. */\n    readonly onError?: (error: unknown, key: string) => void;\n    /**\n     * Called when `wrap` meets a store failure: a `get` that throws or rejects is answered as a miss, so\n     * the loader runs, and a `set` that fails still returns the loaded value. Other operations reject\n     * as before. Default: one `console.error` line per operation per minute, never naming the key.\n     */\n    readonly onStoreError?: (error: unknown, info: {\n        readonly op: CacheStoreOp;\n    }) => void;\n    /**\n     * Receives one {@link CacheEvent} per operation - the seam `cacheTracing()` from `@nifrajs/otel/cache`\n     * plugs into. Without one the cache reads no extra clock and allocates no event.\n     */\n    readonly observer?: CacheObserver;\n}"
+    "signature": "export interface CacheOptions {\n    /** Storage adapter. Default: a fresh {@link MemoryCache}. */\n    readonly store?: CacheStore;\n    /**\n     * Make cache operations produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const cache = createCache({ beacon: useCapability })\n     *\n     * Then `cache.for(context)` announces its capability before each operation. Evidence from the CALL is\n     * per-route and exact, where evidence from an import is per-module and therefore as broad as the\n     * module - which is why a beacon can say something a provenance rule cannot.\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced tokens when the app names its capabilities differently. */\n    readonly capabilities?: CacheCapabilities;\n    /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */\n    readonly defaultTtlMs?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Called when a background SWR revalidation throws. Default: `console.error`. */\n    readonly onError?: (error: unknown, key: string) => void;\n    /**\n     * Called when `wrap` meets a store failure: a `get` that throws or rejects is answered as a miss, so\n     * the loader runs, and a `set` that fails still returns the loaded value. A `fence` that fails\n     * leaves that load uncached. Other operations reject as before. Default: one `console.error` line per operation per minute, never naming the key.\n     */\n    readonly onStoreError?: (error: unknown, info: {\n        readonly op: CacheStoreOp;\n    }) => void;\n    /**\n     * Receives one {@link CacheEvent} per operation - the seam `cacheTracing()` from `@nifrajs/otel/cache`\n     * plugs into. Without one the cache reads no extra clock and allocates no event.\n     */\n    readonly observer?: CacheObserver;\n}"
   },
   {
     "name": "CacheOptions",
@@ -2407,7 +2407,7 @@
     "name": "CacheStore",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface CacheStore {\n    /** The live entry for `key`, or `undefined` if missing or hard-expired (`now >= expiresAt`). */\n    get(key: string): StoredEntry | undefined | Promise<StoredEntry | undefined>;\n    /** Store `entry` under `key`, indexed by `tags` for {@link CacheStore.invalidateTag}. */\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    /** Drop every entry carrying `tag`. */\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n}",
+    "signature": "export interface CacheStore {\n    /** The live entry for `key`, or `undefined` if missing or hard-expired (`now >= expiresAt`). */\n    get(key: string): StoredEntry | undefined | Promise<StoredEntry | undefined>;\n    /** Store `entry` under `key`, indexed by `tags` for {@link CacheStore.invalidateTag}. */\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    /** Drop every entry carrying `tag`. */\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n    /**\n     * Optional, with {@link CacheStore.setIfFence}, for a store several caches or processes share. An\n     * opaque token naming this moment for `key` and `tags`. A `wrap` load takes one before it starts.\n     */\n    fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>;\n    /**\n     * Optional, with {@link CacheStore.fence}. Store `entry` only when nothing has run since `fence`\n     * returned `token` that a load must not overwrite: a `set` or `delete` of `key`, an `invalidateTag`\n     * of one of `tags`, or a `clear`, from any cache sharing the store. The check and the write are one\n     * atomic step. Resolves `true` when it wrote. A store that cannot tell may refuse; the load's value\n     * still reaches its caller, it is just not cached.\n     */\n    setIfFence?(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean | Promise<boolean>;\n}",
     "doc": "/**\n * Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV /\n * Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.\n */"
   },
   {
@@ -2421,7 +2421,7 @@
     "name": "CacheStoreOp",
     "kind": "type",
     "package": "@nifrajs/cache",
-    "signature": "export type CacheStoreOp = \"get\" | \"set\";",
+    "signature": "export type CacheStoreOp = \"get\" | \"set\" | \"fence\";",
     "doc": "/** The store call a {@link CacheOptions.onStoreError} report is about. */"
   },
   {
@@ -2961,7 +2961,7 @@
     "name": "CertifiableCacheStore",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface CertifiableCacheStore {\n    get(key: string): CertifiableCacheEntry | undefined | Promise<CertifiableCacheEntry | undefined>;\n    set(key: string, entry: CertifiableCacheEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n}"
+    "signature": "export interface CertifiableCacheStore {\n    get(key: string): CertifiableCacheEntry | undefined | Promise<CertifiableCacheEntry | undefined>;\n    set(key: string, entry: CertifiableCacheEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n    fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>;\n    setIfFence?(key: string, entry: CertifiableCacheEntry, tags: readonly string[], token: unknown): boolean | Promise<boolean>;\n}"
   },
   {
     "name": "CertifiableDeploymentAdapter",
@@ -6229,7 +6229,7 @@
     "name": "GraphqlWsOptions",
     "kind": "interface",
     "package": "@nifrajs/graphql",
-    "signature": "export interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>> {\n    /** The executable schema. */\n    readonly schema: GraphQLSchema;\n    /** Build the resolver `contextValue` from the upgrade request. Shared with the HTTP transport. */\n    readonly context?: GraphqlContextBuilder<Context>;\n    /**\n     * Admit a socket from its upgrade request, before {@link onConnect}; return `false` (or throw) to\n     * reject the connection. `mountGraphql({ subscriptions: true })` passes its HTTP `authorize` here.\n     */\n    readonly authorize?: (request: Request) => boolean | Promise<boolean>;\n    /**\n     * Called once per connection with the client's `connection_init` payload; return `false` (or throw)\n     * to reject the connection. The seam for authenticating a socket from an init token.\n     */\n    readonly onConnect?: (payload: ConnectionInitMessage[\"payload\"], request: Request) => boolean | Promise<boolean>;\n    /** Additional raw `graphql-ws` server options merged last (advanced escape hatch). */\n    readonly serverOptions?: Partial<ServerOptions>;\n    /** Same query/complexity limits as the HTTP transport. */\n    readonly maxQueryBytes?: number;\n    readonly maxVariablesBytes?: number;\n    readonly maxDepth?: number;\n    readonly maxAliases?: number;\n    readonly maxComplexity?: number;\n    readonly maxOperations?: number;\n    /** Maximum concurrent subscription operation ids per connection. Default 20. */\n    readonly maxSubscriptions?: number;\n    /** Maximum time for initial execute/subscribe setup. Default 10 seconds. */\n    readonly executionTimeoutMs?: number;\n}"
+    "signature": "export interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>> {\n    /** The executable schema. */\n    readonly schema: GraphQLSchema;\n    /** Build the resolver `contextValue` from the upgrade request. Shared with the HTTP transport. */\n    readonly context?: GraphqlContextBuilder<Context>;\n    /**\n     * Admit a socket from its upgrade request, before {@link onConnect}; return `false` (or throw) to\n     * reject the connection. `mountGraphql({ subscriptions: true })` passes its HTTP `authorize` here.\n     */\n    readonly authorize?: (request: Request) => boolean | Promise<boolean>;\n    /**\n     * Called once per connection with the client's `connection_init` payload; return `false` (or throw)\n     * to reject the connection. The seam for authenticating a socket from an init token.\n     */\n    readonly onConnect?: (payload: ConnectionInitMessage[\"payload\"], request: Request) => boolean | Promise<boolean>;\n    /** Additional raw `graphql-ws` server options merged last (advanced escape hatch). */\n    readonly serverOptions?: Partial<ServerOptions>;\n    /** Same query/complexity limits as the HTTP transport. */\n    readonly maxQueryBytes?: number;\n    readonly maxVariablesBytes?: number;\n    readonly maxDepth?: number;\n    readonly maxAliases?: number;\n    readonly maxComplexity?: number;\n    readonly maxOperations?: number;\n    /** Maximum concurrent subscription operation ids per connection. Default 20. */\n    readonly maxSubscriptions?: number;\n    /**\n     * Maximum time for initial execute/subscribe setup. Default 10 seconds. Each operation's abort\n     * signal, which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline, when\n     * the client completes the operation, and when the socket closes.\n     */\n    readonly executionTimeoutMs?: number;\n}"
   },
   {
     "name": "GuardOptions",
@@ -8357,7 +8357,7 @@
     "name": "MemoryCache",
     "kind": "class",
     "package": "@nifrajs/cache",
-    "signature": "export declare class MemoryCache implements CacheStore {\n    private readonly rows;\n    private readonly tagIndex;\n    private expirySweep;\n    private readonly maxEntries;\n    private readonly now;\n    constructor(options?: MemoryCacheOptions);\n    get(key: string): StoredEntry | undefined;\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void;\n    delete(key: string): void;\n    invalidateTag(tag: string): void;\n    clear(): void;\n    /** Live entry count (for observability/tests). */\n    size(): number;\n    /** Remove a key and unlink it from every tag set it belonged to. */\n    private evict;\n    private sweepExpired;\n}"
+    "signature": "export declare class MemoryCache implements CacheStore {\n    private readonly rows;\n    private readonly tagIndex;\n    private expirySweep;\n    private readonly maxEntries;\n    private readonly now;\n    private readonly changes;\n    private epoch;\n    constructor(options?: MemoryCacheOptions);\n    get(key: string): StoredEntry | undefined;\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void;\n    delete(key: string): void;\n    invalidateTag(tag: string): void;\n    clear(): void;\n    /** The current epoch: {@link MemoryCache.setIfFence} compares what changed after it. */\n    fence(): number;\n    setIfFence(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean;\n    /** Live entry count (for observability/tests). */\n    size(): number;\n    private record;\n    /** Remove a key and unlink it from every tag set it belonged to. */\n    private evict;\n    private sweepExpired;\n}"
   },
   {
     "name": "MemoryCacheOptions",
@@ -16636,7 +16636,8 @@
     "name": "cacheStoreCertificationProfile",
     "kind": "function",
     "package": "@nifrajs/testing",
-    "signature": "export declare function cacheStoreCertificationProfile(): AdapterCertificationProfile<CertifiableCacheStore>;"
+    "signature": "export declare function cacheStoreCertificationProfile(options?: {\n    readonly fencing?: boolean;\n}): AdapterCertificationProfile<CertifiableCacheStore>;",
+    "doc": "/**\n * The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence`\n * refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its\n * `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load\n * running in one cache can store a value another cache just invalidated.\n */"
   },
   {
     "name": "cacheTracing",
@@ -17067,7 +17068,7 @@
     "kind": "function",
     "package": "@nifrajs/islets",
     "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
-    "doc": "/**\n * Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed.\n * Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.\n */"
+    "doc": "/**\n * Derived value, cached into a signal and computed on first read. While an effect (or another\n * computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next\n * input change stops it instead of recomputing, so a dropped computed costs nothing; reading it\n * again starts it afresh. `dispose()` stops it at once.\n */"
   },
   {
     "name": "computed",
@@ -21241,6 +21242,13 @@
     "signature": "export declare function renderPageResult(options: RenderPageInput): MaybePromise<RenderedPage>;"
   },
   {
+    "name": "renderResult",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function renderResult(result: ResponseResult): Response;",
+    "doc": "/**\n * Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no\n * request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a\n * handler's `Response`, so a compact server rendering only its own rejections ships none of the code\n * that adopts one.\n */"
+  },
+  {
     "name": "renderRich",
     "kind": "function",
     "package": "@nifrajs/i18n",
@@ -23790,6 +23798,20 @@
     "package": "@nifrajs/core",
     "signature": "export declare function wrapWebSocketMessageValidation(handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning): WebSocketHandler;",
     "doc": "/**\n * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -\n * parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or\n * `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at\n * `app.ws()` registration, so every adapter dispatches validated messages with no per-adapter code.\n * `protoPoisoning` is the app's body policy: a frame with a `__proto__` key gets what a JSON body\n * with one gets, and under `\"reject\"` reads as invalid JSON.\n */"
+  },
+  {
+    "name": "writableResponse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function writableResponse(response: Response, request?: Request): Response;",
+    "doc": "/**\n * The response to write headers on for the request being answered: `response` itself, or a copy.\n *\n * A Response without a body can be sent any number of times, so the object a handler, hook or cache\n * hands over may be answering other requests too - a module-level `new Response(null, { status: 204 })`,\n * a kept redirect, even one nifra rendered earlier. A cookie or per-request header written onto it would\n * ship with every later request it answers, so it is always copied, whoever built it. One with a body\n * can be sent only once, so it already belongs to this request and is written in place; a copy would\n * cost Bun's file responses their sendfile path and buy nothing. Guarded `Headers`\n * (`Response.redirect()`, a raw `fetch()` result) reject writes, so those are copied as well.\n *\n * Pass the `request` being answered and a copy made for it is written in place by its later writers;\n * handed back on any other request, that copy is copied again.\n */"
+  },
+  {
+    "name": "writableResponse",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function writableResponse(response: Response, request?: Request): Response;",
+    "doc": "/**\n * The response to write headers on for the request being answered: `response` itself, or a copy.\n *\n * A Response without a body can be sent any number of times, so the object a handler, hook or cache\n * hands over may be answering other requests too - a module-level `new Response(null, { status: 204 })`,\n * a kept redirect, even one nifra rendered earlier. A cookie or per-request header written onto it would\n * ship with every later request it answers, so it is always copied, whoever built it. One with a body\n * can be sent only once, so it already belongs to this request and is written in place; a copy would\n * cost Bun's file responses their sendfile path and buy nothing. Guarded `Headers`\n * (`Response.redirect()`, a raw `fetch()` result) reject writes, so those are copied as well.\n *\n * Pass the `request` being answered and a copy made for it is written in place by its later writers;\n * handed back on any other request, that copy is copied again.\n */"
   },
   {
     "name": "writeDevFiles",

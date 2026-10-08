@@ -2,6 +2,7 @@ import {
   type CookieOptions,
   type ResponseResult,
   status as statusResult,
+  writableResponse,
 } from "@nifrajs/core/server"
 import type { LoaderResponseControls } from "../manifest.ts"
 import { DATA_HEADER } from "../router.ts"
@@ -112,19 +113,9 @@ export function privateOutcome(outcome: unknown): unknown {
 
 function privateResponse(response: Response): Response {
   if (response.headers.get(CACHE_CONTROL) === PRIVATE_NO_STORE) return response
-  try {
-    response.headers.set(CACHE_CONTROL, PRIVATE_NO_STORE)
-    return response
-  } catch {
-    // Immutable headers (`Response.redirect()`, a `fetch()` result): answer with a copy.
-    const headers = new Headers(response.headers)
-    headers.set(CACHE_CONTROL, PRIVATE_NO_STORE)
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    })
-  }
+  const target = writableResponse(response)
+  target.headers.set(CACHE_CONTROL, PRIVATE_NO_STORE)
+  return target
 }
 
 interface WrittenHeaders {

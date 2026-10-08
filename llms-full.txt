@@ -12148,10 +12148,11 @@ await cache.invalidateTag(`user:${id}`)
   - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
   - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
   - **Store outage**: a store `get` that throws or rejects is a miss, so the loader answers; a `set` that
-    fails still returns the loaded value. Each failure goes to `onStoreError(error, { op })`, which by
-    default logs one line per operation per minute without the key. The explicit `get`, `set`,
-    `delete`, `invalidateTag` and `clear` still reject, so a failed invalidation is never silent.
-- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. The check runs before the store write; with a store shared across processes, a refresh in another process is not fenced.
+    fails still returns the loaded value, and a `fence` that fails leaves that load uncached. Each
+    failure goes to `onStoreError(error, { op })`, which by default logs one line per operation per
+    minute without the key. The explicit `get`, `set`, `delete`, `invalidateTag` and `clear` still
+    reject, so a failed invalidation is never silent.
+- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. A `delete`, `invalidateTag` or `clear` runs after this cache's own async store writes it covers, so a store that applies requests out of order cannot land one after it.
 - TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
 
 ## Stores
@@ -12164,6 +12165,14 @@ opt-in. For a cache shared across instances, implement `CacheStore`
 ```ts
 const cache = createCache({ store: new RedisCacheStore(redis) })
 ```
+
+A store several caches or processes share should also implement the optional `fence(key, tags)` and
+`setIfFence(key, entry, tags, token)`. A `wrap` load takes a fence before it runs and stores its result
+through `setIfFence`, which must refuse, in one atomic step, when a `set` or `delete` of the key, an
+`invalidateTag` of one of its tags, or a `clear` ran since that fence, from any cache. Without them, a
+load running in one process can store a value another process invalidated meanwhile. `MemoryCache`
+implements both, and `cacheStoreCertificationProfile({ fencing: true })` from
+`@nifrajs/testing/certification` checks a store's implementation.
 
 On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived - back it with **CF KV** (or
 the Cache API) via a `CacheStore` for anything that should survive across requests/instances.
@@ -13423,7 +13432,7 @@ framework runtime. The client companion to `@nifrajs/web-vanilla`: the server re
 (zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
-The full island bundle is just under 2 KB gzipped, and a size test keeps it there. Use
+The full island bundle is about 2 KB gzipped (2,080 B at most), and a size test keeps it there. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
 ## Server side (any adapter - `@nifrajs/web-vanilla` shown)
@@ -13489,8 +13498,10 @@ bind it, for example to show or hide the nested island.
 
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
-into one flush. A computed stays subscribed to its inputs until `.dispose()`, so call it when one
-derived from a longer-lived signal is dropped. Island-scale by design: if a widget outgrows this (lists, ownership trees,
+into one flush. A `computed` runs on first read and stops by itself once nothing reads it: the
+next change to its inputs stops it instead of recomputing, and reading it again computes it afresh.
+Every effect an island's setup creates stops when `mountIslands`' disposer unmounts it; one created
+outside an island runs until its disposer is called. Island-scale by design: if a widget outgrows this (lists, ownership trees,
 async orchestration), that's the signal to use the Solid adapter for that page - both tiers are
 first-class.
 
@@ -14023,10 +14034,12 @@ The optional `static` root is served before `app.fetch` for GET and HEAD request
 public asset directory and must contain nothing private: no secrets, source maps, build
 metadata, or user uploads. The directory and its ancestor path must be read-only and owned by
 the service (or otherwise protected from untrusted local writers). Nifra resolves and confines
-the file before opening it and refuses symlinked final files, but Node does not expose a native
-per-component `openat` primitive; a process that can mutate the tree concurrently can still
-create a local TOCTOU race. Mutable or attacker-writable static trees are therefore outside the
-adapter's guarantee. Store user-controlled files outside the static root and serve them through
+the file before opening it, and refuses it when its final file or any directory on its path became
+a symlink in the meantime: on macOS the open itself refuses such a path, and on Linux the opened
+descriptor's path is checked. On Windows and other platforms no file API can open without following a
+middle link, so a process that swaps a directory concurrently can still win a local TOCTOU race;
+the check there only makes it need repeated swaps. Mutable or attacker-writable static trees are
+therefore outside the adapter's guarantee on those platforms. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
 Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
@@ -15478,7 +15491,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `writableResponse`
 
 ## @nifrajs/cron
 

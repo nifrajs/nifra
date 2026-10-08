@@ -51,7 +51,7 @@ export function cacheControl(
               if (respectExisting && res.headers.has("cache-control")) return res
               const directive = value(req)
               if (directive === undefined) return res
-              return withHeaders(res, (headers) => headers.set("cache-control", directive))
+              return withHeaders(res, (headers) => headers.set("cache-control", directive), req)
             },
           }
     return app.use(middleware)

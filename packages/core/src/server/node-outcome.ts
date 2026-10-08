@@ -8,7 +8,8 @@ import {
   applyStaticResponseHeaders,
   markTaggedResponse,
   normalizeBodylessResponse,
-  rememberMutableHeaders,
+  rememberRenderedResponse,
+  SENT_BODY,
   taggedResponseBody,
 } from "./respond.ts"
 import {
@@ -81,6 +82,7 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     )
   }
   if (result instanceof Response) {
+    if (result.bodyUsed) return plainNodeOutcome(SENT_BODY.plain!, EMPTY_RESPONSE_CONTROLS)
     return nodeOutcomeFromResponse(appendCookiesToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)
@@ -152,8 +154,7 @@ export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
     headers,
   })
   if (body !== null) markTaggedResponse(response, body)
-  rememberMutableHeaders(response.headers)
-  return response
+  return rememberRenderedResponse(response, body !== null)
 }
 
 /**

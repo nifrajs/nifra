@@ -204,9 +204,12 @@ export function servePublicDir(
     // symlink; the descriptor then pins the bytes for the lifetime of the response.
     let handle: Awaited<ReturnType<typeof openResolved>> | undefined
     try {
-      // A name refused or gone since realpath falls through, as a failed realpath does.
-      handle = await openResolved(resolvedFile).catch(() => undefined)
-      if (handle === undefined) return undefined
+      try {
+        handle = await openResolved(resolvedFile)
+      } catch {
+        // A name refused or gone since realpath falls through, as a failed realpath does.
+        return undefined
+      }
       const stat = await handle.stat()
       if (!stat.isFile()) return undefined
       const size = stat.size

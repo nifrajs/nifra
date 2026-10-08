@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createCache } from "../src/index.ts"
+import { type CacheStore, createCache, MemoryCache } from "../src/index.ts"
 
 function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number) => void } {
   let ms = start
@@ -269,5 +269,62 @@ describe("createCache - background revalidation errors", () => {
     }
     expect(logged.length).toBeGreaterThan(0)
     expect(String(logged[0]?.[0])).toContain("revalidate")
+  })
+})
+
+describe("createCache - a store shared by several caches", () => {
+  test("an invalidation or newer set from another cache keeps a running load from storing", async () => {
+    const changes: readonly [
+      string,
+      (other: ReturnType<typeof createCache>) => Promise<void>,
+      unknown,
+    ][] = [
+      ["invalidateTag", (other) => other.invalidateTag("t"), undefined],
+      ["delete", (other) => other.delete("k"), undefined],
+      ["set", (other) => other.set("k", "newer"), "newer"],
+    ]
+    for (const [, change, left] of changes) {
+      const store = new MemoryCache()
+      const loading = createCache({ store })
+      const other = createCache({ store })
+      const loader = gatedLoader()
+      const wrapped = loading.wrap("k", loader.load, { tags: ["t"] })
+      await loader.started
+      await change(other)
+      loader.release("old")
+      expect(await wrapped).toBe("old")
+      const stored: unknown = await loading.get("k")
+      expect(stored).toBe(left)
+    }
+  })
+
+  test("a delete, invalidation or clear waits for this cache's async write it covers", async () => {
+    const changes: readonly ((cache: ReturnType<typeof createCache>) => Promise<void>)[] = [
+      (cache) => cache.delete("k"),
+      (cache) => cache.invalidateTag("t"),
+      (cache) => cache.clear(),
+    ]
+    for (const change of changes) {
+      const memory = new MemoryCache()
+      const landed = Promise.withResolvers<void>()
+      // An async store that applies a write only when the test lets it, after a later invalidation
+      // would otherwise already have run.
+      const store: CacheStore = {
+        get: (key) => memory.get(key),
+        set: async (key, entry, tags) => {
+          await landed.promise
+          memory.set(key, entry, tags)
+        },
+        delete: (key) => memory.delete(key),
+        invalidateTag: (tag) => memory.invalidateTag(tag),
+        clear: () => memory.clear(),
+      }
+      const cache = createCache({ store })
+      const write = cache.set("k", "v", { tags: ["t"] })
+      const changed = change(cache)
+      landed.resolve()
+      await Promise.all([write, changed])
+      expect(await cache.get("k")).toBeUndefined()
+    }
   })
 })

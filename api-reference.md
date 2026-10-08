@@ -782,7 +782,7 @@ Every public export of every package and documented subpath - name, kind, signat
   How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and a completed revalidation report `ok`; `error` means the store or the loader threw.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.
-- **CacheStoreOp** _(type)_ - `type CacheStoreOp = "get" | "set"`
+- **CacheStoreOp** _(type)_ - `type CacheStoreOp = "get" | "set" | "fence"`
   The store call a {@link CacheOptions.onStoreError} report is about.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies - a cache should not drag the server into a bundle that only wanted a cache. Wiring it is one line where the cache is created.
@@ -1739,6 +1739,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.
 
 ### `@nifrajs/core/assurance`
 
@@ -2249,6 +2251,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
   The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries.
+- **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
+  Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
 
@@ -2970,6 +2974,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.
 
 ### `@nifrajs/core/single-copy`
 
@@ -3577,7 +3583,7 @@ _No named exports (side-effect entrypoint)._
 - **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
   Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of the created effects (an island unmount can stop them; page-lifetime islands just drop them).
 - **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
-  Derived value, cached into a signal - recomputes when its tracked inputs change, until disposed. Its inputs hold it while it lives, so one derived from a longer-lived signal needs `dispose()`.
+  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
   Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
 - **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`
@@ -4637,7 +4643,8 @@ _No named exports (side-effect entrypoint)._
 - **assertPredictionLab** _(function)_ - `assertPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>`
   Run the lab and throw a joined error on failure - the `assertAdversarialContract` shape.
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
-- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
+- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: (options?: { readonly fencing?: boolean; }) => AdapterCertificationProfile<CertifiableCacheStore>`
+  The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence` refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load …
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
@@ -4749,7 +4756,8 @@ _No named exports (side-effect entrypoint)._
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
-- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
+- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: (options?: { readonly fencing?: boolean; }) => AdapterCertificationProfile<CertifiableCacheStore>`
+  The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence` refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load …
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
@@ -7305,3 +7313,5 @@ _No named exports (side-effect entrypoint)._
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.

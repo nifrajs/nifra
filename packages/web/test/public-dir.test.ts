@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
@@ -229,6 +230,23 @@ test("a missing public/ directory is not an error", async () => {
     expect(await serve(get("/whatever.txt"))).toBeUndefined()
   })
 })
+
+// A name inside the root that cannot be opened as a file, such as a socket, falls through like a
+// missing one instead of failing the request.
+test.skipIf(process.platform === "win32")(
+  "a public name that cannot be opened falls through",
+  async () => {
+    await withDir(async (dir) => {
+      const server = createServer()
+      await new Promise<void>((resolve) => server.listen(join(dir, "live.sock"), resolve))
+      try {
+        expect(await servePublicDir({ dir })(get("/live.sock"))).toBeUndefined()
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      }
+    })
+  },
+)
 
 test("a directory is not served as a public file", async () => {
   await withDir(async (dir) => {

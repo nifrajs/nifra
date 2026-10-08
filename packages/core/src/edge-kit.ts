@@ -8,7 +8,8 @@
  * exposes the one lane the fused body runner already calls, so a compact server reuses it verbatim:
  *
  *   - {@link readBodyFramed}   read + cap + proto-guard + content-type framing (JSON / urlencoded / 415)
- *   - {@link toResponse}       render a {@link ResponseResult} (e.g. a 413 / 415 rejection) to a `Response`
+ *   - {@link renderResult}     render a {@link ResponseResult} (e.g. a 413 / 415 rejection) to a `Response`
+ *   - {@link toResponse}       render any handler result, a handler's own `Response` included
  *   - {@link plainError}       the structured rejection envelope the lane returns
  *   - {@link queryObjectOf} / {@link searchOf}   query parse without a full WHATWG URL construction
  *   - {@link answerNotFound}   run a not-found handler under the same rules (404 only, no 2xx, fail closed)
@@ -27,7 +28,7 @@ export {
 } from "./server/not-found-answer.ts"
 export type { ProtoPoisoning } from "./server/proto-guard.ts"
 export { type QueryValue, queryObjectOf, searchOf } from "./server/query.ts"
-export { toResponse } from "./server/respond.ts"
+export { renderResult, toResponse } from "./server/respond.ts"
 export type { ResponseResult } from "./server/runtime-core.ts"
 export { EMPTY_RESPONSE_CONTROLS } from "./server/runtime-core.ts"
 export type { CtxSet, MaybePromise, RequestSource } from "./server/server.ts"

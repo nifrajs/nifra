@@ -4,6 +4,7 @@ import { MemoryJobStore } from "../../jobs/src/memory-store.ts"
 import { MemoryStorage } from "../../storage/src/memory.ts"
 import {
   assertAdapterCertification,
+  type CertifiableCacheEntry,
   type CertifiableDomainEvent,
   cacheStoreCertificationProfile,
   certifyAdapter,
@@ -108,6 +109,36 @@ describe("portable adapter certification", () => {
     )
     expect(first.evidenceHash).toMatch(/^[a-f0-9]{64}$/)
     expect(first.capabilities.every((capability) => capability.status === "passed")).toBe(true)
+  })
+
+  test("the optional fenced-write capability passes MemoryCache and fails a store without it", async () => {
+    const profile = cacheStoreCertificationProfile({ fencing: true })
+    expect(profile.capabilities).toContain("fenced-write")
+    const fenced = await certifyAdapter({
+      profile,
+      adapterId: "memory-cache",
+      createAdapter: () => new MemoryCache({ now: () => 100 }),
+    })
+    expect(fenced.ok).toBe(true)
+    const unfenced = await certifyAdapter({
+      profile,
+      adapterId: "unfenced-cache",
+      createAdapter: () => {
+        const memory = new MemoryCache({ now: () => 100 })
+        return {
+          get: (key: string) => memory.get(key),
+          set: (key: string, entry: CertifiableCacheEntry, tags: readonly string[]) =>
+            memory.set(key, entry, tags),
+          delete: (key: string) => memory.delete(key),
+          invalidateTag: (tag: string) => memory.invalidateTag(tag),
+          clear: () => memory.clear(),
+        }
+      },
+    })
+    expect(unfenced.ok).toBe(false)
+    expect(
+      unfenced.capabilities.find((capability) => capability.capability === "fenced-write")?.status,
+    ).toBe("failed")
   })
 
   test("fails closed without serializing adapter error messages", async () => {

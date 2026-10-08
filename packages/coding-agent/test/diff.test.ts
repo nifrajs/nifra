@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { join } from "node:path"
 import { readProjectDiff } from "../src/diff.ts"
 
 describe("project diff", () => {
@@ -7,6 +8,16 @@ describe("project diff", () => {
     expect(result.ok).toBe(true)
     expect(result.status).toBe(0)
     expect(typeof result.output).toBe("string")
+  })
+
+  test("a diff that cannot start reports the failure, with its stack only when asked", async () => {
+    const cwd = join(process.cwd(), "no-such-directory-for-diff")
+    const hidden = await readProjectDiff({ cwd })
+    expect(hidden).toMatchObject({ ok: false, status: null })
+    expect(typeof hidden.error).toBe("string")
+    expect(hidden.stack).toBeUndefined()
+    const shown = await readProjectDiff({ cwd, exposeErrorStacks: true })
+    expect(typeof shown.stack).toBe("string")
   })
 
   test("rejects unsafe resource limits", async () => {

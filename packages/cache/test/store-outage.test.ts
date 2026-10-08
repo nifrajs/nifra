@@ -93,6 +93,48 @@ describe("wrap over a failing store", () => {
     }
   })
 
+  test("a fence that fails loads uncached, and a fenced write that fails is a failed set", async () => {
+    for (const how of ["reject", "throw"] as const) {
+      const inner = new MemoryCache()
+      const reports: string[] = []
+      const cache = createCache({
+        store: {
+          get: (key) => inner.get(key),
+          set: (key, entry, tags) => inner.set(key, entry, tags),
+          delete: (key) => inner.delete(key),
+          invalidateTag: (tag) => inner.invalidateTag(tag),
+          clear: () => inner.clear(),
+          fence: () => {
+            const error = new Error("store fence down")
+            if (how === "throw") throw error
+            return Promise.reject(error)
+          },
+          setIfFence: (key, entry, tags, token) => inner.setIfFence(key, entry, tags, token),
+        },
+        onStoreError: (_error, info) => reports.push(info.op),
+      })
+      expect(await cache.wrap("k", () => "loaded")).toBe("loaded")
+      expect(inner.size()).toBe(0)
+      expect(reports).toEqual(["fence"])
+    }
+    const inner = new MemoryCache()
+    const reports: string[] = []
+    const cache = createCache({
+      store: {
+        get: (key) => inner.get(key),
+        set: (key, entry, tags) => inner.set(key, entry, tags),
+        delete: (key) => inner.delete(key),
+        invalidateTag: (tag) => inner.invalidateTag(tag),
+        clear: () => inner.clear(),
+        fence: () => inner.fence(),
+        setIfFence: () => Promise.reject(new Error("store set down")),
+      },
+      onStoreError: (_error, info) => reports.push(info.op),
+    })
+    expect(await cache.wrap("k", () => "loaded")).toBe("loaded")
+    expect(reports).toEqual(["set"])
+  })
+
   test("an observed wrap reports the miss it served", async () => {
     const events: CacheEvent[] = []
     const cache = createCache({

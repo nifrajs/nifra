@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { island, islandState, mountIslands } from "../src/island.ts"
+import { computed, effect, signal } from "../src/signals.ts"
 import { FakeElement, FakeHost, FakeRoot } from "./_fake-dom.ts"
 
 let n = 0
@@ -158,6 +159,44 @@ describe("islands", () => {
     const escaped = json.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
     const unescaped = escaped.replace(/&quot;/g, '"').replace(/&amp;/g, "&")
     expect(JSON.parse(unescaped)).toEqual(state)
+  })
+
+  test("unmounting stops what setup created, across repeated mounts of one island", () => {
+    const shared = signal(0)
+    let computes = 0
+    let effects = 0
+    const name = uniqueName()
+    island(name, () => {
+      const doubled = computed(() => {
+        computes++
+        return shared() * 2
+      })
+      effect(() => {
+        effects++
+        doubled()
+      })
+      return undefined
+    })
+    const mount = () =>
+      mountIslands(
+        new FakeRoot([
+          new FakeHost({ "data-island": name }, [new FakeElement({ "data-bind-text": "n" })]),
+        ]),
+      )
+    for (let i = 0; i < 100; i++) mount()()
+    computes = 0
+    effects = 0
+    shared.set(1)
+    expect(computes).toBe(0)
+    expect(effects).toBe(0)
+
+    const live = mount()
+    computes = 0
+    effects = 0
+    shared.set(2)
+    expect(computes).toBe(1)
+    expect(effects).toBe(1)
+    live()
   })
 
   test("media trigger waits for a match and disposes the listener", () => {

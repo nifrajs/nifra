@@ -347,11 +347,15 @@ function limiter(
       const info = quota.get(req)
       if (info === undefined) return res
       quota.delete(req)
-      return withHeaders(res, (headers) => {
-        headers.set("RateLimit-Limit", String(info.limit))
-        headers.set("RateLimit-Remaining", String(info.remaining))
-        headers.set("RateLimit-Reset", String(info.resetSeconds))
-      })
+      return withHeaders(
+        res,
+        (headers) => {
+          headers.set("RateLimit-Limit", String(info.limit))
+          headers.set("RateLimit-Remaining", String(info.remaining))
+          headers.set("RateLimit-Reset", String(info.resetSeconds))
+        },
+        req,
+      )
     },
     ...(native
       ? {

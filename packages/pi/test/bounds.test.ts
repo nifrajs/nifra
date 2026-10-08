@@ -38,12 +38,13 @@ describe("Pi event bounds", () => {
       expect(events.every(isAgentEvent)).toBe(true)
 
       const started = events.find((event) => event.type === "tool.started")
-      const input = (started as { input?: { path: string; content: string } }).input
-      expect(input?.path).toBe("big.txt")
-      expect(input?.content).toHaveLength(AGENT_MAX_PAYLOAD_STRING)
+      if (started?.type !== "tool.started") throw new Error("expected a tool.started event")
+      expect(started.input).toMatchObject({ path: "big.txt" })
+      expect(started.input).toHaveProperty("content.length", AGENT_MAX_PAYLOAD_STRING)
 
       const completed = events.find((event) => event.type === "tool.completed")
-      expect((completed as { output?: string }).output).toHaveLength(AGENT_MAX_PAYLOAD_STRING)
+      if (completed?.type !== "tool.completed") throw new Error("expected a tool.completed event")
+      expect(completed.output).toHaveLength(AGENT_MAX_PAYLOAD_STRING)
 
       const pieces = (type: AgentEvent["type"]): string[] =>
         events.flatMap((event) =>

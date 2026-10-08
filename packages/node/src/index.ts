@@ -211,6 +211,15 @@ const RESOLVE_NODE_MOUNT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.resolveNodeMount)
 const JSON_CONTENT_TYPE = Response.json(0).headers.get("content-type") ?? "application/json"
 
 const INTERNAL_ERROR_BODY = '{"ok":false,"error":"internal_error"}'
+/** A handler's Response whose body was already sent: refused, since its headers were written for the
+ * request it already answered. */
+const SENT_BODY_OUTCOME: NodeServeOutcome = Object.freeze({
+  kind: "json",
+  status: 500,
+  headers: undefined,
+  cookies: undefined,
+  body: INTERNAL_ERROR_BODY,
+})
 const EMPTY_BUFFER = Buffer.alloc(0)
 const NODE_RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
 const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
@@ -264,6 +273,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
       return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set._cookies))
     }
     if (result instanceof Response) {
+      if (result.bodyUsed) return SENT_BODY_OUTCOME
       return nodeOutcomeFromResponse(appendCookiesToResponse(result, set._cookies))
     }
     const status = set.status ?? (result === undefined ? 204 : 200)
@@ -510,21 +520,47 @@ function installFastResponse(): void {
   globalThis.Response = DeferringResponse as unknown as typeof Response
 }
 
+/**
+ * The response this request's cookies are written to - core's `writableResponse` rule, mirrored here
+ * because the adapter does not import core. A Response without a body can be sent any number of times,
+ * so the object a handler returns may answer other requests too and is always copied; one with a body
+ * can be sent once, so it is this request's and takes the writes in place unless its `Headers` are
+ * guarded (`Response.redirect()`, a raw `fetch()` result).
+ */
 function appendCookiesToResponse(
   response: Response,
   cookies: readonly string[] | undefined,
 ): Response {
   if (cookies === undefined || cookies.length === 0) return response
+  if (response.body === null && response.status >= 200) {
+    const copy = copiedResponse(
+      response,
+      new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      }),
+    )
+    for (const cookie of cookies) copy.headers.append("set-cookie", cookie)
+    return copy
+  }
   try {
     for (const cookie of cookies) response.headers.append("set-cookie", cookie)
     return response
   } catch {
-    // Guarded `Headers` (`Response.redirect()`, a raw `fetch()` result) reject every write, so the
-    // first append throws with nothing applied and the cookies land on a mutable copy instead.
-    const clone = new Response(response.body, response)
+    // Guarded `Headers` reject every write, so the first append throws with nothing applied and the
+    // cookies land on a mutable copy instead.
+    const clone = copiedResponse(response, new Response(response.body, response))
     for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
     return clone
   }
+}
+
+/** `copy` carrying `original`'s buffered-body marker, so the direct writer still sends those bytes. */
+function copiedResponse(original: Response, copy: Response): Response {
+  const body: unknown = Reflect.get(original, NODE_RESPONSE_BODY)
+  if (body !== undefined) Object.defineProperty(copy, NODE_RESPONSE_BODY, { value: body })
+  return copy
 }
 
 /** Early exits built outside the handler's finalizer - an `onRequest` hook's response, a mount's,
@@ -1615,6 +1651,9 @@ function writeInternalError(nodeRes: ServerResponse): void {
 function failWrite(nodeRes: ServerResponse): void {
   try {
     if (!nodeRes.headersSent) {
+      // The failed write may have staged the response's own headers (cookies among them) with
+      // `setHeaders`; the 500 must not carry them.
+      for (const name of nodeRes.getHeaderNames()) nodeRes.removeHeader(name)
       writeInternalError(nodeRes)
       return
     }
@@ -2473,6 +2512,8 @@ function writeNodeResponse(
   nodeRes: ServerResponse,
   method?: string,
 ): void | Promise<void> {
+  // A body already sent once answered another request, with headers written for that one.
+  if (response.bodyUsed) throw new TypeError("[nifra] a Response body can be sent only once")
   const isHead = method?.toUpperCase() === "HEAD"
   // `ServerResponse.setHeaders` (Node 18.14+) takes the Headers object directly and iterates its
   // native Symbol.iterator, which - unlike `Headers.forEach`/`.get()` - never comma-joins repeated

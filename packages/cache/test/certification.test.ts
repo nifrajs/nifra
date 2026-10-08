@@ -4,7 +4,7 @@ import { MemoryCache } from "../src/index.ts"
 
 test("MemoryCache satisfies the portable cache-store certification profile", async () => {
   const report = await certifyAdapter({
-    profile: cacheStoreCertificationProfile(),
+    profile: cacheStoreCertificationProfile({ fencing: true }),
     adapterId: "nifra-memory-cache",
     createAdapter: () => new MemoryCache({ now: () => 0 }),
   })

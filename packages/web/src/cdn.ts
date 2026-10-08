@@ -11,6 +11,7 @@
  * for any other. Backend-only: a browser build that reaches this module fails.
  */
 import "@nifrajs/web/backend-only"
+import { writableResponse } from "@nifrajs/core/server"
 import { isDraftEnabled } from "./draft.ts"
 import type { CdnProvider } from "./internal/cdn/core.ts"
 import { pathTag } from "./internal/cdn/core.ts"
@@ -84,15 +85,9 @@ const isHtml = (res: Response): boolean =>
   (res.headers.get("content-type") ?? "").toLowerCase().includes("text/html")
 
 function withHeaders(res: Response, set: Readonly<Record<string, string>>): Response {
-  try {
-    for (const [name, value] of Object.entries(set)) res.headers.set(name, value)
-    return res
-  } catch {
-    // A `fetch()` response has immutable headers: rebuild it around the same body instead.
-    const headers = new Headers(res.headers)
-    for (const [name, value] of Object.entries(set)) headers.set(name, value)
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-  }
+  const target = writableResponse(res)
+  for (const [name, value] of Object.entries(set)) target.headers.set(name, value)
+  return target
 }
 
 /**

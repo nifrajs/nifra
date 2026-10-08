@@ -116,6 +116,7 @@ import {
   fusedRespond,
   fusedRespondNoSet,
   toResponse,
+  writableResponse,
 } from "./respond.ts"
 // Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
 // install the plugin. The value side arrives through the symbol-keyed install seam.
@@ -1483,11 +1484,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         })
         return this
       }
-      // Route the hook through the same seam the static tier uses. On a framework response (headers
-      // stamped mutable) it applies the defaults in place and returns the SAME object, so the
-      // serialized-body marker survives for later `onResponseBody`/`onResponseRaw` observers and the
-      // Node writer; reconstructing a `Response` here would strip that marker and reclassify the Node
-      // outcome from `json` to a generic `response`. A guarded foreign response takes its clone path.
+      // Route the hook through the same seam the static tier uses. On a framework response with a
+      // body it applies the defaults in place and returns the SAME object, so the serialized-body
+      // marker survives for later `onResponseBody`/`onResponseRaw` observers and the Node writer;
+      // reconstructing a `Response` here would strip that marker and reclassify the Node outcome from
+      // `json` to a generic `response`. A body-less or guarded response is copied, marker included.
       const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
       this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
       if (hookAuditRuntime && process.env.NODE_ENV !== "production")
@@ -5806,13 +5807,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private applyOnResponse(response: Response, req: Request): MaybePromise<Response> {
     const hooks = this.onResponseHooks
-    let current = response
+    // Hooks write onto the response they are handed (cookies, CORS, request ids), so every response
+    // entering the chain - and any other one a hook hands back - is first made this request's own.
+    let current = writableResponse(response, req)
     for (let i = 0; i < hooks.length; i++) {
       const next = (hooks[i] as RawOnResponse)(current, req)
       if (next instanceof Promise) {
-        return next.then((settled) => this.continueOnResponse(settled, i + 1, req))
+        const handed = current
+        return next.then((settled) => this.continueOnResponse(settled, i + 1, req, handed))
       }
-      current = next
+      current = next === current ? next : writableResponse(next, req)
     }
     return current
   }
@@ -5886,11 +5890,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     response: Response,
     nextIndex: number,
     req: Request,
+    handed: Response,
   ): Promise<Response> {
-    let current = response
+    let current = response === handed ? response : writableResponse(response, req)
     for (let i = nextIndex; i < this.onResponseHooks.length; i++) {
       const next = (this.onResponseHooks[i] as RawOnResponse)(current, req)
-      current = next instanceof Promise ? await next : next
+      const settled = next instanceof Promise ? await next : next
+      current = settled === current ? settled : writableResponse(settled, req)
     }
     return current
   }

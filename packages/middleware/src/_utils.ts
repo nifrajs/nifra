@@ -1,7 +1,7 @@
 export type MaybePromise<T> = T | Promise<T>
 
 import type { NodeResponseContext } from "@nifrajs/core/server"
-import { parseCookies as parseCoreCookies } from "@nifrajs/core/server"
+import { parseCookies as parseCoreCookies, writableResponse } from "@nifrajs/core/server"
 
 export const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"])
 
@@ -163,40 +163,19 @@ export async function verifyHmacSha256(
 }
 
 /**
- * Apply header mutations to a response, in place when possible. Framework-built responses
- * (`new Response`, `Response.json`) have mutable headers across every runtime - so the common path
- * mutates `res` directly and returns it, allocating nothing. Only an *immutable*-headers response
- * (`Response.redirect()`/`Response.error()`, or a proxied `fetch()` response on Node/Deno/workerd -
- * never on Bun) makes `.set`/`.append` throw; that path clones into a fresh `Headers` + `Response`,
- * exactly the old always-clone behavior. `apply` runs once either way (immutability is all-or-nothing
- * - the first mutation throws before any partial change), so a mutation chain is safe to pass.
+ * Apply header mutations to the copy of `res` this request owns (`writableResponse`): a body-bearing
+ * response with mutable headers is written in place, a body-less one (sendable any number of times,
+ * so possibly shared) or one with guarded headers is copied first. Pass the `request` being answered
+ * so a copy already made for it is reused.
  */
-export function withHeaders(res: Response, apply: (headers: Headers) => void): Response {
-  const responseHeaders = res.headers
-  const probe = "x-nifra-header-probe"
-  let previous: string | null = null
-  let mutable = true
-  try {
-    previous = responseHeaders.get(probe)
-    responseHeaders.set(probe, "1")
-    if (previous === null) responseHeaders.delete(probe)
-    else responseHeaders.set(probe, previous)
-  } catch {
-    mutable = false
-    try {
-      if (previous === null) responseHeaders.delete(probe)
-      else responseHeaders.set(probe, previous)
-    } catch {
-      // The guarded response rejected cleanup; the clone below is authoritative.
-    }
-  }
-  if (!mutable) {
-    const headers = new Headers(res.headers)
-    apply(headers)
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-  }
-  apply(responseHeaders)
-  return res
+export function withHeaders(
+  res: Response,
+  apply: (headers: Headers) => void,
+  request?: Request,
+): Response {
+  const target = writableResponse(res, request)
+  apply(target.headers)
+  return target
 }
 
 /**
