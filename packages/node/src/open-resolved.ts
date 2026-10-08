@@ -6,7 +6,6 @@ import { type FileHandle, open, readlink, realpath, stat } from "node:fs/promise
 // Darwin's open(2) flag refusing a symlink in ANY component; `O_NOFOLLOW` covers only the last one.
 const O_NOFOLLOW_ANY = 0x20000000
 // Deno's node:fs rejects flags it does not know with EINVAL; the first refusal turns the flag off.
-// Read on first use: this module can sit in a client bundle graph, where `process` is undefined.
 let noFollowAny: boolean | undefined
 
 /**
@@ -18,8 +17,9 @@ let noFollowAny: boolean | undefined
  * {@link opensAt} is a platform limit: it narrows the race to repeated swaps but cannot close it.
  */
 export async function openResolved(realFile: string): Promise<FileHandle> {
-  noFollowAny ??= process.platform === "darwin"
-  if (noFollowAny) {
+  // Read per open, not at load: this module can sit in a client bundle graph, where `process` is
+  // undefined.
+  if (noFollowAny ?? process.platform === "darwin") {
     try {
       return await open(realFile, FS.O_RDONLY | O_NOFOLLOW_ANY)
     } catch (error) {
@@ -35,10 +35,20 @@ export async function openResolved(realFile: string): Promise<FileHandle> {
   throw Object.assign(new Error(`${realFile} moved while it was opened`), { code: "ELOOP" })
 }
 
-/** Whether `handle` is the file at `realFile` with no symlink in its path. Exported for its test. */
+/** Whether `handle` is the file at `realFile` with no symlink in its path. */
 export async function opensAt(handle: FileHandle, realFile: string): Promise<boolean> {
-  const held = await readlink(`/proc/self/fd/${handle.fd}`).catch(() => undefined)
-  if (held !== undefined) return held === realFile
+  try {
+    return (await readlink(`/proc/self/fd/${handle.fd}`)) === realFile
+  } catch {
+    return sameFileAt(handle, realFile)
+  }
+}
+
+/**
+ * {@link opensAt} where no descriptor's path can be read. Exported for its test, which runs it on
+ * every host.
+ */
+export async function sameFileAt(handle: FileHandle, realFile: string): Promise<boolean> {
   // One step after another, so passing takes a swap back and a swap again between steps: the name
   // resolves to itself, then to the opened file, then to itself again. Identities are compared as
   // bigints because a Windows file index can exceed 2^53.
