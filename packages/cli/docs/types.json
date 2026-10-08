@@ -3662,7 +3662,7 @@
     "kind": "class",
     "package": "@nifrajs/coding-agent",
     "signature": "export declare class ContextWindow {\n    private readonly maxTokens;\n    private readonly keepRecent;\n    private readonly maxSummaryChars;\n    private readonly summarizeRecord;\n    private records;\n    constructor(options?: ContextWindowOptions);\n    get tokens(): number;\n    get size(): number;\n    snapshot(): readonly ContextRecord[];\n    /** Restore bounded prompt context from persisted evidence without bypassing compaction rules. */\n    restore(records: readonly ContextRecord[]): void;\n    append(record: ContextRecord): CompactionReport | undefined;\n    compact(reason?: CompactionReport[\"reason\"]): CompactionReport;\n}",
-    "doc": "/** In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. */"
+    "doc": "/**\n * In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. Pinned\n * and authoritative records survive compaction, newest first, within half of `maxTokens`; older ones\n * are folded into the summary like any other record. The session store keeps every one of them.\n */"
   },
   {
     "name": "ContextWindowOptions",

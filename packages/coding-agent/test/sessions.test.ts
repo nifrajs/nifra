@@ -46,6 +46,16 @@ describe("sessions and compaction", () => {
     expect(context.tokens).toBeLessThan(256 * 2)
   })
 
+  test("pinned records cannot grow the window past its bound", () => {
+    const context = new ContextWindow({ maxTokens: 256, keepRecent: 4 })
+    for (let index = 0; index < 2_000; index++)
+      context.append({ kind: "approval.required", content: `approval ${index}`, pinned: true })
+    expect(context.tokens).toBeLessThanOrEqual(256)
+    const kept = context.snapshot().filter((item) => item.kind === "approval.required")
+    expect(kept.at(-1)?.content).toBe("approval 1999")
+    expect(context.snapshot().some((item) => item.kind === "memory.summary")).toBe(true)
+  })
+
   test("accepts an extension-owned bounded compaction summary", () => {
     const context = new ContextWindow({
       maxTokens: 256,

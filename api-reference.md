@@ -1004,7 +1004,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CompactionReport** _(interface)_ - `interface CompactionReport`
 - **ContextRecord** _(interface)_ - `interface ContextRecord`
 - **ContextWindow** _(class)_ - `class ContextWindow`
-  In-memory prompt window with automatic, deterministic compaction and a hard size ceiling.
+  In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. Pinned and authoritative records survive compaction, newest first, within half of `maxTokens`; older ones are folded into the summary like any other record. The session store keeps every one of them.
 - **ContextWindowOptions** _(interface)_ - `interface ContextWindowOptions`
 - **DEPLOYMENT_REFERENCE_PROFILES** _(const)_ - `DEPLOYMENT_REFERENCE_PROFILES: Readonly<{ localProcess: DeploymentCapabilityReport; ci: DeploymentCapabilityReport; replay: DeploymentCapabilityReport; }>`
 - **ExtensionCommand** _(type)_ - `type ExtensionCommand = ( args: string, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`

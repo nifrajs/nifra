@@ -345,7 +345,11 @@ export interface ContextWindowOptions {
   readonly summarize?: (records: readonly ContextRecord[], maxChars: number) => string
 }
 
-/** In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. */
+/**
+ * In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. Pinned
+ * and authoritative records survive compaction, newest first, within half of `maxTokens`; older ones
+ * are folded into the summary like any other record. The session store keeps every one of them.
+ */
 export class ContextWindow {
   private readonly maxTokens: number
   private readonly keepRecent: number
@@ -397,19 +401,21 @@ export class ContextWindow {
     if (this.records.length <= this.keepRecent) return { before, after: before, removed: 0, reason }
     // A compacted summary is replaceable context, not authoritative evidence. Keeping old pinned
     // summaries in `protectedRecords` would make every threshold compaction grow the live window.
-    const protectedRecords = this.records.filter(
-      (record) =>
-        record.kind !== "memory.summary" &&
-        (record.pinned === true || isAuthoritative(record.kind)),
+    const protectedRecords = newestWithin(
+      this.records.filter(
+        (record) =>
+          record.kind !== "memory.summary" &&
+          (record.pinned === true || isAuthoritative(record.kind)),
+      ),
+      Math.floor(this.maxTokens / 2),
     )
     const recent = this.records.slice(-this.keepRecent)
     const retained = new Set([...protectedRecords, ...recent])
     const omitted = this.records.filter((record) => !retained.has(record))
     if (omitted.length === 0) return { before, after: before, removed: 0, reason }
-    const summary = this.summarizeRecord(omitted, this.maxSummaryChars).slice(
-      0,
-      this.maxSummaryChars,
-    )
+    // A summary longer than the window it lives in would defeat the window.
+    const summaryChars = Math.min(this.maxSummaryChars, this.maxTokens)
+    const summary = this.summarizeRecord(omitted, summaryChars).slice(0, summaryChars)
     this.records = [
       ...protectedRecords,
       { kind: "memory.summary", content: summary, pinned: true },
@@ -582,6 +588,19 @@ function estimateTokens(records: readonly ContextRecord[]): number {
   return Math.ceil(
     records.reduce((total, record) => total + record.kind.length + record.content.length, 0) / 4,
   )
+}
+
+/** The newest `records` whose estimated tokens fit `budget`, in their original order; at least one. */
+function newestWithin(records: readonly ContextRecord[], budget: number): ContextRecord[] {
+  const kept: ContextRecord[] = []
+  let tokens = 0
+  for (let index = records.length - 1; index >= 0; index--) {
+    const record = records[index]!
+    tokens += estimateTokens([record])
+    if (tokens > budget && kept.length > 0) break
+    kept.unshift(record)
+  }
+  return kept
 }
 
 function isAuthoritative(kind: string): boolean {
