@@ -1,6 +1,9 @@
 {
   "externalMounts": ["/llms-full.txt"],
   "rules": {
+    "NF-C001": {
+      "ignore": ["packages/create-nifra/template-site*/**"]
+    },
     "NF-C008": {
       "ignore": ["**/test/**", "**/test-node/**", "bench/**", "packages/create-nifra/template-*/**"]
     },
