@@ -18,6 +18,7 @@ import type {
 import { validateStandard } from "../schema/standard.ts"
 import { decodeTransportFrame, type TransportCodecRegistry } from "../transport-codec.ts"
 import { guardDecodedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
+import { isResponseResult } from "./runtime-core.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -133,6 +134,7 @@ export interface WebSocketHandler<
   Env = unknown,
   Schema extends StandardSchemaV1 | undefined = undefined,
   Send extends StandardSchemaV1 | undefined = undefined,
+  Extra = unknown,
 > {
   /**
    * Cross-site WebSocket hijacking (CSWSH) guard - checked BEFORE `upgrade()`. A browser does not
@@ -150,12 +152,15 @@ export interface WebSocketHandler<
    */
   allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean)
   /**
-   * Runs in the HTTP request context **before** the upgrade (and after {@link allowedOrigins}) - the
-   * place to authenticate or rate-limit. Return the initial per-connection `data` (→ `ws.data`), or a
-   * `Response` to **reject** the upgrade (the client never connects). Omit to accept with
-   * `data: undefined`. A thrown error rejects with a flat 500.
+   * Runs in the HTTP request context **before** the upgrade, last in the chain an HTTP `GET` to the
+   * same path runs: after {@link allowedOrigins}, then the `authenticate()` stages, `derive`s and
+   * `beforeHandle`s registered before this route, any of which can refuse the handshake. `c` carries
+   * what they derived. Return the initial per-connection `data` (→ `ws.data`), or a `Response` or
+   * `status(...)` to **reject** the upgrade (the client never connects). Omit to accept with
+   * `data: undefined`. A thrown `Response` rejects with it; any other throw goes to the route's
+   * `onError` hooks, then a flat 500.
    */
-  upgrade?(c: WebSocketContext<Env>): MaybePromise<Data | Response>
+  upgrade?(c: WebSocketContext<Env> & Extra): MaybePromise<Data | Response>
   /**
    * Contract-first messages: a Standard Schema (`t`, zod, valibot, …) validating each **inbound** frame.
    * Text frames are parsed as JSON first. When set, `message` receives the validated, typed value; a
@@ -444,6 +449,33 @@ export function createWebSocketSender(
  * `protoPoisoning` is the app's body policy: a frame with a `__proto__` key gets what a JSON body
  * with one gets, and under `"reject"` reads as invalid JSON.
  */
+/** `upgrade()`'s acceptance, wrapped so a handshake's route chain tells it from an early result such
+ * as a guard's `Response` or a rejected auth stage. */
+class HandshakeAccepted {
+  readonly data: unknown
+  constructor(data: unknown) {
+    this.data = data
+  }
+}
+
+const acceptHandshake = (value: unknown): unknown =>
+  value instanceof Response || isResponseResult(value) ? value : new HandshakeAccepted(value)
+
+/** The step a handshake's route chain ends in: the route's `upgrade()`, or an acceptance without data. */
+export function handshakeUpgradeStep(
+  handler: WebSocketHandler,
+): (ctx: WebSocketContext) => unknown {
+  return (ctx) => {
+    const data = handler.upgrade?.(ctx)
+    return data instanceof Promise ? data.then(acceptHandshake) : acceptHandshake(data)
+  }
+}
+
+/** The acceptance a handshake's route chain ended in, or `undefined` when the chain refused it. */
+export function acceptedHandshake(result: unknown): { readonly data: unknown } | undefined {
+  return result instanceof HandshakeAccepted ? result : undefined
+}
+
 export function wrapWebSocketMessageValidation(
   handler: WebSocketHandler,
   protoPoisoning: ProtoPoisoning = "reject",

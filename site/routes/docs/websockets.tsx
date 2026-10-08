@@ -22,9 +22,10 @@ app.listen(3000) // Bun`
 
 const LIFECYCLE = `// doc-check: skip - illustrative lifecycle (empty close/error bodies, cookie shape).
 app.ws<{ user: string }>("/chat", {
-  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens -
-  // authenticate, check origin, rate-limit. Return the per-connection data (→ ws.data,
-  // typed), or a Response to REJECT the upgrade. A thrown error rejects with 500.
+  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens, after the
+  // guards registered before this route. Return the per-connection data (→ ws.data, typed),
+  // or a Response or status(...) to REJECT the upgrade. A thrown Response rejects with it;
+  // any other throw goes to onError, then a 500.
   upgrade(c) {
     const user = c.cookies.session
     if (user === undefined) return new Response("unauthorized", { status: 401 })
@@ -35,6 +36,16 @@ app.ws<{ user: string }>("/chat", {
   close: (ws, code, reason) => {},
   error: (ws, err) => {}, // a throw in any callback routes here, never crashing the connection
 })`
+
+const GUARDED = `// doc-check: skip - illustrative: an existing auth guard and session lookup.
+app
+  .ws("/status", {})                       // registered before the guard: public
+  .authenticate(sessionAuth)               // or .use(basicAuth(...)), .derive(...), .beforeHandle(...)
+  .get("/me", (c) => c.principal)
+  .ws("/chat", {
+    // Reached only when sessionAuth accepted the handshake, exactly as GET /me is.
+    upgrade: (c) => ({ user: c.principal.id }),
+  })`
 
 const SCHEMA = `// doc-check: skip - illustrative: validated inbound frames on an existing app.
 import { t } from "@nifrajs/schema"
@@ -97,10 +108,22 @@ export default function WebSockets() {
       <h2>Lifecycle</h2>
       <p>
         Every callback is optional - <code>{"{ message }"}</code> alone is a valid echo server.{" "}
-        <code>upgrade</code> is the only one that runs before the socket opens, so it’s the one place
-        to reject a connection.
+        <code>upgrade</code> is the only callback that runs before the socket opens, so it’s where a
+        route rejects a connection or seeds its data.
       </p>
       <CodeBlock code={LIFECYCLE} />
+
+      <h2>Guards</h2>
+      <p>
+        A handshake is a <code>GET</code>, and it runs the chain an HTTP <code>GET</code> registered
+        at the same point runs: the <code>authenticate()</code> stages, <code>derive</code>s and{" "}
+        <code>beforeHandle</code>s added before <code>app.ws()</code>, then <code>upgrade</code>. So
+        auth middleware such as <code>basicAuth</code> or <code>jwt</code> guards the sockets
+        registered after it, any guard can refuse the handshake with the response it would send an
+        HTTP request, and <code>upgrade</code> reads what the guards derived. The origin check runs
+        first. A socket registered before a guard stays public, like an HTTP route there.
+      </p>
+      <CodeBlock code={GUARDED} />
 
       <h2>NifraWebSocket</h2>
       <p>

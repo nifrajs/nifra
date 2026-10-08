@@ -21,7 +21,9 @@ import { INSTALL_WS } from "./server/install.ts"
 import type { IdentityPlugin } from "./server/plugin.ts"
 import type { AnyServer } from "./server/server.ts"
 import {
+  acceptedHandshake,
   attachWebSocket,
+  handshakeUpgradeStep,
   TopicRegistry,
   wrapWebSocketMessageValidation,
 } from "./server/websocket.ts"
@@ -30,6 +32,8 @@ import type { WsRuntime } from "./server/ws-hook.ts"
 
 const WS_RUNTIME: WsRuntime = {
   wrapHandler: wrapWebSocketMessageValidation,
+  upgradeStep: handshakeUpgradeStep,
+  accepted: acceptedHandshake,
   createTopics: () => new TopicRegistry(),
   bunHandlers: createBunWsHandlers,
   attach: attachWebSocket,

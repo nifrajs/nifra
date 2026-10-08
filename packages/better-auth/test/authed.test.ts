@@ -4,6 +4,7 @@ import { server } from "@nifrajs/core"
 import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import { defineContract, implement } from "@nifrajs/core/contract"
 import { reflectRoutes } from "@nifrajs/core/reflection"
+import { websocket } from "@nifrajs/core/ws"
 import { t } from "@nifrajs/schema"
 import { isResponseResult } from "../../core/src/server/runtime-core.ts"
 
@@ -412,3 +413,22 @@ server()
     void _t
     return { id: c.principal.userId }
   })
+
+describe("authed() guards a socket registered after it", () => {
+  test("a handshake without a session is refused; with one, upgrade() reads the principal", async () => {
+    const app = server()
+      .use(websocket())
+      .use(authed(plainAuth))
+      .ws("/socket", { upgrade: (c) => ({ user: c.principal.user.id }) })
+    const handshake = (headers: Record<string, string>) =>
+      app.resolveWebSocketUpgrade(
+        new Request("http://x/socket", { headers: { upgrade: "websocket", ...headers } }),
+      )
+    const refused = await handshake({})
+    if (refused.kind !== "reject") throw new Error(`expected a rejection, got ${refused.kind}`)
+    expect(refused.response.status).toBe(401)
+    const opened = await handshake({ cookie: "session=valid" })
+    if (opened.kind !== "upgrade") throw new Error(`expected an upgrade, got ${opened.kind}`)
+    expect(opened.data).toEqual({ user: "u1" })
+  })
+})
