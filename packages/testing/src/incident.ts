@@ -18,16 +18,23 @@ export interface CapturedRequestInput {
   readonly method?: string
   readonly path: string
   readonly query?: Record<string, string>
+  readonly queryPairs?: readonly (readonly [string, string])[]
   readonly headers?: Record<string, string>
   readonly body?: unknown
+  readonly bodyEncoding?: "text"
 }
 
 export interface CapturedRequest {
   readonly method: string
   readonly path: string
+  /** The query by name; a repeated name keeps its last value. */
   readonly query?: Record<string, string>
+  /** Every query pair in order, present when `query` cannot rebuild it. Replay prefers it. */
+  readonly queryPairs?: readonly (readonly [string, string])[]
   readonly headers?: Record<string, string>
   readonly body?: unknown
+  /** `"text"`: `body` is the request text as sent, and replay sends it verbatim. Absent: JSON. */
+  readonly bodyEncoding?: "text"
 }
 
 export interface IncidentCapsule {
@@ -95,6 +102,29 @@ async function readBody(source: Request | Response): Promise<unknown> {
   return text
 }
 
+/** The request body as captured: parsed JSON when the request said so, its text otherwise. */
+async function readRequestBody(
+  request: Request,
+): Promise<{ readonly body: unknown; readonly text: boolean } | undefined> {
+  const text = await request.clone().text()
+  if (text === "") return undefined
+  if ((request.headers.get("content-type") ?? "").includes("application/json")) {
+    try {
+      return { body: JSON.parse(text), text: false }
+    } catch {}
+  }
+  return { body: text, text: true }
+}
+
+function samePairs(
+  a: readonly (readonly [string, string])[],
+  b: readonly (readonly [string, string])[],
+): boolean {
+  return (
+    a.length === b.length && a.every(([key, value], i) => b[i]?.[0] === key && b[i]?.[1] === value)
+  )
+}
+
 function pickHeaders(
   headers: Headers,
   allow: readonly string[],
@@ -118,25 +148,35 @@ export async function captureIncident(
     method: string
     path: string
     query?: Record<string, string>
+    queryPairs?: readonly (readonly [string, string])[]
     headers?: Record<string, string>
     body?: unknown
+    bodyEncoding?: "text"
   } = { method: "GET", path: "/" }
   if (request instanceof Request) {
     const url = new URL(request.url)
-    const query = Object.fromEntries(url.searchParams.entries())
+    const pairs = [...url.searchParams.entries()]
+    const query = Object.fromEntries(pairs)
     const headers = pickHeaders(request.headers, allow)
-    const body = await readBody(request)
+    const body = await readRequestBody(request)
     req.method = request.method
     req.path = url.pathname
-    if (Object.keys(query).length > 0) req.query = query
+    if (pairs.length > 0) req.query = query
+    // A repeated name, or an order an object cannot hold, is only kept by the pairs.
+    if (!samePairs(pairs, Object.entries(query))) req.queryPairs = pairs
     if (headers !== undefined) req.headers = headers
-    if (body !== undefined) req.body = body
+    if (body !== undefined) {
+      req.body = body.body
+      if (body.text) req.bodyEncoding = "text"
+    }
   } else {
     req.method = request.method ?? "GET"
     req.path = request.path
     if (request.query !== undefined) req.query = request.query
+    if (request.queryPairs !== undefined) req.queryPairs = request.queryPairs
     if (request.headers !== undefined) req.headers = request.headers
     if (request.body !== undefined) req.body = request.body
+    if (request.bodyEncoding !== undefined) req.bodyEncoding = request.bodyEncoding
   }
 
   let status: number
@@ -163,14 +203,22 @@ export async function captureIncident(
 
 function buildRequest(capsule: IncidentCapsule, origin: string): Request {
   const url = new URL(capsule.request.path, origin)
-  for (const [key, value] of Object.entries(capsule.request.query ?? {})) {
-    url.searchParams.set(key, value)
+  if (capsule.request.queryPairs !== undefined) {
+    for (const [key, value] of capsule.request.queryPairs) url.searchParams.append(key, value)
+  } else {
+    for (const [key, value] of Object.entries(capsule.request.query ?? {})) {
+      url.searchParams.set(key, value)
+    }
   }
   const headers = new Headers(capsule.request.headers)
-  const hasBody = capsule.request.body !== undefined
-  if (hasBody && !headers.has("content-type")) headers.set("content-type", "application/json")
+  const body = capsule.request.body
   const init: RequestInit = { method: capsule.request.method, headers }
-  if (hasBody) init.body = JSON.stringify(capsule.request.body)
+  if (capsule.request.bodyEncoding === "text" && typeof body === "string") {
+    init.body = body
+  } else if (body !== undefined) {
+    if (!headers.has("content-type")) headers.set("content-type", "application/json")
+    init.body = JSON.stringify(body)
+  }
   return new Request(url.toString(), init)
 }
 
@@ -295,7 +343,12 @@ export function generateRegressionTest(
   const importPath = options.importPath ?? "../src/app"
   const appExport = options.appExport ?? "app"
   const allow = new Set(options.allow ?? [])
-  const query = redactRecord(capsule.request.query, new Set(options.allowQuery ?? []), (n) => n)
+  const allowQuery = new Set(options.allowQuery ?? [])
+  const query = redactRecord(capsule.request.query, allowQuery, (n) => n)
+  const queryPairs = capsule.request.queryPairs?.map(([name, value]): readonly [string, string] => [
+    name,
+    allowQuery.has(name) ? value : REDACTED,
+  ])
   const headers = redactRecord(
     capsule.request.headers,
     new Set((options.allowHeaders ?? ["content-type"]).map((name) => name.toLowerCase())),
@@ -304,6 +357,7 @@ export function generateRegressionTest(
   const safeRequest: CapturedRequest = {
     ...capsule.request,
     ...(query !== undefined ? { query } : {}),
+    ...(queryPairs !== undefined ? { queryPairs } : {}),
     ...(headers !== undefined ? { headers } : {}),
     ...(capsule.request.body !== undefined
       ? { body: redactForEmission(capsule.request.body, allow) }

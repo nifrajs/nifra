@@ -126,6 +126,30 @@ describe("replayIncident / assertIncidentReplays", () => {
     )
   })
 
+  test("replays a repeated query parameter and a text body exactly as captured", async () => {
+    const exact = {
+      fetch: async (request: Request) => {
+        const q = new URL(request.url).searchParams.getAll("q")
+        const text = await request.text()
+        const ok = q.join(",") === "first,second" && text === "raw text"
+        return new Response(null, { status: ok ? 200 : 400 })
+      },
+    }
+    const original = () =>
+      new Request(`${ORIGIN}/search?q=first&q=second`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "raw text",
+      })
+    const capsule = await captureIncident(original(), await exact.fetch(original()))
+    expect(capsule.request.queryPairs).toEqual([
+      ["q", "first"],
+      ["q", "second"],
+    ])
+    expect(capsule.request.bodyEncoding).toBe("text")
+    expect(await replayIncident(exact, capsule)).toMatchObject({ reproduced: true, status: 200 })
+  })
+
   test("catches a response-shape regression even when status matches", async () => {
     const capsule = await captureIncident(
       { method: "GET", path: "/ping" },
@@ -185,6 +209,16 @@ describe("generateRegressionTest", () => {
     expect(kept).toContain("SYNTHETIC_BEARER")
     expect(kept).toContain("SYNTHETIC_NOTE")
     expect(kept).not.toContain("SANITIZE BEFORE COMMITTING")
+  })
+
+  test("repeated query values are redacted in their pairs too", async () => {
+    const capsule = await captureIncident(
+      new Request(`${ORIGIN}/ping?token=SECRET_ONE&token=SECRET_TWO`),
+      { status: 200 },
+    )
+    const emitted = generateRegressionTest(capsule)
+    expect(emitted).not.toContain("SECRET_ONE")
+    expect(emitted).not.toContain("SECRET_TWO")
   })
 
   test("allow-list keeps a safe value verbatim and drops the banner when nothing was redacted", async () => {
