@@ -225,7 +225,9 @@ export default function Troubleshooting() {
       <p>
         <strong>The build honours the declaration on its own</strong> -{" "}
         <code>buildClient</code> and <code>buildServer</code> inject the resolver, so bundled output
-        already loads one copy. Unbundled phases do not: Bun's <em>runtime</em> resolver never offers a
+        already loads one copy, and so does the browser bundle <code>nifra dev</code> serves on Bun.
+        Listing <code>singleCopyPlugin()</code> in <code>clientPlugins</code> as well is harmless: dev
+        runs that instance in the resolver's place instead of a second one. Unbundled phases do not: Bun's <em>runtime</em> resolver never offers a
         bare specifier to a plugin, so <code>bun test</code>, <code>bun run</code>, and preloaded
         scripts still load both copies unless you preload the registrar:
       </p>
