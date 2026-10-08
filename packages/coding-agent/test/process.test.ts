@@ -12,7 +12,7 @@ function chunks(...parts: string[]): ReadableStream<Uint8Array> {
   })
 }
 
-test("an abort stops the read with what arrived so far", async () => {
+test("an abort stops the read with what arrived so far, even when cancelling the source fails", async () => {
   const controller = new AbortController()
   const waiting = Promise.withResolvers<void>()
   let pulls = 0
@@ -27,6 +27,9 @@ test("an abort stops the read with what arrived so far", async () => {
         }
         waiting.resolve()
         return new Promise(() => {})
+      },
+      cancel() {
+        throw new Error("cancel failed")
       },
     },
     { highWaterMark: 0 },
