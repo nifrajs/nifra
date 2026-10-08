@@ -372,6 +372,8 @@ export function evaluateCapabilityAssurance(
   const routes: AssuredCapabilityRoute[] = []
 
   for (const route of evidenceSet.reflectedRoutes ?? reflectRoutes(source)) {
+    // A socket declares no capabilities, so this policy does not govern its handlers.
+    if (route.method === "WS") continue
     const declared = route.capabilities ?? []
     const supplied = evidenceByRoute.get(routeKey(route.method, route.path))
     const covered = supplied?.covered === true

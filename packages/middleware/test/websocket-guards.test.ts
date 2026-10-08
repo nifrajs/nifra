@@ -1,7 +1,23 @@
 import { describe, expect, test } from "bun:test"
-import { type AnyServer, server, type WebSocketUpgradeOutcome } from "@nifrajs/core"
+import {
+  type AnyServer,
+  authenticated,
+  rejected,
+  server,
+  type WebSocketUpgradeOutcome,
+} from "@nifrajs/core"
+import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { reflectRoutes } from "@nifrajs/core/reflection"
 import { websocket } from "@nifrajs/core/ws"
-import { apiKey, basicAuth, bearer, type JwtClaims, jwt } from "../src/index.ts"
+import {
+  apiKey,
+  basicAuth,
+  bearer,
+  type JwtClaims,
+  jwt,
+  MemoryStore,
+  rateLimit,
+} from "../src/index.ts"
 
 /**
  * A socket registered after an auth middleware is guarded by it, exactly as an HTTP `GET` there is:
@@ -155,4 +171,58 @@ describe("first-party auth guards a socket registered after it", () => {
       expect(signedIn.data).toEqual({ who: guard.principal })
     })
   }
+})
+
+const evidenceOf = (app: AnyServer): readonly string[] =>
+  (reflectRoutes(app).find((route) => route.method === "WS")?.assurance ?? []).map(
+    (item) => item.id,
+  )
+
+describe("a socket claims authentication exactly when its handshake refuses an anonymous caller", () => {
+  const cases: ReadonlyArray<readonly [string, AnyServer, boolean]> = [
+    ...GUARDS.flatMap(([name, make]) => [
+      [`${name}, required`, make(false).app, true] as const,
+      [`${name}, optional`, make(true).app, false] as const,
+    ]),
+    [
+      "authenticate()",
+      withSocket(
+        base().authenticate({
+          id: "test-auth",
+          mode: "sync",
+          run: (input) =>
+            input.headers.get("authorization") === "Bearer good"
+              ? authenticated("ada")
+              : rejected(),
+        }),
+        () => "ada",
+      ),
+      true,
+    ],
+    ["no guard", withSocket(base(), () => null), false],
+  ]
+  for (const [name, app, guarded] of cases) {
+    test(name, async () => {
+      const claimed = evidenceOf(app).includes(NIFRA_ASSURANCE.AUTHENTICATED)
+      const refused = (await handshake(app, {})).kind === "reject"
+      expect(claimed).toBe(guarded)
+      expect(refused).toBe(guarded)
+    })
+  }
+})
+
+describe("rateLimit() covers a socket's handshake", () => {
+  test("the socket reflects the evidence and the limit refuses the next handshake", async () => {
+    const app = withSocket(
+      base().use(
+        rateLimit({ store: new MemoryStore(), max: 1, windowMs: 60_000, key: () => "caller" }),
+      ),
+      () => null,
+    )
+    expect(evidenceOf(app)).toEqual([NIFRA_ASSURANCE.RATE_LIMITED])
+    expect((await handshake(app, {})).kind).toBe("upgrade")
+    const limited = await handshake(app, {})
+    if (limited.kind !== "reject") throw new Error(`expected a rejection, got ${limited.kind}`)
+    expect(limited.response.status).toBe(429)
+  })
 })

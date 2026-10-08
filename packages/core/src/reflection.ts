@@ -15,7 +15,9 @@ import {
 import { normalizeRouteCapabilities } from "./internal/capability-runtime.ts"
 import {
   type AssuranceEvidence,
+  assuranceEvidenceFor,
   evidenceProvenance,
+  NIFRA_ASSURANCE_IDS,
   validEvidence,
 } from "./internal/route-assurance.ts"
 import { NIFRA_BACKEND_EVIDENCE } from "./mount.ts"
@@ -263,9 +265,44 @@ const reflectedAssurance = (value: unknown): readonly AssuranceEvidence[] | unde
   return evidence.length > 0 ? Object.freeze(evidence) : undefined
 }
 
+/** The evidence a WebSocket handshake enforces: its route chain runs the auth guards, and the app's
+ * request hooks run the rate limiter. Anything else a `GET` at the same path carries comes from code
+ * a socket's message handlers never pass through, so a socket does not claim it. */
+const HANDSHAKE_EVIDENCE: ReadonlySet<string> = new Set([
+  NIFRA_ASSURANCE_IDS.AUTHENTICATED,
+  NIFRA_ASSURANCE_IDS.RATE_LIMITED,
+])
+
+/** A server's WebSocket routes as `"WS"` routes, read off its own table the way `reflectMounts` reads
+ * `fetchMounts`, so serving pays nothing for them. */
+const reflectedSockets = (source: unknown): ReflectedRoute[] => {
+  const record = recordOf(source)
+  const sockets = record?.wsRoutes
+  if (!Array.isArray(sockets)) return []
+  const global = Array.isArray(record?.globalAssurance) ? record.globalAssurance : []
+  const reflected: ReflectedRoute[] = []
+  for (const candidate of sockets) {
+    const socket = recordOf(candidate)
+    if (typeof socket?.path !== "string" || !Array.isArray(socket.assurance)) continue
+    // Declarations scoped by method match the `GET` a handshake is.
+    const evidence = reflectedAssurance(
+      assuranceEvidenceFor([...socket.assurance, ...global], "GET", socket.path).filter((item) =>
+        HANDSHAKE_EVIDENCE.has(item.id),
+      ),
+    )
+    reflected.push(
+      evidence === undefined
+        ? { method: "WS", path: socket.path }
+        : { method: "WS", path: socket.path, assurance: evidence },
+    )
+  }
+  return reflected
+}
+
 /**
- * Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries
- * are ignored; a missing/throwing `routes()` method yields an empty array.
+ * Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's
+ * WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing
+ * `routes()` method yields only the sockets.
  */
 export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
   const reflected: ReflectedRoute[] = []
@@ -296,6 +333,7 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
       ...(tool !== undefined ? { tool } : {}),
     })
   }
+  reflected.push(...reflectedSockets(source))
   return reflected
 }
 

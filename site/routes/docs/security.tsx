@@ -255,6 +255,9 @@ export default defineAssuranceConfig({
           NIFRA_ASSURANCE.BODY_BOUNDED] },
       { name: "read", match: { methods: ["GET", "HEAD"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      // WebSocket routes reflect under the pseudo-method "WS".
+      { name: "socket", match: { methods: ["WS"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED] },
     ],
   },
 })
@@ -743,6 +746,13 @@ export default function Security() {
         while authentication and other order-scoped hooks cover only routes registered after them.
         Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
         runs only through reflection or <code>nifra assure</code>, so requests pay no assurance cost.
+      </p>
+      <p>
+        WebSocket routes are reflected under the pseudo-method <code>"WS"</code>, so a policy classifies
+        every socket too. A handshake runs the auth guards registered before the socket and the
+        app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
+        It never claims evidence whose enforcement its message handlers bypass, such as a durable
+        command journal. Capability assurance does not cover sockets: they declare no capabilities.
       </p>
 
       <h2>Effect assurance - declared capability versus provenance</h2>

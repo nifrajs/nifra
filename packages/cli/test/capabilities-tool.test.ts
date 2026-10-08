@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
 import { all, method } from "@nifrajs/core/methods"
+import { websocket } from "@nifrajs/core/ws"
 import {
   collectCapabilityProjectReport,
   diffCapabilitySnapshots,
@@ -168,6 +169,29 @@ describe("project provenance firewall", () => {
         (route) => route.method === "PURGE" && route.path === "/cache/:key",
       ),
     ).toMatchObject({ covered: true })
+    expect(project.report).toMatchObject({ ok: true, findings: [] })
+  })
+
+  test("a socket is outside the capability policy: no route, no finding", async () => {
+    const cwd = join(FIXTURES, "socket")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import "app-db/read"
+       export const backend = server()
+         .get("/orders", { capabilities: ["db.read"] }, () => [])
+         .ws("/chat", {})`,
+    )
+    const app = server()
+      .use(websocket())
+      .get("/orders", { capabilities: ["db.read"] }, () => [])
+      .ws("/chat", {})
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.routes.map((route) => `${route.method} ${route.path}`)).toEqual([
+      "GET /orders",
+    ])
     expect(project.report).toMatchObject({ ok: true, findings: [] })
   })
 

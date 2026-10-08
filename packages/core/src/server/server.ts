@@ -874,7 +874,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
-  private wsRouteCount: number
+  /** Each socket path and the evidence declarations its handshake captured; reflection reads it. */
+  private readonly wsRoutes: {
+    readonly path: string
+    readonly assurance: readonly AssuranceDeclaration[]
+  }[]
   /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
   private wsMountsCheckedAt = -1
   /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
@@ -1022,7 +1026,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.routePrefix = ""
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
-    this.wsRouteCount = 0
+    this.wsRoutes = []
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
@@ -1231,7 +1235,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size + this.wsRouteCount, "derive")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "derive")
     return this as unknown as Server<
       R,
       Ctx & ContextExtensionOf<ReturnType<H>>,
@@ -1275,7 +1279,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size + this.wsRouteCount, "decorate")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "decorate")
     return this as unknown as Server<R, Ctx & Record<K, V>, HookOutput>
   }
 
@@ -1305,7 +1309,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size + this.wsRouteCount, "beforeHandle")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "beforeHandle")
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1385,7 +1389,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size + this.wsRouteCount, "onError")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "onError")
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1991,21 +1995,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const wrapped = runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning)
     const upgrade = runtime.upgradeStep(wrapped)
     for (const form of expandOptionalParams(path)) {
+      // The chain an HTTP `GET` to `form` would capture now, ending in `upgrade()` instead of a
+      // handler. `afterHandle` and `around` are left out: they wrap a response, and an accepted
+      // handshake has none.
+      const { entry, assurance } = this.prepareRoute("GET", form, undefined, upgrade)
+      const chain = { ...entry, afterHandle: [] }
       this.wsRouter.add("GET", form, {
         handler: wrapped,
-        chain: this.handshakeChain(form, upgrade),
+        chain: { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) },
       })
+      this.wsRoutes.push({ path: form, assurance })
     }
-    this.wsRouteCount += 1
     wsChanges += 1
     return this as never
-  }
-
-  /** The chain an HTTP `GET` to `path` would capture now, ending in `upgrade()` instead of a handler.
-   * `afterHandle` and `around` are left out: they wrap a response, and an accepted handshake has none. */
-  private handshakeChain(path: string, upgrade: (context: never) => unknown): RouteEntry {
-    const chain = { ...this.prepareRoute("GET", path, undefined, upgrade).entry, afterHandle: [] }
-    return { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) }
   }
 
   /**
@@ -2397,7 +2399,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * counts. `seen` ends a mount cycle (an app mounted under itself to alias a prefix).
    */
   [GET_WS_RUNTIME](seen?: Set<unknown>): WsRuntime | null | undefined {
-    return this.wsRouteCount > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
+    return this.wsRoutes.length > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
   }
 
   /** The `[GET_WS_RUNTIME]` answer for the apps mounted here alone, whatever this app's own routes. */
@@ -2466,7 +2468,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     const source = other as unknown as Server<Registry, EmptyContext>
-    if (source.wsRouteCount > 0) {
+    if (source.wsRoutes.length > 0) {
       throw new RouteConfigError(
         "INVALID_PATH",
         "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
@@ -2555,7 +2557,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError(`${label} builder must return its group synchronously`)
     }
     if (
-      scope.wsRouteCount > 0 ||
+      scope.wsRoutes.length > 0 ||
       scope.fetchMounts.length > 0 ||
       scope.catalog.entries().some((route) => route.descriptor.tool !== undefined)
     ) {
@@ -2565,7 +2567,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(scope, scope.catalog.size, scope.wsRouteCount, this.logger)
+      sealHookAudit(scope, scope.catalog.size, scope.wsRoutes.length, this.logger)
     this.adopt(scope, fullPrefix, this.globalAssurance.length)
     return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
   }
@@ -2835,7 +2837,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Seal once on the first request so test servers (no `listen()`) still get the dead-hook check.
     // After that it is a single boolean read - the per-request cost the option promises to keep at zero.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.wsRouteCount, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
     return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
@@ -3019,7 +3021,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<NodeServeOutcome> {
     // Seal once on the Node-direct lane too - it can bypass `fetchSource` entirely (hookless outcome).
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.wsRouteCount, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
     // be materialized with a direct-write marker and return to the socket path when the hook mutates
@@ -3307,7 +3309,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<WebSocketUpgradeOutcome> {
     // Before any header is read: Deno only materializes a request's headers when asked, and that
     // costs a plain request measurably.
-    if (this.wsRouteCount === 0 && !this.mountsTakeUpgrades()) return WS_PASS
+    if (this.wsRoutes.length === 0 && !this.mountsTakeUpgrades()) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
     // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
     // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
@@ -3345,7 +3347,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
       if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
       const { handler, chain } = match.payload
-      // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
+      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
       const pubsub = this.topics as TopicRegistry
       const runtime = this.wsRuntime as WsRuntime
       // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
@@ -6173,7 +6175,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
-      this.wsRouteCount > 0 ||
+      this.wsRoutes.length > 0 ||
       this.preRouteMountCount > 0 ||
       this.clientIpTrust !== undefined
     ) {
@@ -6330,7 +6332,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     // Seal before Bun.serve: in `"error"` mode this throws instead of leaving a bound port behind.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.wsRouteCount, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Bun's `Server` is the concrete handle; we expose the stable `RunningServer`
     // subset so the public types don't depend on the ambient `Bun` global. The cast
     // bridges them - Bun's `.port` is `number | undefined` (undefined only for unix
@@ -6341,7 +6343,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // `websocket` handlers are one shared dispatcher - each connection's `ws.data.handler` is the
     // matched route's handler, set by `server.upgrade`.
     // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
-    // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
+    // because a socket route means ws() ran, and ws() requires the runtime at registration.
     // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
     // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
     // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
@@ -6358,7 +6360,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
     // the parent.
     const nativePubsub =
-      this.wsRouteCount > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
+      this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
     // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
     // an explicit undefined as a value on some option paths, and omitting is what selects its own

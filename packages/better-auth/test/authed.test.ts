@@ -419,6 +419,7 @@ describe("authed() guards a socket registered after it", () => {
     const app = server()
       .use(websocket())
       .use(authed(plainAuth))
+      .get("/me", () => "ok")
       .ws("/socket", { upgrade: (c) => ({ user: c.principal.user.id }) })
     const handshake = (headers: Record<string, string>) =>
       app.resolveWebSocketUpgrade(
@@ -430,5 +431,9 @@ describe("authed() guards a socket registered after it", () => {
     const opened = await handshake({ cookie: "session=valid" })
     if (opened.kind !== "upgrade") throw new Error(`expected an upgrade, got ${opened.kind}`)
     expect(opened.data).toEqual({ user: "u1" })
+    const [http, socket] = reflectRoutes(app)
+    expect(socket?.method).toBe("WS")
+    expect(socket?.assurance).toEqual(http?.assurance)
+    expect(socket?.assurance?.map((item) => item.id)).toContain(NIFRA_ASSURANCE.AUTHENTICATED)
   })
 })

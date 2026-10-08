@@ -2588,7 +2588,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
-  Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
+  Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing `routes()` method yields only the sockets.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
 

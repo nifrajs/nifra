@@ -353,6 +353,7 @@ export async function collectCapabilityProjectReport(
   const truncations: CapabilityProvenanceTruncation[] = []
   const reflectedRoutes = options.routes ?? reflectRoutes(source)
   for (const route of reflectedRoutes) {
+    if (route.method === "WS") continue
     const modules = new Set(automatic.get(routeKey(route.method, route.path)) ?? [])
     for (const association of policy.provenance.routeModules ?? []) {
       if (
