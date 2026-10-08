@@ -255,9 +255,13 @@ function withDisconnect(
 }
 
 function sseReplayResponse(turnId: string, replay: AgentEvidenceReplay): Response {
+  let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller)
+      const deliver = sseSender(controller)
+      const send: typeof deliver = (event, data, id) => {
+        if (!detached) deliver(event, data, id)
+      }
       try {
         for (const evidence of replay.evidence) send("step", evidence, evidence.seq)
         if (replay.live !== undefined)
@@ -268,8 +272,13 @@ function sseReplayResponse(turnId: string, replay: AgentEvidenceReplay): Respons
       } catch {
         send("error", { turnId, error: "run_failed" })
       } finally {
-        controller.close()
+        if (!detached) controller.close()
       }
+    },
+    cancel() {
+      detached = true
+      // Only this view detaches; the logged run keeps recording for the next reconnect.
+      void replay.live?.return?.()
     },
   })
   return sseHeaders(body)

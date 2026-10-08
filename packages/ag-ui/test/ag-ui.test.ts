@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentDefinition, AgentModelPort, AgentPorts } from "@nifrajs/agent"
 import { MemoryAgentStateStore } from "@nifrajs/agent"
-import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
+import { type AgentEvidenceLog, createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
 import { defineTool } from "@nifrajs/core/tool-contract"
 import { t } from "@nifrajs/schema"
 import { type AgUIMountableApp, type AgUIRouteContext, mountAgUI } from "../src/index.ts"
@@ -38,6 +38,28 @@ function definition(
     output,
     tools,
   }
+}
+
+/** A log whose live replay views count how often their consumer returned them. */
+function countingLog(): { log: AgentEvidenceLog; returned: () => number } {
+  const base = createMemoryAgentEvidenceLog()
+  let returned = 0
+  const log: AgentEvidenceLog = {
+    ...base,
+    replay: async (turnId, afterSeq) => {
+      const replay = await base.replay(turnId, afterSeq)
+      const live = replay?.live
+      if (live?.return !== undefined) {
+        const stop = live.return.bind(live)
+        live.return = () => {
+          returned++
+          return stop()
+        }
+      }
+      return replay
+    },
+  }
+  return { log, returned: () => returned }
 }
 
 function captureApp(): {
@@ -522,6 +544,38 @@ describe("mountAgUI resumable streams", () => {
     release()
     const replayed = framed(await (await call(replayInput({ "last-event-id": "0" }))).text())
     expect(replayed.types).not.toContain("RUN_ERROR")
+    expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
+  })
+
+  test("a replay connection that closes detaches its live view, and the run keeps recording", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { log, returned } = countingLog()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports({
+        model: {
+          complete: async () => {
+            await gate
+            return { kind: "output", value: { answer: "late" } }
+          },
+        },
+      }),
+      evidenceLog: log,
+    })
+
+    const first = (await call(replayInput({}))).body!.getReader()
+    await first.read()
+    const watcher = (await call(replayInput({ "last-event-id": "0" }))).body!.getReader()
+    await watcher.read()
+    await watcher.cancel()
+    expect(returned()).toBe(1)
+    release()
+    await first.cancel()
+    const replayed = framed(await (await call(replayInput({ "last-event-id": "0" }))).text())
     expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
   })
 

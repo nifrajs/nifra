@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { createMemoryAgentEvidenceLog } from "../src/events.ts"
+import { type AgentEvidenceLog, createMemoryAgentEvidenceLog } from "../src/events.ts"
 import type { AgentModelPort, AgentPorts } from "../src/index.ts"
 import { type AgentMountableApp, type AgentRouteContext, mountAgent } from "../src/mount.ts"
 
@@ -35,6 +35,28 @@ function captureApp(): {
 
 function outputModel(value: unknown): AgentModelPort {
   return { complete: () => ({ kind: "output", value }) }
+}
+
+/** A log whose live replay views count how often their consumer returned them. */
+function countingLog(): { log: AgentEvidenceLog; returned: () => number } {
+  const base = createMemoryAgentEvidenceLog()
+  let returned = 0
+  const log: AgentEvidenceLog = {
+    ...base,
+    replay: async (turnId, afterSeq) => {
+      const replay = await base.replay(turnId, afterSeq)
+      const live = replay?.live
+      if (live?.return !== undefined) {
+        const stop = live.return.bind(live)
+        live.return = () => {
+          returned++
+          return stop()
+        }
+      }
+      return replay
+    },
+  }
+  return { log, returned: () => returned }
 }
 
 function post(body: unknown, headers: Record<string, string> = {}): Request {
@@ -232,6 +254,42 @@ describe("mountAgent resumable streams", () => {
     )
     const text = await replay.text()
     expect(text).toContain("event: result")
+    expect(text).toContain("late")
+  })
+
+  test("a replay connection that closes detaches its live view, and the run keeps recording", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const model: AgentModelPort = {
+      complete: async () => {
+        await gate
+        return { kind: "output", value: { answer: "late" } }
+      },
+    }
+    const { log, returned } = countingLog()
+    mountAgent(app, { agent: definition, ports: ports(model), evidenceLog: log })
+    const replayRequest = () =>
+      post(
+        { input: { prompt: "hey" }, turnId: "run-watched" },
+        { accept: "text/event-stream", "last-event-id": "0" },
+      )
+
+    const first = (
+      await call(
+        post({ input: { prompt: "hey" }, turnId: "run-watched" }, { accept: "text/event-stream" }),
+      )
+    ).body!.getReader()
+    await first.read()
+    // The history before the cursor is empty, so cancel without waiting for a frame.
+    const watcher = (await call(replayRequest())).body!.getReader()
+    await watcher.cancel()
+    expect(returned()).toBe(1)
+    release()
+    await first.cancel()
+    const text = await (await call(replayRequest())).text()
     expect(text).toContain("late")
   })
 

@@ -528,7 +528,7 @@
     "name": "AgentEvidenceStreamOptions",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentEvidenceStreamOptions {\n    /** Maximum number of produced evidence items waiting for a consumer. Default 1024. */\n    readonly maxQueueSize?: number;\n}",
+    "signature": "export interface AgentEvidenceStreamOptions {\n    /** Maximum number of produced evidence items waiting for a consumer. Default 1024. */\n    readonly maxQueueSize?: number;\n    /** Called once when the consumer stops reading through `return()`, so a producer can drop it. */\n    readonly onReturn?: () => void;\n}",
     "doc": "/** Options for the lifecycle evidence stream. */"
   },
   {
@@ -8225,7 +8225,7 @@
     "name": "MemoryAgentEvidenceLogOptions",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /**\n     * Maximum retained turns. Opening one more evicts the oldest finished turn, or the oldest turn when\n     * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.\n     */\n    readonly maxTurns?: number;\n}"
+    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /**\n     * Maximum retained turns. Opening one more evicts the oldest finished turn, or the oldest turn when\n     * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.\n     */\n    readonly maxTurns?: number;\n    /**\n     * Maximum live replays attached to one running turn. One more ends the oldest live view, which then\n     * waits for the result without further steps. Default 64.\n     */\n    readonly maxSubscribers?: number;\n}"
   },
   {
     "name": "MemoryAgentStateStore",

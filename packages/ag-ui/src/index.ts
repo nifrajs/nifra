@@ -384,9 +384,13 @@ function sseReplayResponse(
   replay: AgentEvidenceReplay,
   maxOutputBytes: number,
 ): Response {
+  let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller, maxOutputBytes)
+      const deliver = sseSender(controller, maxOutputBytes)
+      const send: SseSend = (event, id) => {
+        if (!detached) deliver(event, id)
+      }
       send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
       send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
       try {
@@ -407,8 +411,13 @@ function sseReplayResponse(
           // The output budget itself may be exhausted; the stream still closes below.
         }
       } finally {
-        controller.close()
+        if (!detached) controller.close()
       }
+    },
+    cancel() {
+      detached = true
+      // Only this view detaches; the logged run keeps recording for the next reconnect.
+      void replay.live?.return?.()
     },
   })
   return sseHeaders(body)

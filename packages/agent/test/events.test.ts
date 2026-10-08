@@ -87,6 +87,38 @@ describe("memory agent evidence log", () => {
     expect(await replay.result).toBe("done")
   })
 
+  test("a returned live replay stops receiving evidence", async () => {
+    const log = createMemoryAgentEvidenceLog()
+    const port = log.open("turn-returned")
+    let visits = 0
+    for (let i = 0; i < 100; i++) {
+      const live = (await log.replay("turn-returned", 0))?.live
+      if (live === undefined) throw new Error("expected live replay")
+      const step = live.step.bind(live)
+      live.step = (item) => {
+        visits++
+        step(item)
+      }
+      await live.return?.()
+    }
+    await port.step(evidence(1))
+    expect(visits).toBe(0)
+  })
+
+  test("live replays per running turn are capped, ending the oldest", async () => {
+    const log = createMemoryAgentEvidenceLog({ maxSubscribers: 2 })
+    const port = log.open("turn-capped")
+    const views = []
+    for (let i = 0; i < 3; i++) {
+      const live = (await log.replay("turn-capped", 0))?.live
+      if (live === undefined) throw new Error("expected live replay")
+      views.push(live)
+    }
+    await port.step(evidence(1))
+    expect(await views[0]?.next()).toEqual({ done: true, value: undefined })
+    expect(await views[2]?.next()).toEqual({ done: false, value: evidence(1) })
+  })
+
   test("reopening a finished turn appends evidence and defers a fresh result", async () => {
     const log = createMemoryAgentEvidenceLog()
     const first = log.open("turn-resume")
