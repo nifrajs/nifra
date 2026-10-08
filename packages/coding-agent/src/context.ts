@@ -1,4 +1,4 @@
-import { readBoundedText } from "./process.ts"
+import { runBoundedProcess } from "./process.ts"
 
 export interface NifraContextOptions {
   readonly cwd: string
@@ -18,25 +18,19 @@ export interface NifraContextResult {
 
 /** Project discovery kept outside the framework runtime; it is only spawned when an agent asks for it. */
 export async function runNifraContext(options: NifraContextOptions): Promise<NifraContextResult> {
-  const proc = Bun.spawn([options.command ?? "nifra", "context"], {
-    cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: safeEnv(options.env),
-  })
   const timeoutMs = options.timeoutMs ?? 30_000
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
   try {
-    const [stdout, stderr, status] = await Promise.all([
-      readBoundedText(proc.stdout, options.maxOutputBytes ?? 1_048_576),
-      readBoundedText(proc.stderr, options.maxOutputBytes ?? 1_048_576),
-      proc.exited,
-    ])
+    const maxOutputBytes = options.maxOutputBytes ?? 1_048_576
+    const { stdout, stderr, status, timedOut } = await runBoundedProcess(
+      [options.command ?? "nifra", "context"],
+      {
+        cwd: options.cwd,
+        env: safeEnv(options.env),
+        timeoutMs,
+        maxStdoutBytes: maxOutputBytes,
+        maxStderrBytes: maxOutputBytes,
+      },
+    )
     let report: unknown
     try {
       report = JSON.parse(stdout.text)
@@ -56,8 +50,6 @@ export async function runNifraContext(options: NifraContextOptions): Promise<Nif
       status: null,
       error: error instanceof Error ? error.message : String(error),
     }
-  } finally {
-    clearTimeout(timer)
   }
 }
 

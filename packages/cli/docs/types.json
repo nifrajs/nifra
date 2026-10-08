@@ -20741,7 +20741,8 @@
     "name": "readBoundedText",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare function readBoundedText(stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number): Promise<BoundedText>;"
+    "signature": "export declare function readBoundedText(stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number, signal?: AbortSignal): Promise<BoundedText>;",
+    "doc": "/** Read at most `maxBytes` of `stream`; `signal` stops the read early with what arrived so far. */"
   },
   {
     "name": "readBoundedTransportBytes",

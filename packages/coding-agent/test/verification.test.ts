@@ -30,6 +30,38 @@ describe("runNifraVerification", () => {
     }
   })
 
+  test.skipIf(process.platform === "win32")(
+    "a timeout ends a child that ignores SIGTERM and the process it started",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-verify-timeout-"))
+      try {
+        const pidFile = join(dir, "grandchild.pid")
+        const script = join(dir, "stubborn.ts")
+        await writeFile(
+          script,
+          [
+            `const grandchild = Bun.spawn([process.execPath, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdout: "inherit", stderr: "inherit" })`,
+            `await Bun.write(${JSON.stringify(pidFile)}, String(grandchild.pid))`,
+            `process.on("SIGTERM", () => {})`,
+            `setInterval(() => {}, 1000)`,
+          ].join("\n"),
+        )
+        const result = await runNifraVerification("check", {
+          cwd: dir,
+          command: process.execPath,
+          commandArgs: [script],
+          timeoutMs: 500,
+        })
+        expect(result.ok).toBe(false)
+        expect(result.error).toContain("timed out")
+        const grandchild = Number(await Bun.file(pidFile).text())
+        expect(() => process.kill(grandchild, 0)).toThrow()
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
   test("turns a failed gate into a bounded repair task", () => {
     const task = createVerificationRepairTask(
       { name: "check", ok: false, status: 1, output: "diagnostic" },

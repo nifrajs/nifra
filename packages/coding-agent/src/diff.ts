@@ -1,5 +1,5 @@
 import { publicErrorDetails } from "./errors.ts"
-import { readBoundedText } from "./process.ts"
+import { runBoundedProcess } from "./process.ts"
 
 export interface ProjectDiffOptions {
   readonly cwd: string
@@ -29,27 +29,17 @@ export async function readProjectDiff(options: ProjectDiffOptions): Promise<Proj
     maxOutputBytes > 16 * 1024 * 1024
   )
     throw new RangeError("project diff: maxOutputBytes is invalid")
-  const proc = Bun.spawn(
-    ["git", "--no-pager", "diff", "HEAD", "--no-ext-diff", "--unified=3", "--"],
-    {
-      cwd: options.cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: safeEnv(),
-    },
-  )
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
   try {
-    const [stdout, stderr, status] = await Promise.all([
-      readBoundedText(proc.stdout, maxOutputBytes),
-      readBoundedText(proc.stderr, Math.min(maxOutputBytes, 64 * 1024)),
-      proc.exited,
-    ])
+    const { stdout, stderr, status, timedOut } = await runBoundedProcess(
+      ["git", "--no-pager", "diff", "HEAD", "--no-ext-diff", "--unified=3", "--"],
+      {
+        cwd: options.cwd,
+        env: safeEnv(),
+        timeoutMs,
+        maxStdoutBytes: maxOutputBytes,
+        maxStderrBytes: Math.min(maxOutputBytes, 64 * 1024),
+      },
+    )
     return {
       ok: !timedOut && status === 0,
       status,
@@ -65,8 +55,6 @@ export async function readProjectDiff(options: ProjectDiffOptions): Promise<Proj
       error: details.message,
       ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
-  } finally {
-    clearTimeout(timer)
   }
 }
 

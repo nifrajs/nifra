@@ -1144,7 +1144,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
 - **parseSessionEvidenceRecord** _(function)_ - `parseSessionEvidenceRecord: (value: unknown) => SessionEvidenceRecord`
   Parse one evidence record strictly. Payload-bearing or unknown fields are rejected.
-- **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number) => Promise<BoundedText>`
+- **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number, signal?: AbortSignal) => Promise<BoundedText>`
+  Read at most `maxBytes` of `stream`; `signal` stops the read early with what arrived so far.
 - **readProjectDiff** _(function)_ - `readProjectDiff: (options: ProjectDiffOptions) => Promise<ProjectDiffResult>`
   Read a bounded, non-interactive git diff for review surfaces. No user-supplied git arguments are accepted.
 - **readReplayEvents** _(function)_ - `readReplayEvents: (path: string) => Promise<readonly AgentEvent[]>`

@@ -1,5 +1,5 @@
 import { publicErrorDetails } from "./errors.ts"
-import { readBoundedText } from "./process.ts"
+import { type BoundedProcessResult, runBoundedProcess } from "./process.ts"
 
 export interface VerificationResult {
   readonly name: "check" | "assure" | "test"
@@ -108,56 +108,35 @@ export async function runNifraReview(options: ReviewOptions): Promise<ReviewExec
   const args = ["review", "--json"]
   if (options.strict === true) args.push("--strict")
   if (options.diff !== undefined) args.push("--diff", options.diff)
-  let proc: ReturnType<typeof Bun.spawn>
+  const maxOutputBytes = options.maxOutputBytes ?? 1_048_576
+  let run: BoundedProcessResult
   try {
-    proc = Bun.spawn([command, ...commandArgs, ...args], {
+    run = await runBoundedProcess([command, ...commandArgs, ...args], {
       cwd: options.cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
       env: safeEnv(options.env),
+      timeoutMs: options.timeoutMs ?? 120_000,
+      maxStdoutBytes: maxOutputBytes,
+      maxStderrBytes: maxOutputBytes,
     })
   } catch {
     return { name: "review", ok: false, status: null, errorCode: "spawn-failed" }
   }
-  const timeoutMs = options.timeoutMs ?? 120_000
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
+  const { stdout, stderr, status } = run
+  if (run.timedOut) return { name: "review", ok: false, status, errorCode: "timeout" }
+  if (stdout.truncated || stderr.truncated)
+    return { name: "review", ok: false, status, errorCode: "output-truncated" }
   try {
-    const [stdout, stderr, status] = await Promise.all([
-      readBoundedText(proc.stdout, options.maxOutputBytes ?? 1_048_576),
-      readBoundedText(proc.stderr, options.maxOutputBytes ?? 1_048_576),
-      proc.exited,
-    ])
-    void stderr
-    if (timedOut) return { name: "review", ok: false, status, errorCode: "timeout" }
-    if (stdout.truncated || stderr.truncated)
-      return { name: "review", ok: false, status, errorCode: "output-truncated" }
-    try {
-      const raw = JSON.parse(stdout.text) as unknown
-      const { parseReviewReport } = await import("@nifrajs/agent-review")
-      const report = await parseReviewReport(raw)
-      return {
-        name: "review",
-        ok: status === 0 && report.ok,
-        status,
-        report,
-      }
-    } catch {
-      return { name: "review", ok: false, status, errorCode: "invalid-report" }
-    }
-  } catch {
+    const raw = JSON.parse(stdout.text) as unknown
+    const { parseReviewReport } = await import("@nifrajs/agent-review")
+    const report = await parseReviewReport(raw)
     return {
       name: "review",
-      ok: false,
-      status: null,
-      errorCode: timedOut ? "timeout" : "spawn-failed",
+      ok: status === 0 && report.ok,
+      status,
+      report,
     }
-  } finally {
-    clearTimeout(timer)
+  } catch {
+    return { name: "review", ok: false, status, errorCode: "invalid-report" }
   }
 }
 
@@ -173,25 +152,19 @@ export async function runNifraVerification(
   const command = options.command ?? (name === "test" ? process.execPath : "nifra")
   const commandArgs = options.commandArgs ?? []
   const args = name === "test" ? ["test"] : [name, "--json"]
-  const proc = Bun.spawn([command, ...commandArgs, ...args], {
-    cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: safeEnv(options.env),
-  })
   const timeoutMs = options.timeoutMs ?? 120_000
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
   try {
-    const [stdout, stderr, status] = await Promise.all([
-      readBoundedText(proc.stdout, options.maxOutputBytes ?? 1_048_576),
-      readBoundedText(proc.stderr, options.maxOutputBytes ?? 1_048_576),
-      proc.exited,
-    ])
+    const maxOutputBytes = options.maxOutputBytes ?? 1_048_576
+    const { stdout, stderr, status, timedOut } = await runBoundedProcess(
+      [command, ...commandArgs, ...args],
+      {
+        cwd: options.cwd,
+        env: safeEnv(options.env),
+        timeoutMs,
+        maxStdoutBytes: maxOutputBytes,
+        maxStderrBytes: maxOutputBytes,
+      },
+    )
     const output = stdout.text || stderr.text
     let report: unknown
     try {
@@ -220,8 +193,6 @@ export async function runNifraVerification(
       error: details.message,
       ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
-  } finally {
-    clearTimeout(timer)
   }
 }
 
