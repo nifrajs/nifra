@@ -712,6 +712,26 @@ export function reflectHooks(source: unknown): ReflectedHookReport {
         ],
       })
     }
+    // A handshake runs the request hooks and the route chain up to `upgrade()`: no `around`, no
+    // `afterHandle`, and no response phase, since an accepted handshake sends no response through it.
+    for (const candidate of listOf(frame.server, "wsRoutes")) {
+      const socket = recordOf(candidate)
+      const chain = recordOf(socket?.chain)
+      if (typeof socket?.path !== "string" || chain === undefined) continue
+      const entries = (field: string, kind: HookKind) =>
+        listOf(chain, field).flatMap((hook) => entriesOf(hook, kind))
+      routes.push({
+        method: "WS",
+        path: reportPath(socket.path),
+        hooks: [
+          ...requestPhase(probesOf(frames, socket.path, "WS", true)),
+          ...entries("authStages", "authenticate"),
+          ...entries("derives", "derive"),
+          ...entries("beforeHandle", "beforeHandle"),
+          ...entries("onError", "onError"),
+        ],
+      })
+    }
     const prefixes = new Set<string>(["/"])
     const collect = (server: object): void => {
       for (const adoption of adoptionsOf(server)) {

@@ -264,6 +264,12 @@ export default function Plugins() {
           <code>around</code>, <code>derive</code>, and <code>beforeHandle</code> apply only to
           routes declared after them.
         </li>
+        <li>
+          A <b>WebSocket</b> route, listed as <code>WS /path</code>, runs the request hooks, then the
+          authentication stages, <code>derive</code>s, <code>beforeHandle</code>s and{" "}
+          <code>onError</code> declared before it. Its handshake runs no <code>around</code>,{" "}
+          <code>afterHandle</code> or response hooks.
+        </li>
       </ul>
       <p>
         <code>nifra routes --hooks --json</code> writes the report; <code>--since &lt;file&gt;</code>{" "}

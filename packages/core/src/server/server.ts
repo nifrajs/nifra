@@ -909,12 +909,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
-  /** Each socket path, its declared capabilities and the evidence declarations its handshake
-   * captured; reflection reads it. */
+  /** Each socket path, its declared capabilities, the evidence declarations its handshake captured
+   * and the chain it runs; reflection reads it. */
   private readonly wsRoutes: {
     readonly path: string
     readonly capabilities: readonly string[] | undefined
     readonly assurance: readonly AssuranceDeclaration[]
+    readonly chain: RouteEntry
   }[]
   /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
   private wsMountsCheckedAt = -1
@@ -2073,11 +2074,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         upgrade,
       )
       const chain = { ...entry, afterHandle: [] }
-      this.wsRouter.add("GET", form, {
-        handler: wrapped,
-        chain: { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) },
+      const compiled = {
+        ...chain,
+        program: compileRouteProgram({ ...chain, bodySchema: undefined }),
+      }
+      this.wsRouter.add("GET", form, { handler: wrapped, chain: compiled })
+      this.wsRoutes.push({
+        path: form,
+        capabilities: descriptor.capabilities,
+        assurance,
+        chain: compiled,
       })
-      this.wsRoutes.push({ path: form, capabilities: descriptor.capabilities, assurance })
     }
     wsChanges += 1
     return this as never

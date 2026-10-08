@@ -2950,6 +2950,12 @@ hooks.
 `around`, `derive`, and `beforeHandle` apply only to
 routes declared after them.
 
+-
+A **WebSocket** route, listed as `WS /path`, runs the request hooks, then the
+authentication stages, `derive`s, `beforeHandle`s and
+`onError` declared before it. Its handshake runs no `around`,
+`afterHandle` or response hooks.
+
 `nifra routes --hooks --json` writes the report; `--since <file>`
 prints what runs differently from a saved one. `nifra upgrade --write` saves the
 report before it edits anything and prints the scope diff, and `nifra check --json`

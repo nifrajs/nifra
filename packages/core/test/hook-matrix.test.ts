@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { authenticated, definePlugin, server } from "../src/index.ts"
 import { type ReflectedHook, reflectHooks } from "../src/reflection.ts"
+import { websocket } from "../src/ws.ts"
 import { HOOK_MATRIX_REQUESTS, hookMatrixApp } from "./fixtures/hook-matrix-app.ts"
 
 /**
@@ -244,5 +245,78 @@ describe("reflectHooks names", () => {
   test("anything that is not a nifra server yields an empty report", () => {
     expect(reflectHooks({})).toEqual({ complete: true, routes: [], unmatched: [] })
     expect(reflectHooks(undefined)).toEqual({ complete: true, routes: [], unmatched: [] })
+  })
+})
+
+describe("reflectHooks for a WebSocket route", () => {
+  test("lists the hooks its handshake runs, which have no response phase", async () => {
+    const fired: string[] = []
+    const app = server()
+      .use(websocket())
+      .onRequest(function requestLog() {
+        fired.push("requestLog")
+      })
+      .around(async function timing(_c, next) {
+        fired.push("timing")
+        return next()
+      })
+      .derive(function session() {
+        fired.push("session")
+        return {}
+      })
+      .beforeHandle(function requireUser() {
+        fired.push("requireUser")
+      })
+      .afterHandle(function stamp(_c, response) {
+        fired.push("stamp")
+        return response
+      })
+      .onError(function report() {
+        fired.push("report")
+      })
+      .onResponse(function finish(response) {
+        fired.push("finish")
+        return response
+      })
+      .ws("/chat", { upgrade: () => ({}) })
+      .mount({
+        path: "/m",
+        app: server()
+          .use(websocket())
+          .onRequest(function childLog() {
+            fired.push("childLog")
+          })
+          .ws("/live", { upgrade: () => ({}) }),
+        stripPrefix: true,
+      })
+    const report = reflectHooks(app)
+    const hooksOf = (path: string) =>
+      (
+        report.routes.find((route) => route.method === "WS" && route.path === path)?.hooks ?? []
+      ).map((hook) => [hook.kind, hook.name, hook.site])
+    expect(hooksOf("/chat")).toEqual([
+      ["onRequest", "requestLog", "app"],
+      ["derive", "session", "app"],
+      ["beforeHandle", "requireUser", "app"],
+      ["onError", "report", "app"],
+    ])
+    expect(hooksOf("/m/live")).toEqual([
+      ["onRequest", "requestLog", "app"],
+      ["onRequest", "childLog", "mount /m"],
+    ])
+    const handshake = (path: string) =>
+      app.resolveWebSocketUpgrade(
+        new Request(`http://x${path}`, {
+          headers: {
+            upgrade: "websocket",
+            connection: "Upgrade",
+            "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "sec-websocket-version": "13",
+          },
+        }),
+      )
+    expect((await handshake("/chat")).kind).toBe("upgrade")
+    expect((await handshake("/m/live")).kind).toBe("upgrade")
+    expect(fired).toEqual(["requestLog", "session", "requireUser", "requestLog", "childLog"])
   })
 })
