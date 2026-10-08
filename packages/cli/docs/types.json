@@ -14081,7 +14081,7 @@
     "name": "SignatureEncoding",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type SignatureEncoding = \"hex\" | \"base64\";"
+    "signature": "export type SignatureEncoding = \"hex\" | \"base64\" | \"base64url\";"
   },
   {
     "name": "SingleCopyOptions",
@@ -15540,7 +15540,7 @@
     "name": "VerifyWebhookOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface VerifyWebhookOptions {\n    /** Known-provider preset. Default `\"generic\"` (which requires {@link header}). */\n    readonly provider?: WebhookProvider;\n    /** Header carrying the signature. Required for `generic`; overrides the preset otherwise. */\n    readonly header?: string;\n    /** How the signature is encoded in the header. Default `\"hex\"`. */\n    readonly encoding?: SignatureEncoding;\n    /** A prefix stripped from the header value before decoding, e.g. `\"sha256=\"`. */\n    readonly prefix?: string;\n    /** Max raw body bytes to read before rejecting (`payload_too_large`). Default 1 MiB. */\n    readonly maxBytes?: number;\n    /** Replay window in seconds for timestamped schemes (Stripe). Default 300. */\n    readonly toleranceSeconds?: number;\n    /** Current unix time (seconds); defaults to `Date.now()/1000`. Injectable for tests. */\n    readonly now?: number;\n}"
+    "signature": "export interface VerifyWebhookOptions {\n    /** Known-provider preset. Default `\"generic\"` (which requires {@link header}). */\n    readonly provider?: WebhookProvider;\n    /** Header carrying the signature. Required for `generic`; overrides the preset otherwise. */\n    readonly header?: string;\n    /**\n     * How the signature is encoded in the header. Default `\"hex\"`. `\"base64url\"` accepts the padded and\n     * unpadded forms and nothing outside its alphabet.\n     */\n    readonly encoding?: SignatureEncoding;\n    /** A prefix stripped from the header value before decoding, e.g. `\"sha256=\"`. */\n    readonly prefix?: string;\n    /** Max raw body bytes to read before rejecting (`payload_too_large`). Default 1 MiB. */\n    readonly maxBytes?: number;\n    /** Replay window in seconds for timestamped schemes (Stripe). Default 300. */\n    readonly toleranceSeconds?: number;\n    /** Current unix time (seconds); defaults to `Date.now()/1000`. Injectable for tests. */\n    readonly now?: number;\n}"
   },
   {
     "name": "Version",

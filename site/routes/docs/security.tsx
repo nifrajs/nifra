@@ -640,7 +640,9 @@ export default function Security() {
         <code>crypto.subtle.verify</code>, so a wrong signature can't be discovered byte-by-byte through
         timing. Presets cover <b>Stripe</b> (parses <code>t=…,v1=…</code> and enforces a 5-minute replay
         window on the signed timestamp) and <b>GitHub</b> (<code>sha256=…</code>); the <code>generic</code>{" "}
-        preset takes an explicit header, encoding, and prefix for anything else. Pass an array of secrets to
+        preset takes an explicit header, encoding (<code>"hex"</code>, <code>"base64"</code> or{" "}
+        <code>"base64url"</code>, padded or not), and prefix for anything else. A signature that does not
+        decode is refused as <code>malformed_signature</code>, never thrown. Pass an array of secrets to
         accept either during a key rotation.
       </p>
 

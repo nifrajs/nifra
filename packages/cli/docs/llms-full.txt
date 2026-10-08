@@ -3747,7 +3747,9 @@ Verification is **constant-time** - the provider's signature goes straight into
 `crypto.subtle.verify`, so a wrong signature can't be discovered byte-by-byte through
 timing. Presets cover **Stripe** (parses `t=…,v1=…` and enforces a 5-minute replay
 window on the signed timestamp) and **GitHub** (`sha256=…`); the `generic`
-preset takes an explicit header, encoding, and prefix for anything else. Pass an array of secrets to
+preset takes an explicit header, encoding (`"hex"`, `"base64"` or
+`"base64url"`, padded or not), and prefix for anything else. A signature that does not
+decode is refused as `malformed_signature`, never thrown. Pass an array of secrets to
 accept either during a key rotation.
 
 ### Idempotency - `idempotency()` middleware

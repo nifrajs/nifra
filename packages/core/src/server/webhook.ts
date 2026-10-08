@@ -19,14 +19,17 @@ const DEFAULT_MAX_BYTES = 1024 * 1024 // 1 MiB - webhook payloads are small; cap
 const DEFAULT_TOLERANCE_SECONDS = 300 // 5-min replay window for timestamped schemes (Stripe's default).
 
 export type WebhookProvider = "stripe" | "github" | "generic"
-export type SignatureEncoding = "hex" | "base64"
+export type SignatureEncoding = "hex" | "base64" | "base64url"
 
 export interface VerifyWebhookOptions {
   /** Known-provider preset. Default `"generic"` (which requires {@link header}). */
   readonly provider?: WebhookProvider
   /** Header carrying the signature. Required for `generic`; overrides the preset otherwise. */
   readonly header?: string
-  /** How the signature is encoded in the header. Default `"hex"`. */
+  /**
+   * How the signature is encoded in the header. Default `"hex"`. `"base64url"` accepts the padded and
+   * unpadded forms and nothing outside its alphabet.
+   */
   readonly encoding?: SignatureEncoding
   /** A prefix stripped from the header value before decoding, e.g. `"sha256="`. */
   readonly prefix?: string
@@ -96,10 +99,26 @@ const fromBase64 = (value: string): Uint8Array<ArrayBuffer> | null => {
   }
 }
 
+const BASE64URL = /^[A-Za-z0-9_-]+={0,2}$/
+
+const fromBase64Url = (value: string): Uint8Array<ArrayBuffer> | null => {
+  if (!BASE64URL.test(value)) return null
+  const unpadded = value.replace(/=+$/, "")
+  // Padding only ever completes the last quartet; a lone trailing character encodes no byte.
+  if (unpadded.length % 4 === 1) return null
+  if (unpadded.length !== value.length && value.length % 4 !== 0) return null
+  return fromBase64(unpadded.replaceAll("-", "+").replaceAll("_", "/"))
+}
+
 const decodeSignature = (
   value: string,
   encoding: SignatureEncoding,
-): Uint8Array<ArrayBuffer> | null => (encoding === "hex" ? fromHex(value) : fromBase64(value))
+): Uint8Array<ArrayBuffer> | null =>
+  encoding === "hex"
+    ? fromHex(value)
+    : encoding === "base64url"
+      ? fromBase64Url(value)
+      : fromBase64(value)
 
 /** True iff `sig` is a valid HMAC-SHA256 of `payload` under any of `keys` (constant-time per check). */
 async function verifyAny(

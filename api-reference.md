@@ -3085,7 +3085,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/core/webhook`
 
-- **SignatureEncoding** _(type)_ - `type SignatureEncoding = "hex" | "base64"`
+- **SignatureEncoding** _(type)_ - `type SignatureEncoding = "hex" | "base64" | "base64url"`
 - **VerifyWebhookOptions** _(interface)_ - `interface VerifyWebhookOptions`
 - **WebhookFailureReason** _(type)_ - `type WebhookFailureReason = | "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance" | "malformed_signature" | "payload_too_large" | "invalid_content_length"`
 - **WebhookProvider** _(type)_ - `type WebhookProvider = "stripe" | "github" | "generic"`
