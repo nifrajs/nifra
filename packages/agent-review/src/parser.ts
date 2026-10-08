@@ -774,6 +774,13 @@ function assertReportRelationships(
       check.counts.info !== info
     )
       fail("derived-field-mismatch", `${path}.checks`)
+    // A pass or fail status states whether the check kept an error finding, so a failed check cannot
+    // compose a passing report and a passing check cannot carry an error.
+    if (
+      (check.status === "pass" || check.status === "fail") &&
+      (check.status === "fail") !== errors > 0
+    )
+      fail("derived-field-mismatch", `${path}.checks`)
   }
   if (referenced.size !== findings.length) fail("invalid-reference", `${path}.findings`)
 

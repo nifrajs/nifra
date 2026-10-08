@@ -50,6 +50,39 @@ describe("review report composer", () => {
     expect(Object.isFrozen(result)).toBe(true)
   })
 
+  test("refuses a check whose pass or fail status disagrees with its error findings", async () => {
+    const base = draft(false)
+    const [check] = base.checks
+    if (check === undefined) throw new Error("expected a check")
+    const failedWithoutError = {
+      ...base,
+      checks: [
+        {
+          ...check,
+          status: "fail" as const,
+          counts: { findings: 0, errors: 0, warnings: 0, info: 0, outOfScope: 0 },
+          findingIds: [],
+        },
+      ],
+      findings: [],
+    }
+    await expect(composeReviewReport(failedWithoutError)).rejects.toMatchObject({
+      code: "derived-field-mismatch",
+    })
+    const [finding] = base.findings
+    if (finding === undefined) throw new Error("expected a finding")
+    const passedWithError = {
+      ...base,
+      checks: [
+        { ...check, counts: { findings: 1, errors: 1, warnings: 0, info: 0, outOfScope: 0 } },
+      ],
+      findings: [{ ...finding, severity: "error" as const }],
+    }
+    await expect(composeReviewReport(passedWithError)).rejects.toMatchObject({
+      code: "derived-field-mismatch",
+    })
+  })
+
   test("counts strict warnings and unresolved fixes as blocking", async () => {
     const strict = await composeReviewReport({
       ...draft(true),
