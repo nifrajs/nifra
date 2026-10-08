@@ -16,7 +16,7 @@
  * anything fails. Pure scanners (`scanFetchText`, `scanServerOnlyImports`) are unit-tested.
  */
 
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, relative } from "node:path"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
@@ -28,8 +28,10 @@ import {
   type RuleOverride,
   safeIgnoreGlobMatch,
 } from "./check-diagnostics.ts"
+import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
@@ -364,15 +366,25 @@ async function buildProjectScan(
 
     // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
     // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
-    const resolveModule: ModuleResolver = (fromFile, specifier) => {
+    // The resolver answers with real paths, so the project root is read as one too.
+    const realCwd = (() => {
       try {
-        const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
-        const resolved = Bun.resolveSync(specifier, dirname(fromAbs))
-        const rel = relative(cwd, resolved).replaceAll("\\", "/")
-        return rel.startsWith("../") || isAbsolute(rel) ? resolved : rel
+        return realpathSync(cwd)
       } catch {
-        return undefined
+        return cwd
       }
+    })()
+    const resolveSpecifier = createSpecifierResolver()
+    const projectPath = (path: string): string => {
+      const rel = relative(realCwd, path).replaceAll("\\", "/")
+      return rel.startsWith("../") || isAbsolute(rel) ? path : rel
+    }
+    const resolveModule: ModuleResolver = (fromFile, specifier) => {
+      const resolved = resolveSpecifier(
+        isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile),
+        specifier,
+      )
+      return resolved === undefined ? undefined : projectPath(resolved)
     }
     const readModule: ModuleReader = (path) => {
       try {
@@ -386,6 +398,18 @@ async function buildProjectScan(
     )
       ? (await import("./component-check.ts")).componentCheckReceipts(cwd, source)
       : new Set<string>()
+    // An app's `clientModule` is browser code wherever it lives: the generated client entry imports it.
+    const browserRoots = new Set<string>()
+    for (const app of appDirs(source.files)) {
+      const entry = clientModuleRoot(cwd, app, resolveSpecifier)
+      if (entry === undefined) continue
+      const rel = projectPath(entry.file)
+      if (isBrowserSource(rel) || browserRoots.has(rel)) continue
+      const content = readModule(rel)
+      if (content === undefined) continue
+      browserRoots.add(rel)
+      browserModules.push({ rel, content })
+    }
     for (const { rel, content } of browserModules) {
       serverImports.push(
         ...resolveServerOnlyChains(
@@ -395,6 +419,7 @@ async function buildProjectScan(
           readModule,
           sourceFacts,
           componentReceipts,
+          browserRoots.has(rel),
         ),
       )
     }

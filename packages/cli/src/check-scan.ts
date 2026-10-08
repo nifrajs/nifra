@@ -1779,8 +1779,7 @@ const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|serve
 const TRANSITIVE_MAX_DEPTH = 8
 const TRANSITIVE_MAX_VISITED = 200
 
-/** A relative module specifier (`./x`, `../y`) - the only kind we resolve + walk into (a bare specifier
- * is either a sink we recognise by name or a third-party dep we don't follow into node_modules). */
+/** A relative module specifier (`./x`, `../y`) - the only kind the SQL import lookup follows. */
 const isRelativeSpecifier = (spec: string): boolean =>
   spec.startsWith("./") || spec.startsWith("../")
 
@@ -1901,9 +1900,9 @@ export interface TransitiveServerImportFinding extends ServerImportFinding {
   readonly fallback: boolean
 }
 
-/** A resolver from `(fromFile, specifier)` to an absolute module path, or `undefined` when it can't be
- * resolved precisely (bare pkg, path alias, missing file). Abstracted so the BFS is unit-testable with a
- * fake graph (no real fs). The production resolver wraps `Bun.resolveSync`. */
+/** A resolver from `(fromFile, specifier)` to a project module path, or `undefined` when it names no
+ * project file (a package, a missing file). Abstracted so the BFS is unit-testable with a fake graph (no
+ * real fs). The production resolver follows relative paths, tsconfig `paths` and package.json `imports`. */
 export type ModuleResolver = (fromFile: string, specifier: string) => string | undefined
 /** Reads a resolved module's source, or `undefined` if unreadable. Abstracted for the same reason. */
 export type ModuleReader = (absPath: string) => string | undefined
@@ -1911,9 +1910,9 @@ export type ModuleReader = (absPath: string) => string | undefined
 /**
  * BFS the LOCAL module graph from a route file for the SHORTEST import chain that reaches a server-only
  * sink, returning `[routeFile, …as-written specifiers…, sink]` or `undefined` if none is reachable. A
- * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when it's a RELATIVE specifier
- * that `resolve` maps to a readable local file (so the walk never descends into node_modules or chases an
- * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
+ * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when
+ * `resolve` maps it to a readable project file, an alias included (so the walk never descends into
+ * node_modules). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
  * `server-only`-marked dependency terminates the chain; a `*.server` dependency is never entered, since
  * the client build empties it. Bounded by depth + a visited set, so
  * it's linear and cycle-free. `routeFile`/`routeContent` seed the walk; `resolve`/`read` supply the graph
@@ -1947,9 +1946,8 @@ export function walkServerOnlyChain(
         // since BFS reaches the nearest sink before any deeper one).
         const sink = directSinkSpecifier(spec)
         if (sink !== undefined) return [...node.chain, sink]
-        // (b) Only relative specifiers are local source we resolve + walk into. A bare third-party
-        // specifier that isn't a known sink is a leaf - don't follow it into node_modules.
-        if (!isRelativeSpecifier(spec)) continue
+        // (b) Project source is walked into, through an alias as the bundler does; a package that is
+        // not a known sink resolves to nothing and stays a leaf.
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
         if (componentReceipts.has(abs)) continue
@@ -1978,7 +1976,8 @@ export function walkServerOnlyChain(
  * finding carries the full chain; otherwise - when the first hop is itself a direct by-name sink the
  * regex scan already flags, or when a relative import can't be resolved - it falls back to the DIRECT
  * edge (`fallback: true`), never a fabricated chain. Returns one finding per offending top-level import,
- * de-duplicated to the shortest chain per first-hop specifier. Non-route files yield `[]`.
+ * de-duplicated to the shortest chain per first-hop specifier. A file that is not browser source
+ * yields `[]`, unless `browserRoot` says the browser bundle loads it anyway (an app's `clientModule`).
  */
 export function resolveServerOnlyChains(
   file: string,
@@ -1987,8 +1986,9 @@ export function resolveServerOnlyChains(
   read: ModuleReader,
   facts?: SourceFacts,
   componentReceipts: ReadonlySet<string> = new Set(),
+  browserRoot = false,
 ): TransitiveServerImportFinding[] {
-  if (!isBrowserSource(file)) return []
+  if (!browserRoot && !isBrowserSource(file)) return []
   const lines = content.split("\n")
   const out: TransitiveServerImportFinding[] = []
   const flaggedSpecifiers = new Set<string>()
@@ -2006,52 +2006,50 @@ export function resolveServerOnlyChains(
       out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
       continue
     }
-    // (2) A relative local import - try the transitive walk from the resolved dependency. If it reaches
-    // a sink, emit the full chain rooted at THIS route's import line.
-    if (isRelativeSpecifier(specifier)) {
-      const abs = resolve(file, specifier)
-      if (abs === undefined) {
-        // Unresolvable relative import. If it's the known server-only `../db` convention the regex scan
-        // flags directly, fall back to the direct edge (precise resolve impossible - say so via
-        // `fallback`). Any other unresolvable relative import we can't assert is server-only - skip it.
-        if (SERVER_ONLY.test(specifier)) {
-          flaggedSpecifiers.add(specifier)
-          out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
-        }
-        continue
-      }
-      if (componentReceipts.has(abs)) continue
-      // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
-      if (isBackendModule(abs)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
-      if (SERVER_FN_FILE.test(abs)) continue
-      const depContent = read(abs)
-      if (depContent === undefined) continue
-      if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
-      // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
-      const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts, componentReceipts)
-      if (subChain !== undefined) {
-        flaggedSpecifiers.add(specifier)
-        // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the
-        // route's as-written specifier so the chain reads `routes/x → ../data → ../db → node:crypto`.
-        const chain = [file, specifier, ...subChain.slice(1)]
-        out.push({ file, line, snippet, specifier, chain, fallback: false })
-        continue
-      }
-      // (3) The relative `../db`-style convention the regex scan flags directly, but where the walk
-      // found no deeper sink (e.g. the file wasn't readable past the first hop) - fall back to the
-      // direct edge so we still surface the known-server-only convention rather than going silent.
+    // (2) A project import, relative or through an alias - try the transitive walk from the resolved
+    // dependency. If it reaches a sink, emit the full chain rooted at THIS route's import line.
+    const abs = resolve(file, specifier)
+    if (abs === undefined) {
+      // Unresolvable import. If it's the known server-only `../db` convention the regex scan flags
+      // directly, fall back to the direct edge (precise resolve impossible - say so via `fallback`).
+      // Anything else that names no project file we can't assert is server-only - skip it.
       if (SERVER_ONLY.test(specifier)) {
         flaggedSpecifiers.add(specifier)
         out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
       }
+      continue
+    }
+    if (componentReceipts.has(abs)) continue
+    // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
+    if (isBackendModule(abs)) {
+      flaggedSpecifiers.add(specifier)
+      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
+      continue
+    }
+    if (SERVER_FN_FILE.test(abs)) continue
+    const depContent = read(abs)
+    if (depContent === undefined) continue
+    if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
+      flaggedSpecifiers.add(specifier)
+      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
+      continue
+    }
+    // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
+    const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts, componentReceipts)
+    if (subChain !== undefined) {
+      flaggedSpecifiers.add(specifier)
+      // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the
+      // route's as-written specifier so the chain reads `routes/x → ../data → ../db → node:crypto`.
+      const chain = [file, specifier, ...subChain.slice(1)]
+      out.push({ file, line, snippet, specifier, chain, fallback: false })
+      continue
+    }
+    // (3) The relative `../db`-style convention the regex scan flags directly, but where the walk
+    // found no deeper sink (e.g. the file wasn't readable past the first hop) - fall back to the
+    // direct edge so we still surface the known-server-only convention rather than going silent.
+    if (SERVER_ONLY.test(specifier)) {
+      flaggedSpecifiers.add(specifier)
+      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
     }
   }
   return out
