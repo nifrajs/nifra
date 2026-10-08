@@ -114,3 +114,185 @@ describe("nifra levels", () => {
     expect(await runLevels(cwd, { min: 3 })).toBe(false)
   })
 })
+
+/** A project whose L4 needs fixture help: an opaque body schema and a session-guarded surface. */
+async function invariantProject(
+  name: string,
+  invariants: string,
+  options: { guarded?: boolean; opaque?: boolean } = {},
+): Promise<string> {
+  const cwd = createFixtureProject(FIXTURES, `${name}-`)
+  await mkdir(cwd, { recursive: true })
+  await writeFile(
+    join(cwd, "backend.ts"),
+    [
+      `import { server } from "@nifrajs/core"`,
+      `const body = {`,
+      `  "~standard": { version: 1, vendor: "levels-test", validate: (value) => (typeof value?.amount === "number" ? { value } : { issues: [{ message: "amount" }] }) },`,
+      ...(options.opaque === true
+        ? []
+        : [
+            `  jsonSchema: { type: "object", properties: { amount: { type: "number", minimum: 1, maximum: 9 } }, required: ["amount"] },`,
+          ]),
+      `}`,
+      `export const backend = server()`,
+      ...(options.guarded === true
+        ? [
+            `  .onRequest((req) => (req.headers.get("x-session") === "fixture" ? undefined : new Response("no session", { status: 401 })))`,
+          ]
+        : []),
+      `  .post("/pay", { body }, () => ({ ok: true }))`,
+      "",
+    ].join("\n"),
+  )
+  await writeFile(
+    join(cwd, "nifra.assurance.ts"),
+    [
+      `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
+      `import { backend } from "./backend.ts"`,
+      `const calls = ((globalThis as Record<string, unknown>).__levelsCalls ??= {}) as Record<string, string[]>`,
+      `const log = (calls[${JSON.stringify(name)}] ??= [])`,
+      `export default defineAssuranceConfig({`,
+      `  source: backend,`,
+      `  policy: { rules: [{ name: "all", match: {}, require: [] }] },`,
+      `  invariants: ${invariants},`,
+      `})`,
+      "",
+    ].join("\n"),
+  )
+  return cwd
+}
+
+const callsOf = (name: string): string[] => {
+  const calls: unknown = Reflect.get(globalThis, "__levelsCalls")
+  const list: unknown = typeof calls === "object" && calls !== null ? Reflect.get(calls, name) : []
+  return Array.isArray(list)
+    ? list.filter((entry): entry is string => typeof entry === "string")
+    : []
+}
+
+describe("nifra levels L4 fixture options", () => {
+  test("witnesses reach the runner, so an opaque schema can be covered", async () => {
+    const without = await invariantProject(
+      "no-witness",
+      `{ executor: (request) => backend.fetch(request) }`,
+      { opaque: true },
+    )
+    expect((await collectVerificationLevels(without)).levels[4]?.reasons.join("\n")).toMatch(
+      /opaque body schema needs witnesses/,
+    )
+    const cwd = await invariantProject(
+      "witness",
+      `{ executor: (request) => backend.fetch(request), witnesses: { "POST /pay": { body: { amount: 3 } } } }`,
+      { opaque: true },
+    )
+    expect((await collectVerificationLevels(cwd)).levels[4]).toMatchObject({
+      ok: true,
+      reasons: [],
+    })
+  })
+
+  test("prepareRequest reaches the runner, so a session-guarded app can be exercised", async () => {
+    const without = await invariantProject(
+      "no-prepare",
+      `{ executor: (request) => backend.fetch(request) }`,
+      { guarded: true },
+    )
+    expect((await collectVerificationLevels(without)).levels[4]?.ok).toBe(false)
+    const cwd = await invariantProject(
+      "prepare",
+      `{
+    executor: (request) => backend.fetch(request),
+    prepareRequest: (request, context) => {
+      log.push(context.caseId === "" ? "empty" : "case")
+      const headers = new Headers(request.headers)
+      headers.set("x-session", "fixture")
+      return new Request(request, { headers })
+    },
+  }`,
+      { guarded: true },
+    )
+    expect((await collectVerificationLevels(cwd)).levels[4]).toMatchObject({
+      ok: true,
+      reasons: [],
+    })
+    expect(callsOf("prepare").length).toBeGreaterThan(0)
+  })
+
+  test("isRejected and include reach the runner", async () => {
+    const cwd = await invariantProject(
+      "reject-hook",
+      `{
+    executor: (request) => backend.fetch(request),
+    include: (route) => { log.push(\`include \${route.method} \${route.path}\`); return true },
+    isRejected: (response) => { log.push("judged"); return response.status === 401 },
+  }`,
+      { guarded: true },
+    )
+    const result = await collectVerificationLevels(cwd)
+    expect(callsOf("reject-hook")).toContain("include POST /pay")
+    expect(callsOf("reject-hook")).toContain("judged")
+    expect(result.levels[4]?.reasons.join("\n")).not.toMatch(/was not rejected/)
+  })
+
+  test("setup runs once, lazily, and its executor and teardown are used", async () => {
+    const cwd = await invariantProject(
+      "setup",
+      `{
+    setup: async () => {
+      log.push("setup")
+      return { executor: (request) => backend.fetch(request), teardown: async () => void log.push("teardown") }
+    },
+  }`,
+    )
+    await import(join(cwd, "nifra.assurance.ts"))
+    expect(callsOf("setup")).toEqual([]) // importing the config provisions nothing
+    const result = await collectVerificationLevels(cwd)
+    expect(result.levels[4]).toMatchObject({ ok: true, reasons: [] })
+    expect(callsOf("setup")).toEqual(["setup", "teardown"])
+  })
+
+  test("teardown still runs when L4 fails", async () => {
+    const cwd = await invariantProject(
+      "setup-fails-run",
+      `{
+    setup: async () => {
+      log.push("setup")
+      return { executor: () => Response.json({ ok: true }), teardown: () => void log.push("teardown") }
+    },
+  }`,
+    )
+    const result = await collectVerificationLevels(cwd)
+    expect(result.levels[4]?.ok).toBe(false)
+    expect(callsOf("setup-fails-run")).toEqual(["setup", "teardown"])
+  })
+
+  test("a setup that throws is one reason, and a teardown that throws is reported", async () => {
+    const broken = await invariantProject(
+      "setup-throws",
+      `{ setup: async () => { throw new Error("no target available") } }`,
+    )
+    const reasons = (await collectVerificationLevels(broken)).levels[4]?.reasons ?? []
+    expect(reasons).toEqual(["invariants.setup failed: no target available"])
+
+    const leaky = await invariantProject(
+      "teardown-throws",
+      `{
+    setup: async () => ({
+      executor: (request) => backend.fetch(request),
+      teardown: async () => { throw new Error("container still running") },
+    }),
+  }`,
+    )
+    expect((await collectVerificationLevels(leaky)).levels[4]?.reasons).toEqual([
+      "invariants teardown failed: container still running",
+    ])
+  })
+
+  test("a setup that returns no executor, with none configured, says so", async () => {
+    const cwd = await invariantProject("setup-no-executor", `{ setup: async () => {} }`)
+    expect((await collectVerificationLevels(cwd)).levels[4]?.reasons).toEqual([
+      "no invariant executor: invariants.setup returned none and invariants.executor is not set",
+    ])
+  })
+})

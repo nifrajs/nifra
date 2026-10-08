@@ -1250,7 +1250,7 @@
     "name": "AssuranceConfig",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface AssuranceConfig {\n    readonly source: unknown;\n    readonly policy: AssurancePolicy;\n    readonly capabilities?: CapabilityPolicy;\n    /** Off-request-path manifest artifact/signing integration. Private keys remain behind `signer`. */\n    readonly manifest?: {\n        /** Default `nifra.manifest.json`. */\n        readonly path?: string;\n        /** Resolve an operator key reference to a signer (KMS/HSM/local WebCrypto). */\n        readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>;\n    };\n    /** Dynamic invariant execution is opt-in and must use a disposable/sandboxed target. */\n    readonly invariants?: {\n        readonly executor: InvariantExecutor;\n    };\n    /** Optional application-supplied rule packs appended after built-in verification rules. */\n    readonly rulePacks?: readonly AssuranceRulePack[];\n    /** Optional sink for an assurance bundle. The CLI validates the callable shape at runtime. */\n    readonly assureSink?: unknown;\n    /** Optional deterministic effect workloads for the tests gate. */\n    readonly idempotency?: readonly IdempotencyWorkload[];\n    /** Optional output-size budget for the assurance bundle's size gate. */\n    readonly size?: AssuranceSizeBudget;\n}"
+    "signature": "export interface AssuranceConfig {\n    readonly source: unknown;\n    readonly policy: AssurancePolicy;\n    readonly capabilities?: CapabilityPolicy;\n    /** Off-request-path manifest artifact/signing integration. Private keys remain behind `signer`. */\n    readonly manifest?: {\n        /** Default `nifra.manifest.json`. */\n        readonly path?: string;\n        /** Resolve an operator key reference to a signer (KMS/HSM/local WebCrypto). */\n        readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>;\n    };\n    /** Dynamic invariant execution is opt-in and must use a disposable/sandboxed target. */\n    readonly invariants?: InvariantsConfig;\n    /** Optional application-supplied rule packs appended after built-in verification rules. */\n    readonly rulePacks?: readonly AssuranceRulePack[];\n    /** Optional sink for an assurance bundle. The CLI validates the callable shape at runtime. */\n    readonly assureSink?: unknown;\n    /** Optional deterministic effect workloads for the tests gate. */\n    readonly idempotency?: readonly IdempotencyWorkload[];\n    /** Optional output-size budget for the assurance bundle's size gate. */\n    readonly size?: AssuranceSizeBudget;\n}"
   },
   {
     "name": "AssuranceDeclaration",
@@ -3679,8 +3679,21 @@
   {
     "name": "ContractAuthContext",
     "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ContractAuthContext = \"authenticated\" | \"unauthenticated\";"
+  },
+  {
+    "name": "ContractAuthContext",
+    "kind": "type",
     "package": "@nifrajs/testing",
     "signature": "export type ContractAuthContext = \"authenticated\" | \"unauthenticated\";"
+  },
+  {
+    "name": "ContractCaseContext",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContractCaseContext {\n    readonly seed: number;\n    readonly caseId: string;\n    readonly route: ReflectedRoute;\n    readonly runtime: string;\n    readonly kind: ContractCaseKind;\n    readonly target: ContractTarget;\n    readonly auth?: ContractAuthContext;\n    readonly mutation?: string;\n}",
+    "doc": "/** Stable context passed to request/rejection hooks. It contains no request payloads or secrets. */"
   },
   {
     "name": "ContractCaseContext",
@@ -3688,6 +3701,12 @@
     "package": "@nifrajs/testing",
     "signature": "export interface ContractCaseContext {\n    readonly seed: number;\n    readonly caseId: string;\n    readonly route: ReflectedRoute;\n    readonly runtime: string;\n    readonly kind: ContractCaseKind;\n    readonly target: ContractTarget;\n    readonly auth?: ContractAuthContext;\n    readonly mutation?: string;\n}",
     "doc": "/** Stable context passed to request/rejection hooks. It contains no request payloads or secrets. */"
+  },
+  {
+    "name": "ContractCaseKind",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ContractCaseKind = \"input-rejection\" | \"response-conformance\";"
   },
   {
     "name": "ContractCaseKind",
@@ -3706,6 +3725,12 @@
     "kind": "type",
     "package": "@nifrajs/testing",
     "signature": "export type ContractCoverageGapCode = \"NO_CONTRACT_TARGETS\" | \"NO_VALIDATOR\" | \"NO_WITNESS\" | \"INVALID_WITNESS\" | \"WITNESS_TOO_LARGE\" | \"UNSUPPORTED_BODY_METHOD\" | \"NO_REJECTED_MUTATION\" | \"NO_STATUS_CONTRACT\" | \"NO_RUNTIME\" | \"INVALID_RUNTIME\" | \"CASE_NOT_FOUND\";"
+  },
+  {
+    "name": "ContractExpectedResponse",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContractExpectedResponse {\n    readonly status: number;\n    readonly contentType?: \"json\" | \"text\";\n    readonly headers?: Readonly<Record<string, string>>;\n    /** When present, the decoded body is compared byte-structure-wise to this value. */\n    readonly body?: unknown;\n}"
   },
   {
     "name": "ContractExpectedResponse",
@@ -3761,6 +3786,12 @@
   {
     "name": "ContractTarget",
     "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ContractTarget = \"body\" | \"query\" | \"response\";"
+  },
+  {
+    "name": "ContractTarget",
+    "kind": "type",
     "package": "@nifrajs/testing",
     "signature": "export type ContractTarget = \"body\" | \"query\" | \"response\";"
   },
@@ -3774,8 +3805,15 @@
   {
     "name": "ContractWitness",
     "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContractWitness {\n    readonly params?: Readonly<Record<string, string>>;\n    readonly query?: unknown;\n    readonly body?: unknown;\n    readonly headers?: ConstructorParameters<typeof Headers>[0];\n    /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */\n    readonly auth?: ContractAuthContext;\n    /** Expected response for a guard/error witness. Omit for the normal success witness. */\n    readonly expected?: ContractExpectedResponse;\n}",
+    "doc": "/** A known-good request. Missing body/query values are synthesized from inspectable JSON Schema. */"
+  },
+  {
+    "name": "ContractWitness",
+    "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface ContractWitness {\n    readonly params?: Readonly<Record<string, string>>;\n    readonly query?: unknown;\n    readonly body?: unknown;\n    readonly headers?: HeaderSource;\n    /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */\n    readonly auth?: ContractAuthContext;\n    /** Expected response for a guard/error witness. Omit for the normal success witness. */\n    readonly expected?: ContractExpectedResponse;\n}",
+    "signature": "export interface ContractWitness {\n    readonly params?: Readonly<Record<string, string>>;\n    readonly query?: unknown;\n    readonly body?: unknown;\n    readonly headers?: ConstructorParameters<typeof Headers>[0];\n    /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */\n    readonly auth?: ContractAuthContext;\n    /** Expected response for a guard/error witness. Omit for the normal success witness. */\n    readonly expected?: ContractExpectedResponse;\n}",
     "doc": "/** A known-good request. Missing body/query values are synthesized from inspectable JSON Schema. */"
   },
   {
@@ -7002,6 +7040,34 @@
     "package": "@nifrajs/core",
     "signature": "export type InvariantExecutor = (request: Request) => Response | Promise<Response>;",
     "doc": "/** Isolated request executor used by adversarial contract verification. */"
+  },
+  {
+    "name": "InvariantRunOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface InvariantRunOptions {\n    /** Known-good request values keyed by `\"METHOD /path\"`. Required for opaque Standard Schemas. */\n    readonly witnesses?: Readonly<Record<string, ContractWitness>>;\n    /** Attach a session, real row ids or signed tokens. Return a new Request. */\n    readonly prepareRequest?: (request: Request, context: ContractCaseContext) => Request | Promise<Request>;\n    /** Override rejection semantics, for an app with a custom validation response. */\n    readonly isRejected?: (response: Response, context: ContractCaseContext) => boolean | Promise<boolean>;\n    /** Run L4 on a subset of the reflected routes. */\n    readonly include?: (route: ReflectedRoute) => boolean;\n    /** Maximum validator-proven mutations per body/query schema. Default 32. */\n    readonly maxMutationsPerInput?: number;\n}",
+    "doc": "/** Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`). */"
+  },
+  {
+    "name": "InvariantSetup",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>;",
+    "doc": "/** Provisions a throwaway L4 target. Called once, before the first L4 request - never on import. */"
+  },
+  {
+    "name": "InvariantSetupResult",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface InvariantSetupResult {\n    /** The isolated target for this run. Replaces `invariants.executor`. */\n    readonly executor?: InvariantExecutor;\n    /** Called once the run ends, after a failure too. */\n    readonly teardown?: () => void | Promise<void>;\n}",
+    "doc": "/** What `invariants.setup` provisions for one L4 run. */"
+  },
+  {
+    "name": "InvariantsConfig",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type InvariantsConfig = InvariantRunOptions & ({\n    readonly executor: InvariantExecutor;\n    readonly setup?: InvariantSetup;\n} | {\n    readonly executor?: InvariantExecutor;\n    readonly setup: InvariantSetup;\n});",
+    "doc": "/** L4 configuration: an isolated `executor`, a `setup` that provisions one, or both. */"
   },
   {
     "name": "IpMatcher",

@@ -1750,9 +1750,25 @@ Every public export of every package and documented subpath - name, kind, signat
   Where enforcement evidence follows Nifra's route-registration semantics.
 - **AssuranceSizeBudget** _(interface)_ - `interface AssuranceSizeBudget`
 - **AssuredRoute** _(interface)_ - `interface AssuredRoute`
+- **ContractAuthContext** _(type)_ - `type ContractAuthContext = "authenticated" | "unauthenticated"`
+- **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
+  Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
+- **ContractCaseKind** _(type)_ - `type ContractCaseKind = "input-rejection" | "response-conformance"`
+- **ContractExpectedResponse** _(interface)_ - `interface ContractExpectedResponse`
+- **ContractTarget** _(type)_ - `type ContractTarget = "body" | "query" | "response"`
+- **ContractWitness** _(interface)_ - `interface ContractWitness`
+  A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **IdempotencyWorkload** _(interface)_ - `interface IdempotencyWorkload`
 - **InvariantExecutor** _(type)_ - `type InvariantExecutor = (request: Request) => Response | Promise<Response>`
   Isolated request executor used by adversarial contract verification.
+- **InvariantRunOptions** _(interface)_ - `interface InvariantRunOptions`
+  Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`).
+- **InvariantSetup** _(type)_ - `type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>`
+  Provisions a throwaway L4 target. Called once, before the first L4 request - never on import.
+- **InvariantSetupResult** _(interface)_ - `interface InvariantSetupResult`
+  What `invariants.setup` provisions for one L4 run.
+- **InvariantsConfig** _(type)_ - `type InvariantsConfig = InvariantRunOptions & ( | { readonly executor: InvariantExecutor; readonly setup?: InvariantSetup } | { readonly executor?: InvariantExecutor; readonly setup: InvariantSetup } )`
+  L4 configuration: an isolated `executor`, a `setup` that provisions one, or both.
 - **NIFRA_ASSURANCE** _(const)_ - `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
 - **SecurityBaselineLevel** _(type)_ - `type SecurityBaselineLevel = "essential" | "standard" | "strict"`

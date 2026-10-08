@@ -7,6 +7,14 @@
  * responses are validated off the hot path as part of the same laboratory run.
  */
 
+import type {
+  ContractAuthContext,
+  ContractCaseContext,
+  ContractCaseKind,
+  ContractExpectedResponse,
+  ContractTarget,
+  ContractWitness,
+} from "@nifrajs/core/assurance"
 import {
   compileRoutePattern,
   type ParamConstraint,
@@ -26,12 +34,17 @@ const DEFAULT_MAX_MUTATIONS = 32
 const DEFAULT_MAX_SHRINK_ATTEMPTS = 12
 const DEFAULT_MAX_WITNESS_BYTES = 256 * 1024
 const NO_BODY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"])
-type HeaderSource = ConstructorParameters<typeof Headers>[0]
 
 type InputTarget = "body" | "query"
-export type ContractTarget = "body" | "query" | "response"
-export type ContractCaseKind = "input-rejection" | "response-conformance"
-export type ContractAuthContext = "authenticated" | "unauthenticated"
+
+export type {
+  ContractAuthContext,
+  ContractCaseContext,
+  ContractCaseKind,
+  ContractExpectedResponse,
+  ContractTarget,
+  ContractWitness,
+}
 
 /** Anything that exposes reflected routes and a Web-standard in-process fetch handler. */
 export interface ContractTestApp {
@@ -43,38 +56,6 @@ export interface ContractTestApp {
 export interface ContractRuntime {
   readonly name: string
   fetch(request: Request): Response | Promise<Response>
-}
-
-/** A known-good request. Missing body/query values are synthesized from inspectable JSON Schema. */
-export interface ContractWitness {
-  readonly params?: Readonly<Record<string, string>>
-  readonly query?: unknown
-  readonly body?: unknown
-  readonly headers?: HeaderSource
-  /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */
-  readonly auth?: ContractAuthContext
-  /** Expected response for a guard/error witness. Omit for the normal success witness. */
-  readonly expected?: ContractExpectedResponse
-}
-
-export interface ContractExpectedResponse {
-  readonly status: number
-  readonly contentType?: "json" | "text"
-  readonly headers?: Readonly<Record<string, string>>
-  /** When present, the decoded body is compared byte-structure-wise to this value. */
-  readonly body?: unknown
-}
-
-/** Stable context passed to request/rejection hooks. It contains no request payloads or secrets. */
-export interface ContractCaseContext {
-  readonly seed: number
-  readonly caseId: string
-  readonly route: ReflectedRoute
-  readonly runtime: string
-  readonly kind: ContractCaseKind
-  readonly target: ContractTarget
-  readonly auth?: ContractAuthContext
-  readonly mutation?: string
 }
 
 export interface AdversarialContractOptions {

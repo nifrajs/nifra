@@ -11023,6 +11023,47 @@ input, so Nifra will not guess which app to point them at; a level that fuzzed y
 server by default would be a footgun, and a skipped route is reported rather than passed over
 in silence.
 
+An app that needs a session, real row ids or signed tokens passes them to the runner instead of
+rewriting requests inside the executor: `witnesses`, `prepareRequest`,
+`isRejected`, `include` and `maxMutationsPerInput` on
+`invariants` reach every L4 run, from `nifra levels` and the
+`nifra_levels` MCP tool alike. `setup` provisions a throwaway target only
+when L4 runs: it is called once, before the first L4 request, and its `teardown`
+always runs after the run, a failing one included. The example keeps its target in memory; a
+database or container belongs in your own `setup`.
+
+```ts
+// nifra.assurance.ts
+// doc-check: skip - the backend and its seed data are app-specific
+import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+import { createBackend } from "./backend"
+
+export default defineAssuranceConfig({
+  source: createBackend({ rows: new Map() }),
+  policy: { rules: [/* ... */] },
+  invariants: {
+    // Called once, before the first L4 request - never when this file is imported, so
+    // `nifra check` and `nifra assure` provision nothing.
+    setup: async () => {
+      const rows = new Map([["row_1", { id: "row_1", owner: "fixture" }]])
+      const target = createBackend({ rows })
+      return {
+        executor: (request) => target.fetch(request),
+        teardown: () => rows.clear(), // runs after a failing run too
+      }
+    },
+    // Known-good inputs for schemas L4 cannot synthesize (an opaque validator, a real id).
+    witnesses: { "PATCH /rows/:id": { params: { id: "row_1" }, body: { title: "ok" } } },
+    // Attach what the app needs on every case: a session, a signed token.
+    prepareRequest: (request) => {
+      const headers = new Headers(request.headers)
+      headers.set("cookie", "session=fixture")
+      return new Request(request, { headers })
+    },
+  },
+})
+```
+
 ### For coding agents
 
 The `nifra_levels` MCP tool returns the same

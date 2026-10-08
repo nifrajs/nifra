@@ -13,10 +13,19 @@
 
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import type { AssuranceReport } from "@nifrajs/core/assurance"
+import type {
+  AssuranceReport,
+  InvariantSetup,
+  InvariantSetupResult,
+  InvariantsConfig,
+} from "@nifrajs/core/assurance"
 import { snapshotCapabilities } from "@nifrajs/core/capabilities"
 import { buildNifraManifest, parseNifraManifest } from "@nifrajs/core/manifest"
-import { type ContractTestApp, runAdversarialContract } from "@nifrajs/testing"
+import {
+  type AdversarialContractOptions,
+  type ContractTestApp,
+  runAdversarialContract,
+} from "@nifrajs/testing"
 import {
   type CapabilityProjectReport,
   diffCapabilitySnapshots,
@@ -176,30 +185,7 @@ export async function collectVerificationLevels(
       "no isolated invariant executor configured - add `invariants.executor` in nifra.assurance.ts",
     )
   } else {
-    const invariants = await runAdversarialContract(config.source as ContractTestApp, {
-      seed: options.seed ?? 1,
-      runtimes: [{ name: "isolated", fetch: config.invariants.executor }],
-      expectedValidationStatuses: [400, 422],
-      requireCoverage: true,
-    })
-    if (!invariants.ok) {
-      l4Reasons.push(
-        ...invariants.failures
-          .slice(0, 5)
-          .map(
-            (failure) =>
-              `${failure.runtime}: ${failure.id} - ${failure.message} (replay seed ${failure.replay.seed})`,
-          ),
-      )
-      l4Reasons.push(
-        ...invariants.gaps
-          .slice(0, Math.max(0, 5 - l4Reasons.length))
-          .map(
-            (gap) =>
-              `${gap.route ?? "contract"}${gap.target ? ` ${gap.target}` : ""}: ${gap.message}`,
-          ),
-      )
-    }
+    l4Reasons.push(...(await runInvariants(config.source, config.invariants, options.seed ?? 1)))
   }
   statuses.push({
     level: 4,
@@ -210,6 +196,117 @@ export async function collectVerificationLevels(
 
   return finalize(statuses, assurance.routes)
 }
+
+/**
+ * Run L4 against the configured target. `setup` runs at most once, on the first request, and its
+ * `teardown` runs once the run ends - after a failure too - so an app can provision a throwaway target
+ * only when L4 actually exercises it.
+ */
+async function runInvariants(
+  source: unknown,
+  invariants: InvariantsConfig,
+  seed: number,
+): Promise<string[]> {
+  let provisioned: Promise<InvariantSetupResult | undefined> | undefined
+  const provision = (setup: InvariantSetup): Promise<InvariantSetupResult | undefined> => {
+    provisioned ??= Promise.resolve()
+      .then(setup)
+      .then(
+        (result) => result ?? undefined,
+        (error: unknown) => {
+          throw new Error(`invariants.setup failed: ${messageOf(error)}`)
+        },
+      )
+    return provisioned
+  }
+  const fetch = async (request: Request): Promise<Response> => {
+    const ready = invariants.setup === undefined ? undefined : await provision(invariants.setup)
+    const executor = ready?.executor ?? invariants.executor
+    if (executor === undefined) {
+      throw new Error(
+        "no invariant executor: invariants.setup returned none and invariants.executor is not set",
+      )
+    }
+    return executor(request)
+  }
+  const options: AdversarialContractOptions = {
+    seed,
+    runtimes: [{ name: "isolated", fetch }],
+    expectedValidationStatuses: [400, 422],
+    requireCoverage: true,
+  }
+  const runOptions: Record<string, unknown> = {}
+  for (const name of INVARIANT_RUN_OPTIONS) {
+    if (invariants[name] !== undefined) runOptions[name] = invariants[name]
+  }
+  const reasons: string[] = []
+  try {
+    const report = await runAdversarialContract(source as ContractTestApp, {
+      ...options,
+      ...runOptions,
+    })
+    const target = await targetFailure(provisioned, invariants)
+    if (target !== undefined) reasons.push(target)
+    else if (!report.ok) {
+      reasons.push(
+        ...report.failures
+          .slice(0, 5)
+          .map(
+            (failure) =>
+              `${failure.runtime}: ${failure.id} - ${failure.message} (replay seed ${failure.replay.seed})`,
+          ),
+      )
+      reasons.push(
+        ...report.gaps
+          .slice(0, Math.max(0, 5 - reasons.length))
+          .map(
+            (gap) =>
+              `${gap.route ?? "contract"}${gap.target ? ` ${gap.target}` : ""}: ${gap.message}`,
+          ),
+      )
+    }
+  } catch (error) {
+    reasons.push((await targetFailure(provisioned, invariants)) ?? messageOf(error))
+  } finally {
+    const ready = await provisioned?.catch(() => undefined)
+    if (ready?.teardown !== undefined) {
+      try {
+        await ready.teardown()
+      } catch (error) {
+        reasons.push(`invariants teardown failed: ${messageOf(error)}`)
+      }
+    }
+  }
+  return reasons
+}
+
+const INVARIANT_RUN_OPTIONS = [
+  "witnesses",
+  "prepareRequest",
+  "isRejected",
+  "include",
+  "maxMutationsPerInput",
+] as const
+
+/** The setup or missing-executor failure every case hit, if the target never came up. */
+async function targetFailure(
+  provisioned: Promise<InvariantSetupResult | undefined> | undefined,
+  invariants: InvariantsConfig,
+): Promise<string | undefined> {
+  if (provisioned === undefined) return undefined
+  try {
+    const ready = await provisioned
+    if (ready?.executor === undefined && invariants.executor === undefined) {
+      return "no invariant executor: invariants.setup returned none and invariants.executor is not set"
+    }
+    return undefined
+  } catch (error) {
+    return messageOf(error)
+  }
+}
+
+const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
 
 function finalize(
   statuses: readonly { level: number; name: string; ok: boolean; reasons: string[] }[],

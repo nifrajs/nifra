@@ -868,3 +868,62 @@ describe("unknown selector keys", () => {
     ).not.toThrow()
   })
 })
+
+describe("defineAssuranceConfig invariants", () => {
+  const base = { source: server(), policy: { rules: [{ name: "all", match: {}, require: [] }] } }
+  const executor = (request: Request) => new Response(request.url)
+
+  test("an executor, a setup, or both is accepted, and the fixture options are kept", () => {
+    const setup = async () => ({ executor })
+    const prepareRequest = (request: Request) => request
+    const config = defineAssuranceConfig({
+      ...base,
+      invariants: {
+        setup,
+        witnesses: { "POST /pay": { body: { amount: 3 } } },
+        prepareRequest,
+        maxMutationsPerInput: 4,
+      },
+    })
+    expect(config.invariants?.setup).toBe(setup)
+    expect(config.invariants?.prepareRequest).toBe(prepareRequest)
+    expect(config.invariants?.witnesses).toEqual({ "POST /pay": { body: { amount: 3 } } })
+    expect(config.invariants?.maxMutationsPerInput).toBe(4)
+    expect(Object.isFrozen(config.invariants)).toBe(true)
+    expect(() => defineAssuranceConfig({ ...base, invariants: { executor } })).not.toThrow()
+  })
+
+  test("defining the config never calls setup", () => {
+    let calls = 0
+    defineAssuranceConfig({
+      ...base,
+      invariants: {
+        setup: async () => {
+          calls++
+        },
+      },
+    })
+    expect(calls).toBe(0)
+  })
+
+  test("malformed invariant options are refused at definition", () => {
+    const refuse = (invariants: unknown, message: RegExp) =>
+      expect(() =>
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed input, to prove the runtime check refuses what the type already would.
+        defineAssuranceConfig({ ...base, invariants } as never),
+      ).toThrow(message)
+    refuse({}, /needs an executor or a setup/)
+    refuse({ executor: "http://target" }, /executor must be a function/)
+    refuse({ setup: {} }, /invariants.setup must be a function/)
+    refuse({ executor, prepareRequest: true }, /invariants.prepareRequest must be a function/)
+    refuse({ executor, include: 1 }, /invariants.include must be a function/)
+    refuse({ executor, isRejected: "422" }, /invariants.isRejected must be a function/)
+    refuse({ executor, witnesses: [] }, /witnesses must map/)
+    refuse({ executor, witnesses: { "GET /": null } }, /witnesses\["GET \/"\] must be an object/)
+    refuse({ executor, maxMutationsPerInput: 0 }, /maxMutationsPerInput must be a positive integer/)
+    refuse(
+      { executor, maxMutationsPerInput: 1.5 },
+      /maxMutationsPerInput must be a positive integer/,
+    )
+  })
+})
