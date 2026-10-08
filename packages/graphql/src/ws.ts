@@ -16,6 +16,7 @@
 import type { NifraWebSocket, WebSocketContext, WebSocketHandler } from "@nifrajs/core/ws"
 import {
   type DocumentNode,
+  type ExecutionArgs,
   type ExecutionResult,
   execute,
   GraphQLError,
@@ -49,6 +50,14 @@ interface GraphqlWsConnection {
   /** Tear the graphql-ws connection down (graphql-ws's `opened()` return value). */
   closed?: (code: number, reason: string) => void | Promise<void>
   readonly subscriptions: Set<string>
+  /** One abort controller per running operation id, aborted by the client's complete or a close. */
+  operations?: Map<string, AbortController>
+}
+
+/** The `extra` graphql-ws hands its hooks for one socket. */
+interface GraphqlWsExtra {
+  readonly request: Request
+  readonly operations: Map<string, AbortController>
 }
 
 export interface GraphqlWsOptions<
@@ -82,7 +91,11 @@ export interface GraphqlWsOptions<
   readonly maxOperations?: number
   /** Maximum concurrent subscription operation ids per connection. Default 20. */
   readonly maxSubscriptions?: number
-  /** Maximum time for initial execute/subscribe setup. Default 10 seconds. */
+  /**
+   * Maximum time for initial execute/subscribe setup. Default 10 seconds. Each operation's abort
+   * signal, which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline, when
+   * the client completes the operation, and when the socket closes.
+   */
   readonly executionTimeoutMs?: number
 }
 
@@ -160,12 +173,13 @@ function maskWsError(error: unknown): unknown {
  * so the id stops counting against `maxSubscriptions`: a client is not expected to complete an
  * operation the server already ended.
  */
-function outboundFrame(message: string, subscriptions: Set<string>): string {
+function outboundFrame(message: string, connection: GraphqlWsConnection): string {
   try {
     const parsed = recordOf(JSON.parse(message))
     if (parsed === undefined) return message
     if ((parsed.type === "complete" || parsed.type === "error") && typeof parsed.id === "string") {
-      subscriptions.delete(parsed.id)
+      connection.subscriptions.delete(parsed.id)
+      connection.operations?.delete(parsed.id)
     }
     if (parsed.type === "next") {
       const payload = recordOf(parsed.payload)
@@ -193,22 +207,53 @@ function disposeLate(result: unknown): void {
   Promise.resolve(iterator.return.call(result)).catch(() => {})
 }
 
+const wrappedSubscribeFields = new WeakSet<object>()
+
+/**
+ * graphql drops a subscribe resolver's result that settles after the operation's signal aborted, so
+ * a source the resolver opened anyway would stay open. Each root subscription field's resolver is
+ * wrapped once to return such a late source; with no signal, or before an abort, it is unchanged.
+ */
+function returnLateSources(schema: GraphQLSchema): void {
+  const fields = schema.getSubscriptionType()?.getFields() ?? {}
+  for (const field of Object.values(fields)) {
+    const resolver = field.subscribe
+    if (resolver === undefined || wrappedSubscribeFields.has(field)) continue
+    wrappedSubscribeFields.add(field)
+    field.subscribe = (source, args, context, info) => {
+      const result = resolver(source, args, context, info)
+      if (!(result instanceof Promise)) return result
+      return result.then((value) => {
+        if (info.getAbortSignal()?.aborted === true) disposeLate(value)
+        return value
+      })
+    }
+  }
+}
+
 /**
  * A timeout is that operation's error result. graphql-ws does not catch a rejected execute or
- * subscribe, so a rejection would end the whole socket instead of the one operation. Work that
- * settles after the timeout is not abandoned open: a late subscription stream is returned.
+ * subscribe, so a rejection would end the whole socket instead of the one operation. A timeout aborts
+ * the operation's `abortSignal`, which resolvers read through `info.getAbortSignal()`, and work that
+ * settles after it is not abandoned open: a late subscription stream is returned.
  */
 async function withWsTimeout<T>(
-  work: T | Promise<T>,
+  start: (abortSignal: AbortSignal) => T | Promise<T>,
+  outer: AbortSignal | null | undefined,
   timeoutMs: number,
 ): Promise<T | ExecutionResult> {
-  if (!(work instanceof Promise) || timeoutMs === 0) return work
+  const controller = new AbortController()
+  const work = start(outer ? AbortSignal.any([outer, controller.signal]) : controller.signal)
+  if (!(work instanceof Promise)) return work
   let timer: ReturnType<typeof setTimeout> | undefined
   let timedOut = false
   const timeout = new Promise<ExecutionResult>((resolve) => {
     timer = setTimeout(() => {
       timedOut = true
-      resolve({ errors: [new GraphQLError("Execution timed out.")] })
+      const error = new GraphQLError("Execution timed out.")
+      // Resolved first: the abort can reject the work, and the race must settle on this result.
+      resolve({ errors: [error] })
+      controller.abort(error)
     }, timeoutMs)
   })
   try {
@@ -242,10 +287,23 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
   const executionTimeoutMs = options.executionTimeoutMs ?? 10_000
   assertWsNumber(executionTimeoutMs, "executionTimeoutMs", 0)
   const executeWithTimeout: typeof execute = (args) =>
-    withWsTimeout(execute(args), executionTimeoutMs)
+    executionTimeoutMs === 0
+      ? execute(args)
+      : withWsTimeout(
+          (abortSignal) => execute({ ...args, abortSignal }),
+          args.abortSignal,
+          executionTimeoutMs,
+        )
   const subscribeWithTimeout: typeof subscribe = (args) =>
-    withWsTimeout(subscribe(args), executionTimeoutMs)
-  const gqlServer = makeServer<Record<string, unknown>, { request: Request }>({
+    executionTimeoutMs === 0
+      ? subscribe(args)
+      : withWsTimeout(
+          (abortSignal) => subscribe({ ...args, abortSignal }),
+          args.abortSignal,
+          executionTimeoutMs,
+        )
+  returnLateSources(options.schema)
+  const gqlServer = makeServer<Record<string, unknown>, GraphqlWsExtra>({
     // Keep the raw escape hatch for auxiliary graphql-ws hooks, but make the package's safety
     // controls authoritative: callers cannot accidentally replace the bounded execute/subscribe
     // wrappers or the context/authentication seams with an unbounded implementation.
@@ -255,7 +313,7 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
     subscribe: subscribeWithTimeout,
     onConnect:
       options.onConnect || options.authorize
-        ? async (ctx: GraphqlWsContext<Record<string, unknown>, { request: Request }>) => {
+        ? async (ctx: GraphqlWsContext<Record<string, unknown>, GraphqlWsExtra>) => {
             try {
               if (options.authorize !== undefined && !(await options.authorize(ctx.extra.request)))
                 return false
@@ -270,10 +328,24 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
             }
           }
         : undefined,
-    context: options.context
-      ? async (ctx: GraphqlWsContext<Record<string, unknown>, { request: Request }>) =>
-          await buildContext(options.context, { request: ctx.extra.request })
-      : undefined,
+    // graphql-ws builds the context once per operation, just before executing it, so the operation's
+    // abort signal is attached to its execution arguments here.
+    context: async (
+      ctx: GraphqlWsContext<Record<string, unknown>, GraphqlWsExtra>,
+      id: string,
+      _payload: unknown,
+      args: ExecutionArgs,
+    ) => {
+      const controller = new AbortController()
+      ctx.extra.operations.set(id, controller)
+      args.abortSignal =
+        args.abortSignal === undefined || args.abortSignal === null
+          ? controller.signal
+          : AbortSignal.any([args.abortSignal, controller.signal])
+      return options.context === undefined
+        ? undefined
+        : await buildContext(options.context, { request: ctx.extra.request })
+    },
   })
 
   return {
@@ -285,11 +357,13 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
       const protocol =
         (ws.raw as { protocol?: string } | undefined)?.protocol ?? GRAPHQL_TRANSPORT_WS_PROTOCOL
       let onFrame: ((message: string) => void | Promise<void>) | undefined
+      const operations = new Map<string, AbortController>()
+      ws.data.operations = operations
       const closed = gqlServer.opened(
         {
           protocol,
           send: async (data: string) => {
-            ws.send(outboundFrame(data, ws.data.subscriptions))
+            ws.send(outboundFrame(data, ws.data))
           },
           close: (code: number, reason: string) => {
             ws.close(code, reason)
@@ -298,7 +372,7 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
             onFrame = cb
           },
         },
-        { request: ws.data.request },
+        { request: ws.data.request, operations },
       )
       ws.data.closed = closed
       ws.data.dispatch = async (message: string) => {
@@ -345,6 +419,8 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
           ws.data.subscriptions.add(frame.id)
         } else if (frame?.type === "complete" && typeof frame.id === "string") {
           ws.data.subscriptions.delete(frame.id)
+          ws.data.operations?.get(frame.id)?.abort(new GraphQLError("Operation completed."))
+          ws.data.operations?.delete(frame.id)
         }
       } catch {
         // graphql-ws owns malformed protocol-frame handling; pass it through unchanged.
@@ -354,6 +430,9 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
 
     close(ws: NifraWebSocket<GraphqlWsConnection>, code: number, reason: string): void {
       ws.data.subscriptions.clear()
+      for (const controller of ws.data.operations?.values() ?? [])
+        controller.abort(new GraphQLError("Socket closed."))
+      ws.data.operations?.clear()
       // The socket is gone: a failing iterator return() or onClose hook has no one left to answer.
       void Promise.resolve(ws.data.closed?.(code, reason)).catch(() => {})
     },

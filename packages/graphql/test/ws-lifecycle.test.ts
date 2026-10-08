@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { GraphQLObjectType, GraphQLSchema, GraphQLString } from "graphql"
+import { GraphQLObjectType, type GraphQLResolveInfo, GraphQLSchema, GraphQLString } from "graphql"
 import { createPubSub, graphqlWebSocket } from "../src/index.ts"
 
 type Handler = ReturnType<typeof graphqlWebSocket>
@@ -15,7 +15,19 @@ interface Frame {
 const quiet = createPubSub<string>()
 
 // A subscription whose source arrives only when the test releases it, recording its own return().
-const late = { release: () => {}, returned: 0 }
+let slowSignal: AbortSignal | undefined
+
+// A reset outside the test body, so TypeScript does not narrow `late.signal` to undefined there.
+function resetLate(): void {
+  late.returned = 0
+  late.signal = undefined
+}
+
+const late: { release: () => void; returned: number; signal: AbortSignal | undefined } = {
+  release: () => {},
+  returned: 0,
+  signal: undefined,
+}
 
 const schema = new GraphQLSchema({
   query: new GraphQLObjectType({
@@ -24,7 +36,15 @@ const schema = new GraphQLSchema({
       ping: { type: GraphQLString, resolve: () => "pong" },
       slow: {
         type: GraphQLString,
-        resolve: () => new Promise((resolve) => setTimeout(() => resolve("late"), 200)),
+        resolve: (
+          _source: unknown,
+          _args: unknown,
+          _context: unknown,
+          info: GraphQLResolveInfo,
+        ) => {
+          slowSignal = info.getAbortSignal()
+          return new Promise((resolve) => setTimeout(() => resolve("late"), 200))
+        },
       },
     },
   }),
@@ -38,8 +58,14 @@ const schema = new GraphQLSchema({
       },
       late: {
         type: GraphQLString,
-        subscribe: () =>
+        subscribe: (
+          _source: unknown,
+          _args: unknown,
+          _context: unknown,
+          info: GraphQLResolveInfo,
+        ) =>
           new Promise<AsyncIterableIterator<string>>((resolve) => {
+            late.signal = info.getAbortSignal()
             const source: AsyncIterableIterator<string> = {
               [Symbol.asyncIterator]: () => source,
               next: () => new Promise<IteratorResult<string>>(() => {}),
@@ -68,6 +94,7 @@ function connect(handler: Handler): {
   readonly frames: Frame[]
   readonly closes: { readonly code: number | undefined; readonly reason: string | undefined }[]
   send(frame: Record<string, unknown>): void
+  close(): void
 } {
   const frames: Frame[] = []
   const closes: { code: number | undefined; reason: string | undefined }[] = []
@@ -85,7 +112,12 @@ function connect(handler: Handler): {
     raw: { protocol: "graphql-transport-ws" },
   }
   handler.open?.(socket)
-  return { frames, closes, send: (frame) => handler.message?.(socket, JSON.stringify(frame)) }
+  return {
+    frames,
+    closes,
+    send: (frame) => handler.message?.(socket, JSON.stringify(frame)),
+    close: () => handler.close?.(socket, 1000, ""),
+  }
 }
 
 async function until(done: () => boolean): Promise<void> {
@@ -201,6 +233,7 @@ describe("graphql-ws failures stay on the socket", () => {
       const socket = await acknowledged(handler)
       socket.send({ id: "1", type: "subscribe", payload: { query: "{ slow }" } })
       await until(ended(socket.frames, "1"))
+      expect(slowSignal?.aborted).toBe(true)
       socket.send({ id: "2", type: "subscribe", payload: { query: "{ ping }" } })
       await until(ended(socket.frames, "2"))
       expect(socket.frames.filter((frame) => frame.id === "1")).toEqual([
@@ -223,8 +256,34 @@ describe("graphql-ws failures stay on the socket", () => {
     socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
     await until(ended(socket.frames, "1"))
     expect(late.returned).toBe(0)
+    expect(late.signal?.aborted).toBe(true)
     late.release()
     await until(() => late.returned === 1)
     expect(socket.closes).toEqual([])
+  })
+
+  test("a client complete aborts a subscription still setting up and returns its late source", async () => {
+    const handler = graphqlWebSocket({ schema })
+    resetLate()
+    const socket = await acknowledged(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
+    await until(() => late.signal !== undefined)
+    expect(late.signal?.aborted).toBe(false)
+    socket.send({ id: "1", type: "complete" })
+    expect(late.signal?.aborted).toBe(true)
+    late.release()
+    await until(() => late.returned === 1)
+  })
+
+  test("a socket close aborts a subscription still setting up and returns its late source", async () => {
+    const handler = graphqlWebSocket({ schema })
+    resetLate()
+    const socket = await acknowledged(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
+    await until(() => late.signal !== undefined)
+    socket.close()
+    expect(late.signal?.aborted).toBe(true)
+    late.release()
+    await until(() => late.returned === 1)
   })
 })
