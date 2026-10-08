@@ -294,6 +294,17 @@ export default function Rendering() {
       </p>
       <CodeBlock code={PURGE} />
       <p>
+        A page that must not be cached as a whole, because it is personalized or carries a nonce, can
+        still cache the data its loader reads. Wrap the expensive call in <code>cache.wrap</code> from{" "}
+        <code>@nifrajs/cache</code>, with the same tags the pages use. Concurrent loads of one key run
+        once, and a store outage falls through to the loader. Pass that cache to{" "}
+        <code>revalidateEndpoint</code> as <code>dataCaches: [cache]</code>. A tag purge then
+        invalidates it first, then the page store, then the CDN, so no page is rebuilt from stale
+        data. If a data cache fails, the endpoint answers <code>500</code> before it touches the page
+        store, so a retry purges everything again. <code>createInvalidator</code> from{" "}
+        <code>@nifrajs/web/cdn</code> takes the same <code>dataCaches</code> for purges from app code.
+      </p>
+      <p>
         <code>revalidateTags</code> names what a purge by tag reaches. A list tags every page of the
         route alike; a function of the route's params and URL tags each page on its own. Tags travel to
         the CDN and to anyone reading the origin, so build them from params, never from loader data.

@@ -1066,6 +1066,13 @@ export interface RevalidateEndpointOptions {
    * the purge, `202` when it is queued (rate limit or retry), and `502` when the CDN refused it.
    */
   readonly cdn?: CdnPurgeTarget
+  /**
+   * Caches below the pages whose entries carry the same tags, such as a `@nifrajs/cache` holding
+   * loader data. A tag purge invalidates each of them first, then the page store, then the CDN, so a
+   * page regenerated mid-purge cannot be rebuilt from stale data. A failure answers `500` before the
+   * page store is touched, so a retry purges everything again. Path purges do not reach them.
+   */
+  readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
 }
 
 const stringList = (value: unknown): string[] | null | undefined => {
@@ -1149,6 +1156,18 @@ export function revalidateEndpoint(
       return jsonError(501, "tag_invalidation_not_supported")
     }
 
+    if (tags.length > 0 && options.dataCaches !== undefined) {
+      try {
+        for (const cache of options.dataCaches) {
+          for (const candidate of tags) await cache.invalidateTag(candidate)
+        }
+      } catch {
+        return Response.json(
+          { ok: false, error: "data_cache_invalidation_failed" },
+          { status: 500 },
+        )
+      }
+    }
     for (const key of keys) await options.store.delete(key)
     for (const candidate of tags) await invalidateTag?.call(options.store, candidate)
     const done =

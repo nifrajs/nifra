@@ -782,6 +782,8 @@ Every public export of every package and documented subpath - name, kind, signat
   How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and a completed revalidation report `ok`; `error` means the store or the loader threw.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.
+- **CacheStoreOp** _(type)_ - `type CacheStoreOp = "get" | "set"`
+  The store call a {@link CacheOptions.onStoreError} report is about.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies - a cache should not drag the server into a bundle that only wanted a cache. Wiring it is one line where the cache is created.
 - **MemoryCache** _(class)_ - `class MemoryCache`

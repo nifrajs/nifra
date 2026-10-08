@@ -1607,3 +1607,72 @@ describe("withISR store failures", () => {
     }
   })
 })
+
+describe("revalidateEndpoint and the data caches under the pages", () => {
+  const post = (handler: (req: Request) => Promise<Response>, body: unknown) =>
+    handler(
+      new Request("http://x/__nifra/revalidate", {
+        method: "POST",
+        headers: { "x-nifra-revalidate-token": "s3cret", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    )
+  const logged = (log: string[], name: string, fail = false) => ({
+    invalidateTag(tag: string) {
+      log.push(`${name} ${tag}`)
+      if (fail) throw new Error(`${name} down`)
+    },
+  })
+
+  test("a tag purge reaches each data cache first, then the page store, then the CDN", async () => {
+    const log: string[] = []
+    const store = new MemoryCacheStore()
+    await store.set("http://x/b", { ...entry("B"), tags: ["catalog"] })
+    const originInvalidate = store.invalidateTag.bind(store)
+    store.invalidateTag = async (tag: string) => {
+      log.push(`pages ${tag}`)
+      return originInvalidate(tag)
+    }
+    const handler = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      dataCaches: [logged(log, "loaders"), logged(log, "search")],
+      cdn: {
+        async purge(target) {
+          log.push(`cdn ${JSON.stringify(target.tags)}`)
+          return { cdn: "accepted", retryable: false }
+        },
+      },
+    })
+    const res = await post(handler, { tags: ["catalog"] })
+    expect(res.status).toBe(200)
+    expect(log).toEqual(["loaders catalog", "search catalog", "pages catalog", 'cdn ["catalog"]'])
+    expect(await store.get("http://x/b")).toBeUndefined()
+  })
+
+  test("a path-only purge leaves the data caches alone", async () => {
+    const log: string[] = []
+    const handler = revalidateEndpoint({
+      store: new MemoryCacheStore(),
+      secret: "s3cret",
+      dataCaches: [logged(log, "loaders")],
+    })
+    expect((await post(handler, { path: "/a" })).status).toBe(200)
+    expect(log).toEqual([])
+  })
+
+  test("a data cache that fails stops the purge before the pages, so a retry finds them intact", async () => {
+    const log: string[] = []
+    const store = new MemoryCacheStore()
+    await store.set("http://x/b", { ...entry("B"), tags: ["catalog"] })
+    const handler = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      dataCaches: [logged(log, "loaders", true)],
+    })
+    const res = await post(handler, { tags: ["catalog"] })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ ok: false, error: "data_cache_invalidation_failed" })
+    expect(await store.get("http://x/b")).toBeDefined()
+  })
+})

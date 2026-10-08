@@ -1906,6 +1906,16 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)
 ```
 
+A page that must not be cached as a whole, because it is personalized or carries a nonce, can
+still cache the data its loader reads. Wrap the expensive call in `cache.wrap` from
+`@nifrajs/cache`, with the same tags the pages use. Concurrent loads of one key run
+once, and a store outage falls through to the loader. Pass that cache to
+`revalidateEndpoint` as `dataCaches: [cache]`. A tag purge then
+invalidates it first, then the page store, then the CDN, so no page is rebuilt from stale
+data. If a data cache fails, the endpoint answers `500` before it touches the page
+store, so a retry purges everything again. `createInvalidator` from
+`@nifrajs/web/cdn` takes the same `dataCaches` for purges from app code.
+
 `revalidateTags` names what a purge by tag reaches. A list tags every page of the
 route alike; a function of the route's params and URL tags each page on its own. Tags travel to
 the CDN and to anyone reading the origin, so build them from params, never from loader data.
@@ -12137,6 +12147,10 @@ await cache.invalidateTag(`user:${id}`)
     **immediately** while a **background** refresh runs (deduped). Latency stays flat; data self-heals.
   - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
   - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
+  - **Store outage**: a store `get` that throws or rejects is a miss, so the loader answers; a `set` that
+    fails still returns the loaded value. Each failure goes to `onStoreError(error, { op })`, which by
+    default logs one line per operation per minute without the key. The explicit `get`, `set`,
+    `delete`, `invalidateTag` and `clear` still reject, so a failed invalidation is never silent.
 - **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. The check runs before the store write; with a store shared across processes, a refresh in another process is not fenced.
 - TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
 
@@ -12158,7 +12172,8 @@ the Cache API) via a `CacheStore` for anything that should survive across reques
 
 `observer` receives one event per operation after it settles: `{ op, outcome, startedAt, durationMs,
 key, tag, tagCount, context }`. `outcome` is `hit`, `stale` or `miss` for reads, `ok` for writes and a
-finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. An observer
+finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. A `wrap`
+that loaded through a store outage reports `miss`. An observer
 that throws is swallowed; it never changes a result. Without an observer the cache reads no extra clock.
 
 `cache.for(c)` binds a request (or job) context, and every event carries it. That is how
@@ -12181,7 +12196,7 @@ whenever it is set.
 
 ## API
 
-- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, observer?, beacon?, capabilities? }`.
+- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, onStoreError?, observer?, beacon?, capabilities? }`.
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
 - `cache.for(context)` → the same surface bound to a request or job context.
 - `MemoryCache({ maxEntries?, now? })` - the default store; implement `CacheStore` for your own.
@@ -15447,7 +15462,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cache
 
-`Cache`, `CacheCapabilities`, `CacheEvent`, `CacheObserver`, `CacheOperation`, `CacheOptions`, `CacheOutcome`, `CacheStore`, `CapabilityBeacon`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`, `createCache`
+`Cache`, `CacheCapabilities`, `CacheEvent`, `CacheObserver`, `CacheOperation`, `CacheOptions`, `CacheOutcome`, `CacheStore`, `CacheStoreOp`, `CapabilityBeacon`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`, `createCache`
 
 ## @nifrajs/client
 

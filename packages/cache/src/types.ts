@@ -30,6 +30,9 @@ export interface CacheStore {
   clear(): void | Promise<void>
 }
 
+/** The store call a {@link CacheOptions.onStoreError} report is about. */
+export type CacheStoreOp = "get" | "set"
+
 export interface SetOptions {
   /** Time-to-live (ms) before the value goes stale. Default: the cache's `defaultTtlMs`. */
   readonly ttlMs?: number
@@ -123,6 +126,12 @@ export interface CacheOptions {
   readonly now?: () => number
   /** Called when a background SWR revalidation throws. Default: `console.error`. */
   readonly onError?: (error: unknown, key: string) => void
+  /**
+   * Called when `wrap` meets a store failure: a `get` that throws or rejects is answered as a miss, so
+   * the loader runs, and a `set` that fails still returns the loaded value. Other operations reject
+   * as before. Default: one `console.error` line per operation per minute, never naming the key.
+   */
+  readonly onStoreError?: (error: unknown, info: { readonly op: CacheStoreOp }) => void
   /**
    * Receives one {@link CacheEvent} per operation - the seam `cacheTracing()` from `@nifrajs/otel/cache`
    * plugs into. Without one the cache reads no extra clock and allocates no event.

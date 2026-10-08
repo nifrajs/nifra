@@ -31,6 +31,10 @@ await cache.invalidateTag(`user:${id}`)
     **immediately** while a **background** refresh runs (deduped). Latency stays flat; data self-heals.
   - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
   - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
+  - **Store outage**: a store `get` that throws or rejects is a miss, so the loader answers; a `set` that
+    fails still returns the loaded value. Each failure goes to `onStoreError(error, { op })`, which by
+    default logs one line per operation per minute without the key. The explicit `get`, `set`,
+    `delete`, `invalidateTag` and `clear` still reject, so a failed invalidation is never silent.
 - **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. The check runs before the store write; with a store shared across processes, a refresh in another process is not fenced.
 - TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
 
@@ -52,7 +56,8 @@ the Cache API) via a `CacheStore` for anything that should survive across reques
 
 `observer` receives one event per operation after it settles: `{ op, outcome, startedAt, durationMs,
 key, tag, tagCount, context }`. `outcome` is `hit`, `stale` or `miss` for reads, `ok` for writes and a
-finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. An observer
+finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. A `wrap`
+that loaded through a store outage reports `miss`. An observer
 that throws is swallowed; it never changes a result. Without an observer the cache reads no extra clock.
 
 `cache.for(c)` binds a request (or job) context, and every event carries it. That is how
@@ -75,7 +80,7 @@ whenever it is set.
 
 ## API
 
-- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, observer?, beacon?, capabilities? }`.
+- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, onStoreError?, observer?, beacon?, capabilities? }`.
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
 - `cache.for(context)` → the same surface bound to a request or job context.
 - `MemoryCache({ maxEntries?, now? })` - the default store; implement `CacheStore` for your own.

@@ -719,3 +719,51 @@ test("a 200 from Cloudflare that is not its JSON envelope is not a success", asy
     error: "cloudflare_unsuccessful",
   })
 })
+
+describe("createInvalidator and the data caches under the pages", () => {
+  test("a tag reaches each data cache before the page store; a path does not", async () => {
+    const order: string[] = []
+    const store = new MemoryCacheStore()
+    const pages = store.invalidateTag.bind(store)
+    store.invalidateTag = async (tag: string) => {
+      order.push(`pages ${tag}`)
+      return pages(tag)
+    }
+    const loaders = { invalidateTag: (tag: string) => void order.push(`loaders ${tag}`) }
+    const { invalidate } = createInvalidator({
+      store,
+      origin: "https://x.test",
+      dataCaches: [loaders],
+    })
+    await invalidate({ tags: ["catalog"], paths: ["/a"] })
+    expect(order).toEqual(["loaders catalog", "pages catalog"])
+    order.length = 0
+    await invalidate({ paths: ["/a"] })
+    expect(order).toEqual([])
+  })
+
+  test("a failing data cache rejects before the page store is touched", async () => {
+    const store = new MemoryCacheStore()
+    await store.set("https://x.test/a", {
+      body: "x",
+      status: 200,
+      headers: {},
+      storedAt: 0,
+      revalidate: 1000,
+      tags: ["catalog"],
+    })
+    const { invalidate } = createInvalidator({
+      store,
+      origin: "https://x.test",
+      dataCaches: [
+        {
+          invalidateTag: () => {
+            throw new Error("loaders down")
+          },
+        },
+      ],
+    })
+    await expect(invalidate({ tags: ["catalog"] })).rejects.toThrow("loaders down")
+    expect(await store.get("https://x.test/a")).toBeDefined()
+  })
+})

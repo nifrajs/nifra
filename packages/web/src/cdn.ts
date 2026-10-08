@@ -150,6 +150,12 @@ export interface InvalidatorOptions {
   readonly key?: (path: string) => string | null
   /** The `query` policy given to `withISR`. Default `"bypass"`. Ignored with `key`. */
   readonly query?: ISRQuery
+  /**
+   * Caches below the pages whose entries carry the same tags, such as a `@nifrajs/cache` holding
+   * loader data. Tags reach each of them before the store, so a page regenerated mid-purge cannot be
+   * rebuilt from stale data; a failure rejects before the store is touched. Paths do not reach them.
+   */
+  readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
 }
 
 export interface InvalidateResult {
@@ -196,11 +202,16 @@ export function createInvalidator(options: InvalidatorOptions): {
           throw new TypeError("[nifra/web/cdn] invalidate paths must start with /")
         }
       }
+      if (store !== undefined && tags.length > 0 && store.invalidateTag === undefined) {
+        throw new TypeError("[nifra/web/cdn] this store cannot invalidate by tag")
+      }
+      if (tags.length > 0) {
+        for (const cache of options.dataCaches ?? []) {
+          for (const tag of tags) await cache.invalidateTag(tag)
+        }
+      }
       let origin: InvalidateResult["origin"] = "skipped"
       if (store !== undefined) {
-        if (tags.length > 0 && store.invalidateTag === undefined) {
-          throw new TypeError("[nifra/web/cdn] this store cannot invalidate by tag")
-        }
         for (const path of paths) {
           const key = keyOf?.(path)
           if (key !== null && key !== undefined) await store.delete(key)

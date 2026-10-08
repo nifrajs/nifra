@@ -19,6 +19,7 @@ import type {
   CacheOptions,
   CacheOutcome,
   CacheStore,
+  CacheStoreOp,
   SetOptions,
   StoredEntry,
   WrapOptions,
@@ -28,6 +29,18 @@ function assertDuration(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`[nifra/cache] ${name} must be a finite non-negative number`)
   }
+}
+
+const STORE_REPORT_INTERVAL_MS = 60_000
+const STORE_REPORT_DETAIL_CHARS = 200
+
+/** The error's own words with the key cut out, since a store may name the key it failed on. */
+function storeErrorDetail(error: unknown, key: string): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  const redacted = key === "" ? text : text.split(key).join("<key>")
+  return redacted.length > STORE_REPORT_DETAIL_CHARS
+    ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
+    : redacted
 }
 
 function notify(observer: CacheObserver, event: CacheEvent): void {
@@ -73,6 +86,34 @@ export function createCache(options: CacheOptions = {}): Cache {
     ((error, key) =>
       console.error(`[nifra/cache] revalidate ${JSON.stringify(key)} failed:`, error))
 
+  const lastStoreReport = new Map<CacheStoreOp, number>()
+  const reportStoreError = (op: CacheStoreOp, key: string, error: unknown): void => {
+    try {
+      if (options.onStoreError !== undefined) {
+        options.onStoreError(error, { op })
+        return
+      }
+      const last = lastStoreReport.get(op)
+      const at = now()
+      if (last !== undefined && at - last < STORE_REPORT_INTERVAL_MS) return
+      lastStoreReport.set(op, at)
+      console.error(
+        `[nifra/cache] store ${op} failed; loading without the cache (${storeErrorDetail(error, key)})`,
+      )
+    } catch {
+      // A failing reporter must not turn a loaded value into an error.
+    }
+  }
+  /** `wrap`'s read: a store that throws or rejects is a miss, so the loader answers. */
+  const readEntry = async (key: string): Promise<StoredEntry | undefined> => {
+    try {
+      return await store.get(key)
+    } catch (error) {
+      reportStoreError("get", key, error)
+      return undefined
+    }
+  }
+
   const observer = options.observer
   // Single-flight: concurrent loads for the same key share one promise (miss stampede + SWR dedup).
   // A delete, tag invalidation, clear or newer set withdraws a load's right to store its result, so
@@ -100,17 +141,17 @@ export function createCache(options: CacheOptions = {}): Cache {
     return (await store.get(key)) !== undefined
   }
 
-  async function write<T>(key: string, value: T, opts: SetOptions): Promise<void> {
+  function entryOf(value: unknown, opts: SetOptions): StoredEntry {
     const ttlMs = opts.ttlMs ?? defaultTtlMs
     const swrMs = opts.swrMs ?? 0
     assertDuration(ttlMs, "ttlMs")
     assertDuration(swrMs, "swrMs")
     const t = now()
-    await store.set(
-      key,
-      { value, staleAt: t + ttlMs, expiresAt: t + ttlMs + swrMs },
-      opts.tags ?? [],
-    )
+    return { value, staleAt: t + ttlMs, expiresAt: t + ttlMs + swrMs }
+  }
+
+  async function write<T>(key: string, value: T, opts: SetOptions): Promise<void> {
+    await store.set(key, entryOf(value, opts), opts.tags ?? [])
   }
 
   function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
@@ -139,7 +180,15 @@ export function createCache(options: CacheOptions = {}): Cache {
     let withdrawn = false
     const p = (async () => {
       const value = await loader()
-      if (!withdrawn) await write(key, value, opts)
+      if (!withdrawn) {
+        // Built outside the try: a bad ttlMs is the caller's error, not a store outage.
+        const entry = entryOf(value, opts)
+        try {
+          await store.set(key, entry, opts.tags ?? [])
+        } catch (error) {
+          reportStoreError("set", key, error)
+        }
+      }
       return value
     })().finally(() => {
       if (inflight.get(key)?.promise === p) inflight.delete(key)
@@ -184,7 +233,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     loader: () => T,
     opts: WrapOptions = {},
   ): Promise<Awaited<T>> {
-    const entry = await store.get(key)
+    const entry = await readEntry(key)
     if (entry !== undefined) {
       if (now() < entry.staleAt) return entry.value as Awaited<T> // fresh hit
       revalidate(key, loader as () => unknown, opts, undefined) // stale-but-live → serve stale, refresh in background
@@ -241,7 +290,7 @@ export function createCache(options: CacheOptions = {}): Cache {
         const started = performance.now()
         let outcome: CacheOutcome = "error"
         try {
-          const entry = await store.get(key)
+          const entry = await readEntry(key)
           if (entry !== undefined) {
             outcome = readOutcome(entry)
             if (outcome === "stale") revalidate(key, loader, opts, context)
