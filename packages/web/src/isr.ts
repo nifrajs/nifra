@@ -832,13 +832,8 @@ export function withISR(
       const entry = await pending
       return entry === undefined ? render(req, platform, key, true) : fresh(entry)
     }
-    let settle: (entry: CachedResponse | undefined) => void = () => {}
-    coldRenders.set(
-      key,
-      new Promise((resolve) => {
-        settle = resolve
-      }),
-    )
+    const shared = Promise.withResolvers<CachedResponse | undefined>()
+    coldRenders.set(key, shared.promise)
     let entry: CachedResponse | undefined
     try {
       return await render(req, platform, key, true, (stored) => {
@@ -846,7 +841,7 @@ export function withISR(
       })
     } finally {
       coldRenders.delete(key)
-      settle(entry)
+      shared.resolve(entry)
     }
   }
 
