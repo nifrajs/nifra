@@ -3,6 +3,9 @@
  * STRUCTURED output. A missing tool returns a single `tool-unavailable` finding so a silent skip can
  * never read as "clean"; a scanner that ran and failed throws, so the run exits 2 instead.
  */
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { ProbeId, RawFinding, Severity } from "./schema.ts"
 
 export interface ProbeContext {
@@ -190,31 +193,44 @@ export async function secretsProbe(ctx: ProbeContext): Promise<ProbeResult> {
   if (drift !== undefined && ctx.strictTools) {
     throw new Error(`gitleaks version drift under --strict-tools: ${version}`)
   }
-  const reportPath = `${ctx.repoRoot}/.security/.gitleaks-raw.json`
-  const out = await run(
-    ["gitleaks", "detect", "--no-banner", "--report-format", "json", "--report-path", reportPath],
-    ctx.repoRoot,
-  )
-  const findings: RawFinding[] = drift !== undefined ? [{ ...drift, probe }] : []
-  // gitleaks exits 1 when it finds leaks; any other non-zero exit is the tool failing.
-  if (out.code > 1) throw scannerFailed("gitleaks", out)
+  // The tool's own report goes to a private directory that is removed before the probe returns, and
+  // `--redact` keeps secret values out of it even while it exists.
+  const scratch = await mkdtemp(join(tmpdir(), "security-checkup-gitleaks-"))
+  const reportPath = join(scratch, "report.json")
+  let out: Spawned
   let parsed: unknown
   try {
-    parsed = JSON.parse(await Bun.file(reportPath).text())
-  } catch {
-    throw new Error(`gitleaks exited ${out.code} without a readable JSON report`)
+    out = await run(
+      [
+        "gitleaks",
+        "detect",
+        "--no-banner",
+        "--redact",
+        "--report-format",
+        "json",
+        "--report-path",
+        reportPath,
+      ],
+      ctx.repoRoot,
+    )
+    // gitleaks exits 1 when it finds leaks; any other non-zero exit is the tool failing.
+    if (out.code > 1) throw scannerFailed("gitleaks", out)
+    try {
+      parsed = JSON.parse(await Bun.file(reportPath).text())
+    } catch {
+      throw new Error(`gitleaks exited ${out.code} without a readable JSON report`)
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
   }
+  const findings: RawFinding[] = drift !== undefined ? [{ ...drift, probe }] : []
   if (!Array.isArray(parsed)) throw new Error("gitleaks report is not an array")
-  for (const leak of (parsed as Array<{
+  for (const leak of parsed as Array<{
     RuleID?: string
     Description?: string
     File?: string
     StartLine?: number
-    Secret?: string
-    Match?: string
-  }>) ?? []) {
-    // Mask: keep only a short prefix hint, never the secret body, since this artifact hits CI logs.
-    const hint = (leak.Secret ?? leak.Match ?? "").slice(0, 4)
+  }>) {
     findings.push({
       probe,
       severity: "critical",
@@ -222,7 +238,7 @@ export async function secretsProbe(ctx: ProbeContext): Promise<ProbeResult> {
       title: `Possible committed secret: ${leak.RuleID ?? "secret"}`,
       ...(leak.File !== undefined ? { file: leak.File } : {}),
       ...(leak.StartLine !== undefined ? { startLine: leak.StartLine } : {}),
-      detail: `${leak.Description ?? "A secret-like value was found"} (masked hint ${hint}****). Rotate it if live; the raw value is deliberately not written here.`,
+      detail: `${(leak.Description ?? "A secret-like value was found").replace(/\.$/, "")}. Rotate it if live; the value is redacted and never written here.`,
       remediation: `Remove the secret, rotate the credential, and purge it from history if it was pushed.`,
     })
   }
