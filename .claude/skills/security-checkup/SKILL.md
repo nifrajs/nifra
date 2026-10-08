@@ -33,7 +33,8 @@ bun .claude/skills/security-checkup/scripts/run.ts
 | `--out <dir>` | artifact dir (default `.security`) | - |
 
 Exit codes: `0` clean / report-only, `1` findings at-or-above threshold, `2` operational failure
-(unreadable repo, `--strict-tools` drift, malformed probe output). A crashed probe is a `2`, never a
+(unreadable repo, `--strict-tools` drift, a scanner that exits with an error or writes no readable
+report). A crashed probe is a `2`, never a
 silent `0`; a missing scanner prints `DEGRADED: <probe>` and still gates on the rest.
 
 ## Probes (pinned)
