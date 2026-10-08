@@ -267,11 +267,12 @@ describe("remote source SSRF guards", () => {
     })) as unknown as typeof fetch
 
   test("a source rejected before its body is read is cancelled and its fetch aborted", async () => {
-    const cases: readonly [string, number, ResponseInit][] = [
-      ["declared too large", 413, { headers: { "content-length": "11" } }],
-      ["upstream error", 502, { status: 500 }],
+    const cases: readonly [string, number, ResponseInit, boolean][] = [
+      ["declared too large", 413, { headers: { "content-length": "11" } }, false],
+      ["upstream error", 502, { status: 500 }, false],
+      ["upstream error whose cancel fails", 502, { status: 500 }, true],
     ]
-    for (const [label, status, init] of cases) {
+    for (const [label, status, init, cancelFails] of cases) {
       let cancelled = 0
       let signal: AbortSignal | undefined
       const fetchImpl = Object.assign(
@@ -281,6 +282,7 @@ describe("remote source SSRF guards", () => {
             new ReadableStream({
               cancel() {
                 cancelled++
+                if (cancelFails) throw new Error("cancel failed")
               },
             }),
             init,
