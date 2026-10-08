@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# An untracked, machine-local hook may check the message (it lives in the common git dir's hooks/,
+# never committed). The common dir, because in a linked worktree `.git` is a file.
+local_hook="$(git rev-parse --git-common-dir)/hooks/commit-msg-local"
+if [ -x "$local_hook" ]; then
+  "$local_hook" "$1"
+fi

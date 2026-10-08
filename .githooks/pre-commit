@@ -144,7 +144,9 @@ if grep -qE '^(site/routes/docs/.*\.(tsx|mdx)|packages/[^/]+/README\.md)$' <<< "
 fi
 
 # ---- Local extension point ---------------------------------------------------------------------
-# An untracked, machine-local hook may add extra gates (it lives in .git/hooks/, never committed).
-if [ -x .git/hooks/pre-commit-local ]; then
-  .git/hooks/pre-commit-local
+# An untracked, machine-local hook may add extra gates (it lives in the common git dir's hooks/,
+# never committed). The common dir, because in a linked worktree `.git` is a file.
+local_hook="$(git rev-parse --git-common-dir)/hooks/pre-commit-local"
+if [ -x "$local_hook" ]; then
+  "$local_hook"
 fi
