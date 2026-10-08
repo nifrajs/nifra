@@ -29,16 +29,15 @@ try {
   const unpack = spawnSync("tar", ["-xf", "-", "-C", scratch], { input: archive.stdout })
   assert.equal(unpack.status, 0)
   await symlink(resolve(root, "node_modules"), resolve(scratch, "node_modules"), "dir")
-  const resultAt = (entry: string) =>
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The bounded measurement child emits the fixed metrics envelope used by this runner.
-    JSON.parse(
-      run([process.execPath, `${fixture}/check-disabled.ts`], {
-        NIFRA_COMPONENT_BASE_WEB: pathToFileURL(entry).href,
-      }).trim(),
-    ) as { fingerprint: string; p95: number; runs: readonly unknown[] }
-  console.log("components: measure frozen disabled baseline (five runs)")
-  const before = resultAt(resolve(scratch, "packages/web/src/index.ts"))
-  const after = resultAt(resolve(root, "packages/web/src/index.ts"))
+  type Result = { fingerprint: string; p95: number; runs: readonly unknown[] }
+  console.log("components: measure frozen baseline and current disabled mode (five runs)")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The bounded measurement child emits the fixed metrics envelope used by this runner.
+  const { before, after } = JSON.parse(
+    run([process.execPath, `${fixture}/check-disabled.ts`], {
+      NIFRA_COMPONENT_BASE_WEB: pathToFileURL(resolve(scratch, "packages/web/src/index.ts")).href,
+      NIFRA_COMPONENT_CURRENT_WEB: pathToFileURL(resolve(root, "packages/web/src/index.ts")).href,
+    }).trim(),
+  ) as { before: Result; after: Result }
   assert.equal(
     after.fingerprint,
     before.fingerprint,
@@ -99,6 +98,7 @@ try {
         samples: 200,
         warmups: 30,
         runs: 5,
+        order: "alternating",
       },
       null,
       2,
