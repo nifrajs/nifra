@@ -416,6 +416,19 @@ describe("chained upgrades", () => {
     expect(chainRecipes("4.0.0", "4.0.0").steps).toEqual([])
   })
 
+  test("5.0.0 pins the group and names each changed default and how to keep the old one", () => {
+    const chain = chainRecipes("5.0.0", "4.0.2")
+    expect(chain.steps).toEqual(["5.0.0"])
+    expect(chain.pins).toContainEqual({ match: "@nifrajs/", to: "5.0.0" })
+    const notes = chain.notes?.join("\n") ?? ""
+    expect(notes).toContain("export const inLayouts = false")
+    expect(notes).toContain("NF-C034")
+    expect(notes).toContain("nifra fix --code NF-C035")
+    expect(notes).toContain("app.ws()")
+    expect(notes).toContain("500")
+    expect(chainRecipes("5.0.0", "3.5.0").steps).toEqual(["4.0.0", "5.0.0"])
+  })
+
   test("4.0.0 moves the retired backend-only marker import and leads with the layout move", () => {
     const chain = chainRecipes("4.0.0", "3.5.0")
     expect(chain.steps).toEqual(["4.0.0"])
