@@ -5,6 +5,7 @@ import { join } from "node:path"
 import type { AgentBackend } from "@nifrajs/agent-protocol"
 import { PiBackend } from "@nifrajs/pi"
 import { ExtensionHost } from "../src/extensions.ts"
+import { NifraBackend } from "../src/native.ts"
 import { CodingAgentRpcServer } from "../src/rpc.ts"
 import { FileSessionStore } from "../src/sessions.ts"
 
@@ -76,6 +77,43 @@ describe("coding agent RPC", () => {
         backend: new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] }),
       }).start(),
     ).rejects.toThrow("at least 32 bytes")
+  })
+
+  test("concurrent session.create requests share one session", async () => {
+    const backend = new NifraBackend({ model: { complete: () => ({ type: "text", text: "ok" }) } })
+    // Hold the first start open until all three requests have looked for an active session.
+    const looked = Promise.withResolvers<void>()
+    const createSession = backend.createSession.bind(backend)
+    backend.createSession = async (input) => {
+      await looked.promise
+      return createSession(input)
+    }
+    const rpc = new CodingAgentRpcServer({ cwd: process.cwd(), backend })
+    const snapshot = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(rpc.host), "snapshot")
+    let lookups = 0
+    Object.defineProperty(rpc.host, "snapshot", {
+      get() {
+        if (++lookups === 3) looked.resolve()
+        return snapshot?.get?.call(rpc.host)
+      },
+    })
+    const handle = await rpc.start()
+    try {
+      const create = () =>
+        fetch(`${handle.url}/rpc`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${handle.token}`, "content-type": "application/json" },
+          body: JSON.stringify({ method: "session.create" }),
+        })
+      const responses = await Promise.all([create(), create(), create()])
+      expect(responses.map((response) => response.status)).toEqual([200, 200, 200])
+      const bodies: { id: string }[] = await Promise.all(
+        responses.map((response) => response.json()),
+      )
+      expect(new Set(bodies.map((body) => body.id)).size).toBe(1)
+    } finally {
+      await handle.stop()
+    }
   })
 
   test("returns actionable errors and opts into stacks only on loopback", async () => {

@@ -1,6 +1,7 @@
 import {
   type AgentBackend,
   type AgentSessionSnapshot,
+  type CreateSessionInput,
   type ReloadResult,
   resumeFromCursor,
 } from "@nifrajs/agent-protocol"
@@ -76,6 +77,7 @@ export class CodingAgentRpcServer {
   private authFailures = 0
   private authLastFailureAt = 0
   private authBackoffUntil = 0
+  private creating: Promise<AgentSessionSnapshot> | undefined
 
   constructor(options: CodingAgentRpcServerOptions) {
     this.options = Object.freeze({ ...options })
@@ -247,13 +249,11 @@ export class CodingAgentRpcServer {
             422,
             cors,
           )
-        const snapshot =
-          this.host.snapshot ??
-          (await this.host.start({
-            cwd: this.options.cwd,
-            backend: this.options.backend.info.name,
-            ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
-          }))
+        const snapshot = await this.ensureSession({
+          cwd: this.options.cwd,
+          backend: this.options.backend.info.name,
+          ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
+        })
         return json(snapshot, 200, cors)
       }
       case "session.snapshot": {
@@ -268,13 +268,11 @@ export class CodingAgentRpcServer {
             422,
             cors,
           )
-        const snapshot =
-          this.host.snapshot ??
-          (await this.host.start({
-            cwd: this.options.cwd,
-            backend: this.options.backend.info.name,
-            sessionId: params.sessionId,
-          }))
+        const snapshot = await this.ensureSession({
+          cwd: this.options.cwd,
+          backend: this.options.backend.info.name,
+          sessionId: params.sessionId,
+        })
         return json(snapshot, 200, cors)
       }
       case "session.events": {
@@ -630,6 +628,16 @@ export class CodingAgentRpcServer {
           cors,
         )
     }
+  }
+
+  /** The active session, or one started from `input`; concurrent requests share a single start. */
+  private async ensureSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
+    const active = this.host.snapshot
+    if (active !== undefined) return active
+    this.creating ??= this.host.start(input).finally(() => {
+      this.creating = undefined
+    })
+    return await this.creating
   }
 
   private requireSnapshot(): AgentSessionSnapshot {

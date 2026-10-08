@@ -261,3 +261,34 @@ test("host stop releases the backend when the stop audit write fails", async () 
   expect(backend.cancelCalls).toBe(1)
   expect(backend.closeCalls).toBe(1)
 })
+
+test("a second start while one is in flight is refused, and stop closes the one that started", async () => {
+  const backend = new ScriptedBackend()
+  const host = new CodingAgentHost({ backend })
+  const first = host.start({ cwd: process.cwd(), sessionId: "first" })
+  await expect(host.start({ cwd: process.cwd(), sessionId: "second" })).rejects.toThrow(
+    "already active",
+  )
+  expect((await first).id).toBe("first")
+  await host.stop()
+  expect(host.snapshot).toBeUndefined()
+  expect(backend.closeCalls).toBe(1)
+})
+
+test("a stop during startup rolls the starting session back instead of leaving it live", async () => {
+  const backend = new ScriptedBackend()
+  const created = Promise.withResolvers<void>()
+  const create = backend.createSession.bind(backend)
+  backend.createSession = async (input) => {
+    await created.promise
+    return create(input)
+  }
+  const host = new CodingAgentHost({ backend })
+  const starting = host.start({ cwd: process.cwd(), sessionId: "raced" })
+  const stopping = host.stop()
+  created.resolve()
+  await expect(starting).rejects.toThrow("stopped while the session was starting")
+  await stopping
+  expect(host.snapshot).toBeUndefined()
+  expect(backend.closeCalls).toBe(1)
+})

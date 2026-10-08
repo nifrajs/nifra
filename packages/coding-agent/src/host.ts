@@ -56,6 +56,9 @@ export interface CodingAgentHostOptions {
 export class CodingAgentHost {
   readonly backend: AgentBackend
   private session: AgentSessionSnapshot | undefined
+  private starting: Promise<AgentSessionSnapshot> | undefined
+  // Bumped by every start and stop: a start that finds it changed was superseded by a stop.
+  private lifecycle = 0
   private readonly sessionStore: SessionStore | undefined
   private readonly context: ContextWindow
   private readonly extensions: ExtensionHost | undefined
@@ -109,8 +112,27 @@ export class CodingAgentHost {
   }
 
   async start(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
-    if (this.session !== undefined) throw new Error("coding agent: a session is already active")
+    if (this.session !== undefined || this.starting !== undefined)
+      throw new Error("coding agent: a session is already active")
+    const starting = this.startSession(input, ++this.lifecycle)
+    this.starting = starting
+    try {
+      return await starting
+    } finally {
+      if (this.starting === starting) this.starting = undefined
+    }
+  }
+
+  private async startSession(
+    input: CreateSessionInput,
+    generation: number,
+  ): Promise<AgentSessionSnapshot> {
     const created = await this.backend.createSession(input)
+    if (generation !== this.lifecycle) {
+      await this.backend.cancel(created.id, "host stopped").catch(() => {})
+      await this.backend.close(created.id).catch(() => {})
+      throw new Error("coding agent: the host stopped while the session was starting")
+    }
     this.session = created
     try {
       let history: readonly import("./sessions.ts").SessionLogEntry[] = []
@@ -123,6 +145,8 @@ export class CodingAgentHost {
       this.nextSeq = nextSequence(created, history)
       await this.extensions?.reload()
       await this.sessionStore?.append(created.id, "session.started", created)
+      if (generation !== this.lifecycle)
+        throw new Error("coding agent: the host stopped while the session was starting")
       return created
     } catch (error) {
       // Session creation may allocate a process or other external resource. If history, extension
@@ -399,6 +423,9 @@ export class CodingAgentHost {
   }
 
   async stop(reason = "stopped"): Promise<void> {
+    // A start still in flight is superseded: wait for it to roll its session back.
+    this.lifecycle++
+    await this.starting?.catch(() => {})
     if (this.session === undefined) return
     const id = this.session.id
     this.session = undefined
