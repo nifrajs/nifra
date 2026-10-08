@@ -341,44 +341,73 @@ function timedFailure(
   return undefined
 }
 
-async function settleAttempt(
-  gateway: ModelGateway,
-  request: ModelGatewayAttemptRequest,
+type Deadlined<T> =
+  | { readonly settled: true; readonly value: T }
+  | { readonly settled: false; readonly error: ModelGatewayError }
+
+/** Settle `work`, unless the deadline passes or `signal` aborts first. A rejection passes through. */
+async function withinDeadline<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
   deadlineAt: number | undefined,
   now: () => number,
-): Promise<ModelGatewayRawResult> {
-  const before = timedFailure(request.signal, deadlineAt, now)
-  if (before !== undefined) return { ok: false, error: before }
+): Promise<Deadlined<T>> {
+  if (signal.aborted) return { settled: false, error: { code: "cancelled" } }
   const remaining = deadlineAt === undefined ? undefined : Math.max(0, deadlineAt - now())
   let timer: ReturnType<typeof setTimeout> | undefined
   let abort: (() => void) | undefined
   try {
-    const operation = Promise.resolve()
-      .then(() => gateway.complete(request))
-      .then(parseModelGatewayResult, () => ({
-        ok: false as const,
-        error: { code: "internal" as const },
-      }))
-    const races: Promise<ModelGatewayRawResult>[] = [operation]
+    const races: Promise<Deadlined<T>>[] = [
+      work.then((value) => ({ settled: true as const, value })),
+      new Promise((resolve) => {
+        abort = () => resolve({ settled: false, error: { code: "cancelled" } })
+        signal.addEventListener("abort", abort, { once: true })
+      }),
+    ]
     if (remaining !== undefined) {
       races.push(
         new Promise((resolve) => {
-          timer = setTimeout(() => resolve({ ok: false, error: { code: "timeout" } }), remaining)
-        }),
-      )
-    }
-    if (!request.signal.aborted) {
-      races.push(
-        new Promise((resolve) => {
-          abort = () => resolve({ ok: false, error: { code: "cancelled" } })
-          request.signal.addEventListener("abort", abort!, { once: true })
+          timer = setTimeout(
+            () => resolve({ settled: false, error: { code: "timeout" } }),
+            remaining,
+          )
         }),
       )
     }
     return await Promise.race(races)
   } finally {
     if (timer !== undefined) clearTimeout(timer)
-    if (abort !== undefined) request.signal.removeEventListener("abort", abort)
+    if (abort !== undefined) signal.removeEventListener("abort", abort)
+  }
+}
+
+async function settleAttempt(
+  gateway: ModelGateway,
+  request: Omit<ModelGatewayAttemptRequest, "signal">,
+  signal: AbortSignal,
+  deadlineAt: number | undefined,
+  now: () => number,
+): Promise<ModelGatewayRawResult> {
+  const before = timedFailure(signal, deadlineAt, now)
+  if (before !== undefined) return { ok: false, error: before }
+  // Each attempt has its own signal, aborted when the attempt stops being waited for, so an adapter
+  // that honours it stops working on a request whose result would be discarded.
+  const attempt = new AbortController()
+  const cancel = (): void => attempt.abort()
+  signal.addEventListener("abort", cancel, { once: true })
+  try {
+    const operation = Promise.resolve()
+      .then(() => gateway.complete({ ...request, signal: attempt.signal }))
+      .then(parseModelGatewayResult, () => ({
+        ok: false as const,
+        error: { code: "internal" as const },
+      }))
+    const outcome = await withinDeadline(operation, signal, deadlineAt, now)
+    if (outcome.settled) return outcome.value
+    attempt.abort()
+    return { ok: false, error: outcome.error }
+  } finally {
+    signal.removeEventListener("abort", cancel)
   }
 }
 
@@ -431,7 +460,8 @@ export async function runModelGateway<Input, Output>(
     })
     const raw = await settleAttempt(
       gateway,
-      { routeId: route, input: request.input, signal, envelope },
+      { routeId: route, input: request.input, envelope },
+      signal,
       policy.deadlineAt,
       checked.now,
     )
@@ -461,8 +491,29 @@ export async function runModelGateway<Input, Output>(
         outcome: "passed",
       })
       if (request.parser !== undefined) {
+        const parser = request.parser
+        // The deadline covers parsing too: a success is only returned while it is still in time.
+        const stopped = (error: ModelGatewayError) => {
+          addEvidence(evidence, {
+            kind: "attempt",
+            routeId: route,
+            attempt: attempts,
+            outcome: "failed",
+            code: error.code,
+          })
+          return terminal(error, route, attempts, usage, evidence)
+        }
         try {
-          const output = await request.parser.parse(parsed.output)
+          const parsing = await withinDeadline(
+            Promise.resolve().then(() => parser.parse(parsed.output)),
+            signal,
+            policy.deadlineAt,
+            checked.now,
+          )
+          if (!parsing.settled) return stopped(parsing.error)
+          const late = timedFailure(signal, policy.deadlineAt, checked.now)
+          if (late !== undefined) return stopped(late)
+          const output = parsing.value
           addEvidence(evidence, {
             kind: "parse",
             routeId: route,

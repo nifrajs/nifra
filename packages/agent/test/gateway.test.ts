@@ -10,6 +10,69 @@ import {
 const success = (output: unknown) => ({ ok: true as const, output })
 
 describe("model gateway", () => {
+  test("an attempt the deadline ends is aborted for the adapter", async () => {
+    let seen: AbortSignal | undefined
+    const result = await runModelGateway(
+      {
+        complete: (request) => {
+          seen = request.signal
+          return new Promise((resolve) => {
+            request.signal.addEventListener("abort", () =>
+              resolve({ ok: false, error: { code: "cancelled" } }),
+            )
+          })
+        },
+      },
+      { input: "x" },
+      { routes: ["a"], retryableCodes: [], deadlineAt: Date.now() + 5 },
+    )
+    expect(result.ok ? "ok" : result.error.code).toBe("timeout")
+    expect(seen?.aborted).toBe(true)
+  })
+
+  test("a caller's cancellation aborts the attempt's signal", async () => {
+    const caller = new AbortController()
+    let seen: AbortSignal | undefined
+    const pending = runModelGateway(
+      {
+        complete: (request) => {
+          seen = request.signal
+          caller.abort()
+          return new Promise(() => {})
+        },
+      },
+      { input: "x", signal: caller.signal },
+      { routes: ["a"], retryableCodes: [] },
+    )
+    const result = await pending
+    expect(result.ok ? "ok" : result.error.code).toBe("cancelled")
+    expect(seen?.aborted).toBe(true)
+  })
+
+  test("the deadline covers the parser, and a late parse is not a success", async () => {
+    const result = await runModelGateway(
+      { complete: () => success("x") },
+      { input: "x", parser: { parse: () => new Promise<string>(() => {}) } },
+      { routes: ["a"], retryableCodes: [], deadlineAt: Date.now() + 5 },
+    )
+    expect(result.ok ? "ok" : result.error.code).toBe("timeout")
+    let now = 0
+    const late = await runModelGateway(
+      { complete: () => success("x") },
+      {
+        input: "x",
+        parser: {
+          parse: (value: unknown) => {
+            now = 100
+            return value
+          },
+        },
+      },
+      { routes: ["a"], retryableCodes: [], deadlineAt: 50, now: () => now },
+    )
+    expect(late.ok ? "ok" : late.error.code).toBe("timeout")
+  })
+
   test("parses structured output and keeps evidence content-free", async () => {
     const gateway = new FakeModelGateway({ responses: [success({ answer: 42 })] })
     const result = await runModelGateway(
