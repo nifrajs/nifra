@@ -244,14 +244,14 @@ type LayoutRun = {
   readonly pending: Promise<unknown> | undefined
 }
 
-/** Layouts whose loaders settled for this request: what an `inLayouts` status or error page renders in. */
+/** Layouts whose loaders settled for this request: what a status or error page renders in. */
 type LayoutChain = {
   readonly modules: LoadedLayoutModules
   readonly layoutData: readonly unknown[] | undefined
 }
 
 /**
- * Called only for a page that exports `inLayouts`, so no other status page runs a layout loader.
+ * Not called for a page that exports `inLayouts = false`, so such a page runs no layout loader.
  * `undefined` renders the page alone.
  */
 type LayoutChainSource = (page: RouteModule, count: number) => Promise<LayoutChain | undefined>
@@ -702,7 +702,7 @@ export function createPageRequestExecutor<Env = unknown>(
     const data = production
       ? { name: "Error", message: "Internal Server Error" }
       : { name: e.name, message: e.message }
-    const inLayouts = errorModule.inLayouts === true
+    const inLayouts = errorModule.inLayouts !== false
     const chain =
       inLayouts && layouts !== undefined && keptLayoutIds.length > 0
         ? await layouts(errorModule, keptLayoutIds.length)
@@ -738,7 +738,7 @@ export function createPageRequestExecutor<Env = unknown>(
         return render([errorModule.default])
       }
     }
-    if (inLayouts) return render([errorModule.default])
+    // Layouts whose data did not settle still frame the error page, without their data.
     const layoutComponents = await Promise.all(
       keptLayoutIds.map((id) =>
         (manifest.layouts[id] as LayoutEntry).load().then((m) => m.default),
@@ -835,7 +835,7 @@ export function createPageRequestExecutor<Env = unknown>(
     }
     const routeId = manifest.statusPages?.[String(status)] !== undefined ? `_${status}` : "_404"
     const loaded = await page.load()
-    const wraps = loaded.inLayouts === true && rootLayoutIds.length > 0
+    const wraps = loaded.inLayouts !== false && rootLayoutIds.length > 0
     const chain =
       wraps && layouts !== undefined ? await layouts(loaded, rootLayoutIds.length) : undefined
     const modules = chain?.modules ?? []

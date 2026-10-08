@@ -30,7 +30,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C031": "Sensitive field in an output schema",
   "NF-C032": "Credential in browser code",
   "NF-C033": "Generated output schema out of date",
-  "NF-C034": "Root status page outside the root layout",
+  "NF-C034": "Root status page wraps the root layout itself",
   "NF-C035": "Backend mounted at the implicit /api",
   "NF-C036": "Route path the static scan cannot read",
   "NF-C020": "Island enhancer cleanup check",

@@ -579,7 +579,7 @@ test("createWebApp renders _404 (status 404) for unmatched paths", async () => {
   const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
   const res = await app.fetch(new Request("http://x/nope/whatever"))
   expect(res.status).toBe(404)
-  expect(await res.text()).toContain("chain=1:null") // the [_404] chain
+  expect(await res.text()).toContain("chain=2:null") // the [_layout, _404] chain
 })
 
 test("createWebApp falls back to a plain 404 when no _404 exists", async () => {

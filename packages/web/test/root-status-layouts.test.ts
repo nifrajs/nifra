@@ -16,8 +16,8 @@ import { generateClientEntry } from "../src/internal/codegen.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
 import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
 
-// A root status page or `_error` that exports `inLayouts` renders inside the root layout with its
-// loader data and meta, and alone - same status - when that layout cannot render.
+// A root status page or `_error` renders inside the root layout with its loader data and meta, and
+// alone - same status - when that layout cannot render. `inLayouts = false` renders it alone.
 
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
   const bytes = new TextEncoder().encode(s)
@@ -84,9 +84,9 @@ const failing = async (): Promise<never> => {
 
 const site = (overrides: Modules = {}): Modules => ({
   "_layout.tsx": { loader: () => ({ site: "root" }), meta: { title: "Site" } },
-  "_404.tsx": { inLayouts: true, meta: { title: "Not found" } },
-  "_503.tsx": { inLayouts: true, meta: { title: "Down for maintenance" } },
-  "_error.tsx": { inLayouts: true },
+  "_404.tsx": { meta: { title: "Not found" } },
+  "_503.tsx": { meta: { title: "Down for maintenance" } },
+  "_error.tsx": {},
   "index.tsx": {},
   "maintenance.tsx": {
     loader: () => {
@@ -101,7 +101,7 @@ const site = (overrides: Modules = {}): Modules => ({
   ...overrides,
 })
 
-describe("a root status page with inLayouts", () => {
+describe("a root status page", () => {
   test("an unmatched URL renders the root _404 inside the root layout with its data and meta", async () => {
     const res = await get(appOf(site()), "/nope")
     expect(res.status).toBe(404)
@@ -225,7 +225,7 @@ describe("a root status page with inLayouts", () => {
   })
 })
 
-describe("_error with inLayouts", () => {
+describe("_error", () => {
   test("renders inside the layouts with their loader data", async () => {
     const res = await get(appOf(site()), "/broken")
     expect(res.status).toBe(500)
@@ -236,18 +236,21 @@ describe("_error with inLayouts", () => {
     })
   })
 
-  test("renders alone when a layout loader is what failed", async () => {
+  test("renders inside its layouts without their data when a layout loader is what failed", async () => {
     const res = await get(appOf(site({ "_layout.tsx": { loader: failing } })), "/")
     expect(res.status).toBe(500)
-    expect(renderedOf(await res.text())).toMatchObject({ chain: ["_error.tsx"], layoutData: null })
+    expect(renderedOf(await res.text())).toMatchObject({
+      chain: ["_layout.tsx", "_error.tsx"],
+      layoutData: null,
+    })
   })
 })
 
-describe("without inLayouts", () => {
+describe("with inLayouts = false", () => {
   const plain = site({
-    "_404.tsx": { meta: { title: "Not found" } },
-    "_503.tsx": {},
-    "_error.tsx": {},
+    "_404.tsx": { inLayouts: false, meta: { title: "Not found" } },
+    "_503.tsx": { inLayouts: false },
+    "_error.tsx": { inLayouts: false },
   })
 
   test("a root status page renders alone and runs no layout loader, but applies its meta", async () => {
@@ -286,11 +289,11 @@ describe("the browser side", () => {
   const dir = mkdtempSync(join(import.meta.dir, ".tmp-status-layouts-"))
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-  test("the client entry loads the root layout around an inLayouts status page only", async () => {
+  test("the client entry loads the root layout around a status page that does not opt out", async () => {
     const files: Record<string, string> = {
       "_layout.tsx": 'export default "layout"\n',
-      "_404.tsx": 'export const inLayouts = true\nexport default "not-found"\n',
-      "_410.tsx": 'export default "gone"\n',
+      "_404.tsx": 'export default "not-found"\n',
+      "_410.tsx": 'export const inLayouts = false\nexport default "gone"\n',
       "index.tsx": 'export default "home"\n',
     }
     mkdirSync(join(dir, "routes"), { recursive: true })

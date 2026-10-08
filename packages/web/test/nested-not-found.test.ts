@@ -214,11 +214,11 @@ describe("an unmatched URL", () => {
     }
   })
 
-  test("outside every nested directory renders the root _404, bare", async () => {
+  test("outside every nested directory renders the root _404 inside the root layout", async () => {
     const { app } = appOf(admin())
     const res = await get(app, "/nope")
     expect(res.status).toBe(404)
-    expect(renderedOf(await res.text()).chain).toEqual(["_404.tsx"])
+    expect(renderedOf(await res.text()).chain).toEqual(["_layout.tsx", "_404.tsx"])
   })
 
   test("a route still wins, including one the router reaches by another branch", async () => {
@@ -436,7 +436,7 @@ describe("notFound() from a route's loader", () => {
     const { app } = appOf(admin())
     const res = await get(app, "/admin/users/gone")
     expect(res.status).toBe(410)
-    expect(renderedOf(await res.text()).chain).toEqual(["_404.tsx"])
+    expect(renderedOf(await res.text()).chain).toEqual(["_layout.tsx", "_404.tsx"])
   })
 
   test("a layout loader that answers notFound() shows the root page", async () => {

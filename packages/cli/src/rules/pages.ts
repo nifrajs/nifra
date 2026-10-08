@@ -98,15 +98,28 @@ export const shadowedPageRule: CheckRule = {
 
 const IN_LAYOUTS = /\binLayouts\b/
 
+/** An import of the root layout from a page beside it, statically or dynamically. */
+const importsRootLayout = (code: string, layoutFile: string): boolean => {
+  const stem = layoutFile.replace(/\.[^./]+$/, "")
+  return [`"./${stem}`, `'./${stem}`].some((quoted) =>
+    [`${quoted}"`, `${quoted}'`, `${quoted}.`].some((opening) => {
+      for (let at = code.indexOf(opening); at !== -1; at = code.indexOf(opening, at + 1)) {
+        const before = code.slice(Math.max(0, at - 16), at)
+        if (/(?:\bfrom|\bimport)\s*\(?\s*$/.test(before)) return true
+      }
+      return false
+    }),
+  )
+}
+
 /**
- * NF-C034: a root status page (`_404`, `_<status>`) or `_error` beside a root `_layout` that does not
- * export `inLayouts = true`. Such a page renders alone (an `_error` inside the layout but without its
- * loader data or `meta`); the export renders it inside the layout with both. A page that names
- * `inLayouts` at all has decided, so it is not reported.
+ * NF-C034: a root status page (`_404`, `_<status>`) beside a root `_layout` that imports that layout
+ * to wrap itself. Status pages render inside their layouts, so such a page renders the layout twice.
+ * A page that names `inLayouts` at all has decided, so it is not reported.
  */
 export const statusLayoutRule: CheckRule = {
   code: "NF-C034",
-  title: "Root status page outside the root layout",
+  title: "Root status page wraps the root layout itself",
   async scan(ctx) {
     const routesDir = join(ctx.root, "routes")
     if (!existsSync(routesDir)) return []
@@ -121,19 +134,17 @@ export const statusLayoutRule: CheckRule = {
     const pages = [
       ...(manifest.notFound === undefined ? [] : [manifest.notFound.file]),
       ...Object.values(manifest.statusPages ?? {}).map((page) => page.file),
-      ...(manifest.errors?._error === undefined ? [] : [manifest.errors._error.file]),
     ]
     const findings: Diagnostic[] = []
     for (const file of pages.sort()) {
       const source = stripComments(readFileSync(join(routesDir, file), "utf8"))
-      if (IN_LAYOUTS.test(source)) continue
-      const isError = file === manifest.errors?._error?.file
+      if (IN_LAYOUTS.test(source) || !importsRootLayout(source, layout.file)) continue
       findings.push(
         diagnostic({
           code: "NF-C034",
-          severity: "info",
+          severity: "warn",
           file: `routes/${file}`,
-          message: `routes/${file} renders ${isError ? `inside routes/${layout.file} without its loader data or meta` : `without routes/${layout.file}`}. Add \`export const inLayouts = true\` to render it inside the layout with its loader data and the page's meta; when the layout cannot render (a loader throws, a gate or middleware refuses) the page renders alone with the same status. If the page wraps the layout itself, remove that wrap when you add the export. A future major renders status pages inside their layouts by default.`,
+          message: `routes/${file} imports routes/${layout.file} to wrap itself, and status pages render inside their layouts, so it renders routes/${layout.file} twice. Remove the wrap, or add \`export const inLayouts = false\` to keep rendering the page alone.`,
           evidence: [`layout: routes/${layout.file}`],
           verify: "nifra check",
         }),

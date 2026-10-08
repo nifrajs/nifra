@@ -385,11 +385,11 @@ export interface RouteModule {
    */
   readonly handle?: unknown
   /**
-   * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`: `true` renders it inside
-   * the layouts above it with their loader data and `meta`, as a nested `_404` renders. When those
-   * layouts cannot render it - a loader throws, a gate or the middleware refuses - the page renders
-   * alone, with the same status. Without it, a root status page renders alone and an `_error` renders
-   * inside its layouts without their data, as before.
+   * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the
+   * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`
+   * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -
+   * a root status page renders alone and an `_error` inside its layouts without their data, with the
+   * same status. `false` always renders them that way, and runs no layout loader for them.
    */
   readonly inLayouts?: boolean
   /**

@@ -90,8 +90,8 @@ export function generateClientEntry(
       `  { routeId: ${JSON.stringify(route.id)}, pattern: ${JSON.stringify(route.pattern)} },`,
     )
   }
-  // A root status page renders inside the root layout when it exports `inLayouts`, which only its
-  // module says - so the layout loads after the page, and only for a page that asks for it.
+  // A root status page renders inside the root layout unless it exports `inLayouts = false`, which
+  // only its module says - so the layout loads after the page, and only for a page that does not opt out.
   const rootLayout = manifest.layouts._layout
   const statusLoader = (routeId: string, file: string): string =>
     rootLayout === undefined
@@ -112,7 +112,7 @@ export function generateClientEntry(
       : [
           "const layoutStatusRoutes = {}",
           "const withRootLayout = (id, page) => {",
-          "  if (page.inLayouts !== true) return [page]",
+          "  if (page.inLayouts === false) return [page]",
           `  return import(${jsStringLiteral(resolve(rootLayout.file))}).then((layout) => {`,
           "    layoutStatusRoutes[id] = true",
           '    layoutIdsOf[id] = ["_layout"]',

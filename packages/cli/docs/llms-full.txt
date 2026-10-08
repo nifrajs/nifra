@@ -392,7 +392,8 @@ reaches the browser - see [Project structure](/docs/structure).
 
 -
 `_404.tsx` renders unmatched paths, and whatever a loader answers with
-`notFound()`. At the routes root it renders on its own. In a directory below (
+`notFound()`. At the routes root it renders inside the root layout, as below. In
+a directory below (
 `admin/_404.tsx`) it answers for that part of the app: the unmatched URLs under
 `/admin` and `notFound()` from the routes beneath it, the nearest one
 winning, rendered inside the layouts at or above it with their loader data. Those layouts run
@@ -406,16 +407,18 @@ both has one too. `gone()`, `statusPage()` and the
 
 -
 A root status page (`_404.tsx`, `_503.tsx`, ...) or an
-`_error.tsx` that exports `inLayouts = true` renders inside the
-layouts above it with their loader data, and the server puts its `meta` in the
-head. For a request no route ran (an unmatched URL) the root middleware and layout loaders
-run first; otherwise the page reuses the data the request already loaded. When those
-layouts cannot render it - a loader throws, a `gate` or the middleware refuses
-- the page renders alone with the same status, so a status page never fails into a
-second error. The response is `private, no-store` once a layout loaded data,
-and a navigation that lands on one loads the URL as a document. Without the export a root
-status page renders alone and an `_error` renders inside its layouts without
-their data; `nifra check` reports each such page as `NF-C034`.
+`_error.tsx` renders inside the layouts above it with their loader data, and the
+server puts its `meta` in the head. For a request no route ran (an unmatched
+URL) the root middleware and layout loaders run first; otherwise the page reuses the data
+the request already loaded. When those layouts cannot render it - a loader throws, a
+`gate` or the middleware refuses - a root status page renders alone and an
+`_error` inside its layouts without their data, with the same status, so a
+status page never fails into a second error. The response is
+`private, no-store` once a layout loaded data, and a navigation that lands on
+one loads the URL as a document. `export const inLayouts = false` always renders
+the page that way and runs no layout loader for it. A root status page that wraps the root
+layout itself would render it twice; `nifra check` reports one as
+`NF-C034`.
 
 -
 `_loading.tsx` is what the page slot shows while a client navigation loads. A

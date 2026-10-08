@@ -48,7 +48,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('import("/routes/_layout.tsx")')
   expect(code).toContain('"index": () => Promise.all([')
   expect(code).toContain('"users/[id]": () => Promise.all([')
-  // A status page loads first; the root layout follows only for one that exports `inLayouts`.
+  // A status page loads first; the root layout follows unless it exports `inLayouts = false`.
   expect(code).toContain(
     '"_404": () => import("/routes/_404.tsx").then((page) => withRootLayout("_404", page))',
   )

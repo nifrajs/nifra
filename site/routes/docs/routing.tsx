@@ -220,7 +220,8 @@ export default function Routing() {
         </li>
         <li>
           <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
-          <code>notFound()</code>. At the routes root it renders on its own. In a directory below (
+          <code>notFound()</code>. At the routes root it renders inside the root layout, as below. In
+          a directory below (
           <code>admin/_404.tsx</code>) it answers for that part of the app: the unmatched URLs under{" "}
           <code>/admin</code> and <code>notFound()</code> from the routes beneath it, the nearest one
           winning, rendered inside the layouts at or above it with their loader data. Those layouts run
@@ -234,16 +235,18 @@ export default function Routing() {
         </li>
         <li>
           A root status page (<code>_404.tsx</code>, <code>_503.tsx</code>, ...) or an{" "}
-          <code>_error.tsx</code> that exports <code>inLayouts = true</code> renders inside the
-          layouts above it with their loader data, and the server puts its <code>meta</code> in the
-          head. For a request no route ran (an unmatched URL) the root middleware and layout loaders
-          run first; otherwise the page reuses the data the request already loaded. When those
-          layouts cannot render it - a loader throws, a <code>gate</code> or the middleware refuses
-          - the page renders alone with the same status, so a status page never fails into a
-          second error. The response is <code>private, no-store</code> once a layout loaded data,
-          and a navigation that lands on one loads the URL as a document. Without the export a root
-          status page renders alone and an <code>_error</code> renders inside its layouts without
-          their data; <code>nifra check</code> reports each such page as <code>NF-C034</code>.
+          <code>_error.tsx</code> renders inside the layouts above it with their loader data, and the
+          server puts its <code>meta</code> in the head. For a request no route ran (an unmatched
+          URL) the root middleware and layout loaders run first; otherwise the page reuses the data
+          the request already loaded. When those layouts cannot render it - a loader throws, a{" "}
+          <code>gate</code> or the middleware refuses - a root status page renders alone and an{" "}
+          <code>_error</code> inside its layouts without their data, with the same status, so a
+          status page never fails into a second error. The response is{" "}
+          <code>private, no-store</code> once a layout loaded data, and a navigation that lands on
+          one loads the URL as a document. <code>export const inLayouts = false</code> always renders
+          the page that way and runs no layout loader for it. A root status page that wraps the root
+          layout itself would render it twice; <code>nifra check</code> reports one as{" "}
+          <code>NF-C034</code>.
         </li>
         <li>
           <code>_loading.tsx</code> is what the page slot shows while a client navigation loads. A

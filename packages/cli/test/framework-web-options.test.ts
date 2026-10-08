@@ -357,30 +357,27 @@ describe("NF-C034", () => {
     return runRuleRegistry({ root: dir, sources: facts.source, project: facts }, pageRules)
   }
 
-  test("root status pages and _error beside a root layout are reported until they opt in", async () => {
+  test("a root status page that wraps the root layout itself is reported", async () => {
+    const wraps = 'import Layout from "./_layout"\nexport default () => Layout\n'
     const findings = await scan(
       project({
         "routes/_layout.tsx": "export default () => null\n",
-        "routes/_404.tsx": "export default () => null\n",
-        "routes/_503.tsx":
-          "// inLayouts in a comment is not an opt-in\nexport default () => null\n",
-        "routes/_error.tsx": "export default () => null\n",
-        "routes/_410.tsx": "export const inLayouts = true\nexport default () => null\n",
-        "routes/_451.tsx": "export const inLayouts = false\nexport default () => null\n",
-        "routes/admin/_404.tsx": "export default () => null\n",
+        "routes/_404.tsx": wraps,
+        "routes/_503.tsx": 'import Layout from "./_layout.tsx"\nexport default () => Layout\n',
+        "routes/_451.tsx": `export const inLayouts = false\n${wraps}`,
+        "routes/_410.tsx": "export default () => null\n",
+        "routes/_429.tsx": '// import Layout from "./_layout"\nexport default () => null\n',
+        "routes/_error.tsx": wraps,
+        "routes/admin/_404.tsx": 'import Layout from "../_layout"\nexport default () => Layout\n',
         "routes/index.tsx": "export default () => null\n",
       }),
     )
     expect(findings.map((finding) => [finding.code, finding.severity, finding.file])).toEqual([
-      ["NF-C034", "info", "routes/_404.tsx"],
-      ["NF-C034", "info", "routes/_503.tsx"],
-      ["NF-C034", "info", "routes/_error.tsx"],
+      ["NF-C034", "warn", "routes/_404.tsx"],
+      ["NF-C034", "warn", "routes/_503.tsx"],
     ])
-    expect(findings[0]?.message).toContain("renders without routes/_layout.tsx")
-    expect(findings[0]?.message).toContain("export const inLayouts = true")
-    expect(findings[2]?.message).toContain(
-      "inside routes/_layout.tsx without its loader data or meta",
-    )
+    expect(findings[0]?.message).toContain("renders routes/_layout.tsx twice")
+    expect(findings[0]?.message).toContain("export const inLayouts = false")
   })
 
   test("without a root layout there is nothing to render inside", async () => {

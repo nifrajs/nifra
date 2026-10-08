@@ -198,10 +198,11 @@ describe("server render", () => {
     ])
   })
 
-  test("the root status page reports itself alone", async () => {
+  test("the root status page reports the root layout it renders inside", async () => {
     const res = await appOf(modules).fetch(new Request("http://x/nowhere"))
     expect(res.status).toBe(404)
     expect(await matchesIn(res)).toEqual([
+      { id: "_layout", pathname: "/", params: {}, data: { user: "ada" }, handle: "Home" },
       { id: "_404", pathname: "/nowhere", params: {}, data: null, handle: "Missing" },
     ])
   })
