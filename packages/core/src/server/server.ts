@@ -306,7 +306,9 @@ export interface RawContext {
 /** Broad shape so the implementation signature is compatible with both typed overloads. */
 type ErasedHandler = (ctx: never) => MaybePromise<HandlerResult>
 
-export type OnRequestResult = Response | Request | undefined
+/** What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes
+ * the normal response path), a replacement `Request`, or `undefined` to continue. */
+export type OnRequestResult = Response | ResponseResult | Request | undefined
 type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
@@ -1297,8 +1299,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /**
-   * Run before routing on the raw request. Return a `Response` to short-circuit, or a replacement
-   * `Request` to continue routing with a rewritten method/URL/headers. Global.
+   * Run before routing on the raw request. Return a `Response` or a `status()` result to
+   * short-circuit, or a replacement `Request` to continue routing with a rewritten method/URL/headers.
+   * Global.
    */
   onRequest(
     fn: (req: Request, platform?: Platform<EnvOf<Ctx>>) => MaybePromise<OnRequestResult>,
@@ -3317,7 +3320,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         current = outcome
         continue
       }
-      if (outcome !== undefined) return outcome
+      if (outcome !== undefined) return webResponseOf(outcome)
     }
     return current
   }
@@ -3332,7 +3335,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     let outcome = first
     for (let i = start; ; i++) {
       if (outcome instanceof Request) next = outcome
-      else if (outcome !== undefined) return outcome
+      else if (outcome !== undefined) return webResponseOf(outcome)
       if (i >= this.onRequestHooks.length) return next
       const hook = this.onRequestHooks[i]
       if (hook === undefined) return next

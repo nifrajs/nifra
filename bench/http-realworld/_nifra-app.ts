@@ -23,7 +23,7 @@
  * what a route with auth and middleware actually gets, not the narrow fast-path shape.
  */
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
-import { server, status } from "../../packages/core/dist/server.js"
+import { type Middleware, server, status } from "../../packages/core/dist/server.js"
 import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
 
 export const ORDERS = Array.from({ length: 25 }, (_, i) => ({
@@ -80,35 +80,39 @@ const limitQuery: StandardSchemaV1<unknown, { limit: string }> = {
 }
 
 export function makeNifraApp() {
-  return server()
-    .use(securityHeaders())
-    .use(cors({ origin: ["https://app.example.com"], credentials: true }))
-    .use({
-      name: "request-id",
-      beforeHandle: (c) => {
-        c.set.headers["x-request-id"] = c.header("x-request-id") ?? crypto.randomUUID()
-      },
-    })
-    .derive((c) => {
-      const auth = c.header("authorization")
-      // The guard shape nifra documents: a plain render returned from the derive, not a `Response`
-      // built and thrown. Same 401 on the wire; it skips the object and the rejection lane.
-      if (auth === null || !auth.startsWith("Bearer ") || auth.length < 24) {
-        return status(401, { ok: false, error: "unauthorized" })
-      }
-      return { userId: auth.slice(7, 19), theme: c.cookies.theme ?? "light" }
-    })
-    .get("/api/orders", { query: limitQuery }, (c) => ({
-      user: c.userId,
-      theme: c.theme,
-      orders: ORDERS.slice(0, Number(c.query.limit) || 10),
-      total: ORDERS.length,
-    }))
-    .post("/api/orders", { body: orderBody }, (c) => ({
-      ok: true,
-      id: "ord_new",
-      sku: c.body.sku,
-      qty: c.body.qty,
-      by: c.userId,
-    }))
+  return (
+    server()
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the middleware's declarations resolve core through the root `paths` to src while this server is dist; ResponseResult's brand is one Symbol.for at runtime but two declared symbols to tsc.
+      .use(securityHeaders() as Middleware)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: as above, one runtime brand.
+      .use(cors({ origin: ["https://app.example.com"], credentials: true }) as Middleware)
+      .use({
+        name: "request-id",
+        beforeHandle: (c) => {
+          c.set.headers["x-request-id"] = c.header("x-request-id") ?? crypto.randomUUID()
+        },
+      })
+      .derive((c) => {
+        const auth = c.header("authorization")
+        // The guard shape nifra documents: a plain render returned from the derive, not a `Response`
+        // built and thrown. Same 401 on the wire; it skips the object and the rejection lane.
+        if (auth === null || !auth.startsWith("Bearer ") || auth.length < 24) {
+          return status(401, { ok: false, error: "unauthorized" })
+        }
+        return { userId: auth.slice(7, 19), theme: c.cookies.theme ?? "light" }
+      })
+      .get("/api/orders", { query: limitQuery }, (c) => ({
+        user: c.userId,
+        theme: c.theme,
+        orders: ORDERS.slice(0, Number(c.query.limit) || 10),
+        total: ORDERS.length,
+      }))
+      .post("/api/orders", { body: orderBody }, (c) => ({
+        ok: true,
+        id: "ord_new",
+        sku: c.body.sku,
+        qty: c.body.qty,
+        by: c.userId,
+      }))
+  )
 }

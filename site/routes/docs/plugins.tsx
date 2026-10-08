@@ -232,6 +232,13 @@ export default function Plugins() {
         error, 404). Hardening middleware uses the same hook model:
       </p>
       <CodeBlock code={MIDDLEWARE} />
+      <p>
+        To refuse a request in <code>onRequest</code>, return the same <code>status()</code> value a
+        route would: <code>return status(401, {"{ error: \"key required\" }"})</code>. It takes the
+        normal response path, so the body is serialized with its content-type, and declared{" "}
+        <code>responseHeaders</code> and every <code>onResponse</code> hook apply to it. A hand-built{" "}
+        <code>Response</code> still works.
+      </p>
 
       <h3>Which hooks run where</h3>
       <p>

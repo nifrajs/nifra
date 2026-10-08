@@ -1577,7 +1577,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
-- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
+- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
+  What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -2804,7 +2805,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
-- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
+- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
+  What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -7131,7 +7133,8 @@ _No named exports (side-effect entrypoint)._
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
-- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
+- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
+  What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`

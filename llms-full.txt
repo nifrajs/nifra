@@ -2911,6 +2911,12 @@ const app = server()
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
 ```
 
+To refuse a request in `onRequest`, return the same `status()` value a
+route would: `return status(401, { error: "key required" })`. It takes the
+normal response path, so the body is serialized with its content-type, and declared
+`responseHeaders` and every `onResponse` hook apply to it. A hand-built
+`Response` still works.
+
 #### Which hooks run where
 
 Where a hook is registered decides which requests it sees. `nifra routes --hooks`
