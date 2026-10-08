@@ -57,6 +57,9 @@ export class FileSessionStore implements SessionStore {
   private readonly maxEntries: number
   private readonly maxBytes: number
   private readonly sequences = new Map<string, number>()
+  // Entries and bytes in each session file this store has written, so an append under the caps
+  // needs no read of the log to know it.
+  private readonly tallies = new Map<string, { entries: number; bytes: number }>()
   private readonly locks = new Map<string, Promise<void>>()
 
   constructor(options: FileSessionStoreOptions) {
@@ -109,14 +112,21 @@ export class FileSessionStore implements SessionStore {
       if (Buffer.byteLength(line, "utf8") > this.maxEntryBytes)
         throw new RangeError("session store: event exceeds maxEntryBytes")
       const path = this.pathFor(sessionId)
+      const tally = await this.tallyOf(sessionId)
       const file = await openSessionFile(path, O_APPEND | O_CREAT | O_WRONLY, 0o600)
       try {
         await file.writeFile(`${line}\n`, "utf8")
+      } catch (error) {
+        this.tallies.delete(sessionId)
+        throw error
       } finally {
         await file.close()
       }
+      tally.entries += 1
+      tally.bytes += Buffer.byteLength(line, "utf8") + 1
       this.sequences.set(sessionId, nextSeq)
-      await this.compactIfNeeded(sessionId)
+      if (tally.entries > this.maxEntries || tally.bytes > this.maxBytes)
+        await this.compact(sessionId, tally)
       return entry
     })
   }
@@ -173,6 +183,7 @@ export class FileSessionStore implements SessionStore {
         mode: 0o600,
       })
       this.sequences.set(targetSessionId, Math.max(0, lines.length - 1))
+      this.tallies.delete(targetSessionId)
       return targetSessionId
     })
   }
@@ -188,40 +199,63 @@ export class FileSessionStore implements SessionStore {
     return (entries.at(-1)?.seq ?? -1) + 1
   }
 
-  private async compactIfNeeded(sessionId: string): Promise<void> {
+  /** The session file's tally, read once: its size, and how many entries its bounded tail holds. */
+  private async tallyOf(sessionId: string): Promise<{ entries: number; bytes: number }> {
+    const cached = this.tallies.get(sessionId)
+    if (cached !== undefined) return cached
+    const tally = { entries: 0, bytes: 0 }
     const path = this.pathFor(sessionId)
-    const file = await openSessionFile(path, O_RDONLY)
-    let size: number
     try {
-      size = (await file.stat()).size
-    } finally {
-      await file.close()
-    }
-    if (size <= this.maxBytes) {
-      const recent = parseSessionEntries(
-        await this.readTailText(path, this.maxEntries + 1, this.maxBytes),
+      const file = await openSessionFile(path, O_RDONLY)
+      try {
+        tally.bytes = (await file.stat()).size
+      } finally {
+        await file.close()
+      }
+      tally.entries = parseSessionEntries(
+        await this.readTailText(path, this.maxEntries + 1, this.maxBytes + this.maxEntryBytes),
         sessionId,
-      )
-      if (recent.length <= this.maxEntries) return
+      ).length
+    } catch (error) {
+      if (!isNotFound(error)) throw error
     }
+    this.tallies.set(sessionId, tally)
+    return tally
+  }
+
+  /**
+   * Rewrite the log down to a low-water mark below both caps, so the next rewrite is a quarter of the
+   * caps of appends away rather than the very next append.
+   */
+  private async compact(
+    sessionId: string,
+    tally: { entries: number; bytes: number },
+  ): Promise<void> {
+    const path = this.pathFor(sessionId)
     // The tail read is bounded by the retention cap plus one maximum-sized line. This keeps
     // compaction memory bounded even if a pre-existing log is already oversized.
     const recent = parseSessionEntries(
       await this.readTailText(path, this.maxEntries + 1, this.maxBytes + this.maxEntryBytes),
       sessionId,
     )
-    const retained = retainEntries(recent, this.maxEntries, this.maxBytes)
+    const retained = retainEntries(
+      recent,
+      Math.max(1, Math.floor((this.maxEntries * 3) / 4)),
+      Math.max(Math.floor((this.maxBytes * 3) / 4), this.maxEntryBytes + 1),
+    )
     if (retained.length === 0) return
     const content = `${retained.map((entry) => JSON.stringify(entry)).join("\n")}\n`
-    if (Buffer.byteLength(content, "utf8") >= size && size <= this.maxBytes) return
     const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
     await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 })
     try {
       await rename(temporary, path)
     } catch (error) {
       await unlink(temporary).catch(() => {})
+      this.tallies.delete(sessionId)
       throw error
     }
+    tally.entries = retained.length
+    tally.bytes = Buffer.byteLength(content, "utf8")
     this.sequences.set(sessionId, retained.at(-1)!.seq)
   }
 
@@ -237,17 +271,19 @@ export class FileSessionStore implements SessionStore {
       let remaining = Math.min(size, maxBytes)
       const chunks: Buffer[] = []
       const chunkBytes = 64 * 1024
+      let newlines = 0
       while (remaining > 0) {
         const take = Math.min(remaining, chunkBytes)
         end -= take
         const bytes = Buffer.allocUnsafe(take)
         const result = await file.read(bytes, 0, take, end)
-        chunks.unshift(bytes.subarray(0, result.bytesRead))
+        const chunk = bytes.subarray(0, result.bytesRead)
+        chunks.unshift(chunk)
         remaining -= result.bytesRead
-        const text = Buffer.concat(chunks).toString("utf8")
-        const lines = text.split("\n")
-        const completeLines = end > 0 ? lines.length - 1 : lines.length
-        if (completeLines >= minimumLines || end === 0 || result.bytesRead === 0) return text
+        for (let at = chunk.indexOf(10); at !== -1; at = chunk.indexOf(10, at + 1)) newlines++
+        // Before the start of the file the first line may be partial, so it does not count.
+        const completeLines = end > 0 ? newlines : newlines + 1
+        if (completeLines >= minimumLines || end === 0 || result.bytesRead === 0) break
       }
       return Buffer.concat(chunks).toString("utf8")
     } finally {

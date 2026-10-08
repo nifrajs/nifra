@@ -75,14 +75,41 @@ describe("sessions and compaction", () => {
         store.append("bounded", "event", { index, text: "x".repeat(100) }),
       ),
     )
+    // Compaction keeps the newest entries down to three quarters of the cap: 3 -> 2 here.
     const entries = await store.read("bounded")
-    expect(entries).toHaveLength(3)
-    expect(entries.map((entry) => entry.seq)).toEqual([5, 6, 7])
-    expect(await store.read("bounded", 1)).toEqual([entries[2]!])
+    expect(entries.map((entry) => entry.seq)).toEqual([6, 7])
+    expect(await store.read("bounded", 1)).toEqual([entries[1]!])
     expect((await stat(join(root, "bounded.jsonl"))).size).toBeLessThanOrEqual(4_096)
     expect(
       (await readFile(join(root, "bounded.jsonl"), "utf8")).split("\n").filter(Boolean),
-    ).toHaveLength(3)
+    ).toHaveLength(2)
+  })
+
+  test("an append reads the log back only to compact it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-agent-session-cost-"))
+    roots.push(root)
+    const countTailReads = (store: FileSessionStore): (() => number) => {
+      let reads = 0
+      const original: unknown = Reflect.get(store, "readTailText")
+      if (typeof original !== "function") throw new Error("expected a tail reader")
+      Reflect.set(store, "readTailText", (...args: unknown[]) => {
+        reads++
+        return Reflect.apply(original, store, args)
+      })
+      return () => reads
+    }
+    const roomy = new FileSessionStore({ root })
+    const roomyReads = countTailReads(roomy)
+    for (let index = 0; index < 200; index++) await roomy.append("roomy", "event", { index })
+    expect(roomyReads()).toBe(1)
+
+    const tight = new FileSessionStore({ root, maxEntries: 8 })
+    const tightReads = countTailReads(tight)
+    for (let index = 0; index < 200; index++) await tight.append("tight", "event", { index })
+    expect(tightReads()).toBeLessThanOrEqual(1 + Math.ceil(200 / 3))
+    const retained = await tight.read("tight")
+    expect(retained.at(-1)?.seq).toBe(199)
+    expect(retained.length).toBeLessThanOrEqual(8)
   })
 
   test("does not overwrite an existing fork destination", async () => {
