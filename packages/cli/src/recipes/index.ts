@@ -8,6 +8,7 @@ import { recipe as v1_8_0 } from "./1.8.0.ts"
 import { recipe as v2_0_0 } from "./2.0.0.ts"
 import { recipe as v3_0_0 } from "./3.0.0.ts"
 import { recipe as v4_0_0 } from "./4.0.0.ts"
+import { recipe as v5_0_0 } from "./5.0.0.ts"
 
 /** A pin rule: every dependency whose name starts with `match` is set to version `to`. */
 export interface PinRule {
@@ -30,11 +31,19 @@ export interface ImportMove {
   readonly to: string
 }
 
+/** A source comment a release stopped honoring. The runner lists each one; it never rewrites it. */
+export interface RetiredMarker {
+  readonly marker: string
+  /** What to write instead, printed beside each comment. */
+  readonly instead: string
+}
+
 export interface UpgradeRecipe {
   readonly version: string
   readonly pins: readonly PinRule[]
   readonly dependencyMoves?: readonly DependencyMove[]
   readonly importMoves: readonly ImportMove[]
+  readonly retiredMarkers?: readonly RetiredMarker[]
   /** Human notes printed after the plan - e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]
 }
@@ -44,6 +53,7 @@ const RECIPES: Record<string, UpgradeRecipe> = {
   [v2_0_0.version]: v2_0_0,
   [v3_0_0.version]: v3_0_0,
   [v4_0_0.version]: v4_0_0,
+  [v5_0_0.version]: v5_0_0,
 }
 
 export function getRecipe(version: string): UpgradeRecipe | undefined {

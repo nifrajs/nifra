@@ -1044,6 +1044,21 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     expect(found[0]?.snippet).toContain('"/real"')
   })
 
+  test("the NF-C007 code form counts anywhere in the comment block above the return", () => {
+    const src = backend(
+      [
+        "",
+        "  // nifra-expect NF-C007: the download is served as bytes",
+        "  // and the typed client never calls it.",
+        '  .get("/file", () => new Response("x"))',
+        '  .get("/real", () => new Response("y"))',
+      ].join("\n"),
+    )
+    const found = scanResponseRoutes("backend.ts", src)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.snippet).toContain('"/real"')
+  })
+
   test("a TRAILING pragma on one route does NOT leak down and suppress the next route's advisory", () => {
     const src = backend(
       [
@@ -1832,6 +1847,20 @@ describe("scanInterpolatedSql", () => {
         "db.query(q, params)",
       ].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("the NF-C006 code form with a reason silences it; without one it does not", () => {
+      const at = (comment: string) =>
+        scanInterpolatedSql(
+          "a.ts",
+          [...genPlaceholders, comment, "db.query(q, params)"].join("\n"),
+          ts,
+        )
+      expect(at("// nifra-expect NF-C006: placeholders are generated, values bound")).toHaveLength(
+        0,
+      )
+      expect(at("// nifra-expect NF-C006")).toHaveLength(1)
+      expect(at("// nifra-expect NF-C007: names another finding")).toHaveLength(1)
     })
 
     test("a trailing pragma with a reason silences it", () => {

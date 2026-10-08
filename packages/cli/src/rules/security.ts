@@ -4,7 +4,11 @@ import type * as TSApi from "typescript"
 import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
-import { commentBlockHasMarker } from "./comment-markers.ts"
+import {
+  commentBlockExpectation,
+  commentBlockHasMarker,
+  MISSING_EXPECTATION_REASON,
+} from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -27,21 +31,44 @@ function didNotRun(code: string, title: string): readonly Diagnostic[] {
 
 const SECRET = /(?:token|secret|apiKey|api_key|signature|hmac|password)/i
 const PII = /(?:email|phone|ssn|password|token|authorization)/i
-const REVIEWED = "@nifra-gate-reviewed"
+// Retired in 5.0.0: it silenced any security finding without a reason. It now silences nothing and
+// only makes the finding name the form that replaced it.
+const RETIRED_REVIEW_MARKER = "@nifra-gate-reviewed"
 const parseCache = new WeakMap<
   SourceIndex,
   Map<string, { readonly tree: TSApi.SourceFile; readonly lines: readonly string[] }>
 >()
 
-// The marker counts anywhere in the contiguous comment block above the finding (or trailing on its
-// line) - a human writing the multi-line justification the hatch asks for must not un-suppress the
-// finding by growing the comment past two lines.
-function hasReview(lines: readonly string[], line: number): boolean {
-  return commentBlockHasMarker(lines, line, REVIEWED)
+/**
+ * The reason a `nifra-expect <code>: <reason>` comment on or above `line` gives for a security
+ * finding. Every security hatch needs the reason: a comment without one silences nothing.
+ */
+function expectedReason(lines: readonly string[], line: number, code: string): string | undefined {
+  return commentBlockExpectation(lines, line, [code])?.reason
 }
 
-function reviewedEvidence(lines: readonly string[], line: number): readonly string[] {
-  return hasReview(lines, line) ? [REVIEWED] : []
+/** The evidence a silenced finding carries: the comment that silenced it, reason included. */
+function expectationEvidence(
+  lines: readonly string[],
+  line: number,
+  code: string,
+): readonly string[] {
+  const reason = expectedReason(lines, line, code)
+  return reason === undefined ? [] : [`nifra-expect ${code}: ${reason}`]
+}
+
+/** An unsilenced finding's message, plus why a hatch comment written for it does not count. */
+function unexpectedMessage(
+  message: string,
+  lines: readonly string[],
+  line: number,
+  code: string,
+): string {
+  if (commentBlockExpectation(lines, line, [code]) !== undefined)
+    return `${message}; ${MISSING_EXPECTATION_REASON}`
+  if (commentBlockHasMarker(lines, line, RETIRED_REVIEW_MARKER))
+    return `${message}; ${RETIRED_REVIEW_MARKER} no longer silences a finding - after review, write // nifra-expect ${code}: <reason>`
+  return message
 }
 
 const WEB_PACKAGE = /^@nifrajs\/web(?:-[a-z0-9-]+)?$/
@@ -408,7 +435,9 @@ export function rewriteSecretComparisons(
 ): string {
   const tree = parse(ts, file, source)
   const lines = tree.text.split("\n")
-  const sites = secretComparisons(ts, tree, browser).filter((site) => !hasReview(lines, site.line))
+  const sites = secretComparisons(ts, tree, browser).filter(
+    (site) => expectedReason(lines, site.line, "NF-S002") === undefined,
+  )
   // A comparison nested inside another (`(token === a) === flag`) is left for the next run, so every
   // edit below covers a disjoint range and applying them from the end keeps earlier offsets valid.
   const outer = sites.filter(
@@ -454,7 +483,7 @@ export const secretComparisonRule: CheckRule = {
       const { tree, lines } = parsed
       const browser = provenBrowserFile(ctx.root, file, webDirs)
       for (const { left, right, line } of secretComparisons(ts, tree, browser)) {
-        const reviewed = hasReview(lines, line)
+        const reviewed = expectedReason(lines, line, "NF-S002") !== undefined
         findings.push(
           diagnostic({
             code: "NF-S002",
@@ -462,9 +491,17 @@ export const secretComparisonRule: CheckRule = {
             file,
             line,
             message: reviewed
-              ? "secret comparison is explicitly marked as reviewed"
-              : "secret-like values must use a length check and timing-safe comparison",
-            evidence: [left ?? right ?? "secret comparison", ...reviewedEvidence(lines, line)],
+              ? "secret comparison is expected here"
+              : unexpectedMessage(
+                  "secret-like values must use a length check and timing-safe comparison",
+                  lines,
+                  line,
+                  "NF-S002",
+                ),
+            evidence: [
+              left ?? right ?? "secret comparison",
+              ...expectationEvidence(lines, line, "NF-S002"),
+            ],
             ...(reviewed
               ? {}
               : {
@@ -506,7 +543,7 @@ export const piiLogRule: CheckRule = {
               const name = nameOf(ts, arg)
               if (name !== undefined && PII.test(name)) {
                 const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-                const reviewed = hasReview(lines, line)
+                const reviewed = expectedReason(lines, line, "NF-S003") !== undefined
                 findings.push(
                   diagnostic({
                     code: "NF-S003",
@@ -514,9 +551,14 @@ export const piiLogRule: CheckRule = {
                     file,
                     line,
                     message: reviewed
-                      ? "sensitive value in log call is explicitly marked as reviewed"
-                      : "PII-shaped values must not be passed directly to log calls",
-                    evidence: [name, ...reviewedEvidence(lines, line)],
+                      ? "sensitive value in log call is expected here"
+                      : unexpectedMessage(
+                          "PII-shaped values must not be passed directly to log calls",
+                          lines,
+                          line,
+                          "NF-S003",
+                        ),
+                    evidence: [name, ...expectationEvidence(lines, line, "NF-S003")],
                     verify: "nifra check --lints-only",
                   }),
                 )
@@ -592,7 +634,7 @@ export const failOpenGateRule: CheckRule = {
               !/(?:^|[^.\w])(?:fail|deny|reject|forbid|unauthorized|abort)\s*\(/s.test(text)
             ) {
               const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-              const reviewed = hasReview(lines, line)
+              const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
               findings.push(
                 diagnostic({
                   code: "NF-S001",
@@ -600,12 +642,17 @@ export const failOpenGateRule: CheckRule = {
                   file,
                   line,
                   message: reviewed
-                    ? "gate catch block is explicitly marked as reviewed"
-                    : "gate catch blocks must rethrow or return an explicit denial",
+                    ? "gate catch block is expected here"
+                    : unexpectedMessage(
+                        "gate catch blocks must rethrow or return an explicit denial",
+                        lines,
+                        line,
+                        "NF-S001",
+                      ),
                   evidence: [
                     name,
                     "catch block has no denial or rethrow",
-                    ...reviewedEvidence(lines, line),
+                    ...expectationEvidence(lines, line, "NF-S001"),
                   ],
                   verify: "nifra check --lints-only",
                 }),
@@ -672,7 +719,7 @@ export const corsOriginPredicateRule: CheckRule = {
                       : false
                 if (ignoresOrigin) {
                   const line = tree.getLineAndCharacterOfPosition(prop.getStart(tree)).line + 1
-                  const reviewed = hasReview(lines, line)
+                  const reviewed = expectedReason(lines, line, "NF-S004") !== undefined
                   findings.push(
                     diagnostic({
                       code: "NF-S004",
@@ -680,9 +727,17 @@ export const corsOriginPredicateRule: CheckRule = {
                       file,
                       line,
                       message: reviewed
-                        ? "constant CORS origin predicate is explicitly marked as reviewed"
-                        : "CORS origin predicate never inspects the origin - it allows every origin; list explicit origins or use the argument",
-                      evidence: ["origin predicate", ...reviewedEvidence(lines, line)],
+                        ? "constant CORS origin predicate is expected here"
+                        : unexpectedMessage(
+                            "CORS origin predicate never inspects the origin - it allows every origin; list explicit origins or use the argument",
+                            lines,
+                            line,
+                            "NF-S004",
+                          ),
+                      evidence: [
+                        "origin predicate",
+                        ...expectationEvidence(lines, line, "NF-S004"),
+                      ],
                       verify: "nifra check --lints-only",
                     }),
                   )
@@ -723,7 +778,7 @@ export const externalRedirectRule: CheckRule = {
                 prop.initializer.kind === ts.SyntaxKind.TrueKeyword
               ) {
                 const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-                const reviewed = hasReview(lines, line)
+                const reviewed = expectedReason(lines, line, "NF-S005") !== undefined
                 findings.push(
                   diagnostic({
                     code: "NF-S005",
@@ -731,9 +786,14 @@ export const externalRedirectRule: CheckRule = {
                     file,
                     line,
                     message: reviewed
-                      ? "external redirect is explicitly marked as reviewed"
-                      : "redirect opts out of the same-origin default - verify the target can never be derived from request input (open-redirect risk)",
-                    evidence: ["external: true", ...reviewedEvidence(lines, line)],
+                      ? "external redirect is expected here"
+                      : unexpectedMessage(
+                          "redirect opts out of the same-origin default - verify the target can never be derived from request input (open-redirect risk)",
+                          lines,
+                          line,
+                          "NF-S005",
+                        ),
+                    evidence: ["external: true", ...expectationEvidence(lines, line, "NF-S005")],
                     verify: "nifra check --lints-only",
                   }),
                 )
@@ -777,7 +837,7 @@ export const assuranceEscapeHatchRule: CheckRule = {
           const consequence = name !== undefined ? ESCAPE_HATCHES[name] : undefined
           if (name !== undefined && consequence !== undefined) {
             const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-            const reviewed = hasReview(lines, line)
+            const reviewed = expectedReason(lines, line, "NF-S006") !== undefined
             findings.push(
               diagnostic({
                 code: "NF-S006",
@@ -785,9 +845,9 @@ export const assuranceEscapeHatchRule: CheckRule = {
                 file,
                 line,
                 message: reviewed
-                  ? `${name} escape hatch is explicitly marked as reviewed`
-                  : `${name}: ${consequence}`,
-                evidence: [name, ...reviewedEvidence(lines, line)],
+                  ? `${name} escape hatch is expected here`
+                  : unexpectedMessage(`${name}: ${consequence}`, lines, line, "NF-S006"),
+                evidence: [name, ...expectationEvidence(lines, line, "NF-S006")],
                 verify: "nifra check --lints-only",
               }),
             )

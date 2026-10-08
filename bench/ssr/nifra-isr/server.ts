@@ -37,7 +37,7 @@ app.get("/assets/*", async (c) => {
 })
 
 const store = new MemoryCacheStore({
-  // @nifra-gate-reviewed - ISR benchmark intentionally measures the in-memory cache path
+  // nifra-expect NF-S006: the ISR benchmark intentionally measures the in-memory cache path
   allowInProduction: true,
 })
 const isr = withISR(app, {

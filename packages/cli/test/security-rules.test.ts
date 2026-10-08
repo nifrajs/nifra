@@ -61,19 +61,52 @@ describe("built-in security rules", () => {
     expect(findings.filter((finding) => finding.code === "NF-S002")).toEqual([])
   })
 
-  test("keeps reviewed overrides visible without failing", async () => {
+  test("keeps expected findings visible, with their reason, without failing", async () => {
     const findings = await scan(
       "routes/security.ts",
       [
         "const token = input.token",
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S002: compares a public echo, not secret material",
+        "// nifra-expect NF-S003: the token is a public request id",
         "if (token === expected) console.log(token)",
       ].join("\n"),
     )
-    expect(findings.every((finding) => finding.severity === "info")).toBe(true)
-    expect(findings.every((finding) => finding.evidence?.includes("@nifra-gate-reviewed"))).toBe(
-      true,
+    expect(findings.map((finding) => [finding.code, finding.severity])).toEqual([
+      ["NF-S002", "info"],
+      ["NF-S003", "info"],
+    ])
+    expect(findings.find((f) => f.code === "NF-S002")?.evidence).toContain(
+      "nifra-expect NF-S002: compares a public echo, not secret material",
     )
+  })
+
+  test("a nifra-expect comment silences only the code it names, and only with a reason", async () => {
+    const compare = "if (token === expected) deny()"
+    const severity = async (comment: string) =>
+      (await scan("server/auth.ts", `${comment}\n${compare}`)).find((f) => f.code === "NF-S002")
+    for (const comment of [
+      "// nifra-expect NF-S003: names another finding",
+      "// nifra-expect NF-S0021: a longer code is another code",
+      "// nifra-expect NF-S002",
+      "// nifra-expect NF-S002:",
+      "// nifra-expect NF-S002:   */",
+    ]) {
+      expect((await severity(comment))?.severity).toBe("error")
+    }
+    expect((await severity("// nifra-expect NF-S002"))?.message).toContain("gives no reason")
+    expect((await severity("/* nifra-expect NF-S002: a block comment */"))?.evidence).toContain(
+      "nifra-expect NF-S002: a block comment",
+    )
+  })
+
+  test("the retired @nifra-gate-reviewed marker silences nothing and names its replacement", async () => {
+    for (const marker of ["// @nifra-gate-reviewed", "// @nifra-gate-reviewed: reviewed"]) {
+      const finding = (
+        await scan("server/auth.ts", `${marker}\nif (token === expected) deny()`)
+      ).find((f) => f.code === "NF-S002")
+      expect(finding?.severity).toBe("error")
+      expect(finding?.message).toContain("// nifra-expect NF-S002: <reason>")
+    }
   })
 
   test("NF-S001 gate-name: `can` needs camelCase, so canonical/cancel are not gates", async () => {
@@ -224,15 +257,15 @@ describe("configuration audit rules (NF-S004..007)", () => {
     expect(findings[0]?.severity).toBe("info")
   })
 
-  test("reviewed marker downgrades the audit rules", async () => {
+  test("a nifra-expect comment downgrades the audit rules", async () => {
     const findings = await scan(
       "app.ts",
       [
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S004: a public read-only API",
         "app.use(cors({ origin: () => true }))",
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S005: the target is a constant",
         "return redirect(target, { external: true })",
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S006: the edge proxy caps every body",
         "app.use(bodyLimit({ allowLengthless: true }))",
       ].join("\n"),
     )
@@ -497,11 +530,11 @@ describe("NF-S002 severity by file role", () => {
   })
 })
 
-test("reviewed marker counts anywhere in the comment block above, not only 2 lines up", async () => {
+test("a nifra-expect comment counts anywhere in the comment block above, not only 2 lines up", async () => {
   const findings = await scan(
     "server/auth.ts",
     [
-      "// @nifra-gate-reviewed: this compares a public webhook echo, not secret material.",
+      "// nifra-expect NF-S002: this compares a public webhook echo, not secret material.",
       "// The upstream signs with a per-delivery nonce; equality here is a routing hint only,",
       "// and the real verification happens in verifySignature() below.",
       "if (token === expected) deny()",
@@ -509,5 +542,7 @@ test("reviewed marker counts anywhere in the comment block above, not only 2 lin
   )
   const s002 = findings.find((f) => f.code === "NF-S002")
   expect(s002?.severity).toBe("info")
-  expect(s002?.evidence).toContain("@nifra-gate-reviewed")
+  expect(s002?.evidence).toContain(
+    "nifra-expect NF-S002: this compares a public webhook echo, not secret material.",
+  )
 })

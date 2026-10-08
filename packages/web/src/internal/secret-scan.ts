@@ -227,7 +227,7 @@ function looksRandom(value: string, minLength: number): boolean {
 
 /** A password the scanned text spells as a placeholder or a dev default. */
 function placeholderPassword(user: string, password: string): boolean {
-  // @nifra-gate-reviewed: a password equal to its user name is a placeholder in the text being
+  // nifra-expect NF-S002: a password equal to its user name is a placeholder in the text being
   // scanned; nothing is authenticated here.
   return PLACEHOLDER.test(password) || password === user || /[${}<>*]/.test(password)
 }
@@ -580,7 +580,7 @@ export function createRedactor(
     for (const { what, pattern } of KEY_FORMATS) out = out.replace(pattern, `[redacted:${what}]`)
     out = out.replace(JWT, "[redacted:JWT]")
     out = out.replace(CREDENTIAL_URL, (match, user: string, password: string) =>
-      // @nifra-gate-reviewed: the same placeholder test as the scan; nothing is authenticated here.
+      // nifra-expect NF-S002: the same placeholder test as the scan; nothing is authenticated here.
       PLACEHOLDER.test(password) || password === user
         ? match
         : match.replace(`:${password}@`, ":[redacted]@"),

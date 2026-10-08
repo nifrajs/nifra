@@ -239,6 +239,29 @@ export default function Errors() {
       </p>
 
       <FixPrompts code="NIFRA_CDN_PURGE_FAILED" />
+
+      <h2 id="nifra-expect">Silencing a nifra check finding</h2>
+      <p>
+        <code>nifra check</code> names each finding with an <code>NF-</code> code. Where a finding is
+        reviewed and intended, a comment on the flagged line, or anywhere in the comment block directly
+        above it, says so and why:
+      </p>
+      <CodeBlock
+        code={
+          "// nifra-expect NF-S002: compares the challenge the sender echoes back, not a secret\nif (echoToken === challenge) return accept()"
+        }
+      />
+      <p>
+        The comment answers only the code it names. A finding that fails the check, and every security
+        finding, is silenced only with a reason after the colon; an advisory also accepts the comment
+        without one. A blank line or a line of code ends the block, so a comment never reaches the next
+        statement. A silenced security finding stays in the report as information, with the comment and
+        its reason as evidence. Some codes also answer to a name: <code>sql-dynamic</code> (NF-C006),{" "}
+        <code>raw-response</code> (NF-C007), <code>reserved-segment</code> (NF-C018),{" "}
+        <code>route-overlap</code> (NF-C024 and NF-C025) and <code>param-modifier</code> (NF-C026).{" "}
+        <code>@nifra-gate-reviewed</code> silences nothing; a finding under it names the comment to
+        write instead.
+      </p>
     </div>
   )
 }

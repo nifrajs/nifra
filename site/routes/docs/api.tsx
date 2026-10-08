@@ -214,7 +214,7 @@ export default function Api() {
       <p className="caveat">
         Other param modifiers (<code>:id+</code>, <code>:id*</code>, <code>{":id(\\d+)"}</code>) are not
         part of the path grammar and match as literal text. Where that text is intended, put{" "}
-        <code>{"// nifra-expect param-modifier"}</code> above the registration.
+        <code>{"// nifra-expect NF-C026: <reason>"}</code> above the registration.
       </p>
 
       <h2>Param constraints</h2>
@@ -282,7 +282,7 @@ export default function Api() {
           <code>{"/users/:id{[0-9]+}"}</code> serve no request in common, so <code>nifra check</code>{" "}
           (<code>NF-C024</code>) has nothing to report. A constrained route beside a bare{" "}
           <code>:param</code> route still overlaps and is still reported; mark the pair with{" "}
-          <code>{"// nifra-expect route-overlap"}</code> where it is intended.
+          <code>{"// nifra-expect NF-C024: <reason>"}</code> where it is intended.
         </li>
         <li>
           <b>OpenAPI and the typed client use the bare name.</b> The path is{" "}
@@ -495,7 +495,7 @@ export default function Api() {
         the dot access at compile time with that guidance, and <code>nifra check</code> reports the
         collision (<code>NF-C018</code>, advisory). Prefer a verb-free segment
         (e.g. <code>/api/remove</code>) when you control the path; mark a route served only to
-        non-typed-client consumers with <code>{"// nifra-expect reserved-segment"}</code> above its
+        non-typed-client consumers with <code>{"// nifra-expect NF-C018: <reason>"}</code> above its
         registration.
       </p>
 

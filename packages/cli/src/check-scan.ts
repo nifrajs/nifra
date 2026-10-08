@@ -17,7 +17,7 @@ import {
   type TypeScriptApi,
   type TypeScriptSourceIndex,
 } from "./internal/typescript-import.ts"
-import { commentBlockMarkerReason } from "./rules/comment-markers.ts"
+import { commentBlockExpectation } from "./rules/comment-markers.ts"
 
 export interface SourceFinding {
   readonly file: string
@@ -1411,10 +1411,10 @@ function sqlMethod(
 
 const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
 
-/** The opt-out pragma that silences one interpolated-SQL finding. Written `// nifra-expect sql-dynamic:
- * <reason>` on the flagged line or in the comment block directly above it; the reason after the colon
- * is mandatory (see {@link commentBlockMarkerReason}). Scoped to the single statement it sits on. */
-const SQL_DYNAMIC_PRAGMA = "nifra-expect sql-dynamic"
+/** What silences one interpolated-SQL finding: `// nifra-expect NF-C006: <reason>` (or the
+ * `sql-dynamic` slug) on the flagged line or in the comment block directly above it. The reason after
+ * the colon is mandatory (see {@link commentBlockExpectation}). Scoped to the single statement it sits on. */
+const SQL_DYNAMIC_EXPECTATION = ["NF-C006", "sql-dynamic"]
 
 /**
  * Scan one file's text for SQL assembled by interpolation. Pure + line-accurate.
@@ -1456,9 +1456,10 @@ export function scanInterpolatedSql(
           const line = source.getLineAndCharacterOfPosition(index).line + 1
           // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (batch VALUES placeholder
           // generation, an allowlisted identifier). The reason is mandatory: a bare `// nifra-expect
-          // sql-dynamic` with no reason after the colon does NOT silence, so the hatch always leaves a
+          // NF-C006` with no reason after the colon does NOT silence, so the hatch always leaves a
           // greppable audit trail instead of becoming a second laundering trick.
-          const silenced = commentBlockMarkerReason(lines, line, SQL_DYNAMIC_PRAGMA) !== undefined
+          const silenced =
+            commentBlockExpectation(lines, line, SQL_DYNAMIC_EXPECTATION)?.reason !== undefined
           if (!silenced) out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
         }
       }
@@ -2084,23 +2085,19 @@ export function scanResponseRoutes(
       if (source !== undefined && facts.isResponseSyntaxAt(source, m.index) !== true) continue
     }
     const line = lineAt(content, m.index)
-    // A `// nifra-expect raw-response` pragma marks an intentional raw Response (a file/redirect that can't
-    // be a typed route), silencing this advisory. Honor it on the return line itself, OR on the line above
-    // ONLY when that line is a standalone comment - so a TRAILING pragma on one route's return line can't
-    // leak down and suppress the very next route's genuine advisory. `stripComments` blanks the pragma in
-    // `code` (so it never affects the match); the raw `lines` still carry it.
-    const thisLine = lines[line - 1] ?? ""
-    const aboveLine = lines[line - 2] ?? ""
-    const aboveSuppresses =
-      aboveLine.trimStart().startsWith("//") && aboveLine.includes(RAW_RESPONSE_PRAGMA)
-    if (thisLine.includes(RAW_RESPONSE_PRAGMA) || aboveSuppresses) continue
-    out.push({ file, line, snippet: thisLine.trim() })
+    // A `// nifra-expect NF-C007` comment (or the `raw-response` slug) marks an intentional raw Response
+    // (a file/redirect that can't be a typed route), silencing this advisory with or without a reason.
+    // It counts on the return line or in the comment block directly above, so a TRAILING comment on one
+    // route's return line can't leak down onto the next route. `stripComments` blanks it in `code` (so it
+    // never affects the match); the raw `lines` still carry it.
+    if (commentBlockExpectation(lines, line, RAW_RESPONSE_EXPECTATION) !== undefined) continue
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
   return out
 }
 
-/** The opt-out pragma that suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
-const RAW_RESPONSE_PRAGMA = "nifra-expect raw-response"
+/** What suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
+const RAW_RESPONSE_EXPECTATION = ["NF-C007", "raw-response"]
 
 /** Walk the project's `.ts`/`.tsx` source (skipping deps and build output), calling `visit` per file.
  * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`.

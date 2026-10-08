@@ -66,12 +66,12 @@ describe("NF-C018 reserved client segment", () => {
     expect(findings.filter((f) => f.code === "NF-C018")).toEqual([])
   })
 
-  test("the nifra-expect reserved-segment pragma suppresses, from anywhere in the comment block", async () => {
+  test("a nifra-expect NF-C018 comment suppresses, from anywhere in the comment block", async () => {
     const findings = await scan(
       "backend.ts",
       backend([
         "  // Served only to the external webhook consumer, never the typed client.",
-        "  // nifra-expect reserved-segment",
+        "  // nifra-expect NF-C018",
         "  // The path is part of the partner contract and cannot be renamed.",
         '  .post("/hooks/delete", () => ({}))',
         '  .post("/api/delete", () => ({}))', // no pragma - still flagged
@@ -157,7 +157,20 @@ describe("NF-C024 overlapping route registration", () => {
     expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
   })
 
-  test("supports a route-local suppression pragma", async () => {
+  test("a nifra-expect comment with a reason silences the pair, by code or slug", async () => {
+    for (const comment of [
+      "  // nifra-expect NF-C024: /users/me answers first on purpose",
+      "  // nifra-expect route-overlap: /users/me answers first on purpose",
+    ]) {
+      const findings = await scan(
+        "backend.ts",
+        backend(['  .get("/users/:id", () => ({}))', comment, '  .get("/users/me", () => ({}))']),
+      )
+      expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+    }
+  })
+
+  test("an overlap is an error, so a comment without a reason does not silence it", async () => {
     const findings = await scan(
       "backend.ts",
       backend([
@@ -166,7 +179,9 @@ describe("NF-C024 overlapping route registration", () => {
         '  .get("/users/me", () => ({}))',
       ]),
     )
-    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+    const overlap = findings.find((f) => f.code === "NF-C024")
+    expect(overlap?.severity).toBe("error")
+    expect(overlap?.message).toContain("gives no reason")
   })
 
   test("does not crash on malformed route facts", async () => {

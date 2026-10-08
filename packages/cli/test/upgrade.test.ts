@@ -505,5 +505,48 @@ describe("chained upgrades", () => {
   test("the targets are the recipes up to the CLI's version, and that version", () => {
     expect(upgradeTargets("3.5.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "3.5.0"])
     expect(upgradeTargets("4.0.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "4.0.0"])
+    expect(upgradeTargets("5.0.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "4.0.0", "5.0.0"])
+  })
+
+  test("5.0.0 lists each retired review comment with the line it covered and never rewrites one", async () => {
+    const root = join(FIXTURES, "retired-review")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { "@nifrajs/core": "^4.0.2" } }),
+    )
+    const source = [
+      "// @nifra-gate-reviewed: compares our own token",
+      "// with the one we wrote.",
+      "if (token === expected) ok()",
+      "const flag = 1 // @nifra-gate-reviewed",
+      "// @nifra-gate-reviewed",
+      "",
+      "const later = 2",
+    ].join("\n")
+    await writeFile(join(root, "src", "auth.ts"), source)
+
+    const { result, out } = await captureConsole(() =>
+      runUpgrade(root, { version: "5.0.0", cliVersion: "5.0.0", write: true, verify: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain("3 retired comment(s)")
+    expect(out).toContain(
+      "src/auth.ts:1  @nifra-gate-reviewed  covers line 3: if (token === expected) ok()",
+    )
+    expect(out).toContain("src/auth.ts:4  @nifra-gate-reviewed  covers line 4: const flag = 1")
+    expect(out).toContain("src/auth.ts:5  @nifra-gate-reviewed  covers no line")
+    expect(out).toContain("write instead: // nifra-expect <code>: <reason>")
+    expect(await readFile(join(root, "src", "auth.ts"), "utf8")).toBe(source)
+    expect(JSON.parse(await readFile(join(root, "package.json"), "utf8")).dependencies).toEqual({
+      "@nifrajs/core": "^5.0.0",
+    })
+
+    const plan = computeUpgrade(root, chainRecipes("5.0.0", "4.0.2"), false)
+    expect(plan.retiredMarkers.map((site) => [site.line, site.covers?.line])).toEqual([
+      [1, 3],
+      [4, 4],
+      [5, undefined],
+    ])
   })
 })

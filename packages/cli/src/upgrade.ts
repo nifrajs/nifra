@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { Glob } from "bun"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
+import { markerTarget } from "./rules/comment-markers.ts"
 
 export interface UpgradeOptions {
   /** Target version, e.g. "1.8.0". Required unless `list` is set. */
@@ -71,6 +72,16 @@ export interface DependencyMoveChange {
   readonly action: "renamed" | "removed"
 }
 
+/** A retired comment in the project, and the line it applied to before the release retired it. */
+export interface RetiredMarkerSite {
+  readonly file: string
+  readonly line: number
+  readonly marker: string
+  /** The line the comment covered; `undefined` when a blank line follows its comment block. */
+  readonly covers: { readonly line: number; readonly text: string } | undefined
+  readonly instead: string
+}
+
 export interface UpgradePlan {
   readonly version: string
   readonly pins: readonly PinChange[]
@@ -78,6 +89,8 @@ export interface UpgradePlan {
   readonly importMoves: readonly ImportChange[]
   /** Pins refused because the target is BELOW the installed version (a rollback). Empty when allowed. */
   readonly downgrades: readonly PinChange[]
+  /** Comments a release in the chain stopped honoring. Listed only, never rewritten. */
+  readonly retiredMarkers: readonly RetiredMarkerSite[]
   readonly notes: readonly string[]
 }
 
@@ -475,6 +488,7 @@ export function chainRecipes(target: string, installed: string | null): ChainedR
     pins: [...pins].map(([match, to]) => ({ match, to })),
     dependencyMoves: recipes.flatMap((recipe) => recipe.dependencyMoves ?? []),
     importMoves: recipes.flatMap((recipe) => recipe.importMoves),
+    retiredMarkers: recipes.flatMap((recipe) => recipe.retiredMarkers ?? []),
     notes: recipes.flatMap((recipe) =>
       (recipe.notes ?? []).map((note) => `${recipe.version}: ${note}`),
     ),
@@ -493,6 +507,7 @@ export function computeUpgrade(
   const dependencyMoves: DependencyMoveChange[] = []
   const importMoves: ImportChange[] = []
   const downgrades: PinChange[] = []
+  const retiredMarkers: RetiredMarkerSite[] = []
 
   if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
@@ -518,12 +533,34 @@ export function computeUpgrade(
     }
   }
 
+  // Read after the import moves, so a listed line number is the one the file has after `--write`.
+  const retired = recipe.retiredMarkers ?? []
+  if (retired.length > 0) {
+    for (const rel of scan(cwd, SOURCE_GLOB)) {
+      const text = readFileSync(join(cwd, rel), "utf8")
+      if (!retired.some(({ marker }) => text.includes(marker))) continue
+      const lines = text.split("\n")
+      for (let line = 1; line <= lines.length; line++) {
+        for (const { marker, instead } of retired) {
+          if (!(lines[line - 1] ?? "").includes(marker)) continue
+          const target = markerTarget(lines, line)
+          const covers =
+            target === undefined
+              ? undefined
+              : { line: target, text: (lines[target - 1] ?? "").trim() }
+          retiredMarkers.push({ file: rel, line, marker, covers, instead })
+        }
+      }
+    }
+  }
+
   return {
     version: recipe.version,
     pins,
     dependencyMoves,
     importMoves,
     downgrades,
+    retiredMarkers,
     notes: recipe.notes ?? [],
   }
 }
@@ -548,7 +585,8 @@ function renderPlan(
   if (
     plan.pins.length === 0 &&
     plan.dependencyMoves.length === 0 &&
-    plan.importMoves.length === 0
+    plan.importMoves.length === 0 &&
+    plan.retiredMarkers.length === 0
   ) {
     lines.push("Already up to date - no changes.")
     return lines.join("\n")
@@ -573,6 +611,20 @@ function renderPlan(
     const total = plan.importMoves.reduce((n, m) => n + m.count, 0)
     lines.push(`${verb} ${total} import move(s) across ${plan.importMoves.length} file(s):`)
     for (const m of plan.importMoves) lines.push(`  ${m.file}  ${m.from} → ${m.to}  (${m.count})`)
+    lines.push("")
+  }
+  if (plan.retiredMarkers.length > 0) {
+    lines.push(
+      `${plan.retiredMarkers.length} retired comment(s) that silence nothing now; nifra check reports what each covered:`,
+    )
+    for (const site of plan.retiredMarkers) {
+      const covers =
+        site.covers === undefined
+          ? "covers no line"
+          : `covers line ${site.covers.line}: ${site.covers.text}`
+      lines.push(`  ${site.file}:${site.line}  ${site.marker}  ${covers}`)
+      lines.push(`    write instead: ${site.instead}`)
+    }
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)
