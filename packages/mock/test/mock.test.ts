@@ -86,6 +86,15 @@ describe("generateMockValue", () => {
     expect(generateMockValue({ allOf: [{ const: "same" }, { const: "same" }] })).toBe("same")
     const multiple = generateMockValue({ type: "integer", minimum: 5, maximum: 20, multipleOf: 5 })
     expect(multiple).toBeOneOf([5, 10, 15, 20])
+    const at = (schema: Record<string, unknown>, r: number) =>
+      generateMockValue(schema, undefined, () => r)
+    expect(at({ type: "integer", minimum: 1, maximum: 5, multipleOf: 1.5 }, 0)).toBe(3)
+    expect(at({ type: "integer", minimum: 1, maximum: 5, multipleOf: 0.5 }, 0)).toBe(1)
+    expect(at({ type: "integer", minimum: 1, maximum: 9, multipleOf: 0.3 }, 0)).toBe(3)
+    expect(() => at({ type: "integer", minimum: 1, maximum: 2, multipleOf: 1.5 }, 0)).toThrow(
+      "No integer exists in range",
+    )
+    expect(() => at({ type: "integer", multipleOf: 1e-7 }, 0)).toThrow("plain decimal")
     const items = generateMockValue({
       type: "array",
       minItems: 4,

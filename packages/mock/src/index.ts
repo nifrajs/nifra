@@ -97,6 +97,23 @@ function multipleInBounds(b: NumericBounds, step: number, rand: () => number): n
   return first + randomIndex(rand, Math.floor((last - first) / step) + 1) * step
 }
 
+/** The smallest positive integer that is a multiple of a decimal `multipleOf`: 3 for 1.5, 1 for 0.5. */
+function integerMultiple(step: number): number {
+  if (!(step > 0)) throw new UnsupportedMockSchemaError("multipleOf", "multipleOf must be positive")
+  if (Number.isInteger(step)) return step
+  const text = String(step)
+  const dot = text.indexOf(".")
+  const digits = text.length - dot - 1
+  if (dot === -1 || text.includes("e") || digits > 15)
+    throw new UnsupportedMockSchemaError("multipleOf", "Integer multipleOf must be a plain decimal")
+  const scale = 10 ** digits
+  const numerator = Math.round(step * scale)
+  let a = numerator
+  let b = scale
+  while (b !== 0) [a, b] = [b, a % b]
+  return numerator / a
+}
+
 /** A random number inside the bounds, rounded to cents when the rounding stays inside them. */
 function numberInBounds(b: NumericBounds, rand: () => number): number {
   // At least one ulp of `x`, so an exclusive bound moves even where `x + Number.EPSILON === x`.
@@ -258,7 +275,7 @@ export function generateMockValue(
     }
 
     case "integer": {
-      const step = typeof raw.multipleOf === "number" ? raw.multipleOf : 1
+      const step = typeof raw.multipleOf === "number" ? integerMultiple(raw.multipleOf) : 1
       const value = multipleInBounds(numericBounds(raw), step, rand)
       if (value === undefined)
         throw new UnsupportedMockSchemaError("integer", "No integer exists in range")
