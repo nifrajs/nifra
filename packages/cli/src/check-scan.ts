@@ -38,6 +38,7 @@ export interface ServerImportFinding extends SourceFinding {
 const GLOBAL_FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const HTTP_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+const SOCKET_VERB: ReadonlySet<string> = new Set(["WS"])
 export const SIMPLE_REWRITE_METHODS = new Set(["GET", "DELETE", "HEAD", "OPTIONS"])
 
 // Don't scan deps, build output, or generated client entries. `dist(-<runtime>)?` also covers
@@ -769,6 +770,7 @@ function scanRouteArguments(
   content: string,
   facts: SourceFacts | undefined,
   project: ReadonlyMap<string, string> | undefined,
+  verbs: ReadonlySet<string> = HTTP_VERBS,
 ): { routes: StaticRouteFinding[]; unresolved: UnresolvedRoutePathFinding[] } {
   const routes: StaticRouteFinding[] = []
   const unresolved: UnresolvedRoutePathFinding[] = []
@@ -793,7 +795,7 @@ function scanRouteArguments(
   ROUTE_ARGUMENT.lastIndex = 0
   for (let m = ROUTE_ARGUMENT.exec(code); m !== null; m = ROUTE_ARGUMENT.exec(code)) {
     const method = (m[1] ?? "").toUpperCase()
-    if (!HTTP_VERBS.has(method)) continue
+    if (!verbs.has(method)) continue
     const at = m.index + m[0].lastIndexOf(m[2] ?? "")
     const argument = content.slice(at, at + (m[2] ?? "").length)
     let path: string | undefined
@@ -831,22 +833,26 @@ export function scanUnresolvedRoutePaths(
   project?: ReadonlyMap<string, string>,
   facts?: SourceFacts,
 ): UnresolvedRoutePathFinding[] {
-  return scanRouteArguments(file, content, facts, project).unresolved
+  return [
+    ...scanRouteArguments(file, content, facts, project).unresolved,
+    ...scanRouteArguments(file, content, facts, project, SOCKET_VERB).unresolved,
+  ].sort(bySite)
 }
-
-const SOCKET_VERB: ReadonlySet<string> = new Set(["WS"])
 
 /** `app.ws("/path", ...)` registrations, as routes under the pseudo-method `"WS"` reflection uses. */
 export function scanStaticSocketText(
   file: string,
   content: string,
   facts?: SourceFacts,
+  /** Project files by forward-slash relative path, to resolve a path constant imported from one. */
+  project?: ReadonlyMap<string, string>,
 ): StaticRouteFinding[] {
   const code = stripComments(content)
   if (!isPotentialBackendSource(code)) return []
   return [
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts, SOCKET_VERB),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts, SOCKET_VERB),
+    ...scanRouteArguments(file, content, facts, project, SOCKET_VERB).routes,
   ].sort(bySite)
 }
 

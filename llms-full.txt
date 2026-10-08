@@ -4241,7 +4241,7 @@ The walk starts at the module that registers the route, which Nifra finds by rea
 source without running it. It reads a path written as a string literal, or as a name bound to
 a module-level `const` string, with or without `as const`. The
 `const` can live in the same file or be exported from a project file it imports.
-A path built at runtime, such as a template with `${...}` in it, cannot be read
+The same holds for a WebSocket route's `app.ws(path, ...)`. A path built at runtime, such as a template with `${...}` in it, cannot be read
 this way. `nifra check` names that expression in an NF-C036 finding, because the
 route then has no module to start from. List the module in
 `provenance.routeModules` to give it one.

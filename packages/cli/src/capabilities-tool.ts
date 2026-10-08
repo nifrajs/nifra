@@ -340,7 +340,7 @@ export async function collectCapabilityProjectReport(
   for (const [file, content] of sources) {
     for (const route of [
       ...scanStaticRouteText(file, content, undefined, sources),
-      ...scanStaticSocketText(file, content),
+      ...scanStaticSocketText(file, content, undefined, sources),
     ]) {
       // A path ending in optional params is reflected as one route per form it serves.
       for (const path of staticRouteForms(route.path)) {

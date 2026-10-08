@@ -20,6 +20,7 @@ import {
   scanServerManifestDrift,
   scanServerOnlyImports,
   scanStaticRouteText,
+  scanStaticSocketText,
   scanStreamText,
   scanUnresolvedRoutePaths,
   scanUntypedClient,
@@ -614,6 +615,28 @@ describe("scanStaticRouteText - constant paths", () => {
         (finding) => `${finding.line} ${finding.method} ${finding.expression}`,
       ),
     ).toEqual(["5 GET `${PREFIX}/users`", "6 GET PREFIX", "7 DELETE BASE"])
+  })
+
+  test("a socket path given as a constant is a WS route, and an interpolated one is named", () => {
+    const project = new Map([["backend/paths.ts", 'export const CHAT = "/chat"\n']])
+    const src = backend([
+      'import { CHAT } from "./paths.ts"',
+      'const LIVE = "/live" as const',
+      "export const backend = server()",
+      "  .ws(CHAT, chat)",
+      "  .ws(LIVE, live)",
+      "  .ws(`/rooms/${ROOM}`, room)",
+    ])
+    expect(shown(scanStaticSocketText("backend/app.ts", src, undefined, project))).toEqual([
+      "WS /chat",
+      "WS /live",
+    ])
+    expect(scanStaticRouteText("backend/app.ts", src, undefined, project)).toEqual([])
+    expect(
+      scanUnresolvedRoutePaths("backend/app.ts", src, project).map(
+        (finding) => `${finding.line} ${finding.method} ${finding.expression}`,
+      ),
+    ).toEqual(["7 WS `/rooms/${ROOM}`"])
   })
 })
 

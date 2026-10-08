@@ -230,6 +230,27 @@ export const backend = server()
     ])
   })
 
+  test("covers a socket whose path is a constant imported from a project file", async () => {
+    const cwd = join(FIXTURES, "socket-constant")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(join(cwd, "paths.ts"), 'export const CHAT = "/chat"\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+import "app-db/read"
+import { CHAT } from "./paths.ts"
+export const backend = server().ws(CHAT, { capabilities: ["db.read"] })`,
+    )
+    const app = server()
+      .use(websocket())
+      .ws("/chat", { capabilities: ["db.read"] })
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.routes.map((route) => [route.method, route.path, route.covered])).toEqual(
+      [["WS", "/chat", true]],
+    )
+  })
+
   test("a socket write that needs request idempotency fails: a socket message carries none", async () => {
     const cwd = join(FIXTURES, "socket-write")
     await mkdir(cwd, { recursive: true })
