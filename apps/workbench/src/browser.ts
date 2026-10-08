@@ -417,6 +417,9 @@ async function sendPrompt(message: string): Promise<void> {
   try {
     for await (const view of client.send(message)) {
       addTimeline(describeEvent(view))
+      // A turn waits on its approval, so the card has to appear while the stream is still open.
+      if (view.kind === "approval.required" || view.kind === "approval.resolved")
+        void refreshApprovals().catch(() => {})
       if (view.kind === "assistant.delta" || view.kind === "assistant.message") {
         deltas++
         chars += view.chars

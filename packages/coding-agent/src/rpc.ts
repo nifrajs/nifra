@@ -406,7 +406,12 @@ export class CodingAgentRpcServer {
       }
       case "approval.list": {
         this.requireSnapshot()
-        return json({ pending: this.host.pendingApprovals }, 200, cors)
+        // `approvalId` is the name `approval.resolve` takes; `id` stays for existing readers.
+        const pending = this.host.pendingApprovals.map((request) => ({
+          ...request,
+          approvalId: request.id,
+        }))
+        return json({ pending }, 200, cors)
       }
       case "approval.request": {
         const params = record(request.params)

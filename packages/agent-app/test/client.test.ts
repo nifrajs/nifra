@@ -201,6 +201,23 @@ describe("AgentAppClient.resume", () => {
 })
 
 describe("AgentAppClient approvals", () => {
+  test("reads an approval an older host names `id`", async () => {
+    const transport = new FakeTransport((request) =>
+      request.method === "session.create"
+        ? { ok: true, status: 200, value: snapshot() }
+        : {
+            ok: true,
+            status: 200,
+            value: { pending: [{ id: "a1", action: "write file", capability: "filesystem" }] },
+          },
+    )
+    const client = new AgentAppClient(transport)
+    await client.createSession()
+    expect(await client.listApprovals()).toEqual([
+      { approvalId: "a1", action: "write file", capability: "filesystem" },
+    ])
+  })
+
   test("lists pending approvals as identifiers and records a decision", async () => {
     const transport = new FakeTransport((request) => {
       switch (request.method) {

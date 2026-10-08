@@ -218,7 +218,9 @@ export class AgentAppClient {
     const views: PendingApprovalView[] = []
     for (const item of pending) {
       if (!isRecord(item)) continue
-      const { approvalId, action, capability, turnId } = item
+      const { action, capability, turnId } = item
+      // A host older than the `approvalId` field names the approval `id`.
+      const approvalId = item.approvalId ?? item.id
       if (
         typeof approvalId !== "string" ||
         typeof action !== "string" ||

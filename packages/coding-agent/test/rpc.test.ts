@@ -347,7 +347,8 @@ describe("coding agent RPC", () => {
         headers,
         body: JSON.stringify({ method: "approval.list" }),
       })
-      expect(((await pending.json()) as { pending: unknown[] }).pending).toHaveLength(1)
+      const listed = (await pending.json()) as { pending: { approvalId?: unknown }[] }
+      expect(listed.pending.map((item) => item.approvalId)).toEqual([approvalPayload.id])
       const resolved = await fetch(`${handle.url}/rpc`, {
         method: "POST",
         headers,
