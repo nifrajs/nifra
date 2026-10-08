@@ -20,6 +20,13 @@ export interface SourceFacts {
     method: string,
     path: string,
   ): boolean | undefined
+  /** A `.method(argument, …)` member call whose first argument is written exactly as `argument`. */
+  isRouteArgumentAt(
+    source: TSApi.SourceFile,
+    position: number,
+    method: string,
+    argument: string,
+  ): boolean | undefined
   /** A call to the free function `callee` whose argument at `pathIndex` is the literal `path`. */
   isFunctionRouteCallAt(
     source: TSApi.SourceFile,
@@ -142,6 +149,23 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     )
   }
 
+  const isRouteArgumentAt = (
+    source: TSApi.SourceFile,
+    position: number,
+    method: string,
+    argument: string,
+  ): boolean | undefined => {
+    const call = ancestorAt(ts, source, position, ts.isCallExpression)
+    if (call === undefined || !ts.isPropertyAccessExpression(call.expression)) return false
+    const first = call.arguments[0]
+    return (
+      call.expression.name.text.toUpperCase() === method &&
+      call.arguments.length > 1 &&
+      first !== undefined &&
+      first.getText(source) === argument
+    )
+  }
+
   const isFunctionRouteCallAt = (
     source: TSApi.SourceFile,
     position: number,
@@ -200,6 +224,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     parse,
     isValueImportAt,
     isRouteRegistrationAt,
+    isRouteArgumentAt,
     isFunctionRouteCallAt,
     isResponseSyntaxAt,
     isDynamicImportAt,

@@ -9,6 +9,7 @@ import type {
   SourceFinding,
   StaticRouteFinding,
   TransitiveServerImportFinding,
+  UnresolvedRoutePathFinding,
 } from "./check-scan.ts"
 import type { DoctorResult } from "./doctor.ts"
 import type { TypeScriptSession } from "./internal/typescript-import.ts"
@@ -23,6 +24,8 @@ export interface ProjectSourceFindings {
   readonly removedImports: readonly SourceFinding[]
   readonly responseRoutes: readonly SourceFinding[]
   readonly interpolatedSql: readonly SourceFinding[]
+  /** Route registrations whose path is neither a literal nor a constant the scan resolves. */
+  readonly routePaths: readonly UnresolvedRoutePathFinding[]
 }
 
 export interface ProjectPackageFacts {
@@ -87,6 +90,7 @@ export function freezeProjectFacts(seed: ProjectFactsSeed): ProjectFacts {
     removedImports: freezeFindings(seed.sourceFindings.removedImports),
     responseRoutes: freezeFindings(seed.sourceFindings.responseRoutes),
     interpolatedSql: freezeFindings(seed.sourceFindings.interpolatedSql),
+    routePaths: freezeFindings(seed.sourceFindings.routePaths),
   })
   const policies = Object.freeze({
     ...seed.policies,

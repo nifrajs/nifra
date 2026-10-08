@@ -227,6 +227,16 @@ export default function Capabilities() {
         the two halves import-disjoint, at the seam and at the route modules, and every route's
         declaration equals its reach.
       </p>
+      <p>
+        The walk starts at the module that registers the route, which Nifra finds by reading the
+        source without running it. It reads a path written as a string literal, or as a name bound to
+        a module-level <code>const</code> string, with or without <code>as const</code>. The{" "}
+        <code>const</code> can live in the same file or be exported from a project file it imports.
+        A path built at runtime, such as a template with <code>{"${...}"}</code> in it, cannot be read
+        this way. <code>nifra check</code> names that expression in an NF-C036 finding, because the
+        route then has no module to start from. List the module in{" "}
+        <code>provenance.routeModules</code> to give it one.
+      </p>
 
       <h2>Runtime beacons</h2>
       <p>

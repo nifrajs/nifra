@@ -6,7 +6,7 @@
  */
 
 import { readFileSync, realpathSync } from "node:fs"
-import { dirname, isAbsolute, join, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, posix, resolve, sep } from "node:path"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
@@ -121,6 +121,17 @@ export interface StaticRouteFinding extends SourceFinding {
   readonly method: string
   readonly path: string
 }
+
+/** A route registration whose path argument the static scan cannot read, with that argument's text. */
+export interface UnresolvedRoutePathFinding extends SourceFinding {
+  readonly method: string
+  readonly expression: string
+}
+
+// `.get(NAME, …)` or `` .get(`…`, …) ``: a path that is not a quoted literal. The comma is required:
+// a registration always has a handler after its path, while `map.get(key)` has nothing.
+const ROUTE_ARGUMENT = /\.([A-Za-z]+)\s*\(\s*([A-Za-z_$][\w$]*|`(?:\\.|[^`\\])*`)\s*,/g
+const NAMED_IMPORTS = /(?<![\w$.])import\s*\{([^}]*)\}\s*from\s*(["'])([^"'\r\n]+)\2/g
 
 interface SimpleFetchCall {
   readonly path: string
@@ -636,6 +647,8 @@ export function scanStaticRouteText(
   file: string,
   content: string,
   facts?: SourceFacts,
+  /** Project files by forward-slash relative path, to resolve a path constant imported from one. */
+  project?: ReadonlyMap<string, string>,
 ): StaticRouteFinding[] {
   const code = stripComments(content)
   if (!isPotentialBackendSource(code)) return []
@@ -643,7 +656,181 @@ export function scanStaticRouteText(
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
     ...(code.includes(METHODS_SUBPATH) ? scanMethodRoutes(file, content, code, facts) : []),
+    ...scanRouteArguments(file, content, facts, project).routes,
   ].sort(bySite)
+}
+
+/** A module-level `const`: its value when the initializer is one string literal, else `undefined`. */
+interface ModuleConstant {
+  readonly exported: boolean
+  readonly value: string | undefined
+}
+
+/** The end of the quoted literal opening `text`, or -1 when it does not close on this line. */
+function literalEnd(text: string): number {
+  const quote = text[0]
+  for (let i = 1; i < text.length; i++) {
+    if (text[i] === "\\") i++
+    else if (text[i] === quote) return i + 1
+  }
+  return -1
+}
+
+/** The index after the whitespace run at `from`. */
+function skipSpace(text: string, from: number): number {
+  let i = from
+  while (i < text.length && (text[i] === " " || text[i] === "\t")) i++
+  return i
+}
+
+/**
+ * Read `[export ]const NAME[: T] = <init>` written at column 0, so a function-local `const`, which is
+ * indented, never stands in for a module-level one. The shape is read from the comment-stripped
+ * line; the literal itself from the source line, since stripping blanks template contents.
+ */
+function moduleConstantOn(code: string, source: string): [string, ModuleConstant] | undefined {
+  const exported = code.startsWith("export ")
+  let i = exported ? skipSpace(code, 7) : 0
+  if (!code.startsWith("const ", i)) return undefined
+  i = skipSpace(code, i + 6)
+  const name = /^[A-Za-z_$][\w$]*/.exec(code.slice(i))?.[0]
+  if (name === undefined) return undefined
+  i = skipSpace(code, i + name.length)
+  if (code[i] === ":") i = code.indexOf("=", i)
+  if (i === -1 || code[i] !== "=" || code[i + 1] === "=") return undefined
+  i = skipSpace(code, i + 1)
+  const opener = code[i]
+  const end = opener === '"' || opener === "'" || opener === "`" ? literalEnd(source.slice(i)) : -1
+  const tail = end === -1 ? undefined : code.slice(i + end).trim()
+  const literal = source.slice(i, i + end)
+  const value =
+    tail === undefined || !["", ";", "as const", "as const;"].includes(tail)
+      ? undefined
+      : opener === "`"
+        ? /[$\\]/.test(literal)
+          ? undefined
+          : literal.slice(1, -1)
+        : parseQuotedLiteral(literal)
+  return [name, { exported, value }]
+}
+
+function moduleConstants(code: string, source: string): ReadonlyMap<string, ModuleConstant> {
+  const constants = new Map<string, ModuleConstant>()
+  const sourceLines = source.split("\n")
+  code.split("\n").forEach((line, index) => {
+    const constant = moduleConstantOn(line, sourceLines[index] ?? "")
+    if (constant !== undefined) constants.set(constant[0], constant[1])
+  })
+  return constants
+}
+
+/** Local name → the export it imports and from where, for value imports only. */
+function namedImports(
+  code: string,
+): ReadonlyMap<string, { readonly specifier: string; readonly name: string }> {
+  const imports = new Map<string, { readonly specifier: string; readonly name: string }>()
+  NAMED_IMPORTS.lastIndex = 0
+  for (let m = NAMED_IMPORTS.exec(code); m !== null; m = NAMED_IMPORTS.exec(code)) {
+    if (/\btype\s*$/.test(code.slice(Math.max(0, m.index - 12), m.index + 6))) continue
+    for (const element of (m[1] ?? "").split(",")) {
+      const parts = element.trim().split(/\s+/)
+      if (parts[0] === "type" || parts[0] === undefined || parts[0] === "") continue
+      const local = parts[1] === "as" ? parts[2] : parts[0]
+      if (local !== undefined) imports.set(local, { specifier: m[3] ?? "", name: parts[0] })
+    }
+  }
+  return imports
+}
+
+/** The project file a relative import names, tried the way a TypeScript-aware bundler resolves it. */
+function projectModule(
+  project: ReadonlyMap<string, string>,
+  fromFile: string,
+  specifier: string,
+): string | undefined {
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) return undefined
+  const base = posix.normalize(posix.join(posix.dirname(fromFile.replaceAll("\\", "/")), specifier))
+  const stem = base.replace(/\.(?:m?js|jsx)$/, "")
+  return [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${base}/index.ts`].find((candidate) =>
+    project.has(candidate),
+  )
+}
+
+/**
+ * Route registrations whose path is a name or a template rather than a quoted literal. A name bound
+ * to a module-level string `const`, here or imported from a project file, and a template with no
+ * substitution resolve to routes; any other template, and a module-level or imported name nifra
+ * cannot read, is unresolved. A name bound anywhere else (a parameter, a local) is not reported:
+ * nothing marks such a call as a route rather than a `map.get(key, fallback)`.
+ */
+function scanRouteArguments(
+  file: string,
+  content: string,
+  facts: SourceFacts | undefined,
+  project: ReadonlyMap<string, string> | undefined,
+): { routes: StaticRouteFinding[]; unresolved: UnresolvedRoutePathFinding[] } {
+  const routes: StaticRouteFinding[] = []
+  const unresolved: UnresolvedRoutePathFinding[] = []
+  const code = stripComments(content)
+  if (!isPotentialBackendSource(code)) return { routes, unresolved }
+  const lines = content.split("\n")
+  const constants = moduleConstants(code, content)
+  const imports = namedImports(code)
+  const importedFiles = new Map<string, ReadonlyMap<string, ModuleConstant>>()
+  const imported = (specifier: string, name: string): ModuleConstant | undefined => {
+    const target = project === undefined ? undefined : projectModule(project, file, specifier)
+    if (target === undefined) return undefined
+    let found = importedFiles.get(target)
+    if (found === undefined) {
+      const text = project?.get(target) ?? ""
+      found = moduleConstants(stripComments(text), text)
+      importedFiles.set(target, found)
+    }
+    const constant = found.get(name)
+    return constant?.exported === true ? constant : undefined
+  }
+  ROUTE_ARGUMENT.lastIndex = 0
+  for (let m = ROUTE_ARGUMENT.exec(code); m !== null; m = ROUTE_ARGUMENT.exec(code)) {
+    const method = (m[1] ?? "").toUpperCase()
+    if (!HTTP_VERBS.has(method)) continue
+    const at = m.index + m[0].lastIndexOf(m[2] ?? "")
+    const argument = content.slice(at, at + (m[2] ?? "").length)
+    let path: string | undefined
+    if (argument.startsWith("`")) {
+      path = /[$\\]/.test(argument) ? undefined : argument.slice(1, -1)
+    } else {
+      const binding = imports.get(argument)
+      const constant =
+        binding === undefined ? constants.get(argument) : imported(binding.specifier, binding.name)
+      if (binding === undefined && constant === undefined) continue
+      path = constant?.value
+    }
+    // A name that reads as something other than a path (`settings.get(KEY, fallback)`) is no route.
+    if (path !== undefined && (!path.startsWith("/") || path.startsWith("//"))) continue
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      if (
+        source !== undefined &&
+        facts.isRouteArgumentAt(source, m.index, method, argument) !== true
+      )
+        continue
+    }
+    const line = lineAt(content, m.index)
+    const snippet = (lines[line - 1] ?? "").trim()
+    if (path !== undefined) routes.push({ file, line, snippet, method, path })
+    else unresolved.push({ file, line, snippet, method, expression: argument.slice(0, 120) })
+  }
+  return { routes, unresolved }
+}
+
+/** Route registrations whose path the static scan cannot resolve - see {@link scanRouteArguments}. */
+export function scanUnresolvedRoutePaths(
+  file: string,
+  content: string,
+  project?: ReadonlyMap<string, string>,
+  facts?: SourceFacts,
+): UnresolvedRoutePathFinding[] {
+  return scanRouteArguments(file, content, facts, project).unresolved
 }
 
 /** Routes from `all()` and `method()`, one per literal method name; a computed name is not guessed. */

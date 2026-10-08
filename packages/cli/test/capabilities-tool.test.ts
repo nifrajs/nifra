@@ -171,6 +171,32 @@ describe("project provenance firewall", () => {
     expect(project.report).toMatchObject({ ok: true, findings: [] })
   })
 
+  test("covers a route whose path is a constant, here or imported", async () => {
+    const cwd = join(FIXTURES, "constant-paths")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(join(cwd, "paths.ts"), 'export const ORDERS = "/orders" as const\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+import "app-db/read"
+import { ORDERS } from "./paths.ts"
+const USERS = "/users"
+export const backend = server()
+  .get(USERS, { capabilities: ["db.read"] }, handler)
+  .get(ORDERS, { capabilities: ["db.read"] }, handler)`,
+    )
+    const handler = () => ({ ok: true })
+    const app = server()
+      .get("/users", { capabilities: ["db.read"] }, handler)
+      .get("/orders", { capabilities: ["db.read"] }, handler)
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.routes.map((route) => [route.path, route.covered])).toEqual([
+      ["/users", true],
+      ["/orders", true],
+    ])
+  })
+
   test("explicit routeModules cover contract-style registrations", async () => {
     const cwd = join(FIXTURES, "explicit")
     await mkdir(join(cwd, "src"), { recursive: true })

@@ -21,6 +21,7 @@ import {
   scanServerOnlyImports,
   scanStaticRouteText,
   scanStreamText,
+  scanUnresolvedRoutePaths,
   scanUntypedClient,
   stripComments,
   walkServerOnlyChain,
@@ -536,6 +537,83 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
       'const app = server().get("/real", handler)',
     ].join("\n")
     expect(scanStaticRouteText("backend.ts", src, facts).map((r) => r.path)).toEqual(["/real"])
+  })
+})
+
+describe("scanStaticRouteText - constant paths", () => {
+  const backend = (lines: readonly string[]) =>
+    ['import { server } from "@nifrajs/core"', ...lines].join("\n")
+  const shown = (routes: readonly { method: string; path: string }[]) =>
+    routes.map((route) => `${route.method} ${route.path}`)
+
+  test("resolves a module-level const, with or without as const, and a plain template", () => {
+    const src = backend([
+      'const USERS = "/users"',
+      "export const ORDERS = '/orders' as const",
+      "const HEALTH: string = `/health`;",
+      "export const backend = server()",
+      "  .get(USERS, () => [])",
+      "  .post(ORDERS, { body }, (c) => c.body)",
+      "  .get(HEALTH, () => 'ok')",
+    ])
+    const routes = scanStaticRouteText("backend.ts", src)
+    expect(shown(routes)).toEqual(["GET /users", "POST /orders", "GET /health"])
+    expect(routes[0]).toMatchObject({ line: 6, snippet: ".get(USERS, () => [])" })
+    expect(scanStaticRouteText("backend.ts", src, createSourceFacts(ts))).toEqual(routes)
+  })
+
+  test("resolves a constant imported from another project file", () => {
+    const project = new Map([
+      [
+        "backend/paths.ts",
+        'export const USERS = "/users"\nexport const ITEM = "/items/:id" as const\n',
+      ],
+    ])
+    const src = backend([
+      'import { USERS, ITEM as ONE } from "./paths.ts"',
+      "export const backend = server()",
+      "  .get(USERS, list)",
+      "  .get(ONE, show)",
+    ])
+    expect(shown(scanStaticRouteText("backend/app.ts", src, undefined, project))).toEqual([
+      "GET /users",
+      "GET /items/:id",
+    ])
+    const extensionless = src.replace('"./paths.ts"', '"./paths"')
+    expect(shown(scanStaticRouteText("backend/app.ts", extensionless, undefined, project))).toEqual(
+      ["GET /users", "GET /items/:id"],
+    )
+  })
+
+  test("a local const shadowing nothing, a function argument or a Map lookup is not a route", () => {
+    const src = backend([
+      "function routes(path) {",
+      '  const LOCAL = "/local"',
+      "  return server().get(LOCAL, handler).get(path, handler)",
+      "}",
+      "const cached = cache.get(key)",
+      "const value = settings.get(name, fallback)",
+    ])
+    expect(scanStaticRouteText("backend.ts", src)).toEqual([])
+    expect(scanUnresolvedRoutePaths("backend.ts", src)).toEqual([])
+  })
+
+  test("names an interpolated template and a constant that is not a literal", () => {
+    const project = new Map([["backend/config.ts", "export const BASE = process.env.BASE\n"]])
+    const src = backend([
+      'import { BASE } from "./config.ts"',
+      'const PREFIX = BASE + "/v1"',
+      "export const backend = server()",
+      "  .get(`${PREFIX}/users`, list)",
+      "  .get(PREFIX, root)",
+      "  .delete(BASE, remove)",
+    ])
+    expect(scanStaticRouteText("backend/app.ts", src, undefined, project)).toEqual([])
+    expect(
+      scanUnresolvedRoutePaths("backend/app.ts", src, project).map(
+        (finding) => `${finding.line} ${finding.method} ${finding.expression}`,
+      ),
+    ).toEqual(["5 GET `${PREFIX}/users`", "6 GET PREFIX", "7 DELETE BASE"])
   })
 })
 

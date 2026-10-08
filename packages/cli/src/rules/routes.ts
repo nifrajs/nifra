@@ -27,6 +27,7 @@ import type { CheckRule, RuleContext } from "./index.ts"
 const RESERVED_SEGMENT_PRAGMA = "nifra-expect reserved-segment"
 const ROUTE_OVERLAP_PRAGMA = "nifra-expect route-overlap"
 const PARAM_MODIFIER_PRAGMA = "nifra-expect param-modifier"
+const DYNAMIC_PATH_PRAGMA = "nifra-expect dynamic-route-path"
 
 interface StaticRouteFact {
   readonly file: string
@@ -314,9 +315,44 @@ export const paramModifierRule: CheckRule = {
   },
 }
 
+/**
+ * NF-C036: a registration whose path the static scan cannot read. The route still serves; what it
+ * loses is every source-level analysis keyed by path - automatic capability provenance and the route
+ * lints above - so it is reported as information, naming the expression.
+ */
+export const unresolvedRoutePathRule: CheckRule = {
+  code: "NF-C036",
+  title: "Route path the static scan cannot read",
+  async scan(ctx) {
+    const findings: Diagnostic[] = []
+    const linesByFile = new Map<string, readonly string[]>()
+    for (const route of ctx.project.sourceFindings.routePaths) {
+      let lines = linesByFile.get(route.file)
+      if (lines === undefined) {
+        lines = (ctx.project.source.read(route.file) ?? "").split("\n")
+        linesByFile.set(route.file, lines)
+      }
+      if (commentBlockHasMarker(lines, route.line, DYNAMIC_PATH_PRAGMA)) continue
+      findings.push(
+        diagnostic({
+          code: "NF-C036",
+          severity: "info",
+          file: route.file,
+          line: route.line,
+          message: `${route.method} ${route.expression} - the static scan cannot read this route path, so automatic capability provenance and the route lints do not see the route. Write the path as a string literal, or as a module-level \`const\` (optionally \`as const\`) in this file or exported from a project file it imports; mark a deliberately computed path with \`// ${DYNAMIC_PATH_PRAGMA}\` above the registration`,
+          evidence: [`${route.method} ${route.expression}`],
+          verify: "nifra check --lints-only",
+        }),
+      )
+    }
+    return findings
+  },
+}
+
 export const routeRules = Object.freeze([
   reservedSegmentRule,
   duplicateRouteRule,
   overlappingRouteRule,
   paramModifierRule,
+  unresolvedRoutePathRule,
 ])

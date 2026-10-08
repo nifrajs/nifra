@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { scanStaticRouteText } from "../src/check.ts"
+import { scanStaticRouteText, scanUnresolvedRoutePaths } from "../src/check.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { routeRules } from "../src/rules/routes.ts"
 import { projectFacts } from "./rule-facts.ts"
@@ -457,5 +457,40 @@ describe("routes registered by all() and method()", () => {
       withMethods(['  .use(all("/items/:id", handler))', '  .use(all("/items/new", handler))']),
     )
     expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
+})
+
+describe("NF-C036 route path the static scan cannot read", () => {
+  async function scanPaths(content: string) {
+    const base = projectFacts("backend.ts", content, scanStaticRouteText("backend.ts", content))
+    const facts = {
+      ...base,
+      sourceFindings: {
+        ...base.sourceFindings,
+        routePaths: scanUnresolvedRoutePaths("backend.ts", content),
+      },
+    }
+    const findings = await runRuleRegistry(
+      { root: "/tmp/project", sources: facts.source, project: facts },
+      routeRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C036")
+  }
+
+  test("names the expression, as information", async () => {
+    const findings = await scanPaths(
+      backend(['  .get("/plain", list)', "  .get(`${PREFIX}/users`, list)"]),
+    )
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatchObject({ severity: "info", file: "backend.ts", line: 4 })
+    expect(findings[0]?.message).toContain("GET `${PREFIX}/users`")
+    expect(findings[0]?.message).toContain("as const")
+  })
+
+  test("a marker above the registration accepts it", async () => {
+    const findings = await scanPaths(
+      backend(["  // nifra-expect dynamic-route-path", "  .get(`${PREFIX}/users`, list)"]),
+    )
+    expect(findings).toEqual([])
   })
 })

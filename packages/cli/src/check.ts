@@ -66,8 +66,10 @@ import {
   scanServerManifestDrift,
   scanStaticRouteText,
   scanStreamText,
+  scanUnresolvedRoutePaths,
   scanUntypedClient,
   type TransitiveServerImportFinding,
+  type UnresolvedRoutePathFinding,
   walkSource,
 } from "./check-scan.ts"
 
@@ -320,6 +322,7 @@ async function buildProjectScan(
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
   const interpolatedSql: SourceFinding[] = []
+  const routePaths: UnresolvedRoutePathFinding[] = []
   const browserModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
   const {
@@ -355,8 +358,12 @@ async function buildProjectScan(
     const sqlCompiler = loadedTypeScript.compiler
     const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
     const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
+    const project = new Map(
+      sourceFiles.map(({ file, content }) => [file.replaceAll("\\", "/"), content]),
+    )
     for (const { file, content } of sourceFiles) {
-      staticRoutes.push(...scanStaticRouteText(file, content, sourceFacts))
+      staticRoutes.push(...scanStaticRouteText(file, content, sourceFacts, project))
+      routePaths.push(...scanUnresolvedRoutePaths(file, content, project, sourceFacts))
       responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts))
       if (sqlCompiler !== undefined)
         interpolatedSql.push(...scanInterpolatedSql(file, content, sqlCompiler, sqlImports))
@@ -426,6 +433,7 @@ async function buildProjectScan(
         removedImports,
         responseRoutes,
         interpolatedSql,
+        routePaths,
       },
     }
     return { facts }

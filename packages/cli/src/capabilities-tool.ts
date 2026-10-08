@@ -338,7 +338,7 @@ export async function collectCapabilityProjectReport(
   const sources = await readSources(cwd)
   const automatic = new Map<string, Set<string>>()
   for (const [file, content] of sources) {
-    for (const route of scanStaticRouteText(file, content)) {
+    for (const route of scanStaticRouteText(file, content, undefined, sources)) {
       // A path ending in optional params is reflected as one route per form it serves.
       for (const path of staticRouteForms(route.path)) {
         const modules = automatic.get(routeKey(route.method, path)) ?? new Set<string>()
