@@ -462,6 +462,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { methodOverride, trimTrailingSlash, language, timing, poweredBy, combine } from \"@nifrajs/middleware\"\n\nconst app = server()\n  .use(methodOverride())     // POST + X-HTTP-Method-Override → PUT/PATCH/DELETE (a real pre-routing request rewrite)\n  .use(trimTrailingSlash())  // canonicalize URLs: 308 redirect (or rewrite), same-origin only, conservative methods\n  .use(language({ supported: [\"en\", \"fr\"], defaultLanguage: \"en\" }))  // Accept-Language → c.language + Content-Language\n  .use(timing())             // Server-Timing header + typed c.timing marks/measures\n// poweredBy() is opt-in (Nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin."
   },
   {
+    "name": "TIERS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { MemoryStore, rateLimitTiers } from \"@nifrajs/middleware\"\n\n// Each request is charged to ONE bucket: the longest matching prefix, else the floor.\n// A tier may sit above the floor - tiers never stack on it.\nconst app = server().use(\n  rateLimitTiers({\n    store: new MemoryStore(),\n    floor: { max: 120, windowMs: 60_000 },\n    tiers: [\n      { prefix: \"/api/public\", max: 600, windowMs: 60_000 },\n      { prefix: \"/auth/login\", max: 10, windowMs: 60_000 },\n    ],\n    skip: (req) => new URL(req.url).pathname === \"/health\", // never charged\n  }),\n)"
+  },
+  {
     "name": "BUILD",
     "topic": "Nifra - Rendering: SSR, streaming, SSG & ISR",
     "slug": "rendering",

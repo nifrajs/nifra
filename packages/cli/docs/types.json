@@ -11086,7 +11086,7 @@
     "name": "RateLimitOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface RateLimitOptions {\n    /** Where counters live. `MemoryStore` for dev; a shared store in production. */\n    readonly store: RateLimitStore;\n    /** Max requests allowed per window. */\n    readonly max: number;\n    /** Window length, in milliseconds. */\n    readonly windowMs: number;\n    /**\n     * How many trusted reverse proxies sit in front of the app and append to `X-Forwarded-For`.\n     * Default `0`. Prefer the app-level `server({ clientIp: { trustedHops } })` declaration, which the\n     * default key already honors; this option is for a limiter that must read XFF on its own.\n     *\n     * The default key reads the client IP from `X-Forwarded-For` as the address your **edge** proxy\n     * observed - the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the\n     * second-from-right; …). Your proxies append on the right, so a client can only inject fake hops on\n     * the *left*, which this skips → not spoofable when `trustedProxies` matches your topology.\n     *\n     * ⚠️ With the default `0`, `X-Forwarded-For` is treated as fully client-controlled and **ignored**.\n     * Reading the\n     * *first* XFF hop - the old behavior - let any client mint a fresh bucket per request and defeat the\n     * limiter.\n     */\n    readonly trustedProxies?: number;\n    /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not read unless configured. */\n    readonly header?: string;\n    /**\n     * One shared bucket for every request that {@link header}/{@link trustedProxies} cannot key. Off by\n     * default because it lets one client consume the quota for everyone. Enable only for intentional\n     * global throttles; with neither `header` nor `trustedProxies` set, every request shares the bucket.\n     */\n    readonly allowGlobalKey?: boolean;\n    /**\n     * Bucket key for a request. Overrides the default key entirely - e.g. an authenticated user id.\n     * `platform.clientIp` is the caller the app's `clientIp` trust declaration derived (the socket peer\n     * when none is declared).\n     */\n    readonly key?: (req: Request, platform?: Platform) => string;\n}"
+    "signature": "export interface RateLimitOptions {\n    /** Where counters live. `MemoryStore` for dev; a shared store in production. */\n    readonly store: RateLimitStore;\n    /** Max requests allowed per window. */\n    readonly max: number;\n    /** Window length, in milliseconds. */\n    readonly windowMs: number;\n    /**\n     * How many trusted reverse proxies sit in front of the app and append to `X-Forwarded-For`.\n     * Default `0`. Prefer the app-level `server({ clientIp: { trustedHops } })` declaration, which the\n     * default key already honors; this option is for a limiter that must read XFF on its own.\n     *\n     * The default key reads the client IP from `X-Forwarded-For` as the address your **edge** proxy\n     * observed - the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the\n     * second-from-right; …). Your proxies append on the right, so a client can only inject fake hops on\n     * the *left*, which this skips → not spoofable when `trustedProxies` matches your topology.\n     *\n     * ⚠️ With the default `0`, `X-Forwarded-For` is treated as fully client-controlled and **ignored**.\n     * Reading the\n     * *first* XFF hop - the old behavior - let any client mint a fresh bucket per request and defeat the\n     * limiter.\n     */\n    readonly trustedProxies?: number;\n    /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not read unless configured. */\n    readonly header?: string;\n    /**\n     * One shared bucket for every request that {@link header}/{@link trustedProxies} cannot key. Off by\n     * default because it lets one client consume the quota for everyone. Enable only for intentional\n     * global throttles; with neither `header` nor `trustedProxies` set, every request shares the bucket.\n     */\n    readonly allowGlobalKey?: boolean;\n    /**\n     * Bucket key for a request. Overrides the default key entirely - e.g. an authenticated user id.\n     * `platform.clientIp` is the caller the app's `clientIp` trust declaration derived (the socket peer\n     * when none is declared).\n     */\n    readonly key?: (req: Request, platform?: Platform) => string;\n    /**\n     * Leave a request uncharged: it is not counted and carries no `RateLimit-*` headers. Runs before\n     * the key is derived, so a health check or an internal probe never touches the store.\n     */\n    readonly skip?: (req: Request, platform?: Platform) => boolean;\n}"
   },
   {
     "name": "RateLimitResult",
@@ -11100,6 +11100,19 @@
     "package": "@nifrajs/middleware",
     "signature": "export interface RateLimitStore {\n    hit(key: string, windowMs: number): Promise<RateLimitResult>;\n}",
     "doc": "/**\n * Counter backend. Production deploys MUST use a shared store (Redis, etc.) so the\n * limit holds across instances - that's a user dependency, not ours, hence the\n * interface. {@link MemoryStore} is for dev / single-instance only.\n */"
+  },
+  {
+    "name": "RateLimitTier",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface RateLimitTier {\n    /** Static path prefix such as `/api/public`: no params, wildcards, dot segments or trailing slash. */\n    readonly prefix: string;\n    readonly max: number;\n    readonly windowMs: number;\n    /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. */\n    readonly key?: (req: Request, platform?: Platform) => string;\n}",
+    "doc": "/** One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it. */"
+  },
+  {
+    "name": "RateLimitTiersOptions",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface RateLimitTiersOptions extends Omit<RateLimitOptions, \"max\" | \"windowMs\"> {\n    /** The bucket for every request no tier claims. */\n    readonly floor: {\n        readonly max: number;\n        readonly windowMs: number;\n    };\n    readonly tiers: readonly RateLimitTier[];\n}"
   },
   {
     "name": "RawHtml",
@@ -20749,6 +20762,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function rateLimit(options: RateLimitOptions): Middleware;",
     "doc": "/**\n * Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it\n * also covers 404s); over the limit → `429` + `Retry-After`. Every response carries\n * `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).\n */"
+  },
+  {
+    "name": "rateLimitTiers",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function rateLimitTiers(options: RateLimitTiersOptions): Middleware;",
+    "doc": "/**\n * Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is\n * charged to exactly one bucket: the tier with the longest `prefix` that is the request's path or an\n * ancestor of it, else the `floor`. Tiers never stack, so a tier may sit above the floor\n * (`600/min` for `/api/public` under a `120/min` floor). It runs in `onRequest`, before routing, so\n * a 404, a 405 or a body that fails validation is charged too. Prefixes are validated here; each\n * tier counts in its own keys, so tiers can share one store.\n */"
   },
   {
     "name": "raw",

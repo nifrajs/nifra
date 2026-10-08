@@ -33,6 +33,23 @@ const app = server()
   // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
+const TIERS = `import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+// Each request is charged to ONE bucket: the longest matching prefix, else the floor.
+// A tier may sit above the floor - tiers never stack on it.
+const app = server().use(
+  rateLimitTiers({
+    store: new MemoryStore(),
+    floor: { max: 120, windowMs: 60_000 },
+    tiers: [
+      { prefix: "/api/public", max: 600, windowMs: 60_000 },
+      { prefix: "/auth/login", max: 10, windowMs: 60_000 },
+    ],
+    skip: (req) => new URL(req.url).pathname === "/health", // never charged
+  }),
+)`
+
 const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
 import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
@@ -417,6 +434,19 @@ export default function Plugins() {
         is opt-in; <code>combine</code> bundles several middleware into one.
       </p>
       <CodeBlock code={SHAPING} />
+
+      <h2>Rate-limit tiers</h2>
+      <p>
+        A <code>rateLimit()</code> inside a <code>group()</code> still sits under an app-wide one, so a
+        group can only be stricter than the app. <code>rateLimitTiers()</code> is one limiter that
+        charges each request to exactly one bucket - the tier with the longest static{" "}
+        <code>prefix</code> holding the path, else the <code>floor</code> - so a public API can allow
+        more than the floor while a login path allows less. It runs before routing, so 404s, 405s and
+        bodies that fail validation are charged too. Prefixes are checked when the limiter is built
+        (static, no trailing slash, no duplicates), and each tier counts in its own keys, so one store
+        serves them all. <code>skip</code>, on both limiters, leaves a request uncharged.
+      </p>
+      <CodeBlock code={TIERS} />
 
       <h2>Security middleware</h2>
       <p>

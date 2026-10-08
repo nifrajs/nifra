@@ -3981,6 +3981,9 @@ _No named exports (side-effect entrypoint)._
 - **RateLimitResult** _(interface)_ - `interface RateLimitResult`
 - **RateLimitStore** _(interface)_ - `interface RateLimitStore`
   Counter backend. Production deploys MUST use a shared store (Redis, etc.) so the limit holds across instances - that's a user dependency, not ours, hence the interface. {@link MemoryStore} is for dev / single-instance only.
+- **RateLimitTier** _(interface)_ - `interface RateLimitTier`
+  One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it.
+- **RateLimitTiersOptions** _(interface)_ - `interface RateLimitTiersOptions`
 - **RequestIdOptions** _(interface)_ - `interface RequestIdOptions`
 - **RequestLogFields** _(interface)_ - `interface RequestLogFields`
   Structured fields logged per request.
@@ -4073,6 +4076,8 @@ _No named exports (side-effect entrypoint)._
   Create a standards-shaped byte representation response with Range, If-Range, and conditional validator handling. The input is already caller-owned memory; this helper does not read or retain external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.
 - **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => Middleware`
   Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it also covers 404s); over the limit → `429` + `Retry-After`. Every response carries `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
+- **rateLimitTiers** _(function)_ - `rateLimitTiers: (options: RateLimitTiersOptions) => Middleware`
+  Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is charged to exactly one bucket: the tier with the longest `prefix` that is the request's path or an ancestor of it, else the `floor`. Tiers never stack, so a tier may sit above the floor (`600/min` for …
 - **requestId** _(function)_ - `requestId: (options?: RequestIdOptions) => ContextPlugin<{ requestId: string; }>`
   A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw `Response`s…
 - **responseCache** _(const)_ - `responseCache: (options: CacheOptions) => Middleware`
