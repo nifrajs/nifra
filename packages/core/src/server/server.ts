@@ -2074,17 +2074,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         upgrade,
       )
       const chain = { ...entry, afterHandle: [] }
-      const compiled = {
-        ...chain,
-        program: compileRouteProgram({ ...chain, bodySchema: undefined }),
-      }
-      this.wsRouter.add("GET", form, { handler: wrapped, chain: compiled })
-      this.wsRoutes.push({
-        path: form,
-        capabilities: descriptor.capabilities,
-        assurance,
-        chain: compiled,
+      this.wsRouter.add("GET", form, {
+        handler: wrapped,
+        chain: { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) },
       })
+      this.wsRoutes.push({ path: form, capabilities: descriptor.capabilities, assurance, chain })
     }
     wsChanges += 1
     return this as never
