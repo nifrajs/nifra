@@ -165,6 +165,99 @@ function constrainedString(
 // Schema introspection → mock value generation
 // ---------------------------------------------------------------------------
 
+const LOWER_BOUNDS = new Set([
+  "minimum",
+  "exclusiveMinimum",
+  "minLength",
+  "minItems",
+  "minProperties",
+])
+const UPPER_BOUNDS = new Set([
+  "maximum",
+  "exclusiveMaximum",
+  "maxLength",
+  "maxItems",
+  "maxProperties",
+])
+const ANNOTATIONS = new Set([
+  "title",
+  "description",
+  "$comment",
+  "examples",
+  "default",
+  "deprecated",
+])
+
+const isSchemaObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+
+/** Each branch with its own nested `allOf` spread out beside it. */
+function flattenIntersection(parts: readonly unknown[]): Readonly<Record<string, unknown>>[] {
+  return parts.flatMap((part) => {
+    const schema = reflectSchema(part).jsonSchema
+    if (schema === true || schema === undefined) return []
+    if (!isSchemaObject(schema))
+      throw new UnsupportedMockSchemaError("allOf", "An intersection branch has no valid value")
+    const { allOf: nested, ...rest } = schema
+    return Array.isArray(nested) ? [rest, ...flattenIntersection(nested)] : [rest]
+  })
+}
+
+/**
+ * One schema that every branch of an `allOf` accepts: bounds tighten, `required` and `properties`
+ * combine (a property in several branches becomes their own intersection), `type` and `enum`
+ * intersect. Any other keyword the branches disagree on is refused rather than guessed.
+ */
+function mergeIntersection(parts: readonly unknown[]): Record<string, unknown> {
+  const merged = new Map<string, unknown>()
+  for (const branch of flattenIntersection(parts)) {
+    for (const [key, value] of Object.entries(branch)) {
+      const current = merged.get(key)
+      if (current === undefined || ANNOTATIONS.has(key)) {
+        if (current === undefined) merged.set(key, value)
+        continue
+      }
+      if (sameJson(current, value)) continue
+      if (typeof current === "number" && typeof value === "number" && LOWER_BOUNDS.has(key))
+        merged.set(key, Math.max(current, value))
+      else if (typeof current === "number" && typeof value === "number" && UPPER_BOUNDS.has(key))
+        merged.set(key, Math.min(current, value))
+      else if (key === "required" && Array.isArray(current) && Array.isArray(value))
+        merged.set(key, [...new Set([...current, ...value])])
+      else if (key === "properties" && isSchemaObject(current) && isSchemaObject(value))
+        merged.set(key, mergeProperties(current, value))
+      else if (key === "type" || key === "enum")
+        merged.set(key, intersectChoices(key, current, value))
+      else
+        throw new UnsupportedMockSchemaError("allOf", `Intersection branches disagree on "${key}"`)
+    }
+  }
+  return Object.fromEntries(merged)
+}
+
+function mergeProperties(
+  current: Readonly<Record<string, unknown>>,
+  next: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged = new Map(Object.entries(current))
+  for (const [name, schema] of Object.entries(next)) {
+    const existing = merged.get(name)
+    merged.set(name, existing === undefined ? schema : { allOf: [existing, schema] })
+  }
+  return Object.fromEntries(merged)
+}
+
+function intersectChoices(key: "type" | "enum", current: unknown, next: unknown): unknown {
+  const listOf = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : [value])
+  const right = listOf(next)
+  const shared = listOf(current).filter((choice) => right.some((other) => sameJson(choice, other)))
+  if (shared.length === 0)
+    throw new UnsupportedMockSchemaError("allOf", `Intersection branches share no "${key}"`)
+  return key === "type" && shared.length === 1 ? shared[0] : shared
+}
+
 /**
  * Generate a mock value from a schema object. Inspects JSON Schema properties
  * (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema
@@ -220,18 +313,10 @@ export function generateMockValue(
   }
   const intersections = raw.allOf as readonly unknown[] | undefined
   if (Array.isArray(intersections) && intersections.length > 0) {
-    const values = intersections.map((part) => generateMockValue(part, fieldName, rand))
-    if (
-      values.every((value) => value !== null && typeof value === "object" && !Array.isArray(value))
-    ) {
-      return Object.assign({}, ...values)
-    }
-    const first = values[0]
-    if (values.every((value) => Object.is(value, first))) return first
-    throw new UnsupportedMockSchemaError(
-      "allOf",
-      "Could not prove that a scalar satisfies every intersection branch",
-    )
+    // Generated from one merged schema: values generated per branch and then combined satisfy only
+    // the branch that happened to win each key.
+    const { allOf: _intersections, ...siblings } = raw
+    return generateMockValue(mergeIntersection([siblings, ...intersections]), fieldName, rand)
   }
 
   // Enum - pick the first value (deterministic) or random

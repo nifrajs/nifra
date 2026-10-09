@@ -104,6 +104,37 @@ describe("generateMockValue", () => {
     expect(items).toHaveLength(4)
   })
 
+  test("an allOf value satisfies every branch's constraints at once", () => {
+    const adult = {
+      allOf: [
+        {
+          type: "object",
+          properties: { age: { type: "integer", minimum: 18 } },
+          required: ["age"],
+        },
+        { type: "object", properties: { age: { type: "integer", maximum: 30 } } },
+      ],
+    }
+    for (const r of [0, 0.25, 0.5, 0.75, 0.999]) {
+      const { age } = JSON.parse(JSON.stringify(generateMockValue(adult, undefined, () => r)))
+      expect(Number.isInteger(age) && age >= 18 && age <= 30).toBe(true)
+    }
+    const name = generateMockValue({
+      allOf: [
+        { type: "string", minLength: 3 },
+        { allOf: [{ type: ["string", "null"], maxLength: 5 }] },
+      ],
+    })
+    expect(typeof name === "string" && name.length >= 3 && name.length <= 5).toBe(true)
+    expect(generateMockValue({ allOf: [{ enum: ["a", "b"] }, { enum: ["b", "c"] }] })).toBe("b")
+    expect(() => generateMockValue({ allOf: [{ type: "string" }, { type: "integer" }] })).toThrow(
+      UnsupportedMockSchemaError,
+    )
+    expect(() => generateMockValue({ allOf: [{ format: "email" }, { format: "uuid" }] })).toThrow(
+      'disagree on "format"',
+    )
+  })
+
   test("fails closed for unsupported constraints", () => {
     expect(() => generateMockValue({ type: "string", pattern: "^Z{20}$" })).toThrow(
       UnsupportedMockSchemaError,
