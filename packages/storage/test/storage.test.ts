@@ -1,5 +1,15 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -92,7 +102,7 @@ const tmpDirs: string[] = []
 afterAll(() => Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true }))))
 async function freshFileStorage(): Promise<FileStorage> {
   const dir = await mkdtemp(join(tmpdir(), "nifra-storage-"))
-  tmpDirs.push(dir, `${dir}.nifra-metadata`)
+  tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
   return new FileStorage(dir)
 }
 
@@ -194,7 +204,7 @@ describe("FileStorage filesystem containment", () => {
   test("rejects a key whose existing path crosses a symlink outside the storage root", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
     const outside = await mkdtemp(join(tmpdir(), "nifra-storage-outside-"))
-    tmpDirs.push(root, `${root}.nifra-metadata`, outside)
+    tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`, outside)
     await symlink(outside, join(root, "escape"), "dir")
 
     const storage = new FileStorage(root)
@@ -205,7 +215,7 @@ describe("FileStorage filesystem containment", () => {
   test("rejects a final-component symlink without truncating its target", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
     const outside = await mkdtemp(join(tmpdir(), "nifra-storage-outside-"))
-    tmpDirs.push(root, `${root}.nifra-metadata`, outside)
+    tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`, outside)
     const target = join(outside, "protected.txt")
     await writeFile(target, "keep me")
     await symlink(target, join(root, "object.txt"), "file")
@@ -218,7 +228,7 @@ describe("FileStorage filesystem containment", () => {
   test("read, existence and delete never follow a final-component symlink", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
     const outside = await mkdtemp(join(tmpdir(), "nifra-storage-outside-"))
-    tmpDirs.push(root, `${root}.nifra-metadata`, outside)
+    tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`, outside)
     const target = join(outside, "protected.txt")
     await writeFile(target, "keep me")
     await symlink(target, join(root, "object.txt"), "file")
@@ -234,7 +244,7 @@ describe("FileStorage filesystem containment", () => {
     "rejects a storage tree writable by another local principal",
     async () => {
       const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
-      tmpDirs.push(root, `${root}.nifra-metadata`)
+      tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`)
       await writeFile(join(root, "object.txt"), "secret")
       await chmod(root, 0o777)
 
@@ -250,7 +260,7 @@ describe("FileStorage filesystem containment", () => {
     async () => {
       const parent = await mkdtemp(join(tmpdir(), "nifra-storage-parent-"))
       const root = join(parent, "objects")
-      tmpDirs.push(parent, `${root}.nifra-metadata`)
+      tmpDirs.push(parent, `${root}.nifra-metadata`, `${root}.nifra-state`)
       await mkdir(root, { mode: 0o700 })
       await writeFile(join(root, "object.txt"), "secret")
       await chmod(parent, 0o777)
@@ -280,7 +290,7 @@ describe("FileStorage on an ordinary host", () => {
     async () => {
       const parent = await mkdtemp(join(tmpdir(), "nifra-storage-umask-"))
       const root = join(parent, "objects")
-      tmpDirs.push(parent, `${root}.nifra-metadata`)
+      tmpDirs.push(parent, `${root}.nifra-metadata`, `${root}.nifra-state`)
       const previous = process.umask(0o002)
       try {
         const storage = new FileStorage(root)
@@ -297,7 +307,7 @@ describe("FileStorage on an ordinary host", () => {
     "a group-writable directory it refuses is named, with the fix",
     async () => {
       const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
-      tmpDirs.push(root, `${root}.nifra-metadata`)
+      tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`)
       await chmod(root, 0o775)
       await expect(new FileStorage(root).get("a.txt")).rejects.toThrow(
         `${root} is group- or world-writable (chmod go-w removes that)`,
@@ -307,7 +317,7 @@ describe("FileStorage on an ordinary host", () => {
 
   test("a directory under the root is a key prefix, not an object", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
-    tmpDirs.push(root, `${root}.nifra-metadata`)
+    tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`)
     const storage = new FileStorage(root)
     await storage.put("private/secret.txt", "s")
     expect(await storage.exists("private")).toBe(false)
@@ -442,5 +452,47 @@ describe("conformance - optional capabilities", () => {
       expect(error).toBeInstanceOf(StorageAdapterConformanceError)
       expect((error as StorageAdapterConformanceError).check).toBe("presign")
     }
+  })
+})
+
+describe("FileStorage writes", () => {
+  test("a put replaces the object whole: a reader holding the old one still reads it intact", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-storage-"))
+    tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
+    const storage = new FileStorage(dir)
+    await storage.put("doc.txt", "first version")
+    const reader = await open(join(dir, "doc.txt"), "r")
+    try {
+      await storage.put("doc.txt", "second")
+      expect(await reader.readFile({ encoding: "utf8" })).toBe("first version")
+    } finally {
+      await reader.close()
+    }
+    expect(decode(present(await storage.get("doc.txt")).body)).toBe("second")
+    expect(await storage.list()).toEqual(["doc.txt"])
+  })
+
+  test("a key and a key under `<key>.json/` both keep their sidecars", async () => {
+    const storage = await freshFileStorage()
+    await storage.put("a", "1", { contentType: "text/plain" })
+    await storage.put("a.json/x", "2", { contentType: "application/x-two" })
+    expect(present(await storage.get("a")).contentType).toBe("text/plain")
+    expect(present(await storage.get("a.json/x")).contentType).toBe("application/x-two")
+  })
+
+  test("a sidecar from an earlier version is read, and replaced by the next put", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-storage-"))
+    tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
+    const storage = new FileStorage(dir)
+    await storage.put("old", "body")
+    await mkdir(`${dir}.nifra-metadata`, { recursive: true, mode: 0o755 })
+    await writeFile(
+      `${dir}.nifra-metadata/old.json`,
+      JSON.stringify({ contentType: "text/legacy" }),
+    )
+    expect(present(await storage.get("old")).contentType).toBe("text/legacy")
+    await storage.put("old", "body")
+    expect(present(await storage.get("old")).contentType).toBeUndefined()
+    await expect(stat(`${dir}.nifra-metadata/old.json`)).rejects.toThrow()
   })
 })

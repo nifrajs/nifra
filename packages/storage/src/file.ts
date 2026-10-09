@@ -1,11 +1,22 @@
 /**
  * Local-filesystem {@link StorageAdapter} for long-running servers (Bun/Node/Deno). Keys map to paths
  * under `root`; `assertSafeKey` plus a resolved-path containment check keep writes inside `root` (no
- * traversal). Explicit content type and custom metadata are persisted in an adjacent sidecar tree;
- * objects created before sidecar support still infer content type from their extension.
+ * traversal). Explicit content type and custom metadata are persisted in a sidecar tree beside the
+ * root that mirrors the object paths; sidecars written by earlier versions (`<key>.json` in
+ * `<root>.nifra-metadata`) are still read, and objects with none infer content type from their extension.
+ * Every write is staged beside the root and renamed into place, so a reader sees an object whole.
  */
 import { constants } from "node:fs"
-import { type FileHandle, lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises"
+import {
+  type FileHandle,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rename,
+  unlink,
+} from "node:fs/promises"
 import { basename, dirname, join, posix, resolve, sep } from "node:path"
 import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
@@ -43,21 +54,50 @@ function inferContentType(key: string): string | undefined {
   return CONTENT_TYPES[ext]
 }
 
+interface StoredMetadata {
+  readonly contentType?: string
+  readonly metadata?: Readonly<Record<string, string>>
+}
+
+const errorCode = (error: unknown): unknown =>
+  error instanceof Error && "code" in error ? error.code : undefined
+
+// ENOTDIR: a legacy `a.json` sidecar file sits where key `a.json/b`'s sidecar would need a directory.
+const isMissing = (error: unknown): boolean => {
+  const code = errorCode(error)
+  return code === "ENOENT" || code === "ENOTDIR"
+}
+
 export class FileStorage implements StorageAdapter {
   private readonly root: string
   private readonly metadataRoot: string
+  private readonly legacyMetadataRoot: string
+  private readonly stagingRoot: string
 
   constructor(root: string) {
     this.root = resolve(root)
     // Keep bookkeeping outside the object tree so every otherwise-safe key remains usable, including
-    // `.nifra-metadata/*`, and list() never needs a reserved-prefix exception.
-    this.metadataRoot = `${this.root}.nifra-metadata`
+    // `.nifra-metadata/*`, and list() never needs a reserved-prefix exception. Sidecars mirror the
+    // object paths exactly, so two keys clash there only where their objects would clash anyway.
+    const state = `${this.root}.nifra-state`
+    this.metadataRoot = join(state, "metadata")
+    this.stagingRoot = join(state, "staging")
+    this.legacyMetadataRoot = `${this.root}.nifra-metadata`
   }
 
   private metadataPathFor(key: string): string {
+    return this.containedPath(this.metadataRoot, key, key)
+  }
+
+  /** `<key>.json`, where earlier versions kept a sidecar: `a.json` there is also key `a.json`'s parent. */
+  private legacyMetadataPathFor(key: string): string {
+    return this.containedPath(this.legacyMetadataRoot, `${key}.json`, key)
+  }
+
+  private containedPath(base: string, relative: string, key: string): string {
     assertSafeKey(key)
-    const full = resolve(this.metadataRoot, `${key}.json`)
-    if (!full.startsWith(this.metadataRoot + sep)) {
+    const full = resolve(base, relative)
+    if (!full.startsWith(base + sep)) {
       throw new StorageKeyError(
         `storage metadata key ${JSON.stringify(key)} escapes the storage root`,
       )
@@ -228,10 +268,83 @@ export class FileStorage implements StorageAdapter {
   }
 
   /**
+   * Write `data` whole or not at all: staged in a sibling directory, then renamed over `path`, so a
+   * reader never sees a half-written object and a failed write leaves the previous one. The renamed
+   * inode is then proven to be the staged one, reachable beneath the same root.
+   */
+  private async writeContained(
+    base: string,
+    path: string,
+    key: string,
+    data: Uint8Array | string,
+  ): Promise<void> {
+    await this.assertNoSymlinkPath(base, path, key)
+    await mkdir(dirname(path), { recursive: true, mode: 0o755 })
+    const staged = await this.stage(key, data)
+    try {
+      await this.assertNoSymlinkPath(base, path, key)
+      const baseBefore = await lstat(base)
+      try {
+        await rename(staged.path, path)
+      } catch (error) {
+        // A root that is its own mount point cannot take a rename from beside it.
+        if (errorCode(error) !== "EXDEV") throw error
+        await this.writeInPlace(base, path, key, data)
+        return
+      }
+      const [current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
+        lstat(path),
+        lstat(base),
+        realpath(base),
+        realpath(path),
+      ])
+      const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
+      const targetChanged =
+        current.isSymbolicLink() || staged.dev !== current.dev || staged.ino !== current.ino
+      const escaped = resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
+      if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
+    } finally {
+      // Gone already once the rename landed; this clears a staged file the write abandoned.
+      await unlink(staged.path).catch(() => {})
+    }
+  }
+
+  /** A new, exclusively created file in the staging directory holding `data`. */
+  private async stage(
+    key: string,
+    data: Uint8Array | string,
+  ): Promise<{ readonly path: string; readonly dev: number; readonly ino: number }> {
+    await mkdir(this.stagingRoot, { recursive: true, mode: 0o755 })
+    const path = join(this.stagingRoot, `${crypto.randomUUID()}.tmp`)
+    await this.assertNoSymlinkPath(this.stagingRoot, path, key)
+    let handle: FileHandle
+    try {
+      handle = await open(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o666,
+      )
+    } catch (error) {
+      if (errorCode(error) === "ELOOP") throw this.symlinkError(key)
+      throw error
+    }
+    try {
+      await handle.writeFile(data)
+      const info = await handle.stat()
+      return { path, dev: info.dev, ino: info.ino }
+    } catch (error) {
+      await unlink(path).catch(() => {})
+      throw error
+    } finally {
+      await handle.close()
+    }
+  }
+
+  /**
    * Create parents and open without truncating. The opened inode is validated against the current,
    * fully resolved path before any caller data is written, closing the check/open symlink race.
    */
-  private async writeContained(
+  private async writeInPlace(
     base: string,
     path: string,
     key: string,
@@ -281,6 +394,7 @@ export class FileStorage implements StorageAdapter {
     const path = this.pathFor(key)
     await this.writeContained(this.root, path, key, toBytes(data))
     const metadataPath = this.metadataPathFor(key)
+    await this.removeLegacyMetadata(key)
     if (options.contentType !== undefined || options.metadata !== undefined) {
       await this.writeContained(
         this.metadataRoot,
@@ -306,24 +420,11 @@ export class FileStorage implements StorageAdapter {
     } finally {
       await bodyHandle.close()
     }
-    let stored: { contentType?: string; metadata?: Readonly<Record<string, string>> } = {}
-    try {
-      const metadataPath = this.metadataPathFor(key)
-      const metadataHandle = await this.openObject(this.metadataRoot, metadataPath, key)
-      if (metadataHandle !== null) {
-        try {
-          stored = JSON.parse(await metadataHandle.readFile({ encoding: "utf8" })) as typeof stored
-        } finally {
-          await metadataHandle.close()
-        }
-      }
-    } catch (error) {
-      if (error instanceof StorageKeyError) throw error
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) {
-        throw error
-      }
-      // Objects created before sidecar support still infer a useful MIME type from their extension.
-    }
+    const stored =
+      (await this.readMetadata(this.metadataRoot, this.metadataPathFor(key), key)) ??
+      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key)) ??
+      {}
+    // Objects with no sidecar still infer a useful MIME type from their extension.
     const contentType = stored.contentType ?? inferContentType(key)
     return {
       body,
@@ -339,7 +440,36 @@ export class FileStorage implements StorageAdapter {
     await Promise.all([
       this.removeContained(this.root, path, key),
       this.removeContained(this.metadataRoot, metadataPath, key),
+      this.removeLegacyMetadata(key),
     ])
+  }
+
+  private async readMetadata(
+    base: string,
+    path: string,
+    key: string,
+  ): Promise<StoredMetadata | undefined> {
+    try {
+      const handle = await this.openObject(base, path, key)
+      if (handle === null) return undefined
+      try {
+        return JSON.parse(await handle.readFile({ encoding: "utf8" })) as StoredMetadata
+      } finally {
+        await handle.close()
+      }
+    } catch (error) {
+      if (error instanceof StorageKeyError) throw error
+      if (!isMissing(error) && !(error instanceof SyntaxError)) throw error
+      return undefined
+    }
+  }
+
+  private async removeLegacyMetadata(key: string): Promise<void> {
+    try {
+      await this.removeContained(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key)
+    } catch (error) {
+      if (!isMissing(error)) throw error
+    }
   }
 
   async exists(key: string): Promise<boolean> {

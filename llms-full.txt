@@ -15308,7 +15308,7 @@ const keys = await storage.list({ prefix: "avatars/" })
 | Adapter | Use | Notes |
 |---|---|---|
 | `MemoryStorage` | dev / tests | not durable, not shared across instances |
-| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | persists content type + custom metadata in an adjacent sidecar tree; legacy objects still infer MIME from extension |
+| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | writes each object whole (staged in `<root>.nifra-state`, then renamed into place); persists content type + custom metadata in a sidecar tree there; reads older `<root>.nifra-metadata` sidecars; objects with none infer MIME from extension |
 | `R2Storage(env.BUCKET)` | the edge (Cloudflare R2) | round-trips `contentType` + metadata; binding typed structurally (no `@cloudflare/workers-types`) |
 
 Implement `StorageAdapter` (`put` / `get` / `delete` / `exists` / `list`) for **S3 / GCS / anything else** -
