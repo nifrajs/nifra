@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { McpDbConfigError, serveDatabaseAsMcp } from "../src/index.ts"
+import { cellBoundedSqliteQuery } from "../src/internal/shared.ts"
+import { openQuerySession } from "../src/internal/sqlite-session.ts"
 
 function seededDb(): Database {
   const db = new Database(":memory:")
@@ -392,8 +394,31 @@ describe("run_query (opt-in)", () => {
     }
     expect(result.rows.length).toBeLessThanOrEqual(2)
     expect(result.truncated).toBe(true)
-    expect(result.total).toBe(20)
+    // Reading stopped once the rows passed the byte budget, so the total is unknown without a count.
+    expect(result.total).toBeNull()
     expect(text.length).toBeLessThanOrEqual(3000)
+    const counted = serveDatabaseAsMcp(db, {
+      tables: ["blobs"],
+      runQuery: { authorize: () => true, maxRows: 20, maxResultBytes: 2500, exactTotal: true },
+    })
+    const exact = await call(counted, "run_query", { sql: "SELECT * FROM blobs" })
+    expect(JSON.parse(exact.text).total).toBe(20)
+  })
+
+  test("an oversized cell arrives as its byte count and reading stops at the byte budget", async () => {
+    const db = new Database(":memory:")
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT)")
+    for (let i = 0; i < 100; i++) db.run(`INSERT INTO habits (name) VALUES ('h${i}')`)
+    const served = serveDatabaseAsMcp(db, {
+      tables: ["habits"],
+      runQuery: { authorize: () => true, maxResultBytes: 4096 },
+    })
+    // 100 rows of 2 MB each: the driver must never be handed the blobs themselves.
+    const blob = await call(served, "run_query", {
+      sql: "SELECT id, zeroblob(2000000) AS b FROM habits",
+    })
+    expect(blob.isError).toBe(false)
+    expect(JSON.parse(blob.text).rows[0]).toEqual({ id: 1, b: "<2000000 bytes>" })
   })
 
   test("bounds database materialization before applying the row cap", async () => {
@@ -506,6 +531,40 @@ describe("run_query (opt-in)", () => {
 
 describe("query execution lanes", () => {
   const auth = { "x-key": "secret" }
+
+  test("both lanes stop reading rows once their cells pass the byte budget", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const fileDb = new Database(join(directory, "budget.db"))
+    const memoryDb = new Database(":memory:")
+    for (const db of [fileDb, memoryDb]) {
+      db.run("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
+      const insert = db.prepare("INSERT INTO notes (body) VALUES (?)")
+      for (let i = 0; i < 50; i++) insert.run("x".repeat(1000))
+    }
+    const deadline = Date.now() + 60_000
+    try {
+      for (const db of [fileDb, memoryDb]) {
+        const session = openQuerySession(db)
+        const query = "SELECT id, body FROM notes"
+        const columns = await session.columns(`SELECT * FROM (${query}) LIMIT 1`, deadline)
+        expect(columns).toEqual(["id", "body"])
+        const read = await session.read(
+          cellBoundedSqliteQuery(query, columns, 100, 2500),
+          deadline,
+          2500,
+        )
+        // Three 1000-byte rows pass 2500; the other 47 are never read out of SQLite.
+        expect(read.rows).toHaveLength(3)
+        expect(read.cut).toBe(true)
+        expect(read.rows[0]).toEqual({ id: 1, body: "x".repeat(1000) })
+        await session.close()
+      }
+    } finally {
+      fileDb.close()
+      memoryDb.close()
+      await removeDirectoryAfterWorkerExit(directory)
+    }
+  })
 
   test("a database with no interrupt and no file still serves queries", async () => {
     // An embedder passing a structural shim must not be refused at construction.

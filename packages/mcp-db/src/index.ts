@@ -26,6 +26,7 @@
 import { createMcpServer, defineMcpTool, type JsonRpcResponse, type McpServer } from "@nifrajs/mcp"
 import {
   boundedSqliteQuery,
+  cellBoundedSqliteQuery,
   countSqliteQuery,
   fitToBytes,
   gateSqliteStatement,
@@ -57,7 +58,11 @@ export interface RunQueryOptions {
   readonly authorize: (context: McpDbAuthorizeContext) => boolean | Promise<boolean>
   /** Max rows returned per query (default 100). */
   readonly maxRows?: number
-  /** Max serialized result size in bytes (default 100 KB). */
+  /**
+   * Max serialized result size in bytes (default 100 KB). It also bounds what is read: a text or
+   * blob cell longer than this arrives as `"<n bytes>"`, and rows stop being read once their cells
+   * pass it, so a query cannot make the server hold more than about one row past the budget.
+   */
   readonly maxResultBytes?: number
   /**
    * Maximum wall-clock time for planning, execution, and optional counting (default 5 seconds).
@@ -277,16 +282,30 @@ export function serveDatabaseAsMcp(
           }
 
           let limitedRows: unknown[]
+          let cut = false
           try {
-            // Fetch at most one row beyond the advertised cap. This keeps the database driver's
-            // materialization bounded even when the caller submits `SELECT * FROM a_huge_table`.
-            limitedRows = await querySession.run(boundedSqliteQuery(query, maxRows), deadline)
+            // Fetch at most one row beyond the advertised cap, so `SELECT * FROM a_huge_table`
+            // cannot make the driver materialize every row. Where the driver names the columns,
+            // oversized cells and rows past the byte budget are never copied out either.
+            const bounded = boundedSqliteQuery(query, maxRows)
+            const columns = await querySession.columns(bounded, deadline)
+            if (columns.length === 0) {
+              limitedRows = await querySession.run(bounded, deadline)
+            } else {
+              const read = await querySession.read(
+                cellBoundedSqliteQuery(query, columns, maxRows, maxResultBytes),
+                deadline,
+                maxResultBytes,
+              )
+              limitedRows = read.rows
+              cut = read.cut
+            }
           } catch (error) {
             if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
             return { isError: true, text: `query failed: ${String(error)}` }
           }
 
-          const wasLimited = limitedRows.length > maxRows
+          const wasLimited = limitedRows.length > maxRows || cut
           let total: number | null = limitedRows.length
           if (wasLimited && options.runQuery?.exactTotal === true) {
             try {
@@ -295,7 +314,11 @@ export function serveDatabaseAsMcp(
                 deadline,
               )) as Array<{ __nifra_total?: unknown }>
               const count = countRows[0]?.__nifra_total
-              if (typeof count !== "number" || !Number.isSafeInteger(count) || count < maxRows) {
+              if (
+                typeof count !== "number" ||
+                !Number.isSafeInteger(count) ||
+                count < limitedRows.length
+              ) {
                 return { isError: true, text: "query failed: invalid row count" }
               }
               total = count

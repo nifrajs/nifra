@@ -4,7 +4,7 @@
  * tool runs each query in its own subprocess instead, which bounds the work by killing the process.
  */
 
-import type { SqliteDatabaseLike } from "./shared.ts"
+import { ROW_BYTES_COLUMN, type SqliteDatabaseLike } from "./shared.ts"
 
 export class QueryTimeoutError extends Error {
   constructor() {
@@ -13,9 +13,19 @@ export class QueryTimeoutError extends Error {
   }
 }
 
-/** One execution lane for `run_query`: `run` resolves rows, or rejects once the deadline passes. */
+/** Rows read until their bytes passed the budget; `cut` says reading stopped early. */
+export interface BoundedRows {
+  readonly rows: unknown[]
+  readonly cut: boolean
+}
+
+/** One execution lane for `run_query`: each call resolves, or rejects once the deadline passes. */
 export interface QuerySession {
   run(sql: string, deadline: number): Promise<unknown[]>
+  /** The result column names of `sql`, without running it. Empty when the driver cannot say. */
+  columns(sql: string, deadline: number): Promise<readonly string[]>
+  /** Rows of a `cellBoundedSqliteQuery`, read one at a time until their bytes pass `maxBytes`. */
+  read(sql: string, deadline: number, maxBytes: number): Promise<BoundedRows>
   close(): Promise<void>
 }
 
@@ -29,7 +39,7 @@ const SQLITE_WORKER_SOURCE = `
 const { Database } = require("bun:sqlite")
 let db
 self.onmessage = (event) => {
-  const { id, filename, sql, type } = event.data
+  const { id, filename, sql, type, maxBytes } = event.data
   if (type === "close") {
     let response
     try {
@@ -54,7 +64,30 @@ self.onmessage = (event) => {
       db = new Database(filename, { readonly: true })
       db.run("PRAGMA query_only = ON")
     }
-    self.postMessage({ id, ok: true, rows: db.prepare(sql).all() })
+    const statement = db.prepare(sql)
+    if (type === "columns") {
+      const rows = statement.columnNames
+      statement.finalize()
+      self.postMessage({ id, ok: true, rows })
+      return
+    }
+    if (type === "read") {
+      const rows = []
+      let bytes = 0
+      let cut = false
+      for (const { ${ROW_BYTES_COLUMN}: size, ...row } of statement.iterate()) {
+        rows.push(row)
+        bytes += Number(size)
+        if (bytes > maxBytes) {
+          cut = true
+          break
+        }
+      }
+      statement.finalize()
+      self.postMessage({ id, ok: true, rows, cut })
+      return
+    }
+    self.postMessage({ id, ok: true, rows: statement.all() })
   } catch (error) {
     self.postMessage({ id, ok: false, error: String(error) })
   }
@@ -75,8 +108,14 @@ function reopenableFilename(db: SqliteDatabaseLike): string | undefined {
 
 interface PendingQuery {
   readonly deadline: number
-  resolve(rows: unknown[]): void
+  resolve(result: BoundedRows): void
   reject(error: Error): void
+}
+
+interface WorkerQuery {
+  readonly sql: string
+  readonly type?: "columns" | "read"
+  readonly maxBytes?: number
 }
 
 interface PendingClose {
@@ -135,11 +174,12 @@ function workerSession(filename: string): QuerySession {
         id?: number
         ok?: boolean
         rows?: unknown[]
+        cut?: boolean
         error?: string
         closed?: boolean
       }>,
     ) => {
-      const { id, ok, rows, error } = event.data
+      const { id, ok, rows, cut, error } = event.data
       if (typeof id !== "number") return
       if (event.data.closed === true) {
         const closing = pendingClose
@@ -155,7 +195,7 @@ function workerSession(filename: string): QuerySession {
         return
       }
       pending.delete(id)
-      if (ok === true) waiter.resolve(rows ?? [])
+      if (ok === true) waiter.resolve({ rows: rows ?? [], cut: cut === true })
       else waiter.reject(new Error(error ?? "query failed in worker"))
     }
     spawned.onerror = () => discard(new Error("query failed in worker"))
@@ -166,7 +206,7 @@ function workerSession(filename: string): QuerySession {
     return spawned
   }
 
-  const dispatch = (sql: string, deadline: number): Promise<unknown[]> => {
+  const dispatch = (query: WorkerQuery, deadline: number): Promise<BoundedRows> => {
     if (closed) return Promise.reject(new Error("query session is closed"))
     const active = ensureWorker()
     const remaining = deadline - Date.now()
@@ -175,13 +215,13 @@ function workerSession(filename: string): QuerySession {
       return Promise.reject(new QueryTimeoutError())
     }
     const id = ++nextId
-    return new Promise<unknown[]>((resolve, reject) => {
+    return new Promise<BoundedRows>((resolve, reject) => {
       const timer = setTimeout(() => discard(new QueryTimeoutError()), remaining)
       pending.set(id, {
         deadline,
-        resolve: (rows) => {
+        resolve: (result) => {
           clearTimeout(timer)
-          resolve(rows)
+          resolve(result)
         },
         reject: (error) => {
           clearTimeout(timer)
@@ -189,7 +229,7 @@ function workerSession(filename: string): QuerySession {
         },
       })
       try {
-        active.postMessage({ id, filename, sql })
+        active.postMessage({ id, filename, ...query })
       } catch (error) {
         pending.delete(id)
         clearTimeout(timer)
@@ -198,14 +238,21 @@ function workerSession(filename: string): QuerySession {
     })
   }
 
+  // One worker owns the connection, so overlapping calls queue behind each other rather than
+  // interleaving statements on it.
+  const queue = (query: WorkerQuery, deadline: number): Promise<BoundedRows> => {
+    const result = lane.then(() => dispatch(query, deadline))
+    lane = result.catch(() => undefined)
+    return result
+  }
+
   return {
-    run(sql, deadline) {
-      // One worker owns the connection, so overlapping calls queue behind each other rather than
-      // interleaving statements on it.
-      const result = lane.then(() => dispatch(sql, deadline))
-      lane = result.catch(() => undefined)
-      return result
-    },
+    run: async (sql, deadline) => (await queue({ sql }, deadline)).rows,
+    columns: async (sql, deadline) =>
+      (await queue({ sql, type: "columns" }, deadline)).rows.filter(
+        (name): name is string => typeof name === "string",
+      ),
+    read: (sql, deadline, maxBytes) => queue({ sql, type: "read", maxBytes }, deadline),
     close() {
       if (closePromise !== undefined) return closePromise
       closed = true
@@ -256,6 +303,29 @@ function inProcessSession(db: SqliteDatabaseLike): QuerySession {
       const rows = db.prepare(sql).all()
       if (Date.now() > deadline) throw new QueryTimeoutError()
       return rows
+    },
+    async columns(sql, deadline) {
+      if (Date.now() >= deadline) throw new QueryTimeoutError()
+      return db.prepare(sql).columnNames ?? []
+    },
+    async read(sql, deadline, maxBytes) {
+      if (Date.now() >= deadline) throw new QueryTimeoutError()
+      const statement = db.prepare(sql)
+      const rows: unknown[] = []
+      let bytes = 0
+      let cut = false
+      for (const row of statement.iterate?.() ?? statement.all()) {
+        if (typeof row !== "object" || row === null) continue
+        bytes += Number(Reflect.get(row, ROW_BYTES_COLUMN))
+        Reflect.deleteProperty(row, ROW_BYTES_COLUMN)
+        rows.push(row)
+        if (bytes > maxBytes) {
+          cut = true
+          break
+        }
+      }
+      if (Date.now() > deadline) throw new QueryTimeoutError()
+      return { rows, cut }
     },
     async close() {},
   }

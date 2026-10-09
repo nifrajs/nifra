@@ -6,8 +6,13 @@
 
 /** The structural slice of `bun:sqlite`'s `Database` this package needs. */
 export interface SqliteDatabaseLike {
-  /** Prepare a statement; `all` runs it and returns row objects. */
-  prepare(sql: string): { all(...params: unknown[]): unknown[] }
+  /** Prepare a statement; `all` runs it and returns row objects. `columnNames` and `iterate`, which
+   * bun:sqlite has, let `run_query` bound cell bytes and stop reading rows once the budget is spent. */
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[]
+    readonly columnNames?: readonly string[]
+    iterate?(): Iterable<unknown>
+  }
   /** Execute a statement for its side effect (used only for `PRAGMA query_only`). */
   run(sql: string): unknown
   /** Optional path this database was opened from; a file-backed one can be reopened read-only in a
@@ -553,6 +558,35 @@ export function unexposedProgramRelation(
 export function boundedSqliteQuery(query: string, maxRows: number): string {
   // nifra-expect sql-dynamic: wraps a query already through gateSqliteStatement in a bounding subselect; it runs on a query-only connection
   return `SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`
+}
+
+/** The column {@link cellBoundedSqliteQuery} adds to carry each row's cell bytes. */
+export const ROW_BYTES_COLUMN = "__nifra_row_bytes"
+
+/**
+ * {@link boundedSqliteQuery}, plus two bounds the driver cannot apply itself: a text or blob cell
+ * longer than `maxCellBytes` arrives as `"<n bytes>"` instead of being copied out, and each row
+ * carries its cells' byte total in {@link ROW_BYTES_COLUMN} so a reader can stop once the result
+ * budget is spent. `columns` are the result column names of the bounded query.
+ */
+export function cellBoundedSqliteQuery(
+  query: string,
+  columns: readonly string[],
+  maxRows: number,
+  maxCellBytes: number,
+): string {
+  const selected: string[] = []
+  const sizes: string[] = []
+  for (const name of columns) {
+    const column = `"${name.replaceAll('"', '""')}"`
+    const bytes = `length(CAST(${column} AS BLOB))`
+    selected.push(
+      `CASE WHEN typeof(${column}) IN ('text', 'blob') AND ${bytes} > ${maxCellBytes} THEN '<' || ${bytes} || ' bytes>' ELSE ${column} END AS ${column}`,
+    )
+    sizes.push(`min(coalesce(${bytes}, 0), ${maxCellBytes})`)
+  }
+  // nifra-expect sql-dynamic: wraps a query already through gateSqliteStatement; column names are quoted identifiers and the bounds are validated integers
+  return `SELECT ${selected.join(", ")}, ${sizes.join(" + ")} AS "${ROW_BYTES_COLUMN}" FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`
 }
 
 /** Wrap a gated query to count its rows (re-executes it). */
