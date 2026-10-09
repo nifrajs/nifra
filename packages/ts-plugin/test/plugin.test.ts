@@ -130,3 +130,21 @@ test("the plugin proxy delegates untouched methods and falls through off a route
   const def = proxy.getDefinitionAndBoundSpan(srcPath, appCode.indexOf("go"))
   expect(def?.definitions?.some((d) => d.fileName.endsWith("routes/about.tsx"))).not.toBe(true)
 })
+
+test("a navigate-to search is delegated as a value, never looked up as a file", () => {
+  const real = makeLanguageService()
+  const program = real.service.getProgram()
+  if (program === undefined) throw new Error("no program")
+  let scans = 0
+  const counted = new Proxy(program, {
+    get(target, key, receiver) {
+      if (key === "getSourceFiles") scans++
+      return Reflect.get(target, key, receiver)
+    },
+  })
+  const proxy = createProxy(real)
+  real.service.getProgram = () => counted
+  const items = proxy.getNavigateToItems("go", 10)
+  expect(items.map((item) => item.name)).toContain("go")
+  expect(scans).toBe(0)
+})

@@ -302,10 +302,11 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
                 // TypeScript's public methods generally take the source file name first. Map an
                 // editor's short/long Windows spelling to the Program's own spelling before delegating;
                 // this preserves the real service (and its diagnostics) instead of swallowing a path
-                // mismatch as an empty result.
+                // mismatch as an empty result. Editors send absolute file names; a relative first
+                // argument is a value (a navigate-to search), and mapping it would scan every file.
                 const fileName = args[0]
                 const source =
-                  typeof fileName === "string"
+                  typeof fileName === "string" && isAbsolute(fileName)
                     ? programSourceFile(tsm, ls.getProgram(), fileName)
                     : undefined
                 return (member as (...args: unknown[]) => unknown).apply(ls, [
