@@ -153,6 +153,7 @@ export {
 export {
   createVerificationRepairTask,
   isSafeReviewDiff,
+  isVerificationAvailable,
   type ReviewExecutionErrorCode,
   type ReviewExecutionResult,
   type ReviewOptions,

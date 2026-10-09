@@ -1153,6 +1153,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
 - **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
   Validate the only repository selector exposed by the host review RPC.
+- **isVerificationAvailable** _(function)_ - `isVerificationAvailable: (name: "check" | "assure" | "test", options: Pick<VerificationOptions, "cwd" | "command" | "env">) => boolean`
+  Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs on the Bun this agent runs on, so it is always available unless `command` replaces it.
 - **migrateLegacySession** _(function)_ - `migrateLegacySession: (options: MigrateLegacySessionOptions) => Promise<SessionMigrationReport>`
   Read, project, validate, and atomically commit one legacy local session.
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
@@ -1412,6 +1414,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Turn a failed gate into a bounded, auditable repair task for the agent loop.
 - **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
   Validate the only repository selector exposed by the host review RPC.
+- **isVerificationAvailable** _(function)_ - `isVerificationAvailable: (name: "check" | "assure" | "test", options: Pick<VerificationOptions, "cwd" | "command" | "env">) => boolean`
+  Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs on the Bun this agent runs on, so it is always available unless `command` replaces it.
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`

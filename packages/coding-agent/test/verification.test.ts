@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createVerificationRepairTask, runNifraVerification } from "../src/verification.ts"
+import {
+  createVerificationRepairTask,
+  isVerificationAvailable,
+  runNifraVerification,
+} from "../src/verification.ts"
 
 describe("runNifraVerification", () => {
   test("returns bounded structured output", async () => {
@@ -72,5 +76,44 @@ describe("runNifraVerification", () => {
     expect(
       createVerificationRepairTask({ name: "assure", ok: true, status: 0 }, process.cwd()),
     ).toBeUndefined()
+  })
+
+  test("a gate whose command is missing reports unavailable and asks for no repair", async () => {
+    const result = await runNifraVerification("check", {
+      cwd: tmpdir(),
+      command: "nifra-gate-that-is-not-installed",
+    })
+    expect(result).toMatchObject({ name: "check", ok: false, status: null, unavailable: true })
+    expect(result.error).toContain("nifra-gate-that-is-not-installed")
+    expect(createVerificationRepairTask(result, tmpdir())).toBeUndefined()
+  })
+
+  test("a missing working directory is a failure, not a missing gate", async () => {
+    const result = await runNifraVerification("check", {
+      cwd: join(tmpdir(), "nifra-verify-no-such-dir"),
+      command: process.execPath,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.unavailable).toBeUndefined()
+  })
+
+  test("reports whether a gate's command can run without running it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-verify-probe-"))
+    try {
+      const script = join(dir, "gate.sh")
+      await writeFile(script, "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+      expect(isVerificationAvailable("test", { cwd: dir })).toBe(true)
+      expect(isVerificationAvailable("check", { cwd: dir, command: process.execPath })).toBe(true)
+      expect(isVerificationAvailable("check", { cwd: dir, command: "./gate.sh" })).toBe(true)
+      expect(isVerificationAvailable("check", { cwd: dir, command: "./missing.sh" })).toBe(false)
+      expect(
+        isVerificationAvailable("check", { cwd: dir, command: "nifra-gate-that-is-not-installed" }),
+      ).toBe(false)
+      expect(
+        isVerificationAvailable("check", { cwd: dir, command: "sh", env: { PATH: dir } }),
+      ).toBe(false)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

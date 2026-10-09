@@ -189,6 +189,31 @@ test("host stops automatic repair at the configured attempt cap", async () => {
   }
 })
 
+test("a gate that is not installed reports so once and starts no repair turn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-nogate-"))
+  const backend = new ScriptedBackend()
+  const host = new CodingAgentHost({
+    backend,
+    maxRepairAttempts: 2,
+    verifyAfterTurn: ["check"],
+    verification: { command: "nifra-gate-that-is-not-installed" },
+  })
+  try {
+    await host.start({ cwd: root, backend: backend.info.name })
+    const events: AgentEvent[] = []
+    for await (const event of host.prompt("make the project healthy")) events.push(event)
+
+    expect(backend.messages).toHaveLength(1)
+    const verified = events.filter((event) => event.type === "verification.completed")
+    expect(verified).toHaveLength(1)
+    expect(verified[0]).toMatchObject({ ok: false, report: { unavailable: true } })
+    expect(events.some((event) => event.type === "repair.required")).toBe(false)
+  } finally {
+    await host.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("host converts malformed backend events into a bounded protocol failure", async () => {
   const backend = new ScriptedBackend()
   backend.send = () =>

@@ -1,3 +1,5 @@
+import { accessSync, constants, statSync } from "node:fs"
+import { isAbsolute, resolve } from "node:path"
 import { publicErrorDetails } from "./errors.ts"
 import { type BoundedProcessResult, runBoundedProcess } from "./process.ts"
 
@@ -9,6 +11,8 @@ export interface VerificationResult {
   readonly output?: string
   readonly error?: string
   readonly stack?: string
+  /** The gate's command was not found or cannot run, so nothing was checked; never a repair task. */
+  readonly unavailable?: true
 }
 
 export interface VerificationRepairTask {
@@ -27,7 +31,7 @@ export function createVerificationRepairTask(
   result: VerificationResult,
   cwd: string,
 ): VerificationRepairTask | undefined {
-  if (result.ok) return undefined
+  if (result.ok || result.unavailable === true) return undefined
   return Object.freeze({
     id: `verification-${result.name}-${Date.now().toString(36)}`,
     verification: result.name,
@@ -181,6 +185,14 @@ export async function runNifraVerification(
       ...(timedOut ? { error: `nifra ${name} timed out after ${timeoutMs}ms` } : {}),
     }
   } catch (error) {
+    if (commandMissing(error, options.cwd))
+      return {
+        name,
+        ok: false,
+        status: null,
+        unavailable: true,
+        error: `${command} is not installed or cannot run, so ${name} did not run`,
+      }
     const details = publicErrorDetails(
       error,
       "verification failed",
@@ -193,6 +205,36 @@ export async function runNifraVerification(
       error: details.message,
       ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
+  }
+}
+
+/**
+ * Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs
+ * on the Bun this agent runs on, so it is always available unless `command` replaces it.
+ */
+export function isVerificationAvailable(
+  name: "check" | "assure" | "test",
+  options: Pick<VerificationOptions, "cwd" | "command" | "env">,
+): boolean {
+  const command = options.command ?? (name === "test" ? process.execPath : "nifra")
+  if (!command.includes("/") && !(process.platform === "win32" && command.includes("\\")))
+    return Bun.which(command, { PATH: safeEnv(options.env).PATH ?? "" }) !== null
+  try {
+    accessSync(isAbsolute(command) ? command : resolve(options.cwd, command), constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Bun reports a missing executable and a missing cwd alike (ENOENT), so the cwd decides which.
+function commandMissing(error: unknown, cwd: string): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  if (code !== "ENOENT" && code !== "EACCES") return false
+  try {
+    return statSync(cwd).isDirectory()
+  } catch {
+    return false
   }
 }
 

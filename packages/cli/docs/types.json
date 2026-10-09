@@ -15616,7 +15616,7 @@
     "name": "VerificationResult",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface VerificationResult {\n    readonly name: \"check\" | \"assure\" | \"test\";\n    readonly ok: boolean;\n    readonly status: number | null;\n    readonly report?: unknown;\n    readonly output?: string;\n    readonly error?: string;\n    readonly stack?: string;\n}"
+    "signature": "export interface VerificationResult {\n    readonly name: \"check\" | \"assure\" | \"test\";\n    readonly ok: boolean;\n    readonly status: number | null;\n    readonly report?: unknown;\n    readonly output?: string;\n    readonly error?: string;\n    readonly stack?: string;\n    /** The gate's command was not found or cannot run, so nothing was checked; never a repair task. */\n    readonly unavailable?: true;\n}"
   },
   {
     "name": "VerifiedJwt",
@@ -19566,6 +19566,13 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function isTerminalHandoffState(state: HandoffLifecycleState): boolean;",
     "doc": "/** True once a handoff state accepts no further op. */"
+  },
+  {
+    "name": "isVerificationAvailable",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function isVerificationAvailable(name: \"check\" | \"assure\" | \"test\", options: Pick<VerificationOptions, \"cwd\" | \"command\" | \"env\">): boolean;",
+    "doc": "/**\n * Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs\n * on the Bun this agent runs on, so it is always available unless `command` replaces it.\n */"
   },
   {
     "name": "island",
