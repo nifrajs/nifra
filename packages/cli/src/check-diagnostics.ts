@@ -12,6 +12,7 @@ import type { CapabilityGap } from "@nifrajs/core/capabilities"
 import type { ProjectEvidenceSnapshot } from "@nifrajs/core/evidence"
 import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
+import { scanFetchText, scanStreamText } from "./check-scan.ts"
 import {
   type Diagnostic,
   type DiagnosticSuggestion,
@@ -379,6 +380,19 @@ export interface CheckDiagnosticsOptions {
   readonly assurance?: CheckAssuranceContext
 }
 
+/**
+ * The prefixes of the mounts the assurance source declares `opaque` (a better-auth handler nifra
+ * cannot read): no typed client covers them, so a hand-written fetch into one is deliberate, exactly
+ * like a `nifra.check.json` `externalMounts` entry. A mount without that declaration stays checked.
+ */
+async function mountPrefixes(source: unknown): Promise<readonly string[]> {
+  if (source === undefined) return []
+  const { reflectMounts } = await import("@nifrajs/core/reflection")
+  return reflectMounts(source).flatMap((mount) =>
+    mount.opaque === undefined || mount.path === "/*" ? [] : [mount.path.slice(0, -"/*".length)],
+  )
+}
+
 export async function collectCheckDiagnostics(
   cwd: string,
   scan: CheckAnalysisInput,
@@ -433,6 +447,31 @@ export async function collectCheckDiagnostics(
       ...(loadedCapability === undefined ? {} : { capability: loadedCapability }),
       rulePacks: applicationRulePacks,
     },
+  }
+  const configuredMounts = factsSeed.policies.checkConfig.externalMounts
+  const appMounts = (await mountPrefixes(loadedPolicy?.config?.source)).filter(
+    (prefix) => !configuredMounts.includes(prefix),
+  )
+  if (appMounts.length > 0) {
+    const externalMounts = [...configuredMounts, ...appMounts]
+    const files = factsSeed.source.files.map((file) => ({
+      file,
+      content: factsSeed.source.read(file) ?? "",
+    }))
+    factsSeed = {
+      ...factsSeed,
+      policies: {
+        ...factsSeed.policies,
+        checkConfig: { ...factsSeed.policies.checkConfig, externalMounts },
+      },
+      sourceFindings: {
+        ...factsSeed.sourceFindings,
+        fetches: files.flatMap(({ file, content }) => scanFetchText(file, content, externalMounts)),
+        streams: files.flatMap(({ file, content }) =>
+          scanStreamText(file, content, externalMounts),
+        ),
+      },
+    }
   }
   const projectFacts = freezeProjectFacts(factsSeed)
   const ruleContext = {

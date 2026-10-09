@@ -234,8 +234,13 @@ export default function CustomServer() {
       <ul>
         <li>
           <b>Routes nifra cannot see.</b> A mounted handler such as better-auth answers paths that are
-          not in your backend, so a <code>fetch</code> to them looks hand-rolled to the check. List
-          those prefixes in <code>nifra.check.json</code> next to <code>package.json</code>:
+          not in your backend, and no typed client covers them. Declare the mount opaque,{" "}
+          <code>
+            mounts: [{"{"} path: "/api/auth", app: auth, opaque: "better-auth" {"}"}]
+          </code>
+          , and when <code>nifra.assurance.ts</code> names this app as its <code>source</code>, the
+          check skips a <code>fetch</code> into that prefix by itself. Without that, list the prefixes
+          in <code>nifra.check.json</code> next to <code>package.json</code>:
         </li>
       </ul>
       <CodeBlock code={CHECK_CONFIG} />

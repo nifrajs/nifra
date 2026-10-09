@@ -9247,8 +9247,13 @@ says that the app kept it open.
 
 -
 **Routes nifra cannot see.** A mounted handler such as better-auth answers paths that are
-not in your backend, so a `fetch` to them looks hand-rolled to the check. List
-those prefixes in `nifra.check.json` next to `package.json`:
+not in your backend, and no typed client covers them. Declare the mount opaque,
+`
+mounts: [{ path: "/api/auth", app: auth, opaque: "better-auth" }]
+`
+, and when `nifra.assurance.ts` names this app as its `source`, the
+check skips a `fetch` into that prefix by itself. Without that, list the prefixes
+in `nifra.check.json` next to `package.json`:
 
 ```ts
 {
