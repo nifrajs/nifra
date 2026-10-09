@@ -277,11 +277,27 @@ describe("detectFeatures - project walk + WS hub post-pass + ignores", () => {
       "dist/server.js": "Bun.serve({})",
       "vite.config.ts": "Bun.file('x')",
       "build-bun.ts": "Bun.serve({})",
+      "build.ts": "Bun.serve({})",
       "x.test.ts": "Deno.env.get('X')",
     })
     try {
       const found = await detectFeatures(dir)
       expect(found).toHaveLength(0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a source file whose name merely starts with build is scanned", async () => {
+    const dir = await makeApp({
+      "package.json": JSON.stringify({ name: "app" }),
+      "backend/buildings.ts":
+        'import { createScheduler } from "@nifrajs/cron"\nexport const s = createScheduler()',
+    })
+    try {
+      const found = await detectFeatures(dir)
+      expect(found.map((feature) => feature.id)).toEqual(["in-process-cron"])
+      expect(found[0]?.evidence.map((item) => item.file)).toEqual(["backend/buildings.ts"])
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
