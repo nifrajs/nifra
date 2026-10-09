@@ -21410,7 +21410,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function reproduciblePath(absolutePath: string): string;",
-    "doc": "/**\n * A **package-root-relative**, forward-slashed form of an absolute path - the input to {@link hash8} for\n * any build-stable identifier (e.g. CSS-module scoped names). Anchoring on the file's nearest\n * `package.json` (not the absolute path, not `process.cwd()`) makes the result independent of BOTH the\n * machine's directory layout AND the working directory: the dom build and the ssr runtime - even on\n * different machines or from different cwds - derive the SAME relative path for a given file, so their\n * scoped class maps always agree. (Hashing the absolute path would differ across CI/host; a\n * cwd-relative path would silently desync if the SSR server started from a non-project-root cwd.)\n */"
+    "doc": "/**\n * A **package-root-relative**, forward-slashed form of an absolute path - the input to {@link hash8} for\n * any build-stable identifier (e.g. CSS-module scoped names). Anchoring on the file's nearest\n * `package.json` (not the absolute path, not `process.cwd()`) makes the result independent of BOTH the\n * machine's directory layout AND the working directory: the dom build and the ssr runtime - even on\n * different machines or from different cwds - derive the SAME relative path for a given file, so their\n * scoped class maps always agree. (Hashing the absolute path would differ across CI/host; a\n * cwd-relative path would silently desync if the SSR server started from a non-project-root cwd.)\n * The package's `name` leads the path, so `src/Card.vue` in two workspace packages hashes apart.\n */"
   },
   {
     "name": "requestId",

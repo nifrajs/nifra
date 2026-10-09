@@ -4,7 +4,7 @@
  * CSS→client-bundle wiring, the deterministic hash, or the optional-peer guard. Internal to
  * `@nifrajs/web` (imported by the sibling plugin modules); not a public subpath.
  */
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { BunPlugin } from "bun"
@@ -23,7 +23,7 @@ export type PluginBuilder = Parameters<BunPlugin["setup"]>[0]
  */
 export { rewriteSsrImports } from "../dev-ssr-graph.ts"
 
-const packageRootCache = new Map<string, string>()
+const packageCache = new Map<string, PackageOf>()
 
 /**
  * Convert a plugin/runtime path into a path the host filesystem can open.
@@ -57,14 +57,31 @@ export function portablePath(path: string): string {
   return normalizeFilePath(path).replaceAll("\\", "/")
 }
 
-/** The nearest ancestor directory of `startDir` that holds a `package.json` (the file's package root),
- * cached. Falls back to `startDir` if none is found, so it never throws. */
-function packageRootOf(startDir: string): string {
-  const cached = packageRootCache.get(startDir)
+interface PackageOf {
+  readonly root: string
+  readonly name: string
+}
+
+/** The nearest ancestor directory of `startDir` that holds a `package.json` (the file's package root)
+ * and that package's `name` (`""` when it has none), cached. Falls back to `startDir` if none is found,
+ * so it never throws. */
+function packageOf(startDir: string): PackageOf {
+  const cached = packageCache.get(startDir)
   if (cached !== undefined) return cached
   let dir = startDir
+  let name = ""
   for (;;) {
-    if (existsSync(join(dir, "package.json"))) break
+    const manifest = join(dir, "package.json")
+    if (existsSync(manifest)) {
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(manifest, "utf8"))
+        if (typeof parsed === "object" && parsed !== null && "name" in parsed)
+          name = typeof parsed.name === "string" ? parsed.name : ""
+      } catch {
+        // An unreadable manifest still marks the package root; the name is only a disambiguator.
+      }
+      break
+    }
     const parent = dirname(dir)
     if (parent === dir) {
       dir = startDir // reached the filesystem root with no package.json - anchor on the file's own dir
@@ -72,8 +89,9 @@ function packageRootOf(startDir: string): string {
     }
     dir = parent
   }
-  packageRootCache.set(startDir, dir)
-  return dir
+  const found = { root: dir, name }
+  packageCache.set(startDir, found)
+  return found
 }
 
 /**
@@ -84,11 +102,13 @@ function packageRootOf(startDir: string): string {
  * different machines or from different cwds - derive the SAME relative path for a given file, so their
  * scoped class maps always agree. (Hashing the absolute path would differ across CI/host; a
  * cwd-relative path would silently desync if the SSR server started from a non-project-root cwd.)
+ * The package's `name` leads the path, so `src/Card.vue` in two workspace packages hashes apart.
  */
 export function reproduciblePath(absolutePath: string): string {
   const filePath = normalizeFilePath(absolutePath)
-  const root = packageRootOf(dirname(filePath))
-  return relative(root, filePath).replaceAll("\\", "/")
+  const { root, name } = packageOf(dirname(filePath))
+  const path = relative(root, filePath).replaceAll("\\", "/")
+  return name === "" ? path : `${name}/${path}`
 }
 
 /**
