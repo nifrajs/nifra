@@ -234,3 +234,36 @@ test("stop() closes a streaming route answered on an unmatched upgrade", async (
     await stream.running.stop({ drainMs: 50 })
   }
 })
+
+test("signals: { drainMs } is the drain window a signal's stop() gives in-flight requests", async () => {
+  let entered!: () => void
+  const inHandler = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const app = server().get("/held", async () => {
+    entered()
+    await gate
+    return "late"
+  })
+  const before = process.listenerCount("SIGTERM")
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", signals: { drainMs: 0 } })
+  try {
+    assert.equal(process.listenerCount("SIGTERM"), before + 1)
+    const held = fetch(`http://127.0.0.1:${running.port}/held`).then(
+      () => "answered",
+      () => "closed",
+    )
+    await inHandler
+    // A zero window closes the held request at once; the default would hold it for 10 s.
+    for (const handler of process.listeners("SIGTERM").slice(before)) handler("SIGTERM")
+    assert.equal(await held, "closed")
+    assert.equal(process.listenerCount("SIGTERM"), before)
+  } finally {
+    release()
+    await running.stop({ drainMs: 0 })
+  }
+})

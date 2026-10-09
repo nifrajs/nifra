@@ -950,7 +950,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly acceptInboundDeadlines: boolean
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
-  private readonly gracefulSignals: boolean
+  private readonly gracefulSignals: { readonly drainMs?: number } | undefined
   private readonly stopHooks: StopHook[]
   private readonly fetchMounts: FetchMount<EnvOf<Ctx>>[]
   private mountOrder: number
@@ -1092,7 +1092,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!Number.isFinite(this.maxInboundDeadlineMs) || this.maxInboundDeadlineMs <= 0) {
       throw new RangeError("maxInboundDeadlineMs must be a finite positive number")
     }
-    this.gracefulSignals = options.gracefulSignals ?? false
+    this.gracefulSignals =
+      options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
     this.stopHooks = []
     this.fetchMounts = []
     this.mountOrder = 0
@@ -6518,7 +6519,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
     this.sealed = true
-    if (this.gracefulSignals) this.installSignalHandlers()
+    if (this.gracefulSignals) this.installSignalHandlers(this.gracefulSignals)
     return running
   }
 
@@ -6551,12 +6552,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ])
   }
 
-  private installSignalHandlers(): void {
+  private installSignalHandlers(drain: { readonly drainMs?: number }): void {
     // Drain, then let the process exit naturally - the stopped server no longer
     // holds the event loop open. Opt-in (`gracefulSignals`), so taking over the
     // signals is consented; we don't force `process.exit`.
     const onSignal = (): void => {
-      void this.stop()
+      void this.stop(drain)
     }
     process.once("SIGTERM", onSignal)
     process.once("SIGINT", onSignal)

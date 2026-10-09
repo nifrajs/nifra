@@ -25,6 +25,7 @@ a Bun-`listen()`-style graceful `stop()` and opt-in signals.
 
 ```ts
 await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful stop()
+await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
 
 ## What you get for free

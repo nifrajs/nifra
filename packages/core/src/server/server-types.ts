@@ -109,8 +109,12 @@ export interface ServerOptions {
    * Default 30_000; applies only when `acceptInboundDeadlines` is enabled and the header is present.
    */
   readonly maxInboundDeadlineMs?: number
-  /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
-  readonly gracefulSignals?: boolean
+  /**
+   * When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false.
+   * `{ drainMs }` sets how long in-flight requests get to finish before the stop forces them closed
+   * (default 10_000) - keep it under the platform's kill grace period (`docker stop` waits 10 s).
+   */
+  readonly gracefulSignals?: boolean | { readonly drainMs?: number }
   /**
    * Capacity-admission gate (see {@link AdmissionController}). Bounds concurrent in-flight work so a
    * healthy instance sheds load (`429` + `Retry-After`) instead of accepting more than it can finish.

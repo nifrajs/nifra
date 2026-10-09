@@ -76,6 +76,13 @@ process signals should be a deliberate choice):
 await serve(app, { port: 3000, signals: true })
 ```
 
+In-flight requests get 10 s to finish before the stop forces them closed. Set the window to fit
+the platform's kill grace period:
+
+```ts
+await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+```
+
 ## What you get for free
 
 The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) and body-size

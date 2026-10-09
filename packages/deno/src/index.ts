@@ -75,8 +75,10 @@ export interface ServeOptions {
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
    * mirroring nifra's Bun `listen({ gracefulSignals })`.
+   * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed
+   * (default 10_000).
    */
-  readonly signals?: boolean
+  readonly signals?: boolean | { readonly drainMs?: number }
   /**
    * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.
    * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS
@@ -239,14 +241,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     }
   }
 
+  const signals = options.signals === true ? {} : options.signals || undefined
   const onSignal = (): void => {
-    void stop()
+    void stop(signals)
   }
 
   async function stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
     if (closed) return // idempotent
     closed = true
-    if (options.signals === true) {
+    if (signals !== undefined) {
       Deno.removeSignalListener("SIGTERM", onSignal)
       Deno.removeSignalListener("SIGINT", onSignal)
     }
@@ -268,7 +271,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     await httpServer.finished
   }
 
-  if (options.signals === true) {
+  if (signals !== undefined) {
     Deno.addSignalListener("SIGTERM", onSignal)
     Deno.addSignalListener("SIGINT", onSignal)
   }

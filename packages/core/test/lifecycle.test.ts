@@ -96,6 +96,32 @@ describe("graceful shutdown", () => {
     for (const h of process.listeners("SIGINT").slice(beforeInt))
       process.removeListener("SIGINT", h as (...a: unknown[]) => void)
   })
+
+  test("gracefulSignals: { drainMs } is the drain window the signal's stop() gets", async () => {
+    for (const [option, expected] of [
+      [{ drainMs: 25 }, { drainMs: 25 }],
+      [true, {}],
+    ] as const) {
+      const beforeTerm = process.listenerCount("SIGTERM")
+      const beforeInt = process.listenerCount("SIGINT")
+      const app = server({ gracefulSignals: option }).get("/", () => "ok")
+      app.listen(0, { hostname: "127.0.0.1" })
+      const stop = app.stop.bind(app)
+      const seen: unknown[] = []
+      Object.assign(app, {
+        stop: async (options?: unknown) => {
+          seen.push(options)
+        },
+      })
+      for (const handler of process.listeners("SIGTERM").slice(beforeTerm)) handler("SIGTERM")
+      expect(seen).toEqual([expected])
+      await stop()
+      for (const h of process.listeners("SIGTERM").slice(beforeTerm))
+        process.removeListener("SIGTERM", h)
+      for (const h of process.listeners("SIGINT").slice(beforeInt))
+        process.removeListener("SIGINT", h)
+    }
+  })
 })
 
 describe("request timeout", () => {

@@ -772,13 +772,15 @@ export interface ServeOptions {
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
    * mirroring nifra's Bun `listen({ gracefulSignals })`.
+   * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed
+   * (default 10_000).
    *
    * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap
    * are *not* set here - they live inside `app.fetch`, so they already apply through
    * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /
    * `headersTimeout` (60s) defaults.
    */
-  readonly signals?: boolean
+  readonly signals?: boolean | { readonly drainMs?: number }
   /**
    * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
    * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
@@ -1384,14 +1386,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
 
   // Opt-in: own SIGTERM/SIGINT so `docker stop` / Ctrl-C drains in-flight requests
   // before exit. `stop` is hoisted, so `onSignal` can reference it.
+  const signals = options.signals === true ? {} : options.signals || undefined
   const onSignal = (): void => {
-    void stop()
+    void stop(signals)
   }
 
   async function stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
     if (closed) return // idempotent
     closed = true
-    if (options.signals === true) {
+    if (signals !== undefined) {
       // Remove our own handlers so repeated serve()/stop() cycles don't leak listeners.
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
@@ -1415,7 +1418,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     const onListening = (): void => {
       const address = server.address()
       const port = address !== null && typeof address === "object" ? address.port : options.port
-      if (options.signals === true) {
+      if (signals !== undefined) {
         process.once("SIGTERM", onSignal)
         process.once("SIGINT", onSignal)
       }
