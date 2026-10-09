@@ -86,6 +86,30 @@ export default toFetchHandler(app, { webSocketHub: (env) => env.NIFRA_WS_HUB })`
 
 const NODE_WS = `npm i ws`
 
+const COMPOSED = `// server.ts - one listener; the chat child and a non-nifra child both take upgrades.
+import { server } from "@nifrajs/core/server"
+import { attachWebSocket, TopicRegistry, websocket, type WebSocketUpgradeOutcome } from "@nifrajs/core/ws"
+
+const chat = server()
+  .use(websocket())
+  .ws("/room", { message: (ws, data) => ws.send(data) })
+
+// Not a nifra server: it answers HTTP through fetch and builds its own upgrade outcome.
+const topics = new TopicRegistry()
+const legacy = {
+  fetch: () => new Response("legacy"),
+  resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome =>
+    new URL(request.url).pathname === "/feed"
+      ? { kind: "upgrade", handler: { open: (ws) => ws.send("hello") }, data: undefined, pubsub: topics, attach: attachWebSocket }
+      : { kind: "pass" },
+}
+
+server()
+  .use(websocket()) // Bun: the parent holds the socket table every mounted upgrade runs through
+  .mount({ path: "/chat", app: chat, stripPrefix: true })
+  .mount({ path: "/legacy", app: legacy, stripPrefix: true })
+  .listen(3000)`
+
 export default function WebSockets() {
   return (
     <div className="prose">
@@ -291,6 +315,24 @@ export default function WebSockets() {
         <code>501</code> and the HTTP routes are unaffected.
       </p>
       <CodeBlock code={NODE_WS} />
+
+      <h2 id="composed">In a composed app</h2>
+      <p>
+        <code>mount({"{ path, app }"})</code> carries WebSocket upgrades as well as HTTP: when the
+        serving adapter sees an upgrade under the mount's path, it asks the child's{" "}
+        <code>resolveWebSocketUpgrade</code> and upgrades its own socket with the outcome. Any nifra
+        server with <code>websocket()</code> installed has one. A child that is not a nifra server can
+        implement it too, building the outcome from <code>@nifrajs/core/ws</code>:{" "}
+        <code>attachWebSocket</code> wires the socket to a handler and a <code>TopicRegistry</code>{" "}
+        owns its pub/sub. On Bun, install <code>websocket()</code> on the parent or on a mounted nifra
+        child, or <code>listen()</code> refuses to start with <code>INVALID_WS_RUNTIME</code>.
+      </p>
+      <p>
+        <code>mountFetch(path, handler)</code> and a plain fetch handler carry HTTP only. An upgrade
+        request under such a path reaches the handler as an ordinary request and never becomes a
+        socket. Serve that path's WebSockets from a mounted child, or keep that server beside nifra.
+      </p>
+      <CodeBlock code={COMPOSED} lang="ts" />
     </div>
   )
 }

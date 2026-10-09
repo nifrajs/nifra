@@ -676,5 +676,11 @@
     "topic": "Nifra - WebSockets",
     "slug": "websockets",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { websocket } from \"@nifrajs/core/ws\" // .use(websocket()) enables app.ws()\n\nconst app = server()\n  .use(websocket())\n  .get(\"/\", () => ({ ok: true }))\n  .ws(\"/echo\", {\n    open: (ws) => ws.send(\"welcome\"),\n    message: (ws, data) => ws.send(data), // data: string | Uint8Array\n  })\n\napp.listen(3000) // Bun"
+  },
+  {
+    "name": "COMPOSED",
+    "topic": "Nifra - WebSockets",
+    "slug": "websockets",
+    "code": "// server.ts - one listener; the chat child and a non-nifra child both take upgrades.\nimport { server } from \"@nifrajs/core/server\"\nimport { attachWebSocket, TopicRegistry, websocket, type WebSocketUpgradeOutcome } from \"@nifrajs/core/ws\"\n\nconst chat = server()\n  .use(websocket())\n  .ws(\"/room\", { message: (ws, data) => ws.send(data) })\n\n// Not a nifra server: it answers HTTP through fetch and builds its own upgrade outcome.\nconst topics = new TopicRegistry()\nconst legacy = {\n  fetch: () => new Response(\"legacy\"),\n  resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome =>\n    new URL(request.url).pathname === \"/feed\"\n      ? { kind: \"upgrade\", handler: { open: (ws) => ws.send(\"hello\") }, data: undefined, pubsub: topics, attach: attachWebSocket }\n      : { kind: \"pass\" },\n}\n\nserver()\n  .use(websocket()) // Bun: the parent holds the socket table every mounted upgrade runs through\n  .mount({ path: \"/chat\", app: chat, stripPrefix: true })\n  .mount({ path: \"/legacy\", app: legacy, stripPrefix: true })\n  .listen(3000)"
   }
 ]

@@ -5704,6 +5704,47 @@ it). Install it when you use `app.ws()`; without it a WS upgrade gets a clean
 npm i ws
 ```
 
+### In a composed app
+
+`mount({ path, app })` carries WebSocket upgrades as well as HTTP: when the
+serving adapter sees an upgrade under the mount's path, it asks the child's
+`resolveWebSocketUpgrade` and upgrades its own socket with the outcome. Any nifra
+server with `websocket()` installed has one. A child that is not a nifra server can
+implement it too, building the outcome from `@nifrajs/core/ws`:
+`attachWebSocket` wires the socket to a handler and a `TopicRegistry`
+owns its pub/sub. On Bun, install `websocket()` on the parent or on a mounted nifra
+child, or `listen()` refuses to start with `INVALID_WS_RUNTIME`.
+
+`mountFetch(path, handler)` and a plain fetch handler carry HTTP only. An upgrade
+request under such a path reaches the handler as an ordinary request and never becomes a
+socket. Serve that path's WebSockets from a mounted child, or keep that server beside nifra.
+
+```ts
+// server.ts - one listener; the chat child and a non-nifra child both take upgrades.
+import { server } from "@nifrajs/core/server"
+import { attachWebSocket, TopicRegistry, websocket, type WebSocketUpgradeOutcome } from "@nifrajs/core/ws"
+
+const chat = server()
+  .use(websocket())
+  .ws("/room", { message: (ws, data) => ws.send(data) })
+
+// Not a nifra server: it answers HTTP through fetch and builds its own upgrade outcome.
+const topics = new TopicRegistry()
+const legacy = {
+  fetch: () => new Response("legacy"),
+  resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome =>
+    new URL(request.url).pathname === "/feed"
+      ? { kind: "upgrade", handler: { open: (ws) => ws.send("hello") }, data: undefined, pubsub: topics, attach: attachWebSocket }
+      : { kind: "pass" },
+}
+
+server()
+  .use(websocket()) // Bun: the parent holds the socket table every mounted upgrade runs through
+  .mount({ path: "/chat", app: chat, stripPrefix: true })
+  .mount({ path: "/legacy", app: legacy, stripPrefix: true })
+  .listen(3000)
+```
+
 ## Nifra - Deployment
 
 > One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
