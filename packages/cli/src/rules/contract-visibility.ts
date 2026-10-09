@@ -337,16 +337,32 @@ export const contractVisibilityRule: CheckRule = {
       const at = key.indexOf(" ")
       return { method: key.slice(0, at), path: key.slice(at + 1) }
     })
-    // A mount or group prefix serves the operation path under it: the match is at a segment boundary,
-    // which the operation path's own leading `/` supplies.
-    const isServed = (op: Operation): boolean =>
-      routes.some(
-        (route) =>
-          route.method === op.method &&
-          (op.path === "/" || route.path === op.path || route.path.endsWith(op.path)),
-      )
+    const servedKeys = new Set(served)
+    const servedAt = (prefix: string, op: Operation): boolean =>
+      op.path === "/"
+        ? servedKeys.has(`${op.method} ${prefix === "" ? "/" : prefix}`) ||
+          servedKeys.has(`${op.method} ${prefix}/`)
+        : servedKeys.has(`${op.method} ${prefix}${op.path}`)
+    // A mount or group prefix serves every operation of the app under it, so one prefix must serve
+    // them all. Matching each operation on its own lets `/` match any route and `/:id` any `.../:id`.
+    const unserved = (operations: readonly Operation[]): readonly Operation[] => {
+      const prefixes = new Set([""])
+      for (const op of operations) {
+        for (const route of routes) {
+          if (route.method !== op.method) continue
+          if (op.path === "/") prefixes.add(route.path.replace(/\/$/, ""))
+          else if (route.path.endsWith(op.path)) prefixes.add(route.path.slice(0, -op.path.length))
+        }
+      }
+      let fewest = operations
+      for (const prefix of prefixes) {
+        const missing = operations.filter((op) => !servedAt(prefix, op))
+        if (missing.length < fewest.length) fewest = missing
+      }
+      return fewest
+    }
     for (const { file, line, contract, operations } of implementations) {
-      const missing = operations.filter((op) => !isServed(op))
+      const missing = unserved(operations)
       if (missing.length === 0) continue
       const listed = missing.slice(0, LISTED).map((op) => `${op.method} ${op.path}`)
       const more = missing.length > LISTED ? ` and ${missing.length - LISTED} more` : ""

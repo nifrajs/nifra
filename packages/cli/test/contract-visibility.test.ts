@@ -81,6 +81,55 @@ describe("NF-C039", () => {
     expect(await findings(grouped)).toEqual([])
   })
 
+  test("an operation counts as served only at one mount prefix shared by the whole contract", async () => {
+    const contract = [
+      'import { defineContract } from "@nifrajs/core/contract"',
+      "export const users = defineContract({",
+      '  list: { method: "GET", path: "/" },',
+      '  read: { method: "GET", path: "/:id" },',
+      "})",
+      "",
+    ].join("\n")
+    const implementation = [
+      'import { implement } from "@nifrajs/core/contract"',
+      'import { users } from "~/contract"',
+      "export const createApp = (app?: Parameters<typeof implement>[2]) =>",
+      "  implement(users, { list: () => [], read: () => ({}) }, app)",
+      "",
+    ].join("\n")
+    const unmounted = await project({
+      "contract.ts": contract,
+      "src/app.ts": implementation,
+      "backend/app.ts": [
+        'import { server } from "@nifrajs/core"',
+        "export const backend = server()",
+        '  .get("/health", () => "ok")',
+        '  .get("/posts/:id", () => ({}))',
+        "",
+      ].join("\n"),
+    })
+    // `/health` could be `/` mounted there, but then `/health/:id` is missing: no prefix serves both.
+    const found = await findings(unmounted)
+    expect(found.map((f) => f.at)).toEqual(["src/app.ts:4"])
+    expect(found[0]?.message).toStartWith(
+      "implement(users) serves 1 operation(s) that backend/app.ts does not: GET /:id.",
+    )
+
+    const mounted = await project({
+      "contract.ts": contract,
+      "src/app.ts": implementation,
+      "backend/app.ts": [
+        'import { server } from "@nifrajs/core"',
+        'import { createApp } from "../src/app"',
+        "export const backend = server()",
+        '  .get("/posts/:id", () => ({}))',
+        '  .group("/users", (users) => createApp(users))',
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(mounted)).toEqual([])
+  })
+
   test("with no backend/app.ts, one finding counts what no gate sees", async () => {
     const root = await project({}, false)
     const found = await findings(root)
