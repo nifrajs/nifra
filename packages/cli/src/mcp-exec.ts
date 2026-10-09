@@ -76,7 +76,16 @@ export function toMcpTool(
   const entry = "run" in source ? undefined : source
   const { cwd } = options
   const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
-  const pathFields = ["config", "out", "lockfile", "before", "after", "baseline", "file"] as const
+  const pathFields = [
+    "config",
+    "out",
+    "lockfile",
+    "before",
+    "after",
+    "baseline",
+    "file",
+    "since",
+  ] as const
   const catalogEntry = entry ?? toCommandCatalogEntry(spec)
   return {
     name: commandMcpName(catalogEntry.name),
