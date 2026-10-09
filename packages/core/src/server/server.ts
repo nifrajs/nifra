@@ -6281,7 +6281,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           markFramed(request)
           return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
             ? this.fetchMatched(request, entry, EMPTY_PARAMS, peer)
-            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, peer, true)
+            : runNative(request, EMPTY_PARAMS)
         }
       }
       return (request) => {
@@ -6309,7 +6309,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (malformed(params)) return fallback(request, server)
         return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
           ? this.fetchMatched(request, entry, params, peer)
-          : capped(request, params, undefined, signal!, budget!, peer, true)
+          : runNative(request, params)
       }
     }
     return (request, server) => {
