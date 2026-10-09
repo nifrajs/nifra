@@ -49,7 +49,9 @@ describe("official route assurance evidence", () => {
       NIFRA_ASSURANCE.RATE_LIMITED,
       NIFRA_ASSURANCE.IP_RESTRICTED,
     ])
+    // The guard's own evidence, then the authenticate() stage's, as for any integration.
     expect(ids(app, "/private")).toEqual([
+      NIFRA_ASSURANCE.AUTHENTICATED,
       NIFRA_ASSURANCE.AUTHENTICATED,
       NIFRA_ASSURANCE.SECURITY_HEADERS,
       NIFRA_ASSURANCE.RATE_LIMITED,

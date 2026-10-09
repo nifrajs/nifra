@@ -1502,7 +1502,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AuthenticationFailure** _(interface)_ - `interface AuthenticationFailure`
 - **AuthenticationFailureReason** _(type)_ - `type AuthenticationFailureReason = "unauthenticated" | "forbidden" | "unavailable"`
 - **AuthenticationInput** _(interface)_ - `interface AuthenticationInput<Env = unknown>`
-  The authentication trust boundary. There is intentionally no `Request`, `body`, or parsed query here. Route parameters are present only for selecting an identity policy and remain untrusted strings until the normal route validation stage completes.
+  The authentication trust boundary. A stage runs before input validation, so everything here is untrusted: route parameters and the query select an identity policy or carry a credential, and stay unvalidated strings until the route's own validation completes.
 - **AuthenticationResult** _(type)_ - `type AuthenticationResult<Principal> = | AuthenticationSuccess<Principal> | AuthenticationFailure`
 - **AuthenticationStage** _(interface)_ - `interface AuthenticationStage<Principal = unknown, Env = unknown>`
   A dedicated authentication stage. Stages are captured by route scope at registration time and execute before input validation on required protected routes.
@@ -2743,7 +2743,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AuthenticationFailure** _(interface)_ - `interface AuthenticationFailure`
 - **AuthenticationFailureReason** _(type)_ - `type AuthenticationFailureReason = "unauthenticated" | "forbidden" | "unavailable"`
 - **AuthenticationInput** _(interface)_ - `interface AuthenticationInput<Env = unknown>`
-  The authentication trust boundary. There is intentionally no `Request`, `body`, or parsed query here. Route parameters are present only for selecting an identity policy and remain untrusted strings until the normal route validation stage completes.
+  The authentication trust boundary. A stage runs before input validation, so everything here is untrusted: route parameters and the query select an identity policy or carry a credential, and stay unvalidated strings until the route's own validation completes.
 - **AuthenticationResult** _(type)_ - `type AuthenticationResult<Principal> = | AuthenticationSuccess<Principal> | AuthenticationFailure`
 - **AuthenticationStage** _(interface)_ - `interface AuthenticationStage<Principal = unknown, Env = unknown>`
   A dedicated authentication stage. Stages are captured by route scope at registration time and execute before input validation on required protected routes.
@@ -7078,7 +7078,7 @@ _No named exports (side-effect entrypoint)._
 - **AuthenticationFailure** _(interface)_ - `interface AuthenticationFailure`
 - **AuthenticationFailureReason** _(type)_ - `type AuthenticationFailureReason = "unauthenticated" | "forbidden" | "unavailable"`
 - **AuthenticationInput** _(interface)_ - `interface AuthenticationInput<Env = unknown>`
-  The authentication trust boundary. There is intentionally no `Request`, `body`, or parsed query here. Route parameters are present only for selecting an identity policy and remain untrusted strings until the normal route validation stage completes.
+  The authentication trust boundary. A stage runs before input validation, so everything here is untrusted: route parameters and the query select an identity policy or carry a credential, and stay unvalidated strings until the route's own validation completes.
 - **AuthenticationResult** _(type)_ - `type AuthenticationResult<Principal> = | AuthenticationSuccess<Principal> | AuthenticationFailure`
 - **AuthenticationStage** _(interface)_ - `interface AuthenticationStage<Principal = unknown, Env = unknown>`
   A dedicated authentication stage. Stages are captured by route scope at registration time and execute before input validation on required protected routes.

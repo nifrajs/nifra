@@ -34,6 +34,8 @@ export interface ProjectEvidenceSchemaPart {
 }
 
 export interface ProjectEvidenceSchema {
+  /** Set only when the route chose it; absent means the default for its auth stages. */
+  readonly validationOrder?: "validate-before-auth" | "auth-before-validation"
   readonly bodyLimit?: number | "unlimited"
   readonly bodyLimitReason?: string
   readonly headers?: ProjectEvidenceSchemaPart
@@ -160,6 +162,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
     if (part !== undefined) errors[status] = part
   }
   const schema: ProjectEvidenceSchema = {
+    ...(source.validationOrder !== undefined ? { validationOrder: source.validationOrder } : {}),
     ...(source.bodyLimit !== undefined ? { bodyLimit: source.bodyLimit } : {}),
     ...(source.bodyLimitReason !== undefined ? { bodyLimitReason: source.bodyLimitReason } : {}),
     ...(headers !== undefined ? { headers } : {}),
@@ -504,6 +507,7 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
   const response = schemaPartToReflection(schema.response)
   const sse = schemaPartToReflection(schema.sse)
   return {
+    ...(schema.validationOrder !== undefined ? { validationOrder: schema.validationOrder } : {}),
     ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
     ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
     ...(headers !== undefined ? { headers } : {}),

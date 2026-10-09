@@ -54,6 +54,7 @@ export const RULE_CODES = Object.freeze({
   "NF-S005": "External redirect opt-out",
   "NF-S006": "Security escape hatch enabled",
   "NF-S007": "Secure cookie without a __Host-/__Secure- prefix",
+  "NF-S008": "Authenticated route validates input before authentication",
 } as const)
 
 /** Codes that no longer fire but remain reserved forever. */

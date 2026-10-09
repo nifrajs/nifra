@@ -143,7 +143,16 @@ const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-K001": "contract-witness",
 }
 
-for (const code of ["NF-S001", "NF-S002", "NF-S003", "NF-S004", "NF-S005", "NF-S006", "NF-S007"])
+for (const code of [
+  "NF-S001",
+  "NF-S002",
+  "NF-S003",
+  "NF-S004",
+  "NF-S005",
+  "NF-S006",
+  "NF-S007",
+  "NF-S008",
+])
   (CHECK_CODES as Record<string, ReviewCheckId>)[code] = "security"
 
 const REVIEW_INPUT_SCHEMA = {

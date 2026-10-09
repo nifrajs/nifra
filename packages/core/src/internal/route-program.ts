@@ -9,8 +9,10 @@
 
 import type { StandardSchemaV1 } from "../schema/standard.ts"
 import { pathnameOf } from "../server/http.ts"
+import { queryObjectOf } from "../server/query.ts"
 import type { Registry } from "../server/registry.ts"
 import {
+  CONTEXT_SEARCH,
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
   isResponseResult,
@@ -166,15 +168,38 @@ function authHeadersOf(source: RequestSource): import("../server/auth.ts").AuthH
   })
 }
 
+/** A fresh parse of `search`, frozen with its arrays, so a stage never holds what validation reads. */
+function frozenQueryOf(search: string): Readonly<Record<string, string | readonly string[]>> {
+  const query = queryObjectOf(search)
+  for (const key in query) {
+    const value = query[key]
+    if (Array.isArray(value)) Object.freeze(value)
+  }
+  return Object.freeze(query)
+}
+
 function authenticationInputOf(
   source: RequestSource,
   ctx: RawContext,
 ): import("../server/auth.ts").AuthenticationInput<unknown> {
+  let query: Readonly<Record<string, string | readonly string[]>> | undefined
+  // Accessors, so a stage that reads neither the query nor the request costs nothing for them; the
+  // search is the context's own, the one `c.query` and its validation parse.
   return Object.freeze({
     method: source.method,
     pathname: pathnameOf(source.url),
     headers: authHeadersOf(source),
     params: Object.freeze({ ...ctx.params }),
+    get search() {
+      return ctx[CONTEXT_SEARCH]
+    },
+    get query() {
+      query ??= frozenQueryOf(ctx[CONTEXT_SEARCH])
+      return query
+    },
+    get request() {
+      return ctx.req
+    },
     env: ctx.env,
     clientIp: ctx.clientIp,
     signal: ctx.signal,

@@ -121,7 +121,10 @@ export default function WebSockets() {
         auth middleware such as <code>basicAuth</code> or <code>jwt</code> guards the sockets
         registered after it, any guard can refuse the handshake with the response it would send an
         HTTP request, and <code>upgrade</code> reads what the guards derived. The origin check runs
-        first. A socket registered before a guard stays public, like an HTTP route there.
+        first. A socket registered before a guard stays public, like an HTTP route there. A browser
+        cannot set a header on the handshake, so <code>authenticate()</code> can read a short-lived,
+        single-use ticket from <code>input.query</code> - see{" "}
+        <a href="/docs/auth#auth-first">Authentication runs first</a>.
       </p>
       <CodeBlock code={GUARDED} />
       <p>

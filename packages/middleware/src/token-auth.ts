@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
-import { bearerToken, guardName } from "./_utils.ts"
+import { bearerToken, guardName, type HeaderGet, installAuthGuard } from "./_utils.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -29,8 +29,8 @@ export type AuthPlugin<P> = IdentityPlugin & {
 
 interface TokenAuthConfig<P> {
   readonly name: string
-  /** Pull the credential out of the request (e.g. the `Bearer` token or an `x-api-key` header). */
-  readonly extract: (request: Request) => string | undefined
+  /** Pull the credential out of the request's headers (the `Bearer` token, an `x-api-key`). */
+  readonly extract: (header: HeaderGet) => string | undefined
   /** Verify the credential → a principal (truthy) or `null`/`undefined` (rejected). */
   readonly verify: (token: string) => MaybePromise<P | null | undefined>
   readonly optional: boolean
@@ -39,7 +39,7 @@ interface TokenAuthConfig<P> {
 }
 
 function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
-  // Per-request principal cache: verify runs once (in beforeHandle), reads are free + can't desync.
+  // Per-request principal cache: verify runs once, in the guard; reads are free and can't desync.
   const store = new WeakMap<Request, P>()
   const reject = (): Response =>
     Response.json(
@@ -50,16 +50,18 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
       },
     )
   const plugin = defineIdentityPlugin(guardName(config.name), (app) =>
-    app.beforeHandle(async (c: { readonly req: Request }) => {
-      const token = config.extract(c.req)
-      // Empty string is treated as "no credential" - never passed to verify.
-      const principal = token !== undefined && token !== "" ? await config.verify(token) : null
-      if (principal !== null && principal !== undefined) {
-        store.set(c.req, principal)
-        return undefined // authorized - continue to the handler
-      }
-      return config.optional ? undefined : reject() // 401 short-circuits (skips the handler)
-    }),
+    installAuthGuard(
+      app,
+      config.name,
+      config.optional,
+      store,
+      (header) => {
+        const token = config.extract(header)
+        // Empty string is treated as "no credential" - never passed to verify.
+        return token !== undefined && token !== "" ? config.verify(token) : null
+      },
+      reject,
+    ),
   )
   const instrumented = config.optional
     ? plugin
@@ -97,7 +99,7 @@ export function bearer<P>(options: BearerOptions<P>): AuthPlugin<P> {
   const realm = options.realm ?? "api"
   return createTokenAuth({
     name: "bearer",
-    extract: (request) => bearerToken(request.headers.get("authorization")) ?? undefined,
+    extract: (header) => bearerToken(header("authorization")) ?? undefined,
     verify: options.verify,
     optional: options.optional === true,
     challenge: `Bearer realm="${realm}"`,
@@ -171,7 +173,7 @@ export function apiKey<P>(
   const verify = "keys" in options ? staticKeyVerify(options.keys) : options.verify
   return createTokenAuth<P | string>({
     name: "apiKey",
-    extract: (request) => request.headers.get(header) ?? undefined,
+    extract: (get) => get(header) ?? undefined,
     verify,
     optional: options.optional === true,
   })

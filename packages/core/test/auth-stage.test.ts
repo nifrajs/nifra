@@ -25,7 +25,7 @@ describe("dedicated authentication stage", () => {
         run(input) {
           expect("req" in input).toBe(false)
           expect("body" in input).toBe(false)
-          expect("query" in input).toBe(false)
+          expect(Object.isFrozen(input.query)).toBe(true)
           expect("raw" in input).toBe(false)
           expect(Object.isFrozen(input)).toBe(true)
           expect(Object.isFrozen(input.headers)).toBe(true)

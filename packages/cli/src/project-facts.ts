@@ -46,6 +46,8 @@ export interface ContractCheckFacts {
   readonly diagnostics: readonly { readonly route?: string; readonly message: string }[]
   /** `METHOD /path` of every route `backend/app.ts` serves; set only when the lock check loaded it. */
   readonly served?: readonly string[]
+  /** `METHOD /path` of each authenticated route that validates its input before its auth hook runs. */
+  readonly inputBeforeAuth?: readonly string[]
   readonly error?: string
 }
 

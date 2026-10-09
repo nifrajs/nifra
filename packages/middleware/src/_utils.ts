@@ -1,7 +1,12 @@
 export type MaybePromise<T> = T | Promise<T>
 
-import type { NodeResponseContext } from "@nifrajs/core/server"
-import { parseCookies as parseCoreCookies, writableResponse } from "@nifrajs/core/server"
+import type { AnyServer, NodeResponseContext } from "@nifrajs/core/server"
+import {
+  authenticated,
+  parseCookies as parseCoreCookies,
+  rejected,
+  writableResponse,
+} from "@nifrajs/core/server"
 
 export const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"])
 
@@ -28,6 +33,44 @@ let guardInstances = 0
 export function guardName(base: string): string {
   guardInstances += 1
   return `${base}#${guardInstances}`
+}
+
+/** One request header by name, or `null`: what a credential extractor reads. */
+export type HeaderGet = (name: string) => string | null
+
+/**
+ * Install a credential guard. Required, it is an `authenticate()` stage, so a request without a
+ * principal is refused before its body or query is read or validated, and before any `derive` or
+ * `beforeHandle`. Optional never refuses, so it stays a `beforeHandle` that records a principal when
+ * the request carries one.
+ */
+export function installAuthGuard<P>(
+  app: AnyServer,
+  id: string,
+  optional: boolean,
+  store: WeakMap<Request, P>,
+  verify: (header: HeaderGet) => MaybePromise<P | null | undefined>,
+  refuse: () => Response,
+): AnyServer {
+  if (optional) {
+    return app.beforeHandle(async (c: { readonly req: Request }) => {
+      const principal = await verify((name) => c.req.headers.get(name))
+      if (principal !== null && principal !== undefined) store.set(c.req, principal)
+      return undefined
+    })
+  }
+  return app.authenticate({
+    id,
+    mode: "async",
+    run: async (input) => {
+      const principal = await verify((name) => input.headers.get(name))
+      if (principal === null || principal === undefined) {
+        return rejected("unauthenticated", refuse())
+      }
+      store.set(input.request, principal)
+      return authenticated(principal)
+    },
+  })
 }
 
 /** Shared with core so auth/CSRF middleware gets the allocation-light cookie scanner too. */

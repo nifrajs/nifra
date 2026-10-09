@@ -4635,6 +4635,51 @@ app.group("/api", (api) =>
 )
 ```
 
+### Authentication runs first
+
+`authenticate()` refuses a request before anything reads it: the body is not read,
+no schema runs, and no `derive` or `beforeHandle` sees it. An
+unauthenticated caller gets the 401 (or the refusal `run` returns), never a 413 or a
+422 that describes the route's input. `basicAuth`, `bearer`,
+`apiKey` and `jwt` from `@nifrajs/middleware` run there. With
+`optional: true` they never refuse, so validation answers as usual.
+
+`run` receives the method, pathname, headers, path params, the raw
+`search` and the parsed `query` (frozen, read by the parser
+`c.query` uses; a repeated key is an array), the `request` (never read
+its body), `env`, `clientIp` and an abort `signal`. Every
+field is the caller's and unvalidated. Read the query only for a short-lived, single-use
+ticket, such as one for a WebSocket handshake a browser cannot set a header on: a URL lands in
+proxy and access logs. The dev feed records a query's keys, never its values.
+
+```ts
+// doc-check: skip - fragment: `app` and `tickets` (a single-use store) are your application's.
+import { authenticated, rejected } from "@nifrajs/core"
+
+app
+  .authenticate({
+    id: "socket-ticket",
+    run: async (input) => {
+      // A browser cannot set a header on a WebSocket handshake, so the ticket rides in the URL.
+      const ticket = input.query.ticket
+      if (typeof ticket !== "string") return rejected()
+      const user = await tickets.take(ticket) // single use, expires in seconds
+      return user === null ? rejected() : authenticated(user)
+    },
+  })
+  .ws("/live", { upgrade: (c) => ({ user: c.principal.id }) })
+```
+
+A guard written as a `beforeHandle` runs after validation, so an unauthenticated
+caller reaches the body parser. When `nifra check` loads
+`backend/app.ts` (it does when a `contracts.lock.json` exists), NF-S008
+names each route that claims authentication this way and declares an input schema. Move the
+check into `authenticate()`, or set
+`validationOrder: "auth-before-validation"` on the route to run its hooks first. A
+rate limiter written as a `beforeHandle` behind `authenticate()` does not
+see refused requests; `rateLimit()` runs in `onRequest`, before routing,
+and counts them.
+
 ### Session code stays in the backend
 
 The session manager, an auth instance and their secrets live in `backend/`, and only
@@ -5463,7 +5508,10 @@ at the same point runs: the `authenticate()` stages, `derive`s and
 auth middleware such as `basicAuth` or `jwt` guards the sockets
 registered after it, any guard can refuse the handshake with the response it would send an
 HTTP request, and `upgrade` reads what the guards derived. The origin check runs
-first. A socket registered before a guard stays public, like an HTTP route there.
+first. A socket registered before a guard stays public, like an HTTP route there. A browser
+cannot set a header on the handshake, so `authenticate()` can read a short-lived,
+single-use ticket from `input.query` - see
+[Authentication runs first](/docs/auth#auth-first).
 
 ```ts
 // doc-check: skip - illustrative: an existing auth guard and session lookup.
@@ -13972,6 +14020,9 @@ const app = server()
 - **`basicAuth(options)`** - Basic Auth plugin with constant-time static credential comparison or
   a custom verifier.
 - **`bearer(options)` / `apiKey(options)`** - token auth plugins with typed principals.
+- Required `basicAuth`, `bearer`, `apiKey` and `jwt` refuse in the core `authenticate()` stage:
+  before the body is read or validated and before any `derive` or `beforeHandle`. A rate limiter
+  that must count refused requests belongs in `onRequest`, where `rateLimit()` runs.
 - **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking. The
   token travels in the `x-csrf-token` header; set `field: "_csrf"` to also accept it from a plain
   HTML form's hidden input (urlencoded or multipart, bodies up to `fieldMaxBytes`, default 64 KiB).

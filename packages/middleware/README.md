@@ -41,6 +41,9 @@ const app = server()
 - **`basicAuth(options)`** - Basic Auth plugin with constant-time static credential comparison or
   a custom verifier.
 - **`bearer(options)` / `apiKey(options)`** - token auth plugins with typed principals.
+- Required `basicAuth`, `bearer`, `apiKey` and `jwt` refuse in the core `authenticate()` stage:
+  before the body is read or validated and before any `derive` or `beforeHandle`. A rate limiter
+  that must count refused requests belongs in `onRequest`, where `rateLimit()` runs.
 - **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking. The
   token travels in the `x-csrf-token` header; set `field: "_csrf"` to also accept it from a plain
   HTML form's hidden input (urlencoded or multipart, bodies up to `fieldMaxBytes`, default 64 KiB).

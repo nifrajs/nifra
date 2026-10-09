@@ -392,6 +392,25 @@ function fnv1a(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0")
 }
 
+/**
+ * A query value may be a single-use ticket or a token no redaction pattern knows, so the feed keeps
+ * which keys a request sent and never their values. `/x?ticket=abc&page` -> `/x?ticket=[redacted]&[redacted]`.
+ */
+function queryKeysOnly(target: string): string {
+  const at = target.indexOf("?")
+  if (at === -1) return target
+  const hash = target.indexOf("#", at)
+  const parts = target
+    .slice(at + 1, hash === -1 ? undefined : hash)
+    .split("&")
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      const eq = part.indexOf("=")
+      return eq === -1 ? "[redacted]" : `${part.slice(0, eq)}=[redacted]`
+    })
+  return parts.length === 0 ? target.slice(0, at) : `${target.slice(0, at)}?${parts.join("&")}`
+}
+
 const cap = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}... [${text.length - max} more chars]`
 
@@ -477,7 +496,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
     if (diagnostic.request !== undefined) {
       redacted.request = {
         method: diagnostic.request.method,
-        url: cap(redactText(diagnostic.request.url), 2048),
+        url: cap(redactText(queryKeysOnly(diagnostic.request.url)), 2048),
       }
     }
     if (diagnostic.codeframe !== undefined) {
@@ -530,7 +549,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
     record.resolvedAt = undefined
     if (requestId !== undefined) record.requestId = requestId
     if (meta.route !== undefined) record.route = meta.route
-    if (meta.page !== undefined) record.page = meta.page
+    if (meta.page !== undefined) record.page = cap(redactText(queryKeysOnly(meta.page)), 2048)
     // Re-insert: Map order is recency order, which eviction relies on.
     errors.delete(key)
     errors.set(key, record)
@@ -557,7 +576,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
       message: text,
     }
     if (requestId !== undefined) entry.requestId = requestId
-    if (meta.page !== undefined) entry.page = meta.page
+    if (meta.page !== undefined) entry.page = cap(redactText(queryKeysOnly(meta.page)), 2048)
     logs.push(entry)
     logBytes += text.length
     if (logs.length > limits.logs || logBytes > limits.logBytes) {
@@ -607,7 +626,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
         seq,
         requestId,
         method,
-        path: cap(redactText(path), 2048),
+        path: cap(redactText(queryKeysOnly(path)), 2048),
         at: nowIso(),
         status: undefined,
         durationMs: undefined,

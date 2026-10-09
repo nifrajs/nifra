@@ -1,4 +1,5 @@
 import type * as TSApi from "typescript"
+import { BACKEND_APP_FILE } from "../app-files.ts"
 import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { createWebAppProbe } from "../internal/nifra-project.ts"
@@ -869,6 +870,24 @@ export const unprefixedSecureCookieRule: CheckRule = {
   },
 }
 
+/** Reads the backend the contract-lock check loaded; this rule runs no project code of its own. */
+export const inputBeforeAuthenticationRule: CheckRule = {
+  code: "NF-S008",
+  title: "Authenticated route validates input before authentication",
+  async scan(ctx) {
+    return (ctx.project.check.contracts.inputBeforeAuth ?? []).map((route) =>
+      diagnostic({
+        code: "NF-S008",
+        severity: "warn",
+        file: BACKEND_APP_FILE,
+        message: `${route} authenticates in a hook that runs after its declared input is validated, so an unauthenticated caller reaches the body parser and reads the validation issues. Authenticate with \`app.authenticate()\` (the first-party auth middleware already does), or set \`validationOrder: "auth-before-validation"\` on the route so its hooks run first`,
+        evidence: [route],
+        verify: "nifra check --lints-only",
+      }),
+    )
+  },
+}
+
 export const securityRules = Object.freeze([
   failOpenGateRule,
   secretComparisonRule,
@@ -877,4 +896,5 @@ export const securityRules = Object.freeze([
   externalRedirectRule,
   assuranceEscapeHatchRule,
   unprefixedSecureCookieRule,
+  inputBeforeAuthenticationRule,
 ])

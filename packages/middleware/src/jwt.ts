@@ -4,6 +4,8 @@ import {
   base64UrlDecode,
   bearerToken,
   guardName,
+  type HeaderGet,
+  installAuthGuard,
   jsonError,
   type MaybePromise,
   parseCookies,
@@ -300,15 +302,19 @@ export async function tryVerifyJwt<C extends JwtClaims = JwtClaims>(
   }
 }
 
-function tokenFromRequest(req: Request, header: string, cookie: string | undefined): string | null {
-  const headerValue = req.headers.get(header)
+function tokenFromHeaders(
+  get: HeaderGet,
+  header: string,
+  cookie: string | undefined,
+): string | null {
+  const headerValue = get(header)
   if (headerValue !== null) {
     if (header === "authorization") {
       return bearerToken(headerValue)
     }
     return headerValue.trim() || null
   }
-  return cookie === undefined ? null : (parseCookies(req.headers.get("cookie"))[cookie] ?? null)
+  return cookie === undefined ? null : (parseCookies(get("cookie"))[cookie] ?? null)
 }
 
 function challenge(realm: string): string {
@@ -327,17 +333,23 @@ export function jwt<C extends JwtClaims = JwtClaims>(options: JwtOptions): JwtPl
   const store = new WeakMap<Request, C>()
 
   const plugin = defineIdentityPlugin(guardName("jwt"), (app) =>
-    app.beforeHandle(async (c: { readonly req: Request }) => {
-      const token = tokenFromRequest(c.req, header, options.cookie)
-      if (token === null) return optional ? undefined : reject(realm)
-      try {
-        const verified = await verifyJwt<C>(token, options)
-        store.set(c.req, verified.claims)
-        return undefined
-      } catch {
-        return optional ? undefined : reject(realm)
-      }
-    }),
+    installAuthGuard(
+      app,
+      "jwt",
+      optional,
+      store,
+      async (get) => {
+        const token = tokenFromHeaders(get, header, options.cookie)
+        if (token === null) return null
+        try {
+          return (await verifyJwt<C>(token, options)).claims
+        } catch {
+          // A token that fails verification is no credential: a 401, never a 503.
+          return null
+        }
+      },
+      () => reject(realm),
+    ),
   )
   const instrumented = optional
     ? plugin

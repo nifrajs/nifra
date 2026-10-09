@@ -122,6 +122,22 @@ app.group("/api", (api) =>
     .post("/notes", { body: Note }, (c) => db.notes.insert({ ...c.body, owner: c.principal.userId })),
 )`
 
+const TICKET = `// doc-check: skip - fragment: \`app\` and \`tickets\` (a single-use store) are your application's.
+import { authenticated, rejected } from "@nifrajs/core"
+
+app
+  .authenticate({
+    id: "socket-ticket",
+    run: async (input) => {
+      // A browser cannot set a header on a WebSocket handshake, so the ticket rides in the URL.
+      const ticket = input.query.ticket
+      if (typeof ticket !== "string") return rejected()
+      const user = await tickets.take(ticket) // single use, expires in seconds
+      return user === null ? rejected() : authenticated(user)
+    },
+  })
+  .ws("/live", { upgrade: (c) => ({ user: c.principal.id }) })`
+
 const DENIAL = `// doc-check: skip - fragment: \`session\` is the request's session.
 requireUser(session, "userId", {
   unauthenticated: { status: 403, body: { error: "login_required" }, headers: { "www-authenticate": "Session" } },
@@ -232,6 +248,37 @@ export default function Auth() {
         order-scoped, so inside a <code>group</code> they cover only its routes.
       </p>
       <CodeBlock code={FRAME} />
+
+      <h2 id="auth-first">Authentication runs first</h2>
+      <p>
+        <code>authenticate()</code> refuses a request before anything reads it: the body is not read,
+        no schema runs, and no <code>derive</code> or <code>beforeHandle</code> sees it. An
+        unauthenticated caller gets the 401 (or the refusal <code>run</code> returns), never a 413 or a
+        422 that describes the route's input. <code>basicAuth</code>, <code>bearer</code>,{" "}
+        <code>apiKey</code> and <code>jwt</code> from <code>@nifrajs/middleware</code> run there. With{" "}
+        <code>optional: true</code> they never refuse, so validation answers as usual.
+      </p>
+      <p>
+        <code>run</code> receives the method, pathname, headers, path params, the raw{" "}
+        <code>search</code> and the parsed <code>query</code> (frozen, read by the parser{" "}
+        <code>c.query</code> uses; a repeated key is an array), the <code>request</code> (never read
+        its body), <code>env</code>, <code>clientIp</code> and an abort <code>signal</code>. Every
+        field is the caller's and unvalidated. Read the query only for a short-lived, single-use
+        ticket, such as one for a WebSocket handshake a browser cannot set a header on: a URL lands in
+        proxy and access logs. The dev feed records a query's keys, never its values.
+      </p>
+      <CodeBlock code={TICKET} />
+      <p>
+        A guard written as a <code>beforeHandle</code> runs after validation, so an unauthenticated
+        caller reaches the body parser. When <code>nifra check</code> loads{" "}
+        <code>backend/app.ts</code> (it does when a <code>contracts.lock.json</code> exists), NF-S008
+        names each route that claims authentication this way and declares an input schema. Move the
+        check into <code>authenticate()</code>, or set{" "}
+        <code>validationOrder: "auth-before-validation"</code> on the route to run its hooks first. A
+        rate limiter written as a <code>beforeHandle</code> behind <code>authenticate()</code> does not
+        see refused requests; <code>rateLimit()</code> runs in <code>onRequest</code>, before routing,
+        and counts them.
+      </p>
 
       <h2 id="server-only">Session code stays in the backend</h2>
       <p>
