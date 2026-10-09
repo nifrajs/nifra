@@ -17,7 +17,7 @@
  * Everything here is pure state + fs probes; the I/O wiring lives in `./mcp.ts`.
  */
 
-import { readFile } from "node:fs/promises"
+import { readdir, readFile, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -46,6 +46,8 @@ const MAX_ROOT_PATH_LENGTH = 4_096
 /** Workspace members probed per workspace root. A monorepo larger than this is pointed at explicitly
  * (`nifra mcp <dir>`) rather than scanned on every server start. */
 const MAX_WORKSPACE_MEMBERS = 256
+/** Directories one workspace probe may read while matching member patterns. */
+const MAX_WORKSPACE_DIRECTORIES = 4_096
 
 /** A directory is a nifra project when its `package.json` depends on any `@nifrajs/*` package, or it
  * is a `nifra.config.ts` monorepo root. Backend-only projects (no web config, no `routes/`) count -
@@ -103,6 +105,57 @@ async function workspacePatterns(dir: string): Promise<readonly string[] | null>
 }
 
 /**
+ * The directories under `dir` that `pattern` matches and that hold a `package.json`, in name order. A
+ * walk rather than a glob scan: a `**` pattern would otherwise descend every `node_modules` below it,
+ * where a member never lives. It starts at the pattern's literal prefix, stops at the pattern's depth
+ * unless it has a `**`, skips dot directories, and draws on one directory budget for the whole probe.
+ */
+async function workspaceMatches(
+  dir: string,
+  pattern: string,
+  budget: { directories: number },
+): Promise<string[]> {
+  const segments = pattern
+    .replace(/^\.\//, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+  const firstGlob = segments.findIndex((segment) => /[*?[{]/.test(segment))
+  const prefix = firstGlob === -1 ? segments : segments.slice(0, firstGlob)
+  const depth = segments.includes("**") ? Number.POSITIVE_INFINITY : segments.length
+  const glob = new Bun.Glob(segments.join("/"))
+  const found: string[] = []
+  const queue: { readonly path: string; readonly depth: number }[] = [
+    { path: prefix.join("/"), depth: prefix.length },
+  ]
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    if (budget.directories <= 0) break
+    budget.directories -= 1
+    const absolute = join(dir, next.path)
+    if (next.path !== "" && glob.match(next.path) && (await isFile(join(absolute, "package.json"))))
+      found.push(next.path)
+    if (next.depth >= depth) continue
+    const entries = await readdir(absolute, { withFileTypes: true }).catch(() => [])
+    const names = entries
+      .filter(
+        (entry) =>
+          entry.isDirectory() && entry.name !== "node_modules" && !entry.name.startsWith("."),
+      )
+      .map((entry) => entry.name)
+      .sort()
+    for (const name of names) {
+      queue.push({ path: next.path === "" ? name : `${next.path}/${name}`, depth: next.depth + 1 })
+    }
+  }
+  return found
+}
+
+const isFile = (path: string): Promise<boolean> =>
+  stat(path)
+    .then((info) => info.isFile())
+    .catch(() => false)
+
+/**
  * The nifra projects among `dir`'s package-manager workspace members, in declaration order. Empty when
  * `dir` declares no `workspaces`. A member is a directory a pattern matches that holds a `package.json`;
  * `node_modules` is never a member.
@@ -111,15 +164,12 @@ export async function workspaceProjects(dir: string): Promise<string[]> {
   const patterns = await workspacePatterns(dir)
   if (patterns === null) return []
   const members = new Set<string>()
-  let probed = 0
+  const budget = { directories: MAX_WORKSPACE_DIRECTORIES }
   for (const pattern of patterns) {
-    const glob = new Bun.Glob(`${pattern.replace(/\/+$/, "")}/package.json`)
-    for await (const match of glob.scan({ cwd: dir, onlyFiles: true })) {
-      if (match.split(/[\\/]/).includes("node_modules")) continue
-      if (++probed > MAX_WORKSPACE_MEMBERS) break
-      members.add(dirname(join(dir, match)))
+    for (const member of await workspaceMatches(dir, pattern, budget)) {
+      if (members.size === MAX_WORKSPACE_MEMBERS) break
+      members.add(join(dir, member))
     }
-    if (probed > MAX_WORKSPACE_MEMBERS) break
   }
   const projects: string[] = []
   for (const member of members) if (await isNifraProjectDir(member)) projects.push(member)

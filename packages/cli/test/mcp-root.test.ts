@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -135,6 +135,26 @@ describe("resolveRootState - package-manager workspaces", () => {
     expect(state.root).toBe(join(dir, "apps", "web"))
     expect(state.source).toBe("workspace")
     await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a ** pattern finds nested members without walking into node_modules", async () => {
+    const dir = await workspaceRoot(["./packages/**"], {
+      "packages/group/web": true,
+      "packages/tools": false,
+    })
+    const modules = join(dir, "packages", "group", "web", "node_modules")
+    await mkdir(join(modules, "dep"), { recursive: true })
+    await writeFile(join(modules, "dep", "package.json"), "{}")
+    // Unreadable, so a walk into it fails the probe (outside a root shell, where chmod binds).
+    await chmod(modules, 0o000)
+    try {
+      const state = await resolveRootState(dir, false)
+      expect(state.root).toBe(join(dir, "packages", "group", "web"))
+      expect(state.source).toBe("workspace")
+    } finally {
+      await chmod(modules, 0o755)
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   test("several nifra members adopt nothing and the refusal names each one", async () => {
