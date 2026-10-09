@@ -1791,9 +1791,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *
    *   // client: const off = api.feed.subscribe((post) => console.log(post.title))
    *
-   * `init` passes through to the underlying {@link sse} helper (`keepAlive`, extra headers). The
-   * connection closes when the handler resolves, `stream.close()` runs, or the client disconnects
-   * (`stream.signal`). Query/body schemas validate exactly as on any other route.
+   * `init` passes through to the underlying {@link sse} helper (`keepAlive`, `maxBufferedBytes`,
+   * extra headers). The connection closes when the handler resolves, `stream.close()` runs, or the
+   * client disconnects (`stream.signal`). Query/body schemas validate exactly as on any other route.
    */
   sse<Path extends string, S extends RouteSchema & { sse: StandardSchemaV1 }>(
     path: Path,

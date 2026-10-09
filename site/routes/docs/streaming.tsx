@@ -101,6 +101,13 @@ export default function Streaming() {
         <code>data</code> is split into multiple <code>data:</code> lines per the spec; and{" "}
         <code>keepAlive</code> emits comment pings so idle proxies don't drop the connection.
       </p>
+      <p>
+        A client that stops reading is dropped once it has <code>maxBufferedBytes</code> (default 1
+        MiB) of events unread: <code>stream.signal</code> aborts with <code>sse_client_too_slow</code>,
+        the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
+        server memory without limit. Raise it for a burst larger than that sent before the client can
+        read, or pass <code>Infinity</code> to turn the limit off.
+      </p>
     </div>
   )
 }

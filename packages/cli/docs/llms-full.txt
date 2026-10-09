@@ -2679,6 +2679,12 @@ stripped from `event`/`id` to prevent frame injection); multi-line
 `data` is split into multiple `data:` lines per the spec; and
 `keepAlive` emits comment pings so idle proxies don't drop the connection.
 
+A client that stops reading is dropped once it has `maxBufferedBytes` (default 1
+MiB) of events unread: `stream.signal` aborts with `sse_client_too_slow`,
+the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
+server memory without limit. Raise it for a burst larger than that sent before the client can
+read, or pass `Infinity` to turn the limit off.
+
 ## Nifra - Query cache
 
 > Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.

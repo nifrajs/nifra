@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { sse } from "../src/server/sse.ts"
+import { type SSEStream, sse } from "../src/server/sse.ts"
 
 function ctx(signal?: AbortSignal): { req: Request } {
   return { req: new Request("http://test/", signal ? { signal } : undefined) }
@@ -139,5 +139,81 @@ describe("sse", () => {
     const { value } = await reader.read()
     expect(new TextDecoder().decode(value)).toBe(": \n\n")
     await reader.cancel() // stop the never-resolving producer + its interval
+  })
+})
+
+describe("sse maxBufferedBytes", () => {
+  const frame = { data: "x".repeat(1000) } // 1008 bytes on the wire
+
+  // Sends without reading until the stream drops the client, at most `limit` times.
+  function flood(init: Parameters<typeof sse>[2], limit: number) {
+    let stream!: SSEStream
+    const res = sse(
+      ctx(),
+      (s) => {
+        stream = s
+        return new Promise<void>(() => {})
+      },
+      init,
+    )
+    let sends = 0
+    while (sends < limit && !stream.signal.aborted) {
+      stream.send(frame)
+      sends++
+    }
+    return { res, stream, sends }
+  }
+
+  test("a client that stops reading is dropped on the first send past the cap", async () => {
+    const { res, stream, sends } = flood({ maxBufferedBytes: 4096 }, 1000)
+    expect(sends).toBe(6)
+    expect(String(stream.signal.reason)).toContain("sse_client_too_slow")
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+    await expect(reader.read()).rejects.toThrow("sse_client_too_slow")
+  })
+
+  test("the default cap is 1 MiB; Infinity turns it off", () => {
+    expect(flood(undefined, 2000).sends).toBe(Math.ceil((1024 * 1024) / 1008) + 1)
+    const unlimited = flood({ maxBufferedBytes: Number.POSITIVE_INFINITY }, 2000)
+    expect(unlimited.sends).toBe(2000)
+    expect(unlimited.stream.signal.aborted).toBe(false)
+  })
+
+  test("a reader that keeps up is never dropped, however much passes through", async () => {
+    let caughtUp: (() => void) | undefined
+    const res = sse(
+      ctx(),
+      async (s) => {
+        for (let round = 0; round < 200; round++) {
+          s.send(frame)
+          s.send(frame)
+          s.send(frame)
+          await new Promise<void>((resolve) => {
+            caughtUp = resolve
+          })
+        }
+      },
+      { maxBufferedBytes: 4096 },
+    )
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+    let bytes = 0
+    let reads = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (++reads % 3 === 0) caughtUp?.()
+    }
+    expect(bytes).toBe(200 * 3 * 1008)
+  })
+
+  test("one frame larger than the cap still goes out to a reader that is caught up", async () => {
+    const out = await readAll(sse(ctx(), (s) => s.send(frame), { maxBufferedBytes: 16 }))
+    expect(out).toBe(`data: ${frame.data}\n\n`)
+  })
+
+  test("a negative, NaN, or non-numeric cap throws", () => {
+    for (const maxBufferedBytes of [-1, Number.NaN, "1mb" as unknown as number])
+      expect(() => sse(ctx(), () => {}, { maxBufferedBytes })).toThrow(RangeError)
   })
 })

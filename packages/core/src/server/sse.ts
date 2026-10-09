@@ -39,7 +39,10 @@ export interface SSEMessage {
 
 /** The stream handed to the `run` callback. */
 export interface SSEStream {
-  /** Enqueue an event frame. No-op once the stream is closed. */
+  /**
+   * Enqueue an event frame. No-op once the stream is closed, including after a client that fell
+   * more than `maxBufferedBytes` behind was dropped.
+   */
   send(message: SSEMessage): void
   /** End the stream now. */
   close(): void
@@ -59,7 +62,16 @@ export interface SSEInit {
   readonly headers?: ConstructorParameters<typeof Headers>[0]
   /** Send a `: ` comment ping every N ms so idle proxies don't drop the connection. */
   readonly keepAlive?: number
+  /**
+   * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:
+   * `signal` aborts, the queued frames are released, and later sends are no-ops, so a reader that
+   * stalls cannot hold server memory without limit. Raise it for a burst larger than this sent before
+   * the client can read; `Infinity` turns the limit off.
+   */
+  readonly maxBufferedBytes?: number
 }
+
+const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024
 
 /**
  * The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and
@@ -111,6 +123,9 @@ export function sse(
   run: (stream: SSEStream) => void | Promise<void>,
   init: SSEInit = {},
 ): Response {
+  const maxBuffered = init.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
+  if (!(maxBuffered >= 0))
+    throw new RangeError("sse maxBufferedBytes must be a non-negative number")
   const encoder = new TextEncoder()
   const requestSignal: AbortSignal | undefined = c.req?.signal
   // The producer's signal also aborts when the runtime cancels the body: a writer that finds the
@@ -127,66 +142,80 @@ export function sse(
     }
   }
 
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const close = (): void => {
-        if (closed) return
+  const body = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        const close = (): void => {
+          if (closed) return
+          closed = true
+          teardown()
+          try {
+            controller.close()
+          } catch {
+            // Already closed by the runtime's cancel() - safe to ignore.
+          }
+        }
+        const stream: SSEStream = {
+          send(message) {
+            if (closed) return
+            // The queue only shrinks as the runtime writes to the socket, so a backlog past the cap
+            // is a client that stopped reading. Erroring the body releases the queue and the socket.
+            if ((controller.desiredSize ?? 0) < 0) {
+              closed = true
+              teardown()
+              const reason = new Error("sse_client_too_slow")
+              stopped.abort(reason)
+              controller.error(reason)
+              return
+            }
+            controller.enqueue(encoder.encode(formatMessage(message)))
+          },
+          close,
+          signal: stopped.signal,
+        }
+
+        // Stop the moment the client goes away.
+        if (requestSignal !== undefined) {
+          if (requestSignal.aborted) {
+            stopped.abort()
+            close()
+            return
+          }
+          onAbort = () => {
+            stopped.abort()
+            close()
+          }
+          requestSignal.addEventListener("abort", onAbort, { once: true })
+        }
+
+        if (init.keepAlive !== undefined && init.keepAlive > 0) {
+          heartbeat = setInterval(() => stream.send({ comment: "" }), init.keepAlive)
+          // Don't let the ping keep a Node process alive on its own.
+          ;(heartbeat as { unref?: () => void }).unref?.()
+        }
+        // An async IIFE so a synchronous throw in `run` becomes a rejection we can surface.
+        ;(async () => {
+          await run(stream)
+        })().then(close, (err: unknown) => {
+          if (closed) return
+          closed = true
+          teardown()
+          try {
+            controller.error(err instanceof Error ? err : new Error("sse_producer_failed"))
+          } catch {
+            // Stream already torn down.
+          }
+        })
+      },
+      cancel() {
+        // Consumer/runtime canceled (client gone) - pending sends become no-ops.
         closed = true
         teardown()
-        try {
-          controller.close()
-        } catch {
-          // Already closed by the runtime's cancel() - safe to ignore.
-        }
-      }
-      const stream: SSEStream = {
-        send(message) {
-          if (!closed) controller.enqueue(encoder.encode(formatMessage(message)))
-        },
-        close,
-        signal: stopped.signal,
-      }
-
-      // Stop the moment the client goes away.
-      if (requestSignal !== undefined) {
-        if (requestSignal.aborted) {
-          stopped.abort()
-          close()
-          return
-        }
-        onAbort = () => {
-          stopped.abort()
-          close()
-        }
-        requestSignal.addEventListener("abort", onAbort, { once: true })
-      }
-
-      if (init.keepAlive !== undefined && init.keepAlive > 0) {
-        heartbeat = setInterval(() => stream.send({ comment: "" }), init.keepAlive)
-        // Don't let the ping keep a Node process alive on its own.
-        ;(heartbeat as { unref?: () => void }).unref?.()
-      }
-      // An async IIFE so a synchronous throw in `run` becomes a rejection we can surface.
-      ;(async () => {
-        await run(stream)
-      })().then(close, (err: unknown) => {
-        if (closed) return
-        closed = true
-        teardown()
-        try {
-          controller.error(err instanceof Error ? err : new Error("sse_producer_failed"))
-        } catch {
-          // Stream already torn down.
-        }
-      })
+        stopped.abort()
+      },
     },
-    cancel() {
-      // Consumer/runtime canceled (client gone) - pending sends become no-ops.
-      closed = true
-      teardown()
-      stopped.abort()
-    },
-  })
+    { highWaterMark: maxBuffered, size: (chunk) => chunk?.byteLength ?? 0 },
+  )
 
   const headers = new Headers(init.headers)
   headers.set("content-type", "text/event-stream; charset=utf-8")
