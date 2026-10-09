@@ -78,6 +78,34 @@ test("createWebApp SSRs a route (no layout, no loader → chain 1, data null)", 
   expect(await res.text()).toContain("chain=1:null")
 })
 
+test("a page route named with spaces or non-ASCII serves the path a browser requests", async () => {
+  const page = (id: string, pattern: string): RouteEntry => ({
+    id,
+    pattern,
+    layoutIds: [],
+    file: `${id}.tsx`,
+    load: async () => ({ default: id, loader: (ctx) => ({ page: id, ...ctx.params }) }),
+  })
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [page("cafe", "/café"), page("space", "/a b"), page("uber", "/über/:id")],
+      layouts: {},
+    },
+    clientEntry: "/c.js",
+  })
+  const cases: Array<[string, string]> = [
+    ["/café", '{"page":"cafe"}'],
+    ["/a b", '{"page":"space"}'],
+    ["/über/7", '{"page":"uber","id":"7"}'],
+  ]
+  for (const [path, data] of cases) {
+    const res = await app.fetch(new Request(`http://x${path}`))
+    expect({ path, status: res.status }).toEqual({ path, status: 200 })
+    expect(await res.text()).toContain(data)
+  }
+})
+
 test("createWebApp resolves a fresh CSP nonce for documents, including 404 pages", async () => {
   const seen: string[] = []
   const adapterNonces: Array<string | undefined> = []

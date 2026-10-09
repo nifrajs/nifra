@@ -21,6 +21,7 @@ import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
+import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 export interface CreateWebAppOptions<Env = unknown> {
@@ -453,15 +454,16 @@ export function createWebApp<Env = unknown>(
   })
 
   for (const route of manifest.routes) {
+    const pattern = requestPattern(route.pattern)
     app.register(
       "GET",
-      route.pattern,
+      pattern,
       options.serverComponents?.owns(route.id)
         ? { capabilities: options.serverComponents.capabilities(route.id) }
         : undefined,
       pageExecutor.get(route),
     )
-    app.register("POST", route.pattern, undefined, pageExecutor.post(route))
+    app.register("POST", pattern, undefined, pageExecutor.post(route))
   }
   // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
   // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An

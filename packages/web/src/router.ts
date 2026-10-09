@@ -10,6 +10,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
+import { requestPattern } from "./internal/route-path.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -176,7 +177,7 @@ export function createMatcher(
   for (const pattern of patterns) {
     // Pass the literal to the public router seam: package type resolution may point the two core
     // subpaths at different source/dist declarations, while registration-time compilation is cheap.
-    routeIndex.add("GET", pattern.pattern, pattern.routeId)
+    routeIndex.add("GET", requestPattern(pattern.pattern), pattern.routeId)
   }
   return (path) => {
     // Strip the query without allocating a `split("?")` array - matcher runs per match.

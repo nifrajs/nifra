@@ -33,6 +33,22 @@ describe("createMatcher", () => {
       params: { year: "2026", slug: "hello" },
     })
   })
+  test("a route named with spaces or non-ASCII matches the path a browser requests", () => {
+    const named = createMatcher([
+      { routeId: "cafe", pattern: "/café" },
+      { routeId: "space", pattern: "/a b" },
+      { routeId: "uber", pattern: "/über/:id" },
+      // Decomposed, as some file systems store a name: the browser requests the composed form.
+      { routeId: "nfd", pattern: "/re\u0301sume\u0301" },
+    ])
+    expect(named(new URL("http://x/café").pathname)).toEqual({ routeId: "cafe", params: {} })
+    expect(named(new URL("http://x/a b").pathname)).toEqual({ routeId: "space", params: {} })
+    expect(named(new URL("http://x/über/7").pathname)).toEqual({
+      routeId: "uber",
+      params: { id: "7" },
+    })
+    expect(named(new URL("http://x/résumé").pathname)).toEqual({ routeId: "nfd", params: {} })
+  })
   test("decodes percent-encoded params", () => {
     expect(match("/users/a%20b")).toEqual({ routeId: "user", params: { id: "a b" } })
   })
