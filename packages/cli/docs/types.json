@@ -19540,6 +19540,13 @@
     "signature": "export declare function isServerComponent(value: unknown): value is ServerComponent;"
   },
   {
+    "name": "isServerPackageSpecifier",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isServerPackageSpecifier(specifier: string): boolean;",
+    "doc": "/** Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry. */"
+  },
+  {
     "name": "isTerminalApprovalState",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",

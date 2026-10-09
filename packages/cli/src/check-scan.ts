@@ -7,6 +7,7 @@
 
 import { readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, posix, resolve, sep } from "node:path"
+import { isServerPackageSpecifier } from "@nifrajs/web/zones"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
@@ -83,10 +84,57 @@ function isBackendModule(file: string): boolean {
   )
 }
 
-// Module specifiers that must never be VALUE-imported into a route module: node:/bun: builtins, common
-// DB drivers/ORМ server entrypoints, and the conventional `./db` module the scaffold generates.
-const SERVER_ONLY =
-  /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b|^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
+// Node builtins that have no browser counterpart, imported bare. Bare `events`, `buffer`, `path`, `util`
+// and the like stay out: each also names an npm polyfill a browser bundle may legitimately carry.
+const SERVER_BUILTINS: ReadonlySet<string> = new Set([
+  "async_hooks",
+  "child_process",
+  "cluster",
+  "crypto",
+  "dgram",
+  "diagnostics_channel",
+  "dns",
+  "dns/promises",
+  "fs",
+  "fs/promises",
+  "http",
+  "http2",
+  "https",
+  "inspector",
+  "module",
+  "net",
+  "os",
+  "perf_hooks",
+  "readline",
+  "readline/promises",
+  "repl",
+  "tls",
+  "trace_events",
+  "tty",
+  "v8",
+  "vm",
+  "wasi",
+  "worker_threads",
+])
+// The conventional `./db` module the scaffold generates.
+const DB_MODULE = /^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
+
+/**
+ * Whether a specifier names server-only code by name, so the chain ends there: a `node:`/`bun:`
+ * module, a bare builtin with no browser counterpart, or a package the browser build refuses
+ * (`SERVER_PACKAGES` and the driver entries of `@nifrajs/web/zones`).
+ */
+function isServerOnlySink(specifier: string): boolean {
+  return (
+    /^(?:node:|bun:)/.test(specifier) ||
+    SERVER_BUILTINS.has(specifier) ||
+    isServerPackageSpecifier(specifier)
+  )
+}
+
+/** A specifier no route module may value-import: a {@link isServerOnlySink} name, or the `./db` module. */
+const isServerOnly = (specifier: string): boolean =>
+  isServerOnlySink(specifier) || DB_MODULE.test(specifier)
 
 // A static, non-type import with a string specifier, or a re-export (`export … from "x"`), which
 // pulls its module into the bundle the same way. `import type …` and `export type …` are erased at
@@ -104,6 +152,10 @@ const DYNAMIC_IMPORT = /(?<![\w$.])import\s*\(\s*(["'`])([^"'`$\\\r\n]+)\1\s*[,)
 // Without a parser: `typeof import("x")` and `import("x").Name` are type positions, erased at build.
 // A runtime `import("x")` is a promise, so the only members read straight off it are its methods.
 const TYPE_QUERY_BEFORE = /\btypeof\s*$/
+// `require("x")` and `import x = require("x")` pull a module into a bundle as `import` does; the
+// `import type x = require("x")` form is erased.
+const REQUIRE_CALL = /(?<![\w$.])require\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*\)/g
+const TYPE_ALIAS_BEFORE = /\bimport\s+type\s+[\w$]+\s*=\s*$/
 const TYPE_QUALIFIER_AFTER = /^\s*\.\s*(?!(?:then|catch|finally)\b)[A-Za-z_$]/
 
 const ROUTE_REGISTRATION_DQ = /\.([A-Za-z]+)\s*\(\s*"((?:\\.|[^"\\])*)"/g
@@ -2424,7 +2476,7 @@ export function scanServerOnlyImports(
   // Inline `import { type X } from "…"` is erased just like `import type` and is not an edge; a parse
   // failure keeps the lexical edge so the security rule fails closed.
   for (const { specifier, index } of importEdges(content, facts, file)) {
-    if (!SERVER_ONLY.test(specifier)) continue
+    if (!isServerOnly(specifier)) continue
     const line = lineAt(content, index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), specifier })
   }
@@ -2441,11 +2493,6 @@ export function scanServerOnlyImports(
 // that can't be precisely resolved (a bare pkg, a tsconfig path alias) falls back to the direct edge.
 // ---------------------------------------------------------------------------------------------------
 
-// Server-only specifiers that are TERMINAL sinks - a bare `node:`/`bun:` builtin or a known server-only
-// npm package. These are never local source we can walk into, so the chain ends here. (Same vocabulary
-// as SERVER_ONLY, minus the relative `../db` arm - a relative `db` module IS local source we resolve.)
-const SERVER_ONLY_SINK =
-  /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b/
 // The retired `*.server` convention. Builds refuse such a module in browser code rather than empty it.
 const LEGACY_SERVER_FILE = /\.server(\.[cm]?[jt]sx?)?$/
 // The explicit poison-import marker (`@nifrajs/web/backend-only`, or its retired `server-only` name) - a
@@ -2524,19 +2571,39 @@ function dynamicImportEdges(
   return edges
 }
 
-/** Every import a module's runtime code makes - static and literal dynamic - in source order. Pure. */
+/** The literal `require("x")` calls in executable code. Pure. */
+function requireEdges(
+  content: string,
+  positions: string,
+): Array<{ specifier: string; index: number }> {
+  const edges: Array<{ specifier: string; index: number }> = []
+  const re = new RegExp(REQUIRE_CALL.source, REQUIRE_CALL.flags)
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    if (positions[m.index] === " ") continue // inside a comment or a string
+    const specifier = m[2]
+    if (specifier === undefined) continue
+    if (TYPE_ALIAS_BEFORE.test(content.slice(Math.max(0, m.index - 80), m.index))) continue
+    edges.push({ specifier, index: m.index })
+  }
+  return edges
+}
+
+/** Every import a module's runtime code makes - static, literal dynamic and `require` - in source
+ * order. Pure. */
 function importEdges(
   content: string,
   facts?: SourceFacts,
   file?: string,
 ): Array<{ specifier: string; index: number }> {
-  // Without an `import(` there is nothing for the dynamic pass to find; skip its regex.
   const positions = codePositionMask(content)
   const edges = staticImportEdges(content, facts, file, positions)
-  if (!content.includes("import(") && !/import\s+\(/.test(content)) return edges
-  return [...edges, ...dynamicImportEdges(content, facts, file, positions)].sort(
-    (a, b) => a.index - b.index,
-  )
+  // Without an `import(` or a `require` there is nothing for the other passes to find; skip them.
+  const dynamic = content.includes("import(") || /import\s+\(/.test(content)
+  const required = content.includes("require")
+  if (!dynamic && !required) return edges
+  if (dynamic) edges.push(...dynamicImportEdges(content, facts, file, positions))
+  if (required) edges.push(...requireEdges(content, positions))
+  return edges.sort((a, b) => a.index - b.index)
 }
 
 /** The runtime imports of a module with the line each sits on, in source order. Pure. */
@@ -2559,7 +2626,7 @@ export function parseImports(content: string, facts?: SourceFacts, file?: string
  * server-only package), or `undefined` if it isn't a by-name sink. Pure - the label is the specifier
  * itself (it's already the actionable name). */
 export function directSinkSpecifier(spec: string): string | undefined {
-  return SERVER_ONLY_SINK.test(spec) ? spec : undefined
+  return isServerOnlySink(spec) ? spec : undefined
 }
 
 /** One transitive server-only finding: the route module, the route's offending top-level import (the
@@ -2586,6 +2653,9 @@ export interface ServerOnlyChainSource {
   readonly read: ModuleReader
   readonly facts?: SourceFacts | undefined
   readonly componentReceipts?: ReadonlySet<string>
+  /** Whether a bare specifier `resolve` leaves unanswered names an installed package that declares
+   * `"nifra": { "environment": "backend" }`, which the browser build refuses. */
+  readonly backendPackage?: (fromFile: string, specifier: string) => boolean
 }
 
 /** The chain searches of one check, sharing what they learn about each module. */
@@ -2594,6 +2664,7 @@ interface ChainGraph {
   walk(start: string, content: string): readonly string[] | undefined
   read(abs: string): string | undefined
   resolve(from: string, specifier: string): string | undefined
+  backendPackage(from: string, specifier: string): boolean
   readonly componentReceipts: ReadonlySet<string>
   readonly facts: SourceFacts | undefined
 }
@@ -2610,6 +2681,7 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
   const imports = new Map<string, readonly string[]>()
   const resolutions = new Map<string, string | undefined>()
   const walks = new Map<string, readonly string[] | undefined>()
+  const packages = new Map<string, boolean>()
   const read = (abs: string): string | undefined => {
     if (!contents.has(abs)) contents.set(abs, source.read(abs))
     return contents.get(abs)
@@ -2618,6 +2690,16 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
     const key = `${from}\0${specifier}`
     if (!resolutions.has(key)) resolutions.set(key, source.resolve(from, specifier))
     return resolutions.get(key)
+  }
+  const backendPackage = (from: string, specifier: string): boolean => {
+    if (source.backendPackage === undefined || /^[./#]/.test(specifier)) return false
+    const key = `${from}\0${specifier}`
+    let found = packages.get(key)
+    if (found === undefined) {
+      found = source.backendPackage(from, specifier)
+      packages.set(key, found)
+    }
+    return found
   }
   const importsOf = (abs: string, content: string): readonly string[] => {
     let found = imports.get(abs)
@@ -2649,7 +2731,11 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
           const sink = directSinkSpecifier(spec)
           if (sink !== undefined) return [...node.chain, sink]
           const abs = resolve(node.abs, spec)
-          if (abs === undefined || seen.has(abs)) continue
+          if (abs === undefined) {
+            if (backendPackage(node.abs, spec)) return [...node.chain, spec]
+            continue
+          }
+          if (seen.has(abs)) continue
           if (componentReceipts.has(abs)) continue
           if (isBackendModule(abs)) return [...node.chain, spec]
           if (SERVER_FN_FILE.test(abs)) continue
@@ -2671,6 +2757,7 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
     },
     read,
     resolve,
+    backendPackage,
     componentReceipts,
     facts,
   }
@@ -2762,9 +2849,11 @@ function serverOnlyChains(
     // it reaches a sink, report the full chain rooted at THIS route's import line.
     const abs = graph.resolve(file, specifier)
     if (abs === undefined) {
-      // A name no project file answers to can't be called server-only, except the `../db`
-      // convention, reported as the direct edge with `fallback` saying the resolve was impossible.
-      if (SERVER_ONLY.test(specifier)) flag([file, specifier], true)
+      // An installed package that declares itself backend is a sink. Any other name no project file
+      // answers to can't be called server-only, except the `../db` convention, reported as the direct
+      // edge with `fallback` saying the resolve was impossible.
+      if (graph.backendPackage(file, specifier)) flag([file, specifier], false)
+      else if (isServerOnly(specifier)) flag([file, specifier], true)
       continue
     }
     if (graph.componentReceipts.has(abs)) continue
@@ -2787,7 +2876,7 @@ function serverOnlyChains(
       continue
     }
     // (3) The `../db` convention with no deeper sink found: still surface the direct edge.
-    if (SERVER_ONLY.test(specifier)) flag([file, specifier], true)
+    if (isServerOnly(specifier)) flag([file, specifier], true)
   }
   return out
 }

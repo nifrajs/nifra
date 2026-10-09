@@ -1,5 +1,15 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
+import { collectCheckResult } from "../src/check.ts"
 import { createServerOnlyChains } from "../src/check-scan.ts"
+import {
+  createFixtureProject,
+  createFixtureRoot,
+  removeFixtureRoot,
+  writeAppFile,
+} from "./fixture-root.ts"
+
+const parent = createFixtureRoot("tmp-server-only-")
+afterAll(() => removeFixtureRoot(parent))
 
 /** A fake project: `files` by path, `../x` specifiers resolve to `x.ts`, and every read is counted. */
 function graph(files: Record<string, string>) {
@@ -47,5 +57,49 @@ describe("server-only chains", () => {
         [],
       )
     expect(project.reads()).toBe(250)
+  })
+})
+
+describe("server-only names match the browser build's", () => {
+  test("server SDKs, bare server builtins, require() and backend workspace packages are sinks", async () => {
+    const root = createFixtureProject(parent, "app-")
+    const files: Record<string, string> = {
+      "nifra.config.ts": "export const adapter = {}\n",
+      "node_modules/@shop/db/package.json": JSON.stringify({
+        name: "@shop/db",
+        nifra: { environment: "backend" },
+      }),
+      "node_modules/@shop/ui/package.json": JSON.stringify({ name: "@shop/ui" }),
+      "routes/a.tsx": 'import Stripe from "stripe"\nexport default () => Stripe\n',
+      "routes/b.tsx": 'import { readFileSync } from "fs"\nexport default () => readFileSync\n',
+      "routes/c.tsx": 'import { db } from "@shop/db"\nexport default () => db\n',
+      "routes/d.tsx": 'import jwt from "jsonwebtoken"\nexport default () => jwt\n',
+      "routes/e.tsx": 'const pg = require("pg")\nexport default () => pg\n',
+      "routes/f.ts": 'import pgx = require("pg")\nexport default () => pgx\n',
+      "routes/ok.tsx": [
+        'import { EventEmitter } from "events"',
+        'import { join } from "path"',
+        'import { Button } from "@shop/ui"',
+        '// const pg = require("pg")',
+        'import type Pg = require("pg")',
+        "export default () => [EventEmitter, join, Button]",
+        "",
+      ].join("\n"),
+    }
+    for (const [path, content] of Object.entries(files)) writeAppFile(root, path, content)
+    const result = await collectCheckResult(root, { lintsOnly: true })
+    const found = new Set(
+      [...result.diagnostics, ...(result.structuredDiagnostics ?? [])]
+        .filter((d) => d.code === "NF-C004")
+        .map((d) => `${d.file}:${d.line}`),
+    )
+    expect([...found].sort()).toEqual([
+      "routes/a.tsx:1",
+      "routes/b.tsx:1",
+      "routes/c.tsx:1",
+      "routes/d.tsx:1",
+      "routes/e.tsx:1",
+      "routes/f.ts:1",
+    ])
   })
 })

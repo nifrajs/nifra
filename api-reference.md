@@ -6252,6 +6252,8 @@ _No named exports (side-effect entrypoint)._
   The message for an import {@link importAllowed} refuses.
 - **isSensitiveFieldName** _(function)_ - `isSensitiveFieldName: (name: string) => boolean`
   A field name that usually holds a credential or personal identifier.
+- **isServerPackageSpecifier** _(function)_ - `isServerPackageSpecifier: (specifier: string) => boolean`
+  Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry.
 - **parseZoneConfig** _(function)_ - `parseZoneConfig: (value: unknown, source: string) => ZoneConfig`
   Validate a `zones` setting. `source` names where it came from in the error. Folders are plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a pattern can never match less than its author meant without saying so.
 - **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`

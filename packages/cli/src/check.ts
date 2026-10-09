@@ -18,6 +18,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { specifierPackage } from "@nifrajs/web/zones"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
@@ -433,11 +434,36 @@ async function buildProjectScan(
       browserRoots.add(rel)
       browserModules.push({ rel, content })
     }
+    // Node's lookup: the nearest `node_modules/<name>` at or above the importing file.
+    const backendPackage = (fromFile: string, specifier: string): boolean => {
+      const name = specifierPackage(specifier)
+      if (name === undefined) return false
+      let dir = dirname(isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile))
+      for (;;) {
+        const manifest = join(dir, "node_modules", name, "package.json")
+        if (existsSync(manifest)) {
+          try {
+            const nifra: unknown = JSON.parse(readFileSync(manifest, "utf8"))?.nifra
+            return (
+              typeof nifra === "object" &&
+              nifra !== null &&
+              Reflect.get(nifra, "environment") === "backend"
+            )
+          } catch {
+            return false
+          }
+        }
+        const parent = dirname(dir)
+        if (parent === dir) return false
+        dir = parent
+      }
+    }
     const serverOnlyChains = createServerOnlyChains({
       resolve: resolveModule,
       read: readModule,
       facts: sourceFacts,
       componentReceipts,
+      backendPackage,
     })
     for (const { rel, content } of browserModules)
       serverImports.push(...serverOnlyChains(rel, content, browserRoots.has(rel)))

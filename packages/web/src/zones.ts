@@ -582,6 +582,12 @@ export function browserDenial(
   return undefined
 }
 
+/** Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry. */
+export function isServerPackageSpecifier(specifier: string): boolean {
+  const name = specifierPackage(specifier)
+  return (name !== undefined && SERVER_PACKAGES.includes(name)) || SERVER_SUBPATHS.test(specifier)
+}
+
 /** Whether a module in `from` may import (with a value import) a module in `to`. */
 export function importAllowed(from: Zone, to: Zone): boolean {
   if (from === "component") return true
