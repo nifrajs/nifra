@@ -127,6 +127,7 @@ interface LegacyFields {
   readonly message: string
   readonly evidence?: readonly string[]
   readonly chain?: readonly string[]
+  readonly modules?: readonly string[]
   readonly fix?: string
   /** A recipe for this one finding, when the rule's findings are not all mechanically fixable. */
   readonly recipe?: Diagnostic["fix"]
@@ -166,6 +167,7 @@ function legacyDiagnostic(rule: string, fields: LegacyFields): Diagnostic {
     ...(fields.fix === undefined ? {} : { fix: fields.fix }),
     ...(fields.suggestion === undefined ? {} : { suggestion: fields.suggestion }),
     ...(fields.chain === undefined ? {} : { chain: fields.chain }),
+    ...(fields.modules === undefined ? {} : { modules: fields.modules }),
     ...(fields.includeCode === true ? { includeCode: true } : {}),
   }
   return diagnosticWithCompatibility(canonical, compatibility)
@@ -517,6 +519,7 @@ const serverOnlyImportRule: CheckRule = {
         ),
         fix: SERVER_IMPORT_HINT,
         chain,
+        modules: finding.modules,
         suggestion: serverImportSuggestion(finding.specifier, chain, finding.fallback),
       })
     })

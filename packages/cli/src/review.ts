@@ -16,7 +16,7 @@ import type {
 import type { CheckResult } from "./check.ts"
 import type { CommandCtx, CommandSpec } from "./command-catalog.ts"
 import type { Diagnostic } from "./diagnostics.ts"
-import { toSarifLog } from "./diagnostics.ts"
+import { diagnosticCompatibilityOf, toSarifLog } from "./diagnostics.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { LEGACY_RULE_CODES } from "./rules/legacy.ts"
 
@@ -623,17 +623,22 @@ async function composeCollectedReport(
   }
 
   const changedPaths = new Set(scope.changedPaths)
+  // A server-only chain is in scope when any file on it changed: a new import in a shared module
+  // reaches the browser through a route the diff never touched.
+  const inScope = (candidate: CandidateFinding): boolean =>
+    candidate.location === undefined ||
+    changedPaths.has(candidate.location.path) ||
+    (diagnosticCompatibilityOf(candidate.diagnostic)?.modules ?? []).some((module) => {
+      const path = normalizedLocation(cwd, module, undefined)?.path
+      return path !== undefined && changedPaths.has(path)
+    })
   const retainedByCheck = new Map<ReviewCheckId, CandidateFinding[]>()
   let totalOutOfScope = 0
   let typeErrorOutOfScope = false
   for (const id of CHECK_IDS) {
     const retained: CandidateFinding[] = []
     for (const candidate of candidatesByCheck.get(id) ?? []) {
-      if (
-        scope.kind === "diff" &&
-        candidate.location !== undefined &&
-        !changedPaths.has(candidate.location.path)
-      ) {
+      if (scope.kind === "diff" && !inScope(candidate)) {
         totalOutOfScope += 1
         if (id === "typecheck" && candidate.severity === "error") typeErrorOutOfScope = true
       } else retained.push(candidate)

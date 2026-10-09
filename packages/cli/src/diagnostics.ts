@@ -21,6 +21,9 @@ export interface DiagnosticCompatibility {
   readonly suggestion?: DiagnosticSuggestion
   /** The import path evidence used by the legacy server-only-import view. */
   readonly chain?: readonly string[]
+  /** The project files a server-only chain runs through, so a diff review keeps a finding whose
+   * route is unchanged but whose chain a changed module made. */
+  readonly modules?: readonly string[]
   /** Preserve the old optional `CheckDiagnostic.code` field exactly where it existed. */
   readonly includeCode?: boolean
 }

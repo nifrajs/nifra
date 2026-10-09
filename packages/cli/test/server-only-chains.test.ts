@@ -47,6 +47,29 @@ describe("server-only chains", () => {
     expect(chain?.at(-1)).toBe("node:fs")
   })
 
+  test("a finding names every project file its chain runs through", () => {
+    const project = graph({
+      "lib/a.ts": 'import "../lib/b"\n',
+      "lib/b.ts": 'import "node:fs"\n',
+      "backend/db.ts": "export {}\n",
+    })
+    expect(
+      project
+        .chains("routes/index.tsx", 'import "../lib/a"\nimport "../backend/db"\nimport "pg"\n')
+        .map(({ chain, modules }) => ({ chain, modules })),
+    ).toEqual([
+      {
+        chain: ["routes/index.tsx", "../lib/a", "../lib/b", "node:fs"],
+        modules: ["routes/index.tsx", "lib/a.ts", "lib/b.ts"],
+      },
+      {
+        chain: ["routes/index.tsx", "../backend/db"],
+        modules: ["routes/index.tsx", "backend/db.ts"],
+      },
+      { chain: ["routes/index.tsx", "pg"], modules: ["routes/index.tsx"] },
+    ])
+  })
+
   test("each module is read once however many routes share it", () => {
     const files: Record<string, string> = {}
     for (let i = 0; i < 250; i++)

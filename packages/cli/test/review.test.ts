@@ -171,6 +171,42 @@ describe("nifra review command contract", () => {
   )
 
   test(
+    "a server-only chain is in scope when any file on it changed, though its route did not",
+    async () => {
+      const root = await reviewProject()
+      try {
+        await writeFile(
+          join(root, "package.json"),
+          JSON.stringify({ name: "review-fixture", dependencies: { "@nifrajs/web": "*" } }),
+        )
+        await writeFile(join(root, "nifra.config.ts"), "export const adapter = {}\n")
+        await mkdir(join(root, "routes"), { recursive: true })
+        await mkdir(join(root, "lib"), { recursive: true })
+        await writeFile(
+          join(root, "routes", "page.tsx"),
+          'import { label } from "../lib/helper"\nexport default () => label\n',
+        )
+        const helper =
+          'import { readFileSync } from "node:fs"\nexport const label = String(readFileSync)\n'
+        await writeFile(join(root, "lib", "helper.ts"), helper)
+        await writeFile(join(root, "lib", "other.ts"), "export const other = 1\n")
+        await commitBaseline(root)
+        const chainFinding = async (): Promise<boolean> =>
+          (await runReview({ diff: "HEAD" }, { cwd: root })).findings.some(
+            (finding) => finding.code === "NF-C004" && finding.location?.path === "routes/page.tsx",
+          )
+        await writeFile(join(root, "lib", "other.ts"), "export const other = 2\n")
+        expect(await chainFinding()).toBe(false)
+        await writeFile(join(root, "lib", "helper.ts"), `${helper}export const more = 1\n`)
+        expect(await chainFinding()).toBe(true)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    GIT_REVIEW_TIMEOUT_MS,
+  )
+
+  test(
     "a type error in an unchanged file keeps a diff review inconclusive",
     async () => {
       const root = await reviewProject("export const count: number = 1\n")

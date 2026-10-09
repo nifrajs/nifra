@@ -3007,6 +3007,9 @@ export interface TransitiveServerImportFinding extends ServerImportFinding {
   /** `[routeFile, ...as-written specifiers…, sink]` - the shortest path the walk found. Length 2 means
    * the route imports the sink directly (same as the regex scan's direct edge). */
   readonly chain: readonly string[]
+  /** The project files the chain runs through, as `resolve` named them: the route, each module the
+   * walk entered, and the sink when it is a project file. A change to any of them can make the chain. */
+  readonly modules: readonly string[]
   /** True when a precise transitive resolve wasn't possible for the first hop (a bare pkg / path alias),
    * so the chain is the honest direct edge rather than a fabricated deeper path. */
   readonly fallback: boolean
@@ -3030,10 +3033,17 @@ export interface ServerOnlyChainSource {
   readonly backendPackage?: (fromFile: string, specifier: string) => boolean
 }
 
+/** A chain from a module to a sink: `[start, ...as-written specifiers, sink]`, and the project files
+ * it runs through (see {@link TransitiveServerImportFinding.modules}). */
+interface ChainWalk {
+  readonly chain: readonly string[]
+  readonly modules: readonly string[]
+}
+
 /** The chain searches of one check, sharing what they learn about each module. */
 interface ChainGraph {
-  /** The shortest chain from `start` to a sink, `[start, ...as-written specifiers, sink]`. */
-  walk(start: string, content: string): readonly string[] | undefined
+  /** The shortest chain from `start` to a sink. */
+  walk(start: string, content: string): ChainWalk | undefined
   read(abs: string): string | undefined
   resolve(from: string, specifier: string): string | undefined
   backendPackage(from: string, specifier: string): boolean
@@ -3052,7 +3062,7 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
   const contents = new Map<string, string | undefined>()
   const imports = new Map<string, readonly string[]>()
   const resolutions = new Map<string, string | undefined>()
-  const walks = new Map<string, readonly string[] | undefined>()
+  const walks = new Map<string, ChainWalk | undefined>()
   const packages = new Map<string, boolean>()
   const read = (abs: string): string | undefined => {
     if (!contents.has(abs)) contents.set(abs, source.read(abs))
@@ -3088,34 +3098,36 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
    * importing the `backend-only` marker ends the chain; a `*.fn.ts` module ships as its stub and is not
    * entered. The visited set keeps it cycle-free; there is no depth or size cap to cut a chain short.
    */
-  const search = (start: string, startContent: string): readonly string[] | undefined => {
-    interface Node {
+  const search = (start: string, startContent: string): ChainWalk | undefined => {
+    interface Node extends ChainWalk {
       readonly abs: string
       readonly content: string
-      readonly chain: readonly string[]
     }
     const seen = new Set<string>([start])
-    let frontier: Node[] = [{ abs: start, content: startContent, chain: [start] }]
+    let frontier: Node[] = [{ abs: start, content: startContent, chain: [start], modules: [start] }]
     while (frontier.length > 0) {
       const next: Node[] = []
       for (const node of frontier) {
+        const { chain, modules } = node
         for (const spec of importsOf(node.abs, node.content)) {
           const sink = directSinkSpecifier(spec)
-          if (sink !== undefined) return [...node.chain, sink]
+          if (sink !== undefined) return { chain: [...chain, sink], modules }
           const abs = resolve(node.abs, spec)
           if (abs === undefined) {
-            if (backendPackage(node.abs, spec)) return [...node.chain, spec]
+            if (backendPackage(node.abs, spec)) return { chain: [...chain, spec], modules }
             continue
           }
           if (seen.has(abs)) continue
           if (componentReceipts.has(abs)) continue
-          if (isBackendModule(abs)) return [...node.chain, spec]
+          if (isBackendModule(abs)) return { chain: [...chain, spec], modules: [...modules, abs] }
           if (SERVER_FN_FILE.test(abs)) continue
           const content = read(abs)
           if (content === undefined) continue
-          if (BACKEND_ONLY_MARKER_IMPORT.test(content)) return [...node.chain, spec]
+          if (BACKEND_ONLY_MARKER_IMPORT.test(content)) {
+            return { chain: [...chain, spec], modules: [...modules, abs] }
+          }
           seen.add(abs)
-          next.push({ abs, content, chain: [...node.chain, spec] })
+          next.push({ abs, content, chain: [...chain, spec], modules: [...modules, abs] })
         }
       }
       frontier = next
@@ -3153,7 +3165,7 @@ export function walkServerOnlyChain(
     read,
     facts,
     componentReceipts,
-  }).walk(routeFile, routeContent)
+  }).walk(routeFile, routeContent)?.chain
 }
 
 /**
@@ -3208,9 +3220,13 @@ function serverOnlyChains(
     if (flaggedSpecifiers.has(specifier)) continue
     const line = lineAt(content, index)
     const snippet = (lines[line - 1] ?? "").trim()
-    const flag = (chain: readonly string[], fallback: boolean): void => {
+    const flag = (
+      chain: readonly string[],
+      fallback: boolean,
+      modules: readonly string[] = [file],
+    ): void => {
       flaggedSpecifiers.add(specifier)
-      out.push({ file, line, snippet, specifier, chain, fallback })
+      out.push({ file, line, snippet, specifier, chain, modules, fallback })
     }
     // (1) A direct by-name sink (`node:fs`, `postgres`): the route imports it itself.
     if (directSinkSpecifier(specifier) !== undefined) {
@@ -3231,20 +3247,20 @@ function serverOnlyChains(
     if (graph.componentReceipts.has(abs)) continue
     // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
     if (isBackendModule(abs)) {
-      flag([file, specifier], false)
+      flag([file, specifier], false, [file, abs])
       continue
     }
     if (SERVER_FN_FILE.test(abs)) continue
     const depContent = graph.read(abs)
     if (depContent === undefined) continue
     if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
-      flag([file, specifier], false)
+      flag([file, specifier], false, [file, abs])
       continue
     }
-    const subChain = graph.walk(abs, depContent)
-    if (subChain !== undefined) {
-      // `subChain` starts at the resolved dependency; the route names it by its as-written specifier.
-      flag([file, specifier, ...subChain.slice(1)], false)
+    const sub = graph.walk(abs, depContent)
+    if (sub !== undefined) {
+      // `sub` starts at the resolved dependency; the route names it by its as-written specifier.
+      flag([file, specifier, ...sub.chain.slice(1)], false, [file, ...sub.modules])
       continue
     }
     // (3) The `../db` convention with no deeper sink found: still surface the direct edge.
