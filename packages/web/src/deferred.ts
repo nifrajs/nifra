@@ -165,25 +165,29 @@ export function ndjsonStream(
   deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
   codec: TransportCodec = plainJsonCodec,
 ): ReadableStream<Uint8Array> {
+  // A client that goes away cancels the body; a value settling after that has nowhere to go.
+  let cancelled = false
   return new ReadableStream({
     async start(controller) {
       controller.enqueue(NDJSON_ENCODER.encode(`${codec.encode(forClient)}\n`))
       await Promise.all(
         deferred.map(async (d) => {
+          let line: string
           try {
-            const value = await d.promise
-            controller.enqueue(NDJSON_ENCODER.encode(`${codec.encode({ i: d.id, v: value })}\n`))
+            line = codec.encode({ i: d.id, v: await d.promise })
           } catch (err) {
             // Redact: stream a stable opaque code, never the raw error text; log the real reason
             // server-side. The client's <Await> errorFallback receives this code.
             console.error("[nifra/web] deferred value rejected:", err)
-            controller.enqueue(
-              NDJSON_ENCODER.encode(`${codec.encode({ i: d.id, e: DEFERRED_ERROR_CODE })}\n`),
-            )
+            line = codec.encode({ i: d.id, e: DEFERRED_ERROR_CODE })
           }
+          if (!cancelled) controller.enqueue(NDJSON_ENCODER.encode(`${line}\n`))
         }),
       )
-      controller.close()
+      if (!cancelled) controller.close()
+    },
+    cancel() {
+      cancelled = true
     },
   })
 }

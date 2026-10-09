@@ -39,6 +39,35 @@ const stub: RenderAdapter = {
   hydrationHead: () => "<!--hydration-head-->",
 }
 
+test("cancelling the document body cancels the renderer's stream and reads no further", async () => {
+  let pulls = 0
+  let cancelled: unknown = "never"
+  const adapter: RenderAdapter = {
+    hydrationHead: () => "",
+    renderToStream: () =>
+      new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls++
+            controller.enqueue(new TextEncoder().encode(`<i>${pulls}</i>`))
+          },
+          cancel: (reason) => {
+            cancelled = reason
+          },
+        },
+        { highWaterMark: 0 },
+      ),
+  }
+  const res = await renderPage({ adapter, chain: [], data: {}, clientEntry: "/e.js" })
+  const reader = res.body!.getReader()
+  await reader.read()
+  await reader.cancel("client went away")
+  const at = pulls
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+  expect(cancelled).toBe("client went away")
+  expect(pulls).toBe(at)
+})
+
 test("renderPage builds an HTML doc: SSR markup, hydration head, data, client entry", async () => {
   const res = await renderPage({
     adapter: stub,
