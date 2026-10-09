@@ -86,7 +86,7 @@ function isLoopbackPeer(address: string): boolean {
  * DevTools plugin. Its observation adapter projects the single request span into a
  * `DevToolsEvent`; its middleware only owns the secured SSE transport.
  * When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to
- * that request owner.
+ * that request owner, and pass it `rawUrlPath: true` to list raw paths instead of route templates.
  */
 /** Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`. */
 export interface DevToolsQuery {
@@ -211,7 +211,8 @@ export function devtools(options?: DevToolsOptions | undefined) {
     if (!enabled) return app
     // Mounted as side effects: DevTools stays a type identity, so `c.trace` is not threaded here.
     // Apps that want the typed trace context add `.use(tracing())` themselves.
-    app.use(tracing({ adapters: [adapter] }))
+    // A local request log is only useful with the paths actually requested.
+    app.use(tracing({ adapters: [adapter], rawUrlPath: true }))
     app.use({
       name: "devtools-stream",
 
