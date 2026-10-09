@@ -221,7 +221,9 @@ export class EdgeServer {
         if (err instanceof Response) return err
         return render(plainError(500, "internal_error"))
       }
-      return out instanceof Response ? out : Response.json(out)
+      if (out instanceof Response) return out
+      // Core answers a handler that returns nothing with an empty 204.
+      return out === undefined ? new Response(null, { status: 204 }) : Response.json(out)
     }
 
     if (bodySchema === undefined) return dispatch(undefined, true)

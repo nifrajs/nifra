@@ -119,6 +119,19 @@ test("parity: 404 not-found envelope matches the full Server", async () => {
   expect(await wire(await edgeApp().fetch(req()))).toEqual(await wire(await coreApp().fetch(req())))
 })
 
+test("parity: a handler that returns nothing answers an empty 204", async () => {
+  const req = () => new Request("https://x.test/void", { method: "POST" })
+  const edge = await server()
+    .post("/void", () => {})
+    .fetch(req())
+  const core = await coreServer()
+    .post("/void", () => {})
+    .fetch(req())
+  expect(edge.status).toBe(204)
+  expect(edge.headers.get("content-type")).toBe(core.headers.get("content-type"))
+  expect(await wire(edge)).toEqual(await wire(core))
+})
+
 test("parity: 405 method-not-allowed + Allow header matches", async () => {
   const req = () => new Request("https://x.test/users/1", { method: "DELETE" })
   const e = await wire(await edgeApp().fetch(req()))
