@@ -1,4 +1,5 @@
-import { resolve, sep } from "node:path"
+import { realpath } from "node:fs/promises"
+import { isAbsolute, relative, resolve } from "node:path"
 import { type CompatibleReplayFile, parseCompatibleReplayFile } from "@nifrajs/core/replay"
 import { runHydrationAssurance } from "./assure-hydration.ts"
 import { checkContractsLock } from "./contracts.ts"
@@ -12,10 +13,20 @@ export interface ReplayResult {
   readonly replays?: readonly string[]
 }
 
+const within = (root: string, path: string): boolean => {
+  const rel = relative(root, path)
+  return !rel.startsWith("..") && !isAbsolute(rel)
+}
+
+const canonical = (path: string): Promise<string> => realpath(path).catch(() => path)
+
 /** Validate and dispatch one token-only replay while keeping the file inside the project root. */
 export async function runReplay(cwd: string, file: string): Promise<ReplayResult> {
-  const path = resolve(cwd, file)
-  if (path !== cwd && !path.startsWith(cwd + sep)) {
+  const root = resolve(cwd)
+  // Compared as real paths: the MCP host hands over an already-resolved file, which never starts
+  // with a root reached through a symlink, and a replay file that is itself a link must not lead out.
+  const path = await canonical(resolve(root, file))
+  if (!within(await canonical(root), path) && !within(root, path)) {
     throw new Error("replay file must stay inside the project root")
   }
   const replay = parseCompatibleReplayFile(JSON.parse(await Bun.file(path).text()))

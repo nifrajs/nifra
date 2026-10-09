@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineReplayFile } from "@nifrajs/core/replay"
@@ -246,6 +246,19 @@ describe("agent verification surfaces", () => {
     await writeFile(join(dir, ".nifra", "replays", "contracts.json"), `${JSON.stringify(replay)}\n`)
     expect((await runReplay(dir, ".nifra/replays/contracts.json")).ok).toBe(true)
     await expect(runReplay(dir, "../outside.json")).rejects.toThrow(
+      "replay file must stay inside the project root",
+    )
+
+    // A project reached through a symlink, handed the real path of its file as the MCP host does.
+    const link = join(ROOT, "replay-link")
+    await symlink(dir, link)
+    const real = join(await realpath(dir), ".nifra", "replays", "contracts.json")
+    expect((await runReplay(link, real)).ok).toBe(true)
+
+    // A replay file that is itself a link out of the project is refused.
+    await writeFile(join(ROOT, "outside.json"), `${JSON.stringify(replay)}\n`)
+    await symlink(join(ROOT, "outside.json"), join(dir, ".nifra", "replays", "escape.json"))
+    await expect(runReplay(dir, ".nifra/replays/escape.json")).rejects.toThrow(
       "replay file must stay inside the project root",
     )
   })
