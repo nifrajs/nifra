@@ -90,12 +90,20 @@ export interface JwksOptions {
   readonly fetch?: typeof fetch
   readonly cacheMs?: number
   /**
-   * Extra time to keep using the last successful key set when refresh fails.
-   * Defaults to one cache window; set `0` to fail closed immediately on refresh errors.
+   * Extra time to keep using the last successful key set past `cacheMs`. Inside it a request is
+   * answered from that set at once while one refresh runs behind it, so a slow or failing identity
+   * provider holds no request. Defaults to one cache window; set `0` to wait for every refresh and
+   * fail closed on refresh errors.
    */
   readonly staleMs?: number
   readonly timeoutMs?: number
   readonly maxBytes?: number
+  /**
+   * Least time (ms) between the refreshes a token with a `kid` the cached set lacks may start, so a
+   * newly rotated key is picked up without made-up `kid`s turning every request into a fetch.
+   * Default 30 s.
+   */
+  readonly cooldownMs?: number
 }
 
 const HASH: Record<JwtAlgorithm, "SHA-256" | "SHA-384" | "SHA-512"> = {
@@ -441,6 +449,9 @@ export function jwks(options: JwksOptions): JwtKeyResolver {
   const staleMs = options.staleMs ?? cacheMs
   const timeoutMs = options.timeoutMs ?? 5_000
   const maxBytes = options.maxBytes ?? 65_536
+  const cooldownMs = options.cooldownMs ?? 30_000
+  if (!Number.isFinite(cooldownMs) || cooldownMs < 0)
+    throw new Error("jwks: cooldownMs must be non-negative")
   if (!Number.isFinite(cacheMs) || cacheMs < 0)
     throw new Error("jwks: cacheMs must be non-negative")
   if (!Number.isFinite(staleMs) || staleMs < 0)
@@ -452,30 +463,49 @@ export function jwks(options: JwksOptions): JwtKeyResolver {
   }
   let cached: readonly JwkKey[] = []
   let cachedAt = 0
+  let refreshedAt = Number.NEGATIVE_INFINITY
   let pending: Promise<readonly JwkKey[]> | undefined
 
-  const load = async (): Promise<readonly JwkKey[]> => {
-    const now = Date.now()
-    if (cached.length > 0 && now - cachedAt < cacheMs) return cached
-    pending ??= fetchJwks({ url, fetch: fetcher, timeoutMs, maxBytes }).finally(() => {
-      pending = undefined
-    })
-    try {
-      cached = await pending
-      cachedAt = Date.now()
-      return cached
-    } catch (error) {
-      if (cached.length > 0 && staleMs > 0 && Date.now() - cachedAt < cacheMs + staleMs) {
-        return cached
-      }
-      throw error
+  const refresh = (): Promise<readonly JwkKey[]> => {
+    if (pending === undefined) {
+      refreshedAt = Date.now()
+      pending = fetchJwks({ url, fetch: fetcher, timeoutMs, maxBytes })
+        .then((keys) => {
+          cached = keys
+          cachedAt = Date.now()
+          return keys
+        })
+        .finally(() => {
+          pending = undefined
+        })
     }
+    return pending
+  }
+
+  const load = (): Promise<readonly JwkKey[]> => {
+    const age = Date.now() - cachedAt
+    if (cached.length > 0 && age < cacheMs) return Promise.resolve(cached)
+    if (cached.length > 0 && age < cacheMs + staleMs) {
+      refresh().catch(() => {})
+      return Promise.resolve(cached)
+    }
+    return refresh()
   }
 
   return async (header) => {
-    if (typeof header.kid !== "string" || header.kid === "") return null
-    const keys = await load()
+    const kid = header.kid
+    if (typeof kid !== "string" || kid === "") return null
     const alg = header.alg as JwtAlgorithm
-    return keys.find((key) => key.kid === header.kid && validateJwkForAlg(key, alg, header.kid))
+    const find = (keys: readonly JwkKey[]): JwkKey | undefined =>
+      keys.find((key) => key.kid === kid && validateJwkForAlg(key, alg, kid))
+    const found = find(await load())
+    if (found !== undefined) return found
+    // A kid the set lacks may be a key the provider just rotated in.
+    if (pending === undefined && Date.now() - refreshedAt < cooldownMs) return undefined
+    try {
+      return find(await refresh())
+    } catch {
+      return undefined
+    }
   }
 }

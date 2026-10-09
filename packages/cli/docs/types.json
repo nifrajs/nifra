@@ -7433,7 +7433,7 @@
     "name": "JwksOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface JwksOptions {\n    readonly url: string | URL;\n    readonly fetch?: typeof fetch;\n    readonly cacheMs?: number;\n    /**\n     * Extra time to keep using the last successful key set when refresh fails.\n     * Defaults to one cache window; set `0` to fail closed immediately on refresh errors.\n     */\n    readonly staleMs?: number;\n    readonly timeoutMs?: number;\n    readonly maxBytes?: number;\n}"
+    "signature": "export interface JwksOptions {\n    readonly url: string | URL;\n    readonly fetch?: typeof fetch;\n    readonly cacheMs?: number;\n    /**\n     * Extra time to keep using the last successful key set past `cacheMs`. Inside it a request is\n     * answered from that set at once while one refresh runs behind it, so a slow or failing identity\n     * provider holds no request. Defaults to one cache window; set `0` to wait for every refresh and\n     * fail closed on refresh errors.\n     */\n    readonly staleMs?: number;\n    readonly timeoutMs?: number;\n    readonly maxBytes?: number;\n    /**\n     * Least time (ms) between the refreshes a token with a `kid` the cached set lacks may start, so a\n     * newly rotated key is picked up without made-up `kid`s turning every request into a fetch.\n     * Default 30 s.\n     */\n    readonly cooldownMs?: number;\n}"
   },
   {
     "name": "JwtAlgorithm",
