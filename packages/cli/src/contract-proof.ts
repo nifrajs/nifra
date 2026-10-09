@@ -1,14 +1,12 @@
-import { existsSync, realpathSync } from "node:fs"
-import { resolve, sep } from "node:path"
 import type { AssuranceFinding, AssuranceReport, AssuredRoute } from "@nifrajs/core/assurance"
 import type {
   AssuredCapabilityRoute,
   CapabilityAssuranceReport,
   CapabilityFinding,
 } from "@nifrajs/core/capabilities"
-import { diffRouteSnapshots, type RouteChange, type RoutesDiff } from "@nifrajs/core/diff"
+import type { RouteChange, RoutesDiff } from "@nifrajs/core/diff"
 import type { CheckResult } from "./check.ts"
-import { DEFAULT_SNAPSHOT_FILE, parseSnapshotFile, snapshotBackend } from "./diff-tool.ts"
+import { DEFAULT_SNAPSHOT_FILE, diffAgainstBaseline } from "./diff-tool.ts"
 import { collectProjectVerification } from "./verification.ts"
 
 const routeKey = (method: string, path: string): string => `${method.toUpperCase()}\n${path}`
@@ -57,15 +55,6 @@ export interface ContractProofOptions {
   /** Run the lazy typed-contract check only when explicitly requested. */
   readonly check?: boolean
   readonly signal?: AbortSignal
-}
-
-function safeBaselinePath(cwd: string, baselinePath: string): string {
-  const root = resolve(cwd)
-  const target = resolve(root, baselinePath)
-  if (target !== root && !target.startsWith(`${root}${sep}`)) {
-    throw new Error("contract proof baseline must stay inside the project directory")
-  }
-  return target
 }
 
 function errorMessage(error: unknown): string {
@@ -144,18 +133,7 @@ export async function collectContractProof(
   options: ContractProofOptions = {},
 ): Promise<ContractProofReport> {
   const baselinePath = options.baselinePath ?? DEFAULT_SNAPSHOT_FILE
-  const resolvedBaseline = safeBaselinePath(cwd, baselinePath)
-  if (!existsSync(resolvedBaseline)) {
-    throw new Error(`contract proof baseline not found: ${resolvedBaseline}`)
-  }
-  const realRoot = realpathSync(resolve(cwd))
-  const realBaseline = realpathSync(resolvedBaseline)
-  if (realBaseline !== realRoot && !realBaseline.startsWith(`${realRoot}${sep}`)) {
-    throw new Error("contract proof baseline must stay inside the project directory")
-  }
-  const baseline = parseSnapshotFile(await Bun.file(resolvedBaseline).text(), baselinePath)
-  const current = await snapshotBackend(cwd)
-  const diff = diffRouteSnapshots(baseline.routes, current)
+  const diff = await diffAgainstBaseline(cwd, baselinePath, { contain: true })
   const verification = await collectProjectVerification(cwd, {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   })

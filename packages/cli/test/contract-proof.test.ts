@@ -73,6 +73,6 @@ describe("joined contract proof", () => {
     await mkdir(join(cwd, "backend"), { recursive: true })
     await expect(
       collectContractProof(cwd, { baselinePath: "../../outside/api-snapshot.json" }),
-    ).rejects.toThrow("must stay inside")
+    ).rejects.toThrow("is outside the project directory")
   })
 })

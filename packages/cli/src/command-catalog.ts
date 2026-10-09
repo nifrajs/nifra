@@ -502,6 +502,9 @@ interface DiffCommandOutput {
   readonly hasBreaking: boolean
   readonly changes: readonly unknown[]
 }
+interface RouteDiffCommandOutput extends DiffCommandOutput {
+  readonly text: string
+}
 interface ContractsCommandOutput {
   readonly ok: boolean
   readonly lock?: ContractsLock
@@ -1737,18 +1740,16 @@ const snapshotSpec: CommandSpec<SnapshotInput, SnapshotCommandOutput> = {
   },
   async run(value, ctx) {
     const mod = await import("./diff-tool.ts")
-    const routes = await mod.snapshotBackend(ctx.cwd)
     const file = value.out ?? mod.DEFAULT_SNAPSHOT_FILE
-    const snapshot = { nifraSnapshot: 1 as const, routes }
-    await Bun.write(resolve(ctx.cwd, file), `${JSON.stringify(snapshot, null, 2)}\n`)
-    return { ok: true, file, routes: routes.length, snapshot }
+    const snapshot = await mod.writeSnapshot(ctx.cwd, file)
+    return { ok: true, file, routes: snapshot.routes.length, snapshot }
   },
   render: (out) => [
     `[nifra] wrote ${out.routes} route${out.routes === 1 ? "" : "s"} to ${out.file}`,
   ],
 }
 
-const diffSpec: CommandSpec<DiffInput, DiffCommandOutput> = {
+const diffSpec: CommandSpec<DiffInput, RouteDiffCommandOutput> = {
   name: "diff",
   summary: "Compare the current backend contract with a baseline and fail on breaking changes.",
   input: DIFF_SCHEMA,
@@ -1765,21 +1766,17 @@ const diffSpec: CommandSpec<DiffInput, DiffCommandOutput> = {
   stability: "stable",
   argv: { positionals: ["baseline"], flags: [{ name: "json", field: "json", type: "boolean" }] },
   async run(value, ctx) {
-    const mod = await import("./diff-tool.ts")
-    const baseline = value.baseline ?? mod.DEFAULT_SNAPSHOT_FILE
-    const file = await Bun.file(resolve(ctx.cwd, baseline)).text()
-    const before = mod.parseSnapshotFile(file, baseline)
-    const current = await mod.snapshotBackend(ctx.cwd)
-    const { diffRouteSnapshots } = await import("@nifrajs/core/diff")
-    const diff = diffRouteSnapshots(before.routes, current)
-    return { ok: !diff.hasBreaking, hasBreaking: diff.hasBreaking, changes: diff.changes }
+    const { diffAgainstBaseline, formatDiff } = await import("./diff-tool.ts")
+    const diff = await diffAgainstBaseline(ctx.cwd, value.baseline)
+    return {
+      ok: !diff.hasBreaking,
+      hasBreaking: diff.hasBreaking,
+      changes: diff.changes,
+      text: formatDiff(diff),
+    }
   },
-  render: (out) => [
-    out.ok ? "✓ no breaking changes" : "✖ breaking changes",
-    ...(out.changes as readonly { method: string; path: string; message: string }[]).map(
-      (c) => `${c.method} ${c.path}: ${c.message}`,
-    ),
-  ],
+  render: (out) => [out.text],
+  json: ({ ok, hasBreaking, changes }) => ({ ok, hasBreaking, changes }),
   success: (out) => out.ok,
 }
 
