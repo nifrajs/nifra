@@ -788,18 +788,35 @@ export function toolHttpResult<Output>(result: ToolCallResult<Output>): Response
       ? { ok: true, output: result.output, dryRun: result.dryRun, evidence: result.evidence }
       : { ok: false, error: result.error, dryRun: result.dryRun, evidence: result.evidence },
   )
-  const status = result.ok
-    ? 200
-    : result.error.code === "input_invalid"
-      ? 422
-      : result.error.code === "approval_required" ||
-          result.error.code === "approval_denied" ||
-          result.error.code === "capability_denied"
-        ? 403
-        : result.error.code === "budget_exceeded"
-          ? 429
-          : 500
-  return new Response(body, { status, headers: { "content-type": "application/json" } })
+  const headers: Record<string, string> = { "content-type": "application/json" }
+  const status = result.ok ? 200 : toolErrorStatus(result.error.code)
+  // The idempotency refusals answer as the HTTP idempotency lane does, a retry included.
+  if (!result.ok && retryableIdempotency(result.error.code)) headers["retry-after"] = "1"
+  return new Response(body, { status, headers })
+}
+
+function retryableIdempotency(code: ToolError["code"]): boolean {
+  return code === "idempotency_in_flight" || code === "idempotency_capacity"
+}
+
+function toolErrorStatus(code: ToolError["code"]): number {
+  switch (code) {
+    case "input_invalid":
+      return 422
+    case "approval_required":
+    case "approval_denied":
+    case "capability_denied":
+      return 403
+    case "idempotency_duplicate":
+    case "idempotency_in_flight":
+      return 409
+    case "budget_exceeded":
+      return 429
+    case "idempotency_capacity":
+      return 503
+    default:
+      return 500
+  }
 }
 
 export function toolInputJsonSchema<Input, Output>(

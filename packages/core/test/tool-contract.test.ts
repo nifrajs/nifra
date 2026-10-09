@@ -8,7 +8,9 @@ import {
   executeTool,
   MemoryToolIdempotencyStore,
   runToolContractConformance,
+  type ToolIdempotencyBeginResult,
   type ToolIdempotencyStore,
+  toolHttpResult,
 } from "../src/tool-contract.ts"
 
 const input = t.object({ name: t.string({ minLength: 1 }) })
@@ -142,6 +144,39 @@ describe("typed tool contracts", () => {
       { capabilities: ["orders.charge"], idempotency: store },
     )
     expect(duplicate).toMatchObject({ ok: false, error: { code: "idempotency_duplicate" } })
+  })
+
+  test("an idempotency refusal answers as the HTTP idempotency lane does", async () => {
+    const tool = defineTool({
+      name: "orders.refund",
+      description: "Refund an order.",
+      input,
+      output,
+      capability: "orders.refund",
+      idempotency: { scope: "request", key: (value) => value.name },
+      execute: () => ({ ok: true }),
+    })
+    const answering = (began: ToolIdempotencyBeginResult): ToolIdempotencyStore => ({
+      begin: () => began,
+      complete: () => true,
+      abandon: () => true,
+    })
+    const cases = [
+      [{ state: "duplicate" }, "idempotency_duplicate", 409, null],
+      [{ state: "in-flight" }, "idempotency_in_flight", 409, "1"],
+      [{ state: "capacity" }, "idempotency_capacity", 503, "1"],
+    ] satisfies [ToolIdempotencyBeginResult, string, number, string | null][]
+    for (const [began, code, status, retryAfter] of cases) {
+      const result = await executeTool(
+        tool,
+        { name: "a" },
+        { capabilities: ["orders.refund"], idempotency: answering(began) },
+      )
+      expect(result).toMatchObject({ ok: false, error: { code } })
+      const response = toolHttpResult(result)
+      expect(response.status).toBe(status)
+      expect(response.headers.get("retry-after")).toBe(retryAfter)
+    }
   })
 
   test("budget exhaustion fails before the executor", async () => {
