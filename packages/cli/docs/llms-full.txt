@@ -5946,6 +5946,11 @@ hand one visitor a response produced for another:
 from cache forever is correct by construction. Unhashed URLs are left to the network.
 
 -
+**Only the build's own URLs are answered, from the build's own cache.** Any other request,
+an API call included, goes to the network untouched, and a cache the page or another app
+stored on the origin is never read.
+
+-
 **Documents are never cached.** Only navigations that FAIL are answered, and only with the
 offline page you nominate - which must be static and user-independent, since every visitor
 gets the same bytes. Caching HTML is how a worker serves one signed-in user the page rendered

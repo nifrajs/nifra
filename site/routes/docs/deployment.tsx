@@ -198,6 +198,11 @@ export default function Deployment() {
           from cache forever is correct by construction. Unhashed URLs are left to the network.
         </li>
         <li>
+          <b>Only the build's own URLs are answered, from the build's own cache.</b> Any other request,
+          an API call included, goes to the network untouched, and a cache the page or another app
+          stored on the origin is never read.
+        </li>
+        <li>
           <b>Documents are never cached.</b> Only navigations that FAIL are answered, and only with the
           offline page you nominate - which must be static and user-independent, since every visitor
           gets the same bytes. Caching HTML is how a worker serves one signed-in user the page rendered

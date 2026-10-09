@@ -14,7 +14,9 @@
  *   - **The cache name carries the build id.** A deploy that changed the assets gets a new cache, and
  *     activation deletes every older one, so a stale worker cannot pin an old build indefinitely.
  *     Only caches named `<cacheName>:<buildId>` are the worker's: the origin's other caches - another
- *     app's, or data the page stored itself - are left alone.
+ *     app's, or data the page stored itself - are never read, written or deleted.
+ *   - **Only this build's precached URLs are answered.** Every other request, an API call included,
+ *     goes to the network untouched.
  *
  * It is opt-in and generated at build time; an app that does not call this ships nothing.
  */
@@ -109,6 +111,8 @@ export function generateServiceWorker(
 const OWNED = ${JSON.stringify(`${prefix}:`)}
 const CACHE = OWNED + ${JSON.stringify(options.buildId)}
 const PRECACHE = ${JSON.stringify(urls)}
+const OWN_URLS = new Set(PRECACHE)
+const OWN = { cacheName: CACHE }
 const OFFLINE = ${offline === undefined ? "null" : JSON.stringify(offline)}
 
 self.addEventListener("install", (event) => {
@@ -138,20 +142,25 @@ self.addEventListener("fetch", (event) => {
   // how one user gets served the page rendered for another, so nothing is stored here.
   if (request.mode === "navigate") {
     if (OFFLINE === null) return
-    event.respondWith(fetch(request).catch(() => caches.match(OFFLINE).then((r) => r ?? Response.error())))
+    event.respondWith(
+      fetch(request).catch(() => caches.match(OFFLINE, OWN).then((r) => r ?? Response.error())),
+    )
     return
   }
 
-  // Assets: cache first, because every precached URL is content-hashed and therefore immutable.
+  // Assets: cache first, because every precached URL is content-hashed and therefore immutable. Only
+  // this build's URLs are answered, and only from this build's cache: every other request, an API
+  // call included, goes to the network, and another cache on the origin is never read.
+  if (!OWN_URLS.has(url.pathname)) return
   event.respondWith(
-    caches.match(request).then((hit) => {
+    caches.match(request, OWN).then((hit) => {
       if (hit !== undefined) return hit
       return fetch(request).then((response) => {
         const cacheable =
           response.ok &&
           response.type === "basic" &&
           !(response.headers.get("cache-control") ?? "").includes("no-store")
-        if (cacheable && PRECACHE.includes(url.pathname)) {
+        if (cacheable) {
           const copy = response.clone()
           void caches.open(CACHE).then((c) => c.put(request, copy))
         }
