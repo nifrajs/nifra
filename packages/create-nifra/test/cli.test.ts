@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import ts from "typescript"
 import { githubDeployWorkflow, parseArgs, run, scaffold } from "../src/cli.ts"
 import { SHARED_SITE_FILES } from "../src/scaffold/site.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
@@ -794,6 +795,20 @@ describe("scaffold - --db (Drizzle presets)", () => {
       )
       expect(unzoned).toEqual([])
     })
+  }
+
+  // Bun runs a `./schema.ts` import as written; tsc accepts it only with allowImportingTsExtensions.
+  for (const template of ["site", "isr", "api", "batteries"] as const) {
+    test(`the ${template} scaffold with --db typechecks its .ts-suffixed imports`, async () => {
+      const dir = await freshDir(`ts-ext-${template}`)
+      await scaffold({ target: dir, template, db: "drizzle-sqlite" })
+      const config = ts.readConfigFile(join(dir, "tsconfig.json"), ts.sys.readFile)
+      const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dir)
+      const program = ts.createProgram(parsed.fileNames, parsed.options)
+      // Dependencies are not installed here, so only the import-extension rule is in scope.
+      const refused = ts.getPreEmitDiagnostics(program).filter(({ code }) => code === 5097)
+      expect(refused.map(({ file }) => file?.fileName)).toEqual([])
+    }, 60_000)
   }
 
   test("without --db the app stays db-free (no backend/db/ directory)", async () => {

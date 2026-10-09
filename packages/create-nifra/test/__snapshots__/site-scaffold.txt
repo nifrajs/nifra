@@ -194,6 +194,7 @@ export const target = "bun"
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": [
       "bun",
       "react",
@@ -412,6 +413,7 @@ export const target = "bun"
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": [
       "bun"
     ],
@@ -637,6 +639,7 @@ export const target = "bun"
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": [
       "bun"
     ],
@@ -854,6 +857,7 @@ export const target = "bun"
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": [
       "bun",
       "svelte"
@@ -1080,6 +1084,7 @@ export const target = "bun"
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": [
       "bun"
     ],

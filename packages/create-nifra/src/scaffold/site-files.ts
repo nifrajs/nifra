@@ -85,6 +85,8 @@ export function renderTsconfig(framework: FrameworkSpec): string {
       skipLibCheck: true,
       noEmit: true,
       verbatimModuleSyntax: true,
+      // The `--db` modules import their siblings as `./schema.ts`, the way Bun runs them.
+      allowImportingTsExtensions: true,
       types: ["bun", ...(ts.types ?? [])],
       // Merges the generated `.nifra/types` tree in, so a route imports its types as `./+types/<name>`.
       rootDirs: [".", "./.nifra/types"],
