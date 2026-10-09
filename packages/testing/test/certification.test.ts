@@ -218,6 +218,49 @@ describe("portable adapter certification", () => {
     expect(jobs.ok).toBe(true)
   })
 
+  test("a store that honors expiry on the wall clock passes; shared leases and unsafe keys fail", async () => {
+    const wallClock = await certifyAdapter({
+      profile: cacheStoreCertificationProfile(),
+      adapterId: "wall-clock-cache",
+      createAdapter: () => new MemoryCache({ now: () => Date.now() }),
+    })
+    expect(wallClock.ok).toBe(true)
+
+    // Every worker that asks is handed the same job: a lease that hides nothing.
+    const sharing = await certifyAdapter({
+      profile: jobStoreCertificationProfile(),
+      adapterId: "sharing-jobs",
+      createAdapter: () => {
+        const store = new MemoryJobStore()
+        const lease = store.lease.bind(store)
+        store.lease = (now, limit) => lease(now, limit, 0)
+        return store
+      },
+    })
+    expect(sharing.checks.filter((check) => !check.ok).map((check) => check.id)).toEqual([
+      "lease-exclusive",
+    ])
+
+    class TraversingStorage extends MemoryStorage {
+      // Writes `../x` as `x`: the key escapes its namespace instead of being refused.
+      override put(
+        key: string,
+        data: Parameters<MemoryStorage["put"]>[1],
+        options?: Parameters<MemoryStorage["put"]>[2],
+      ) {
+        return super.put(key.replace(/^(?:\.\.\/)+/, ""), data, options)
+      }
+    }
+    const traversing = await certifyAdapter({
+      profile: storageAdapterCertificationProfile(),
+      adapterId: "traversing-storage",
+      createAdapter: () => new TraversingStorage(),
+    })
+    expect(traversing.checks.filter((check) => !check.ok).map((check) => check.id)).toEqual([
+      "unsafe-keys",
+    ])
+  })
+
   test("traceparent round-trip is an optional job-store capability, failed by a store that drops it", async () => {
     const traced = await certifyAdapter({
       profile: jobStoreCertificationProfile({ traceparent: true }),

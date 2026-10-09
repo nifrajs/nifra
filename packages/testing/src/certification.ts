@@ -270,10 +270,11 @@ export interface CertifiableCacheStore {
 export function cacheStoreCertificationProfile(
   options: { readonly fencing?: boolean } = {},
 ): AdapterCertificationProfile<CertifiableCacheStore> {
+  // Fresh on any clock until 2100: a store that honors expiry on the wall clock must still keep it.
   const entry = (value: unknown): CertifiableCacheEntry => ({
     value,
-    staleAt: 5_000_000,
-    expiresAt: 6_000_000,
+    staleAt: 4_102_444_800_000,
+    expiresAt: 4_102_448_400_000,
   })
   const capabilities = ["roundtrip", "tag-invalidation", "clear"]
   const checks: CertificationCheck<CertifiableCacheStore>[] = [
@@ -343,7 +344,7 @@ export function cacheStoreCertificationProfile(
       },
     })
   }
-  return { id: "cache-store", version: 1, capabilities, checks }
+  return { id: "cache-store", version: 2, capabilities, checks }
 }
 
 export interface CertifiableStoredJob {
@@ -409,6 +410,19 @@ export function jobStoreCertificationProfile(
       },
     },
     {
+      // A lease hides the job from every other worker until it runs out, then hands it back.
+      id: "lease-exclusive",
+      capability: "lease-complete",
+      async run(store) {
+        const id = await store.enqueue({ name: "cert", payload: null, runAt: 0, maxAttempts: 3 })
+        const first = await store.lease(0, 1, 100)
+        if (first.length !== 1 || first[0]?.id !== id) throw new Error("JobLease")
+        if ((await store.lease(50, 1, 100)).length !== 0) throw new Error("JobLeaseShared")
+        const expired = await store.lease(101, 1, 100)
+        if (expired.length !== 1 || expired[0]?.id !== id) throw new Error("JobLeaseExpiry")
+      },
+    },
+    {
       id: "retry-schedule",
       capability: "retry-schedule",
       async run(store) {
@@ -463,7 +477,7 @@ export function jobStoreCertificationProfile(
       },
     })
   }
-  return { id: "job-store", version: 1, capabilities, checks }
+  return { id: "job-store", version: 2, capabilities, checks }
 }
 
 export interface CertifiableStorageObject {
@@ -504,10 +518,24 @@ export interface CertifiableStorageAdapter {
   move?(sourceKey: string, destinationKey: string): Promise<void>
 }
 
+/** Keys the storage key contract refuses: a `..` segment anywhere, an absolute path, a backslash, a
+ * NUL, and an empty, `.` or trailing segment. Refusing only `../escape` leaves the rest open. */
+const UNSAFE_STORAGE_KEYS = [
+  "../escape",
+  "cert/../../escape",
+  "/cert/absolute",
+  "cert\\..\\escape",
+  "cert/nul\0",
+  "",
+  "cert//empty-segment",
+  "cert/./dot-segment",
+  "cert/trailing/",
+]
+
 export function storageAdapterCertificationProfile(
   options: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean } = {},
 ): AdapterCertificationProfile<CertifiableStorageAdapter> {
-  const capabilities = ["object-roundtrip", "overwrite", "list-delete"]
+  const capabilities = ["object-roundtrip", "overwrite", "list-delete", "key-safety"]
   const checks: CertificationCheck<CertifiableStorageAdapter>[] = [
     {
       id: "object-roundtrip",
@@ -552,6 +580,29 @@ export function storageAdapterCertificationProfile(
         await store.delete(key)
         if ((await store.exists(key)) || (await store.get(key)) !== null)
           throw new Error("StorageDelete")
+      },
+    },
+    {
+      id: "unsafe-keys",
+      capability: "key-safety",
+      async run(store) {
+        const refuses = async (call: () => Promise<unknown>): Promise<boolean> => {
+          try {
+            await call()
+            return false
+          } catch {
+            return true
+          }
+        }
+        for (const key of UNSAFE_STORAGE_KEYS) {
+          const refused = await Promise.all([
+            refuses(() => store.put(key, "x")),
+            refuses(() => store.get(key)),
+            refuses(() => store.exists(key)),
+            refuses(() => store.delete(key)),
+          ])
+          if (refused.includes(false)) throw new Error("StorageUnsafeKey")
+        }
       },
     },
   ]
@@ -617,7 +668,7 @@ export function storageAdapterCertificationProfile(
   }
   return {
     id: "storage-adapter",
-    version: 1,
+    version: 2,
     capabilities,
     checks,
   }
