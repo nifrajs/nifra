@@ -231,3 +231,35 @@ describe("generateRegressionTest", () => {
     expect(code).not.toContain("<redacted>")
   })
 })
+
+describe("generateRegressionTest emits captured values only as data", () => {
+  const hostilePath = '/x", () => {}); globalThis.__pwned = 1; describe("y'
+
+  test("a hostile path or status stays inside one string literal", async () => {
+    const capsule = await captureIncident(
+      { method: "GET", path: hostilePath },
+      { status: 500 },
+      { id: "inc_1", capturedAt: "t" },
+    )
+    const source = generateRegressionTest(capsule)
+    const describeLine = source.split("\n").find((line) => line.startsWith("describe("))
+    const title = describeLine?.slice("describe(".length, -", () => {".length)
+    expect(JSON.parse(title ?? "null")).toBe(`regression: GET ${hostilePath}`)
+    const itLine = source.split("\n").find((line) => line.trimStart().startsWith("it("))
+    expect(itLine?.trim()).toBe('it("reproduces status 500", async () => {')
+  })
+
+  test("the import path is a string literal and the export must be an identifier", async () => {
+    const capsule = await captureIncident(
+      { method: "GET", path: "/" },
+      { status: 200 },
+      { id: "inc_2", capturedAt: "t" },
+    )
+    expect(generateRegressionTest(capsule, { importPath: '../app"; import "evil' })).toContain(
+      'from "../app\\"; import \\"evil"',
+    )
+    expect(() => generateRegressionTest(capsule, { appExport: "app } from 'x'; //" })).toThrow(
+      TypeError,
+    )
+  })
+})

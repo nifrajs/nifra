@@ -342,6 +342,10 @@ export function generateRegressionTest(
 ): string {
   const importPath = options.importPath ?? "../src/app"
   const appExport = options.appExport ?? "app"
+  if (!/^[A-Za-z_$][\w$]*$/.test(appExport))
+    throw new TypeError(
+      `generateRegressionTest: appExport must be an identifier, got ${JSON.stringify(appExport)}`,
+    )
   const allow = new Set(options.allow ?? [])
   const allowQuery = new Set(options.allowQuery ?? [])
   const query = redactRecord(capsule.request.query, allowQuery, (n) => n)
@@ -375,12 +379,12 @@ ${redacted ? '// ⚠️  SANITIZE BEFORE COMMITTING: replace every "<redacted>" 
 // Asserts the response CONTRACT (status${options.assertShape ? " + shape" : ""}) still reproduces.
 import { describe, it } from "bun:test"
 import { assertIncidentReplays, type IncidentCapsule } from "@nifrajs/testing"
-import { ${appExport} } from "${importPath}"
+import { ${appExport} } from ${JSON.stringify(importPath)}
 
 const capsule: IncidentCapsule = ${JSON.stringify(emitted, null, 2)}
 
-describe("regression: ${capsule.request.method} ${capsule.request.path}", () => {
-  it("reproduces status ${capsule.response.status}", async () => {
+describe(${JSON.stringify(`regression: ${capsule.request.method} ${capsule.request.path}`)}, () => {
+  it(${JSON.stringify(`reproduces status ${capsule.response.status}`)}, async () => {
     await assertIncidentReplays(${appExport}, capsule, { assertShape: ${options.assertShape === true} })
   })
 })
