@@ -95,6 +95,18 @@ describe("generated route types", () => {
     )
   })
 
+  test("a part-literal segment carries the params inside it", () => {
+    write("routes/post-[id].tsx", "export default () => null\n")
+    write("routes/[lang]-feed/[year]-[month].xml.tsx", "export default () => null\n")
+    writeRouteTypes({ appRoot: root })
+    expect(generated("routes/+types/post-[id].d.ts")).toContain(
+      "export type Params = { readonly id: string }",
+    )
+    expect(generated("routes/[lang]-feed/+types/[year]-[month].xml.d.ts")).toContain(
+      "export type Params = { readonly lang: string; readonly year: string; readonly month: string }",
+    )
+  })
+
   test("data is the output schema's type, and api is the registered backend's", () => {
     write(
       "backend/app.ts",

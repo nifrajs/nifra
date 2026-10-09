@@ -85,6 +85,8 @@ function routeFiles(manifest: Manifest): readonly RouteFile[] {
 const PARAM = /^\[([A-Za-z_][A-Za-z0-9_]*)\]$/
 const OPTIONAL = /^\[\[([A-Za-z_][A-Za-z0-9_]*)\]\]$/
 const CATCH_ALL = /^\[\.\.\.([A-Za-z_][A-Za-z0-9_]*)\]$/
+// A `[name]` inside a part-literal segment such as `post-[id]` or `[lang]-feed.xml`.
+const EMBEDDED_PARAM = /\[([A-Za-z_][A-Za-z0-9_]*)\]/g
 
 /** The params a route file's URL carries: its directories', plus its own name's for a page. */
 function paramsType(file: string, kind: Kind): string {
@@ -96,6 +98,9 @@ function paramsType(file: string, kind: Kind): string {
     const optional = OPTIONAL.exec(segment)
     const name = optional?.[1] ?? PARAM.exec(segment)?.[1] ?? CATCH_ALL.exec(segment)?.[1]
     if (name !== undefined) fields.push(`readonly ${name}${optional === null ? "" : "?"}: string`)
+    else
+      for (const embedded of segment.matchAll(EMBEDDED_PARAM))
+        fields.push(`readonly ${embedded[1]}: string`)
   }
   return fields.length === 0 ? "Record<string, never>" : `{ ${fields.join("; ")} }`
 }
