@@ -30,6 +30,7 @@ import {
   aggregateSizeReport,
   type BuildManifest,
   type BuildTarget,
+  type BuildTargetPlan,
   type Bundler,
   type ChunkSize,
   detectNodeBuiltinsInClient,
@@ -1616,6 +1617,26 @@ export const bunBundler: Bundler = {
     }),
 }
 
+/** Refuse a public file that shares a path with a file the target writes into the same directory: the
+ * build overwrites it, and the server would then answer that public path with its own bundle. */
+function assertNoPublicCollision(
+  plan: BuildTargetPlan,
+  publicFiles: readonly string[],
+  outDir: string,
+): void {
+  if (plan.kind !== "server" || plan.staticDir !== "") return
+  const owned = [`/${plan.outputFile}`]
+  if (plan.target === "cloudflare") owned.push("/_routes.json")
+  // Compared case-insensitively: on a case-insensitive filesystem `Server.js` is the same file.
+  const clashes = publicFiles.filter((file) => owned.includes(file.toLowerCase()))
+  if (clashes.length > 0) {
+    throw new Error(
+      `[nifra/web] public file(s) ${clashes.join(", ")} would be overwritten by the ${plan.target} ` +
+        `build's own output in ${outDir}. Rename or move them out of the public directory.`,
+    )
+  }
+}
+
 /** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */
 export async function buildTarget(
   target: BuildTarget,
@@ -1705,6 +1726,7 @@ export async function buildTargetWith(
     publicDir !== undefined && existsSync(publicDir)
       ? await copyPublicDir(publicDir, staticRoot)
       : []
+  assertNoPublicCollision(targetPlan, publicFiles, outDir)
   if (publicFiles.length > 0) {
     client = { ...client, publicFiles }
   }

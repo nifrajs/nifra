@@ -202,6 +202,34 @@ test("--target static with no prerenderable route throws a clear error", async (
   await expect(promise).rejects.toThrow(/no routes were prerendered/)
 }, 60_000)
 
+test("a public file that shares the server bundle's path is refused, not served as the bundle", async () => {
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "Server.js"), "console.log('a public script')\n")
+  const promise = buildTarget("bun", {
+    routesDir,
+    outDir: join(projectRoot, "dist-public-clash"),
+    workDir: join(projectRoot, ".work-public-clash"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  await expect(promise).rejects.toThrow(
+    /public file\(s\) \/Server\.js would be overwritten by the bun/,
+  )
+}, 60_000)
+
+test("cloudflare refuses a public _routes.json, which the build writes itself", async () => {
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "_routes.json"), "{}")
+  const promise = buildTarget("cloudflare", {
+    routesDir,
+    outDir: join(projectRoot, "dist-cf-clash"),
+    workDir: join(projectRoot, ".work-cf-clash"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  await expect(promise).rejects.toThrow(/\/_routes\.json would be overwritten by the cloudflare/)
+}, 60_000)
+
 // The built Bun server's URL, read from its startup line rather than polled.
 async function listening(stdout: ReadableStream<Uint8Array>): Promise<string> {
   const decoder = new TextDecoder()
