@@ -146,7 +146,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
-    "react-server-dom-webpack": "19.2.7"
+    "react-server-dom-webpack": "19.2.8"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
@@ -154,7 +154,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
-    "react-server-dom-webpack": "19.2.7",
+    "react-server-dom-webpack": "19.2.8",
     "vite": "8.2.1"
   },
   "repository": {

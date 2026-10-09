@@ -144,9 +144,9 @@ try {
       if (packages.has(dependency)) needed.add(dependency)
   }
   const dependencies: Record<string, string> = {
-    react: "19.2.7",
-    "react-dom": "19.2.7",
-    "react-server-dom-webpack": "19.2.7",
+    react: "19.2.8",
+    "react-dom": "19.2.8",
+    "react-server-dom-webpack": "19.2.8",
     vue: "3.5.40",
     svelte: "5.56.8",
     "solid-js": "1.9.14",

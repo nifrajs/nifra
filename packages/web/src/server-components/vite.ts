@@ -112,13 +112,13 @@ export function serverComponentsPlugin(
             return (require(`${name}/package.json`) as { version: string }).version
           } catch {
             throw new Error(
-              `[nifra/components] Install ${name}@19.2.7 for the React component pipeline`,
+              `[nifra/components] Install ${name}@19.2.8 for the React component pipeline`,
             )
           }
         })
-        if (versions.some((version) => version !== "19.2.7"))
+        if (versions.some((version) => version !== "19.2.8"))
           throw new Error(
-            "[nifra/components] React, React DOM, and Flight must all use the matching 19.2.7 version",
+            "[nifra/components] React, React DOM, and Flight must all use the matching 19.2.8 version",
           )
       }
     },

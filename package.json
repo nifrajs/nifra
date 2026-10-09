@@ -123,8 +123,8 @@
     "read-yaml-file": {
       "js-yaml": "3.15.2"
     },
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "seroval": "1.6.8",
     "seroval-plugins": "1.6.8",
     "sharp": "0.35.5",
@@ -162,8 +162,8 @@
     "mdsvex": "^0.12",
     "memoirist": "^1.0.3",
     "publint": "^0.3.21",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "typescript": "6.0.3",
     "valibot": "^1.4.2",
     "wrangler": "4.131.1",

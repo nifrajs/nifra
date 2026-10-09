@@ -18,7 +18,7 @@ function publicModel(value: unknown, depth = 0): unknown {
   return value
 }
 
-/** React 19.2.7 Flight framing: remove development owners/stacks/console records before transport. */
+/** React 19.2.8 Flight framing: remove development owners/stacks/console records before transport. */
 export function publicFlight(bytes: Uint8Array): Uint8Array {
   const rows: Uint8Array[] = []
   let offset = 0
