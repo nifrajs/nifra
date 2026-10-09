@@ -65,6 +65,18 @@ describe("scanServerFnExports", () => {
     ).toEqual(["a"])
   })
 
+  test("comment markers inside a string do not hide a declaration", () => {
+    const source = [
+      `export const upload = serverFn({ accept: "image/*" }, async (input) => input)`,
+      `export const remove = serverFn({ path: '//x', note: \`a /* b\` }, async (input) => input)`,
+      "/** Rename one. */",
+      `export const rename = serverFn({ quote: "say \\"/*\\"" }, async (input) => input)`,
+      "// it's a comment, its apostrophe opens no string",
+      "export const last = serverFn({}, async (input) => input)",
+    ].join("\n")
+    expect(scanServerFnExports(source)).toEqual(["upload", "remove", "rename", "last"])
+  })
+
   test("explicit type arguments are part of the declaration form", () => {
     // `serverFn<Input, Output>(...)` is idiomatic TypeScript; the scanner used to see neither a
     // declaration NOR a call in it, emitting an exportless stub that failed the build with a

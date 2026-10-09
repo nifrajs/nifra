@@ -51,15 +51,18 @@ const DECLARATION =
 const ANY_CALL = /\bserverFn\s*[<(]/g
 /** Strip line and block comments by forward index scan, so prose cannot register as code. Not a
  * regex: every regex shape for comment stripping either backtracks polynomially on adversarial
- * source or is opaque enough that reviewers cannot tell. A `//` preceded by `:` is kept (URL in a
- * string - the same heuristic the previous implementation used); an unterminated block comment
- * swallows the rest of the source, matching a real parser. */
+ * source or is opaque enough that reviewers cannot tell. String literals are stepped over, so a
+ * `"image/*"` cannot open a comment; a `//` preceded by `:` is kept (a URL outside a string); an
+ * unterminated block comment swallows the rest of the source, matching a real parser. */
 function stripComments(source: string): string {
   const parts: string[] = []
   let keepFrom = 0
   let i = 0
   while (i < source.length) {
-    if (source.startsWith("/*", i)) {
+    const char = source[i]
+    if (char === '"' || char === "'" || char === "`") {
+      i = stringEnd(source, i)
+    } else if (source.startsWith("/*", i)) {
       const close = source.indexOf("*/", i + 2)
       parts.push(source.slice(keepFrom, i))
       i = close === -1 ? source.length : close + 2
@@ -75,6 +78,21 @@ function stripComments(source: string): string {
   }
   parts.push(source.slice(keepFrom))
   return parts.join("")
+}
+
+/** The index just past the string literal opening at `start`. A quote or apostrophe string also ends
+ * at a line break, so a stray one (JSX text, a regex literal) misreads one line at most. */
+function stringEnd(source: string, start: number): number {
+  const quote = source[start]
+  let i = start + 1
+  while (i < source.length) {
+    const char = source[i]
+    if (char === "\\") i += 2
+    else if (char === quote) return i + 1
+    else if (char === "\n" && quote !== "`") return i
+    else i++
+  }
+  return source.length
 }
 
 /**
