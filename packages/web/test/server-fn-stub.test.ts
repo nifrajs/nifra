@@ -73,8 +73,11 @@ describe("scanServerFnExports", () => {
       `export const rename = serverFn({ quote: "say \\"/*\\"" }, async (input) => input)`,
       "// it's a comment, its apostrophe opens no string",
       "export const last = serverFn({}, async (input) => input)",
+      "const apostrophe = /'/ // a stray quote outside a string misreads this line only",
+      "export const after = serverFn({}, async (input) => input)",
+      "// export const ghost = serverFn({}, async (input) => input)",
     ].join("\n")
-    expect(scanServerFnExports(source)).toEqual(["upload", "remove", "rename", "last"])
+    expect(scanServerFnExports(source)).toEqual(["upload", "remove", "rename", "last", "after"])
   })
 
   test("explicit type arguments are part of the declaration form", () => {
