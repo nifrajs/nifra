@@ -15,7 +15,7 @@ import {
 import { type JsonSchema, reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
 import { autoReflectJsonSchema } from "./reflect-auto.ts"
 
-export { autoReflectJsonSchema } from "./reflect-auto.ts"
+export { autoReflectJsonSchema, explainAutoReflectJsonSchema } from "./reflect-auto.ts"
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG (deterministic mocks)

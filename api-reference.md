@@ -1770,7 +1770,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
 - **ContractCaseKind** _(type)_ - `type ContractCaseKind = "input-rejection" | "response-conformance"`
 - **ContractExpectedResponse** _(interface)_ - `interface ContractExpectedResponse`
-- **ContractTarget** _(type)_ - `type ContractTarget = "body" | "query" | "response"`
+- **ContractTarget** _(type)_ - `type ContractTarget = "headers" | "cookies" | "params" | "body" | "query" | "response"`
 - **ContractWitness** _(interface)_ - `interface ContractWitness`
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **IdempotencyWorkload** _(interface)_ - `interface IdempotencyWorkload`
@@ -4151,6 +4151,8 @@ _No named exports (side-effect entrypoint)._
   Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change one that already carries JSON Schema metadata.
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
   Create a mock server from a Nifra app's route definitions. For each route with a `schema.response`, generates a handler returning fake data that matches the response schema structure. Routes without response schemas return `{}`.
+- **explainAutoReflectJsonSchema** _(function)_ - `explainAutoReflectJsonSchema: (schema: unknown) => string | undefined`
+  Why {@link autoReflectJsonSchema} could not read a zod schema: zod is not resolvable, it is older than 4, or its converter threw. `undefined` for a schema it reads, or one that is not zod's.
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
   Generate a mock value from a schema object. Inspects JSON Schema properties (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema objects carry directly. Unsupported constraints fail closed with {@link UnsupportedMockSchemaError} rather than returning a known-invalid response.
 
@@ -4565,7 +4567,7 @@ _No named exports (side-effect entrypoint)._
 - **ContractReplay** _(interface)_ - `interface ContractReplay`
 - **ContractRuntime** _(interface)_ - `interface ContractRuntime`
   A runtime target for the same generated contract cases (for example Bun, Node, and Workers).
-- **ContractTarget** _(type)_ - `type ContractTarget = "body" | "query" | "response"`
+- **ContractTarget** _(type)_ - `type ContractTarget = "headers" | "cookies" | "params" | "body" | "query" | "response"`
 - **ContractTestApp** _(interface)_ - `interface ContractTestApp`
   Anything that exposes reflected routes and a Web-standard in-process fetch handler.
 - **ContractWitness** _(interface)_ - `interface ContractWitness`

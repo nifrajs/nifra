@@ -11024,6 +11024,14 @@ await assertAdversarialContract(app, {
 Missing, invalid, or unsynthesizable witnesses become explicit coverage gaps. The default is
 fail-closed; `requireCoverage: false` makes gaps advisory.
 
+Declared `params` and `headers` get witnesses too, validated before any
+case runs, so a body or query case is rejected by the input it mutates. The harness never
+invents credentials: `authorization`, `cookie`, `x-api-key`
+and names that look like a key, token, secret or signature come from the witness and
+`prepareRequest` only, and are never mutated. A route with a `cookies`
+schema needs `headers.cookie` in its witness, and a missing credential is a gap that
+names it.
+
 ### Auth and tenant context
 
 `prepareRequest` runs for every case and runtime. Use it to attach a test session,
@@ -14894,6 +14902,16 @@ The validator still decides which generated mutations are truly invalid; the sup
 weaken validation. A missing/invalid witness is a coverage gap, not a silent pass. Set
 `requireCoverage: false` only when gaps are intentionally advisory.
 
+Declared `params` and `headers` get witnesses too, validated before any case runs, so a body or query
+case is rejected by the input it mutates rather than by a placeholder param or a missing header. A `t`
+schema synthesizes them, the witness's `params` and `headers` override, and a route param the schema
+leaves out keeps a placeholder its pattern accepts. The harness never invents credentials:
+`authorization`, `proxy-authorization`, `cookie`, `x-api-key`, and names ending in `-key` or containing
+`token`, `secret` or `signature` come from the witness (and `prepareRequest`) only, and are never
+mutated; a schema that requires one the witness lacks is a `NO_WITNESS` gap that names it. Cookies are
+never synthesized either: a route with a `cookies` schema needs `headers.cookie` in its witness. A
+params or header field typed as bare text accepts any text, so it is not a `NO_REJECTED_MUTATION` gap.
+
 To exercise adapter parity, pass runtime fetch targets. The reflected `app` remains the one source of
 the contract:
 
@@ -14915,10 +14933,12 @@ laboratory at production.
 ### Opaque validators (zod / valibot / arktype)
 
 A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
-automatically. A Standard Schema validator that carries no JSON Schema (zod, valibot, arktype) validates
+automatically. A Standard Schema validator that carries no JSON Schema (valibot, arktype) validates
 requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
-type-confusion mutations. Pass `reflectJsonSchema` to convert such a validator; for zod, use the shipped
-bridge:
+type-confusion mutations. A zod schema is converted automatically with the project's own zod 4
+(resolved from the project directory first, then from this package); when it cannot be, the gap says
+why: zod is not resolvable, it is older than 4, or its converter threw. Pass `reflectJsonSchema` to
+convert any other validator, or to choose the zod bridge explicitly:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"
@@ -15728,7 +15748,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/mock
 
-`MockServer`, `MockServerOptions`, `MockableApp`, `MockableRoute`, `UnsupportedMockSchemaError`, `autoReflectJsonSchema`, `createMockServer`, `generateMockValue`
+`MockServer`, `MockServerOptions`, `MockableApp`, `MockableRoute`, `UnsupportedMockSchemaError`, `autoReflectJsonSchema`, `createMockServer`, `explainAutoReflectJsonSchema`, `generateMockValue`
 
 ## @nifrajs/node
 

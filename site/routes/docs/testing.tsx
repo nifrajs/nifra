@@ -153,6 +153,15 @@ export default function ContractTesting() {
         Missing, invalid, or unsynthesizable witnesses become explicit coverage gaps. The default is
         fail-closed; <code>requireCoverage: false</code> makes gaps advisory.
       </p>
+      <p>
+        Declared <code>params</code> and <code>headers</code> get witnesses too, validated before any
+        case runs, so a body or query case is rejected by the input it mutates. The harness never
+        invents credentials: <code>authorization</code>, <code>cookie</code>, <code>x-api-key</code>{" "}
+        and names that look like a key, token, secret or signature come from the witness and{" "}
+        <code>prepareRequest</code> only, and are never mutated. A route with a <code>cookies</code>{" "}
+        schema needs <code>headers.cookie</code> in its witness, and a missing credential is a gap that
+        names it.
+      </p>
 
       <h2>Auth and tenant context</h2>
       <p>

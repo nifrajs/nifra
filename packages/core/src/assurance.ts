@@ -48,7 +48,7 @@ export { withRouteAssurance }
 /** Isolated request executor used by adversarial contract verification. */
 export type InvariantExecutor = (request: Request) => Response | Promise<Response>
 
-export type ContractTarget = "body" | "query" | "response"
+export type ContractTarget = "headers" | "cookies" | "params" | "body" | "query" | "response"
 export type ContractCaseKind = "input-rejection" | "response-conformance"
 export type ContractAuthContext = "authenticated" | "unauthenticated"
 
