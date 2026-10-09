@@ -273,7 +273,9 @@ export default function Rendering() {
         <code>KVCacheStore</code> wraps a Workers KV namespace; any backend that fits the small{" "}
         <code>CacheStore</code> interface (Redis, the Cache API) works too. Every read is validated
         before it's trusted, so a corrupt or version-skewed entry is treated as a miss, not served
-        broken.
+        broken. A store that also implements <code>fence()</code> keeps a purge that lands while a
+        page renders from being undone when that render stores the page it built from the old data;
+        both built-in stores do.
       </p>
       <CodeBlock code={KV} />
       <p>

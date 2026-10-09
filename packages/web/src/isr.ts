@@ -23,6 +23,9 @@ export interface CachedResponse {
   readonly revalidate: number
   /** Public, bounded invalidation labels. A tag purge makes matching entries miss immediately. */
   readonly tags?: readonly string[]
+  /** The store's {@link CacheStore.fence} as the render behind this entry began. A store that keeps
+   * purge order skips the write when this key or one of its tags was purged after it. */
+  readonly fence?: number | undefined
 }
 
 /**
@@ -40,6 +43,13 @@ export interface CacheStore {
   delete(key: string): Promise<void>
   /** Drop every cached response carrying `tag`, when the backend supports tag invalidation. */
   readonly invalidateTag?: (tag: string) => Promise<void>
+  /**
+   * The current point in this store's purge order. `withISR` takes one before each render and hands it
+   * back as {@link CachedResponse.fence}, and `set` skips that entry when its key or one of its tags
+   * was purged after the point. Without it, a purge that lands while a page renders is undone when the
+   * render stores the page it built from data read before the purge.
+   */
+  readonly fence?: () => number | Promise<number>
 }
 
 const ISR_TAG_PATTERN = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
@@ -146,6 +156,10 @@ export class MemoryCacheStore implements CacheStore {
   >()
   private readonly max: number
   private readonly tagEpoch = new Map<string, string>()
+  // Purge order: `fence` reads it; each purge advances it and records where, per key and per tag.
+  private order = 0
+  private readonly purgedKeys = new Map<string, number>()
+  private readonly purgedTags = new Map<string, number>()
 
   constructor(options: MemoryCacheStoreOptions = {}) {
     const isProd = typeof process !== "undefined" && process.env?.NODE_ENV === "production"
@@ -189,8 +203,14 @@ export class MemoryCacheStore implements CacheStore {
     return Promise.resolve(value)
   }
 
+  fence(): number {
+    return this.order
+  }
+
   set(key: string, value: CachedResponse): Promise<void> {
     const tags = normalizeTags(value.tags)
+    if (value.fence !== undefined && this.purgedAfter(key, tags, value.fence))
+      return Promise.resolve()
     const tagEpochs: Record<string, string> = {}
     for (const tag of tags) tagEpochs[tag] = this.tagEpoch.get(tag) ?? "0"
     this.cache.delete(key) // re-insert at the tail so Map order tracks recency (with get) for the LRU evict
@@ -206,6 +226,7 @@ export class MemoryCacheStore implements CacheStore {
 
   delete(key: string): Promise<void> {
     this.cache.delete(key)
+    this.markPurged(this.purgedKeys, key)
     this.pruneTagEpochs()
     return Promise.resolve()
   }
@@ -213,6 +234,7 @@ export class MemoryCacheStore implements CacheStore {
   invalidateTag(tag: string): Promise<void> {
     normalizeTag(tag)
     this.tagEpoch.set(tag, crypto.randomUUID())
+    this.markPurged(this.purgedTags, tag)
     // This store is bounded and local, so eagerly remove matching rows. It keeps invalidation
     // immediate and lets us discard epoch keys that no retained entry references anymore.
     for (const [key, row] of this.cache) {
@@ -220,6 +242,22 @@ export class MemoryCacheStore implements CacheStore {
     }
     this.pruneTagEpochs()
     return Promise.resolve()
+  }
+
+  private purgedAfter(key: string, tags: readonly string[], fence: number): boolean {
+    if ((this.purgedKeys.get(key) ?? 0) > fence) return true
+    return tags.some((tag) => (this.purgedTags.get(tag) ?? 0) > fence)
+  }
+
+  private markPurged(marks: Map<string, number>, name: string): void {
+    marks.delete(name)
+    marks.set(name, ++this.order)
+    // Bounded like the entries: a mark matters only to a render still in flight.
+    while (marks.size > this.max) {
+      const oldest = marks.keys().next().value
+      if (oldest === undefined) break
+      marks.delete(oldest)
+    }
   }
 
   private pruneTagEpochs(): void {
@@ -318,6 +356,33 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
 }
 
 const KV_TAG_EPOCH_PREFIX = "__nifra_isr_tag_v1:"
+const KV_PURGED_AT = "__nifraPurgedAt"
+
+/** When a KV page key was purged, from the marker `delete` leaves; `-Infinity` for a page or nothing. */
+function kvPurgedAt(raw: string | null): number {
+  if (raw === null || !raw.includes(KV_PURGED_AT)) return Number.NEGATIVE_INFINITY
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null && KV_PURGED_AT in parsed) {
+      const at = parsed[KV_PURGED_AT]
+      if (typeof at === "number") return at
+    }
+  } catch {
+    // Not a marker.
+  }
+  return Number.NEGATIVE_INFINITY
+}
+
+/** When a tag epoch was written (`<time>:<uuid>`); an epoch from before epochs carried a time is older
+ * than any render. */
+function kvEpochTime(epoch: string): number {
+  const at = epoch.indexOf(":")
+  const time = at === -1 ? Number.NaN : Number(epoch.slice(0, at))
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY
+}
+
+/** Wall-clock milliseconds with a fraction, so a purge a moment after a render began orders after it. */
+const kvClock = (): number => performance.timeOrigin + performance.now()
 
 type StoredTaggedResponse = CachedResponse & {
   readonly __nifraTagEpochs?: Readonly<Record<string, string>>
@@ -390,10 +455,18 @@ export class KVCacheStore implements CacheStore {
     return value
   }
 
+  /** Wall-clock time, so purges on any instance order against it. KV is eventually consistent, so the
+   * fence holds only for purges this location has already seen. */
+  fence(): number {
+    return kvClock()
+  }
+
   async set(key: string, value: CachedResponse): Promise<void> {
-    const tags = normalizeTags(value.tags)
+    const { fence, ...entry } = value
+    if (fence !== undefined && kvPurgedAt(await this.kv.get(key)) > fence) return
+    const tags = normalizeTags(entry.tags)
     if (tags.length === 0) {
-      await this.kv.put(key, JSON.stringify(value), this.putOptions)
+      await this.kv.put(key, JSON.stringify(entry), this.putOptions)
       return
     }
     const epochs = Object.fromEntries(
@@ -401,24 +474,29 @@ export class KVCacheStore implements CacheStore {
         tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
       ),
     )
+    if (fence !== undefined && Object.values(epochs).some((epoch) => kvEpochTime(epoch) > fence)) {
+      return
+    }
     const stored: StoredTaggedResponse = {
-      ...value,
+      ...entry,
       tags,
       __nifraTagEpochs: epochs,
     }
     await this.kv.put(key, JSON.stringify(stored), this.putOptions)
   }
 
+  /** Leaves a marker rather than removing the key, so `set` can refuse a render that began before
+   * the purge. The marker reads as a miss. */
   async delete(key: string): Promise<void> {
-    await this.kv.delete(key)
+    await this.kv.put(key, JSON.stringify({ [KV_PURGED_AT]: kvClock() }), this.putOptions)
   }
 
   async invalidateTag(tag: string): Promise<void> {
     normalizeTag(tag)
     // Epoch invalidation avoids KV key enumeration and remains bounded for a tag with millions of
     // pages. Epoch keys intentionally have no expiration: an expired epoch would resurrect entries
-    // written before the invalidation when their page key still exists.
-    await this.kv.put(this.tagKey(tag), crypto.randomUUID())
+    // written before the invalidation when their page key still exists. The time orders it for `set`.
+    await this.kv.put(this.tagKey(tag), `${kvClock()}:${crypto.randomUUID()}`)
   }
 
   private tagKey(tag: string): string {
@@ -522,7 +600,7 @@ export interface ISROptions {
 }
 
 /** The store operation an {@link ISROptions.onStoreError} report is about. */
-export type ISRStoreOp = "get" | "set" | "delete"
+export type ISRStoreOp = "get" | "set" | "delete" | "fence"
 
 const STORE_FAILED = Symbol("nifra.isr.store-failed")
 const STORE_REPORT_INTERVAL_MS = 60_000
@@ -797,6 +875,13 @@ export function withISR(
       if (timer !== undefined) clearTimeout(timer)
     }
   }
+  // A store without purge order, or one whose fence failed, stores the render unfenced.
+  const fenceFor = async (key: string): Promise<number | undefined> => {
+    const { fence } = store
+    if (fence === undefined) return undefined
+    const taken = await attempt("fence", key, async () => fence.call(store))
+    return taken === STORE_FAILED ? undefined : taken
+  }
   const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
   const anonymousCookies = new Set(options.anonymousCookies ?? [])
@@ -864,6 +949,7 @@ export function withISR(
     remember: boolean,
     stored?: (entry: CachedResponse) => void,
   ): Promise<Response> => {
+    const fence = await fenceFor(key)
     const res = await app.fetch(req, platform)
     if (!isCacheablePage(judged(req), res)) {
       if (remember) rememberUncacheable(key, res)
@@ -879,6 +965,7 @@ export function withISR(
       storedAt: now(),
       revalidate: ttlMs(res),
       ...(tags.length === 0 ? {} : { tags }),
+      fence,
     }
     // A failed write still answers with the page, and still hands it to concurrent misses: whether it
     // may be shared was decided above, not by the store.
@@ -933,6 +1020,7 @@ export function withISR(
     if (regenerating.has(key)) return
     regenerating.add(key)
     try {
+      const fence = await fenceFor(key)
       const res = await app.fetch(req, platform)
       if (isCacheablePage(judged(req), res)) {
         const tags = tagsOf(res)
@@ -943,6 +1031,7 @@ export function withISR(
           storedAt: now(),
           revalidate: ttlMs(res),
           ...(tags.length === 0 ? {} : { tags }),
+          fence,
         }
         await attempt("set", key, () => store.set(key, entry))
       } else if (isInvalidationResponse(judged(req), res)) {

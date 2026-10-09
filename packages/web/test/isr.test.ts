@@ -90,7 +90,13 @@ describe("MemoryCacheStore", () => {
   })
 })
 
-import { type ISRApp, type ISROptions, type ISRPlatform, withISR } from "../src/isr.ts"
+import {
+  type ISRApp,
+  type ISROptions,
+  type ISRPlatform,
+  type ISRStoreOp,
+  withISR,
+} from "../src/isr.ts"
 
 const html = (body: string, headers: Record<string, string> = {}): Response =>
   new Response(body, { status: 200, headers: { "content-type": "text/html", ...headers } })
@@ -1031,13 +1037,27 @@ describe("KVCacheStore", () => {
     expect(await new KVCacheStore(new FakeKV()).get("/nope")).toBeUndefined()
   })
 
-  test("delete drops the key", async () => {
+  test("delete leaves a marker that reads as a miss and refuses a render begun before it", async () => {
     const kv = new FakeKV()
     const store = new KVCacheStore(kv)
     await store.set("/p", entry("x"))
+    const before = store.fence()
     await store.delete("/p")
-    expect(kv.store.has("/p")).toBe(false)
     expect(await store.get("/p")).toBeUndefined()
+    await store.set("/p", { ...entry("stale"), fence: before })
+    expect(await store.get("/p")).toBeUndefined()
+    await store.set("/p", { ...entry("fresh"), fence: store.fence() })
+    expect((await store.get("/p"))?.body).toBe("fresh")
+    // The fence is the store's business, not the page's.
+    expect(kv.store.get("/p")).not.toContain("fence")
+  })
+
+  test("a tag epoch written before epochs carried a time fences nothing", async () => {
+    const kv = new FakeKV()
+    const store = new KVCacheStore(kv)
+    kv.store.set("__nifra_isr_tag_v1:product", crypto.randomUUID())
+    await store.set("/p", { ...entry("x"), tags: ["product"], fence: store.fence() })
+    expect((await store.get("/p"))?.body).toBe("x")
   })
 
   test("a corrupt (non-JSON) entry reads as a miss, not a throw", async () => {
@@ -1418,7 +1438,7 @@ describe("revalidateEndpoint batches and the CDN after it", () => {
 })
 
 describe("withISR store failures", () => {
-  type Op = "get" | "set" | "delete"
+  type Op = ISRStoreOp
   // `fail` answers for the store: a promise it returns stands in for the call, undefined passes through.
   const failing = (
     fail: (op: Op) => Promise<never> | undefined,
@@ -1674,5 +1694,66 @@ describe("revalidateEndpoint and the data caches under the pages", () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ ok: false, error: "data_cache_invalidation_failed" })
     expect(await store.get("http://x/b")).toBeDefined()
+  })
+})
+
+describe("a purge that lands while a page renders", () => {
+  const stores: ReadonlyArray<readonly [string, () => CacheStore]> = [
+    ["MemoryCacheStore", () => new MemoryCacheStore()],
+    ["KVCacheStore", () => new KVCacheStore(new FakeKV())],
+  ]
+  for (const [name, makeStore] of stores)
+    for (const purge of ["path", "tag"] as const)
+      test(`${name}: a ${purge} purge is not undone by the render it overtook`, async () => {
+        const store = makeStore()
+        let data = "v1"
+        const started = Promise.withResolvers<void>()
+        const release = Promise.withResolvers<void>()
+        const app: ISRApp = {
+          async fetch() {
+            const read = data
+            started.resolve()
+            await release.promise
+            return new Response(`<p>${read}</p>`, {
+              headers: { "content-type": "text/html", "x-nifra-isr-tags": "product" },
+            })
+          },
+        }
+        const isr = withISR(app, { store, revalidate: 3600, now: () => 0 })
+        const first = isr(new Request("http://x/p"))
+        await started.promise
+        data = "v2"
+        if (purge === "path") await store.delete("http://x/p")
+        else await store.invalidateTag?.("product")
+        release.resolve()
+        expect(await (await first).text()).toBe("<p>v1</p>")
+
+        const next = await isr(new Request("http://x/p"))
+        expect([next.headers.get("x-nifra-isr"), await next.text()]).toEqual(["miss", "<p>v2</p>"])
+        const again = await isr(new Request("http://x/p"))
+        expect([again.headers.get("x-nifra-isr"), await again.text()]).toEqual(["hit", "<p>v2</p>"])
+      })
+
+  test("a store whose fence fails stores the render unfenced and reports it", async () => {
+    const inner = new MemoryCacheStore()
+    const reports: string[] = []
+    const store: CacheStore = {
+      get: (key) => inner.get(key),
+      set: (key, value) => inner.set(key, value),
+      delete: (key) => inner.delete(key),
+      fence: () => Promise.reject(new Error("down")),
+    }
+    const app: ISRApp = {
+      fetch: () => new Response("<p>x</p>", { headers: { "content-type": "text/html" } }),
+    }
+    const isr = withISR(app, {
+      store,
+      revalidate: 3600,
+      now: () => 0,
+      onStoreError: (_error, { op }) => reports.push(op),
+    })
+    await (await isr(new Request("http://x/p"))).text()
+    expect((await isr(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
+    expect(reports).toEqual(["fence"])
   })
 })
