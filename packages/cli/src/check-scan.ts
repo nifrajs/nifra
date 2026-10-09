@@ -2869,7 +2869,18 @@ export function scanServerOnlyImports(
 const LEGACY_SERVER_FILE = /\.server(\.[cm]?[jt]sx?)?$/
 // The explicit poison-import marker (`@nifrajs/web/backend-only`, or its retired `server-only` name) - a
 // module opting into the client-leak guard. A resolved file carrying this side-effect import is a sink.
-const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|server)-only["']/
+const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|server)-only["']/g
+
+/** Whether `content` imports the backend-only marker in code. A mention in a comment or a string,
+ * such as a note on how to opt in, marks nothing. */
+function hasBackendOnlyMarker(content: string): boolean {
+  if (!content.includes("-only")) return false
+  const positions = codePositionMask(content)
+  for (const match of content.matchAll(BACKEND_ONLY_MARKER_IMPORT)) {
+    if (positions[match.index] !== " ") return true
+  }
+  return false
+}
 
 /** A relative module specifier (`./x`, `../y`) - the only kind the SQL import lookup follows. */
 const isRelativeSpecifier = (spec: string): boolean =>
@@ -3123,7 +3134,7 @@ function chainGraph(source: ServerOnlyChainSource): ChainGraph {
           if (SERVER_FN_FILE.test(abs)) continue
           const content = read(abs)
           if (content === undefined) continue
-          if (BACKEND_ONLY_MARKER_IMPORT.test(content)) {
+          if (hasBackendOnlyMarker(content)) {
             return { chain: [...chain, spec], modules: [...modules, abs] }
           }
           seen.add(abs)
@@ -3253,7 +3264,7 @@ function serverOnlyChains(
     if (SERVER_FN_FILE.test(abs)) continue
     const depContent = graph.read(abs)
     if (depContent === undefined) continue
-    if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
+    if (hasBackendOnlyMarker(depContent)) {
       flag([file, specifier], false, [file, abs])
       continue
     }

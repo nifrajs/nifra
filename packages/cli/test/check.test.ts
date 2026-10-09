@@ -1562,6 +1562,25 @@ describe("walkServerOnlyChain - bounded transitive walk over a fake module graph
     expect(chain).toEqual(["/app/routes/m.tsx", "../secrets.ts"])
   })
 
+  test("the marker counts only as code: a mention in a comment or a string marks nothing", () => {
+    const mention =
+      '// opt in with: import "@nifrajs/web/backend-only"\n' +
+      'export const hint = `import "@nifrajs/web/backend-only"`\nexport const fmt = 1'
+    const routes: Record<string, string> = {
+      "/app/routes/m.tsx": 'import { fmt } from "../shared/fmt.ts"\nexport default () => fmt',
+      "/app/routes/n.tsx": 'import { fmt } from "../shared/re.ts"\nexport default () => fmt',
+    }
+    const g: Record<string, string> = {
+      ...routes,
+      "/app/shared/re.ts": 'export { fmt } from "./fmt.ts"\nimport "./fmt.ts"',
+      "/app/shared/fmt.ts": mention,
+    }
+    const read = (abs: string) => g[abs]
+    for (const [route, content] of Object.entries(routes)) {
+      expect(walkServerOnlyChain(route, content, resolve, read)).toBeUndefined()
+    }
+  })
+
   test("is cycle-safe (a → b → a) - never loops, returns undefined for no sink", () => {
     const g: Record<string, string> = {
       "/app/routes/c.tsx": 'import { a } from "../a.ts"\nexport default () => a',
