@@ -31,6 +31,26 @@ export interface ServerImportFinding extends SourceFinding {
   /** The server-only module specifier the route top-level-imports (e.g. `pg`, `node:fs`, `../db`). */
   readonly specifier: string
 }
+/** A hand-rolled call to the app's own API, with the `// nifra-expect NF-C002` comment covering it. */
+export interface TypedClientFinding extends SourceFinding {
+  /** Present when such a comment covers the call. `reason` is `undefined` when it gives none after
+   * its colon, and then it silences nothing. */
+  readonly expected?: { readonly reason: string | undefined }
+}
+
+/** What marks a hand-rolled own-API call as intended: a streamed POST, a foreign handler's endpoint,
+ * a static file. Only the code form; a reason after the colon is required. */
+const TYPED_CLIENT_EXPECTATION = ["NF-C002"]
+
+function typedClientFinding(
+  file: string,
+  lines: readonly string[],
+  line: number,
+): TypedClientFinding {
+  const finding = { file, line, snippet: (lines[line - 1] ?? "").trim() }
+  const expected = commentBlockExpectation(lines, line, TYPED_CLIENT_EXPECTATION)
+  return expected === undefined ? finding : { ...finding, expected }
+}
 
 // `fetch( <ws> ('|"|`) / (not /)` - a string/template arg starting with a single `/` is a relative URL,
 // i.e. same-origin = this app's own API. `(?<![.\w])` skips `.fetch(` (a method) and `prefetch(`; the
@@ -640,8 +660,8 @@ export function scanFetchText(
   file: string,
   content: string,
   externalMounts: readonly string[] = [],
-): SourceFinding[] {
-  const out: SourceFinding[] = []
+): TypedClientFinding[] {
+  const out: TypedClientFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
   GLOBAL_FETCH_CALL.lastIndex = 0
@@ -654,8 +674,7 @@ export function scanFetchText(
     if (hasLiteralNifraDataHeader(content, openParen)) continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
-    const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+    out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
   }
   return out
 }
@@ -678,8 +697,8 @@ export function scanStreamText(
   file: string,
   content: string,
   externalMounts: readonly string[] = [],
-): SourceFinding[] {
-  const out: SourceFinding[] = []
+): TypedClientFinding[] {
+  const out: TypedClientFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
   STREAM_CONSTRUCT.lastIndex = 0
@@ -690,8 +709,7 @@ export function scanStreamText(
     if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
-    const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+    out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
   }
   return out
 }

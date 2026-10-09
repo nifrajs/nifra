@@ -335,6 +335,26 @@ describe("scanFetchText - own-API fetch detection", () => {
     expect(scanFetchText("a.ts", src)).toEqual([])
   })
 
+  test("a nifra-expect NF-C002 comment rides on the finding, with its reason", () => {
+    const src = [
+      "// The chat stream is a POST that no typed client covers.",
+      "// nifra-expect NF-C002: streamed POST, read with a reader",
+      'const r = await fetch("/api/ai/chat/stream", { method: "POST" })',
+      'const s = await fetch("/logo.svg") // nifra-expect NF-C002: static file',
+      "// nifra-expect NF-C002",
+      'const u = await fetch("/users")',
+      "// nifra-expect NF-C002: separated by a blank line",
+      "",
+      'const v = await fetch("/users")',
+    ].join("\n")
+    expect(scanFetchText("a.ts", src).map((f) => [f.line, f.expected])).toEqual([
+      [3, { reason: "streamed POST, read with a reader" }],
+      [4, { reason: "static file" }],
+      [6, { reason: undefined }],
+      [9, undefined],
+    ])
+  })
+
   test("does NOT flag Nifra page-data fetches with a literal x-nifra-data header", () => {
     const src = [
       'const first = fetch("/", { headers: { "x-nifra-data": "1" } })',
@@ -390,6 +410,21 @@ describe("scanFetchText - own-API fetch detection", () => {
 })
 
 describe("scanStreamText - own-API EventSource/WebSocket detection", () => {
+  test("a nifra-expect NF-C002 comment rides on a stream finding too", () => {
+    const src = [
+      "// nifra-expect NF-C002: legacy feed, retired next release",
+      'const es = new EventSource("/feed")',
+    ].join("\n")
+    expect(scanStreamText("a.ts", src)).toEqual([
+      {
+        file: "a.ts",
+        line: 2,
+        snippet: 'const es = new EventSource("/feed")',
+        expected: { reason: "legacy feed, retired next release" },
+      },
+    ])
+  })
+
   test("flags relative-path constructions, with accurate line numbers", () => {
     const src = [
       "const a = 1",
@@ -753,6 +788,35 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     expect(importDiag?.message).toContain('server-only "../db"')
     // The fix references the exact specifier so an agent acts without re-reading the source.
     expect(importDiag?.suggestion?.steps?.join("\n")).toContain('"../db"')
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a reasoned nifra-expect NF-C002 keeps the fetch as info; one without a reason still fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(
+      join(dir, "routes", "chat.tsx"),
+      [
+        "// nifra-expect NF-C002: better-auth owns this path",
+        'export const a = () => fetch("/auth/session")',
+      ].join("\n"),
+    )
+    const expected = await collectCheckResult(dir)
+    const info = expected.diagnostics.find((d) => d.rule === "typed-client")
+    expect(expected.ok).toBe(true)
+    expect(info?.severity).toBe("info")
+    expect(info?.message).toContain("own-API fetch is expected here")
+    expect(info?.evidence).toEqual(["nifra-expect NF-C002: better-auth owns this path"])
+
+    await writeFile(
+      join(dir, "routes", "chat.tsx"),
+      ["// nifra-expect NF-C002", 'export const a = () => fetch("/auth/session")'].join("\n"),
+    )
+    const unreasoned = await collectCheckResult(dir)
+    const error = unreasoned.diagnostics.find((d) => d.rule === "typed-client")
+    expect(unreasoned.ok).toBe(false)
+    expect(error?.severity).toBe("error")
+    expect(error?.message).toContain("gives no reason after its colon")
     await rm(dir, { recursive: true, force: true })
   })
 

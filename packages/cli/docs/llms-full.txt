@@ -9295,6 +9295,12 @@ in `nifra.check.json` next to `package.json`:
 ```
 
 -
+**One call nifra cannot type.** For a single call rather than a whole prefix, such as a
+static file, put `// nifra-expect NF-C002: ` on the line or in the
+comment block above it. The finding stays in the report as info, with your reason. A comment
+with no reason silences nothing.
+
+-
 **Two repositories, one runtime.** When a linked sibling repository brings its own install
 of nifra or React, `nifra check` reports the duplicates. A reinstall in this app
 cannot remove a copy that another project installed. Declare the packages single-copy and

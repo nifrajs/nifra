@@ -75,6 +75,7 @@ import {
   scanUnresolvedRoutePaths,
   scanUntypedClient,
   type TransitiveServerImportFinding,
+  type TypedClientFinding,
   type UnresolvedRoutePathFinding,
   walkSource,
 } from "./check-scan.ts"
@@ -316,8 +317,8 @@ async function buildProjectScan(
   cwd: string,
   opts: Pick<CheckCollectionOptions, "lintsOnly" | "signal" | "loadTypeScript">,
 ): Promise<ProjectScan> {
-  const fetches: SourceFinding[] = []
-  const streams: SourceFinding[] = []
+  const fetches: TypedClientFinding[] = []
+  const streams: TypedClientFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
   const untypedClients: SourceFinding[] = []
   const removedImports: SourceFinding[] = []

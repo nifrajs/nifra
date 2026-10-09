@@ -9,6 +9,7 @@ import type {
   SourceFinding,
   StaticRouteFinding,
   TransitiveServerImportFinding,
+  TypedClientFinding,
   UnresolvedRoutePathFinding,
 } from "./check-scan.ts"
 import type { DoctorResult } from "./doctor.ts"
@@ -17,9 +18,9 @@ import type { PipelineReport } from "./pipeline-report.ts"
 import type { RulePack, SourceIndex } from "./rules/index.ts"
 
 export interface ProjectSourceFindings {
-  readonly fetches: readonly SourceFinding[]
+  readonly fetches: readonly TypedClientFinding[]
   /** Hand-rolled `new EventSource("/…")` / `new WebSocket("/…")` to the app's own streaming surface. */
-  readonly streams: readonly SourceFinding[]
+  readonly streams: readonly TypedClientFinding[]
   readonly untypedClients: readonly SourceFinding[]
   readonly removedImports: readonly SourceFinding[]
   readonly responseRoutes: readonly SourceFinding[]
