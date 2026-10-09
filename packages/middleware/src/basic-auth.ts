@@ -41,7 +41,8 @@ function reject(realm: string): Response {
 }
 
 function credentials(header: string | null): { username: string; password: string } | null {
-  if (header?.startsWith("Basic ") !== true) return null
+  // The auth-scheme is case-insensitive (RFC 9110 section 11.1): `basic` and `BASIC` are Basic too.
+  if (header == null || header.slice(0, 6).toLowerCase() !== "basic ") return null
   const raw = decodeBase64(header.slice(6).trim())
   if (raw === null) return null
   let decoded: string
