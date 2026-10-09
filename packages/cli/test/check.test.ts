@@ -1796,6 +1796,120 @@ describe("scanInterpolatedSql", () => {
       expect(scanInterpolatedSql("a.ts", byRequest, ts)).toHaveLength(1)
     })
 
+    test("a function-local const of literals or a literal ternary is static text", () => {
+      const src = [
+        "function list(desc: boolean, limit: number) {",
+        '  const dir = desc ? "DESC" : "ASC"',
+        '  const cols = "id, email"',
+        "  return db.query(`SELECT ${cols} FROM users ORDER BY id ${dir} LIMIT $1`, [limit])",
+        "}",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("join over an array that provably holds its literals is static text", () => {
+      const sources = [
+        // A module array that is only ever read.
+        ['const COLS = ["id", "email"]', 'db.query(`SELECT ${COLS.join(", ")} FROM users`)'],
+        // A frozen array, exported or not.
+        [
+          'export const COLS = Object.freeze(["id", "email"])',
+          "db.query(`SELECT ${COLS.join()} FROM users`)",
+        ],
+        // A function-local array, and an inline literal.
+        [
+          "function list() {",
+          '  const cols = ["id", "email"]',
+          '  if (cols.includes("id") && cols.length > 0) return db.query(`SELECT ${cols.join(", ")} FROM t`)',
+          '  return db.query(`SELECT ${["a", "b"].join(", ")} FROM t`)',
+          "}",
+        ],
+      ]
+      for (const lines of sources) {
+        expect([lines[0], scanInterpolatedSql("a.ts", lines.join("\n"), ts).length]).toEqual([
+          lines[0],
+          0,
+        ])
+      }
+    })
+
+    test("every form that could carry other text still flags", () => {
+      const sources = [
+        // A reassigned `let`, and a parameter.
+        ['let cols = "id"', 'cols = "x"', "db.query(`SELECT ${cols} FROM t`)"],
+        [
+          "function run(cols: string[]) {",
+          "  return db.query(`SELECT ${cols.join()} FROM t`)",
+          "}",
+        ],
+        // An array that is pushed to, passed to a call, or exported unfrozen.
+        ['const COLS = ["id"]', "COLS.push(input)", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        ['const COLS = ["id"]', "mutate(COLS)", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        ['export const COLS = ["id"]', "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        [
+          'const COLS = ["id"] as const',
+          "export { COLS }",
+          "db.query(`SELECT ${COLS.join()} FROM t`)",
+        ],
+        ['const COLS = ["id"]', "COLS.length = 0", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        // A shadowed name: the nearer binding is a parameter.
+        [
+          'const COLS = ["id"]',
+          "function run(COLS: string[]) {",
+          "  return db.query(`SELECT ${COLS.join()} FROM t`)",
+          "}",
+        ],
+        // A template with a call inside, a computed separator, a spread, and a local `let`.
+        [
+          "function run() {",
+          "  const cols = `${pick()}`",
+          "  return db.query(`SELECT ${cols} FROM t`)",
+          "}",
+        ],
+        ['const COLS = ["id"]', "db.query(`SELECT ${COLS.join(sep)} FROM t`)"],
+        ['const COLS = ["id", ...more]', "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        [
+          "function run() {",
+          '  let cols = "id"',
+          "  return db.query(`SELECT ${cols} FROM t`)",
+          "}",
+        ],
+        // A frozen array whose element is not static, and Object shadowed.
+        ["const COLS = Object.freeze([input])", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        [
+          "function run(Object: { freeze: (x: unknown) => unknown }) {",
+          '  const COLS = Object.freeze(["id"])',
+          "  return db.query(`SELECT ${COLS.join()} FROM t`)",
+          "}",
+        ],
+      ]
+      for (const lines of sources) {
+        const found = scanInterpolatedSql("a.ts", lines.join("\n"), ts).length
+        expect([lines.join(" | "), found]).toEqual([lines.join(" | "), 1])
+      }
+    })
+
+    test("an imported array is static only when frozen", () => {
+      const modules: Record<string, string> = {
+        "/p/frozen.ts": 'export const COLS = Object.freeze(["id", "email"])',
+        "/p/plain.ts": 'export const COLS = ["id", "email"]',
+      }
+      const imports = createSqlImports((_from, specifier) => {
+        const id = `/p/${specifier.replace("./", "")}`
+        const content = modules[id]
+        return content === undefined ? undefined : { id, content }
+      })
+      const scanWith = (from: string) =>
+        scanInterpolatedSql(
+          "/p/a.ts",
+          [`import { COLS } from "${from}"`, "db.query(`SELECT ${COLS.join()} FROM t`)"].join("\n"),
+          ts,
+          imports,
+        ).length
+      expect(scanWith("./frozen.ts")).toBe(0)
+      expect(scanWith("./plain.ts")).toBe(1)
+    })
+
     test("a shadowed name still flags - the module const is not what is read", () => {
       const src = [
         'const COLS = "id, name"',

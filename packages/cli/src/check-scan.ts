@@ -1235,11 +1235,12 @@ const CONST_RESOLUTION_DEPTH = 5
  * data. Pure syntax, no type checker - the same honest limit the rule already documents. What
  * resolves: string/number literals, no-substitution templates, templates whose every span resolves,
  * ternaries with both branches resolvable (BOTH branch texts are returned, so a hostile keyword in
- * either still feeds the keyword scan), `as`/`satisfies` wrappers, a module-scope `const` whose
- * initializer resolves (recursively, depth-capped), and - when `scope.imports` is configured - such a
- * `const` imported by name from another in-project module. Everything else - `let`, a parameter, a
- * call, a member access, a shadowed name, a bare-specifier import - stays unresolved and the
- * interpolation is flagged exactly as before.
+ * either still feeds the keyword scan), `as`/`satisfies` wrappers, a `const` whose initializer
+ * resolves (the nearest binding: function or block scope, then module scope; recursively,
+ * depth-capped), `.join(sep?)` over an array {@link staticArrayItems} proves, and - when
+ * `scope.imports` is configured - a module `const` imported by name from another in-project module.
+ * Everything else - `let`, a parameter, any other call, a member access, a shadowed name, a
+ * bare-specifier import - stays unresolved and the interpolation is flagged exactly as before.
  */
 function resolveStaticSqlText(
   ts: TypeScriptApi,
@@ -1271,7 +1272,11 @@ function resolveStaticSqlText(
     if (whenTrue === undefined || whenFalse === undefined) return undefined
     return `${whenTrue} ${whenFalse}`
   }
+  if (ts.isCallExpression(node)) return resolveStaticJoin(ts, node, scope, depth)
   if (ts.isIdentifier(node)) {
+    const local = localConstInitializer(ts, node)
+    if (local === "shadow") return undefined
+    if (local !== undefined) return resolveStaticSqlText(ts, local, scope, depth + 1)
     const initializer = scope.module.consts.get(node.text)
     const edge = initializer === undefined ? scope.module.imports.get(node.text) : undefined
     // Membership first: `isShadowedAt` walks a subtree, and most identifiers in a query are neither a
@@ -1300,6 +1305,202 @@ function resolveStaticSqlText(
   return undefined
 }
 
+/**
+ * The initializer of the `const` a function or block scope binds `node` to, `"shadow"` when the
+ * nearest such binding is anything else (a parameter, `let`, `var`, destructuring), or `undefined`
+ * when no scope below the module binds it - the module-scope lookup applies then.
+ */
+function localConstInitializer(
+  ts: TypeScriptApi,
+  node: TSApi.Identifier,
+): TSApi.Expression | "shadow" | undefined {
+  const source = node.getSourceFile()
+  for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
+    if (ts.isSourceFile(scope)) return undefined
+    const binding = directBinding(ts, source, scope, node.text)
+    if (binding === "shadow") return "shadow"
+    if (binding !== undefined) return binding.constant ? binding.initializer : "shadow"
+  }
+  return undefined
+}
+
+const unwrapExpression = (ts: TypeScriptApi, node: TSApi.Expression): TSApi.Expression => {
+  let current = node
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression
+  }
+  return current
+}
+
+/** `Object.freeze([...])` with `Object` unshadowed: the one array form no later code can change. */
+function frozenArrayLiteral(
+  ts: TypeScriptApi,
+  node: TSApi.Expression,
+): TSApi.ArrayLiteralExpression | undefined {
+  const call = unwrapExpression(ts, node)
+  if (!ts.isCallExpression(call) || call.arguments.length !== 1) return undefined
+  const callee = call.expression
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    callee.name.text !== "freeze" ||
+    !ts.isIdentifier(callee.expression) ||
+    callee.expression.text !== "Object" ||
+    isShadowedAt(ts, callee.expression, "Object")
+  ) {
+    return undefined
+  }
+  const array = unwrapExpression(ts, call.arguments[0]!)
+  return ts.isArrayLiteralExpression(array) ? array : undefined
+}
+
+const ARRAY_READS: ReadonlySet<string> = new Set(["join", "includes", "indexOf"])
+
+/**
+ * Whether every use of `name` in `source` other than its declaration is a call of `.join(`,
+ * `.includes(` or `.indexOf(`, or a `.length` read: then nothing pushes to, sorts, exports or hands
+ * away the array, so it still holds its literal elements. A same-named binding elsewhere only adds
+ * uses, so the answer can only err toward refusing.
+ */
+function onlyReadsArray(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+  name: string,
+  declaration: TSApi.Node,
+): boolean {
+  let ok = true
+  const visit = (node: TSApi.Node): void => {
+    if (!ok) return
+    if (ts.isIdentifier(node) && node.text === name && node !== declaration) {
+      const access = node.parent
+      const read =
+        ts.isPropertyAccessExpression(access) &&
+        access.expression === node &&
+        (access.name.text === "length"
+          ? !isWrittenTo(ts, access)
+          : ARRAY_READS.has(access.name.text) &&
+            ts.isCallExpression(access.parent) &&
+            access.parent.expression === access)
+      if (!read) ok = false
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return ok
+}
+
+/** `node` as the target of an assignment, `++`/`--`, or `delete`. */
+function isWrittenTo(ts: TypeScriptApi, node: TSApi.Node): boolean {
+  const parent = node.parent
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.left === node &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return true
+  }
+  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+    return (
+      parent.operator === ts.SyntaxKind.PlusPlusToken ||
+      parent.operator === ts.SyntaxKind.MinusMinusToken
+    )
+  }
+  return ts.isDeleteExpression(parent)
+}
+
+/**
+ * The element texts of an array `receiver` names, when the array provably still holds them: an
+ * inline literal, `Object.freeze([...])` anywhere it is bound or imported from, or a `const` array
+ * literal bound in this file, not exported, and only ever read ({@link onlyReadsArray}). `as const`
+ * is type-only and proves nothing.
+ */
+function staticArrayItems(
+  ts: TypeScriptApi,
+  receiver: TSApi.Expression,
+  scope: SqlScope,
+  depth: number,
+): readonly string[] | undefined {
+  const node = unwrapExpression(ts, receiver)
+  let array = ts.isArrayLiteralExpression(node) ? node : frozenArrayLiteral(ts, node)
+  let itemScope = scope
+  if (array === undefined && ts.isIdentifier(node)) {
+    const local = localConstInitializer(ts, node)
+    if (local === "shadow") return undefined
+    let initializer = local
+    let exported = false
+    if (initializer === undefined && !isShadowedAt(ts, node, node.text)) {
+      initializer = scope.module.consts.get(node.text)
+      exported = [...scope.module.localExports.values()].includes(node.text)
+      const edge = initializer === undefined ? scope.module.imports.get(node.text) : undefined
+      if (edge !== undefined && scope.imports !== undefined) {
+        const target = loadSqlModuleScope(ts, scope.imports, scope.module.id, edge.specifier)
+        const found =
+          target === undefined
+            ? undefined
+            : resolveExportedConst(ts, scope.imports, target, edge.exported, 1, new Set())
+        if (found === undefined) return undefined
+        // Another module's array is accepted only frozen: its own file may mutate it.
+        array = frozenArrayLiteral(ts, found.expression)
+        itemScope = { module: found.scope, imports: scope.imports }
+      }
+    }
+    if (array === undefined && initializer !== undefined) {
+      array = frozenArrayLiteral(ts, initializer)
+      const literal = unwrapExpression(ts, initializer)
+      if (
+        array === undefined &&
+        !exported &&
+        ts.isArrayLiteralExpression(literal) &&
+        ts.isVariableDeclaration(initializer.parent) &&
+        onlyReadsArray(ts, node.getSourceFile(), node.text, initializer.parent.name)
+      ) {
+        array = literal
+      }
+    }
+  }
+  if (array === undefined) return undefined
+  const items: string[] = []
+  for (const element of array.elements) {
+    if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return undefined
+    const text = resolveStaticSqlText(ts, element, itemScope, depth + 1)
+    if (text === undefined) return undefined
+    items.push(text)
+  }
+  return items
+}
+
+/** `items.join(sep?)` over a {@link staticArrayItems} array with a literal or absent separator. */
+function resolveStaticJoin(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+  scope: SqlScope,
+  depth: number,
+): string | undefined {
+  const callee = call.expression
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    callee.questionDotToken !== undefined ||
+    callee.name.text !== "join" ||
+    call.arguments.length > 1
+  ) {
+    return undefined
+  }
+  const separatorArg = call.arguments[0]
+  const separator =
+    separatorArg === undefined
+      ? ","
+      : ts.isStringLiteral(separatorArg) || ts.isNoSubstitutionTemplateLiteral(separatorArg)
+        ? separatorArg.text
+        : undefined
+  if (separator === undefined) return undefined
+  return staticArrayItems(ts, callee.expression, scope, depth + 1)?.join(separator)
+}
+
 /** A template's contribution to the shape: resolved span texts fold into `staticText` (so the
  * keyword scan still sees what a `const` carries); any unresolvable span keeps it `dynamic`. */
 function templateShape(
@@ -1323,7 +1524,9 @@ function templateShape(
  * whole file never reassigns. `"shadow"` marks a nearer binding of the name we can NOT read through (a
  * parameter, `var`, destructured, uninitialized, reassigned `let`) - it stops the outward walk so a
  * farther, resolvable const of the same name is never read in its place. */
-type ResolvableBinding = { readonly initializer: TSApi.Expression } | "shadow"
+type ResolvableBinding =
+  | { readonly initializer: TSApi.Expression; readonly constant: boolean }
+  | "shadow"
 
 /** Whether `name` is written to anywhere in the file - a plain, compound, or `++`/`--` assignment to a
  * bare identifier of that name. A `let` that is is over-cautiously refused (it might be reassigned from
@@ -1427,9 +1630,9 @@ function directBinding(
         return "shadow"
       const isConst = (list.flags & ts.NodeFlags.Const) !== 0
       const isLet = (list.flags & ts.NodeFlags.Let) !== 0
-      if (isConst) return { initializer: declaration.initializer }
+      if (isConst) return { initializer: declaration.initializer, constant: true }
       if (isLet && !isReassignedInFile(ts, source, name))
-        return { initializer: declaration.initializer }
+        return { initializer: declaration.initializer, constant: false }
       return "shadow"
     }
   }
