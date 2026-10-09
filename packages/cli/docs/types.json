@@ -12386,14 +12386,14 @@
     "name": "RouteConfigErrorCode",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type RouteConfigErrorCode = \"DUPLICATE_ROUTE\" | \"DUPLICATE_PARAM\" | \"PARAM_NAME_CONFLICT\" | \"INVALID_PATH\" | \"INVALID_PARAM_NAME\" | \"WILDCARD_NOT_LAST\" | \"INVALID_METHOD\" | \"INVALID_ASSURANCE\" | \"INVALID_IDEMPOTENCY\" | \"INVALID_WS_SEND_VALIDATION\" | \"INVALID_WIRE\" | \"INVALID_VALIDATION_ORDER\" | \"INVALID_BODY_LIMIT\" | \"PLUGIN_RECONFIGURED\";",
+    "signature": "export type RouteConfigErrorCode = \"DUPLICATE_ROUTE\" | \"DUPLICATE_PARAM\" | \"PARAM_NAME_CONFLICT\" | \"INVALID_PATH\" | \"INVALID_PARAM_NAME\" | \"WILDCARD_NOT_LAST\" | \"INVALID_METHOD\" | \"INVALID_ASSURANCE\" | \"INVALID_IDEMPOTENCY\" | \"INVALID_WS_SEND_VALIDATION\" | \"INVALID_WIRE\" | \"INVALID_VALIDATION_ORDER\" | \"INVALID_BODY_LIMIT\" | \"PLUGIN_RECONFIGURED\" | \"MOUNT_CYCLE\";",
     "doc": "/** Stable codes for boot-time (L2) route configuration failures. */"
   },
   {
     "name": "RouteConfigErrorCode",
     "kind": "type",
     "package": "nifra",
-    "signature": "export type RouteConfigErrorCode = \"DUPLICATE_ROUTE\" | \"DUPLICATE_PARAM\" | \"PARAM_NAME_CONFLICT\" | \"INVALID_PATH\" | \"INVALID_PARAM_NAME\" | \"WILDCARD_NOT_LAST\" | \"INVALID_METHOD\" | \"INVALID_ASSURANCE\" | \"INVALID_IDEMPOTENCY\" | \"INVALID_WS_SEND_VALIDATION\" | \"INVALID_WIRE\" | \"INVALID_VALIDATION_ORDER\" | \"INVALID_BODY_LIMIT\" | \"PLUGIN_RECONFIGURED\";",
+    "signature": "export type RouteConfigErrorCode = \"DUPLICATE_ROUTE\" | \"DUPLICATE_PARAM\" | \"PARAM_NAME_CONFLICT\" | \"INVALID_PATH\" | \"INVALID_PARAM_NAME\" | \"WILDCARD_NOT_LAST\" | \"INVALID_METHOD\" | \"INVALID_ASSURANCE\" | \"INVALID_IDEMPOTENCY\" | \"INVALID_WS_SEND_VALIDATION\" | \"INVALID_WIRE\" | \"INVALID_VALIDATION_ORDER\" | \"INVALID_BODY_LIMIT\" | \"PLUGIN_RECONFIGURED\" | \"MOUNT_CYCLE\";",
     "doc": "/** Stable codes for boot-time (L2) route configuration failures. */"
   },
   {

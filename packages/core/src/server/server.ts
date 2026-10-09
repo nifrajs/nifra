@@ -826,6 +826,27 @@ interface HookAuditState {
 }
 const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
 
+/** Whether `from` reaches `target` through mounts that keep the path and take a request under `path`.
+ * Module-level, not a `Server` method, so a production bundle drops it with its dev-only caller. */
+function mountLeadsBack(
+  from: unknown,
+  target: unknown,
+  path: string,
+  mountsOf: (server: Server) => readonly FetchMount[],
+  seen: Set<unknown>,
+): boolean {
+  if (from === target) return true
+  if (!(from instanceof Server) || seen.has(from)) return false
+  seen.add(from)
+  const under = (prefix: string): string => (prefix === "/" ? "/" : `${prefix}/`)
+  return mountsOf(from).some(
+    (mount) =>
+      !mount.stripPrefix &&
+      (under(path).startsWith(under(mount.path)) || under(mount.path).startsWith(under(path))) &&
+      mountLeadsBack(mount.app, target, path, mountsOf, seen),
+  )
+}
+
 /** Set by `@nifrajs/web`'s `createWebApp` on its app once the page routes are declared. */
 const PAGES_DECLARED = /* @__PURE__ */ Symbol.for("nifra.web.pagesDeclared")
 
@@ -1278,6 +1299,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       order: this.mountOrder++,
       opaque: options.opaque,
       app,
+    }
+    // Mounts run before routes: a request under this prefix that no mount on the way strips comes back
+    // here unchanged until the stack overflows, which takes the process down. Dev-time only, like the
+    // hook audit: a production define folds this away, and the first dev request would hit it anyway.
+    if (
+      hookAuditRuntime &&
+      process.env.NODE_ENV !== "production" &&
+      !mount.stripPrefix &&
+      mountLeadsBack(app, this, mount.path, (server) => server.fetchMounts, new Set())
+    ) {
+      throw new RouteConfigError(
+        "MOUNT_CYCLE",
+        `mount ${mount.path}: the app leads back to this one without stripPrefix`,
+      )
     }
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
