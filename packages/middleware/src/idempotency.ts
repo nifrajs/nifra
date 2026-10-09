@@ -197,8 +197,11 @@ export interface IdempotencyOptions {
   readonly maxBytes?: number
   /**
    * Whether a response should be cached for replay. Default: any status below 500 except 401, 403,
-   * 408, 409, 425, and 429. Those, like a transient 5xx, say the operation did not run; replaying one
-   * would refuse every retry under that key until it expired.
+   * 408, 409, 425, and 429, and the request rejections 400, 404, 405, 413, 414, 415, 422 and 431.
+   * Like a transient 5xx, those say the operation did not run: replaying one would refuse every
+   * retry under that key until it expired, and storing a rejection lets a caller fill the store
+   * with keys sent to a route that does not exist. A handler that answers 400 or 422 after a side
+   * effect should supply its own predicate.
    */
   readonly shouldCache?: (response: Response) => boolean
   /**
@@ -233,7 +236,9 @@ export interface IdempotencyOptions {
 }
 
 const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const
-const NOT_THE_OPERATIONS_ANSWER = new Set([401, 403, 408, 409, 425, 429])
+const NOT_THE_OPERATIONS_ANSWER = new Set([
+  400, 401, 403, 404, 405, 408, 409, 413, 414, 415, 422, 425, 429, 431,
+])
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function assertPositiveTtl(value: number, name: string): void {

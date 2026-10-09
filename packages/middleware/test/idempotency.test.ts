@@ -383,6 +383,29 @@ describe("idempotency middleware", () => {
   })
 })
 
+describe("idempotency and request rejections", () => {
+  test("rejected requests with fresh keys never fill the store", async () => {
+    const store = new MemoryIdempotencyStore({ maxEntries: 2 })
+    let charges = 0
+    const app = server()
+      .use(idempotency({ store }))
+      .post("/charge", () => ({ charged: ++charges }))
+    const post = (path: string, key: string) =>
+      app.fetch(
+        new Request(`http://x${path}`, {
+          method: "POST",
+          headers: { "idempotency-key": key, "content-length": "0" },
+        }),
+      )
+    for (let i = 0; i < 5; i++) expect((await post("/nope", `atk-${i}`)).status).toBe(404)
+    const first = await post("/charge", "user-1")
+    expect(first.status).toBe(200)
+    const retry = await post("/charge", "user-1")
+    expect(retry.headers.get("idempotent-replayed")).toBe("true")
+    expect(charges).toBe(1)
+  })
+})
+
 describe("idempotency with a credential outside principalHeaders", () => {
   const KEY = "k".repeat(40)
   const apps = (principalHeaders?: readonly string[]) => {
