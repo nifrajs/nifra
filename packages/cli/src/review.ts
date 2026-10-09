@@ -135,6 +135,7 @@ const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C022": "route-boundary",
   "NF-C023": "route-boundary",
   "NF-D001": "dependency",
+  "NF-D002": "dependency",
   "NF-A001": "route-assurance",
   "NF-H001": "hydration",
   "NF-H002": "hydration",

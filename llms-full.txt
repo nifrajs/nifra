@@ -7737,6 +7737,22 @@ which the server logs. Read the body in a hook with `c.req.bytes()`,
 instead: they read it once, within the route's body limit, and every reader after the hook
 replays the same bytes.
 
+### "mixed nifra versions in this workspace"
+
+Every `@nifrajs/*` package, `nifra` and `create-nifra` ship
+together at one version. `nifra doctor` (and `nifra check`, as the
+`NF-D002` advisory) reads the versions your `package.json` files pin,
+the versions installed in `node_modules` - followed to their real location, so a
+linked repository reports its own - and the running CLI. When they disagree it names each
+version and where it came from. It only reads files, and it never fails the run.
+
+The fix is `nifra upgrade <highest>`, not a hand edit of the pins: it runs
+every release's migration steps between your oldest pin and the target, then re-pins. Run it
+without `--write` first to see each planned edit. It edits files under the
+workspace root only. A symlinked package directory or `package.json` is never
+followed, and a group package installed by a link from outside the root is listed under
+"Left alone" - upgrade that repository on its own.
+
 ### Still stuck?
 
 Run `nifra check --json` as the done-gate - it surfaces the import-chain leaks,

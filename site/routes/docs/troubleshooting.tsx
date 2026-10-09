@@ -418,6 +418,24 @@ export default function Troubleshooting() {
         replays the same bytes.
       </p>
 
+      <h2 id="mixed-versions">"mixed nifra versions in this workspace"</h2>
+      <p>
+        Every <code>@nifrajs/*</code> package, <code>nifra</code> and <code>create-nifra</code> ship
+        together at one version. <code>nifra doctor</code> (and <code>nifra check</code>, as the{" "}
+        <code>NF-D002</code> advisory) reads the versions your <code>package.json</code> files pin,
+        the versions installed in <code>node_modules</code> - followed to their real location, so a
+        linked repository reports its own - and the running CLI. When they disagree it names each
+        version and where it came from. It only reads files, and it never fails the run.
+      </p>
+      <p>
+        The fix is <code>nifra upgrade &lt;highest&gt;</code>, not a hand edit of the pins: it runs
+        every release's migration steps between your oldest pin and the target, then re-pins. Run it
+        without <code>--write</code> first to see each planned edit. It edits files under the
+        workspace root only. A symlinked package directory or <code>package.json</code> is never
+        followed, and a group package installed by a link from outside the root is listed under
+        "Left alone" - upgrade that repository on its own.
+      </p>
+
       <h2>Still stuck?</h2>
       <p>
         Run <code>nifra check --json</code> as the done-gate - it surfaces the import-chain leaks,

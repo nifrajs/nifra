@@ -34,6 +34,7 @@ import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
+import { collectVersionDrift, type VersionDrift, versionDriftMessage } from "./version-drift.ts"
 import { buildScriptName } from "./workspace-link.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
@@ -178,6 +179,12 @@ export interface DoctorResult {
    * supplied and the feature versions disagree. Computed by {@link detectToolingDrift}.
    */
   readonly toolingDrift?: ToolingDrift
+  /**
+   * More than one version of the fixed release group across pins, installs and the running CLI.
+   * Advisory (never folded into `ok`); its fix is `nifra upgrade <highest>`. Computed by
+   * {@link collectVersionDrift}.
+   */
+  readonly versionDrift?: VersionDrift
   /**
    * Agent files whose MCP launch pins an `@nifrajs/cli` other than the one the project installs, so
    * the agent's server answers for a release the code no longer builds with. Advisory (never folded
@@ -829,6 +836,7 @@ export async function collectDoctorResult(
   const toolingDrift =
     opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
   const staleMcpPins = await collectStaleMcpPins(cwd).catch(() => undefined)
+  const versionDrift = collectVersionDrift(cwd, opts.cliVersion)
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
@@ -846,6 +854,7 @@ export async function collectDoctorResult(
     readiness,
     scanScope,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
+    ...(versionDrift !== undefined ? { versionDrift } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
@@ -1030,6 +1039,9 @@ export async function runDoctor(
         "for the CLI itself, run the project's own (`bunx --bun nifra doctor` from the project directory, " +
         "or ./node_modules/.bin/nifra)\n",
     )
+  }
+  if (result.versionDrift !== undefined) {
+    console.log(`⚠ ${versionDriftMessage(result.versionDrift)}\n`)
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
   // release even when the CLI running doctor matches the project.

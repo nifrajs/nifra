@@ -22,8 +22,15 @@
  * transforms are a future addition - a recipe that needs one is the signal to add the engine, not before.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname, join, relative } from "node:path"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs"
+import { dirname, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
@@ -106,6 +113,8 @@ export interface UpgradePlan {
   readonly downgrades: readonly PinChange[]
   /** Comments a release in the chain stopped honoring. Listed only, never rewritten. */
   readonly retiredMarkers: readonly RetiredMarkerSite[]
+  /** Installed group packages linked from outside the workspace root, at another version. Never edited. */
+  readonly linkedOutside: readonly LinkedGroupInstall[]
   readonly notes: readonly string[]
 }
 
@@ -427,7 +436,9 @@ const isIgnored = (path: string): boolean =>
 function scan(cwd: string, pattern: string): string[] {
   const glob = new Glob(pattern)
   const out: string[] = []
-  for (const path of glob.scanSync({ cwd, dot: false })) {
+  // The write boundary: a symlinked file or directory (a linked repository) is never yielded, so the
+  // upgrade can only edit files that live under `cwd`.
+  for (const path of glob.scanSync({ cwd, dot: false, followSymlinks: false })) {
     if (!isIgnored(path)) out.push(path)
   }
   return out.sort() // deterministic order
@@ -444,11 +455,11 @@ const groupPins = (version: string): UpgradeRecipe["pins"] => [
 ]
 
 /**
- * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
- * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
+ * with the files that declare it. `workspace:`, `link:` and other non-semver specs are not versions.
  */
-export function installedGroupVersion(cwd: string): string | null {
-  let lowest: string | null = null
+export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly string[]> {
+  const versions = new Map<string, string[]>()
   for (const rel of scan(cwd, "**/package.json")) {
     let parsed: Record<string, unknown>
     try {
@@ -462,11 +473,81 @@ export function installedGroupVersion(cwd: string): string | null {
       for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
         if (!isFixedGroup(name) || typeof spec !== "string") continue
         const version = specVersion(spec)
-        if (version !== null && (lowest === null || compareSemverSpec(version, lowest) < 0)) {
-          lowest = version
-        }
+        if (version === null) continue
+        const files = versions.get(version) ?? []
+        if (!files.includes(rel)) files.push(rel)
+        versions.set(version, files)
       }
     }
+  }
+  return versions
+}
+
+/** An installed fixed-group package, followed to its real location. */
+export interface LinkedGroupInstall {
+  readonly package: string
+  readonly path: string
+  readonly version: string
+}
+
+const packageVersionAt = (dir: string): string | undefined => {
+  try {
+    const meta: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))
+    const version = Reflect.get(Object(meta), "version")
+    return typeof version === "string" && version.length > 0 ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Every fixed-group package installed in `cwd/node_modules`, realpath-resolved so a linked repository
+ * reports its own version. `inside` is false for one that resolves outside the workspace root.
+ */
+export function installedGroupPackages(
+  cwd: string,
+): readonly (LinkedGroupInstall & { readonly inside: boolean })[] {
+  const modules = join(cwd, "node_modules")
+  const names = ["nifra", "create-nifra"].filter((name) => existsSync(join(modules, name)))
+  try {
+    for (const name of readdirSync(join(modules, "@nifrajs"))) names.push(`@nifrajs/${name}`)
+  } catch {
+    // No scoped installs.
+  }
+  let root: string
+  try {
+    root = realpathSync(cwd)
+  } catch {
+    root = cwd
+  }
+  const found: (LinkedGroupInstall & { inside: boolean })[] = []
+  for (const name of names) {
+    let path: string
+    try {
+      path = realpathSync(join(modules, name))
+    } catch {
+      continue
+    }
+    const version = packageVersionAt(path)
+    if (version === undefined) continue
+    found.push({
+      package: name,
+      path,
+      version,
+      inside: path === root || path.startsWith(root + sep),
+    })
+  }
+  return found
+}
+
+/**
+ * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
+ * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ */
+export function installedGroupVersion(cwd: string): string | null {
+  let lowest: string | null = null
+  for (const version of groupPinVersions(cwd).keys()) {
+    if (lowest === null || compareSemverSpec(version, lowest) < 0) lowest = version
   }
   return lowest
 }
@@ -523,6 +604,9 @@ export function computeUpgrade(
   const importMoves: ImportChange[] = []
   const downgrades: PinChange[] = []
   const retiredMarkers: RetiredMarkerSite[] = []
+  const linkedOutside = installedGroupPackages(cwd)
+    .filter((entry) => !entry.inside && entry.version !== recipe.version)
+    .map(({ package: name, path, version }) => ({ package: name, path, version }))
 
   if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
@@ -576,6 +660,7 @@ export function computeUpgrade(
     importMoves,
     downgrades,
     retiredMarkers,
+    linkedOutside,
     notes: recipe.notes ?? [],
   }
 }
@@ -601,7 +686,8 @@ function renderPlan(
     plan.pins.length === 0 &&
     plan.dependencyMoves.length === 0 &&
     plan.importMoves.length === 0 &&
-    plan.retiredMarkers.length === 0
+    plan.retiredMarkers.length === 0 &&
+    plan.linkedOutside.length === 0
   ) {
     lines.push("Already up to date - no changes.")
     return lines.join("\n")
@@ -640,6 +726,14 @@ function renderPlan(
       lines.push(`  ${site.file}:${site.line}  ${site.marker}  ${covers}`)
       lines.push(`    write instead: ${site.instead}`)
     }
+    lines.push("")
+  }
+  if (plan.linkedOutside.length > 0) {
+    lines.push(
+      "Left alone, linked from outside the workspace root (upgrade that repository on its own):",
+    )
+    for (const entry of plan.linkedOutside)
+      lines.push(`  ${entry.package} ${entry.version} at ${entry.path}`)
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)

@@ -25,6 +25,7 @@ import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { createWebAppProbe, withApiKindHint } from "../internal/nifra-project.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import { zoneFolderOf } from "../typecheck-coverage.ts"
+import { versionDriftMessage } from "../version-drift.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /** Legacy rule name → stable NF- code. Exported so `nifra.check.json` rule overrides can be keyed
@@ -696,6 +697,26 @@ const doctorRules: readonly CheckRule[] = Object.freeze([
   },
 ])
 
+/** Read from the doctor result check already collected; it spawns nothing and edits nothing. */
+const versionDriftRule: CheckRule = {
+  code: "NF-D002",
+  title: "Mixed nifra versions",
+  async scan(ctx) {
+    const drift = ctx.project.packages.doctor.versionDrift
+    if (drift === undefined) return []
+    return [
+      diagnostic({
+        code: "NF-D002",
+        severity: "info",
+        message: versionDriftMessage(drift),
+        evidence: drift.versions.map(({ version }) => version),
+        fix: { recipe: "upgrade.align-versions", command: `nifra upgrade ${drift.highest}` },
+        verify: "nifra doctor",
+      }),
+    ]
+  },
+}
+
 const pipelineRule: CheckRule = {
   code: LEGACY_RULE_CODES.pipeline!,
   title: TITLES.pipeline!,
@@ -1033,6 +1054,7 @@ export const legacyRules: readonly CheckRule[] = Object.freeze([
   interpolatedSqlRule,
   responseRouteRule,
   ...doctorRules,
+  versionDriftRule,
   pipelineRule,
   serverManifestRule,
   manifestRule,

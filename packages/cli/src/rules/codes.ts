@@ -41,6 +41,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C022": "nano bindList key check",
   "NF-C023": "nano computed deps check",
   "NF-D001": "Doctor check",
+  "NF-D002": "Mixed nifra versions",
   "NF-A001": "Assurance bundle check",
   "NF-H001": "Hydration mismatch",
   "NF-H002": "Duplicate framework runtime",
