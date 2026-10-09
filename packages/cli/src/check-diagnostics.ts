@@ -21,6 +21,7 @@ import {
 import type { DuplicateInstallFinding } from "./doctor.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
+import { contractVisibilityRule } from "./rules/contract-visibility.ts"
 import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
 import { islandRules } from "./rules/islands.ts"
@@ -446,6 +447,7 @@ export async function collectCheckDiagnostics(
     ...legacyRules,
     ...securityRules,
     ...routeRules,
+    contractVisibilityRule,
     ...pageRules,
     ...zoneRules,
     ...dataGuardRules,

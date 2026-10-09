@@ -11152,6 +11152,23 @@ implementation into the client.
 See [Framework contract](/docs/contract) for the decoupled form and its scaling
 guidance.
 
+The tooling reads the backend `backend/app.ts` exports. An app that
+`implement`s a contract somewhere else, such as a `createApp(deps)`
+factory, is invisible to the contract lock and the route lints until that file serves it.
+`nifra check` names each implemented operation the backend does not serve
+(NF-C039), and counts them when there is no `backend/app.ts` at all. Export the
+same app built with stand-in dependencies:
+
+```ts
+// backend/app.ts - the backend nifra's tooling reads
+import { createApp } from "../src/app"
+import { stubDeps } from "../src/stub-deps"
+
+// The real entry builds the app with real dependencies elsewhere. This one builds the same routes with
+// stand-ins, so the contract lock, the typed client checks and `nifra routes` see every operation.
+export const backend = createApp(stubDeps())
+```
+
 ### OpenAPI
 
 The `openapi()` middleware builds an OpenAPI 3.1 document from your registered

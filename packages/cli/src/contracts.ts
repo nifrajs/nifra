@@ -215,12 +215,15 @@ export async function checkContractsLock(
   present: boolean
   vacuous: boolean
   diagnostics: Array<{ route?: string; message: string }>
+  /** `METHOD /path` of every route the backend serves, read when the lock made the check load it. */
+  served?: readonly string[]
 }> {
   const path = resolve(cwd, file)
   if (!existsSync(path)) return { present: false, vacuous: false, diagnostics: [] }
   const parsed = parseContractsLock(JSON.parse(await Bun.file(path).text()))
   const current = await buildContractsLock(await loadBackend(cwd))
   const vacuous = await isVacuousLock(current)
+  const served = Object.keys(current.routes)
   const diagnostics: Array<{ route?: string; message: string }> = []
   // Digests of two formats never compare, so this still fails; it just names the real cause.
   if (parsed.digest !== undefined && parsed.digest !== CONTRACT_DIGEST_FORMAT) {
@@ -228,7 +231,7 @@ export async function checkContractsLock(
     diagnostics.push({
       message: `${file} was written with contract digest format ${parsed.digest}, but this nifra computes format ${CONTRACT_DIGEST_FORMAT}${newer ? " (a newer @nifrajs/cli wrote it; upgrade this one)" : ""}, so no route could be compared. Review the route schema changes since the lock was written, then run \`nifra contracts snapshot\` and commit the lock.`,
     })
-    return { present: true, vacuous, diagnostics }
+    return { present: true, vacuous, diagnostics, served }
   }
   const keys = new Set([...Object.keys(parsed.routes), ...Object.keys(current.routes)])
   for (const key of [...keys].sort()) {
@@ -251,5 +254,5 @@ export async function checkContractsLock(
       message: `${file} records no contract digest format. A lock written before nifra 4.0.1 hashed schemas differently, so a route reported above may not have changed. Review them, then run \`nifra contracts snapshot\` to record the format.`,
     })
   }
-  return { present: true, vacuous, diagnostics }
+  return { present: true, vacuous, diagnostics, served }
 }

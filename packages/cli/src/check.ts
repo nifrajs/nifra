@@ -275,12 +275,7 @@ async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
   const hasLock = existsSync(join(cwd, DEFAULT_CONTRACTS_LOCK))
   if (!hasBackend && !hasLock) return { present: false, vacuous: false, diagnostics: [] }
   try {
-    const result = await checkContractsLock(cwd)
-    return {
-      present: result.present,
-      vacuous: result.vacuous,
-      diagnostics: result.diagnostics,
-    }
+    return await checkContractsLock(cwd)
   } catch (error) {
     if (error instanceof Error && error.message === "contract source not configured") {
       return { present: false, vacuous: false, diagnostics: [] }

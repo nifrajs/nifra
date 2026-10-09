@@ -16,6 +16,14 @@ export const app = server()
 
 // No schema, annotation, or codegen is required for the route types.`
 
+const STUB_ENTRY = `// backend/app.ts - the backend nifra's tooling reads
+import { createApp } from "../src/app"
+import { stubDeps } from "../src/stub-deps"
+
+// The real entry builds the app with real dependencies elsewhere. This one builds the same routes with
+// stand-ins, so the contract lock, the typed client checks and \`nifra routes\` see every operation.
+export const backend = createApp(stubDeps())`
+
 const SCHEMA = `import { t } from "@nifrajs/schema"
 
 // Add a schema when the boundary needs runtime validation or a declared contract.
@@ -129,6 +137,15 @@ export default function TypesFirst() {
         See <a href="/docs/contract">Framework contract</a> for the decoupled form and its scaling
         guidance.
       </p>
+      <p>
+        The tooling reads the backend <code>backend/app.ts</code> exports. An app that{" "}
+        <code>implement</code>s a contract somewhere else, such as a <code>createApp(deps)</code>{" "}
+        factory, is invisible to the contract lock and the route lints until that file serves it.{" "}
+        <code>nifra check</code> names each implemented operation the backend does not serve
+        (NF-C039), and counts them when there is no <code>backend/app.ts</code> at all. Export the
+        same app built with stand-in dependencies:
+      </p>
+      <CodeBlock code={STUB_ENTRY} lang="ts" />
 
       <h2>OpenAPI</h2>
       <p>
