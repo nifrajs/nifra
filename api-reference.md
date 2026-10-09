@@ -5056,7 +5056,7 @@ _No named exports (side-effect entrypoint)._
 - **Meta** _(interface)_ - `interface Meta`
   The document head a route contributes - title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and ac…
 - **MetaArgs** _(interface)_ - `interface MetaArgs<Data = unknown>`
-  Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through l…
+  Args for a route's or layout's `meta` function: its own loader's `data` + the page's `pageData` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (s…
 - **MetaDescriptor** _(interface)_ - `interface MetaDescriptor`
   One managed `<meta>` tag. Standard attributes and inert `data-*` metadata only.
 - **MetaInput** _(type)_ - `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
@@ -5286,6 +5286,8 @@ _No named exports (side-effect entrypoint)._
 - **renderPage** _(function)_ - `renderPage: (options: RenderPageInput) => MaybePromise<Response>`
   Server: render a full HTML document for a page - the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module - as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
 - **renderPageResult** _(function)_ - `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
+- **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
+  Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveDynamicBoundaries** _(function)_ - `resolveDynamicBoundaries: (boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx) => Promise<BoundaryStates>`
   Resolve all dynamic boundaries concurrently. Each receives a fresh frozen context object; one failure becomes that boundary's error state and never rejects a sibling or exposes sibling data. Static/intercepting modes remain `unresolved` until their phase-specific runtime owns them.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
@@ -5546,6 +5548,8 @@ _No named exports (side-effect entrypoint)._
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
+- **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
+  Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
 - **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`

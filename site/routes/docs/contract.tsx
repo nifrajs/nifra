@@ -25,11 +25,13 @@ const SIGNATURES = `// routes/users/[id].tsx - the page: it ships to the browser
 // own backend, so it can't compile standalone (see the typed examples elsewhere).
 import type { Route } from "./+types/[id]"
 
-// Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
-// recomputes per request (its content can vary with loader data). \`origin\` is the request's
-// scheme+host (server-resolved, matches the client's location.origin) - use it for ABSOLUTE
-// canonical / og:url / og:image URLs without threading siteUrl through loader data.
-export const meta = ({ data, params, origin }) => ({
+// Static OR a function of { data, pageData, params, origin }. Static meta is serialized once; function
+// meta recomputes per request (its content can vary with loader data). \`data\` is the exporting
+// module's own loader data: a layout's meta gets its layout's (null without a loader) and reads the
+// page's as \`pageData\`. \`origin\` is the request's scheme+host (server-resolved, matches the
+// client's location.origin) - use it for ABSOLUTE canonical / og:url / og:image URLs without threading
+// siteUrl through loader data.
+export const meta = ({ data, params, origin }: Route.MetaArgs) => ({
   title: \`User \${data.name}\`,
   meta: [{ name: "description", content: data.bio }],
   link: [{ rel: "canonical", href: \`\${origin}/users/\${params.id}\` }],
@@ -251,7 +253,7 @@ export const handler = withISR(app, {
 
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
 // with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) are public
-// exports of @nifrajs/web; \`origin\` is the third MetaArgs field (after data + params).
+// exports of @nifrajs/web; \`origin\` is a MetaArgs field beside data, pageData and params.
 import { canonical, jsonLd, openGraph, type MetaArgs } from "@nifrajs/web"
 
 // CAVEAT: meta() runs in BOTH SSR and client navigation, so it has NO server env - never read

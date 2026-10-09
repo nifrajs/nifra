@@ -271,13 +271,24 @@ export interface Meta {
 }
 
 /**
- * Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`.
- * `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** -
- * `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through loader data
- * for absolute `og:url`/`canonical`/`og:image` URLs). See {@link origin}.
+ * Args for a route's or layout's `meta` function: its own loader's `data` + the page's `pageData` + the
+ * route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has
+ * **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (so you
+ * needn't thread `siteUrl` through loader data for absolute `og:url`/`canonical`/`og:image` URLs). See
+ * {@link origin}.
  */
 export interface MetaArgs<Data = unknown> {
+  /**
+   * The loader data of the module that exports this `meta`: the page's for a page, the layout's own for a
+   * layout (`null` when the layout has no loader), the same value its component receives. A layout that
+   * loads the locale sets `lang` from here, so a soft navigation keeps it.
+   */
   readonly data: Data
+  /**
+   * The page's loader data, for a layout's `meta` that builds on the page (a title template). In a page's
+   * own `meta` it is the same value as {@link data}. Always set by the framework.
+   */
+  readonly pageData?: unknown
   readonly params: Record<string, string>
   /** The resolved document CSP nonce, when this render uses per-request nonce protection. */
   readonly nonce?: string

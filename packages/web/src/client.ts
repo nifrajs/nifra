@@ -40,7 +40,7 @@ export function currentDocumentNonce(): string | undefined {
  * serves modules as written, so the browser evaluated `public-dir.ts` and died on `node:fs/promises`
  * before hydrating. The fix is for the entry not to name the server module in the first place.
  */
-export { mergeHeads, resolveMeta } from "./internal/head-merge.ts"
+export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
 export {
   getBrowserNavigate,
   IDLE_BLOCKER,

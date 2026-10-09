@@ -509,6 +509,7 @@ describe("chained upgrades", () => {
     expect(notes).toContain("export const inLayouts = false")
     expect(notes).toContain("NF-C034")
     expect(notes).toContain("nifra fix --code NF-C035")
+    expect(notes).toContain("NF-C040")
     expect(notes).toContain("app.ws()")
     expect(notes).toContain("500")
     expect(chainRecipes("5.0.0", "3.5.0").steps).toEqual(["4.0.0", "5.0.0"])

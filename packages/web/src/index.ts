@@ -85,8 +85,8 @@ export {
   generateServerManifest,
 } from "./internal/codegen.ts"
 // Generated client entries intentionally import the browser router from the client subpath:
-// `import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"`.
-export { mergeHeads, resolveMeta } from "./internal/head-merge.ts"
+// `import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"`.
+export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
 export {
   canonical,
   gone,

@@ -46,6 +46,22 @@ export function resolveMeta(meta: MetaInput | undefined, args: MetaArgs): Meta {
 }
 
 /**
+ * Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets
+ * `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its
+ * component renders. The SSR head and a soft navigation both resolve through this, so they match.
+ */
+export function resolveChainMeta(
+  metas: readonly (MetaInput | undefined)[],
+  layoutData: readonly unknown[] | undefined,
+  args: MetaArgs,
+): Meta[] {
+  const last = metas.length - 1
+  return metas.map((meta, i) =>
+    resolveMeta(meta, i < last ? { ...args, data: layoutData?.[i] ?? null } : args),
+  )
+}
+
+/**
  * Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and
  * `meta`/`link`/`script` concatenate in chain order.
  *

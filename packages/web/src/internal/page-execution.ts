@@ -40,7 +40,7 @@ import {
   STATUS_HEADER,
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
-import { mergeHeads, resolveMeta } from "./head-merge.ts"
+import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -635,16 +635,14 @@ export function createPageRequestExecutor<Env = unknown>(
 
   const resolveChainAndHead = (
     layoutModules: LoadedLayoutModules,
+    layoutData: readonly unknown[] | undefined,
     page: RouteModule,
     metaArgs: MetaArgs,
     leaf: unknown = page.default,
   ): { chain: unknown[]; head: Meta } => {
     const chain = [...layoutModules.map((m) => m.default), leaf]
-    const heads = [
-      ...layoutModules.map((m) => resolveMeta(m.meta, metaArgs)),
-      resolveMeta(page.meta, metaArgs),
-    ]
-    return { chain, head: mergeHeads(heads) }
+    const metas = [...layoutModules.map((m) => m.meta), page.meta]
+    return { chain, head: mergeHeads(resolveChainMeta(metas, layoutData, metaArgs)) }
   }
 
   /** What `useMatches` reports for a chain: the layouts' ids and `handle`s, then the page's. */
@@ -693,8 +691,8 @@ export function createPageRequestExecutor<Env = unknown>(
   /** What a status or error page's `meta` receives: no route params, and its own data. */
   const statusMetaArgs = (req: Request, data: unknown, nonce: string | undefined): MetaArgs =>
     nonce === undefined
-      ? { data, params: {}, origin: originOf(req) }
-      : { data, params: {}, origin: originOf(req), nonce }
+      ? { data, pageData: data, params: {}, origin: originOf(req) }
+      : { data, pageData: data, params: {}, origin: originOf(req), nonce }
 
   const renderError = async (
     req: Request,
@@ -743,6 +741,7 @@ export function createPageRequestExecutor<Env = unknown>(
     if (chain !== undefined) {
       const resolved = resolveChainAndHead(
         chain.modules,
+        chain.layoutData,
         errorModule,
         statusMetaArgs(req, data, nonce),
       )
@@ -855,12 +854,13 @@ export function createPageRequestExecutor<Env = unknown>(
       wraps && layouts !== undefined ? await layouts(loaded, rootLayoutIds.length) : undefined
     const modules = chain?.modules ?? []
     const layoutIds = chain === undefined ? [] : rootLayoutIds
+    const layoutData = chain?.layoutData
     const { chain: components, head } = resolveChainAndHead(
       modules,
+      layoutData,
       loaded,
       statusMetaArgs(req, null, nonce),
     )
-    const layoutData = chain?.layoutData
     let headers = extraHeaders
     if (layoutData !== undefined) {
       // The page now shows what a layout loaded for this visitor.
@@ -1007,9 +1007,11 @@ export function createPageRequestExecutor<Env = unknown>(
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
     const { chain, head } = resolveChainAndHead(
       layoutModules,
+      layoutData,
       mod,
       {
         data,
+        pageData: data,
         params,
         origin: originOf(req),
         ...(nonce === undefined ? {} : { nonce }),
@@ -1136,8 +1138,9 @@ export function createPageRequestExecutor<Env = unknown>(
     }
     const mod = await page.load()
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
-    const { chain, head } = resolveChainAndHead(layoutModules, mod, {
+    const { chain, head } = resolveChainAndHead(layoutModules, layoutData, mod, {
       data: null,
+      pageData: null,
       params,
       origin: originOf(req),
       ...(nonce === undefined ? {} : { nonce }),
@@ -1588,11 +1591,14 @@ export function createPageRequestExecutor<Env = unknown>(
           : null
         const responseHeaders = controls.documentHeaders()
         const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
+        // A no-script action answer runs only the gates, so its layouts render, and title, without data.
         const { chain, head } = resolveChainAndHead(
           layoutModules,
+          undefined,
           mod,
           {
             data,
+            pageData: data,
             params: c.params,
             origin: originOf(c.req),
             ...(nonce === undefined ? {} : { nonce }),

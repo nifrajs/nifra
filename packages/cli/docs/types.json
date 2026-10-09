@@ -8622,8 +8622,8 @@
     "name": "MetaArgs",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface MetaArgs<Data = unknown> {\n    readonly data: Data;\n    readonly params: Record<string, string>;\n    /** The resolved document CSP nonce, when this render uses per-request nonce protection. */\n    readonly nonce?: string;\n    /**\n     * The site origin - scheme + host (+ port), e.g. `\"https://news.example.com\"`, **with no trailing\n     * slash**. The single piece of server/env knowledge `meta()` otherwise can't see: it runs in BOTH\n     * SSR and client navigation, so it has no `request`/`process.env`. The framework resolves it from the\n     * request URL during SSR and from `location.origin` on client nav - and they match, so an absolute\n     * `og:url`/`canonical`/`og:image` built from it never drifts between the server-rendered `<head>` and\n     * a soft-nav. Use it for absolute URLs (`origin + \"/posts/\" + slug`) instead of threading `siteUrl`\n     * through loader data. Empty string (`\"\"`) when the origin is unknown (e.g. a hand-built test render\n     * with no request URL). A `meta()` that ignores `origin` is unchanged.\n     */\n    readonly origin: string;\n}",
-    "doc": "/**\n * Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`.\n * `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** -\n * `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through loader data\n * for absolute `og:url`/`canonical`/`og:image` URLs). See {@link origin}.\n */"
+    "signature": "export interface MetaArgs<Data = unknown> {\n    /**\n     * The loader data of the module that exports this `meta`: the page's for a page, the layout's own for a\n     * layout (`null` when the layout has no loader), the same value its component receives. A layout that\n     * loads the locale sets `lang` from here, so a soft navigation keeps it.\n     */\n    readonly data: Data;\n    /**\n     * The page's loader data, for a layout's `meta` that builds on the page (a title template). In a page's\n     * own `meta` it is the same value as {@link data}. Always set by the framework.\n     */\n    readonly pageData?: unknown;\n    readonly params: Record<string, string>;\n    /** The resolved document CSP nonce, when this render uses per-request nonce protection. */\n    readonly nonce?: string;\n    /**\n     * The site origin - scheme + host (+ port), e.g. `\"https://news.example.com\"`, **with no trailing\n     * slash**. The single piece of server/env knowledge `meta()` otherwise can't see: it runs in BOTH\n     * SSR and client navigation, so it has no `request`/`process.env`. The framework resolves it from the\n     * request URL during SSR and from `location.origin` on client nav - and they match, so an absolute\n     * `og:url`/`canonical`/`og:image` built from it never drifts between the server-rendered `<head>` and\n     * a soft-nav. Use it for absolute URLs (`origin + \"/posts/\" + slug`) instead of threading `siteUrl`\n     * through loader data. Empty string (`\"\"`) when the origin is unknown (e.g. a hand-built test render\n     * with no request URL). A `meta()` that ignores `origin` is unchanged.\n     */\n    readonly origin: string;\n}",
+    "doc": "/**\n * Args for a route's or layout's `meta` function: its own loader's `data` + the page's `pageData` + the\n * route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has\n * **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (so you\n * needn't thread `siteUrl` through loader data for absolute `og:url`/`canonical`/`og:image` URLs). See\n * {@link origin}.\n */"
   },
   {
     "name": "MetaDescriptor",
@@ -21481,6 +21481,13 @@
     "package": "@nifrajs/client",
     "signature": "export declare function reservedKeyFor(segment: string): string | undefined;",
     "doc": "/**\n * The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards\n * (`*rest`) never collide - they are not spelled as property accesses.\n */"
+  },
+  {
+    "name": "resolveChainMeta",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resolveChainMeta(metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs): Meta[];",
+    "doc": "/**\n * Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets\n * `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its\n * component renders. The SSR head and a soft navigation both resolve through this, so they match.\n */"
   },
   {
     "name": "resolveComponentRecord",

@@ -32,7 +32,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain(
     // `/client`, not the root: the root drags the server graph into the browser (see
     // client-graph-boundary.test.ts).
-    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
+    'import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"',
   )
   expect(code).toContain(
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
@@ -92,14 +92,15 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
+  // A layout's function meta reads its own loader data; the page's (last) reads the page's.
   expect(code).toContain(
-    "applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
+    "applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)))",
   )
   // Item 1: the client passes `origin: location.origin` into MetaArgs. It equals the SSR-side
   // `URL(req.url).origin`, so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
   expect(code).toContain("const nonce = currentDocumentNonce()")
   expect(code).toContain(
-    "const args = { data: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
+    "const args = { data: s.data, pageData: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
   )
   // Initial data is mapped through `mapDeferred` so `{__nifra_deferred: id}` placeholders become the
   // registry's promises (a no-op for non-deferred pages).

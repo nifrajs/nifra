@@ -154,7 +154,7 @@ export function generateClientEntry(
   return `${[
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
-    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
+    'import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"',
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
     ...(options.serverComponents
       ? ['import { bindComponentRouter } from "@nifrajs/web/server-components/client"']
@@ -382,8 +382,8 @@ export function generateClientEntry(
     // `origin: location.origin` matches the SSR `originOf(req)` (both are `URL.origin` for the same
     // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
     "      const nonce = currentDocumentNonce()",
-    "      const args = { data: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
-    "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
+    "      const args = { data: s.data, pageData: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
+    "      applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)))",
     "    }",
     "  })",
     "}).catch((error) => console.error('[nifra/web] hydration failed:', error))",

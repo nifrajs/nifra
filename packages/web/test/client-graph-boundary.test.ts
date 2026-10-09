@@ -79,7 +79,7 @@ test("the generated client entry imports the client subpath, never the root", ()
   const source = readFileSync(resolve(ROOT, "packages/web/src/index.ts"), "utf8")
   const line = source
     .split("\n")
-    .find((l) => l.includes("createClientRouter, createMatcher, mergeHeads, resolveMeta"))
+    .find((l) => l.includes("createClientRouter, createMatcher, mergeHeads, resolveChainMeta"))
   expect(line).toBeDefined()
   expect(line).toContain('"@nifrajs/web/client"')
   expect(line).not.toContain(`from ${ROOT_SPECIFIER}`)

@@ -28,7 +28,11 @@ function routeModule(
     '/// <reference path="../../register.d.ts" />',
     'import type { OutputOf, RouteActionReturn, RouteLoaderArgs, RouteLoaderReturn, SearchSchemaOf } from "@nifrajs/client"',
   ]
-  if (kind === "page") lines.push('import type { RenderProps } from "@nifrajs/web"')
+  lines.push(
+    kind === "page"
+      ? 'import type { MetaArgs as WebMetaArgs, RenderProps } from "@nifrajs/web"'
+      : 'import type { MetaArgs as WebMetaArgs } from "@nifrajs/web"',
+  )
   lines.push("")
   if (hasBackend) lines.push(`type Backend = typeof import("../../../../routes/${name}.backend")`)
   if (script) lines.push(`type Frontend = typeof import("../../../../routes/${name}")`)
@@ -51,6 +55,8 @@ function routeModule(
     `  export type Loader = (args: LoaderArgs) => RouteLoaderReturn<${hasBackend ? "Backend" : "null"}>`,
     "  /** The backend half's action. Annotate it, `export const action: Route.Action = ...`, and what it returns is checked against `actionOutput`. */",
     `  export type Action = (args: ActionArgs) => RouteActionReturn<${hasBackend ? "Backend" : "null"}>`,
+    "  /** What this module's `meta` function receives: its own loader data as `data`. */",
+    "  export type MetaArgs = WebMetaArgs<LoaderData>",
   )
   if (kind === "page") {
     lines.push(
