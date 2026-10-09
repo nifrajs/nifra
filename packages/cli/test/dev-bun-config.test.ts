@@ -105,6 +105,14 @@ test("the user's ENTIRE bunfig round-trips - not just the two fields the merge t
   expect(reparsed.preload).toEqual([resolve("/app/setup.ts")])
 })
 
+test("strings with control characters round-trip through the rendered bunfig", () => {
+  // TOML escapes in the input, so the parsed value holds a raw newline, tab, CR, U+0001 and DEL.
+  const user = parseUserBunfig('[define]\nBANNER = "\\"a\\nb\\tc\\r\\u0001\\u007f\\\\d\\""\n')
+  expect(user).toEqual({ define: { BANNER: '"a\nb\tc\r\u0001\u007f\\d"' } })
+  const toml = renderDevBunfig("/app/.nifra/dev-bun/boundary-plugin.ts", user, "/app")
+  expect(parseUserBunfig(toml).define).toEqual(user.define)
+})
+
 test("serializeBunfig refuses a shape it cannot round-trip instead of dropping it", () => {
   expect(() => serializeBunfig({ weird: [{ nested: true }] })).toThrow(/cannot re-serialize/)
 })

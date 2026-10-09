@@ -44,9 +44,27 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { relative, resolve } from "node:path"
 import { readSingleCopyDeclaration } from "@nifrajs/core/single-copy"
 
-/** TOML string literal: basic (double-quoted) form with the two escapes it needs. */
+const TOML_ESCAPES: Readonly<Record<string, string>> = {
+  "\\": "\\\\",
+  '"': '\\"',
+  "\b": "\\b",
+  "\t": "\\t",
+  "\n": "\\n",
+  "\f": "\\f",
+  "\r": "\\r",
+}
+
+/** TOML string literal: basic (double-quoted) form. A basic string may hold no raw control
+ * character, so each one is escaped along with the quote and the backslash. */
 function tomlString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+  let out = '"'
+  for (const char of value) {
+    const code = char.charCodeAt(0)
+    out +=
+      TOML_ESCAPES[char] ??
+      (code < 0x20 || code === 0x7f ? `\\u${code.toString(16).padStart(4, "0")}` : char)
+  }
+  return `${out}"`
 }
 
 /** A parsed bunfig: plain data from `Bun.TOML.parse`. */
