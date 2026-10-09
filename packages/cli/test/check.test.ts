@@ -2034,9 +2034,37 @@ describe("scanInterpolatedSql", () => {
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
 
-    test("a reassigned `let` does not resolve - left unflagged, not a false laundering channel", () => {
-      const src = ["let q = `SELECT ${x} FROM t`", "q = whatever", "db.query(q)"].join("\n")
-      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    test("a reassigned `let` is read through every value it may hold", () => {
+      const scan = (lines: string[]): number =>
+        scanInterpolatedSql("a.ts", lines.join("\n"), ts).length
+      expect(scan(["let q = `SELECT ${x} FROM t`", "q = whatever", "db.query(q)"])).toBe(1)
+      expect(scan(['let q = ""', "q = `SELECT * FROM t WHERE id = ${id}`", "db.query(q)"])).toBe(1)
+      expect(scan(["let q", "q = `SELECT * FROM t WHERE id = ${id}`", "db.query(q)"])).toBe(1)
+      expect(
+        scan(["var q = `SELECT * FROM t WHERE id = ${id}`", "q = q.trim()", "db.query(q)"]),
+      ).toBe(1)
+      // Every value static, or the dynamic one is not SQL text: nothing to flag.
+      expect(
+        scan(['let q = "SELECT 1 FROM t"', 'if (c) q = "SELECT 2 FROM t"', "db.query(q)"]),
+      ).toBe(0)
+      expect(scan(['let q = "SELECT 1 FROM t"', "q = statement", "db.query(q)"])).toBe(0)
+    })
+
+    test("a statement built up in steps flags at the call that sends it", () => {
+      const builder = (step: string): string =>
+        [
+          "export function find(db: any, name: string, age: number) {",
+          '  let q = "SELECT * FROM users WHERE 1=1"',
+          `  if (name) ${step}`,
+          "  return db.query(q)",
+          "}",
+        ].join("\n")
+      const scan = (src: string): number => scanInterpolatedSql("a.ts", src, ts).length
+      expect(scan(builder("q += ` AND name = '${name}'`"))).toBe(1)
+      expect(scan(builder('q = q + " AND name = \'" + name + "\'"'))).toBe(1)
+      expect(scan(builder("q = `${q} AND name = '${name}'`"))).toBe(1)
+      expect(scan(builder('q += " AND name = $1"'))).toBe(0)
+      expect(scan(builder("q += ` AND age > ${Number(age)}`"))).toBe(1)
     })
 
     test("transitive: q = a, a = dynamic template - flags", () => {
@@ -2598,17 +2626,75 @@ describe("scanInterpolatedSql", () => {
 
   test("trust is by NAME, which is the documented limit of a scanner with no type checker", () => {
     // Worth pinning rather than leaving implied. `sql` is trusted because postgres.js, drizzle,
-    // slonik and Bun's driver all call theirs that, and nothing here can prove a given `sql` binds
-    // anything. So a no-op with the name passes: this rule catches mistakes, not an adversary who
-    // has read it. Deciding otherwise needs a type checker, which is a different tool.
-    expect(
-      scan("const sql = (s) => s.raw.join('')\ndb.query(sql`SELECT * FROM t WHERE id = ${x}`)"),
-    ).toBe(0)
+    // slonik and Bun's driver all call theirs that, and nothing here can prove an imported `sql`
+    // binds anything: this rule catches mistakes, not an adversary who has read it. A `sql` the same
+    // file defines as a function is visibly not a driver, so it is read as plain interpolation.
+    const statement = "db.query(sql`SELECT * FROM t WHERE id = ${x}`)"
+    expect(scan(`import { sql } from "./tag"\n${statement}`)).toBe(0)
+    expect(scan(`const sql = postgres(url)\n${statement}`)).toBe(0)
+    expect(scan(`function run(sql) {\n  return ${statement}\n}`)).toBe(0)
+    expect(scan(`const sql = (s) => s.raw.join('')\n${statement}`)).toBe(1)
+    expect(scan(`function sql(s) { return s.raw.join('') }\n${statement}`)).toBe(1)
   })
 
   test("stays silent on a parameterised statement", () => {
     expect(scan('db.query("SELECT * FROM users WHERE id = ?").get(id)')).toBe(0)
     expect(scan("db.query(`SELECT * FROM users WHERE id = $1`, [id])")).toBe(0)
+  })
+
+  test("every way a call can send a statement is read", () => {
+    const tpl = "`SELECT * FROM users WHERE id = ${id}`"
+    expect(scan(`db.query({ text: ${tpl}, values: [] })`)).toBe(1)
+    expect(scan(`conn.execute({ sql: ${tpl} })`)).toBe(1)
+    expect(scan(`const text = ${tpl}\ndb.query({ text })`)).toBe(1)
+    expect(scan(`db.query({ name: "find", values: [${tpl}] })`)).toBe(0)
+    expect(scan(`db[\`query\`](${tpl})`)).toBe(1)
+    expect(scan(`const { query } = db\nquery(${tpl})`)).toBe(1)
+    expect(scan(`db.query(${tpl} as string)`)).toBe(1)
+    expect(scan(`db.query(String(${tpl}))`)).toBe(1)
+    expect(scan(`db.query(${tpl}.trim())`)).toBe(1)
+    expect(scan('db.execute(["SELECT * FROM users WHERE id = ", id].join(""))')).toBe(1)
+    expect(scan('db.execute("SELECT * FROM users WHERE id = ".concat(id))')).toBe(1)
+    expect(scan('db.execute(["SELECT", "id", "FROM users"].join(" "))')).toBe(0)
+  })
+
+  test("node-sqlite3 and pg-promise calls are sinks when their text starts a statement", () => {
+    const tpl = "`SELECT * FROM users WHERE id = ${id}`"
+    for (const method of ["all", "get", "each", "any", "one", "oneOrNone", "many", "none"])
+      expect([method, scan(`db.${method}(${tpl})`)]).toEqual([method, 1])
+    expect(scan(`pool.manyOrNone(${tpl})`)).toBe(1)
+    expect(scan("db.one(`SELECT * FROM t WHERE id = $1`, [id])")).toBe(0)
+    // Everyday names: a URL with a keyword in it is not a statement.
+    expect(scan("client.get(`/users/${id}/update`)")).toBe(0)
+    expect(scan('client.get("/users/" + id)')).toBe(0)
+    expect(scan("map.get(`select:${id}`)")).toBe(0)
+    expect(scan("exec(`npm update ${pkg}`)")).toBe(0)
+  })
+
+  test("a template that only glues values together is concatenation", () => {
+    expect(scan("db.query(`${where}`)")).toBe(1)
+    expect(scan("db.query(`${select} ${where}`)")).toBe(1)
+    expect(scan("cache.query(`${key}`)")).toBe(0)
+    expect(scan("db.query(statement)")).toBe(0)
+  })
+
+  test("a same-file function that sends its parameter as a statement is a sink", () => {
+    const helper = "async function run(db: any, q: string) {\n  return db.query(q)\n}\n"
+    expect(scan(`${helper}run(db, \`SELECT * FROM users WHERE id = \${id}\`)`)).toBe(1)
+    expect(scan(`${helper}run(db, "SELECT * FROM users WHERE id = $1")`)).toBe(0)
+    const arrow = "const one = (sql: string) => pool.query({ text: sql })\n"
+    expect(scan(`${arrow}one(\`DELETE FROM t WHERE id = \${id}\`)`)).toBe(1)
+    // The helper's own hatch call answers for the variable; its callers are judged as statements.
+    const hatch = "function raw(q: string) {\n  return sql.unsafe(q)\n}\n"
+    expect(scanInterpolatedSql("a.ts", `${hatch}raw(STATEMENT)`, ts)).toMatchObject([{ line: 2 }])
+  })
+
+  test("a marker inside a string the call passes does not silence it", () => {
+    const tpl = "`SELECT * FROM users WHERE id = ${id}`"
+    expect(scan(`db.query(${tpl}, ["nifra-expect NF-C006: reason"])`)).toBe(1)
+    expect(scan(`db.query(${tpl}, [\`nifra-expect NF-C006: \${reason}\`])`)).toBe(1)
+    expect(scan(`db.query(${tpl}) // nifra-expect NF-C006: id is an integer`)).toBe(0)
+    expect(scan(`/* nifra-expect NF-C006: id is an integer */ db.query(${tpl})`)).toBe(0)
   })
 
   test("stays silent on a call that is not SQL", () => {

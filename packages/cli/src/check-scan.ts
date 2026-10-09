@@ -995,6 +995,25 @@ const SQL_METHODS = new Set([
 const SQL_KEYWORD =
   /\b(select|insert\s+into|update|delete\s+from|drop\s+table|create\s+table|alter\s+table|truncate|from|where|values|set|join|union)\b/i
 const ALWAYS_UNSAFE = new Set(["unsafe", "$queryRawUnsafe", "$executeRawUnsafe", "raw"])
+/** Driver calls that take a statement under names that are everyday words elsewhere (`map.get`,
+ * `client.get("/users/update")`): node-sqlite3's `all`/`get`/`each` and pg-promise's result-shaping
+ * calls. One of these, and any bare call, is judged by whether its text starts like a statement. */
+const DRIVER_READ_METHODS = new Set([
+  "all",
+  "get",
+  "each",
+  "any",
+  "one",
+  "none",
+  "many",
+  "oneOrNone",
+  "manyOrNone",
+  "result",
+  "multi",
+  "multiResult",
+])
+const STATEMENT_START =
+  /^\s*\(?\s*(?:select|insert|update|delete|with|replace|merge|create|drop|alter|truncate|pragma)\s/i
 
 interface SqlExpressionShape {
   readonly staticText: string
@@ -1928,33 +1947,15 @@ function directBinding(
     const declared = scope.variableDeclaration
     if (declared !== undefined && bindingNameCovers(ts, declared.name, name)) return "shadow"
   }
-  const statements: readonly TSApi.Statement[] | undefined = ts.isSourceFile(scope)
-    ? scope.statements
-    : ts.isBlock(scope) || ts.isModuleBlock(scope)
-      ? scope.statements
-      : ts.isCaseClause(scope) || ts.isDefaultClause(scope)
-        ? scope.statements
-        : undefined
-  const lists: TSApi.VariableDeclarationList[] = []
-  if (statements !== undefined) {
-    for (const statement of statements) {
-      if (ts.isVariableStatement(statement)) lists.push(statement.declarationList)
-      if (
-        (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
-        statement.name?.text === name
-      ) {
-        return "shadow"
-      }
+  for (const statement of scopeStatements(ts, scope) ?? []) {
+    if (
+      (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+      statement.name?.text === name
+    ) {
+      return "shadow"
     }
   }
-  if (
-    (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
-    scope.initializer !== undefined &&
-    ts.isVariableDeclarationList(scope.initializer)
-  ) {
-    lists.push(scope.initializer)
-  }
-  for (const list of lists) {
+  for (const list of scopeDeclarationLists(ts, scope)) {
     for (const declaration of list.declarations) {
       if (!bindingNameCovers(ts, declaration.name, name)) continue
       // A destructured or uninitialized binding, or a `var` (hoisting + reassignment risk), is not a
@@ -1972,48 +1973,297 @@ function directBinding(
   return undefined
 }
 
+function scopeStatements(
+  ts: TypeScriptApi,
+  scope: TSApi.Node,
+): readonly TSApi.Statement[] | undefined {
+  return ts.isSourceFile(scope) ||
+    ts.isBlock(scope) ||
+    ts.isModuleBlock(scope) ||
+    ts.isCaseClause(scope) ||
+    ts.isDefaultClause(scope)
+    ? scope.statements
+    : undefined
+}
+
+/** The `var`/`let`/`const` lists a scope node declares directly: its statements' and a `for` head's. */
+function scopeDeclarationLists(
+  ts: TypeScriptApi,
+  scope: TSApi.Node,
+): TSApi.VariableDeclarationList[] {
+  const lists: TSApi.VariableDeclarationList[] = []
+  for (const statement of scopeStatements(ts, scope) ?? []) {
+    if (ts.isVariableStatement(statement)) lists.push(statement.declarationList)
+  }
+  if (
+    (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
+    scope.initializer !== undefined &&
+    ts.isVariableDeclarationList(scope.initializer)
+  ) {
+    lists.push(scope.initializer)
+  }
+  return lists
+}
+
+/** The `var` or `let` a scope declares `name` with by a plain identifier, if any. */
+function mutableDeclaration(
+  ts: TypeScriptApi,
+  scope: TSApi.Node,
+  name: string,
+): TSApi.VariableDeclaration | undefined {
+  for (const list of scopeDeclarationLists(ts, scope)) {
+    if ((list.flags & ts.NodeFlags.Const) !== 0) continue
+    for (const declaration of list.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) return declaration
+    }
+  }
+  return undefined
+}
+
+interface SqlWrite {
+  readonly value: TSApi.Expression
+  /** `+=`: the value is glued onto what the variable already holds. */
+  readonly appends: boolean
+}
+
 /**
- * Resolve a query-call ARGUMENT identifier to the expression it was initialized from, so a statement
- * parked in a variable is scanned as if it had been written inline at the call. This is the counterpart
- * to {@link resolveStaticSqlText}: that folds a const's text INTO a template's shape; this unfolds the
- * whole statement back out of the variable it was lifted into. Without it, ANY interpolated-SQL finding
- * could be silenced, invisibly, by hoisting the statement to `const q = …` first.
+ * Every value a statement variable may hold where the query reads it, so a statement parked in a
+ * variable is scanned as if it had been written inline at the call. This is the counterpart to
+ * {@link resolveStaticSqlText}: that folds a const's text INTO a template's shape; this unfolds the
+ * statement back out of the variable it was lifted into. Without it, ANY interpolated-SQL finding
+ * could be silenced, invisibly, by hoisting the statement to `const q = …` first, or by building it
+ * in steps (`let q = "SELECT …"; q += …`).
  *
  * Same-file only. Nearest enclosing declaration wins, so a shadowing local is read and never a
- * same-named module const. Reads through a `const`, or a `let` the file never reassigns, at function or
- * module scope; transitive through an identifier-valued initializer; depth-capped. A parameter, an
- * imported or destructured binding, a reassigned `let`, a `var`, or a name with no same-file
- * declaration returns `undefined` - which leaves the argument scanned as itself (unflagged unless it is
- * a module const that resolves to static text: exactly the pre-feature behavior).
+ * same-named module const. A `const`, or a `let` the file never reassigns, holds its initializer. A
+ * `var` or reassigned `let` holds its initializer and every value assigned to the name anywhere in
+ * the function (or module) that declares it: over-collected rather than scope-simulated, which only
+ * ever adds a value to check. `key` names the binding, so a value that reads the variable it is
+ * assigned to is recognised. A parameter, an imported or destructured binding, or a name with no
+ * same-file declaration returns `undefined` - which leaves the argument scanned as itself.
  */
-function resolveArgumentInitializer(
+function variableWrites(
   ts: TypeScriptApi,
   node: TSApi.Identifier,
-  depth: number,
-): TSApi.Expression | undefined {
-  if (depth > CONST_RESOLUTION_DEPTH) return undefined
+): { readonly key: TSApi.Node; readonly writes: readonly SqlWrite[] } | undefined {
   const source = node.getSourceFile()
   const name = node.text
   for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
     const binding = directBinding(ts, source, scope, name)
-    if (binding === "shadow") return undefined
+    if (binding === "shadow") {
+      const declaration = mutableDeclaration(ts, scope, name)
+      if (declaration === undefined) return undefined
+      let owner: TSApi.Node = declaration
+      while (!ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent
+      const writes = writesTo(ts, owner, name)
+      return {
+        key: declaration,
+        writes:
+          declaration.initializer === undefined
+            ? writes
+            : [{ value: declaration.initializer, appends: false }, ...writes],
+      }
+    }
     if (binding !== undefined) {
-      let init = binding.initializer
-      while (ts.isParenthesizedExpression(init)) init = init.expression
-      return ts.isIdentifier(init) ? resolveArgumentInitializer(ts, init, depth + 1) : init
+      return { key: binding.initializer, writes: [{ value: binding.initializer, appends: false }] }
     }
     if (ts.isSourceFile(scope)) break
   }
   return undefined
 }
 
-/** Describe only the first argument's syntax; comments/strings elsewhere cannot influence the result. */
+/** The values assigned to `name` under `root`. A numeric compound assignment stores no text. */
+function writesTo(ts: TypeScriptApi, root: TSApi.Node, name: string): SqlWrite[] {
+  const writes: SqlWrite[] = []
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isIdentifier(node) && node.text === name) {
+      const parent = node.parent
+      if (ts.isBinaryExpression(parent) && parent.left === node) {
+        const operator = parent.operatorToken.kind
+        if (operator === ts.SyntaxKind.PlusEqualsToken) {
+          writes.push({ value: parent.right, appends: true })
+        } else if (
+          operator === ts.SyntaxKind.EqualsToken ||
+          operator === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+          operator === ts.SyntaxKind.BarBarEqualsToken ||
+          operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken
+        ) {
+          writes.push({ value: parent.right, appends: false })
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+  return writes
+}
+
+function mentionsName(ts: TypeScriptApi, node: TSApi.Node, name: string): boolean {
+  if (ts.isIdentifier(node)) return node.text === name
+  return ts.forEachChild(node, (child) => mentionsName(ts, child, name) || undefined) === true
+}
+
+const UNKNOWN_SQL: SqlExpressionShape = {
+  staticText: "",
+  dynamic: true,
+  concatenated: false,
+  literal: false,
+  parameterizedTag: false,
+}
+
+function textShape(text: string): SqlExpressionShape {
+  return {
+    staticText: text,
+    dynamic: false,
+    concatenated: false,
+    literal: true,
+    parameterizedTag: false,
+  }
+}
+
+function joinShapes(shapes: readonly SqlExpressionShape[]): SqlExpressionShape {
+  return {
+    staticText: shapes.map((shape) => shape.staticText).join(""),
+    // As with `+`: text glued onto a binding tag's output un-parameterizes it.
+    dynamic: shapes.some((shape) => shape.dynamic || shape.parameterizedTag),
+    concatenated: true,
+    literal: false,
+    parameterizedTag: false,
+  }
+}
+
+/** Orders a variable's candidate statements by how surely {@link scanInterpolatedSql} would flag
+ * them: dynamic SQL text, then dynamic glued text, then any dynamic text; outside a binding tag
+ * before inside one. */
+function sqlRisk(shape: SqlExpressionShape): number {
+  const dynamic = !shape.dynamic
+    ? 0
+    : SQL_KEYWORD.test(shape.staticText) || STATEMENT_START.test(shape.staticText)
+      ? 3
+      : shape.concatenated
+        ? 2
+        : 1
+  return dynamic * 2 + (shape.parameterizedTag ? 0 : 1)
+}
+
+/**
+ * The riskiest statement a variable may hold. Each value that replaces the text is one candidate.
+ * The values that build on it (`+=`, or `q = q + more`) are glued onto every replacing value at
+ * once, as a builder that takes each branch would, so a static `SELECT … WHERE 1=1` followed by an
+ * interpolated `AND …` reads as the one statement it becomes.
+ */
+function writtenShape(
+  ts: TypeScriptApi,
+  name: string,
+  writes: readonly SqlWrite[],
+  scope: SqlScope | undefined,
+  trail: readonly TSApi.Node[],
+): SqlExpressionShape {
+  const replacing: SqlExpressionShape[] = []
+  const building: SqlExpressionShape[] = []
+  for (const write of writes) {
+    const shape = sqlExpressionShape(ts, write.value, scope, trail)
+    if (write.appends || mentionsName(ts, write.value, name)) building.push(shape)
+    else replacing.push(shape)
+  }
+  const candidates =
+    building.length === 0 ? replacing : [...replacing, joinShapes([...replacing, ...building])]
+  let worst: SqlExpressionShape | undefined
+  for (const candidate of candidates) {
+    if (worst === undefined || sqlRisk(candidate) > sqlRisk(worst)) worst = candidate
+  }
+  return worst ?? UNKNOWN_SQL
+}
+
+const TEXT_METHODS = new Set([
+  "toString",
+  "valueOf",
+  "trim",
+  "trimStart",
+  "trimEnd",
+  "toLowerCase",
+  "toUpperCase",
+])
+
+/** The value a text-preserving call returns: `String(x)`, `x.toString()`, `x.trim()`. */
+function passedThrough(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+): TSApi.Expression | undefined {
+  const callee = call.expression
+  if (ts.isIdentifier(callee) && callee.text === "String" && call.arguments.length === 1) {
+    return call.arguments[0]
+  }
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    TEXT_METHODS.has(callee.name.text) &&
+    call.arguments.length === 0
+  ) {
+    return callee.expression
+  }
+  return undefined
+}
+
+/** The parts `[a, b].join(sep)` and `a.concat(b)` glue together, a separator as its text. */
+function joinedParts(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+): readonly (TSApi.Expression | string)[] | undefined {
+  const callee = call.expression
+  if (!ts.isPropertyAccessExpression(callee)) return undefined
+  if (callee.name.text === "concat") return [callee.expression, ...call.arguments]
+  const items = unwrapExpression(ts, callee.expression)
+  if (callee.name.text !== "join" || !ts.isArrayLiteralExpression(items)) return undefined
+  const separator = call.arguments[0]
+  const glue: TSApi.Expression | string =
+    separator === undefined ? "," : ts.isStringLiteralLike(separator) ? separator.text : separator
+  const parts: (TSApi.Expression | string)[] = []
+  items.elements.forEach((element, index) => {
+    if (index > 0) parts.push(glue)
+    if (ts.isSpreadElement(element)) parts.push(element.expression)
+    else if (!ts.isOmittedExpression(element)) parts.push(element)
+  })
+  return parts
+}
+
+/** Whether the `sql` a tag names is a function this file defines (`const sql = (s, ...v) => …`),
+ * which is plain interpolation whatever its name. A parameter, an import, or a driver instance
+ * (`const sql = postgres(url)`) keeps the name's trust. */
+function definesSqlFunction(ts: TypeScriptApi, tag: TSApi.Identifier): boolean {
+  for (let scope: TSApi.Node | undefined = tag.parent; scope !== undefined; scope = scope.parent) {
+    if (
+      ts.isFunctionLike(scope) &&
+      scope.parameters.some((parameter) => bindingNameCovers(ts, parameter.name, tag.text))
+    ) {
+      return false
+    }
+    for (const statement of scopeStatements(ts, scope) ?? []) {
+      if (ts.isFunctionDeclaration(statement) && statement.name?.text === tag.text) return true
+    }
+    for (const list of scopeDeclarationLists(ts, scope)) {
+      for (const declaration of list.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.name.text !== tag.text) continue
+        const value =
+          declaration.initializer === undefined
+            ? undefined
+            : unwrapExpression(ts, declaration.initializer)
+        return value !== undefined && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))
+      }
+    }
+  }
+  return false
+}
+
+/** Describe only the statement's syntax; comments/strings elsewhere cannot influence the result.
+ * `trail` holds the variables being read through, innermost last. */
 function sqlExpressionShape(
   ts: TypeScriptApi,
-  node: TSApi.Expression,
+  expression: TSApi.Expression,
   scope?: SqlScope,
+  trail: readonly TSApi.Node[] = [],
 ): SqlExpressionShape {
-  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression, scope)
+  let node = unwrapExpression(ts, expression)
+  while (ts.isNonNullExpression(node)) node = unwrapExpression(ts, node.expression)
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return {
       staticText: node.text,
@@ -2026,7 +2276,7 @@ function sqlExpressionShape(
   if (ts.isTaggedTemplateExpression(node)) {
     const tag = node.tag
     const parameterizedTag =
-      (ts.isIdentifier(tag) && tag.text === "sql") ||
+      (ts.isIdentifier(tag) && tag.text === "sql" && !definesSqlFunction(ts, tag)) ||
       (ts.isPropertyAccessExpression(tag) && tag.getText() === "Prisma.sql")
     const template = node.template
     const templated = ts.isTemplateExpression(template)
@@ -2036,8 +2286,9 @@ function sqlExpressionShape(
     // Only the ecosystem's binding tags are trusted, by NAME - which is the honest limit of a scanner
     // that reads syntax and runs no type checker. `sql` is what postgres.js, drizzle, slonik and Bun's
     // own driver all call theirs, and `Prisma.sql` is Prisma's; taking those at their word is a
-    // deliberate trade, and it is worth stating what it costs: a no-op function named `sql` in the
-    // same file is trusted too, so this rule finds mistakes, not an adversary who reads it first.
+    // deliberate trade, and it is worth stating what it costs: a `sql` this file defines as a
+    // function is read as the interpolation it is, but one imported from anywhere is trusted, so
+    // this rule finds mistakes, not an adversary who reads it first.
     //
     // Trusting anything else widens that for no gain. This list briefly also held `sqlIdentifiers`,
     // a name invented for Nifra's own adapters - a second forgeable name that no user has a
@@ -2059,14 +2310,17 @@ function sqlExpressionShape(
     return {
       staticText: templated.staticText,
       dynamic: templated.dynamic,
-      concatenated: false,
+      // `${a} ${b}` writes no text of its own; it only glues values together.
+      concatenated: [node.head, ...node.templateSpans.map((span) => span.literal)].every(
+        (part) => part.text.trim() === "",
+      ),
       literal: false,
       parameterizedTag: false,
     }
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = sqlExpressionShape(ts, node.left, scope)
-    const right = sqlExpressionShape(ts, node.right, scope)
+    const left = sqlExpressionShape(ts, node.left, scope, trail)
+    const right = sqlExpressionShape(ts, node.right, scope, trail)
     return {
       staticText: left.staticText + right.staticText,
       // A resolved const operand is static text, not a dynamic part - so the old `!literal` test
@@ -2095,50 +2349,158 @@ function sqlExpressionShape(
       }
     }
   }
-  // A bare name that did not resolve to compile-time text. If it is a same-file binding we can prove
-  // holds one expression, scan THAT expression's shape - so a statement hoisted into `const q = …` is
+  if (ts.isCallExpression(node)) {
+    const inner = passedThrough(ts, node)
+    if (inner !== undefined)
+      return { ...sqlExpressionShape(ts, inner, scope, trail), literal: false }
+    const parts = joinedParts(ts, node)
+    if (parts !== undefined) {
+      return joinShapes(
+        parts.map((part) =>
+          typeof part === "string" ? textShape(part) : sqlExpressionShape(ts, part, scope, trail),
+        ),
+      )
+    }
+  }
+  // A bare name that did not resolve to compile-time text. If it is a same-file binding, scan the
+  // shapes of what it may hold - so a statement hoisted into `const q = …` or built up in a `let` is
   // read exactly as if it were written inline at the call, closing the "extract a variable to launder
   // the finding" hole. `literal` is forced false: the value arrived through a variable, which is the
   // property the `unsafe`/`$queryRawUnsafe` hatch rule keys on.
   if (ts.isIdentifier(node)) {
-    const initializer = resolveArgumentInitializer(ts, node, 0)
-    if (initializer !== undefined) {
-      return { ...sqlExpressionShape(ts, initializer, scope), literal: false }
+    const read = variableWrites(ts, node)
+    // Read inside one of its own writes (`q = q + more`), the variable is the text the other writes
+    // already account for.
+    if (read !== undefined && trail.includes(read.key)) return { ...textShape(""), literal: false }
+    if (read !== undefined && trail.length <= CONST_RESOLUTION_DEPTH) {
+      const written = writtenShape(ts, node.text, read.writes, scope, [...trail, read.key])
+      return { ...written, literal: false }
     }
   }
-  return {
-    staticText: "",
-    dynamic: true,
-    concatenated: false,
-    literal: false,
-    parameterizedTag: false,
-  }
+  return UNKNOWN_SQL
 }
 
-function sqlMethod(
-  ts: TypeScriptApi,
-  call: TSApi.CallExpression,
-): { method: string; receiver: string } | undefined {
-  if (ts.isPropertyAccessExpression(call.expression)) {
-    const method = call.expression.name.text
-    return SQL_METHODS.has(method)
-      ? { method, receiver: call.expression.expression.getText() }
+interface SqlSink {
+  readonly method: string
+  /** `undefined` for a bare call: `const { query } = db` and then `query(…)`. */
+  readonly receiver: string | undefined
+}
+
+function sqlMethod(ts: TypeScriptApi, call: TSApi.CallExpression): SqlSink | undefined {
+  const sink = (method: string, receiver: TSApi.Expression | undefined): SqlSink | undefined =>
+    SQL_METHODS.has(method) || DRIVER_READ_METHODS.has(method)
+      ? { method, receiver: receiver?.getText() }
       : undefined
-  }
-  if (
-    ts.isElementAccessExpression(call.expression) &&
-    call.expression.argumentExpression !== undefined &&
-    ts.isStringLiteral(call.expression.argumentExpression)
-  ) {
-    const method = call.expression.argumentExpression.text
-    return SQL_METHODS.has(method)
-      ? { method, receiver: call.expression.expression.getText() }
-      : undefined
+  const callee = call.expression
+  if (ts.isIdentifier(callee)) return sink(callee.text, undefined)
+  if (ts.isPropertyAccessExpression(callee)) return sink(callee.name.text, callee.expression)
+  if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+    return sink(callee.argumentExpression.text, callee.expression)
   }
   return undefined
 }
 
 const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
+
+/** Whether a statement is SQL assembled from runtime values, judged by where it is sent. */
+function isAssembledSql(sink: SqlSink, shape: SqlExpressionShape): boolean {
+  if (!shape.dynamic) return false
+  if (sink.receiver === undefined || DRIVER_READ_METHODS.has(sink.method)) {
+    return STATEMENT_START.test(shape.staticText)
+  }
+  return (
+    SQL_KEYWORD.test(shape.staticText) || (shape.concatenated && SQL_RECEIVER.test(sink.receiver))
+  )
+}
+
+/** The statement a call passes: the argument itself, or the `text`/`sql` of a config object
+ * (`{ text, values }` in pg, `{ sql, values }` in mysql2). */
+function statementArgument(
+  ts: TypeScriptApi,
+  argument: TSApi.Expression,
+): TSApi.Expression | undefined {
+  const node = unwrapExpression(ts, argument)
+  if (!ts.isObjectLiteralExpression(node)) return argument
+  for (const property of node.properties) {
+    if (ts.isShorthandPropertyAssignment(property) && STATEMENT_KEYS.has(property.name.text)) {
+      return property.name
+    }
+    if (
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      STATEMENT_KEYS.has(property.name.text)
+    ) {
+      return property.initializer
+    }
+  }
+  return undefined
+}
+
+const STATEMENT_KEYS = new Set(["text", "sql"])
+
+interface StatementHelper {
+  readonly position: number
+  readonly sink: SqlSink
+}
+
+/** Same-file functions that send one of their parameters as a statement - `run(db, q)` calling
+ * `db.query(q)` - by name, with the parameter's position and the sink it reaches. A call to one is
+ * scanned as a call to that sink. One level deep. */
+function statementHelpers(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+): ReadonlyMap<string, StatementHelper> {
+  const helpers = new Map<string, StatementHelper>()
+  const visit = (node: TSApi.Node): void => {
+    const sink = ts.isCallExpression(node) ? sqlMethod(ts, node) : undefined
+    const passed = sink !== undefined && ts.isCallExpression(node) ? node.arguments[0] : undefined
+    const argument = passed === undefined ? undefined : statementArgument(ts, passed)
+    const statement = argument === undefined ? undefined : unwrapExpression(ts, argument)
+    if (sink !== undefined && statement !== undefined && ts.isIdentifier(statement)) {
+      const binding = nameBinding(ts, statement)
+      const name = binding.kind === "parameter" ? functionName(ts, binding.fn) : undefined
+      if (binding.kind === "parameter" && name !== undefined && !helpers.has(name)) {
+        helpers.set(name, { position: binding.position, sink })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return helpers
+}
+
+function functionName(ts: TypeScriptApi, fn: TSApi.SignatureDeclaration): string | undefined {
+  if (ts.isFunctionDeclaration(fn)) return fn.name?.text
+  if (
+    (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) &&
+    ts.isVariableDeclaration(fn.parent) &&
+    ts.isIdentifier(fn.parent.name)
+  ) {
+    return fn.parent.name.text
+  }
+  return undefined
+}
+
+/** `content` with every string, template and regex literal blanked, line breaks kept. */
+function literalsBlanked(ts: TypeScriptApi, source: TSApi.SourceFile, content: string): string {
+  const out = content.split("")
+  const visit = (node: TSApi.Node): void => {
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node) ||
+      ts.isRegularExpressionLiteral(node) ||
+      ts.isJsxText(node)
+    ) {
+      for (let i = node.getStart(source); i < node.end; i++) if (out[i] !== "\n") out[i] = " "
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return out.join("")
+}
 
 /** What silences one interpolated-SQL finding: `// nifra-expect NF-C006: <reason>` (or the
  * `sql-dynamic` slug) on the flagged line or in the comment block directly above it. The reason after
@@ -2168,27 +2530,37 @@ export function scanInterpolatedSql(
   // text cannot carry request data, so the shared-projection idiom (`const COLS = "id, name"` …
   // `${COLS}`) stays quiet while mutable, parameter, shadowed, and unprovable names flag as before.
   const scope: SqlScope = { module: sqlModuleScope(ts, file, source), imports }
+  const helpers = statementHelpers(ts, source)
+  // A marker counts only in a comment: one inside a string the call passes is data, not a reason.
+  let markerLines: readonly string[] | undefined
   const visit = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
-      const sink = sqlMethod(ts, node)
-      const argument = node.arguments[0]
+      const helper = ts.isIdentifier(node.expression)
+        ? helpers.get(node.expression.text)
+        : undefined
+      const sink = helper?.sink ?? sqlMethod(ts, node)
+      const passed = node.arguments[helper?.position ?? 0]
+      const argument = passed === undefined ? undefined : statementArgument(ts, passed)
       if (sink !== undefined && argument !== undefined) {
         const shape = sqlExpressionShape(ts, argument, scope)
+        // A helper's own hatch call already answers for passing it a variable.
         const unsafeEscape =
-          ALWAYS_UNSAFE.has(sink.method) && !shape.literal && !shape.parameterizedTag
-        const assembledSql =
-          shape.dynamic &&
-          (SQL_KEYWORD.test(shape.staticText) ||
-            (shape.concatenated && SQL_RECEIVER.test(sink.receiver)))
-        if (unsafeEscape || assembledSql) {
+          helper === undefined &&
+          sink.receiver !== undefined &&
+          ALWAYS_UNSAFE.has(sink.method) &&
+          !shape.literal &&
+          !shape.parameterizedTag
+        if (unsafeEscape || isAssembledSql(sink, shape)) {
           const index = node.getStart(source)
           const line = source.getLineAndCharacterOfPosition(index).line + 1
           // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (an allowlisted identifier,
           // placeholders numbered from data the scan cannot prove numeric). The reason is mandatory: a bare `// nifra-expect
           // NF-C006` with no reason after the colon does NOT silence, so the hatch always leaves a
           // greppable audit trail instead of becoming a second laundering trick.
+          markerLines ??= literalsBlanked(ts, source, content).split("\n")
           const silenced =
-            commentBlockExpectation(lines, line, SQL_DYNAMIC_EXPECTATION)?.reason !== undefined
+            commentBlockExpectation(markerLines, line, SQL_DYNAMIC_EXPECTATION)?.reason !==
+            undefined
           if (!silenced) out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
         }
       }
