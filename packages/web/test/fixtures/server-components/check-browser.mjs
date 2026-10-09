@@ -23,6 +23,14 @@ for (const [name, engine] of Object.entries(engines)) {
         )
       )
         return
+      // Under the strict CSP and Trusted Types runs, React's development Flight client tries eval to
+      // rebuild server stacks: it says so once, and the browser reports the blocked attempt. Production
+      // React never evals, so neither is a fixture failure.
+      if (
+        /react-server-dom[^/]*client/.test(message.location().url ?? "") &&
+        /\beval\b|TrustedScript/.test(message.text())
+      )
+        return
       if (message.type() === "error") errors.push(message.text())
     })
     page.on("requestfailed", (request) => {

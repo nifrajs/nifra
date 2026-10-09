@@ -97,7 +97,7 @@ export function createApp(
           ctx.set.headers["content-security-policy"] =
             "default-src 'self'; script-src 'nonce-fixture_nonce' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'" +
             (new URL(ctx.req.url).searchParams.get("tt") === "yes"
-              ? "; require-trusted-types-for 'script'; trusted-types default vue"
+              ? "; require-trusted-types-for 'script'; trusted-types default vue svelte-trusted-html"
               : "")
       })
     },
