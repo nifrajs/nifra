@@ -99,6 +99,22 @@ describe("built-in security rules", () => {
     )
   })
 
+  test("a nifra-expect inside a string on the flagged line silences nothing; a trailing comment does", async () => {
+    const finding = async (line: string) =>
+      (await scan("server/auth.ts", line)).find((f) => f.code === "NF-S002")
+    for (const line of [
+      'const ok = token === expected ? "nifra-expect NF-S002: data, not a comment" : ""',
+      "const ok = token === expected || `// nifra-expect NF-S002: in a template`",
+      "const ok = token === expected || 'it\\'s // nifra-expect NF-S002: escaped quote'",
+    ]) {
+      expect((await finding(line))?.severity).toBe("error")
+    }
+    const trailing = await finding(
+      'const ok = token === expected && "a//b" // nifra-expect NF-S002: compares a public echo',
+    )
+    expect(trailing?.severity).toBe("info")
+  })
+
   test("the retired @nifra-gate-reviewed marker silences nothing and names its replacement", async () => {
     for (const marker of ["// @nifra-gate-reviewed", "// @nifra-gate-reviewed: reviewed"]) {
       const finding = (

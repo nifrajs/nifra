@@ -11,12 +11,27 @@
 // open/body/close lines, and the JSX comment form.
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*\/|\*|\{\/\*)/
 
+/** The trailing comment on a code line: from its first `//` or `/*` outside a string literal to the
+ * end, else `""`. A marker in a string the code passes is data, not a comment. */
+function trailingComment(text: string): string {
+  let quote: string | undefined
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    if (quote !== undefined) {
+      if (char === "\\") i++
+      else if (char === quote) quote = undefined
+    } else if (char === '"' || char === "'" || char === "`") quote = char
+    else if (char === "/" && (text[i + 1] === "/" || text[i + 1] === "*")) return text.slice(i)
+  }
+  return ""
+}
+
 export function commentBlockHasMarker(
   lines: readonly string[],
   line: number,
   marker: string,
 ): boolean {
-  if ((lines[line - 1] ?? "").includes(marker)) return true
+  if (trailingComment(lines[line - 1] ?? "").includes(marker)) return true
   for (let i = line - 2; i >= 0; i--) {
     const text = lines[i] ?? ""
     if (!COMMENT_LINE.test(text)) return false
@@ -71,7 +86,7 @@ export function commentBlockExpectation(
       .trim()
     return reason.length > 0 ? reason : undefined
   }
-  const onLine = reasonOn(lines[line - 1] ?? "")
+  const onLine = reasonOn(trailingComment(lines[line - 1] ?? ""))
   if (onLine !== undefined) return { reason: onLine }
   for (let i = line - 2; i >= 0; i--) {
     const text = lines[i] ?? ""
