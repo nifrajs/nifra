@@ -141,6 +141,65 @@ describe("generated route types", () => {
     expect(typeErrors(["routes/blog/[slug].tsx", "routes/blog/[slug].backend.ts"])).toEqual([])
   }, 60_000)
 
+  test("Route.Loader and Route.Action check what they return against the output schemas", () => {
+    write(
+      "routes/feed/[id].backend.ts",
+      [
+        'import { t } from "@nifrajs/schema"',
+        'import { defer, redirect, revalidate } from "@nifrajs/web"',
+        'import type { Route } from "./+types/[id]"',
+        "export const loaderOutput = t.object({ title: t.string(), feed: t.deferred(t.array(t.number())) })",
+        "export const actionOutput = t.object({ ok: t.boolean() })",
+        "export const loader: Route.Loader = async ({ params }) => {",
+        '  if (params.id === "old") return redirect("/feed/new")',
+        "  return { title: params.id, feed: defer(Promise.resolve([1, 2])) }",
+        "}",
+        "export const action: Route.Action = async ({ params }) => {",
+        '  if (params.id === "x") return',
+        '  return revalidate(["/feed"], { ok: true })',
+        "}",
+        "export const wrongField: Route.Loader = () => ({",
+        "  // @ts-expect-error title is a string",
+        "  title: 1,",
+        "  feed: defer(Promise.resolve([1])),",
+        "})",
+        "// A field the schema does not declare type-checks: the output guard drops it before it ships.",
+        "export const droppedField: Route.Loader = () => ({",
+        '  title: "t",',
+        "  feed: defer(Promise.resolve([1])),",
+        '  internalNote: "x",',
+        "})",
+        "export const wrongDeferred: Route.Loader = () => ({",
+        '  title: "t",',
+        "  // @ts-expect-error the deferred value resolves to numbers",
+        '  feed: defer(Promise.resolve(["a"])),',
+        "})",
+        "export const wrongRevalidate: Route.Action = () =>",
+        "  // @ts-expect-error ok is a boolean",
+        '  revalidate(["/"], { ok: "yes" })',
+        "",
+      ].join("\n"),
+    )
+    write("routes/feed/[id].tsx", "export default () => null\n")
+    write(
+      "routes/plain.backend.ts",
+      [
+        'import { redirect } from "@nifrajs/web"',
+        'import type { Route } from "./+types/plain"',
+        'export const loader: Route.Loader = () => redirect("/")',
+        "// @ts-expect-error no loaderOutput: data is refused",
+        "export const data: Route.Loader = () => ({ secret: 1 })",
+        "",
+      ].join("\n"),
+    )
+    write("routes/plain.tsx", "export default () => null\n")
+    writeRouteTypes({ appRoot: root })
+    expect(generated("routes/feed/+types/[id].d.ts")).toContain(
+      "export type Loader = (args: LoaderArgs) => RouteLoaderReturn<Backend>",
+    )
+    expect(typeErrors(["routes/feed/[id].backend.ts", "routes/plain.backend.ts"])).toEqual([])
+  }, 60_000)
+
   test("a route with no backend half sends no data", () => {
     write(
       "routes/about.tsx",

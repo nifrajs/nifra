@@ -7039,6 +7039,13 @@
     "signature": "export interface InjectedClock {\n    readonly now: () => number;\n    readonly sleep?: (milliseconds: number) => Promise<void>;\n}"
   },
   {
+    "name": "InputOf",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type InputOf<Module, Name extends string> = Module extends {\n    readonly [K in Name]: infer S;\n} ? S extends StandardSchemaV1 ? InferInput<S> : never : null;",
+    "doc": "/**\n * What a route module's output schema accepts from its loader or action: the input type of its `Name`\n * export, or `null` when the module declares none. A `t.deferred(inner)` field accepts `defer(...)`.\n */"
+  },
+  {
     "name": "InstallHistoryOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -12288,6 +12295,13 @@
     "signature": "export interface RobotsRule {\n    /** A single user-agent token (`\"*\"`, `\"Googlebot\"`, …) or several sharing the same directives. */\n    readonly userAgent: string | readonly string[];\n    readonly allow?: readonly string[];\n    readonly disallow?: readonly string[];\n    /** Seconds between requests (honored by some crawlers). */\n    readonly crawlDelay?: number;\n}"
   },
   {
+    "name": "RouteActionReturn",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type RouteActionReturn<Module> = InputOf<Module, \"actionOutput\"> | RouteRevalidate<InputOf<Module, \"actionOutput\">> | RouteControl | Promise<InputOf<Module, \"actionOutput\"> | RouteRevalidate<InputOf<Module, \"actionOutput\">> | RouteControl>;",
+    "doc": "/**\n * What a route module's `action` may return: as {@link RouteLoaderReturn} against `actionOutput`,\n * plus that data wrapped in `revalidate(paths, data)`.\n */"
+  },
+  {
     "name": "RouteBody",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -12403,6 +12417,13 @@
     "package": "@nifrajs/client",
     "signature": "export type RouteLoaderArgs<Params, Search = undefined> = Omit<LoaderArgs<RegisteredBackend, RegisteredEnv, Search>, \"params\"> & {\n    readonly params: Params;\n};",
     "doc": "/** A route's loader or action context: its own `params`, and `api` typed by the registered backend. */"
+  },
+  {
+    "name": "RouteLoaderReturn",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type RouteLoaderReturn<Module> = InputOf<Module, \"loaderOutput\"> | RouteControl | Promise<InputOf<Module, \"loaderOutput\"> | RouteControl>;",
+    "doc": "/**\n * What a route module's `loader` may return: data its `loaderOutput` accepts, a `Response` or a\n * `ResponseResult` such as `redirect(...)`, or nothing. With no `loaderOutput`, returning data is a\n * type error, as it is a refusal at runtime.\n */"
   },
   {
     "name": "RouteLocation",

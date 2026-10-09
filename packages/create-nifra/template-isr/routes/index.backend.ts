@@ -8,7 +8,7 @@ export const revalidate = 10
 
 export const loaderOutput = t.object({ renders: t.number(), revalidate: t.number() })
 
-export async function loader({ api }: Route.LoaderArgs) {
+export const loader: Route.Loader = async ({ api }) => {
   const res = await api.page.get()
   return { renders: res.ok ? res.data.renders : 0, revalidate }
 }

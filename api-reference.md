@@ -927,6 +927,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **InProcessClient** _(type)_ - `type InProcessClient<App> = Treaty<App> & BackendMount`
   Typed route client plus the explicit platform-aware backend mount capability.
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
+- **InputOf** _(type)_ - `type InputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S } ? S extends StandardSchemaV1 ? InferInput<S> : never : null`
+  What a route module's output schema accepts from its loader or action: the input type of its `Name` export, or `null` when the module declares none. A `t.deferred(inner)` field accepts `defer(...)`.
 - **Jsonify** _(type)_ - `type Jsonify<T>`
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
@@ -954,8 +956,12 @@ Every public export of every package and documented subpath - name, kind, signat
   A response body that broke its route's declared contract. Thrown THROUGH the "never throws" client on purpose: this is a test assertion about the server's honesty, not a call outcome the caller should branch on - swallowing it into a `Result` would let the drift pass the test.
 - **Result** _(type)_ - `type Result<Data, Errors = unknown, Responses = unknown>`
   The outcome of a client call. The client never throws - inspect `ok` to branch.
+- **RouteActionReturn** _(type)_ - `type RouteActionReturn<Module>`
+  What a route module's `action` may return: as {@link RouteLoaderReturn} against `actionOutput`, plus that data wrapped in `revalidate(paths, data)`.
 - **RouteLoaderArgs** _(type)_ - `type RouteLoaderArgs<Params, Search = undefined> = Omit< LoaderArgs<RegisteredBackend, RegisteredEnv, Search>, "params" > & { readonly params: Params }`
   A route's loader or action context: its own `params`, and `api` typed by the registered backend.
+- **RouteLoaderReturn** _(type)_ - `type RouteLoaderReturn<Module> = | InputOf<Module, "loaderOutput"> | RouteControl | Promise<InputOf<Module, "loaderOutput"> | RouteControl>`
+  What a route module's `loader` may return: data its `loaderOutput` accepts, a `Response` or a `ResponseResult` such as `redirect(...)`, or nothing. With no `loaderOutput`, returning data is a type error, as it is a refusal at runtime.
 - **SearchSchemaOf** _(type)_ - `type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S } ? S : undefined`
   The `searchSchema` a route's frontend half declares, or `undefined`.
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`

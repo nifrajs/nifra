@@ -93,7 +93,7 @@ export function routePathToFile(urlPath: string, ext: string): string {
 
 const ROUTE_CONTRACT = `A route is two files:
 - The page, \`routes/x.<ext>\` - ships to the browser: \`export default function Page({ data }: Route.ComponentProps)\` and \`export const meta = { title, meta: […] }\`. It never imports backend code.
-- Its backend half, \`routes/x.backend.ts\` - never reaches the browser: \`export const loaderOutput = t.object({…})\` with \`export async function loader({ params, api }: Route.LoaderArgs)\` (data for SSR - only what the schema declares is sent), \`actionOutput\` with \`action\` (the form POST), and \`hydrate\`, \`islandScripts\`, \`revalidate\`, \`middleware\`. Reach the backend through the typed \`api\`.
+- Its backend half, \`routes/x.backend.ts\` - never reaches the browser: \`export const loaderOutput = t.object({…})\` with \`export const loader: Route.Loader = async ({ params, api }) => …\` (data for SSR - only what the schema declares is sent, and \`Route.Loader\` type-checks what it returns against that schema), \`actionOutput\` with \`export const action: Route.Action\` (the form POST), and \`hydrate\`, \`islandScripts\`, \`revalidate\`, \`middleware\`. Reach the backend through the typed \`api\`.
 Both import \`type { Route } from "./+types/<name>"\`, which \`nifra dev\`, \`nifra build\`, \`nifra check\` and \`nifra types\` generate. Path params are typed on \`params\`.`
 
 interface RouteParam {
@@ -120,11 +120,13 @@ function backendStub(file: string, params: readonly RouteParam[], vanilla: boole
   const last = params.at(-1)
   const loader =
     last === undefined
-      ? `export async function loader(_args: Route.LoaderArgs) {
+      ? `// Route.Loader checks what it returns against loaderOutput.
+export const loader: Route.Loader = async () => {
   // Load through the typed backend client, \`api\` in these args; see nifra_example("loader").
   return { title: "TODO" }
 }`
-      : `export async function loader({ params }: Route.LoaderArgs) {
+      : `// Route.Loader checks what it returns against loaderOutput.
+export const loader: Route.Loader = async ({ params }) => {
   // Load by params.${last.name} through the typed backend client, \`api\` in these args; see nifra_example("loader").
   return { title: \`TODO: \${params.${last.name}${last.optional ? ' ?? ""' : ""}}\` }
 }`

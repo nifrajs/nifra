@@ -124,6 +124,32 @@ function collectSamples(root: string): Sample[] {
   return samples
 }
 
+const ROUTE_TYPES_IMPORT = /\bfrom\s+["']\.\/\+types\/([^"'/]+)["']/g
+
+// A route's `./+types` module is generated from its files. Here the sample is the backend half, so a
+// `Route.Loader` return is checked against the sample's own schema. The params are the route name's
+// own (`[id]` gives `id`); `api` stays untyped, as the sandbox has no `backend/app.ts` to register.
+function routeTypesStandIn(name: string): string {
+  const own = [...name.matchAll(/\[{1,2}(?:\.\.\.)?([A-Za-z_]\w*)\]{1,2}/g)].map(
+    ([, param]) => `readonly ${param}: string`,
+  )
+  return [
+    'import type { LoaderArgs as Args, OutputOf, RouteActionReturn, RouteLoaderReturn } from "@nifrajs/client"',
+    'type Backend = typeof import("../sample")',
+    "export namespace Route {",
+    `  export type Params = { ${own.join("; ")} } & Record<string, string>`,
+    '  export type LoaderData = OutputOf<Backend, "loaderOutput">',
+    '  export type ActionData = OutputOf<Backend, "actionOutput">',
+    '  export type LoaderArgs = Omit<Args<unknown>, "api" | "params"> & { readonly api: any; readonly params: Params }',
+    "  export type ActionArgs = LoaderArgs",
+    "  export type Loader = (args: LoaderArgs) => RouteLoaderReturn<Backend>",
+    "  export type Action = (args: ActionArgs) => RouteActionReturn<Backend>",
+    "  export type ComponentProps = { readonly data: LoaderData; readonly actionData?: ActionData; readonly params: Params }",
+    "}",
+    "",
+  ].join("\n")
+}
+
 function loadRepoOptions(): ts.CompilerOptions {
   const host: ts.ParseConfigFileHost = { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} }
   const parsed = ts.getParsedCommandLineOfConfigFile(`${ROOT}/tsconfig.json`, {}, host)
@@ -152,8 +178,15 @@ export function main(root = ROOT): void {
   mkdirSync(WORK, { recursive: true })
   const byFile = new Map<string, Sample>()
   for (const s of samples) {
-    const fileName = `${WORK}/${s.page.replace(/\W/g, "_")}__${s.name}.ts`
+    // One directory per sample, so each resolves `./+types/<name>` to a stand-in of its own.
+    const dir = `${WORK}/${s.page.replace(/\W/g, "_")}__${s.name}`
+    mkdirSync(dir, { recursive: true })
+    const fileName = `${dir}/sample.ts`
     writeFileSync(fileName, s.code)
+    for (const [, name = ""] of s.code.matchAll(ROUTE_TYPES_IMPORT)) {
+      mkdirSync(`${dir}/+types`, { recursive: true })
+      writeFileSync(`${dir}/+types/${name}.d.ts`, routeTypesStandIn(name))
+    }
     byFile.set(fileName, s)
   }
 

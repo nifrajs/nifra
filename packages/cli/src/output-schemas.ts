@@ -725,6 +725,8 @@ interface Target {
   /** Where a new declaration goes: above the function's export and its doc comment. */
   readonly insertAt: number
   readonly fnLine: number
+  /** `export const loader: <type> = ...`: the checker reads that type, not what the body returns. */
+  readonly annotated: boolean
   /** `undefined` when the schema is not exported; `null` when exported in a form not rewritten. */
   readonly declaration: SchemaDeclaration | null | undefined
 }
@@ -773,11 +775,17 @@ function targetsOf(content: string): Target[] {
     const found = exported(mask, fn)
     if (found === null) continue
     const reexport = found[0].startsWith("export {") || found[0].startsWith("export{")
+    let after = found.index + found[0].length
+    while (/\s/.test(mask[after] ?? "")) after++
     targets.push({
       fn,
       schema,
       insertAt: reexport ? content.length : aboveComments(content, lineStart(content, found.index)),
       fnLine: lineAt(content, found.index),
+      annotated:
+        !reexport &&
+        /^(?:const|let|var)\b/.test(found[0].replace(/^export\s+/, "")) &&
+        mask[after] === ":",
       declaration: declarationOf(content, mask, schema),
     })
   }
@@ -862,6 +870,16 @@ async function plan(
             ? { file, line, schema, status, generated, dropped }
             : { file, line, schema, status, generated, dropped, reason }
         return entries.push(item) - 1
+      }
+      if (target.annotated) {
+        // A `Route.Loader` annotation returns the schema's own input type: comparing the two would
+        // always agree, so the schema is reported unchecked rather than passed.
+        entry(
+          "unreadable",
+          [],
+          `${target.fn} has a type annotation, so its return type is the annotation's, not what it returns. Remove the annotation to have the schema generated and checked, or delete the "nifra:generated" line to own the schema by hand`,
+        )
+        continue
       }
       if (raw === undefined) {
         entry("unreadable", [], "TypeScript could not read its type")

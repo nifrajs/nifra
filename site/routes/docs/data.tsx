@@ -16,7 +16,8 @@ import type { Route } from "./+types/[id]"
 // The page receives exactly this shape. Anything else the loader returns stays on the server.
 export const loaderOutput = t.object({ id: t.string(), name: t.string() })
 
-export async function loader({ params, api }: Route.LoaderArgs) {
+// Route.Loader checks what this returns against loaderOutput at compile time.
+export const loader: Route.Loader = async ({ params, api }) => {
   const res = await api.users({ id: params.id }).get()
   if (!res.ok) throw notFound()
   return res.data
@@ -35,7 +36,7 @@ import type { Route } from "./+types/new"
 
 export const actionOutput = t.object({ ok: t.boolean() })
 
-export async function action({ api, request }: Route.ActionArgs) {
+export const action: Route.Action = async ({ api, request }) => {
   const form = await request.formData()
   await api.users.post({ name: String(form.get("name")) })
   return { ok: true }                  // the page's loaders revalidate automatically
@@ -113,6 +114,19 @@ export default function Data() {
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
+      <p>
+        Annotating the loader with <code>Route.Loader</code> from the generated{" "}
+        <code>./+types/&lt;name&gt;</code> checks what it returns against <code>loaderOutput</code>{" "}
+        at compile time: a field of the wrong type, a <code>defer(...)</code> whose value does not
+        match its <code>t.deferred(...)</code> field, or any data from a loader with no{" "}
+        <code>loaderOutput</code> is a type error. A redirect, a <code>Response</code> and returning
+        nothing stay allowed. <code>Route.Action</code> does the same against{" "}
+        <code>actionOutput</code>, <code>revalidate(paths, data)</code> included. A field the schema
+        does not declare is not a type error: the guard drops it before it ships. The annotation
+        makes the loader's type the schema's, so <code>nifra schemas</code> cannot read what an
+        annotated loader returns. It reports a generated schema over one as unchecked: annotate a
+        loader whose schema you write, and leave a loader whose schema is generated unannotated.
+      </p>
       <p>
         <code>nifra schemas</code> drafts the schemas from your code for review: it reads each
         loader's and action's TypeScript return type, and with <code>--write</code> puts a schema

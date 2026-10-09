@@ -207,7 +207,7 @@
     "name": "ACTION",
     "topic": "Nifra - Loaders & actions",
     "slug": "data",
-    "code": "// routes/users/new.backend.ts - an action handles the route's POST.\nimport { t } from \"@nifrajs/schema\"\nimport type { Route } from \"./+types/new\"\n\nexport const actionOutput = t.object({ ok: t.boolean() })\n\nexport async function action({ api, request }: Route.ActionArgs) {\n  const form = await request.formData()\n  await api.users.post({ name: String(form.get(\"name\")) })\n  return { ok: true }                  // the page's loaders revalidate automatically\n}"
+    "code": "// routes/users/new.backend.ts - an action handles the route's POST.\nimport { t } from \"@nifrajs/schema\"\nimport type { Route } from \"./+types/new\"\n\nexport const actionOutput = t.object({ ok: t.boolean() })\n\nexport const action: Route.Action = async ({ api, request }) => {\n  const form = await request.formData()\n  await api.users.post({ name: String(form.get(\"name\")) })\n  return { ok: true }                  // the page's loaders revalidate automatically\n}"
   },
   {
     "name": "CONTENT",
@@ -219,7 +219,7 @@
     "name": "LOADER",
     "topic": "Nifra - Loaders & actions",
     "slug": "data",
-    "code": "// routes/users/[id].backend.ts - a loader runs on the server: in-process during SSR (no network\n// round-trip), typed against your backend contract. This file never reaches the browser.\nimport { t } from \"@nifrajs/schema\"\nimport { notFound } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\n// The page receives exactly this shape. Anything else the loader returns stays on the server.\nexport const loaderOutput = t.object({ id: t.string(), name: t.string() })\n\nexport async function loader({ params, api }: Route.LoaderArgs) {\n  const res = await api.users({ id: params.id }).get()\n  if (!res.ok) throw notFound()\n  return res.data\n}"
+    "code": "// routes/users/[id].backend.ts - a loader runs on the server: in-process during SSR (no network\n// round-trip), typed against your backend contract. This file never reaches the browser.\nimport { t } from \"@nifrajs/schema\"\nimport { notFound } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\n// The page receives exactly this shape. Anything else the loader returns stays on the server.\nexport const loaderOutput = t.object({ id: t.string(), name: t.string() })\n\n// Route.Loader checks what this returns against loaderOutput at compile time.\nexport const loader: Route.Loader = async ({ params, api }) => {\n  const res = await api.users({ id: params.id }).get()\n  if (!res.ok) throw notFound()\n  return res.data\n}"
   },
   {
     "name": "SHOULD_REVALIDATE",

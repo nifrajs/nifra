@@ -26,7 +26,7 @@ function routeModule(
   const lines = [
     header(`routes/${name}.${extension}`),
     '/// <reference path="../../register.d.ts" />',
-    'import type { OutputOf, RouteLoaderArgs, SearchSchemaOf } from "@nifrajs/client"',
+    'import type { OutputOf, RouteActionReturn, RouteLoaderArgs, RouteLoaderReturn, SearchSchemaOf } from "@nifrajs/client"',
   ]
   if (kind === "page") lines.push('import type { RenderProps } from "@nifrajs/web"')
   lines.push("")
@@ -47,6 +47,10 @@ function routeModule(
     `  export type LoaderArgs = RouteLoaderArgs<Params${script ? ", SearchSchemaOf<Frontend>" : ""}>`,
     "  /** The context the backend half's action receives. */",
     "  export type ActionArgs = LoaderArgs",
+    "  /** The backend half's loader. Annotate it, `export const loader: Route.Loader = ...`, and what it returns is checked against `loaderOutput`. */",
+    `  export type Loader = (args: LoaderArgs) => RouteLoaderReturn<${hasBackend ? "Backend" : "null"}>`,
+    "  /** The backend half's action. Annotate it, `export const action: Route.Action = ...`, and what it returns is checked against `actionOutput`. */",
+    `  export type Action = (args: ActionArgs) => RouteActionReturn<${hasBackend ? "Backend" : "null"}>`,
   )
   if (kind === "page") {
     lines.push(

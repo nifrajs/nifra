@@ -163,8 +163,10 @@ A file outside those folders joins a side with a \`.frontend.ts\`, \`.backend.ts
   (and \`actionOutput\`). Only what the schema declares reaches the browser, and a loader without one
   is refused.
 - **Type a route with its generated \`./+types/<name>\`**: \`import type { Route } from "./+types/[slug]"\`
-  gives \`Route.LoaderArgs\` (with the typed \`api\`) in the backend half and \`Route.ComponentProps\` in
-  the page. \`nifra dev\`, \`nifra build\`, \`nifra check\` and \`nifra types\` write them.
+  gives \`Route.Loader\` and \`Route.Action\` in the backend half (\`export const loader: Route.Loader =
+  async ({ api, params }) => ...\` checks what it returns against \`loaderOutput\`) and
+  \`Route.ComponentProps\` in the page. \`nifra dev\`, \`nifra build\`, \`nifra check\` and
+  \`nifra types\` write them.
 - **Secrets stay in \`backend/\`.** A value only the server may see is read there (\`process.env\`), never
   in a frontend file; a build that finds what looks like a credential in browser output fails.`
 }

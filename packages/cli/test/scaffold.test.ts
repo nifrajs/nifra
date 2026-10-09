@@ -62,7 +62,7 @@ describe("scaffoldRoute", () => {
     expect(r.backend.file).toBe("routes/users/[id].backend.ts")
     expect(r.backend.content).toContain("export const loaderOutput = t.object(")
     expect(r.backend.content).toContain(
-      "export async function loader({ params }: Route.LoaderArgs)",
+      "export const loader: Route.Loader = async ({ params }) => {",
     )
     expect(r.note).toContain("routes/users/[id].backend.ts")
   })

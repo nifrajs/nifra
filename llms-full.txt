@@ -1317,7 +1317,8 @@ import type { Route } from "./+types/[id]"
 // The page receives exactly this shape. Anything else the loader returns stays on the server.
 export const loaderOutput = t.object({ id: t.string(), name: t.string() })
 
-export async function loader({ params, api }: Route.LoaderArgs) {
+// Route.Loader checks what this returns against loaderOutput at compile time.
+export const loader: Route.Loader = async ({ params, api }) => {
   const res = await api.users({ id: params.id }).get()
   if (!res.ok) throw notFound()
   return res.data
@@ -1332,6 +1333,18 @@ export default function User({ data }: Route.ComponentProps) {
   return <h1>{data.name}</h1>
 }
 ```
+
+Annotating the loader with `Route.Loader` from the generated
+`./+types/<name>` checks what it returns against `loaderOutput`
+at compile time: a field of the wrong type, a `defer(...)` whose value does not
+match its `t.deferred(...)` field, or any data from a loader with no
+`loaderOutput` is a type error. A redirect, a `Response` and returning
+nothing stay allowed. `Route.Action` does the same against
+`actionOutput`, `revalidate(paths, data)` included. A field the schema
+does not declare is not a type error: the guard drops it before it ships. The annotation
+makes the loader's type the schema's, so `nifra schemas` cannot read what an
+annotated loader returns. It reports a generated schema over one as unchecked: annotate a
+loader whose schema you write, and leave a loader whose schema is generated unannotated.
 
 `nifra schemas` drafts the schemas from your code for review: it reads each
 loader's and action's TypeScript return type, and with `--write` puts a schema
@@ -1367,7 +1380,7 @@ import type { Route } from "./+types/new"
 
 export const actionOutput = t.object({ ok: t.boolean() })
 
-export async function action({ api, request }: Route.ActionArgs) {
+export const action: Route.Action = async ({ api, request }) => {
   const form = await request.formData()
   await api.users.post({ name: String(form.get("name")) })
   return { ok: true }                  // the page's loaders revalidate automatically
@@ -15690,7 +15703,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/client
 
-`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `InProcessClient`, `InProcessClientOptions`, `Jsonify`, `LoaderArgs`, `LoaderData`, `LoaderResponseControls`, `OutputOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `Register`, `RegisteredBackend`, `RegisteredEnv`, `RegistryOf`, `ResponseContractViolation`, `Result`, `RouteLoaderArgs`, `SearchSchemaOf`, `SubscribeOptions`, `Subscription`, `TestClientOptions`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`, `client`, `inProcessClient`, `reservedKeyFor`, `testClient`
+`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `InProcessClient`, `InProcessClientOptions`, `InputOf`, `Jsonify`, `LoaderArgs`, `LoaderData`, `LoaderResponseControls`, `OutputOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `Register`, `RegisteredBackend`, `RegisteredEnv`, `RegistryOf`, `ResponseContractViolation`, `Result`, `RouteActionReturn`, `RouteLoaderArgs`, `RouteLoaderReturn`, `SearchSchemaOf`, `SubscribeOptions`, `Subscription`, `TestClientOptions`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`, `client`, `inProcessClient`, `reservedKeyFor`, `testClient`
 
 ## @nifrajs/coding-agent
 

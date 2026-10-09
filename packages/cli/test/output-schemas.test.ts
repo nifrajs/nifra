@@ -289,6 +289,28 @@ describe("a generated schema over time", () => {
       "generated loaderOutput was not checked: the loader's return type is any",
     )
   }, 60_000)
+
+  test("a generated schema over an annotated loader is reported unchecked, never passed", async () => {
+    const root = project({
+      "routes/me.backend.ts": initial,
+      "routes/me.tsx": "export default () => null\n",
+    })
+    await outputSchemas(root, { write: true })
+    writeFileSync(
+      join(root, "routes/me.backend.ts"),
+      read(root, "routes/me.backend.ts").replace(
+        "export const loader = () => ({ name: 'Ada' })",
+        "type Loader = () => { name: string }\nexport const loader: Loader = () => ({ name: 'Ada' })",
+      ),
+    )
+    const { entries } = await outputSchemas(root)
+    expect(entries.map((e) => e.status)).toEqual(["unreadable"])
+    expect(entries[0]?.reason).toContain("loader has a type annotation")
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    const findings = check.diagnostics.filter((d) => d.code === "NF-C033")
+    expect(findings.map((d) => d.severity)).toEqual(["warning"])
+    expect(findings[0]?.message).toContain("generated loaderOutput was not checked: loader has")
+  }, 60_000)
 })
 
 describe("a hand-written schema", () => {
