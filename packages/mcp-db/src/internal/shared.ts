@@ -517,8 +517,7 @@ export function unexposedPlanRelation(
   return undefined
 }
 
-// The opcodes that open a b-tree cursor. `VOpen` (a virtual table) names no relation in the program,
-// so virtual tables stay with the statement and plan checks.
+// The opcodes that open a b-tree cursor.
 const BTREE_OPEN_OPCODES = new Set(["OpenRead", "OpenWrite", "ReopenIdx"])
 
 const field = (row: unknown, key: string): unknown =>
@@ -529,6 +528,7 @@ const field = (row: unknown, key: string): unknown =>
  * it opens belongs to an exposed table (an index counts as its table). `program` is the statement's
  * `EXPLAIN` rows and `catalog` is `SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage > 0`.
  * The program names what SQLite will read by root page, so no alias, CTE name or quoting changes it.
+ * A virtual table or table-valued function (`VOpen`) names no table at all and is never exposed.
  */
 export function unexposedProgramRelation(
   program: readonly unknown[],
@@ -542,6 +542,7 @@ export function unexposedProgramRelation(
   }
   for (const step of program) {
     const opcode = field(step, "opcode")
+    if (opcode === "VOpen") return "<virtual table>"
     if (typeof opcode !== "string" || !BTREE_OPEN_OPCODES.has(opcode)) continue
     // P3 is the schema: 0 is main; temp (1) and attached databases (2+) are not in this catalog.
     const schema = Number(field(step, "p3"))

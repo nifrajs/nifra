@@ -341,6 +341,17 @@ describe("run_query (opt-in)", () => {
     expect(result.text).toContain("not exposed")
   })
 
+  test("a table-valued function or virtual table behind a comma and an allowlisted alias stays unexposed", async () => {
+    for (const sql of [
+      "SELECT name FROM (SELECT 1), pragma_table_info('users') AS habits",
+      "SELECT name FROM (SELECT 1), dbstat AS habits",
+    ]) {
+      const result = await call(server, "run_query", { sql }, auth)
+      expect(result.isError).toBe(true)
+      expect(result.text).toBe('query touches "<virtual table>", which is not exposed')
+    }
+  })
+
   test("a same-named table in another schema of the connection stays unexposed", async () => {
     const db = seededDb()
     db.run("ATTACH ':memory:' AS aux")
