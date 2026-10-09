@@ -72,6 +72,13 @@ export interface RunResult {
   readonly failureCode?: string
 }
 
+/** Why one node failed, handed to {@link OrchestrationHostOptions.onStepFailed}. */
+export interface StepFailure {
+  readonly code: "STEP_FAILED" | "GATE_REJECTED"
+  /** What the step threw (bounded), or a rejecting verify gate's string `reason`. Not masked. */
+  readonly message?: string
+}
+
 export interface SubmitOptions {
   /** Caller-supplied for reproducibility; defaults to a per-host monotonic id (no clock, no random). */
   readonly runId?: string
@@ -98,9 +105,17 @@ export interface OrchestrationHostOptions {
    * running. `limits.maxAbandonedSubagents` bounds how many may run at once across all runs.
    */
   onSubagentAbandoned?(runId: string, nodeId: string, abandonment: SubagentAbandonment): void
+  /**
+   * Called when a node fails, with what it threw or why a verify gate refused. Evidence and
+   * {@link RunResult} stay content-free, so this is the only place the text goes: mask anything
+   * sensitive before keeping it. A throw here is ignored.
+   */
+  onStepFailed?(runId: string, nodeId: string, failure: StepFailure): void
 }
 
 const DEFAULT_MAX_STEPS = 100_000
+// Matches the bound the workflow kernel puts on a thrown step's message.
+const MAX_FAILURE_MESSAGE = 4096
 const DEFAULT_MAX_DEPTH = 64
 
 interface RunRecord {
@@ -136,6 +151,7 @@ export class OrchestrationHost {
   private counter = 0
   private readonly subagentAbandonment: SubagentAbandonmentLedger = { abandoned: 0 }
   private readonly onSubagentAbandoned: OrchestrationHostOptions["onSubagentAbandoned"]
+  private readonly onStepFailed: OrchestrationHostOptions["onStepFailed"]
 
   constructor(options: OrchestrationHostOptions) {
     this.catalog = options.catalog
@@ -144,6 +160,7 @@ export class OrchestrationHost {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.policy = options.policy
     this.onSubagentAbandoned = options.onSubagentAbandoned
+    this.onStepFailed = options.onStepFailed
   }
 
   /** Subagent executors abandoned by any run of this host that are still running. */
@@ -401,6 +418,7 @@ export class OrchestrationHost {
       if (isGateRejection(run.kindById.get(event.id), event.output)) {
         run.failureCode = "E_GATE_REJECTED"
         await run.store.append({ ...base, status: "failed", errorCode: "GATE_REJECTED", ...effect })
+        this.reportFailure(run.runId, event.id, "GATE_REJECTED", gateReason(event.output))
         return
       }
       const refs = run.artifacts.get(event.id)
@@ -415,6 +433,21 @@ export class OrchestrationHost {
     if (event.type === "step.failed") {
       run.failureCode = "E_STEP_FAILED"
       await run.store.append({ ...base, status: "failed", errorCode: "STEP_FAILED", ...effect })
+      this.reportFailure(run.runId, event.id, "STEP_FAILED", event.error)
+    }
+  }
+
+  private reportFailure(
+    runId: string,
+    nodeId: string,
+    code: StepFailure["code"],
+    message: string | undefined,
+  ): void {
+    if (this.onStepFailed === undefined) return
+    try {
+      this.onStepFailed(runId, nodeId, message === undefined ? { code } : { code, message })
+    } catch {
+      // The caller's sink must not decide the run's outcome.
     }
   }
 
@@ -452,6 +485,13 @@ export class OrchestrationHost {
 }
 
 /** A verify/approve node whose output is not a pass. Other kinds never gate. */
+function gateReason(output: unknown): string | undefined {
+  const reason =
+    typeof output === "object" && output !== null && "reason" in output ? output.reason : undefined
+  if (typeof reason !== "string" || reason.length === 0) return undefined
+  return reason.length > MAX_FAILURE_MESSAGE ? `${reason.slice(0, MAX_FAILURE_MESSAGE)}…` : reason
+}
+
 function isGateRejection(kind: RunNodeKind | undefined, output: unknown): boolean {
   if (kind === "verify") {
     if (output === true) return false

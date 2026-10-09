@@ -17,7 +17,17 @@ events.push(/* a versioned AgentEvent */)
 error message, and 64 KiB per string inside `input`, `output`, or `details`. A backend keeps its
 events inside them with `splitAgentText` (a long reply as consecutive events that join back),
 `boundAgentText` (one field, cut with a marker), and `boundAgentValue` (a display copy of a tool's
-input or output; the tool itself still gets the whole value).
+input or output; the tool itself still gets the whole value). `agentEventProblem` says why an event
+was refused, naming the field and the limit but never its content.
+
+A backend's own frames (a vendor's plan, reasoning, or context usage) travel as extension events:
+`type` is `x-<vendor>.<name>` (lowercase, at most 64 characters), with an optional `turnId` and a
+`data` value inside the same payload bounds. Hosts that do not know the type pass it through; a host
+that does can register a check for it.
+
+```ts
+yield { version: 1, sessionId, seq, at: Date.now(), type: "x-codex.plan", turnId, data: { steps } }
+```
 
 Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
 runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI

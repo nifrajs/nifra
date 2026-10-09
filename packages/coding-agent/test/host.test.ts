@@ -7,13 +7,14 @@ import type {
   AgentBackendInfo,
   AgentEvent,
   AgentEventPayload,
+  AgentExtensionEvent,
   AgentSessionSnapshot,
   CreateSessionInput,
   ReloadResult,
   SendMessageInput,
 } from "@nifrajs/agent-protocol"
 import { CodingAgentHost } from "../src/host.ts"
-import type { SessionStore } from "../src/sessions.ts"
+import { FileSessionStore, type SessionStore } from "../src/sessions.ts"
 
 class ScriptedBackend implements AgentBackend {
   readonly info: AgentBackendInfo = {
@@ -189,6 +190,31 @@ test("host stops automatic repair at the configured attempt cap", async () => {
   }
 })
 
+test("a gate that is not installed reports so once and starts no repair turn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-nogate-"))
+  const backend = new ScriptedBackend()
+  const host = new CodingAgentHost({
+    backend,
+    maxRepairAttempts: 2,
+    verifyAfterTurn: ["check"],
+    verification: { command: "nifra-gate-that-is-not-installed" },
+  })
+  try {
+    await host.start({ cwd: root, backend: backend.info.name })
+    const events: AgentEvent[] = []
+    for await (const event of host.prompt("make the project healthy")) events.push(event)
+
+    expect(backend.messages).toHaveLength(1)
+    const verified = events.filter((event) => event.type === "verification.completed")
+    expect(verified).toHaveLength(1)
+    expect(verified[0]).toMatchObject({ ok: false, report: { unavailable: true } })
+    expect(events.some((event) => event.type === "repair.required")).toBe(false)
+  } finally {
+    await host.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("host converts malformed backend events into a bounded protocol failure", async () => {
   const backend = new ScriptedBackend()
   backend.send = () =>
@@ -203,6 +229,115 @@ test("host converts malformed backend events into a bounded protocol failure", a
   expect(events[0]).toMatchObject({ type: "session.failed", error: { code: "BACKEND_PROTOCOL" } })
   expect(host.snapshot?.status).toBe("failed")
   await host.stop()
+})
+
+test("a malformed backend event's failure names the field it broke", async () => {
+  const backend = new ScriptedBackend()
+  backend.send = () =>
+    (async function* (): AsyncGenerator<AgentEvent> {
+      yield {
+        version: 1,
+        sessionId: "named",
+        seq: 0,
+        at: 0,
+        type: "turn.started",
+        turnId: "t",
+        prompt: "p".repeat(256 * 1024 + 1),
+      }
+    })()
+  const host = new CodingAgentHost({ backend })
+  await host.start({ cwd: process.cwd(), sessionId: "named", backend: backend.info.name })
+  const events: AgentEvent[] = []
+  for await (const event of host.prompt("long")) events.push(event)
+  expect(events).toHaveLength(1)
+  const failed = events[0]
+  expect(failed?.type === "session.failed" ? failed.error : undefined).toEqual({
+    code: "BACKEND_PROTOCOL",
+    message:
+      "backend emitted an invalid agent event: turn.started.prompt is longer than 262144 characters",
+  })
+  await host.stop()
+})
+
+test("extension events pass through unless their registered check refuses them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-ext-"))
+  const run = async (
+    sessionId: string,
+    extensionEvents?: Record<string, (event: AgentExtensionEvent) => boolean>,
+  ) => {
+    const backend = new ScriptedBackend()
+    const send = backend.send.bind(backend)
+    backend.send = (input) =>
+      (async function* (): AsyncGenerator<AgentEvent> {
+        for await (const event of send(input)) {
+          yield event
+          if (event.type !== "turn.started") continue
+          yield {
+            version: 1,
+            sessionId: event.sessionId,
+            seq: 100,
+            at: 0,
+            type: "x-codex.plan",
+            turnId: event.turnId,
+            data: { steps: 2 },
+          }
+          yield {
+            version: 1,
+            sessionId: event.sessionId,
+            seq: 101,
+            at: 0,
+            type: "x-acme.notice",
+            data: "unchecked",
+          }
+        }
+      })()
+    const sessionStore = new FileSessionStore({ root })
+    const host = new CodingAgentHost(
+      extensionEvents === undefined
+        ? { backend, sessionStore }
+        : { backend, sessionStore, extensionEvents },
+    )
+    await host.start({ cwd: root, sessionId, backend: backend.info.name })
+    const events: AgentEvent[] = []
+    for await (const event of host.prompt("plan")) events.push(event)
+    await host.stop()
+    const stored = await sessionStore.read(sessionId)
+    return { types: events.map((event) => event.type), stored }
+  }
+  try {
+    const passed = await run("passes")
+    expect(passed.types).toEqual([
+      "turn.started",
+      "x-codex.plan",
+      "x-acme.notice",
+      "assistant.message",
+      "session.completed",
+    ])
+    expect(passed.stored.find((entry) => entry.type === "x-codex.plan")?.payload).toEqual({
+      turnId: "turn-1",
+    })
+    expect(passed.stored.find((entry) => entry.type === "x-acme.notice")?.payload).toEqual({})
+
+    const checked: unknown[] = []
+    const refused = await run("refused", {
+      "x-codex.plan": (event) => {
+        checked.push(event.data)
+        return false
+      },
+    })
+    expect(refused.types).toEqual(["turn.started", "session.failed"])
+    expect(checked).toEqual([{ steps: 2 }])
+
+    expect(
+      () =>
+        new CodingAgentHost({
+          backend: new ScriptedBackend(),
+          extensionEvents: { plan: () => true },
+        }),
+    ).toThrow("extension event type must be x-<vendor>.<name>: plan")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("host snapshot becomes stopped when the backend emits only session.stopped", async () => {

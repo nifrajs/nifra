@@ -12,6 +12,7 @@
 
 import {
   type AgentEvent,
+  type AgentExtensionEventType,
   type AgentSessionSnapshot,
   type AgentSessionStatus,
   type ApprovalLifecycleState,
@@ -158,6 +159,13 @@ export interface SessionStoppedView extends EventViewBase {
   readonly kind: "session.stopped"
 }
 
+/** A backend's `x-<vendor>.<name>` event: its type and turn, never its data. */
+export interface ExtensionEventView extends EventViewBase {
+  readonly kind: AgentExtensionEventType
+  readonly turnId?: string
+  readonly hasData: boolean
+}
+
 export type AgentEventView =
   | SessionLifecycleView
   | TurnStartedView
@@ -173,6 +181,7 @@ export type AgentEventView =
   | ExtensionReloadedView
   | SessionFailedView
   | SessionStoppedView
+  | ExtensionEventView
 
 /** Project one protocol event to its content-free view. Total over the event union - never returns undefined. */
 export function toEventView(event: AgentEvent): AgentEventView {
@@ -277,6 +286,13 @@ export function toEventView(event: AgentEvent): AgentEventView {
       })
     case "session.stopped":
       return Object.freeze({ ...base, kind: event.type })
+    default:
+      return Object.freeze({
+        ...base,
+        kind: event.type,
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        hasData: event.data !== undefined,
+      })
   }
 }
 

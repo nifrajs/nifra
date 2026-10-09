@@ -207,6 +207,44 @@ describe("OrchestrationHost lifecycle", () => {
     expect(result.completedNodeIds).toEqual(["seed"])
   })
 
+  test("a failed node's reason reaches onStepFailed and stays out of the evidence", async () => {
+    const failures: unknown[] = []
+    const catalog = createStepCatalog({
+      boom: {
+        kind: "task",
+        run: () => {
+          throw new Error("disk full writing build/out.js")
+        },
+      },
+      gate: { kind: "verify", run: () => ({ ok: false, reason: "3 tests failed" }) },
+      quiet: { kind: "verify", run: () => false },
+    })
+    const host = new OrchestrationHost({
+      catalog,
+      onStepFailed: (runId, nodeId, failure) => {
+        failures.push([runId, nodeId, failure])
+        throw new Error("a sink that throws does not change the run")
+      },
+    })
+    const run = async (nodes: RunPlan["nodes"]) => {
+      const runId = await host.submit({ version: 1, id: "p", nodes })
+      host.start(runId)
+      return { runId, result: await host.settled(runId) }
+    }
+
+    const thrown = await run([{ id: "build", kind: "task", step: "boom" }])
+    expect(thrown.result.failureCode).toBe("E_STEP_FAILED")
+    const gated = await run([{ id: "tests", kind: "verify", step: "gate" }])
+    const quiet = await run([{ id: "lint", kind: "verify", step: "quiet" }])
+    expect(failures).toEqual([
+      [thrown.runId, "build", { code: "STEP_FAILED", message: "disk full writing build/out.js" }],
+      [gated.runId, "tests", { code: "GATE_REJECTED", message: "3 tests failed" }],
+      [quiet.runId, "lint", { code: "GATE_REJECTED" }],
+    ])
+    expect(JSON.stringify([thrown.result, gated.result])).not.toContain("disk full")
+    expect(JSON.stringify([thrown.result, gated.result])).not.toContain("tests failed")
+  })
+
   test("an over-limit plan fails closed at submit with no run registered", async () => {
     const host = new OrchestrationHost({ catalog: linearCatalog(), limits: { maxNodes: 1 } })
     await expect(host.submit(twoLayerPlan(), { runId: "big" })).rejects.toThrow(

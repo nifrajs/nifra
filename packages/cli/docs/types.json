@@ -470,13 +470,13 @@
     "name": "AgentEvent",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type AgentEvent = AgentSessionStartedEvent | AgentSessionUpdatedEvent | AgentTurnStartedEvent | AgentAssistantDeltaEvent | AgentAssistantMessageEvent | AgentToolStartedEvent | AgentToolDeltaEvent | AgentToolCompletedEvent | AgentApprovalRequiredEvent | AgentApprovalResolvedEvent | AgentRepairRequiredEvent | AgentVerificationCompletedEvent | AgentMemoryCompactedEvent | AgentExtensionReloadedEvent | AgentSessionCompletedEvent | AgentSessionFailedEvent | AgentSessionStoppedEvent;"
+    "signature": "export type AgentEvent = AgentSessionStartedEvent | AgentSessionUpdatedEvent | AgentTurnStartedEvent | AgentAssistantDeltaEvent | AgentAssistantMessageEvent | AgentToolStartedEvent | AgentToolDeltaEvent | AgentToolCompletedEvent | AgentApprovalRequiredEvent | AgentApprovalResolvedEvent | AgentRepairRequiredEvent | AgentVerificationCompletedEvent | AgentMemoryCompactedEvent | AgentExtensionReloadedEvent | AgentSessionCompletedEvent | AgentSessionFailedEvent | AgentSessionStoppedEvent | AgentExtensionEvent;"
   },
   {
     "name": "AgentEventPayload",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type AgentEventPayload = Omit<AgentSessionStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionUpdatedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentTurnStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantMessageEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalResolvedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentRepairRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentVerificationCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentMemoryCompactedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionReloadedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionFailedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionStoppedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\">;",
+    "signature": "export type AgentEventPayload = Omit<AgentSessionStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionUpdatedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentTurnStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantMessageEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalResolvedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentRepairRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentVerificationCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentMemoryCompactedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionReloadedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionFailedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionStoppedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\">;",
     "doc": "/** Event payload before the transport adds protocol version, session id, sequence, and timestamp. */"
   },
   {
@@ -495,13 +495,13 @@
     "name": "AgentEventType",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type AgentEventType = \"session.started\" | \"session.updated\" | \"turn.started\" | \"assistant.delta\" | \"assistant.message\" | \"tool.started\" | \"tool.delta\" | \"tool.completed\" | \"approval.required\" | \"approval.resolved\" | \"repair.required\" | \"verification.completed\" | \"memory.compacted\" | \"extension.reloaded\" | \"session.completed\" | \"session.failed\" | \"session.stopped\";"
+    "signature": "export type AgentEventType = \"session.started\" | \"session.updated\" | \"turn.started\" | \"assistant.delta\" | \"assistant.message\" | \"tool.started\" | \"tool.delta\" | \"tool.completed\" | \"approval.required\" | \"approval.resolved\" | \"repair.required\" | \"verification.completed\" | \"memory.compacted\" | \"extension.reloaded\" | \"session.completed\" | \"session.failed\" | \"session.stopped\" | AgentExtensionEventType;"
   },
   {
     "name": "AgentEventView",
     "kind": "type",
     "package": "@nifrajs/agent-app",
-    "signature": "export type AgentEventView = SessionLifecycleView | TurnStartedView | AssistantChunkView | ToolStartedView | ToolDeltaView | ToolCompletedView | ApprovalRequiredView | ApprovalResolvedView | RepairRequiredView | VerificationCompletedView | MemoryCompactedView | ExtensionReloadedView | SessionFailedView | SessionStoppedView;"
+    "signature": "export type AgentEventView = SessionLifecycleView | TurnStartedView | AssistantChunkView | ToolStartedView | ToolDeltaView | ToolCompletedView | ApprovalRequiredView | ApprovalResolvedView | RepairRequiredView | VerificationCompletedView | MemoryCompactedView | ExtensionReloadedView | SessionFailedView | SessionStoppedView | ExtensionEventView;"
   },
   {
     "name": "AgentEvidenceLog",
@@ -530,6 +530,20 @@
     "package": "@nifrajs/agent",
     "signature": "export interface AgentEvidenceStreamOptions {\n    /** Maximum number of produced evidence items waiting for a consumer. Default 1024. */\n    readonly maxQueueSize?: number;\n    /** Called once when the consumer stops reading through `return()`, so a producer can drop it. */\n    readonly onReturn?: () => void;\n}",
     "doc": "/** Options for the lifecycle evidence stream. */"
+  },
+  {
+    "name": "AgentExtensionEvent",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentExtensionEvent extends AgentSessionEventBase {\n    readonly type: AgentExtensionEventType;\n    readonly turnId?: string;\n    readonly data?: unknown;\n}",
+    "doc": "/**\n * A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the\n * type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.\n */"
+  },
+  {
+    "name": "AgentExtensionEventType",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type AgentExtensionEventType = `x-${string}`;",
+    "doc": "/**\n * The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64\n * characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.\n */"
   },
   {
     "name": "AgentExtensionReloadedEvent",
@@ -3292,20 +3306,20 @@
     "name": "CodingAgentHost",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class CodingAgentHost {\n    readonly backend: AgentBackend;\n    private session;\n    private starting;\n    private lifecycle;\n    private readonly sessionStore;\n    private readonly context;\n    private readonly extensions;\n    readonly approvals: ApprovalManager;\n    /** Approvals {@link resolveApproval} is settling; it forwards those itself, once the broker accepts. */\n    private readonly resolving;\n    private readonly verifyAfterTurn;\n    private readonly maxRepairAttempts;\n    private readonly exposeErrorStacks;\n    private readonly verification;\n    constructor(options: CodingAgentHostOptions);\n    start(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    private startSession;\n    get snapshot(): AgentSessionSnapshot | undefined;\n    prompt(message: string, signal?: AbortSignal): AsyncIterable<AgentEvent>;\n    private nextSeq;\n    private acceptBackendEvent;\n    private verifyTurn;\n    private createEvent;\n    private recordEvent;\n    private requireSession;\n    reload(): Promise<ReloadResult>;\n    checkpoint(payload?: unknown): Promise<void>;\n    compact(reason?: CompactionReport[\"reason\"]): Promise<CompactionReport>;\n    fork(targetSessionId?: string): Promise<ForkSessionResult>;\n    history(limit?: number): Promise<readonly import(\"./sessions.js\").SessionLogEntry[]>;\n    stop(reason?: string): Promise<void>;\n    get pendingApprovals(): readonly ApprovalRequest[];\n    offerApproval(input: Omit<ApprovalRequest, \"sessionId\" | \"createdAt\" | \"expiresAt\"> & {\n        readonly sessionId?: string;\n    }): Promise<ApprovalRequest | undefined>;\n    requestApproval(input: Omit<ApprovalRequest, \"sessionId\" | \"createdAt\" | \"expiresAt\"> & {\n        readonly sessionId?: string;\n    }): Promise<boolean>;\n    resolveApproval(approvalId: string, approved: boolean, reason?: string): Promise<ApprovalDecision | undefined>;\n    get contextWindow(): ContextWindow;\n}",
+    "signature": "export declare class CodingAgentHost {\n    readonly backend: AgentBackend;\n    private session;\n    private starting;\n    private lifecycle;\n    private readonly sessionStore;\n    private readonly context;\n    private readonly extensions;\n    readonly approvals: ApprovalManager;\n    /** Approvals {@link resolveApproval} is settling; it forwards those itself, once the broker accepts. */\n    private readonly resolving;\n    private readonly verifyAfterTurn;\n    private readonly maxRepairAttempts;\n    private readonly exposeErrorStacks;\n    private readonly extensionChecks;\n    private readonly verification;\n    constructor(options: CodingAgentHostOptions);\n    start(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    private startSession;\n    get snapshot(): AgentSessionSnapshot | undefined;\n    prompt(message: string, signal?: AbortSignal): AsyncIterable<AgentEvent>;\n    private nextSeq;\n    private acceptBackendEvent;\n    private protocolFailure;\n    private acceptedEventProblem;\n    private verifyTurn;\n    private createEvent;\n    private recordEvent;\n    private requireSession;\n    reload(): Promise<ReloadResult>;\n    checkpoint(payload?: unknown): Promise<void>;\n    compact(reason?: CompactionReport[\"reason\"]): Promise<CompactionReport>;\n    fork(targetSessionId?: string): Promise<ForkSessionResult>;\n    history(limit?: number): Promise<readonly import(\"./sessions.js\").SessionLogEntry[]>;\n    stop(reason?: string): Promise<void>;\n    get pendingApprovals(): readonly ApprovalRequest[];\n    offerApproval(input: Omit<ApprovalRequest, \"sessionId\" | \"createdAt\" | \"expiresAt\"> & {\n        readonly sessionId?: string;\n    }): Promise<ApprovalRequest | undefined>;\n    requestApproval(input: Omit<ApprovalRequest, \"sessionId\" | \"createdAt\" | \"expiresAt\"> & {\n        readonly sessionId?: string;\n    }): Promise<boolean>;\n    resolveApproval(approvalId: string, approved: boolean, reason?: string): Promise<ApprovalDecision | undefined>;\n    get contextWindow(): ContextWindow;\n}",
     "doc": "/** Small lifecycle host shared by the CLI, RPC server, and future Workbench. */"
   },
   {
     "name": "CodingAgentHostOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CodingAgentHostOptions {\n    readonly backend: AgentBackend;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly approvals?: ApprovalManagerOptions;\n    /** Optional post-turn gates. Disabled by default to keep the hot path fast. */\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    /**\n     * Maximum number of automatic repair turns after a failed post-turn gate. Set to zero to\n     * preserve observe-only verification while still emitting repair.required.\n     */\n    readonly maxRepairAttempts?: number;\n    readonly verification?: Pick<VerificationOptions, \"command\" | \"commandArgs\" | \"timeoutMs\" | \"maxOutputBytes\" | \"env\">;\n    /** Retain bounded exception stacks for trusted local diagnostics. */\n    readonly exposeErrorStacks?: boolean;\n}"
+    "signature": "export interface CodingAgentHostOptions {\n    readonly backend: AgentBackend;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly approvals?: ApprovalManagerOptions;\n    /** Optional post-turn gates. Disabled by default to keep the hot path fast. */\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    /**\n     * Maximum number of automatic repair turns after a failed post-turn gate. Set to zero to\n     * preserve observe-only verification while still emitting repair.required.\n     */\n    readonly maxRepairAttempts?: number;\n    readonly verification?: Pick<VerificationOptions, \"command\" | \"commandArgs\" | \"timeoutMs\" | \"maxOutputBytes\" | \"env\">;\n    /** Retain bounded exception stacks for trusted local diagnostics. */\n    readonly exposeErrorStacks?: boolean;\n    /**\n     * Checks for a backend's extension events (`x-<vendor>.<name>`), by type. An event whose check\n     * returns false or throws fails the turn like a malformed protocol event; a type with no check\n     * passes through as long as it stays inside the protocol's bounds.\n     */\n    readonly extensionEvents?: Readonly<Record<string, (event: AgentExtensionEvent) => boolean>>;\n}"
   },
   {
     "name": "CodingAgentRpcServer",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class CodingAgentRpcServer {\n    readonly host: CodingAgentHost;\n    private readonly options;\n    private readonly token;\n    private readonly maxBodyBytes;\n    private readonly maxResponseBytes;\n    private listener;\n    private authFailures;\n    private authLastFailureAt;\n    private authBackoffUntil;\n    private creating;\n    constructor(options: CodingAgentRpcServerOptions);\n    start(): Promise<CodingAgentRpcServerHandle>;\n    stop(): Promise<void>;\n    private fetch;\n    private dispatch;\n    /** The active session, or one started from `input`; concurrent requests share a single start. */\n    private ensureSession;\n    private requireSnapshot;\n    private authBackoffMs;\n    private noteAuthFailure;\n    private resetAuthFailures;\n    private response;\n    private protocolError;\n    private readRequest;\n}",
+    "signature": "export declare class CodingAgentRpcServer {\n    readonly host: CodingAgentHost;\n    private readonly options;\n    private readonly token;\n    private readonly maxBodyBytes;\n    private readonly maxResponseBytes;\n    private listener;\n    private authFailures;\n    private authLastFailureAt;\n    private authBackoffUntil;\n    private creating;\n    private readonly resumable;\n    private turn;\n    private turnController;\n    private detachedTimer;\n    constructor(options: CodingAgentRpcServerOptions);\n    start(): Promise<CodingAgentRpcServerHandle>;\n    stop(): Promise<void>;\n    private fetch;\n    private dispatch;\n    private sendResumableTurn;\n    /** The active session, or one started from `input`; concurrent requests share a single start. */\n    private ensureSession;\n    private requireSnapshot;\n    private authBackoffMs;\n    private noteAuthFailure;\n    private resetAuthFailures;\n    private response;\n    private protocolError;\n    private readRequest;\n}",
     "doc": "/**\n * Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion.\n * Turn output is SSE so clients do not need a WebSocket dependency; every event is still a versioned\n * protocol event from the backend.\n */"
   },
   {
@@ -3318,7 +3332,7 @@
     "name": "CodingAgentRpcServerOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CodingAgentRpcServerOptions {\n    readonly backend: AgentBackend;\n    readonly cwd: string;\n    readonly hostname?: string;\n    /** Remote binding is opt-in; the default only permits loopback hosts. */\n    readonly allowRemote?: boolean;\n    readonly port?: number;\n    /** A random token is generated when omitted. Use an explicit token only for managed local launchers. */\n    readonly authToken?: string;\n    /** Include bounded exception stacks in RPC failures only for trusted loopback debugging. */\n    readonly exposeErrorStacks?: boolean;\n    readonly maxBodyBytes?: number;\n    /** Maximum UTF-8 bytes in one non-streaming JSON response. Defaults to 4 MiB. */\n    readonly maxResponseBytes?: number;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly ui?: UiExtensionHost;\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    readonly maxRepairAttempts?: number;\n    readonly verification?: CodingAgentHostOptions[\"verification\"];\n}"
+    "signature": "export interface CodingAgentRpcServerOptions {\n    readonly backend: AgentBackend;\n    readonly cwd: string;\n    readonly hostname?: string;\n    /** Remote binding is opt-in; the default only permits loopback hosts. */\n    readonly allowRemote?: boolean;\n    readonly port?: number;\n    /** A random token is generated when omitted. Use an explicit token only for managed local launchers. */\n    readonly authToken?: string;\n    /** Include bounded exception stacks in RPC failures only for trusted loopback debugging. */\n    readonly exposeErrorStacks?: boolean;\n    readonly maxBodyBytes?: number;\n    /** Maximum UTF-8 bytes in one non-streaming JSON response. Defaults to 4 MiB. */\n    readonly maxResponseBytes?: number;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly ui?: UiExtensionHost;\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    readonly maxRepairAttempts?: number;\n    readonly verification?: CodingAgentHostOptions[\"verification\"];\n    readonly extensionEvents?: CodingAgentHostOptions[\"extensionEvents\"];\n    /**\n     * Keep a `turn.send` running when its client disconnects, and let a client that comes back read\n     * what it missed with `turn.attach` (an `afterSeq` cursor, or `Last-Event-ID`). The newest\n     * `replayEvents` frames, up to `replayBytes`, are held (defaults 1024 and 8 MiB); a turn no client\n     * has followed for `detachedTimeoutMs` (default 2 minutes) is cancelled.\n     */\n    readonly resumableTurns?: boolean | {\n        readonly replayEvents?: number;\n        readonly replayBytes?: number;\n        readonly detachedTimeoutMs?: number;\n    };\n}"
   },
   {
     "name": "Collection",
@@ -5636,6 +5650,13 @@
     "kind": "type",
     "package": "@nifrajs/coding-agent",
     "signature": "export type ExtensionEventHandler = (payload: unknown, context: ExtensionContext) => unknown | PromiseLike<unknown>;"
+  },
+  {
+    "name": "ExtensionEventView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ExtensionEventView extends EventViewBase {\n    readonly kind: AgentExtensionEventType;\n    readonly turnId?: string;\n    readonly hasData: boolean;\n}",
+    "doc": "/** A backend's `x-<vendor>.<name>` event: its type and turn, never its data. */"
   },
   {
     "name": "ExtensionHost",
@@ -9868,14 +9889,14 @@
     "name": "OrchestrationHost",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class OrchestrationHost {\n    private readonly catalog;\n    private readonly limits;\n    private readonly maxSteps;\n    private readonly maxDepth;\n    private readonly policy;\n    private readonly vectors;\n    private readonly runs;\n    private counter;\n    private readonly subagentAbandonment;\n    private readonly onSubagentAbandoned;\n    constructor(options: OrchestrationHostOptions);\n    /** Subagent executors abandoned by any run of this host that are still running. */\n    get abandonedSubagents(): number;\n    /**\n     * Admit a capability descriptor against the host policy before it can be invoked. Throws\n     * {@link OrchestrationStateError} (`E_POLICY_REJECTED`) carrying the admission reason when refused.\n     * With no policy configured this is a passthrough - the host admits nothing it is not told to gate.\n     */\n    admit(descriptor: CapabilityDescriptor): void;\n    /**\n     * Allocate the next monotonic child vector for a live run, addressing a decision boundary the run\n     * pauses on. Strictly increasing per run, so a decision carrying any other vector is provably stale.\n     */\n    openBoundaryVector(runId: string): number;\n    /**\n     * Parse, compile, and register a run in `submitted`. All structural ceilings and capability\n     * authority are enforced here (a `CompileError` with a stable code), so an over-limit or\n     * unauthorized plan never reaches `running`.\n     */\n    submit(source: RunPlan | unknown, options?: SubmitOptions): Promise<string>;\n    /** Content-free progress view. Throws `E_NOT_FOUND` for an unknown run. */\n    inspect(runId: string): RunStatus;\n    /** `submitted` -> `running`. Begins the driver. */\n    start(runId: string): void;\n    /** `running` -> `paused`. Takes effect at the next layer boundary; in-flight nodes finish. */\n    pause(runId: string): void;\n    /** `paused` -> `running`. Releases the layer boundary. */\n    resume(runId: string): void;\n    /**\n     * Cancel from any non-terminal state. Aborts the in-flight layer and any bounded subagent, frees a\n     * paused gate, and freezes the run in `cancelled`. A late completion cannot revive it.\n     */\n    cancel(runId: string): void;\n    /** Terminal result. Throws `E_NOT_TERMINAL` while the run is still live. */\n    result(runId: string): Promise<RunResult>;\n    /** Await the run reaching a terminal state, then return its result. */\n    settled(runId: string): Promise<RunResult>;\n    private require;\n    private transition;\n    private buildResult;\n    private drive;\n    /** Project one kernel event into a content-free evidence record. Frozen once the run is terminal. */\n    private project;\n    /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */\n    private indexPlan;\n}",
+    "signature": "export declare class OrchestrationHost {\n    private readonly catalog;\n    private readonly limits;\n    private readonly maxSteps;\n    private readonly maxDepth;\n    private readonly policy;\n    private readonly vectors;\n    private readonly runs;\n    private counter;\n    private readonly subagentAbandonment;\n    private readonly onSubagentAbandoned;\n    private readonly onStepFailed;\n    constructor(options: OrchestrationHostOptions);\n    /** Subagent executors abandoned by any run of this host that are still running. */\n    get abandonedSubagents(): number;\n    /**\n     * Admit a capability descriptor against the host policy before it can be invoked. Throws\n     * {@link OrchestrationStateError} (`E_POLICY_REJECTED`) carrying the admission reason when refused.\n     * With no policy configured this is a passthrough - the host admits nothing it is not told to gate.\n     */\n    admit(descriptor: CapabilityDescriptor): void;\n    /**\n     * Allocate the next monotonic child vector for a live run, addressing a decision boundary the run\n     * pauses on. Strictly increasing per run, so a decision carrying any other vector is provably stale.\n     */\n    openBoundaryVector(runId: string): number;\n    /**\n     * Parse, compile, and register a run in `submitted`. All structural ceilings and capability\n     * authority are enforced here (a `CompileError` with a stable code), so an over-limit or\n     * unauthorized plan never reaches `running`.\n     */\n    submit(source: RunPlan | unknown, options?: SubmitOptions): Promise<string>;\n    /** Content-free progress view. Throws `E_NOT_FOUND` for an unknown run. */\n    inspect(runId: string): RunStatus;\n    /** `submitted` -> `running`. Begins the driver. */\n    start(runId: string): void;\n    /** `running` -> `paused`. Takes effect at the next layer boundary; in-flight nodes finish. */\n    pause(runId: string): void;\n    /** `paused` -> `running`. Releases the layer boundary. */\n    resume(runId: string): void;\n    /**\n     * Cancel from any non-terminal state. Aborts the in-flight layer and any bounded subagent, frees a\n     * paused gate, and freezes the run in `cancelled`. A late completion cannot revive it.\n     */\n    cancel(runId: string): void;\n    /** Terminal result. Throws `E_NOT_TERMINAL` while the run is still live. */\n    result(runId: string): Promise<RunResult>;\n    /** Await the run reaching a terminal state, then return its result. */\n    settled(runId: string): Promise<RunResult>;\n    private require;\n    private transition;\n    private buildResult;\n    private drive;\n    /** Project one kernel event into a content-free evidence record. Frozen once the run is terminal. */\n    private project;\n    private reportFailure;\n    /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */\n    private indexPlan;\n}",
     "doc": "/** Owns run lifecycle and evidence projection over the kernel WorkflowRunner. */"
   },
   {
     "name": "OrchestrationHostOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    /**\n     * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability\n     * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or\n     * approval requirement. A descriptor, plan, model, or extension cannot override it.\n     */\n    readonly policy?: HostPolicy;\n    /**\n     * Called when a subagent node's run returns while its executor, which ignored the abort, keeps\n     * running. `limits.maxAbandonedSubagents` bounds how many may run at once across all runs.\n     */\n    onSubagentAbandoned?(runId: string, nodeId: string, abandonment: SubagentAbandonment): void;\n}"
+    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    /**\n     * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability\n     * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or\n     * approval requirement. A descriptor, plan, model, or extension cannot override it.\n     */\n    readonly policy?: HostPolicy;\n    /**\n     * Called when a subagent node's run returns while its executor, which ignored the abort, keeps\n     * running. `limits.maxAbandonedSubagents` bounds how many may run at once across all runs.\n     */\n    onSubagentAbandoned?(runId: string, nodeId: string, abandonment: SubagentAbandonment): void;\n    /**\n     * Called when a node fails, with what it threw or why a verify gate refused. Evidence and\n     * {@link RunResult} stay content-free, so this is the only place the text goes: mask anything\n     * sensitive before keeping it. A throw here is ignored.\n     */\n    onStepFailed?(runId: string, nodeId: string, failure: StepFailure): void;\n}"
   },
   {
     "name": "OrchestrationLimits",
@@ -14569,6 +14590,13 @@
     "doc": "/** Read-only view handed to a step's pure effect selector. No port, no mutation. */"
   },
   {
+    "name": "StepFailure",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface StepFailure {\n    readonly code: \"STEP_FAILED\" | \"GATE_REJECTED\";\n    /** What the step threw (bounded), or a rejecting verify gate's string `reason`. Not masked. */\n    readonly message?: string;\n}",
+    "doc": "/** Why one node failed, handed to {@link OrchestrationHostOptions.onStepFailed}. */"
+  },
+  {
     "name": "StepRunContext",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -15616,7 +15644,7 @@
     "name": "VerificationResult",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface VerificationResult {\n    readonly name: \"check\" | \"assure\" | \"test\";\n    readonly ok: boolean;\n    readonly status: number | null;\n    readonly report?: unknown;\n    readonly output?: string;\n    readonly error?: string;\n    readonly stack?: string;\n}"
+    "signature": "export interface VerificationResult {\n    readonly name: \"check\" | \"assure\" | \"test\";\n    readonly ok: boolean;\n    readonly status: number | null;\n    readonly report?: unknown;\n    readonly output?: string;\n    readonly error?: string;\n    readonly stack?: string;\n    /** The gate's command was not found or cannot run, so nothing was checked; never a repair task. */\n    readonly unavailable?: true;\n}"
   },
   {
     "name": "VerifiedJwt",
@@ -16041,6 +16069,13 @@
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function agentError(code: string, message: string, details?: unknown): AgentError;"
+  },
+  {
+    "name": "agentEventProblem",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function agentEventProblem(value: unknown): string | undefined;",
+    "doc": "/**\n * Why `value` is not a valid agent event, naming the field and the limit it broke but never its\n * content, so the text is safe to log or show; `undefined` when it is valid.\n */"
   },
   {
     "name": "agentTelemetry",
@@ -19355,6 +19390,13 @@
     "doc": "/** Validate the complete discriminated event union before a projection or UI consumer sees it. */"
   },
   {
+    "name": "isAgentExtensionEventType",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function isAgentExtensionEventType(type: unknown): type is AgentExtensionEventType;",
+    "doc": "/**\n * Whether `type` names an extension event: `x-<vendor>.<name>` in lowercase letters, digits, and\n * single `-`, `.`, or `_` separators, at most 64 characters.\n */"
+  },
+  {
     "name": "isAllowedFontUrl",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -19566,6 +19608,13 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function isTerminalHandoffState(state: HandoffLifecycleState): boolean;",
     "doc": "/** True once a handoff state accepts no further op. */"
+  },
+  {
+    "name": "isVerificationAvailable",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function isVerificationAvailable(name: \"check\" | \"assure\" | \"test\", options: Pick<VerificationOptions, \"cwd\" | \"command\" | \"env\">): boolean;",
+    "doc": "/**\n * Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs\n * on the Bun this agent runs on, so it is always available unless `command` replaces it.\n */"
   },
   {
     "name": "island",

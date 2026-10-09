@@ -321,6 +321,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
 - **EvalComparisonView** _(interface)_ - `interface EvalComparisonView`
 - **EvidenceTimelineView** _(interface)_ - `interface EvidenceTimelineView`
+- **ExtensionEventView** _(interface)_ - `interface ExtensionEventView`
+  A backend's `x-<vendor>.<name>` event: its type and turn, never its data.
 - **ExtensionReloadedView** _(interface)_ - `interface ExtensionReloadedView`
 - **FaultInjectionView** _(interface)_ - `interface FaultInjectionView`
 - **HandoffView** _(interface)_ - `interface HandoffView`
@@ -405,6 +407,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventSink** _(interface)_ - `interface AgentEventSink`
 - **AgentEventStream** _(interface)_ - `interface AgentEventStream`
 - **AgentEventType** _(type)_ - `type AgentEventType`
+- **AgentExtensionEvent** _(interface)_ - `interface AgentExtensionEvent`
+  A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.
+- **AgentExtensionEventType** _(type)_ - `type AgentExtensionEventType = `x-${string}``
+  The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64 characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
 - **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 - **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
 - **AgentRepairRequiredEvent** _(interface)_ - `interface AgentRepairRequiredEvent`
@@ -516,6 +522,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SendMessageInput** _(interface)_ - `interface SendMessageInput`
 - **TransportByteLimitOptions** _(interface)_ - `interface TransportByteLimitOptions`
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
+- **agentEventProblem** _(function)_ - `agentEventProblem: (value: unknown) => string | undefined`
+  Why `value` is not a valid agent event, naming the field and the limit it broke but never its content, so the text is safe to log or show; `undefined` when it is valid.
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
@@ -533,6 +541,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The stable dedupe identity for an evidence record.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
   Validate the complete discriminated event union before a projection or UI consumer sees it.
+- **isAgentExtensionEventType** _(function)_ - `isAgentExtensionEventType: (type: unknown) => type is AgentExtensionEventType`
+  Whether `type` names an extension event: `x-<vendor>.<name>` in lowercase letters, digits, and single `-`, `.`, or `_` separators, at most 64 characters.
 - **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
   True once a boundary state accepts no further op.
 - **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
@@ -1153,6 +1163,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
 - **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
   Validate the only repository selector exposed by the host review RPC.
+- **isVerificationAvailable** _(function)_ - `isVerificationAvailable: (name: "check" | "assure" | "test", options: Pick<VerificationOptions, "cwd" | "command" | "env">) => boolean`
+  Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs on the Bun this agent runs on, so it is always available unless `command` replaces it.
 - **migrateLegacySession** _(function)_ - `migrateLegacySession: (options: MigrateLegacySessionOptions) => Promise<SessionMigrationReport>`
   Read, project, validate, and atomically commit one legacy local session.
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
@@ -1324,6 +1336,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Resolves step names to handlers. Immutable after construction; lookup is deterministic.
 - **StepEffectContext** _(interface)_ - `interface StepEffectContext`
   Read-only view handed to a step's pure effect selector. No port, no mutation.
+- **StepFailure** _(interface)_ - `interface StepFailure`
+  Why one node failed, handed to {@link OrchestrationHostOptions.onStepFailed}.
 - **StepRunContext** _(interface)_ - `interface StepRunContext`
   Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
@@ -1412,6 +1426,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Turn a failed gate into a bounded, auditable repair task for the agent loop.
 - **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
   Validate the only repository selector exposed by the host review RPC.
+- **isVerificationAvailable** _(function)_ - `isVerificationAvailable: (name: "check" | "assure" | "test", options: Pick<VerificationOptions, "cwd" | "command" | "env">) => boolean`
+  Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs on the Bun this agent runs on, so it is always available unless `command` replaces it.
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`

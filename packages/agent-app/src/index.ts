@@ -41,6 +41,7 @@ export {
   boundaryIsStale,
   type EvalComparisonView,
   type EvidenceTimelineView,
+  type ExtensionEventView,
   type ExtensionReloadedView,
   type FaultInjectionView,
   type HandoffView,
