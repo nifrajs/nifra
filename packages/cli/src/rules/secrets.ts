@@ -17,7 +17,7 @@ import { stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import type { CheckRule } from "./index.ts"
-import { zonedFiles } from "./zones.ts"
+import { buildText, zonedFiles } from "./zones.ts"
 
 const BROWSER_CODE = new Set(["route-frontend", "frontend", "shared"])
 
@@ -123,7 +123,7 @@ export const secretSourceRule: CheckRule = {
     for (const { file, app, classification } of files) {
       if (!apps.has(app)) apps.set(app, [])
       if (!BROWSER_CODE.has(classification.zone)) continue
-      const text = ctx.sources.read(file)
+      const text = buildText(ctx, file)
       if (text === undefined) continue
       const name = app === "" ? file : file.slice(app.length + 1)
       apps.get(app)?.push({ name, text, firstParty: true })

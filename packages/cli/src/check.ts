@@ -55,6 +55,8 @@ export type {
 } from "./check-diagnostics.ts"
 
 import {
+  COMPONENT_FILE,
+  componentScripts,
   createProjectSqlImports,
   isBrowserSource,
   type ModuleReader,
@@ -335,22 +337,33 @@ async function buildProjectScan(
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
       : typecheck(cwd, opts.signal),
-    walkSource(cwd, (rel, content) => {
-      sourceFiles.push({ file: rel, content })
-      fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
-      streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
-      untypedClients.push(...scanUntypedClient(rel, content))
-      removedImports.push(...scanRemovedImports(rel, content))
-      const dir = dirname(rel).replace(/^\.$/, "")
-      if (isBrowserSource(rel) && inNifraProject(dir) && !apiOnly(dir))
-        browserModules.push({ rel, content })
-    }),
+    walkSource(
+      cwd,
+      (rel, content) => {
+        sourceFiles.push({ file: rel, content })
+        fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
+        streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
+        untypedClients.push(...scanUntypedClient(rel, content))
+        removedImports.push(...scanRemovedImports(rel, content))
+        const dir = dirname(rel).replace(/^\.$/, "")
+        if (isBrowserSource(rel) && inNifraProject(dir) && !apiOnly(dir))
+          browserModules.push({ rel, content })
+      },
+      { scripts: true },
+    ),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
     collectContractFacts(cwd),
   ])
 
-  const typecheckResult = withProgramCoverage(cwd, typecheckRun, sourceFiles, checkConfig)
+  // tsc compiles TypeScript sources only; the JavaScript and component files the scan reads are no
+  // program's to cover.
+  const typecheckResult = withProgramCoverage(
+    cwd,
+    typecheckRun,
+    sourceFiles.filter(({ file }) => /\.[cm]?tsx?$/.test(file)),
+    checkConfig,
+  )
 
   // TypeScript 7's unstable API materializes source files through one project session. Build the
   // source index first so every syntax-backed scanner (including the independent rule registry)
@@ -395,11 +408,13 @@ async function buildProjectScan(
       return resolved === undefined ? undefined : projectPath(resolved)
     }
     const readModule: ModuleReader = (path) => {
+      let text: string
       try {
-        return readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
+        text = readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
       } catch {
         return undefined
       }
+      return COMPONENT_FILE.test(path) ? componentScripts(text) : text
     }
     const componentReceipts = source.files.some((file) =>
       /\.component\.server\.[cm]?[jt]sx?$/.test(file),

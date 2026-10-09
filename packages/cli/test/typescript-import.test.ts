@@ -254,6 +254,39 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
   }
 })
 
+test("checks JSX and Svelte routes on a project TypeScript 7 install", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-ts7-components-"))
+  try {
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "app" }))
+    await writeFile(join(root, "nifra.config.ts"), "export const adapter = {}\n")
+    await installTypeScriptPackage(root, "typescript7")
+    await mkdir(join(root, "routes"), { recursive: true })
+    const key = "sk_live_51HcQ2eLkdIwHu7ixA9bC0dEfGhIjKlMnOpQr"
+    await writeFile(
+      join(root, "routes", "index.svelte"),
+      `<script lang="ts">\n  import pg from "pg"\n  const key: string = "${key}"\n</script>\n<p>{key}{pg}</p>\n`,
+    )
+    await writeFile(
+      join(root, "routes", "about.jsx"),
+      `const key = "${key}"\nexport default () => <p>{key}</p>\n`,
+    )
+
+    const result = await collectCheckResult(root, { lintsOnly: true })
+    const found = new Set(
+      [...result.diagnostics, ...(result.structuredDiagnostics ?? [])].map(
+        (finding) => `${finding.code} ${finding.file}:${finding.line}`,
+      ),
+    )
+    expect([...found].filter((entry) => /NF-C0(04|17|32)/.test(entry)).sort()).toEqual([
+      "NF-C004 routes/index.svelte:2",
+      "NF-C032 routes/about.jsx:1",
+      "NF-C032 routes/index.svelte:3",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("runs the project TypeScript 7 typecheck instead of the CLI compiler", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-ts7-typecheck-"))
   try {

@@ -2820,22 +2820,69 @@ export async function walkSource(
     readonly includeTests?: boolean
     /** Additional project-relative paths to exclude from this scan. */
     readonly ignore?: (relativePath: string) => boolean
+    /**
+     * Also visit the other files a build loads: every `.jsx`, `.svelte` and `.vue` file, and `.js`
+     * files in a zone. A `.svelte`/`.vue` file is visited as {@link componentScripts}.
+     */
+    readonly scripts?: boolean
   } = {},
 ): Promise<void> {
   const skip = opts.includeTests === true ? IGNORED_DIR : IGNORED
+  const pattern =
+    opts.scripts === true
+      ? "**/*.{ts,tsx,mts,cts,jsx,js,mjs,cjs,svelte,vue}"
+      : "**/*.{ts,tsx,mts,cts}"
   // List candidates first (cheap - no reads), drop the built-in ignores, then exclude gitignored paths in
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
-  for await (const rawRel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
+  for await (const rawRel of new Glob(pattern).scan({ cwd, dot: false })) {
     const rel = normalizeProjectPath(rawRel)
+    // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
+    if (PLAIN_SCRIPT_FILE.test(rel) && !ZONED_PATH.test(rel)) continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
   // Glob order is the filesystem's, so findings would come out in a different order on each platform.
   for (const rel of rels.sort(codeUnitOrder)) {
     if (ignored.has(rel)) continue
-    visit(rel, await Bun.file(join(cwd, rel)).text())
+    const text = await Bun.file(join(cwd, rel)).text()
+    visit(rel, COMPONENT_FILE.test(rel) ? componentScripts(text) : text)
   }
+}
+
+const PLAIN_SCRIPT_FILE = /\.[cm]?js$/
+const ZONED_PATH =
+  /(^|\/)(?:routes|frontend|shared|backend)\/|\.(?:frontend|shared|backend|fn)\.[^/]+$/
+/** A single-file component: its `<script>` blocks are the code a build compiles. */
+export const COMPONENT_FILE = /\.(?:svelte|vue)$/
+
+/**
+ * A `.svelte` or `.vue` file as the source scanners read it: the text of its `<script>` blocks where
+ * they stand, and every other character blanked to a space with line breaks kept, so a finding's line
+ * and column are the file's own. An unclosed `<script>` runs to the end of the file. Pure.
+ */
+export function componentScripts(text: string): string {
+  const blank = (part: string): string => part.replace(/[^\n]/g, " ")
+  let out = ""
+  let at = 0
+  for (;;) {
+    const open = text.indexOf("<script", at)
+    if (open === -1) break
+    const close = text.indexOf(">", open)
+    if (close === -1) break
+    // `<scripts>` or `<script-x>` is another element.
+    if (!/[\s>]/.test(text[open + 7] ?? "")) {
+      out += blank(text.slice(at, close + 1))
+      at = close + 1
+      continue
+    }
+    const end = text.indexOf("</script", close + 1)
+    const stop = end === -1 ? text.length : end
+    out += blank(text.slice(at, close + 1)) + text.slice(close + 1, stop)
+    at = stop
+    if (end === -1) break
+  }
+  return out + blank(text.slice(at))
 }
 
 const bySite = (a: SourceFinding, b: SourceFinding): number =>

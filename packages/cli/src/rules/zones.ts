@@ -21,7 +21,7 @@ import {
   ZoneConfigError,
 } from "@nifrajs/web/zones"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
-import { importSites, stripComments } from "../check-scan.ts"
+import { COMPONENT_FILE, importSites, stripComments } from "../check-scan.ts"
 import { appDirs, clientModuleRoot } from "../client-module.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
@@ -48,6 +48,20 @@ function appOf(file: string): string | undefined {
   const parts = file.split("/")
   const at = parts.findIndex((part, i) => i < parts.length - 1 && ZONE_FOLDER.has(part))
   return at === -1 ? undefined : parts.slice(0, at).join("/")
+}
+
+/**
+ * A file's text as the build compiles it. The source index holds a `.svelte`/`.vue` file as its script
+ * blocks only, for the parsers; its markup carries expressions the build compiles too, so a rule that
+ * reads components itself gets the whole file.
+ */
+export function buildText(ctx: RuleContext, file: string): string | undefined {
+  if (!COMPONENT_FILE.test(file)) return ctx.sources.read(file)
+  try {
+    return readFileSync(join(ctx.root, file), "utf8")
+  } catch {
+    return undefined
+  }
 }
 
 interface ZonedFile {
@@ -309,7 +323,7 @@ export const privateEnvRule: CheckRule = {
     const findings: Diagnostic[] = []
     for (const { file, app, classification } of files) {
       if (!BROWSER_CODE.has(classification.zone)) continue
-      const content = ctx.sources.read(file)
+      const content = buildText(ctx, file)
       if (content === undefined) continue
       let prefix = prefixes.get(app)
       if (prefix === undefined) {

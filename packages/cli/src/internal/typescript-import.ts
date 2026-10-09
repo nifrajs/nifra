@@ -412,7 +412,11 @@ function sourceEntries(
     const content = sourceIndex.read(file)
     if (content === undefined) continue
     const absolute = isAbsolute(file) ? file : resolve(root, file)
-    const normalized = normalizedPath(absolute)
+    // The session opens script extensions only; a component's script blocks are opened as TypeScript
+    // beside it, and `createSourceFile` finds them by their text.
+    const normalized = normalizedPath(
+      /\.(?:svelte|vue)$/.test(absolute) ? `${absolute}.ts` : absolute,
+    )
     paths.push(normalized)
     for (const variant of pathVariants(normalized)) files.set(variant, content)
   }
