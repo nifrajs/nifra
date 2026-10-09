@@ -2394,7 +2394,7 @@
     "name": "CacheOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface CacheOptions {\n    readonly store: ResponseCacheStore;\n    /** Time to live in milliseconds. */\n    readonly ttlMs: number;\n    /** Methods cached. Default `[\"GET\", \"HEAD\"]`. */\n    readonly methods?: readonly string[];\n    /** Status predicate. Default: `200` only. */\n    readonly status?: (status: number) => boolean;\n    /** Header names included in the cache key and emitted in `Vary`. */\n    readonly vary?: readonly string[];\n    /** Custom cache key. Receives the normalized `vary` headers through the request itself. */\n    readonly key?: (request: Request) => string;\n    /** Maximum response bytes to store. Default `1_000_000`. Larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Respect request `Cache-Control: no-cache/no-store`. Default `true`. */\n    readonly respectRequestCacheControl?: boolean;\n    /** Respect response `Cache-Control: private/no-store`. Default `true`. */\n    readonly respectResponseCacheControl?: boolean;\n    /** Cache responses with `Set-Cookie`. Default `false`. */\n    readonly cacheSetCookie?: boolean;\n    /** Cache responses to requests bearing `Authorization` or `Cookie` even when the response is not\n     * explicitly `Cache-Control: public` (or `s-maxage`). Default `false`: a shared cache must not store a\n     * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless\n     * the cached route is genuinely the same for every caller. */\n    readonly cacheAuthenticated?: boolean;\n    /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key. */\n    readonly authenticatedHeaders?: readonly string[];\n    /** Response header for cache status. Default `\"x-nifra-cache\"`; set `false` to disable. */\n    readonly cacheStatusHeader?: string | false;\n}"
+    "signature": "export interface CacheOptions {\n    readonly store: ResponseCacheStore;\n    /** Time to live in milliseconds. */\n    readonly ttlMs: number;\n    /** Methods cached. Default `[\"GET\", \"HEAD\"]`. */\n    readonly methods?: readonly string[];\n    /** Status predicate. Default: `200` only. */\n    readonly status?: (status: number) => boolean;\n    /** Header names included in the cache key and emitted in `Vary`. */\n    readonly vary?: readonly string[];\n    /** Custom cache key. Receives the normalized `vary` headers through the request itself. */\n    readonly key?: (request: Request) => string;\n    /** Maximum response bytes to store. Default `1_000_000`. Larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Respect request `Cache-Control: no-cache/no-store`. Default `true`. */\n    readonly respectRequestCacheControl?: boolean;\n    /** Respect response `Cache-Control: private/no-store`. Default `true`. */\n    readonly respectResponseCacheControl?: boolean;\n    /** Cache responses with `Set-Cookie`. Default `false`. */\n    readonly cacheSetCookie?: boolean;\n    /** Cache responses to requests bearing `Authorization` or `Cookie` even when the response is not\n     * explicitly `Cache-Control: public` (or `s-maxage`). Default `false`: a shared cache must not store a\n     * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless\n     * the cached route is genuinely the same for every caller. */\n    readonly cacheAuthenticated?: boolean;\n    /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key.\n     * A response to a request an authentication stage accepted (or an integration marked with\n     * `markAuthenticatedRequest`) is treated as private too, whichever header carried the credential. */\n    readonly authenticatedHeaders?: readonly string[];\n    /** Response header for cache status. Default `\"x-nifra-cache\"`; set `false` to disable. */\n    readonly cacheStatusHeader?: string | false;\n}"
   },
   {
     "name": "CacheOutcome",
@@ -19349,6 +19349,20 @@
     "doc": "/** `true` iff `raw` is an `https://fonts.gstatic.com/…` URL - the only host we'll download from. */"
   },
   {
+    "name": "isAuthenticatedRequest",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function isAuthenticatedRequest(request: Request): boolean;",
+    "doc": "/**\n * Whether `request` passed an authentication stage or was marked with\n * {@link markAuthenticatedRequest}. The server records the request object its response hooks\n * receive, including one an `onRequest` hook replaced.\n */"
+  },
+  {
+    "name": "isAuthenticatedRequest",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function isAuthenticatedRequest(request: Request): boolean;",
+    "doc": "/**\n * Whether `request` passed an authentication stage or was marked with\n * {@link markAuthenticatedRequest}. The server records the request object its response hooks\n * receive, including one an `onRequest` hook replaced.\n */"
+  },
+  {
     "name": "isAuthorized",
     "kind": "function",
     "package": "@nifrajs/auth",
@@ -19698,6 +19712,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function manifestLink(href?: string): string;",
     "doc": "/** The `<link rel=\"manifest\">` tag for the document head. */"
+  },
+  {
+    "name": "markAuthenticatedRequest",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markAuthenticatedRequest(request: Request): void;",
+    "doc": "/**\n * Record that `request` carries a verified credential, so a response-side store keyed without it - a\n * response cache, an idempotency replay - treats the response as personalized whichever header\n * carried the credential. The server records every request an authentication stage accepts; call\n * this from an integration that verifies a credential elsewhere (an optional guard in `beforeHandle`).\n */"
+  },
+  {
+    "name": "markAuthenticatedRequest",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function markAuthenticatedRequest(request: Request): void;",
+    "doc": "/**\n * Record that `request` carries a verified credential, so a response-side store keyed without it - a\n * response cache, an idempotency replay - treats the response as personalized whichever header\n * carried the credential. The server records every request an authentication stage accepts; call\n * this from an integration that verifies a credential elsewhere (an optional guard in `beforeHandle`).\n */"
   },
   {
     "name": "markIdempotencySafeToRetry",

@@ -17,15 +17,15 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => Conte…`
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<Adde…`
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
-- **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
-- **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 
-_…and 129 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 131 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

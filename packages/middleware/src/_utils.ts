@@ -3,6 +3,7 @@ export type MaybePromise<T> = T | Promise<T>
 import type { AnyServer, NodeResponseContext } from "@nifrajs/core/server"
 import {
   authenticated,
+  markAuthenticatedRequest,
   parseCookies as parseCoreCookies,
   rejected,
   writableResponse,
@@ -55,7 +56,10 @@ export function installAuthGuard<P>(
   if (optional) {
     return app.beforeHandle(async (c: { readonly req: Request }) => {
       const principal = await verify((name) => c.req.headers.get(name))
-      if (principal !== null && principal !== undefined) store.set(c.req, principal)
+      if (principal !== null && principal !== undefined) {
+        store.set(c.req, principal)
+        markAuthenticatedRequest(c.req)
+      }
       return undefined
     })
   }

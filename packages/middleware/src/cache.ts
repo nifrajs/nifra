@@ -1,4 +1,4 @@
-import type { Middleware } from "@nifrajs/core/server"
+import { isAuthenticatedRequest, type Middleware } from "@nifrajs/core/server"
 import { type MaybePromise, withHeaders } from "./_utils.ts"
 
 export interface CachedResponse {
@@ -89,7 +89,9 @@ export interface CacheOptions {
    * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless
    * the cached route is genuinely the same for every caller. */
   readonly cacheAuthenticated?: boolean
-  /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key. */
+  /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key.
+   * A response to a request an authentication stage accepted (or an integration marked with
+   * `markAuthenticatedRequest`) is treated as private too, whichever header carried the credential. */
   readonly authenticatedHeaders?: readonly string[]
   /** Response header for cache status. Default `"x-nifra-cache"`; set `false` to disable. */
   readonly cacheStatusHeader?: string | false
@@ -359,11 +361,13 @@ export function cache(options: CacheOptions): Middleware {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       // Shared-cache safety (RFC 9111 §3.5): never store a response to an authenticated request
-      // (Authorization or Cookie) unless it's explicitly public - otherwise a personalized 200 leaks
-      // across users. Opt in with `cacheAuthenticated: true` for a route that's the same for everyone.
+      // unless it's explicitly public - otherwise a personalized 200 leaks across users. A credential
+      // header outside `authenticatedHeaders` is caught by the authentication stage that accepted it,
+      // because a hit is served before that stage runs. Opt in with `cacheAuthenticated: true` for a
+      // route that's the same for everyone.
       if (
         !cacheAuthenticated &&
-        hasAuthentication(req) &&
+        (hasAuthentication(req) || isAuthenticatedRequest(req)) &&
         !cacheControlHas(res.headers, ["public", "s-maxage"])
       ) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)

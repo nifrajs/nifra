@@ -8,6 +8,7 @@
  */
 
 import type { StandardSchemaV1 } from "../schema/standard.ts"
+import { markAuthenticatedRequest } from "../server/auth.ts"
 import { pathnameOf } from "../server/http.ts"
 import { queryObjectOf } from "../server/query.ts"
 import type { Registry } from "../server/registry.ts"
@@ -17,6 +18,7 @@ import {
   EMPTY_RESPONSE_CONTROLS,
   isResponseResult,
   type ResponseResult,
+  requestOf,
   status,
 } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
@@ -346,6 +348,7 @@ function finishAuthentication<T>(
     configurable: true,
     writable: false,
   })
+  markAuthenticatedRequest(requestOf(source))
   return runAuthenticationStages(
     host,
     entry,

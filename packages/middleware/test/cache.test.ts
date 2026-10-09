@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { cache, MemoryResponseCache } from "../src/index.ts"
+import { authenticated, rejected } from "@nifrajs/core/server"
+import { apiKey, cache, MemoryResponseCache } from "../src/index.ts"
 
 describe("cache()", () => {
   test("stores and serves cacheable GET responses", async () => {
@@ -200,5 +201,70 @@ describe("cache()", () => {
     const hit = await app.fetch(authed())
     expect(hit.headers.get("x-nifra-cache")).toBe("HIT")
     expect(await hit.json()).toEqual({ n: 1 })
+  })
+})
+
+// A hit is served before authentication runs, so a credential header outside
+// `authenticatedHeaders` must still keep the authenticated response out of the store.
+describe("cache() with a credential header it does not list", () => {
+  const key = "k".repeat(40)
+  const call = (app: { fetch(req: Request): Response | Promise<Response> }, headers = {}) =>
+    app.fetch(new Request("http://x/secret", { headers }))
+
+  test("apiKey on a custom header: the authenticated 200 is never replayed to an anonymous caller", async () => {
+    const auth = apiKey({ keys: [key], header: "x-service-key" })
+    const app = server()
+      .use(auth)
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/secret", () => ({ secret: "payroll" }))
+    const authed = await call(app, { "x-service-key": key })
+    expect(authed.status).toBe(200)
+    expect(authed.headers.get("x-nifra-cache")).toBe("BYPASS")
+    const anon = await call(app)
+    expect(anon.status).toBe(401)
+    expect(await anon.text()).not.toContain("payroll")
+  })
+
+  test("an optional apiKey guard keeps the personalized response out of the store", async () => {
+    const auth = apiKey({ keys: [key], header: "x-service-key", optional: true })
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .use(auth)
+      .get("/secret", (c) => ({ who: auth.principal(c.req) === null ? "anon" : "member" }))
+    expect(await (await call(app, { "x-service-key": key })).json()).toEqual({ who: "member" })
+    expect(await (await call(app)).json()).toEqual({ who: "anon" })
+  })
+
+  test("an app's own authentication stage on any header", async () => {
+    let calls = 0
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .authenticate({
+        id: "service",
+        run: (input) =>
+          input.headers.get("x-tenant-token") === "t1" ? authenticated("t1") : rejected(),
+      })
+      .get("/secret", () => ({ n: ++calls }))
+    expect((await call(app, { "x-tenant-token": "t1" })).headers.get("x-nifra-cache")).toBe(
+      "BYPASS",
+    )
+    expect((await call(app)).status).toBe(401)
+    expect((await call(app, { "x-tenant-token": "t1" })).headers.get("x-nifra-cache")).toBe(
+      "BYPASS",
+    )
+    expect(calls).toBe(2)
+  })
+
+  test("an explicitly public response to an authenticated request is still cached", async () => {
+    const auth = apiKey({ keys: [key], header: "x-service-key" })
+    const app = server()
+      .use(auth)
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/secret", (c) => {
+        c.set.headers["cache-control"] = "public, max-age=60"
+        return { shared: true }
+      })
+    expect((await call(app, { "x-service-key": key })).headers.get("x-nifra-cache")).toBe("MISS")
+    expect((await call(app, { "x-service-key": key })).headers.get("x-nifra-cache")).toBe("HIT")
   })
 })

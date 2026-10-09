@@ -1708,12 +1708,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+  Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
+  Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
@@ -2948,12 +2952,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+  Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
+  Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
@@ -7290,12 +7298,16 @@ _No named exports (side-effect entrypoint)._
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+  Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
+  Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`

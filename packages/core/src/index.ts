@@ -54,6 +54,8 @@ export {
   type AuthHeaders,
   type AuthMaybePromise,
   authenticated,
+  isAuthenticatedRequest,
+  markAuthenticatedRequest,
   rejected,
 } from "./server/auth.ts"
 export type {

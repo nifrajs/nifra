@@ -89,3 +89,28 @@ export function rejected(
     ? { kind: "rejected", reason }
     : { kind: "rejected", reason, response }
 }
+
+// Keyed in the global symbol registry so two copies of core agree on one record.
+const shared = globalThis as unknown as Record<symbol, WeakSet<Request> | undefined>
+const AUTHENTICATED = Symbol.for("nifra.authenticated")
+shared[AUTHENTICATED] ??= new WeakSet()
+const authenticatedRequests = shared[AUTHENTICATED]
+
+/**
+ * Record that `request` carries a verified credential, so a response-side store keyed without it - a
+ * response cache, an idempotency replay - treats the response as personalized whichever header
+ * carried the credential. The server records every request an authentication stage accepts; call
+ * this from an integration that verifies a credential elsewhere (an optional guard in `beforeHandle`).
+ */
+export function markAuthenticatedRequest(request: Request): void {
+  authenticatedRequests.add(request)
+}
+
+/**
+ * Whether `request` passed an authentication stage or was marked with
+ * {@link markAuthenticatedRequest}. The server records the request object its response hooks
+ * receive, including one an `onRequest` hook replaced.
+ */
+export function isAuthenticatedRequest(request: Request): boolean {
+  return authenticatedRequests.has(request)
+}

@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { NIFRA_ASSURANCE } from "../src/assurance.ts"
-import { authenticated, rejected, server, status } from "../src/index.ts"
+import {
+  authenticated,
+  isAuthenticatedRequest,
+  markAuthenticatedRequest,
+  rejected,
+  server,
+  status,
+} from "../src/index.ts"
 import { reflectRoutes } from "../src/reflection.ts"
 
 describe("dedicated authentication stage", () => {
@@ -479,5 +486,56 @@ describe("dedicated authentication stage", () => {
     const asyncFailed = await app.fetch(new Request("http://x/async-boom"))
     expect(asyncFailed.status).toBe(500)
     expect(await asyncFailed.text()).not.toContain("private async handler detail")
+  })
+})
+
+describe("authenticated request record", () => {
+  const stage = {
+    id: "service",
+    run: (input: { headers: { get(name: string): string | null } }) =>
+      input.headers.get("x-service-key") === "k" ? authenticated("svc") : rejected(),
+  }
+  const seen = (app: { fetch(req: Request): Response | Promise<Response> }, headers = {}) =>
+    Promise.resolve(app.fetch(new Request("http://x/r", { headers }))).then((res) =>
+      res.headers.get("x-authenticated"),
+    )
+
+  test("response hooks see the request an authentication stage accepted, and only that one", async () => {
+    const app = server()
+      .onResponse((res, req) => {
+        res.headers.set("x-authenticated", String(isAuthenticatedRequest(req)))
+        return res
+      })
+      .authenticate(stage)
+      .get("/r", () => ({ ok: true }))
+    expect(await seen(app, { "x-service-key": "k" })).toBe("true")
+    expect(await seen(app)).toBe("false")
+  })
+
+  test("the record follows a request an onRequest hook replaced", async () => {
+    const app = server()
+      .onRequest((req) => new Request(req.url, { headers: req.headers }))
+      .onResponse((res, req) => {
+        res.headers.set("x-authenticated", String(isAuthenticatedRequest(req)))
+        return res
+      })
+      .authenticate(stage)
+      .get("/r", () => ({ ok: true }))
+    expect(await seen(app, { "x-service-key": "k" })).toBe("true")
+  })
+
+  test("an integration outside a stage marks the request itself", async () => {
+    const app = server()
+      .onResponse((res, req) => {
+        res.headers.set("x-authenticated", String(isAuthenticatedRequest(req)))
+        return res
+      })
+      .beforeHandle((c) => {
+        if (c.req.headers.get("x-optional-key") === "k") markAuthenticatedRequest(c.req)
+        return undefined
+      })
+      .get("/r", () => ({ ok: true }))
+    expect(await seen(app, { "x-optional-key": "k" })).toBe("true")
+    expect(await seen(app)).toBe("false")
   })
 })
