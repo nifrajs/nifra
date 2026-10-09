@@ -844,7 +844,8 @@ function normalizeHostAuthority(value: string): string | undefined {
       hostname = value.slice(0, colon)
       port = value.slice(colon + 1)
     }
-    if (hostname.length === 0 || !/^[a-z0-9.-]+$/i.test(hostname)) return undefined
+    // `_` is a legal reg-name character (RFC 3986) and common in container service names.
+    if (hostname.length === 0 || !/^[\w.-]+$/.test(hostname)) return undefined
     hostname = hostname.toLowerCase()
   }
   if (port !== undefined) {

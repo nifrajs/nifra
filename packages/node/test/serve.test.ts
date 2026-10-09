@@ -171,6 +171,17 @@ test("allowedHosts rejects an untrusted Host on both fast GET and POST paths", a
   expect(post.status).toBe(400)
 })
 
+test("a Host name with an underscore is served, as a container service name often has one", async () => {
+  const app = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+  running = await serve(app, { hostname: "127.0.0.1", port: 0, allowedHosts: ["api_gateway:3000"] })
+  const base = `http://127.0.0.1:${running.port}`
+  const ok = await fetch(`${base}/host`, { headers: { host: "api_gateway:3000" } })
+  expect(ok.status).toBe(200)
+  expect(await ok.json()).toEqual({ origin: "http://api_gateway:3000" })
+  const bad = await fetch(`${base}/host`, { headers: { host: "api!gateway:3000" } })
+  expect(bad.status).toBe(400)
+})
+
 test("canonicalHost controls request URL construction and the default remains Host-derived", async () => {
   const canonicalApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
   running = await serve(canonicalApp, {
