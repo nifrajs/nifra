@@ -256,6 +256,27 @@ describe("loadGoogleFont()", () => {
     expect(evilHit).toBe(false) // never even attempted the fetch
   })
 
+  test("SECURITY: refuses a stylesheet weight that would steer the written file out of outDir", async () => {
+    const css = GOOGLE_CSS.replace("font-weight: 400;", "font-weight: 400/../../../escaped;")
+    const { written, writeFile } = memWriter()
+    await expect(
+      loadGoogleFont({ family: "Inter" }, { outDir: "out", fetch: cannedFetch(css), writeFile }),
+    ).rejects.toThrow(/unexpected font-weight/)
+    expect([...written.keys()]).toEqual([])
+  })
+
+  test("accepts a variable font's weight range from the stylesheet", async () => {
+    const css = GOOGLE_CSS.replaceAll("font-weight: 400;", "font-weight: 100 900;")
+    const { written, writeFile } = memWriter()
+    await loadGoogleFont(
+      { family: "Inter", subsets: ["latin"], weights: ["100..900"] },
+      { outDir: "out", fetch: cannedFetch(css), writeFile },
+    )
+    expect([...written.keys()].map((path) => path.replace(/-[0-9a-f]{16}\.woff2$/, ""))).toEqual([
+      "out/inter-latin-normal-100_900",
+    ])
+  })
+
   test("SECURITY: rejects a font file that exceeds the size cap", async () => {
     const bigFetch = (async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input)
