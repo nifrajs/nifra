@@ -179,6 +179,15 @@ export default function Structure() {
         <code>nifra openapi</code> and <code>nifra mcp</code> load <code>backend/app.ts</code> alone,
         and the tools, resources and prompts its backend declares reach <code>nifra mcp</code>.
       </p>
+      <p>
+        Those commands, the contract lock and the route lints see only what{" "}
+        <code>backend/app.ts</code> exports. An API whose app is built by a factory such as{" "}
+        <code>createApp(deps)</code>, with its real dependencies wired in another entry, exports the
+        same app from <code>backend/app.ts</code> built with stand-in dependencies, so every operation
+        is visible without a database or secrets; <code>nifra check</code> names an implemented
+        operation it does not serve (NF-C039). See{" "}
+        <a href="/docs/types-first#stub-entry">the stand-in entry</a>.
+      </p>
 
       <h2>A route is two files</h2>
       <p>

@@ -364,7 +364,7 @@ export default function Security() {
         Express, and Elysia, see <a href="/docs/security-comparison">security posture, compared</a>.
       </p>
 
-      <h2>Responses that cannot leak more than they declare</h2>
+      <h2 id="response-contract">Responses that cannot leak more than they declare</h2>
       <p>
         A <code>response</code> schema is a <strong>lower</strong> bound: it says &ldquo;at least these
         fields&rdquo;, never &ldquo;only these&rdquo;. A handler returning a database row that satisfies
@@ -733,6 +733,14 @@ export default function Security() {
         group can apply its own configuration over the app&apos;s - <code>{`admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`}</code>{" "}
         inside <code>app.group("/admin", ...)</code> - and each header it sets replaces the app&apos;s
         value on the group&apos;s routes only.
+      </p>
+      <p>
+        A fixed <code>Content-Security-Policy</code> here cannot allow nifra&apos;s inline scripts by
+        nonce. For a strict <code>script-src</code> on web pages, give <code>createWebApp</code> a{" "}
+        <code>csp</code> from <code>createCspPolicy</code>: it allows the framework&apos;s constant
+        scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
+        same header and stays cacheable under <code>withISR</code> or a CDN. See{" "}
+        <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
       </p>
 
       <h2>Route assurance - prove every route is guarded</h2>

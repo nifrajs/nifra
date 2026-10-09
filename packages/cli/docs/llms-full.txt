@@ -1066,6 +1066,42 @@ The request is on `c.req`, also available as `c.request` - the same name a
 page loader/action receives (which in turn also accepts `ctx.req`), so one name works
 in both places.
 
+### Typed error responses
+
+Declare a route's error bodies in `errors`, keyed by status, and answer with
+`status(code, body, { headers })` from `@nifrajs/core/server`. It
+ends the request from a handler or any hook, returned or thrown, without building a
+`Response`: the body is serialized like a plain return, the headers ride with it,
+and queued cookies still apply. On the typed client, checking `res.status === 409`
+narrows `res.data` to the declared 409 body; a status the route does not declare
+falls into one arm whose `data` is `unknown`.
+
+```ts
+import { client } from "@nifrajs/client"
+import { server, status } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+const conflict = t.object({ code: t.literal("conflict"), retryAfter: t.number() })
+const locked = new Set(["7"])
+
+export const app = server().post("/orders/:id/pay", { errors: { 409: conflict } }, (c) => {
+  if (locked.has(c.params.id))
+    // The body is the typed contract; the header serves proxies and plain HTTP clients.
+    return status(409, { code: "conflict", retryAfter: 5 }, { headers: { "retry-after": "5" } })
+  return { paid: true }
+})
+
+const api = client<typeof app>("https://api.example.com")
+const res = await api.orders({ id: "7" }).pay.post()
+if (!res.ok && res.status === 409) {
+  const wait: number = res.data.retryAfter // narrowed to the declared 409 body
+}
+```
+
+The client's `Result` carries the body, not the response headers. A value the
+caller acts on, such as how long to wait, belongs in the declared body; set the matching
+header too when proxies or plain HTTP clients read it.
+
 ### Typed request cookies (schema.cookies)
 
 `c.cookies` is the request's `Cookie` header as a name-to-value record,
@@ -1929,6 +1965,11 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \
   -H 'x-nifra-revalidate-token: $REVALIDATE_SECRET'
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)
 ```
+
+A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give
+`createWebApp` a `csp` from `createCspPolicy` instead of a
+`nonce`: constant scripts are allowed by hash, so only a page that needs a nonce
+carries one - see [A strict CSP that still caches](/docs/contract#strict-csp).
 
 A page that must not be cached as a whole, because it is personalized or carries a nonce, can
 still cache the data its loader reads. Wrap the expensive call in `cache.wrap` from
@@ -3926,6 +3967,13 @@ native response lanes. A route that sets one of these names itself keeps its own
 group can apply its own configuration over the app&apos;s - `admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`
 inside `app.group("/admin", ...)` - and each header it sets replaces the app&apos;s
 value on the group&apos;s routes only.
+
+A fixed `Content-Security-Policy` here cannot allow nifra&apos;s inline scripts by
+nonce. For a strict `script-src` on web pages, give `createWebApp` a
+`csp` from `createCspPolicy`: it allows the framework&apos;s constant
+scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
+same header and stays cacheable under `withISR` or a CDN. See
+[A strict CSP that still caches](/docs/contract#strict-csp).
 
 ### Route assurance - prove every route is guarded
 
@@ -6132,6 +6180,34 @@ import { stylexVite } from "@nifrajs/web/plugins/stylex"
 export const vitePlugins = [react(), stylexVite()]
 ```
 
+### Upgrading nifra
+
+Every `@nifrajs/*` package, `nifra` and `create-nifra` ship
+together at one version. Move a workspace between releases with
+`nifra upgrade <version>` rather than by editing pins: it runs every release
+recipe between the oldest version your `package.json` files pin and the target,
+oldest first. A recipe moves a removed package to its replacement, rewrites imports that
+moved, lists comments a release stopped honoring, and pins each group dependency to the
+target, keeping its `^` or `~` unless you pass `--exact`.
+
+```ts
+nifra upgrade --list          # the release targets this CLI knows
+nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
+nifra upgrade 5.0.0 --write   # apply, then nifra check verifies (--no-verify skips it)
+nifra doctor                  # afterwards: no "mixed nifra versions" advisory left
+```
+
+It is a dry-run until `--write`, and the same run twice makes no further edits. An
+unknown version or a target below what is installed is refused (`--allow-downgrade`
+when the rollback is intended); a target newer than the running CLI prints the command for
+that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
+directory or `package.json` is never followed, and a group package installed by a
+link from outside the root is listed under "Left alone" for you to upgrade in its
+own repository. With `--write` it also prints how hook scope changed across the
+upgrade (`--no-hooks` skips that). `nifra doctor` and
+`nifra check` (NF-D002) point here when a workspace carries more than one version;
+see [mixed nifra versions](/docs/troubleshooting#mixed-versions).
+
 ### Scope
 
 `nifra build` defaults to a self-hosted Bun server. Use `--target node`,
@@ -7800,7 +7876,8 @@ the versions installed in `node_modules` - followed to their real location, so a
 linked repository reports its own - and the running CLI. When they disagree it names each
 version and where it came from. It only reads files, and it never fails the run.
 
-The fix is `nifra upgrade <highest>`, not a hand edit of the pins: it runs
+The fix is [`nifra upgrade <highest>`](/docs/cli#upgrade), not a
+hand edit of the pins: it runs
 every release's migration steps between your oldest pin and the target, then re-pins. Run it
 without `--write` first to see each planned edit. It edits files under the
 workspace root only. A symlinked package directory or `package.json` is never
@@ -8723,6 +8800,8 @@ const page = renderPage({
   },
 })
 ```
+
+#### A strict CSP that still caches
 
 A nonce makes every document unique, so a nonce-bearing page is
 `private, no-store` and no shared cache - `withISR`, a CDN - may store
@@ -10889,6 +10968,14 @@ A directory with `backend/app.ts` and no web config is read as an API-only app
 whether or not it declares the kind: `nifra routes`, `nifra context`,
 `nifra openapi` and `nifra mcp` load `backend/app.ts` alone,
 and the tools, resources and prompts its backend declares reach `nifra mcp`.
+
+Those commands, the contract lock and the route lints see only what
+`backend/app.ts` exports. An API whose app is built by a factory such as
+`createApp(deps)`, with its real dependencies wired in another entry, exports the
+same app from `backend/app.ts` built with stand-in dependencies, so every operation
+is visible without a database or secrets; `nifra check` names an implemented
+operation it does not serve (NF-C039). See
+[the stand-in entry](/docs/types-first#stub-entry).
 
 ### A route is two files
 

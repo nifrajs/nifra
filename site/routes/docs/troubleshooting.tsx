@@ -428,7 +428,8 @@ export default function Troubleshooting() {
         version and where it came from. It only reads files, and it never fails the run.
       </p>
       <p>
-        The fix is <code>nifra upgrade &lt;highest&gt;</code>, not a hand edit of the pins: it runs
+        The fix is <a href="/docs/cli#upgrade"><code>nifra upgrade &lt;highest&gt;</code></a>, not a
+        hand edit of the pins: it runs
         every release's migration steps between your oldest pin and the target, then re-pins. Run it
         without <code>--write</code> first to see each planned edit. It edits files under the
         workspace root only. A symlinked package directory or <code>package.json</code> is never

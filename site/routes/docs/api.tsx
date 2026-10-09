@@ -65,6 +65,26 @@ if (res.ok) {
 // Or destructure { data, error } directly:
 const { data, error } = await api.users.post({ name: "" })  // 422 if the schema rejects it`
 
+const TYPED_ERRORS = `import { client } from "@nifrajs/client"
+import { server, status } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+const conflict = t.object({ code: t.literal("conflict"), retryAfter: t.number() })
+const locked = new Set(["7"])
+
+export const app = server().post("/orders/:id/pay", { errors: { 409: conflict } }, (c) => {
+  if (locked.has(c.params.id))
+    // The body is the typed contract; the header serves proxies and plain HTTP clients.
+    return status(409, { code: "conflict", retryAfter: 5 }, { headers: { "retry-after": "5" } })
+  return { paid: true }
+})
+
+const api = client<typeof app>("https://api.example.com")
+const res = await api.orders({ id: "7" }).pay.post()
+if (!res.ok && res.status === 409) {
+  const wait: number = res.data.retryAfter // narrowed to the declared 409 body
+}`
+
 const SET = `export const app = server()
   .post("/login", { body: z.object({ email: z.string() }) }, (c) => {
     c.set.status = 201                       // override the default 200 (204 when you return undefined)
@@ -385,6 +405,23 @@ export default function Api() {
         The request is on <code>c.req</code>, also available as <code>c.request</code> - the same name a
         page loader/action receives (which in turn also accepts <code>ctx.req</code>), so one name works
         in both places.
+      </p>
+
+      <h2 id="typed-errors">Typed error responses</h2>
+      <p>
+        Declare a route's error bodies in <code>errors</code>, keyed by status, and answer with{" "}
+        <code>status(code, body, {"{ headers }"})</code> from <code>@nifrajs/core/server</code>. It
+        ends the request from a handler or any hook, returned or thrown, without building a{" "}
+        <code>Response</code>: the body is serialized like a plain return, the headers ride with it,
+        and queued cookies still apply. On the typed client, checking <code>res.status === 409</code>{" "}
+        narrows <code>res.data</code> to the declared 409 body; a status the route does not declare
+        falls into one arm whose <code>data</code> is <code>unknown</code>.
+      </p>
+      <CodeBlock code={TYPED_ERRORS} lang="ts" />
+      <p>
+        The client's <code>Result</code> carries the body, not the response headers. A value the
+        caller acts on, such as how long to wait, belongs in the declared body; set the matching
+        header too when proxies or plain HTTP clients read it.
       </p>
 
       <h2>Typed request cookies (schema.cookies)</h2>

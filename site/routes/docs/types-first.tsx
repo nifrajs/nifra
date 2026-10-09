@@ -137,7 +137,7 @@ export default function TypesFirst() {
         See <a href="/docs/contract">Framework contract</a> for the decoupled form and its scaling
         guidance.
       </p>
-      <p>
+      <p id="stub-entry">
         The tooling reads the backend <code>backend/app.ts</code> exports. An app that{" "}
         <code>implement</code>s a contract somewhere else, such as a <code>createApp(deps)</code>{" "}
         factory, is invisible to the contract lock and the route lints until that file serves it.{" "}

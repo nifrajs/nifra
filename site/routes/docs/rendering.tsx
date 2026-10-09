@@ -294,6 +294,12 @@ export default function Rendering() {
       </p>
       <CodeBlock code={PURGE} />
       <p>
+        A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give{" "}
+        <code>createWebApp</code> a <code>csp</code> from <code>createCspPolicy</code> instead of a{" "}
+        <code>nonce</code>: constant scripts are allowed by hash, so only a page that needs a nonce
+        carries one - see <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
+      </p>
+      <p>
         A page that must not be cached as a whole, because it is personalized or carries a nonce, can
         still cache the data its loader reads. Wrap the expensive call in <code>cache.wrap</code> from{" "}
         <code>@nifrajs/cache</code>, with the same tags the pages use. Concurrent loads of one key run

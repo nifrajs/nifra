@@ -571,6 +571,7 @@ export default function Contract() {
         <code>script-src 'nonce-…'</code> policy is achievable rather than aspirational:
       </p>
       <CodeBlock code={INLINE_SCRIPT} lang="ts" />
+      <h3 id="strict-csp">A strict CSP that still caches</h3>
       <p>
         A nonce makes every document unique, so a nonce-bearing page is{" "}
         <code>private, no-store</code> and no shared cache - <code>withISR</code>, a CDN - may store
