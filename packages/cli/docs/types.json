@@ -3848,7 +3848,7 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface CookieJar {\n    /** The current `Cookie` request-header value (`\"a=1; b=2\"`, or `\"\"` when empty). */\n    header(): string;\n    /** Set the `Cookie` header on `headers` when the jar is non-empty. */\n    applyTo(headers: Headers): void;\n    /** Absorb every `Set-Cookie` on a response (setting or, on removal, deleting each). */\n    store(response: {\n        headers: Headers;\n    }): void;\n    set(name: string, value: string): void;\n    get(name: string): string | undefined;\n    clear(): void;\n    readonly size: number;\n}",
-    "doc": "/**\n * A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie`\n * request header, so a login → authenticated-request flow works without threading headers by hand. It\n * honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes\n * (Domain/Path/Secure/SameSite) are ignored - everything is same-origin in-process.\n */"
+    "doc": "/**\n * A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie`\n * request header, so a login → authenticated-request flow works without threading headers by hand. It\n * honours removal (`Max-Age` of zero or less, or a past `Expires`) so logout clears the cookie; other attributes\n * (Domain/Path/Secure/SameSite) are ignored - everything is same-origin in-process.\n */"
   },
   {
     "name": "CookieOptions",

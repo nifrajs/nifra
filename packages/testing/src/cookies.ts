@@ -1,7 +1,7 @@
 /**
  * A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie`
  * request header, so a login → authenticated-request flow works without threading headers by hand. It
- * honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes
+ * honours removal (`Max-Age` of zero or less, or a past `Expires`) so logout clears the cookie; other attributes
  * (Domain/Path/Secure/SameSite) are ignored - everything is same-origin in-process.
  */
 
@@ -27,7 +27,9 @@ function setCookies(headers: Headers): string[] {
 }
 
 function isRemoval(attributes: string): boolean {
-  if (/(^|;)\s*max-age=0(\s|;|$)/.test(attributes)) return true
+  // RFC 6265 5.2.2: any Max-Age of zero or less removes the cookie, and Max-Age outranks Expires.
+  const maxAge = /(?:^|;)\s*max-age=(-?\d+)\s*(?:;|$)/.exec(attributes)
+  if (maxAge !== null) return Number(maxAge[1]) <= 0
   const expires = /expires=([^;]+)/.exec(attributes)
   if (expires === null) return false
   const at = Date.parse(expires[1] as string)

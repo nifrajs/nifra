@@ -30,6 +30,21 @@ describe("cookieJar", () => {
     expect(headers.get("cookie")).toBe("a=1")
   })
 
+  test("any Max-Age of zero or less removes a cookie, and Max-Age outranks Expires", () => {
+    const jar = cookieJar()
+    for (const removal of [
+      "sid=; Max-Age=-1",
+      "sid=; Max-Age=00",
+      "sid=x; Max-Age=0; Expires=Fri, 01 Jan 2100 00:00:00 GMT",
+    ]) {
+      jar.store(withSetCookie("sid=abc"))
+      jar.store(withSetCookie(removal))
+      expect({ removal, kept: jar.get("sid") }).toEqual({ removal, kept: undefined })
+    }
+    jar.store(withSetCookie("sid=abc; Max-Age=60; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+    expect(jar.get("sid")).toBe("abc")
+  })
+
   test("Max-Age=0 and a past Expires remove a cookie (logout)", () => {
     const jar = cookieJar()
     jar.set("sid", "abc")

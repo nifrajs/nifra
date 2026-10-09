@@ -4612,7 +4612,7 @@ _No named exports (side-effect entrypoint)._
 - **ContractWitness** _(interface)_ - `interface ContractWitness`
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ - `interface CookieJar`
-  A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+  A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age` of zero or less, or a past `Expires`) so logout clears the cookie; other att…
 - **CreateTrajectoryTranscriptOptions** _(interface)_ - `interface CreateTrajectoryTranscriptOptions`
 - **DataAdapterConformanceError** _(class)_ - `class DataAdapterConformanceError`
 - **DataAdapterConformanceReport** _(interface)_ - `interface DataAdapterConformanceReport`
