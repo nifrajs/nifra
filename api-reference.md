@@ -2595,7 +2595,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Total ordering for mixed segment shapes, shared by the trie and regex-based routers.
 - **compareRoutePatternSpecificity** _(function)_ - `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
   Core precedence: static > mixed > param > wildcard at the first differing segment, independent of registration order.
-- **compileRoutePattern** _(function)_ - `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
+- **compileRoutePattern** _(function)_ - `compileRoutePattern: (path: string) => CompiledRoutePattern`
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **constrainedParts** _(function)_ - `constrainedParts: (parts: readonly MixedPart[]) => readonly MixedPart[] | undefined`
   The parts of a mixed segment when at least one of its parameters has a constraint, else `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.

@@ -443,10 +443,13 @@ export function expandOptionalParams(pattern: string): readonly string[] {
 }
 
 /** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */
-export function compileRoutePattern(pattern: string): CompiledRoutePattern {
-  if (pattern.length === 0 || pattern.charCodeAt(0) !== 47 /* / */) {
-    throw new RouteConfigError("INVALID_PATH", `path must start with "/": "${pattern}"`)
+export function compileRoutePattern(path: string): CompiledRoutePattern {
+  if (path.length === 0 || path.charCodeAt(0) !== 47 /* / */) {
+    throw new RouteConfigError("INVALID_PATH", `path must start with "/": "${path}"`)
   }
+  // Routing compares the raw request path, and a browser sends `/café` as `/caf%C3%A9`: literal text
+  // is registered as a request spells it. Only controls, space and non-ASCII are encoded.
+  const pattern = path.normalize("NFC").replace(/[^!-~]/gu, encodeURIComponent)
   const raw = pattern === "/" ? [] : pattern.slice(1).split("/")
   const segments: RoutePatternSegment[] = []
   const paramNames: string[] = []

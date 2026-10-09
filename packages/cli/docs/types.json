@@ -17025,7 +17025,7 @@
     "name": "compileRoutePattern",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function compileRoutePattern(pattern: string): CompiledRoutePattern;",
+    "signature": "export declare function compileRoutePattern(path: string): CompiledRoutePattern;",
     "doc": "/** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */"
   },
   {
