@@ -98,6 +98,8 @@ const DEFAULT_MAX_MESSAGE_CHARS = 64 * 1024
 const MAX_MESSAGE_CHARS = 4 * 1024 * 1024
 const MAX_EVENT_QUEUE_SIZE = 65_536
 const MAX_PENDING_APPROVALS = 128
+// Pi's extension UI methods that block the extension until an `extension_ui_response` arrives.
+const PI_DIALOG_METHODS: ReadonlySet<unknown> = new Set(["select", "confirm", "input", "editor"])
 
 /**
  * Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.
@@ -573,6 +575,17 @@ export class PiBackend implements AgentBackend {
           this.finishTurn(session)
         }
       }
+      return
+    }
+    // Only a `confirm` inside a turn becomes an approval. Any other dialog is cancelled at once, or
+    // the extension waits on an answer nobody can give; notify, setStatus and the like expect none.
+    if (
+      record.type === "extension_ui_request" &&
+      PI_DIALOG_METHODS.has(record.method) &&
+      (record.method !== "confirm" || session.active === undefined) &&
+      boundedPiToken(record.id)
+    ) {
+      writeRpc(session, { type: "extension_ui_response", id: record.id, cancelled: true })
       return
     }
     const active = session.active

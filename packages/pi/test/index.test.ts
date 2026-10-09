@@ -366,6 +366,38 @@ process.stdin.on("data", (chunk) => {
     await backend.close("approval")
   })
 
+  test("cancels an extension dialog it cannot map instead of leaving the turn waiting", async () => {
+    const fakeDialog = `
+let buffer = ""
+process.stdin.on("data", (chunk) => {
+  buffer += String(chunk)
+  for (;;) {
+    const newline = buffer.indexOf("\\n")
+    if (newline === -1) break
+    const command = JSON.parse(buffer.slice(0, newline))
+    buffer = buffer.slice(newline + 1)
+    if (command.type === "prompt") {
+      process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "note-1", method: "notify", message: "hi" }) + "\\n")
+      process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "select-1", method: "select", title: "Pick", options: ["a", "b"] }) + "\\n")
+    }
+    if (command.type === "extension_ui_response") {
+      process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: JSON.stringify(command) } }) + "\\n")
+      process.stdout.write(JSON.stringify({ type: "agent_end" }) + "\\n")
+    }
+  }
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakeDialog] })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "dialog" })
+    const replies: string[] = []
+    for await (const event of backend.send({ sessionId: "dialog", message: "hello" }))
+      if (event.type === "assistant.message") replies.push(event.text)
+    expect(replies).toEqual([
+      JSON.stringify({ type: "extension_ui_response", id: "select-1", cancelled: true }),
+    ])
+    await backend.close("dialog")
+  })
+
   test("ships an opt-in Nifra verification extension through Pi's public API", async () => {
     type Tool = {
       execute: (
