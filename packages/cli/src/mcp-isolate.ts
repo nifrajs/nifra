@@ -13,7 +13,13 @@ import { fileURLToPath } from "node:url"
 import { CONFIG_FILE } from "./app-files.ts"
 import type { NifraMonorepoConfig } from "./load.ts"
 import { appFingerprint } from "./mcp-exec.ts"
-import { CHILD_TIMEOUT_MS, readBoundedLines, readBoundedStream } from "./mcp-io.ts"
+import {
+  CHILD_TIMEOUT_MS,
+  OWN_PROCESS_GROUP,
+  readBoundedLines,
+  readBoundedStream,
+  signalProcessGroup,
+} from "./mcp-io.ts"
 import type {
   AppSurface,
   ProjectChildAnswer,
@@ -121,6 +127,7 @@ export async function askProjectChild(
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      detached: OWN_PROCESS_GROUP,
     })
   } catch (error) {
     return failed(
@@ -131,7 +138,7 @@ export async function askProjectChild(
   const stop = (reason: "timeout" | "cancel"): void => {
     if (stopped !== undefined) return
     stopped = reason
-    proc.kill("SIGKILL")
+    signalProcessGroup(proc, "SIGKILL")
   }
   const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop("timeout"), timeoutMs)
   const onAbort = (): void => stop("cancel")

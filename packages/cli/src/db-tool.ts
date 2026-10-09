@@ -34,8 +34,10 @@ import { readProjectEnv } from "./db-config.ts"
 import {
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
+  OWN_PROCESS_GROUP,
   readBoundedLines,
   readBoundedStream,
+  signalProcessGroup,
 } from "./mcp-io.ts"
 
 /** Added to the declared `timeoutMs` before the subprocess is killed. */
@@ -134,12 +136,13 @@ export async function runDbChild(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    detached: OWN_PROCESS_GROUP,
   })
   let killedFor: "startup" | "deadline" | "cancel" | undefined
   const kill = (reason: NonNullable<typeof killedFor>): void => {
     if (killedFor !== undefined) return
     killedFor = reason
-    proc.kill("SIGKILL")
+    signalProcessGroup(proc, "SIGKILL")
   }
   let deadlineMs: number | undefined
   let timer = setTimeout(() => kill("startup"), startupMs)

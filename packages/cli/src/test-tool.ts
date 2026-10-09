@@ -1,4 +1,9 @@
-import { type HeadTailOutput, readHeadTail } from "./mcp-io.ts"
+import {
+  type HeadTailOutput,
+  OWN_PROCESS_GROUP,
+  readHeadTail,
+  signalProcessGroup,
+} from "./mcp-io.ts"
 import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
 
 export interface TestToolArgs {
@@ -57,6 +62,8 @@ function normalizeTimeout(value: unknown): number {
   }
   return Math.min(Math.max(Math.trunc(value), 1_000), MAX_TIMEOUT_MS)
 }
+
+const KILL_GRACE_MS = 2_000
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g")
 
@@ -146,17 +153,24 @@ export async function collectTestResult(
     env: process.env,
     stdout: "pipe",
     stderr: "pipe",
+    detached: OWN_PROCESS_GROUP,
   })
   let timedOut = false
   let cancelled = false
+  let escalation: ReturnType<typeof setTimeout> | undefined
+  // A test can ignore SIGTERM, so the group gets SIGKILL once the grace period runs out.
+  const stop = (): void => {
+    signalProcessGroup(proc, "SIGTERM")
+    escalation ??= setTimeout(() => signalProcessGroup(proc, "SIGKILL"), KILL_GRACE_MS)
+  }
   const abort = (): void => {
     cancelled = true
-    proc.kill()
+    stop()
   }
   opts.signal?.addEventListener("abort", abort, { once: true })
   const timer = setTimeout(() => {
     timedOut = true
-    proc.kill()
+    stop()
   }, timeoutMs)
   const empty: HeadTailOutput = { head: "", tail: "", droppedBytes: 0 }
   let stdoutRaw = empty
@@ -175,6 +189,7 @@ export async function collectTestResult(
     exitCode = result[2]
   } finally {
     clearTimeout(timer)
+    clearTimeout(escalation)
     opts.signal?.removeEventListener("abort", abort)
   }
   const stdout = clean(stdoutRaw)

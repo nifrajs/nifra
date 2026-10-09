@@ -36,7 +36,9 @@ import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
+  OWN_PROCESS_GROUP,
   readBoundedStream,
+  signalProcessGroup,
   timeoutMessage,
   validateLocalPort,
 } from "./mcp-io.ts"
@@ -692,12 +694,13 @@ export async function spawnChild(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    detached: OWN_PROCESS_GROUP,
   })
   let killed = false
   const kill = (): void => {
     if (killed) return
     killed = true
-    proc.kill()
+    signalProcessGroup(proc, "SIGTERM")
   }
   const abort = (): void => kill()
   signal?.addEventListener("abort", abort, { once: true })

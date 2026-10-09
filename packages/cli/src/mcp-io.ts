@@ -16,6 +16,26 @@ export const CHILD_INPUT_MAX_BYTES = 4 * 1024 * 1024
 export const LOCAL_TOOL_FETCH_TIMEOUT_MS = 2_000
 export const LOCAL_TOOL_MAX_RESPONSE_BYTES = 1_048_576
 
+/**
+ * On POSIX a bounded child is spawned `detached`, leading its own process group, so stopping it
+ * reaches every process it started. Otherwise a grandchild still holding the pipes keeps the read,
+ * and the tool call, open past its timeout.
+ */
+export const OWN_PROCESS_GROUP = process.platform !== "win32"
+
+/** Signal a child spawned with `detached: OWN_PROCESS_GROUP`: its whole group on POSIX. */
+export function signalProcessGroup(
+  proc: { readonly pid: number; kill(signal?: NodeJS.Signals): void },
+  signal: NodeJS.Signals,
+): void {
+  try {
+    if (OWN_PROCESS_GROUP) process.kill(-proc.pid, signal)
+    else proc.kill(signal)
+  } catch {
+    // The group has already exited.
+  }
+}
+
 /** Accept only a concrete TCP port. Port 0 (bind-any-free-port) is not a valid read target. */
 export function validateLocalPort(port: unknown): number | undefined {
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65_535
