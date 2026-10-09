@@ -224,6 +224,7 @@ const RELEASE_PLAN = Object.freeze([
   "cli-isolation",
   "coverage",
   "corpus",
+  "sitemap",
   "docs",
   "public-boundary",
   "public-manifest",

@@ -74,9 +74,10 @@ jobs:
       # types.json), API reference, package cards, and the Node outcome contract. They were the only
       # generated artifacts with no gate, so they were as fresh as whoever last remembered to run
       # `gen:llms` - and `types.json` is what the `nifra_types` MCP tool answers from, so stale is not
-      # cosmetic: it hands an agent a signature the code no longer has.
-      - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora fresh)
-        run: bun run check:docs && bun run check:corpus
+      # cosmetic: it hands an agent a signature the code no longer has. `check:sitemap` fails when a
+      # docs page is added or removed without regenerating site/public/sitemap.xml.
+      - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora + sitemap fresh)
+        run: bun run check:docs && bun run check:corpus && bun run check:sitemap
 
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish

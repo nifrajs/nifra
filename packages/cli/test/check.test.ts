@@ -86,6 +86,7 @@ describe("release verification", () => {
       "cli-isolation",
       "coverage",
       "corpus",
+      "sitemap",
       "docs",
       "public-boundary",
       "public-manifest",
@@ -120,6 +121,7 @@ describe("release verification", () => {
     expect(release.find((gate) => gate.id === "tests")?.workflowRequired).toBe(true)
     expect(omittedVerificationGateIds()).toContain("core-performance")
     expect(omittedVerificationGateIds()).not.toContain("public-manifest")
+    expect(release.find((gate) => gate.id === "sitemap")?.workflowRequired).toBe(true)
   })
 
   test("reports omitted release gates for the default plan", async () => {
