@@ -114,7 +114,14 @@ const entryName = (file: string): string => {
  * `fromBunMetafile`; this smaller view is only for the per-route stylesheet map. */
 interface BunMetafile {
   readonly outputs?: Readonly<
-    Record<string, { readonly entryPoint?: string; readonly cssBundle?: string }>
+    Record<
+      string,
+      {
+        readonly entryPoint?: string
+        readonly cssBundle?: string
+        readonly inputs?: Readonly<Record<string, unknown>>
+      }
+    >
   >
 }
 
@@ -684,15 +691,30 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // links only its layout chain + own CSS (deduped); an empty array means the page needs no CSS at all.
   // Absent (→ aggregate fallback) only if Bun emits no metafile/cssBundle - never silently incomplete.
   const cssByEntry = new Map<string, string>()
+  const bootstrapEntry = resolvePath(entryFile)
+  let bootstrapSources: readonly string[] = []
+  const routeSources = new Set<string>()
   for (const out of Object.values(clientMeta?.outputs ?? {})) {
     if (out.entryPoint !== undefined && out.cssBundle !== undefined) {
-      cssByEntry.set(resolvePath(cwd, out.entryPoint), toUrl(out.cssBundle))
+      const entry = resolvePath(cwd, out.entryPoint)
+      cssByEntry.set(entry, toUrl(out.cssBundle))
+      const sources = Object.keys(clientMeta?.outputs?.[out.cssBundle]?.inputs ?? {})
+      if (entry === bootstrapEntry) bootstrapSources = sources
+      else for (const source of sources) routeSources.add(source)
     }
   }
+  // A stylesheet the client module imports is bundled only into the bootstrap's CSS, which also holds
+  // every route's (the bootstrap imports each route lazily). When it carries CSS no route entry owns,
+  // every page links that bundle first, the whole-app stylesheet before any route-scoped one, as a
+  // Vite page links the bootstrap's; otherwise the page renders without it.
+  const leadingCss = bootstrapSources.some((source) => !routeSources.has(source))
+    ? cssByEntry.get(bootstrapEntry)
+    : undefined
   const stylesFor = (chainFiles: readonly string[]): readonly string[] => {
     const urls = chainFiles
       .map((f) => (f ? cssByEntry.get(resolvePath(resolve(f))) : undefined))
       .filter((u): u is string => u !== undefined)
+    if (leadingCss !== undefined) urls.unshift(leadingCss)
     return [...new Set(urls)]
   }
   const routeStyles: Record<string, readonly string[]> = {}
@@ -700,7 +722,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // route entry (StyleX's atomic CSS is one example). In that shape there is no useful per-route map:
   // emitting `routeId: []` would suppress the aggregate `styles` fallback in `createWebApp` and render
   // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
-  const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== resolvePath(entryFile))
+  const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== bootstrapEntry)
   if (css.length > 0 && routeCssEntries.length > 0) {
     // A `_loading` page can show on a navigation from ANY page, and a document links only its own
     // route's stylesheets - so every page that can start a navigation carries the loading pages' too.

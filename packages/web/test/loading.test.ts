@@ -601,6 +601,37 @@ describe("the client build", () => {
   const root = mkdtempSync(`${import.meta.dir}/.tmp-loading-`)
   afterAll(() => rmSync(root, { recursive: true, force: true }))
 
+  test("a stylesheet the client module imports is linked by every page, before the route's", async () => {
+    const app = join(root, "global-css")
+    const files: Record<string, string> = {
+      "routes/index.tsx":
+        'import "../frontend/home.css"\nexport default function Index() { return null }\n',
+      "routes/about.tsx": "export default function About() { return null }\n",
+      "frontend/home.css": ".home-hero { color: tomato }\n",
+      "frontend/global.css": ".app-shell { color: tomato }\n",
+      "frontend/client-stub.ts": 'import "./global.css"\nexport function mountRouter() {}\n',
+    }
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(join(app, rel, ".."), { recursive: true })
+      writeFileSync(join(app, rel), content)
+    }
+    const outDir = join(app, "dist", "assets")
+    const manifest = await buildClient({
+      routesDir: join(app, "routes"),
+      outDir,
+      clientModule: join(app, "frontend/client-stub.ts"),
+      publicDir: false,
+      minify: false,
+    })
+    const text = (url: string) => readFileSync(join(outDir, url.slice("/assets/".length)), "utf8")
+    for (const id of ["index", "about"]) {
+      const styles = manifest.routeStyles?.[id] ?? []
+      expect(styles.length, id).toBeGreaterThan(0)
+      expect(text(styles[0] ?? ""), id).toContain(".app-shell")
+    }
+    expect(manifest.routeStyles?.index?.some((url) => text(url).includes(".home-hero"))).toBe(true)
+  }, 60_000)
+
   test("every page that can start a navigation links the loading pages' stylesheets", async () => {
     const files: Record<string, string> = {
       "routes/_layout.tsx":
