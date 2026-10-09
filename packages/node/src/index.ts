@@ -1327,8 +1327,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       if (handled instanceof Promise) {
         // `catch` before `finally`: a `finally` alone forwards the rejection to a promise nothing
         // observes, and Node terminates the process on an unhandled rejection by default. Every
-        // writer already ends its own failures (`failWrite`), so anything arriving here is a fault
-        // no response can still be built from - the connection is the only thing left to end.
+        // writer already ends and reports its own failures (`failAndReport`), so anything arriving
+        // here is a fault no response can still be built from - the connection is the only thing
+        // left to end.
         void handled
           .catch((error: unknown) => failAndReport(nodeRes, error))
           .finally(() => {
@@ -1728,7 +1729,8 @@ function failAndReport(nodeRes: ServerResponse, error: unknown): void {
   failWrite(nodeRes)
 }
 
-/** {@link writeNodeOutcome} with {@link failWrite} behind it, sync throw and async rejection alike. */
+/** {@link writeNodeOutcome} with {@link failAndReport} behind it, sync throw and async rejection
+ * alike. */
 function writeOutcomeSafely(
   outcome: NodeServeOutcome,
   nodeRes: ServerResponse,
@@ -1736,14 +1738,16 @@ function writeOutcomeSafely(
 ): void | Promise<void> {
   try {
     const written = writeNodeOutcome(outcome, nodeRes, method)
-    return written instanceof Promise ? written.catch(() => failWrite(nodeRes)) : written
-  } catch {
-    failWrite(nodeRes)
+    return written instanceof Promise
+      ? written.catch((error: unknown) => failAndReport(nodeRes, error))
+      : written
+  } catch (error) {
+    failAndReport(nodeRes, error)
     return
   }
 }
 
-/** {@link writeNodeResponse} with {@link failWrite} behind it - same contract as
+/** {@link writeNodeResponse} with {@link failAndReport} behind it - same contract as
  * {@link writeOutcomeSafely}, for the lanes that carry a `Response`. */
 function writeResponseSafely(
   response: Response,
@@ -1752,9 +1756,11 @@ function writeResponseSafely(
 ): void | Promise<void> {
   try {
     const written = writeNodeResponse(response, nodeRes, method)
-    return written instanceof Promise ? written.catch(() => failWrite(nodeRes)) : written
-  } catch {
-    failWrite(nodeRes)
+    return written instanceof Promise
+      ? written.catch((error: unknown) => failAndReport(nodeRes, error))
+      : written
+  } catch (error) {
+    failAndReport(nodeRes, error)
     return
   }
 }
