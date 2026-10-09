@@ -387,6 +387,28 @@ export function createPageRequestExecutor<Env = unknown>(
     pending: undefined,
   }
 
+  /**
+   * Await one gate. A returned redirect, status or Response refuses the request exactly as a thrown
+   * one does: stored as layout data it would let the page loader and the action run.
+   */
+  const runGate = async (
+    route: RouteEntry,
+    index: number,
+    loader: NonNullable<LoadedLayoutModules[number]["loader"]>,
+    ctx: LoaderContext,
+  ): Promise<unknown> => {
+    let value: unknown
+    try {
+      value = await loader(ctx)
+    } catch (err) {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
+      throw tagLayoutError(err, route.layoutIds[index] as string)
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
+    if (isControlFlow(value)) throw tagLayoutError(value, route.layoutIds[index] as string)
+    return value
+  }
+
   /** Run layout loaders, awaiting gates before starting the page loader and retaining only safe data. */
   const runLayoutChain = async (
     route: RouteEntry,
@@ -425,12 +447,7 @@ export function createPageRequestExecutor<Env = unknown>(
         set: controls.scope(i),
       }
       if (modules[i]?.gate === true) {
-        try {
-          results[i] = await loader(scoped)
-        } catch (err) {
-          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
-          throw tagLayoutError(err, route.layoutIds[i] as string)
-        }
+        results[i] = await runGate(route, i, loader, scoped)
         continue
       }
       const layoutId = route.layoutIds[i] as string
@@ -474,16 +491,11 @@ export function createPageRequestExecutor<Env = unknown>(
     for (let i = 0; i < modules.length; i++) {
       const mod = modules[i]
       if (mod?.gate !== true || mod.loader === undefined) continue
-      try {
-        await mod.loader({
-          ...ctx,
-          params: scopeParams(ctx.params, route.layoutParams?.[i]),
-          set: controls.scope(i),
-        })
-      } catch (err) {
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
-        throw tagLayoutError(err, route.layoutIds[i] as string)
-      }
+      await runGate(route, i, mod.loader, {
+        ...ctx,
+        params: scopeParams(ctx.params, route.layoutParams?.[i]),
+        set: controls.scope(i),
+      })
     }
     return modules
   }

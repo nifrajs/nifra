@@ -5,6 +5,7 @@ import {
   type Manifest,
   notFound,
   type RenderAdapter,
+  redirect,
   type ShouldRevalidateArgs,
 } from "../src/index.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
@@ -704,4 +705,84 @@ test("a layout's notFound() on a soft-nav answers with the status, not a documen
   )
   expect(res.status).toBe(404)
   expect(res.headers.get("x-nifra-status")).toBe("404")
+})
+
+// Page loaders treat a returned redirect like a thrown one, so a gate must too: kept as layout data,
+// a returned refusal let the page loader and the action run for the refused visitor.
+const gatedApp = (gateLoader: () => unknown, counts: { page: number; action: number }) =>
+  createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "page",
+          pattern: "/admin",
+          layoutIds: ["_layout"],
+          layoutParams: [[]],
+          file: "page.tsx",
+          load: async () => ({
+            default: "page",
+            loader: () => {
+              counts.page += 1
+              return { secret: "top" }
+            },
+            action: () => {
+              counts.action += 1
+              return { ok: true }
+            },
+          }),
+        },
+      ],
+      layouts: {
+        _layout: {
+          file: "_layout.tsx",
+          load: async () => ({ default: "root", gate: true, loader: gateLoader }),
+        },
+      },
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    } as unknown as Manifest,
+    clientEntry: "/c.js",
+  })
+
+const answer = async (res: Response) => ({
+  status: res.status,
+  location: res.headers.get("location"),
+  redirect: res.headers.get("x-nifra-redirect"),
+  secret: (await res.text()).includes("top"),
+})
+
+test("a gate that returns a redirect refuses exactly as one that throws it", async () => {
+  const returned = { page: 0, action: 0 }
+  const thrown = { page: 0, action: 0 }
+  const returning = gatedApp(() => redirect("/login"), returned)
+  const throwing = gatedApp(() => {
+    throw redirect("/login")
+  }, thrown)
+  const requests = (): Request[] => [
+    new Request("http://x/admin"),
+    new Request("http://x/admin", { headers: { [DATA_HEADER]: "1" } }),
+    new Request("http://x/admin", { method: "POST", headers: { [DATA_HEADER]: "1" } }),
+  ]
+  const fromReturning = await Promise.all(
+    requests().map(async (r) => answer(await returning.fetch(r))),
+  )
+  const fromThrowing = await Promise.all(
+    requests().map(async (r) => answer(await throwing.fetch(r))),
+  )
+  expect(fromReturning).toEqual(fromThrowing)
+  expect(fromReturning[0]).toMatchObject({ status: 303, location: "/login", secret: false })
+  expect(returned).toEqual({ page: 0, action: 0 })
+})
+
+test("a gate that returns a Response answers with it and runs nothing else", async () => {
+  const counts = { page: 0, action: 0 }
+  const app = gatedApp(() => new Response("denied", { status: 403 }), counts)
+  const doc = await app.fetch(new Request("http://x/admin"))
+  expect(doc.status).toBe(403)
+  expect(await doc.text()).toBe("denied")
+  const post = await app.fetch(
+    new Request("http://x/admin", { method: "POST", headers: { [DATA_HEADER]: "1" } }),
+  )
+  expect(post.status).toBe(403)
+  expect(counts).toEqual({ page: 0, action: 0 })
 })
