@@ -118,6 +118,25 @@
     "doc": "/**\n * Backend-neutral protocol for local coding-agent hosts.\n *\n * This package deliberately has no runtime dependencies. A Pi adapter, a Nifra-native backend,\n * the CLI, and the Workbench can all implement or consume these contracts without pulling any\n * framework, model provider, or UI code into an application.\n */"
   },
   {
+    "name": "AcpBackend",
+    "kind": "class",
+    "package": "@nifrajs/acp",
+    "signature": "export declare class AcpBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly maxRecordBytes;\n    private readonly maxMessageChars;\n    private readonly startupTimeoutMs;\n    private readonly cancelGraceMs;\n    private readonly sessions;\n    constructor(options: AcpBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private start;\n    private requireSession;\n    private onRequest;\n    private onNotification;\n    private onFault;\n    private startTool;\n    private completeTool;\n    private withdrawApproval;\n    /** Answer every approval still open as cancelled, as ACP requires before a turn ends. */\n    private settleApprovals;\n    private cancelTurn;\n    private endTurn;\n    private failTurn;\n    private finishTurn;\n    private flushReply;\n    private setStatus;\n    private emit;\n}",
+    "doc": "/**\n * Drive an agent that speaks the Agent Client Protocol (version 1) over stdio, one agent process per\n * session, and translate its session updates into the Nifra agent protocol.\n *\n * The client side is deliberately small: it offers no filesystem or terminal methods, so the agent\n * uses its own tools, and every tool call it asks permission for surfaces as `approval.required`.\n */"
+  },
+  {
+    "name": "AcpBackendOptions",
+    "kind": "interface",
+    "package": "@nifrajs/acp",
+    "signature": "export interface AcpBackendOptions {\n    /** The agent's executable, such as `claude-code-acp`, `codex-acp`, or `gemini`. */\n    readonly command: string;\n    /** Arguments for the agent, such as `[\"--experimental-acp\"]`. */\n    readonly args?: readonly string[];\n    /**\n     * Variables the agent runs with on top of `PATH`, `HOME`, locale, terminal, user, shell, and temp.\n     * Nothing else from the parent environment passes, model credentials included; a key mapped to\n     * `undefined` is withheld even when the parent has it.\n     */\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    /** One of the `authMethods` ids the agent's `initialize` answer lists, sent with `authenticate`. */\n    readonly authMethod?: string;\n    /** MCP servers handed to `session/new`, in ACP's shape. Default none. */\n    readonly mcpServers?: readonly unknown[];\n    /** How the client names itself in `initialize`. Default `{ name: \"nifra\", version: \"4\" }`. */\n    readonly clientInfo?: AcpClientInfo;\n    /** Longest wait for `initialize`, `authenticate`, and `session/new`. Default 30 seconds. */\n    readonly startupTimeoutMs?: number;\n    /** How long a cancelled turn may take to end before the agent is stopped. Default 2 seconds. */\n    readonly cancelGraceMs?: number;\n    readonly maxEventQueueSize?: number;\n    /** Most UTF-8 bytes in one JSON-RPC line from the agent. Default 1 MiB. */\n    readonly maxRecordBytes?: number;\n    /** Longest message `send` accepts. Default 64 KiB. */\n    readonly maxMessageChars?: number;\n}"
+  },
+  {
+    "name": "AcpClientInfo",
+    "kind": "interface",
+    "package": "@nifrajs/acp",
+    "signature": "export interface AcpClientInfo {\n    readonly name: string;\n    readonly title?: string;\n    readonly version: string;\n}"
+  },
+  {
     "name": "Action",
     "kind": "type",
     "package": "@nifrajs/web",

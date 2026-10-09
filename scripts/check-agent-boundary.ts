@@ -8,6 +8,7 @@ const FORBIDDEN = [
   "@nifrajs/agent-review",
   "@nifrajs/agent-protocol",
   "@nifrajs/pi",
+  "@nifrajs/acp",
   "@nifrajs/coding-agent",
   "@nifrajs/tui",
   "@nifrajs/workbench",

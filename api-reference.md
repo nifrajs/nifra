@@ -22,6 +22,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **mountA2A** _(function)_ - `mountA2A: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: A2AMountableApp, options: MountA2AOptions<InputSchema, OutputSchema>) => void`
   Mount an agent as an A2A server: the agent card on GET, the JSON-RPC binding on POST.
 
+## @nifrajs/acp
+
+- **AcpBackend** _(class)_ - `class AcpBackend`
+  Drive an agent that speaks the Agent Client Protocol (version 1) over stdio, one agent process per session, and translate its session updates into the Nifra agent protocol.
+- **AcpBackendOptions** _(interface)_ - `interface AcpBackendOptions`
+- **AcpClientInfo** _(interface)_ - `interface AcpClientInfo`
+
 ## @nifrajs/ag-ui
 
 - **AgUIMountableApp** _(interface)_ - `interface AgUIMountableApp`

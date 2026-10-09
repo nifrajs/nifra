@@ -156,6 +156,13 @@
         "@nifrajs/core",
       ],
     },
+    "packages/acp": {
+      "name": "@nifrajs/acp",
+      "version": "4.0.2",
+      "dependencies": {
+        "@nifrajs/agent-protocol": "workspace:*",
+      },
+    },
     "packages/ag-ui": {
       "name": "@nifrajs/ag-ui",
       "version": "4.0.2",
@@ -1220,6 +1227,8 @@
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.0.0", "", { "dependencies": { "@modelcontextprotocol/core": "2.0.0", "zod": "^4.2.0" } }, "sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw=="],
 
     "@nifrajs/a2a": ["@nifrajs/a2a@workspace:packages/a2a"],
+
+    "@nifrajs/acp": ["@nifrajs/acp@workspace:packages/acp"],
 
     "@nifrajs/ag-ui": ["@nifrajs/ag-ui@workspace:packages/ag-ui"],
 

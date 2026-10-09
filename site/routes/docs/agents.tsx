@@ -653,8 +653,10 @@ export default function Agents() {
         <code>@nifrajs/agent-protocol</code> is the small versioned session and event contract.{" "}
         <code>@nifrajs/coding-agent</code> provides the standalone <code>nifra-agent</code> host with
         bounded sessions, checkpoints, workflows, extensions, verification, and authenticated local
-        RPC. <code>@nifrajs/pi</code> is an optional Pi backend; other backends implement the same
-        protocol port.
+        RPC. <code>@nifrajs/pi</code> is an optional Pi backend, and <code>@nifrajs/acp</code> drives
+        any Agent Client Protocol agent (Claude Code, Codex, Gemini CLI) over stdio; other backends
+        implement the same protocol port and can prove it with <code>checkAgentBackend</code> from{" "}
+        <code>@nifrajs/agent-protocol/conformance</code>.
       </p>
       <CodeBlock code={HOST} lang="bash" />
       <p>
