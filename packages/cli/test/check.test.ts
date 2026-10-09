@@ -2800,6 +2800,47 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("another framework's app beside a nifra app is not zoned; a nifra package still is", async () => {
+    const files = {
+      "web/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "~/*": ["./src/*"] } } }),
+      "web/src/routes/index.tsx":
+        'import { catalog } from "~/lib/catalog"\nimport { readFileSync } from "node:fs"\nexport default () => [catalog, readFileSync]\n',
+      "web/src/lib/catalog.ts": "export const catalog = []\n",
+    }
+    const serverOnly = async (dir: string) =>
+      (await collectCheckResult(dir, { lintsOnly: true })).diagnostics.filter(
+        (d) => d.rule === "server-only-import",
+      )
+    const other = await project({
+      ...files,
+      "web/package.json": JSON.stringify({ dependencies: { "solid-js": "^1.9.0" } }),
+    })
+    expect(await findings(other, "NF-C028")).toEqual([])
+    expect(await serverOnly(other)).toEqual([])
+    const nifra = await project({
+      ...files,
+      "web/package.json": JSON.stringify({ dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    })
+    expect(await findings(nifra, "NF-C028")).toEqual([
+      'web/src/routes/index.tsx:1 web/src/routes/index.tsx imports web/src/lib/catalog.ts: "lib/catalog.ts" is in no zone. Every file a build loads lives under routes/, frontend/, backend/ or shared/, or carries a .frontend/.backend/.shared suffix',
+    ])
+    expect(await serverOnly(nifra)).toHaveLength(1)
+    // A nifra config inside another package's tree is a nifra app of its own.
+    const nested = await project({
+      ...files,
+      "web/package.json": JSON.stringify({ dependencies: { "solid-js": "^1.9.0" } }),
+      "web/src/nifra.config.ts": 'export const clientModule = "@nifrajs/web-solid/client"\n',
+    })
+    expect(await findings(nested, "NF-C028")).toHaveLength(1)
+    // The checked root is a nifra project whatever its own package.json names.
+    const root = await project({
+      ...Object.fromEntries(Object.entries(files).map(([path, text]) => [path.slice(4), text])),
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.9.0" } }),
+    })
+    expect(await findings(root, "NF-C028")).toHaveLength(1)
+    for (const dir of [other, nifra, nested, root]) await rm(dir, { recursive: true, force: true })
+  })
+
   test("browser code reading a private variable, under the app's declared prefix", async () => {
     const dir = await project({
       "backend/framework.ts": 'export const publicEnvPrefix = "APP_PUBLIC_"\n',

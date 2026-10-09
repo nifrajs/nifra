@@ -25,6 +25,7 @@ import { importSites, stripComments } from "../check-scan.ts"
 import { appDirs, clientModuleRoot } from "../client-module.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { createNifraProjectProbe } from "../internal/nifra-project.ts"
 import { createSpecifierResolver } from "../internal/project-specifiers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
@@ -80,10 +81,12 @@ export function zonedFiles(ctx: RuleContext): {
   }
   const files: ZonedFile[] = []
   const configErrors: Array<{ app: string; message: string }> = []
+  // Another framework's app keeps folders named `routes/` too; nifra builds none of it.
+  const inNifraProject = createNifraProjectProbe(ctx.root)
   for (const file of ctx.sources.files) {
     if (!CODE_FILE.test(file)) continue
     const app = appOf(file)
-    if (app === undefined) continue
+    if (app === undefined || !inNifraProject(app)) continue
     const classifier = load(app)
     if (classifier instanceof ZoneConfigError) {
       if (!configErrors.some((entry) => entry.app === app))
