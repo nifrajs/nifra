@@ -78,6 +78,10 @@ function originAllowed(req: Request, origins: Set<string> | undefined): boolean 
   const allows = (candidate: string): boolean =>
     origins !== undefined ? origins.has(candidate) : isSameOriginRequest(candidate, req)
   const origin = req.headers.get("origin")
+  // Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`;
+  // its own `Sec-Fetch-Site` still says same-origin, and page script can set neither header.
+  if (origin === "null" && origins === undefined)
+    return req.headers.get("sec-fetch-site") === "same-origin"
   if (origin !== null) return allows(origin)
 
   const referer = req.headers.get("referer")

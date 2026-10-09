@@ -37,6 +37,10 @@ export function csrf(options: CsrfOptions = {}): Middleware {
         configured !== undefined ? configured.has(candidate) : isSameOriginRequest(candidate, req)
 
       const origin = req.headers.get("origin")
+      // Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with
+      // `Origin: null`; its own `Sec-Fetch-Site` still says same-origin, and script can set neither.
+      if (origin === "null" && configured === undefined)
+        return req.headers.get("sec-fetch-site") === "same-origin" ? undefined : forbidden()
       if (origin !== null) return allowed(origin) ? undefined : forbidden()
 
       // Some same-origin requests omit `Origin` - fall back to the `Referer`'s origin.

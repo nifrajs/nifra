@@ -93,3 +93,22 @@ describe("csrf - stacking", () => {
     expect((await post("https://partner.example")).status).toBe(403)
   })
 })
+
+describe("csrf - a same-origin form under Referrer-Policy: no-referrer", () => {
+  const statusOf = (result: unknown) => (result instanceof Response ? result.status : undefined)
+
+  test("Origin: null passes only when the browser marks the request same-origin", async () => {
+    const run = handlerOf()
+    expect(await run("POST", { origin: "null", "sec-fetch-site": "same-origin" })).toBeUndefined()
+    for (const site of ["cross-site", "same-site", "none"])
+      expect(statusOf(await run("POST", { origin: "null", "sec-fetch-site": site }))).toBe(403)
+    expect(statusOf(await run("POST", { origin: "null" }))).toBe(403)
+  })
+
+  test("an explicit origin allowlist never accepts Origin: null", async () => {
+    const run = handlerOf(["https://app.example"])
+    expect(statusOf(await run("POST", { origin: "null", "sec-fetch-site": "same-origin" }))).toBe(
+      403,
+    )
+  })
+})
