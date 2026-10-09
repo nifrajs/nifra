@@ -39,6 +39,7 @@ import {
   documentMetrics,
   type GraphqlLimits,
   graphqlLimits,
+  overlapLimitError,
   requestLimitError,
 } from "./limits.ts"
 
@@ -52,6 +53,8 @@ interface GraphqlWsConnection {
   readonly subscriptions: Set<string>
   /** One abort controller per running operation id, aborted by the client's complete or a close. */
   operations?: Map<string, AbortController>
+  /** Set once graphql-ws sends `connection_ack`, i.e. `connection_init` was admitted. */
+  acknowledged?: boolean
 }
 
 /** The `extra` graphql-ws hands its hooks for one socket. */
@@ -89,6 +92,7 @@ export interface GraphqlWsOptions<
   readonly maxAliases?: number
   readonly maxComplexity?: number
   readonly maxOperations?: number
+  readonly maxFieldOverlaps?: number
   /** Maximum concurrent subscription operation ids per connection. Default 20. */
   readonly maxSubscriptions?: number
   /**
@@ -151,11 +155,13 @@ function subscriptionFrameError(
   } catch (error) {
     return { id, message: error instanceof GraphQLError ? error.message : "Invalid GraphQL query." }
   }
+  const limitError =
+    documentLimitError(documentMetrics(document), limits) ?? overlapLimitError(document, limits)
+  if (limitError !== undefined) return { id, message: limitError }
   const validationErrors = validate(schema, document, specifiedRules)
-  if (validationErrors.length > 0)
-    return { id, message: validationErrors[0]?.message ?? "Invalid GraphQL query." }
-  const limitError = documentLimitError(documentMetrics(document), limits)
-  return limitError === undefined ? undefined : { id, message: limitError }
+  return validationErrors.length > 0
+    ? { id, message: validationErrors[0]?.message ?? "Invalid GraphQL query." }
+    : undefined
 }
 
 function maskWsError(error: unknown): unknown {
@@ -177,6 +183,7 @@ function outboundFrame(message: string, connection: GraphqlWsConnection): string
   try {
     const parsed = recordOf(JSON.parse(message))
     if (parsed === undefined) return message
+    if (parsed.type === "connection_ack") connection.acknowledged = true
     if ((parsed.type === "complete" || parsed.type === "error") && typeof parsed.id === "string") {
       connection.subscriptions.delete(parsed.id)
       connection.operations?.delete(parsed.id)
@@ -392,7 +399,13 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
       // this socket - including the client's `Complete` that stops the subscription. graphql-ws drives
       // its own sends and error frames from inside that loop; we only feed it inbound frames.
       const message = asText(data)
-      const rejected = subscriptionFrameError(message, options.schema, limits)
+      // Until connection_init is admitted, graphql-ws answers a subscribe frame by closing with 4401
+      // without reading the query. Parsing or validating it here would hand an unauthenticated socket
+      // schema suggestions and synchronous validation work.
+      const rejected =
+        ws.data.acknowledged === true
+          ? subscriptionFrameError(message, options.schema, limits)
+          : undefined
       if (rejected !== undefined) {
         ws.send(
           JSON.stringify({

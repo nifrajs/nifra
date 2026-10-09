@@ -60,6 +60,7 @@ const SHARED_LIMITS = [
   "maxAliases",
   "maxComplexity",
   "maxOperations",
+  "maxFieldOverlaps",
   "executionTimeoutMs",
 ] as const
 

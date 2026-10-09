@@ -287,3 +287,32 @@ describe("graphql-ws failures stay on the socket", () => {
     await until(() => late.returned === 1)
   })
 })
+
+// graphql-ws refuses a subscribe sent before connection_init is admitted. Answering it with a
+// validation error first told an unauthenticated socket the schema's field names.
+describe("a subscribe frame before connection_ack", () => {
+  test("gets no validation answer and closes the socket as unauthorized", async () => {
+    const handler = graphqlWebSocket({ schema, onConnect: () => false })
+    const socket = connect(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "{ pin }" } })
+    await until(() => socket.closes.length > 0)
+    expect(socket.closes[0]?.code).toBe(4401)
+    expect(socket.frames).toEqual([])
+  })
+
+  test("an admitted socket still gets the limit errors", async () => {
+    const socket = await acknowledged(graphqlWebSocket({ schema }))
+    socket.send({ id: "1", type: "subscribe", payload: { query: `{${" ping".repeat(100)} }` } })
+    await until(ended(socket.frames, "1"))
+    expect(socket.frames.at(-1)).toEqual({
+      id: "1",
+      type: "error",
+      payload: [
+        {
+          message:
+            "GraphQL document repeats field names in one selection set beyond the limit of 2000 same-named field pairs.",
+        },
+      ],
+    })
+  })
+})

@@ -50,6 +50,7 @@ import {
   documentMetrics,
   type GraphqlLimits,
   graphqlLimits,
+  overlapLimitError,
   requestLimitError,
   safeFormattedError,
 } from "./limits.ts"
@@ -85,6 +86,11 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
   readonly maxComplexity?: number
   /** Maximum operation definitions in one document. Default 10. */
   readonly maxOperations?: number
+  /**
+   * Maximum pairs of fields sharing a response name in one selection set, counted through fragments.
+   * Validation compares every such pair, so this bounds its cost. Default 2,000.
+   */
+  readonly maxFieldOverlaps?: number
   /** Maximum asynchronous resolver execution time. Default 10 seconds. */
   readonly executionTimeoutMs?: number
   /** Prototype-pollution policy for the parsed JSON body. Default `"reject"`. */
@@ -254,12 +260,10 @@ async function run<Context, Env>(
     return requestError("", 400, legacy, cors, [gqlErr], opts.formatError)
   }
 
-  const validationErrors = validate(opts.schema, document, specifiedRules)
-  if (validationErrors.length > 0) {
-    return requestError("", 400, legacy, cors, validationErrors, opts.formatError)
-  }
-
-  const documentLimit = documentLimitError(documentMetrics(document), limits)
+  // Every limit runs before validate(): its overlap rule is quadratic, so a small document within the
+  // byte limit can hold the event loop for seconds.
+  const documentLimit =
+    documentLimitError(documentMetrics(document), limits) ?? overlapLimitError(document, limits)
   if (documentLimit !== undefined) {
     return requestError(
       documentLimit,
@@ -269,6 +273,11 @@ async function run<Context, Env>(
       [new GraphQLError(documentLimit)],
       opts.formatError,
     )
+  }
+
+  const validationErrors = validate(opts.schema, document, specifiedRules)
+  if (validationErrors.length > 0) {
+    return requestError("", 400, legacy, cors, validationErrors, opts.formatError)
   }
 
   // GET is idempotent and cacheable, so per the GraphQL-over-HTTP spec it may run queries only.

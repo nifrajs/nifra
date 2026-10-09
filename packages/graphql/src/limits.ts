@@ -1,4 +1,11 @@
-import { type DocumentNode, type GraphQLError, Kind, type SelectionNode } from "graphql"
+import {
+  type DocumentNode,
+  type GraphQLError,
+  Kind,
+  type SelectionNode,
+  type SelectionSetNode,
+  visit,
+} from "graphql"
 
 export const DEFAULT_GRAPHQL_LIMITS = Object.freeze({
   maxQueryBytes: 64 * 1024,
@@ -7,6 +14,7 @@ export const DEFAULT_GRAPHQL_LIMITS = Object.freeze({
   maxAliases: 100,
   maxComplexity: 1_000,
   maxOperations: 10,
+  maxFieldOverlaps: 2_000,
 })
 
 export interface GraphqlLimitsOptions {
@@ -16,6 +24,7 @@ export interface GraphqlLimitsOptions {
   readonly maxAliases?: number
   readonly maxComplexity?: number
   readonly maxOperations?: number
+  readonly maxFieldOverlaps?: number
 }
 
 export interface GraphqlLimits {
@@ -25,6 +34,7 @@ export interface GraphqlLimits {
   readonly maxAliases: number
   readonly maxComplexity: number
   readonly maxOperations: number
+  readonly maxFieldOverlaps: number
 }
 
 function limit(value: number | undefined, fallback: number, name: string, minimum: number): number {
@@ -62,6 +72,12 @@ export function graphqlLimits(options: GraphqlLimitsOptions = {}): GraphqlLimits
       DEFAULT_GRAPHQL_LIMITS.maxOperations,
       "maxOperations",
       1,
+    ),
+    maxFieldOverlaps: limit(
+      options.maxFieldOverlaps,
+      DEFAULT_GRAPHQL_LIMITS.maxFieldOverlaps,
+      "maxFieldOverlaps",
+      0,
     ),
   }
 }
@@ -170,6 +186,113 @@ export function requestLimitError(
     return `GraphQL variables exceed the ${limits.maxVariablesBytes}-byte limit.`
   }
   return undefined
+}
+
+/**
+ * Pairs of same-named fields across every selection set, the work graphql-js's
+ * OverlappingFieldsCanBeMerged rule does: it compares every two fields that share a response name in
+ * one selection set, counting the fields its fragment spreads and inline fragments bring in. A few
+ * thousand bytes of `b(x: 1) b(x: 2) ...` hold within the depth and complexity limits yet cost seconds
+ * of synchronous validation, so this is counted, and refused, before `validate()` runs. Measured
+ * once {@link documentLimitError} passes and no fragment is unused, the fields it walks are bounded
+ * by `maxComplexity`.
+ */
+export function fieldOverlaps(document: DocumentNode): number {
+  const fragments = new Map<string, readonly SelectionNode[]>()
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION) {
+      fragments.set(definition.name.value, definition.selectionSet.selections)
+    }
+  }
+  const fragmentNames = new Map<string, ReadonlyMap<string, number>>()
+  const expanding = new Set<string>()
+  const add = (
+    selections: readonly SelectionNode[],
+    names: Map<string, number>,
+    spread: Set<string>,
+  ): void => {
+    for (const selection of selections) {
+      if (selection.kind === Kind.FIELD) {
+        const name = selection.alias?.value ?? selection.name.value
+        names.set(name, (names.get(name) ?? 0) + 1)
+      } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+        add(selection.selectionSet.selections, names, spread)
+      } else if (!spread.has(selection.name.value)) {
+        spread.add(selection.name.value)
+        for (const [name, count] of fragmentNamesOf(selection.name.value)) {
+          names.set(name, (names.get(name) ?? 0) + count)
+        }
+      }
+    }
+  }
+  // An unknown fragment and a cycle, both refused by validation, contribute nothing.
+  const fragmentNamesOf = (fragment: string): ReadonlyMap<string, number> => {
+    const known = fragmentNames.get(fragment)
+    if (known !== undefined) return known
+    const selections = fragments.get(fragment)
+    if (selections === undefined || expanding.has(fragment)) return new Map()
+    expanding.add(fragment)
+    const names = new Map<string, number>()
+    add(selections, names, new Set([fragment]))
+    expanding.delete(fragment)
+    fragmentNames.set(fragment, names)
+    return names
+  }
+  let pairs = 0
+  visit(document, {
+    SelectionSet(node: SelectionSetNode) {
+      const names = new Map<string, number>()
+      add(node.selections, names, new Set())
+      for (const count of names.values()) pairs += (count * (count - 1)) / 2
+    },
+  })
+  return pairs
+}
+
+/** The first fragment no operation reaches; graphql-js refuses it, and no limit above counts it. */
+function unusedFragment(document: DocumentNode): string | undefined {
+  const spreads = new Map<string, readonly string[]>()
+  const pending: string[] = []
+  const spreadsIn = (node: DocumentNode["definitions"][number]): string[] => {
+    const names: string[] = []
+    visit(node, {
+      FragmentSpread(spread) {
+        names.push(spread.name.value)
+      },
+    })
+    return names
+  }
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION) {
+      spreads.set(definition.name.value, spreadsIn(definition))
+    } else if (definition.kind === Kind.OPERATION_DEFINITION) {
+      pending.push(...spreadsIn(definition))
+    }
+  }
+  const reached = new Set<string>()
+  for (let name = pending.pop(); name !== undefined; name = pending.pop()) {
+    if (reached.has(name)) continue
+    reached.add(name)
+    pending.push(...(spreads.get(name) ?? []))
+  }
+  for (const name of spreads.keys()) if (!reached.has(name)) return name
+  return undefined
+}
+
+/**
+ * Refuses, before `validate()`, the documents whose overlap validation is expensive: too many
+ * same-named field pairs, or a fragment no operation uses (its fields escape `maxComplexity`). Run it
+ * after {@link documentLimitError} passes.
+ */
+export function overlapLimitError(
+  document: DocumentNode,
+  limits: GraphqlLimits,
+): string | undefined {
+  const unused = unusedFragment(document)
+  if (unused !== undefined) return `Fragment "${unused}" is never used.`
+  return fieldOverlaps(document) > limits.maxFieldOverlaps
+    ? `GraphQL document repeats field names in one selection set beyond the limit of ${limits.maxFieldOverlaps} same-named field pairs.`
+    : undefined
 }
 
 export function documentLimitError(
