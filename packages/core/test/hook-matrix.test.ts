@@ -154,6 +154,29 @@ describe("hook scope matrix", () => {
     }
   })
 
+  test("a server mounted on its own path is reported once, not followed", () => {
+    const app = server()
+      .onRequest(function requestLog() {})
+      .get("/a", () => "a")
+    app.mount({ path: "/self", app, stripPrefix: true })
+    const report = reflectHooks(app)
+    expect(report.routes.map((route) => `${route.method} ${route.path}`)).toEqual(["GET /a"])
+    expect(
+      report.unmatched.map(({ prefix, hooks }) => [prefix, hooks.map((hook) => hook.name)]),
+    ).toEqual([
+      ["/", ["requestLog"]],
+      ["/self", ["requestLog"]],
+    ])
+
+    const a = server().get("/a", () => "a")
+    const b = server().get("/b", () => "b")
+    a.mount({ path: "/to-b", app: b, stripPrefix: true })
+    b.mount({ path: "/to-a", app: a, stripPrefix: true })
+    const cycle = reflectHooks(a)
+    expect(cycle.routes.map((route) => route.path)).toEqual(["/a", "/to-b/b"])
+    expect(cycle.unmatched.map((entry) => entry.prefix)).toEqual(["/", "/to-b", "/to-b/to-a"])
+  })
+
   test("the report for an app with a group, a merge and a mount", () => {
     const report = reflectHooks(hookMatrixApp([]))
     const render = (hooks: readonly ReflectedHook[]) =>

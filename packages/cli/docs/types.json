@@ -21269,7 +21269,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function reflectHooks(source: unknown): ReflectedHookReport;",
-    "doc": "/**\n * Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin\n * that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It\n * follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server's\n * request hooks cover only its own routes, a mount runs its child's whole lifecycle inside the app's\n * global hooks - and reads the provenance a development load records, so reflect the app outside\n * production. Anything that is not a nifra server yields an empty report.\n */"
+    "doc": "/**\n * Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin\n * that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It\n * follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server's\n * request hooks cover only its own routes, a mount runs its child's whole lifecycle inside the app's\n * global hooks - and reads the provenance a development load records, so reflect the app outside\n * production. A mount of a server already on the path (a self-mount) is reported once, as that\n * prefix's unmatched entry. Anything that is not a nifra server yields an empty report.\n */"
   },
   {
     "name": "reflectMounts",

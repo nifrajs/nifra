@@ -565,7 +565,8 @@ const joinPath = (base: string, path: string): string =>
  * follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server's
  * request hooks cover only its own routes, a mount runs its child's whole lifecycle inside the app's
  * global hooks - and reads the provenance a development load records, so reflect the app outside
- * production. Anything that is not a nifra server yields an empty report.
+ * production. A mount of a server already on the path (a self-mount) is reported once, as that
+ * prefix's unmatched entry. Anything that is not a nifra server yields an empty report.
  */
 export function reflectHooks(source: unknown): ReflectedHookReport {
   if (!isServerRecord(source)) return { complete: true, routes: [], unmatched: [] }
@@ -755,7 +756,10 @@ export function reflectHooks(source: unknown): ReflectedHookReport {
       })
     }
     for (const { path, ...mount } of mounts) {
-      if (isServerRecord(mount.app)) {
+      // A server already on this request's path (a self-mount, or two servers mounting each other)
+      // is listed like a plain fetch mount: followed, the walk would never end.
+      const cyclic = frames.some((outer) => outer.server === mount.app)
+      if (isServerRecord(mount.app) && !cyclic) {
         const child = mount.app
         if (!labels.has(child)) {
           const context = `mount ${reportPath(path)}`
