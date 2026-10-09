@@ -221,6 +221,25 @@ describe("generateRegressionTest", () => {
     expect(emitted).not.toContain("SECRET_TWO")
   })
 
+  test("a body that keeps numbers or keys verbatim carries a review banner", async () => {
+    const capsule = await captureIncident(
+      new Request(`${ORIGIN}/pay`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ card: 4111111111111111, "alice@example.com": true }),
+      }),
+      { status: 500 },
+    )
+    const code = generateRegressionTest(capsule)
+    expect(code).toContain("REVIEW BEFORE COMMITTING")
+    expect(code).not.toContain("SANITIZE BEFORE COMMITTING")
+    const strings = await captureIncident(
+      new Request(`${ORIGIN}/pay`, { method: "POST", body: JSON.stringify(["only", "strings"]) }),
+      { status: 500 },
+    )
+    expect(generateRegressionTest(strings)).not.toContain("REVIEW BEFORE COMMITTING")
+  })
+
   test("allow-list keeps a safe value verbatim and drops the banner when nothing was redacted", async () => {
     const capsule = await captureIncident(
       { method: "GET", path: "/ping" },

@@ -21227,7 +21227,7 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function redactForEmission(value: unknown, allow: ReadonlySet<string>, path?: string): unknown;",
-    "doc": "/**\n * Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are\n * kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This\n * is intentionally aggressive: a committed fixture must not leak PII/secrets.\n */"
+    "doc": "/**\n * Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings and\n * object keys are kept - they carry the structure that makes the fixture reproduce - and the emitted\n * file says so in a review banner. A committed fixture must not leak PII/secrets.\n */"
   },
   {
     "name": "redactLogFields",

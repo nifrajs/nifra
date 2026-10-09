@@ -4734,7 +4734,7 @@ _No named exports (side-effect entrypoint)._
 - **recordTrajectory** _(const)_ - `recordTrajectory: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
   Alias that reads naturally at a call site which has just completed a run.
 - **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
-  Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
+  Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings and object keys are kept - they carry the structure that makes the fixture reproduce - and the emitted file says so in a review banner. A committed fixture must not leak PII/secrets.
 - **referenceFaultProfile** _(const)_ - `referenceFaultProfile: FaultProfile`
   A small smoke profile for consumers that only need to verify the harness wiring.
 - **registryCertificationProfile** _(function)_ - `registryCertificationProfile: () => AdapterCertificationProfile<CertifiableDescriptorAdapter>`
