@@ -595,29 +595,59 @@ function copyLines(finding: DuplicateInstallFinding): string[] {
   )
 }
 
-function duplicateSuggestion(finding: DuplicateInstallFinding): DiagnosticSuggestion {
-  const lines = copyLines(finding)
+/** One fix for duplicates that share a cause and topology, so a linked sibling repository that
+ * duplicates every package reads as one finding instead of one paragraph per package. */
+function duplicateSuggestion(group: readonly DuplicateInstallFinding[]): DiagnosticSuggestion {
+  const names = group.map((finding) => `"${finding.package}"`).join(", ")
   return {
     kind: "manual",
-    title: `Resolve ${finding.package} to one loaded copy`,
+    title:
+      group.length === 1
+        ? `Resolve ${group[0]?.package} to one loaded copy`
+        : `Resolve each of ${group.length} packages to one loaded copy`,
     diff: [
       "package.json:",
-      `  "nifra": { "singleCopy": ["${finding.package}"] }`,
+      `  "nifra": { "singleCopy": [${names}] }`,
       "bunfig.toml:",
       `  preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`,
       "  [test]",
       `  preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`,
     ].join("\n"),
     steps: [
-      ...lines.map((line) => `Copy: ${line}`),
-      ...(finding.provenance === undefined
-        ? []
-        : [`Planted links: ${finding.provenance} Try this before the fixes below.`]),
+      ...group.flatMap(copyLines).map((line) => `Copy: ${line}`),
+      ...group.flatMap((finding) =>
+        finding.provenance === undefined
+          ? []
+          : [
+              `Planted links${group.length === 1 ? "" : ` (${finding.package})`}: ${finding.provenance} Try this before the fixes below.`,
+            ],
+      ),
       "Fix 1 - deduplicate: align workspace dependency and peer ranges on one compatible version, remove stale nested installs, and reinstall from the workspace root so every importer resolves one physical copy.",
-      `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${finding.cause === "version-skew" ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
+      `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${group.some((finding) => finding.cause === "version-skew") ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
       "Re-run `nifra check`; the gate stays failing until one fix lands.",
     ],
   }
+}
+
+function duplicateDiagnostic(group: readonly DuplicateInstallFinding[]): Diagnostic | undefined {
+  const first = group[0]
+  if (first === undefined) return undefined
+  const context = `${first.topology === undefined ? "" : `. Topology: ${first.topology}`}${first.scope === undefined ? "" : `. Scope: ${first.scope}`}`
+  const skew = first.cause === "version-skew"
+  const names = group.map((finding) => finding.package)
+  return legacyDiagnostic("duplicate-install", {
+    severity: "error",
+    message:
+      group.length === 1
+        ? `${first.package} identity preflight found ${first.cause} - ${first.explanation}${context}`
+        : `${group.length} packages share one identity preflight finding, ${first.cause} - ${names.join(", ")} ${skew ? "each resolve to multiple versions and physical paths" : "are each loaded from more than one physical path"}, so module state and symbols are not shared${context}`,
+    fix:
+      group.length === 1 || skew
+        ? first.remediation
+        : `Deduplicate so each resolves to a single physical path, or declare them single-copy: add "nifra": { "singleCopy": [${names.map((name) => `"${name}"`).join(", ")}] } to package.json and preload "${SINGLE_COPY_REGISTER_SPECIFIER}" from bunfig.toml.`,
+    evidence: group.flatMap(copyLines),
+    suggestion: duplicateSuggestion(group),
+  })
 }
 
 const doctorRules: readonly CheckRule[] = Object.freeze([
@@ -649,20 +679,14 @@ const doctorRules: readonly CheckRule[] = Object.freeze([
     async scan(ctx: RuleContext) {
       const doctor = ctx.project.packages.doctor
       if (!doctor.ran) return []
-      const findings: Diagnostic[] = []
+      // Duplicates with one cause and one layout (every package a linked sibling repo installs again)
+      // have one fix, so they are one finding; `identityPreflight` in --json keeps each package.
+      const groups = new Map<string, DuplicateInstallFinding[]>()
       for (const finding of doctor.duplicateInstalls) {
-        const copies = copyLines(finding)
-        findings.push(
-          legacyDiagnostic("duplicate-install", {
-            severity: "error",
-            message: `${finding.package} identity preflight found ${finding.cause} - ${finding.explanation}${finding.topology === undefined ? "" : `. Topology: ${finding.topology}`}${finding.scope === undefined ? "" : `. Scope: ${finding.scope}`}`,
-            fix: finding.remediation,
-            evidence: copies,
-            suggestion: duplicateSuggestion(finding),
-          }),
-        )
+        const key = [finding.cause, finding.topology ?? "", finding.scope ?? ""].join("\0")
+        groups.set(key, [...(groups.get(key) ?? []), finding])
       }
-      return findings
+      return [...groups.values()].flatMap((group) => duplicateDiagnostic(group) ?? [])
     },
   },
   {

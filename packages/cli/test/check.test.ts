@@ -899,6 +899,59 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     }
   })
 
+  test("duplicate-install reports packages duplicated the same way as one finding with one fix", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-dup-group-"))
+    const names = ["@nifrajs/client", "@nifrajs/core", "@nifrajs/web"]
+    try {
+      const app = join(dir, "packages", "app")
+      const dependencies = Object.fromEntries(names.map((name) => [name, "1.12.0"]))
+      await mkdir(join(app, "src"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies,
+        }),
+      )
+      await writeFile(join(app, "package.json"), JSON.stringify({ name: "app", dependencies }))
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      for (const copy of [dir, app]) {
+        for (const name of names) {
+          await mkdir(join(copy, "node_modules", name), { recursive: true })
+          await writeFile(
+            join(copy, "node_modules", name, "package.json"),
+            JSON.stringify({ name, version: "1.12.0" }),
+          )
+        }
+      }
+
+      const result = await collectCheckResult(dir, { lintsOnly: true })
+      const diagnostics = result.diagnostics.filter((d) => d.rule === "duplicate-install")
+      expect(diagnostics).toHaveLength(1)
+      const [diagnostic] = diagnostics
+      expect(diagnostic?.severity).toBe("error")
+      expect(diagnostic?.message).toContain(
+        "3 packages share one identity preflight finding, duplicate-path - @nifrajs/client, @nifrajs/core, @nifrajs/web are each loaded from more than one physical path",
+      )
+      expect(diagnostic?.message).toContain("Topology: 2 paths under 2 install roots")
+      expect(diagnostic?.fix).toContain(
+        '"nifra": { "singleCopy": ["@nifrajs/client", "@nifrajs/core", "@nifrajs/web"] }',
+      )
+      expect(diagnostic?.suggestion?.diff).toContain(
+        '"nifra": { "singleCopy": ["@nifrajs/client", "@nifrajs/core", "@nifrajs/web"] }',
+      )
+      const steps = diagnostic?.suggestion?.steps ?? []
+      expect(steps.filter((step) => step.startsWith("Copy: "))).toHaveLength(6)
+      expect(steps.filter((step) => step.startsWith("Fix 1"))).toHaveLength(1)
+      // --json consumers still get one entry per package.
+      expect(result.identityPreflight?.duplicates.map((finding) => finding.package)).toEqual(names)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("duplicate-install names a copy planted by a symlink out of the install, before the fixes", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-planted-"))
     try {
