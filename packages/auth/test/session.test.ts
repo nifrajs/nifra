@@ -67,6 +67,35 @@ test("a non-finite maxAge is rejected at construction", () => {
   expect(() => createSessions({ secret: SECRET, maxAge: Number.NaN })).toThrow(/maxAge/)
 })
 
+test("a session cookie does not verify under another name that shares the secret", async () => {
+  // Store mode (one shared store) and cookie mode.
+  for (const mode of [{ store: new MemorySessionStore() }, {}]) {
+    const user = createSessions<Data>({ secret: SECRET, cookieName: "user_session", ...mode })
+    const admin = createSessions<Data>({ secret: SECRET, cookieName: "admin_session", ...mode })
+    const source = ctx()
+    const session = await user.get(source.context)
+    session.set("role", "user")
+    await user.commit(source.context, session)
+    const signed = lastCookie(source.setCalls)
+    expect((await user.get(ctx({ user_session: signed }).context)).get("role")).toBe("user")
+    expect((await admin.get(ctx({ admin_session: signed }).context)).isEmpty).toBe(true)
+  }
+})
+
+test("a cookie signed before names were bound still loads, and is re-signed bound", async () => {
+  const sessions = createSessions<Data>({ secret: SECRET })
+  const expiresAt = Date.now() + 60_000
+  const legacy = await signValue(JSON.stringify({ data: { userId: "u1" }, expiresAt }), SECRET)
+  const source = ctx({ nifra_session: legacy })
+  const loaded = await sessions.get(source.context)
+  expect(loaded.get("userId")).toBe("u1")
+  await sessions.commit(source.context, loaded)
+  const resigned = lastCookie(source.setCalls)
+  const other = createSessions<Data>({ secret: SECRET, cookieName: "other" })
+  expect((await other.get(ctx({ other: resigned }).context)).isEmpty).toBe(true)
+  expect((await sessions.get(ctx({ nifra_session: resigned }).context)).get("userId")).toBe("u1")
+})
+
 describe("session - store mode", () => {
   const make = (now: () => number = () => 1000): SessionManager<Data> =>
     createSessions<Data>({ secret: SECRET, store: new MemorySessionStore(), now, maxAge: 3600 })

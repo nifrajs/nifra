@@ -198,9 +198,23 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     return state
   }
 
+  // The cookie name is signed with the value, so when two managers share a secret one's cookie does
+  // not verify as the other's. On the wire the cookie keeps its `value.signature` shape.
+  const bound = `${cookieName}\n`
+  const sign = async (value: string): Promise<string> =>
+    (await signValue(`${bound}${value}`, secret)).slice(bound.length)
+  const unsign = async (raw: string): Promise<string | null> => {
+    const named = await unsignValue(`${bound}${raw}`, secret)
+    if (named !== null) return named.slice(bound.length)
+    // Signed before names were bound: still accepted, so upgrading signs no one out, and re-signed
+    // bound on its next commit. Such a cookie lives at most `maxAge` past the upgrade.
+    const legacy = await unsignValue(raw, secret)
+    return legacy === null || legacy.includes("\n") ? null : legacy
+  }
+
   const loadFromRaw = async (raw: string | undefined): Promise<Session<Data>> => {
     if (raw === undefined || raw === "") return make({})
-    const unsigned = await unsignValue(raw, secret)
+    const unsigned = await unsign(raw)
     if (unsigned === null) return make({}) // tampered / wrong secret → fail closed (anonymous)
 
     if (store !== undefined) {
@@ -253,15 +267,11 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       }
       if (state.id === undefined) state.id = randomId()
       await store.set(state.id, { data, expiresAt } satisfies SessionRecord)
-      writeCookie(c, await signValue(state.id, secret), expiresAt)
+      writeCookie(c, await sign(state.id), expiresAt)
       return
     }
     // Cookie mode: the (signed) payload IS the cookie. serializeCookie enforces the 4 KB cap.
-    writeCookie(
-      c,
-      await signValue(JSON.stringify({ data, expiresAt } satisfies Payload), secret),
-      expiresAt,
-    )
+    writeCookie(c, await sign(JSON.stringify({ data, expiresAt } satisfies Payload)), expiresAt)
   }
 
   const destroy = async (c: SessionContext, session?: Session<Data>): Promise<void> => {
@@ -273,7 +283,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
         const raw = sessionCookie(c)
-        if (raw !== undefined) id = (await unsignValue(raw, secret)) ?? undefined
+        if (raw !== undefined) id = (await unsign(raw)) ?? undefined
       }
       if (id !== undefined) await store.delete(id)
     }
