@@ -155,3 +155,15 @@ test("the event projection rejects malformed payloads instead of dereferencing t
     } as never),
   ).toThrow("agent event is invalid")
 })
+
+test("an extension event projects to its type and turn, never its data", () => {
+  const base = { version: 1, sessionId: "s", seq: 4, at: 9 } as const
+  const view = toEventView({ ...base, type: "x-codex.plan", turnId: "t", data: { secret: "plan" } })
+  expect(view).toEqual({ seq: 4, at: 9, kind: "x-codex.plan", turnId: "t", hasData: true })
+  expect(toEventView({ ...base, type: "x-acme.ping" })).toEqual({
+    seq: 4,
+    at: 9,
+    kind: "x-acme.ping",
+    hasData: false,
+  })
+})

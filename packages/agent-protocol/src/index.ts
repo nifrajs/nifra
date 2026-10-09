@@ -28,6 +28,13 @@ export type AgentEventType =
   | "session.completed"
   | "session.failed"
   | "session.stopped"
+  | AgentExtensionEventType
+
+/**
+ * The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64
+ * characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
+ */
+export type AgentExtensionEventType = `x-${string}`
 
 export interface AgentSessionSnapshot {
   readonly version: typeof AGENT_PROTOCOL_VERSION
@@ -181,6 +188,16 @@ export interface AgentSessionStoppedEvent extends AgentSessionEventBase {
   readonly reason?: string
 }
 
+/**
+ * A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the
+ * type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.
+ */
+export interface AgentExtensionEvent extends AgentSessionEventBase {
+  readonly type: AgentExtensionEventType
+  readonly turnId?: string
+  readonly data?: unknown
+}
+
 export type AgentEvent =
   | AgentSessionStartedEvent
   | AgentSessionUpdatedEvent
@@ -199,6 +216,7 @@ export type AgentEvent =
   | AgentSessionCompletedEvent
   | AgentSessionFailedEvent
   | AgentSessionStoppedEvent
+  | AgentExtensionEvent
 
 /** Event payload before the transport adds protocol version, session id, sequence, and timestamp. */
 export type AgentEventPayload =
@@ -219,6 +237,7 @@ export type AgentEventPayload =
   | Omit<AgentSessionCompletedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentSessionFailedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentSessionStoppedEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentExtensionEvent, "version" | "sessionId" | "seq" | "at">
 
 export interface AgentError {
   readonly code: string
@@ -401,6 +420,8 @@ export * from "./run-lifecycle.ts"
 export * from "./transport-policy.ts"
 
 const AGENT_TOKEN_RE = /^[A-Za-z0-9._:/-]{1,128}$/
+const AGENT_EXTENSION_TYPE_RE = /^x-[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+(?:[._-][a-z0-9]+)*$/
+const AGENT_MAX_EXTENSION_TYPE = 64
 const AGENT_MAX_TEXT = 256 * 1024
 const AGENT_MAX_PAYLOAD_TEXT = 64 * 1024
 const AGENT_MAX_ARRAY = 256
@@ -621,144 +642,221 @@ function boundedAgentValue(
   )
 }
 
-function optionalBoundedAgentValue(record: Record<string, unknown>, key: string): boolean {
+type AgentProblem = string | undefined
+
+function tokenProblem(value: unknown, field: string): AgentProblem {
+  return agentToken(value) ? undefined : `${field} must be 1-128 characters of [A-Za-z0-9._:/-]`
+}
+
+function optionalTokenProblem(value: unknown, field: string): AgentProblem {
+  return value === undefined ? undefined : tokenProblem(value, field)
+}
+
+function textProblem(
+  value: unknown,
+  field: string,
+  max = AGENT_MAX_TEXT,
+  allowEmpty = true,
+): AgentProblem {
+  if (typeof value !== "string") return `${field} must be a string`
+  if (value.length > max) return `${field} is longer than ${max} characters`
+  if (!allowEmpty && value.length === 0) return `${field} must not be empty`
+  return value.includes("\0") ? `${field} contains NUL` : undefined
+}
+
+function optionalTextProblem(value: unknown, field: string): AgentProblem {
+  return value === undefined ? undefined : textProblem(value, field)
+}
+
+function countProblem(value: unknown, field: string): AgentProblem {
+  return agentCount(value) ? undefined : `${field} must be a non-negative safe integer`
+}
+
+function booleanProblem(value: unknown, field: string): AgentProblem {
+  return typeof value === "boolean" ? undefined : `${field} must be a boolean`
+}
+
+function tokenListProblem(value: unknown, field: string): AgentProblem {
+  if (!Array.isArray(value) || value.length > AGENT_MAX_ARRAY)
+    return `${field} must be an array of at most ${AGENT_MAX_ARRAY} tokens`
+  return value.every(agentToken) ? undefined : `${field} must hold only tokens`
+}
+
+function valueProblem(record: Record<string, unknown>, key: string, field: string): AgentProblem {
   return !Object.hasOwn(record, key) || boundedAgentValue(record[key])
+    ? undefined
+    : `${field} is outside the payload bounds (strings ${AGENT_MAX_PAYLOAD_TEXT} characters, ${AGENT_MAX_ARRAY} items or keys, depth ${AGENT_MAX_PAYLOAD_DEPTH})`
 }
 
-function validAgentError(value: unknown): boolean {
-  if (!agentRecord(value)) return false
+function errorProblem(value: unknown, field: string): AgentProblem {
+  if (!agentRecord(value)) return `${field} must be an object`
   return (
-    agentToken(value.code) &&
-    agentText(value.message, AGENT_MAX_TEXT, false) &&
-    optionalBoundedAgentValue(value, "details")
+    tokenProblem(value.code, `${field}.code`) ??
+    textProblem(value.message, `${field}.message`, AGENT_MAX_TEXT, false) ??
+    valueProblem(value, "details", `${field}.details`)
   )
 }
 
-function validAgentSnapshot(value: unknown, sessionId: string): value is AgentSessionSnapshot {
-  if (!agentRecord(value)) return false
-  if (
-    value.version !== AGENT_PROTOCOL_VERSION ||
-    !agentToken(value.id) ||
-    value.id !== sessionId ||
-    !agentToken(value.backend) ||
-    !agentText(value.cwd, 4_096, false) ||
-    typeof value.status !== "string" ||
-    !AGENT_STATUSES.has(value.status) ||
-    !agentCount(value.createdAt) ||
-    !agentCount(value.updatedAt) ||
-    !agentCount(value.lastSeq) ||
-    !Array.isArray(value.capabilities) ||
-    value.capabilities.length > AGENT_MAX_ARRAY ||
-    !value.capabilities.every(agentToken)
+function snapshotProblem(value: unknown, sessionId: unknown, field: string): AgentProblem {
+  if (!agentRecord(value)) return `${field} must be an object`
+  if (value.version !== AGENT_PROTOCOL_VERSION)
+    return `${field}.version must be ${AGENT_PROTOCOL_VERSION}`
+  if (value.id !== sessionId) return `${field}.id must be the event's sessionId`
+  return (
+    tokenProblem(value.backend, `${field}.backend`) ??
+    textProblem(value.cwd, `${field}.cwd`, 4_096, false) ??
+    (typeof value.status === "string" && AGENT_STATUSES.has(value.status)
+      ? undefined
+      : `${field}.status must be one of ${[...AGENT_STATUSES].join(", ")}`) ??
+    countProblem(value.createdAt, `${field}.createdAt`) ??
+    countProblem(value.updatedAt, `${field}.updatedAt`) ??
+    countProblem(value.lastSeq, `${field}.lastSeq`) ??
+    tokenListProblem(value.capabilities, `${field}.capabilities`) ??
+    optionalTokenProblem(value.activeTurnId, `${field}.activeTurnId`) ??
+    optionalTokenProblem(value.extensionRevision, `${field}.extensionRevision`)
   )
-    return false
-  if (value.activeTurnId !== undefined && !agentToken(value.activeTurnId)) return false
-  if (value.extensionRevision !== undefined && !agentToken(value.extensionRevision)) return false
-  return true
 }
 
-function validRepairTask(value: unknown): boolean {
-  if (!agentRecord(value)) return false
+function repairTaskProblem(value: unknown, field: string): AgentProblem {
+  if (!agentRecord(value)) return `${field} must be an object`
   return (
-    agentToken(value.id) &&
+    tokenProblem(value.id, `${field}.id`) ??
     (value.verification === "check" ||
-      value.verification === "assure" ||
-      value.verification === "test") &&
-    agentText(value.cwd, 4_096, false) &&
-    agentText(value.reason, AGENT_MAX_TEXT, false) &&
-    Array.isArray(value.capabilities) &&
-    value.capabilities.length <= AGENT_MAX_ARRAY &&
-    value.capabilities.every(agentToken) &&
-    (value.output === undefined || agentText(value.output)) &&
-    optionalBoundedAgentValue(value, "report")
+    value.verification === "assure" ||
+    value.verification === "test"
+      ? undefined
+      : `${field}.verification must be check, assure, or test`) ??
+    textProblem(value.cwd, `${field}.cwd`, 4_096, false) ??
+    textProblem(value.reason, `${field}.reason`, AGENT_MAX_TEXT, false) ??
+    tokenListProblem(value.capabilities, `${field}.capabilities`) ??
+    optionalTextProblem(value.output, `${field}.output`) ??
+    valueProblem(value, "report", `${field}.report`)
+  )
+}
+
+/**
+ * Whether `type` names an extension event: `x-<vendor>.<name>` in lowercase letters, digits, and
+ * single `-`, `.`, or `_` separators, at most 64 characters.
+ */
+export function isAgentExtensionEventType(type: unknown): type is AgentExtensionEventType {
+  return (
+    typeof type === "string" &&
+    type.length <= AGENT_MAX_EXTENSION_TYPE &&
+    AGENT_EXTENSION_TYPE_RE.test(type)
   )
 }
 
 /** Validate the complete discriminated event union before a projection or UI consumer sees it. */
 export function isAgentEvent(value: unknown): value is AgentEvent {
-  if (!agentRecord(value)) return false
-  if (
-    value.version !== AGENT_PROTOCOL_VERSION ||
-    !agentToken(value.sessionId) ||
-    !agentCount(value.seq) ||
-    !agentCount(value.at) ||
-    typeof value.type !== "string"
-  )
-    return false
-  switch (value.type) {
+  return agentEventProblem(value) === undefined
+}
+
+/**
+ * Why `value` is not a valid agent event, naming the field and the limit it broke but never its
+ * content, so the text is safe to log or show; `undefined` when it is valid.
+ */
+export function agentEventProblem(value: unknown): string | undefined {
+  if (!agentRecord(value)) return "event must be an object"
+  if (value.version !== AGENT_PROTOCOL_VERSION) return `version must be ${AGENT_PROTOCOL_VERSION}`
+  const base =
+    tokenProblem(value.sessionId, "sessionId") ??
+    countProblem(value.seq, "seq") ??
+    countProblem(value.at, "at")
+  if (base !== undefined) return base
+  if (typeof value.type !== "string") return "type must be a string"
+  const type = value.type
+  switch (type) {
     case "session.started":
     case "session.updated":
     case "session.completed":
-      return validAgentSnapshot(value.snapshot, value.sessionId)
+      return snapshotProblem(value.snapshot, value.sessionId, `${type}.snapshot`)
     case "turn.started":
-      return agentToken(value.turnId) && agentText(value.prompt)
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ?? textProblem(value.prompt, `${type}.prompt`)
+      )
     case "assistant.delta":
     case "assistant.message":
-      return agentToken(value.turnId) && agentText(value.text)
+      return tokenProblem(value.turnId, `${type}.turnId`) ?? textProblem(value.text, `${type}.text`)
     case "tool.started":
       return (
-        agentToken(value.turnId) &&
-        agentToken(value.callId) &&
-        agentToken(value.name) &&
-        optionalBoundedAgentValue(value, "input")
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.callId, `${type}.callId`) ??
+        tokenProblem(value.name, `${type}.name`) ??
+        valueProblem(value, "input", `${type}.input`)
       )
     case "tool.delta":
-      return agentToken(value.turnId) && agentToken(value.callId) && agentText(value.text)
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.callId, `${type}.callId`) ??
+        textProblem(value.text, `${type}.text`)
+      )
     case "tool.completed":
       return (
-        agentToken(value.turnId) &&
-        agentToken(value.callId) &&
-        agentToken(value.name) &&
-        typeof value.ok === "boolean" &&
-        optionalBoundedAgentValue(value, "output") &&
-        (value.error === undefined || validAgentError(value.error))
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.callId, `${type}.callId`) ??
+        tokenProblem(value.name, `${type}.name`) ??
+        booleanProblem(value.ok, `${type}.ok`) ??
+        valueProblem(value, "output", `${type}.output`) ??
+        (value.error === undefined ? undefined : errorProblem(value.error, `${type}.error`))
       )
     case "approval.required":
       return (
-        agentToken(value.turnId) &&
-        agentToken(value.approvalId) &&
-        agentText(value.action, AGENT_MAX_TEXT, false) &&
-        agentToken(value.capability) &&
-        (value.reason === undefined || agentText(value.reason))
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.approvalId, `${type}.approvalId`) ??
+        textProblem(value.action, `${type}.action`, AGENT_MAX_TEXT, false) ??
+        tokenProblem(value.capability, `${type}.capability`) ??
+        optionalTextProblem(value.reason, `${type}.reason`)
       )
     case "approval.resolved":
       return (
-        (value.turnId === undefined || agentToken(value.turnId)) &&
-        agentToken(value.approvalId) &&
-        typeof value.approved === "boolean" &&
-        (value.reason === undefined || agentText(value.reason))
+        optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.approvalId, `${type}.approvalId`) ??
+        booleanProblem(value.approved, `${type}.approved`) ??
+        optionalTextProblem(value.reason, `${type}.reason`)
       )
     case "repair.required":
-      return (value.turnId === undefined || agentToken(value.turnId)) && validRepairTask(value.task)
+      return (
+        optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+        repairTaskProblem(value.task, `${type}.task`)
+      )
     case "verification.completed":
       return (
-        (value.name === "check" || value.name === "assure" || value.name === "test") &&
-        typeof value.ok === "boolean" &&
-        optionalBoundedAgentValue(value, "report")
+        (value.name === "check" || value.name === "assure" || value.name === "test"
+          ? undefined
+          : `${type}.name must be check, assure, or test`) ??
+        booleanProblem(value.ok, `${type}.ok`) ??
+        valueProblem(value, "report", `${type}.report`)
       )
     case "memory.compacted":
       return (
-        agentCount(value.before) &&
-        agentCount(value.after) &&
-        typeof value.reason === "string" &&
-        AGENT_COMPACTION_REASONS.has(value.reason)
+        countProblem(value.before, `${type}.before`) ??
+        countProblem(value.after, `${type}.after`) ??
+        (typeof value.reason === "string" && AGENT_COMPACTION_REASONS.has(value.reason)
+          ? undefined
+          : `${type}.reason must be one of ${[...AGENT_COMPACTION_REASONS].join(", ")}`)
       )
     case "extension.reloaded":
       return (
-        agentToken(value.revision) &&
-        Array.isArray(value.loaded) &&
-        value.loaded.length <= AGENT_MAX_ARRAY &&
-        value.loaded.every(agentToken) &&
-        Array.isArray(value.disabled) &&
-        value.disabled.length <= AGENT_MAX_ARRAY &&
-        value.disabled.every(agentToken) &&
-        typeof value.rolledBack === "boolean"
+        tokenProblem(value.revision, `${type}.revision`) ??
+        tokenListProblem(value.loaded, `${type}.loaded`) ??
+        tokenListProblem(value.disabled, `${type}.disabled`) ??
+        booleanProblem(value.rolledBack, `${type}.rolledBack`)
       )
     case "session.failed":
-      return validAgentError(value.error) && typeof value.recoverable === "boolean"
+      return (
+        errorProblem(value.error, `${type}.error`) ??
+        booleanProblem(value.recoverable, `${type}.recoverable`)
+      )
     case "session.stopped":
-      return value.reason === undefined || agentText(value.reason)
+      return optionalTextProblem(value.reason, `${type}.reason`)
     default:
-      return false
+      if (isAgentExtensionEventType(type))
+        return (
+          optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+          valueProblem(value, "data", `${type}.data`)
+        )
+      if (type.startsWith("x-"))
+        return "extension event type must be x-<vendor>.<name>, lowercase, at most 64 characters"
+      return agentToken(type) ? `unknown event type ${type}` : "unknown event type"
   }
 }

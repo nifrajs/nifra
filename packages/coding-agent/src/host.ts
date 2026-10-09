@@ -4,11 +4,14 @@ import {
   type AgentBackend,
   type AgentEvent,
   type AgentEventPayload,
+  type AgentExtensionEvent,
   type AgentSessionSnapshot,
   agentError,
+  agentEventProblem,
   type CreateSessionInput,
   type ForkSessionResult,
   isAgentEvent,
+  isAgentExtensionEventType,
   type ReloadResult,
 } from "@nifrajs/agent-protocol"
 import {
@@ -50,6 +53,12 @@ export interface CodingAgentHostOptions {
   >
   /** Retain bounded exception stacks for trusted local diagnostics. */
   readonly exposeErrorStacks?: boolean
+  /**
+   * Checks for a backend's extension events (`x-<vendor>.<name>`), by type. An event whose check
+   * returns false or throws fails the turn like a malformed protocol event; a type with no check
+   * passes through as long as it stays inside the protocol's bounds.
+   */
+  readonly extensionEvents?: Readonly<Record<string, (event: AgentExtensionEvent) => boolean>>
 }
 
 /** Small lifecycle host shared by the CLI, RPC server, and future Workbench. */
@@ -68,6 +77,7 @@ export class CodingAgentHost {
   private readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
   private readonly maxRepairAttempts: number
   private readonly exposeErrorStacks: boolean
+  private readonly extensionChecks: ReadonlyMap<string, (event: AgentExtensionEvent) => boolean>
   private readonly verification:
     | Pick<VerificationOptions, "command" | "commandArgs" | "timeoutMs" | "maxOutputBytes" | "env">
     | undefined
@@ -109,6 +119,15 @@ export class CodingAgentHost {
       throw new RangeError("coding agent: maxRepairAttempts must be between 0 and 8")
     this.exposeErrorStacks = options.exposeErrorStacks === true
     this.verification = options.verification
+    const checks = new Map<string, (event: AgentExtensionEvent) => boolean>()
+    for (const [type, check] of Object.entries(options.extensionEvents ?? {})) {
+      if (!isAgentExtensionEventType(type))
+        throw new TypeError(`coding agent: extension event type must be x-<vendor>.<name>: ${type}`)
+      if (typeof check !== "function")
+        throw new TypeError(`coding agent: the check for ${type} must be a function`)
+      checks.set(type, check)
+    }
+    this.extensionChecks = checks
   }
 
   async start(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
@@ -204,15 +223,16 @@ export class CodingAgentHost {
 
   private acceptBackendEvent(rawEvent: unknown): AgentEvent {
     const session = this.requireSession()
-    if (!isAgentEvent(rawEvent) || rawEvent.sessionId !== session.id) {
+    const problem = this.backendEventProblem(rawEvent, session.id)
+    if (problem !== undefined) {
       return this.createEvent({
         type: "session.failed",
-        error: agentError("BACKEND_PROTOCOL", "backend emitted an invalid agent event"),
+        error: agentError("BACKEND_PROTOCOL", `backend emitted an invalid agent event: ${problem}`),
         recoverable: false,
       })
     }
     const event = Object.freeze({
-      ...rawEvent,
+      ...(rawEvent as AgentEvent),
       sessionId: session.id,
       seq: this.nextSeq++,
     }) as AgentEvent
@@ -255,6 +275,23 @@ export class CodingAgentHost {
       updatedAt: event.at,
     })
     return event
+  }
+
+  private backendEventProblem(rawEvent: unknown, sessionId: string): string | undefined {
+    const problem = agentEventProblem(rawEvent)
+    if (problem !== undefined) return problem
+    const event = rawEvent as AgentEvent
+    if (event.sessionId !== sessionId) return "sessionId is not this session's"
+    if (!isAgentExtensionEventType(event.type)) return undefined
+    const check = this.extensionChecks.get(event.type)
+    if (check === undefined) return undefined
+    let accepted = false
+    try {
+      accepted = check(event as AgentExtensionEvent) === true
+    } catch {
+      accepted = false
+    }
+    return accepted ? undefined : `${event.type} failed its registered check`
   }
 
   private async verifyTurn(): Promise<{
@@ -578,6 +615,11 @@ function boundedHostToken(value: unknown): value is string {
 
 /** Default session evidence is content-free; live protocol consumers still receive the full event. */
 function eventEvidence(event: AgentEvent): unknown {
+  // An extension event's data is the backend's own content; evidence keeps only where it belongs.
+  if (isAgentExtensionEventType(event.type)) {
+    const { turnId } = event as AgentExtensionEvent
+    return turnId === undefined ? {} : { turnId }
+  }
   switch (event.type) {
     case "session.started":
     case "session.updated":

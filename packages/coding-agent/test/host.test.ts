@@ -230,6 +230,111 @@ test("host converts malformed backend events into a bounded protocol failure", a
   await host.stop()
 })
 
+test("a malformed backend event's failure names the field it broke", async () => {
+  const backend = new ScriptedBackend()
+  backend.send = () =>
+    (async function* (): AsyncGenerator<AgentEvent> {
+      yield {
+        version: 1,
+        sessionId: "named",
+        seq: 0,
+        at: 0,
+        type: "turn.started",
+        turnId: "t",
+        prompt: "p".repeat(256 * 1024 + 1),
+      } as never
+    })()
+  const host = new CodingAgentHost({ backend })
+  await host.start({ cwd: process.cwd(), sessionId: "named", backend: backend.info.name })
+  const events: AgentEvent[] = []
+  for await (const event of host.prompt("long")) events.push(event)
+  expect(events).toHaveLength(1)
+  const failed = events[0] as Extract<AgentEvent, { type: "session.failed" }>
+  expect(failed.error).toEqual({
+    code: "BACKEND_PROTOCOL",
+    message:
+      "backend emitted an invalid agent event: turn.started.prompt is longer than 262144 characters",
+  })
+  await host.stop()
+})
+
+test("extension events pass through unless their registered check refuses them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-ext-"))
+  const appended: Array<{ type: string; payload: unknown }> = []
+  const store = {
+    append: async (_id: string, type: string, payload: unknown) => {
+      appended.push({ type, payload })
+    },
+    checkpoint: async () => {},
+    read: async () => [],
+  } as unknown as SessionStore
+  const run = async (extensionEvents?: Record<string, (event: never) => boolean>) => {
+    const backend = new ScriptedBackend()
+    const send = backend.send.bind(backend)
+    backend.send = (input) =>
+      (async function* (): AsyncGenerator<AgentEvent> {
+        for await (const event of send(input)) {
+          yield event
+          if (event.type === "turn.started") {
+            const base = { version: 1, sessionId: event.sessionId, at: 0 } as const
+            yield {
+              ...base,
+              seq: 100,
+              type: "x-codex.plan",
+              turnId: event.turnId,
+              data: { steps: 2 },
+            }
+            yield { ...base, seq: 101, type: "x-acme.notice", data: "unchecked" }
+          }
+        }
+      })()
+    const host = new CodingAgentHost({
+      backend,
+      sessionStore: store,
+      ...(extensionEvents === undefined ? {} : { extensionEvents }),
+    })
+    await host.start({ cwd: root, backend: backend.info.name })
+    const events: AgentEvent[] = []
+    for await (const event of host.prompt("plan")) events.push(event)
+    await host.stop()
+    return events.map((event) => event.type)
+  }
+  try {
+    expect(await run()).toEqual([
+      "turn.started",
+      "x-codex.plan",
+      "x-acme.notice",
+      "assistant.message",
+      "session.completed",
+    ])
+    expect(appended.find((entry) => entry.type === "x-codex.plan")?.payload).toEqual({
+      turnId: "turn-1",
+    })
+    expect(appended.find((entry) => entry.type === "x-acme.notice")?.payload).toEqual({})
+
+    const checked: unknown[] = []
+    expect(
+      await run({
+        "x-codex.plan": (event: { data?: unknown }) => {
+          checked.push(event.data)
+          return false
+        },
+      }),
+    ).toEqual(["turn.started", "session.failed"])
+    expect(checked).toEqual([{ steps: 2 }])
+
+    expect(
+      () =>
+        new CodingAgentHost({
+          backend: new ScriptedBackend(),
+          extensionEvents: { plan: () => true },
+        }),
+    ).toThrow("extension event type must be x-<vendor>.<name>: plan")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("host snapshot becomes stopped when the backend emits only session.stopped", async () => {
   const backend = new ScriptedBackend(true)
   const host = new CodingAgentHost({ backend })

@@ -11,6 +11,7 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 ## Key exports
 
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
+- **agentEventProblem** _(function)_ - `agentEventProblem: (value: unknown) => string | undefined`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
 - **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
 - **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string`
@@ -20,12 +21,11 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **isAgentExtensionEventType** _(function)_ - `isAgentExtensionEventType: (type: unknown) => type is AgentExtensionEventType`
 - **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
 - **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
-- **negotiateFeatures** _(function)_ - `negotiateFeatures: (offered: readonly string[], requested: readonly string[]) => FeatureNegotiation`
-- **nextApprovalState** _(function)_ - `nextApprovalState: (from: ApprovalLifecycleState, op: BoundaryOp) => ApprovalLifecycleState | undefined`
 
-_…and 99 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 103 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 
