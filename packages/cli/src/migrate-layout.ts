@@ -303,8 +303,12 @@ function filterImport(
   if (parts.length === 0) return undefined
   const typeOnly = clause.isTypeOnly ? "type " : ""
   const leading = node.getFullText(sf).slice(0, node.getStart(sf) - node.getFullStart())
-  return `${leading}import ${typeOnly}${parts.join(", ")} from ${spec}${attributes}`
+  return `${leading}import ${typeOnly}${parts.join(", ")} from ${spec}${attributes}${terminatorOf(sf, node)}`
 }
+
+/** The `;` a statement was written with, so a rebuilt one keeps the file's style. */
+const terminatorOf = (sf: TS.SourceFile, node: TS.Node): string =>
+  node.getText(sf).endsWith(";") ? ";" : ""
 
 /** Rebuild `export { a, b as c }` keeping only the exported names `keep` accepts. */
 function filterExportList(
@@ -319,7 +323,7 @@ function filterExportList(
   if (kept.length === 0) return undefined
   const from = node.moduleSpecifier ? ` from ${node.moduleSpecifier.getText(sf)}` : ""
   const leading = node.getFullText(sf).slice(0, node.getStart(sf) - node.getFullStart())
-  return `${leading}export ${node.isTypeOnly ? "type " : ""}{ ${kept.join(", ")} }${from}`
+  return `${leading}export ${node.isTypeOnly ? "type " : ""}{ ${kept.join(", ")} }${from}${terminatorOf(sf, node)}`
 }
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -485,10 +489,11 @@ export function splitRouteSource(
   }
   // After the other imports: the nearest relative path sorts last.
   if (typeImports.size > 0) {
+    const semi = statements.some((info) => terminatorOf(sf, info.node) !== "") ? ";" : ""
     frontendTexts.splice(
       afterImports,
       0,
-      `\nimport type { ${[...typeImports].sort().join(", ")} } from "${backendSpecifier}"`,
+      `\nimport type { ${[...typeImports].sort().join(", ")} } from "${backendSpecifier}"${semi}`,
     )
   }
   // A JSX pragma counts only in the file's leading comments, and the backend half has no JSX.
@@ -529,7 +534,7 @@ export function middlewareSource(ts: typeof TS, source: string, fileName: string
   // Edit from the end so earlier offsets stay valid.
   for (const node of [...sf.statements].reverse()) {
     if (ts.isExportAssignment(node) && !node.isExportEquals) {
-      out = `${out.slice(0, node.getStart(sf))}export const middleware = ${node.expression.getText(sf)}${out.slice(node.getEnd())}`
+      out = `${out.slice(0, node.getStart(sf))}export const middleware = ${node.expression.getText(sf)}${terminatorOf(sf, node)}${out.slice(node.getEnd())}`
     } else if (
       ts.isFunctionDeclaration(node) &&
       hasModifier(ts, node, ts.SyntaxKind.DefaultKeyword)
@@ -547,7 +552,8 @@ export function middlewareSource(ts: typeof TS, source: string, fileName: string
         out = `${out.slice(0, first.getStart(sf))}export${text}${out.slice(node.getEnd())}`
       } else {
         out = `${out.slice(0, first.getStart(sf))}${out.slice(last.getEnd()).replace(/^\s+/, "")}`
-        out = `${out.trimEnd()}\nexport { ${node.name.text} as middleware }\n`
+        const semi = sf.statements.some((s) => terminatorOf(sf, s) !== "") ? ";" : ""
+        out = `${out.trimEnd()}\nexport { ${node.name.text} as middleware }${semi}\n`
       }
     }
   }
@@ -891,6 +897,164 @@ function rebase(specifier: string, from: string, newFrom: string): string | unde
   return rel.startsWith(".") ? rel : `./${rel}`
 }
 
+/** A split route as an importer sees it: the names that left it, and how this importer spells the
+ * backend half they went to (`undefined` when an alias cannot name it). */
+interface SplitTarget {
+  readonly backend: string
+  readonly moved: ReadonlySet<string>
+  readonly specifier: string | undefined
+}
+
+/** `specifier` re-pointed from a split route to its backend half, in the author's extension style. */
+function backendSpecifier(specifier: string, route: string, backend: string, from: string): string {
+  const query = /[?#].*$/.exec(specifier)?.[0] ?? ""
+  const written = extname(specifier.slice(0, specifier.length - query.length))
+  const stem = backend.slice(0, -extname(backend).length)
+  const target =
+    written === ""
+      ? stem
+      : written === extname(route)
+        ? backend
+        : `${stem}${written === ".jsx" ? ".js" : written}`
+  const rel = posix.relative(posix.dirname(from), target)
+  return (rel.startsWith(".") ? rel : `./${rel}`) + query
+}
+
+/**
+ * Point an importer's named imports of a split route's moved exports (`loader`, `action`, ...) at the
+ * backend half, splitting a statement that also names what stayed. What cannot be rewritten (a
+ * namespace or dynamic import that reads a moved name, `export *`, an alias with no target there) is
+ * returned as an issue.
+ */
+function redirectMovedImports(
+  ts: typeof TS,
+  file: string,
+  text: string,
+  splitOf: (specifier: string) => SplitTarget | undefined,
+): {
+  readonly text: string
+  readonly issues: readonly string[]
+  readonly redirects: ReadonlyArray<{ names: string[]; from: string; to: string }>
+} {
+  const redirects: Array<{ names: string[]; from: string; to: string }> = []
+  const sf = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  const issues: string[] = []
+  const mentioned = (split: SplitTarget, pattern: (name: string) => RegExp): string[] =>
+    [...split.moved].filter((name) => pattern(escapeRegExp(name)).test(text)).sort()
+  const quoted = (names: readonly string[]): string => names.map((name) => `"${name}"`).join(", ")
+  const visit = (node: TS.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      const from = node.moduleSpecifier.text
+      const split = splitOf(from)
+      if (split === undefined) return
+      const clause = ts.isImportDeclaration(node) ? node.importClause : undefined
+      const named = ts.isImportDeclaration(node) ? clause?.namedBindings : node.exportClause
+      if (named !== undefined && (ts.isNamespaceImport(named) || ts.isNamespaceExport(named))) {
+        const reads = mentioned(split, (name) => new RegExp(`\\b${named.name.text}\\.${name}\\b`))
+        if (reads.length > 0)
+          issues.push(
+            `reads ${quoted(reads)} through a namespace import of "${from}", but they moved to "${split.backend}"; import them from there by hand`,
+          )
+        return
+      }
+      if (named === undefined) {
+        if (ts.isExportDeclaration(node))
+          issues.push(
+            `re-exports everything from "${from}", but ${quoted([...split.moved].sort())} moved to "${split.backend}"; re-export them from there by hand`,
+          )
+        return
+      }
+      const elements: readonly (TS.ImportSpecifier | TS.ExportSpecifier)[] = named.elements
+      const isMoved = (el: TS.ImportSpecifier | TS.ExportSpecifier): boolean =>
+        split.moved.has((el.propertyName ?? el.name).text)
+      const moved = elements.filter(isMoved)
+      if (moved.length === 0) return
+      if (split.specifier === undefined) {
+        issues.push(
+          `imports ${quoted(moved.map((el) => (el.propertyName ?? el.name).text))} from "${from}", but they moved to "${split.backend}" and no target of that alias covers it; point the import there by hand`,
+        )
+        return
+      }
+      redirects.push({
+        names: moved.map((el) => (el.propertyName ?? el.name).text),
+        from,
+        to: split.specifier,
+      })
+      const kept = elements.filter((el) => !isMoved(el)).map((el) => el.getText(sf))
+      const quote = node.moduleSpecifier.getText(sf)[0] ?? '"'
+      const attributes = node.attributes ? ` ${node.attributes.getText(sf)}` : ""
+      const tail = (specifier: string): string =>
+        ` from ${quote}${specifier}${quote}${attributes}${terminatorOf(sf, node)}`
+      const keyword = ts.isImportDeclaration(node)
+        ? `import ${clause?.isTypeOnly ? "type " : ""}`
+        : `export ${node.isTypeOnly ? "type " : ""}`
+      const list = (names: readonly string[]): string => `{ ${names.join(", ")} }`
+      const backend = `${keyword}${list(moved.map((el) => el.getText(sf)))}${tail(split.specifier)}`
+      const stays = [
+        ...(clause?.name === undefined ? [] : [clause.name.text]),
+        ...(kept.length === 0 ? [] : [list(kept)]),
+      ]
+      edits.push({
+        start: node.getStart(sf),
+        end: node.getEnd(),
+        text:
+          stays.length === 0 ? backend : `${keyword}${stays.join(", ")}${tail(from)}\n${backend}`,
+      })
+      return
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] !== undefined &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      const from = node.arguments[0].text
+      const split = splitOf(from)
+      const reads =
+        split === undefined ? [] : mentioned(split, (name) => new RegExp(`\\b${name}\\b`))
+      if (split !== undefined && reads.length > 0)
+        issues.push(
+          `loads "${from}" with import() and mentions ${quoted(reads)}, which moved to "${split.backend}"; load the backend half for them by hand`,
+        )
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  let out = text
+  for (const edit of edits.sort((a, b) => b.start - a.start))
+    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
+  return { text: out, issues, redirects }
+}
+
+/** The package folder an app without its own package.json sits in (`--dir src`), at most two levels
+ * up and never a workspace root, so the scan beside it stays inside one package. */
+function enclosingPackage(root: string): string | undefined {
+  if (existsSync(join(root, "package.json"))) return undefined
+  for (const dir of [dirname(root), dirname(dirname(root))]) {
+    const manifest = join(dir, "package.json")
+    if (dir === root || !existsSync(manifest)) continue
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(manifest, "utf8"))
+      const workspace = typeof parsed === "object" && parsed !== null && "workspaces" in parsed
+      return workspace ? undefined : dir
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
 function rewriteImports(
   ts: typeof TS,
   file: string,
@@ -1136,18 +1300,36 @@ function layoutMode(root: string, rootMoves: Readonly<Record<string, string>>): 
     )
   }
   if (existsSync(join(root, "routes"))) return "web"
+  const nested = nestedAppHint(root)
   if (config !== undefined) {
     throw new Error(
-      `[nifra] no routes/ directory in ${root}, but it has web config (${config}). A web app is file-routed under routes/; if this one serves no pages, remove the web config and declare "nifra": { "kind": "api" } in package.json`,
+      `[nifra] no routes/ directory in ${root}, but it has web config (${config}). A web app is file-routed under routes/; if this one serves no pages, remove the web config and declare "nifra": { "kind": "api" } in package.json${nested}`,
     )
   }
-  if (declared.kind === "web") throw new Error(`[nifra] no routes/ directory in ${root}`)
+  if (declared.kind === "web") throw new Error(`[nifra] no routes/ directory in ${root}${nested}`)
   if (rootMoves["backend.ts"] === undefined && !existsSync(join(root, BACKEND_APP_FILE))) {
     throw new Error(
-      `[nifra] ${root} has no routes/, no web config and no backend (a backend.ts that exports \`backend\`, or ${BACKEND_APP_FILE}); there is nothing to migrate`,
+      `[nifra] ${root} has no routes/, no web config and no backend (a backend.ts that exports \`backend\`, or ${BACKEND_APP_FILE}); there is nothing to migrate${nested}`,
     )
   }
   return "api"
+}
+
+/** An app one folder down (`src/routes/`): the `--dir` that migrates it, as a sentence to append. */
+function nestedAppHint(root: string): string {
+  const found = readdirSync(root, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        !SKIP_DIRS.has(entry.name) &&
+        existsSync(join(root, entry.name, "routes")),
+    )
+    .map((entry) => entry.name)
+    .sort(codeUnitOrder)
+  const first = found[0]
+  if (first === undefined) return ""
+  return `. ${found.map((name) => `${name}/routes/`).join(", ")} exists: run \`nifra migrate layout --dir ${first}\` to migrate the app there`
 }
 
 export async function migrateLayout(
@@ -1292,6 +1474,39 @@ export async function migrateLayout(
       installed.set(name, found)
     }
     return found
+  }
+  // A test (or any module) that imports `loader` from a page would import a name the page no longer
+  // exports: it reads it from the backend half instead.
+  const splitRoutes = new Map<string, { backend: string; moved: ReadonlySet<string> }>()
+  for (const split of splits)
+    if (next.has(split.file)) splitRoutes.set(split.file, { ...split, moved: new Set(split.moved) })
+  /** `base` is where `file` is relative to: the app root, or the package folder around it. */
+  const splitTarget =
+    (base: string, file: string, resolve: (specifier: string) => string | undefined) =>
+    (specifier: string): SplitTarget | undefined => {
+      const route = resolve(specifier)
+      const split = route === undefined ? undefined : splitRoutes.get(route)
+      if (route === undefined || split === undefined) return undefined
+      const inBase = (path: string): string => toPosix(relative(base, join(root, path)))
+      const respelled = specifier.startsWith(".")
+        ? backendSpecifier(specifier, inBase(route), inBase(split.backend), file)
+        : resolver.respell(join(base, file), specifier, join(root, split.backend))
+      return { backend: split.backend, moved: split.moved, specifier: respelled }
+    }
+  const redirectedFiles = new Set<string>()
+  for (const [file, text] of splitRoutes.size === 0 ? [] : next) {
+    if (splitRoutes.has(file) || !/\.[cm]?[jt]sx?$/.test(file)) continue
+    const redirected = redirectMovedImports(
+      ts,
+      file,
+      text,
+      splitTarget(root, file, (specifier) => resolveAny(file, specifier)),
+    )
+    if (redirected.text !== text) {
+      next.set(file, redirected.text)
+      redirectedFiles.add(file)
+    }
+    for (const reason of redirected.issues) issues.push({ file, reason })
   }
   const edges = new Map<string, Array<{ target: string; typeOnly: boolean }>>()
   for (const [file, text] of api ? [] : next) {
@@ -1480,7 +1695,11 @@ export async function migrateLayout(
     })
     const updated = renameRetiredTypes(ts, file, imports)
     final.set(newPath(file), updated)
-    if (updated !== text && !moveMap.has(file) && original.get(file) === text) rewritten.push(file)
+    if (
+      !moveMap.has(file) &&
+      (redirectedFiles.has(file) || (updated !== text && original.get(file) === text))
+    )
+      rewritten.push(file)
   }
 
   // A config path names its module from the app root, so it follows the module, never the config file.
@@ -1558,6 +1777,44 @@ export async function migrateLayout(
     }
   }
 
+  // Code beside an app one folder down (a package's test/ when the app is its src/) is not the
+  // migration's to edit, so each import there that stops resolving to what it named is reported.
+  const pkg = enclosingPackage(root)
+  if (pkg !== undefined) {
+    const prefix = toPosix(relative(pkg, root))
+    const inApp = new Set([...known].map((file) => `${prefix}/${file}`))
+    const appPath = (file: string, specifier: string): string | undefined =>
+      resolveIn(inApp, file, specifier)?.slice(prefix.length + 1)
+    const outside = ` - it is outside ${prefix}/, so the migration does not rewrite it`
+    for (const file of listFiles(pkg)) {
+      if (file.startsWith(`${prefix}/`) || !/\.[cm]?[jt]sx?$/.test(file)) continue
+      const text = readFileSync(join(pkg, file), "utf8")
+      const at = toPosix(relative(root, join(pkg, file)))
+      for (const { specifier } of importsOf(ts, file, text)) {
+        const target = appPath(file, specifier)
+        const to = target === undefined ? undefined : moveMap.get(target)
+        if (to !== undefined)
+          issues.push({
+            file: at,
+            reason: `imports "${specifier}", which moves to "${to}"${outside}`,
+          })
+      }
+      const redirected = redirectMovedImports(
+        ts,
+        file,
+        text,
+        splitTarget(pkg, file, (specifier) => appPath(file, specifier)),
+      )
+      for (const { names, from, to } of redirected.redirects) {
+        issues.push({
+          file: at,
+          reason: `imports ${names.map((name) => `"${name}"`).join(", ")} from "${from}"; import it from "${to}"${outside}`,
+        })
+      }
+      for (const reason of redirected.issues) issues.push({ file: at, reason })
+    }
+  }
+
   // Paths a module finds at run time are not imports either: one built from the module's own location
   // now starts from its new folder, and a folder listed at run time loses whatever moved out of it.
   const leaving = new Map<string, Array<{ from: string; to: string }>>()
@@ -1598,7 +1855,7 @@ export async function migrateLayout(
     for (const { name, schema } of missingOutputSchemas(text)) {
       issues.push({
         file,
-        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... })`,
+        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... }), or run \`nifra schemas --write\` after the migration to draft it from the ${name}'s return type`,
       })
     }
   }

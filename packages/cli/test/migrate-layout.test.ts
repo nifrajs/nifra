@@ -536,7 +536,7 @@ describe("migrateLayout", () => {
       {
         file: "routes/index.backend.ts",
         reason:
-          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... })",
+          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... }), or run `nifra schemas --write` after the migration to draft it from the loader's return type",
       },
     ])
   })
@@ -700,6 +700,111 @@ describe("migrateLayout", () => {
     } finally {
       for (const dir of [bare, ignored, none]) rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  const semicolonRoute = [
+    'import { db } from "../lib/db";',
+    'import { format } from "../lib/format";',
+    "",
+    "export const loader = async () => {",
+    "  return { n: format(db) };",
+    "};",
+    "",
+    "export default function Page() {",
+    "  return <p>{format(1)}</p>;",
+    "}",
+    "",
+  ].join("\n")
+  const semicolonApp = {
+    "lib/db.ts": "export const db = 1;\n",
+    "lib/format.ts": "export const format = (n: number): string => String(n);\n",
+    "routes/index.tsx": semicolonRoute,
+  }
+
+  test("rebuilt imports keep the statement terminator the file was written with", async () => {
+    const dir = app(semicolonApp)
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "routes/index.tsx")).toStartWith(
+      'import { format } from "../shared/lib/format";\n',
+    )
+    const backendHalf = read(dir, "routes/index.backend.ts")
+    expect(backendHalf).toContain('import { db } from "../backend/lib/db";\n')
+    expect(backendHalf).toContain('import { format } from "../shared/lib/format";\n')
+    expect(split('import { a } from "./a"\nexport const loader = () => a\n').backend).toContain(
+      'import { a } from "./a"\n',
+    )
+    expect(middlewareSource(ts, "export default (ctx) => ctx.next();\n", "_middleware.ts")).toBe(
+      "export const middleware = (ctx) => ctx.next();\n",
+    )
+  })
+
+  test("an importer of a moved export reads it from the backend half; the rest stays", async () => {
+    const dir = app({
+      ...semicolonApp,
+      "routes/__tests__/index.test.ts": [
+        'import Page, { loader as load } from "../index";',
+        'export { loader } from "../index";',
+        'import type { loader as L } from "../index.tsx";',
+        'import * as page from "../index";',
+        "",
+        "void [Page, load, page.loader] as unknown as L;",
+        "",
+      ].join("\n"),
+      "scripts/warm.ts": 'const route = await import("../routes/index")\nawait route.loader()\n',
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "routes/__tests__/index.test.ts")).toBe(
+      [
+        'import Page from "../index";',
+        'import { loader as load } from "../index.backend";',
+        'export { loader } from "../index.backend";',
+        'import type { loader as L } from "../index.backend.ts";',
+        'import * as page from "../index";',
+        "",
+        "void [Page, load, page.loader] as unknown as L;",
+        "",
+      ].join("\n"),
+    )
+    expect(result.rewritten).toContain("routes/__tests__/index.test.ts")
+    expect(result.issues).toContainEqual({
+      file: "routes/__tests__/index.test.ts",
+      reason:
+        'reads "loader" through a namespace import of "../index", but they moved to "routes/index.backend.ts"; import them from there by hand',
+    })
+    expect(result.issues).toContainEqual({
+      file: "scripts/warm.ts",
+      reason:
+        'loads "../routes/index" with import() and mentions "loader", which moved to "routes/index.backend.ts"; load the backend half for them by hand',
+    })
+  })
+
+  test("an app one folder down: the dry run from the package names --dir, and code beside it is reported", async () => {
+    const pkg = app({
+      "package.json": '{ "name": "site" }\n',
+      ...Object.fromEntries(
+        Object.entries(semicolonApp).map(([path, text]) => [`src/${path}`, text]),
+      ),
+      "test/index.test.ts":
+        'import { loader } from "../src/routes/index";\nimport { db } from "../src/lib/db";\nvoid [loader, db];\n',
+    })
+    await expect(migrateLayout(pkg, { typescript: ts })).rejects.toThrow(
+      "src/routes/ exists: run `nifra migrate layout --dir src` to migrate the app there",
+    )
+    const result = await migrateLayout(join(pkg, "src"), { typescript: ts, write: true })
+    expect(result.issues).toContainEqual({
+      file: "../test/index.test.ts",
+      reason:
+        'imports "loader" from "../src/routes/index"; import it from "../src/routes/index.backend" - it is outside src/, so the migration does not rewrite it',
+    })
+    expect(result.issues).toContainEqual({
+      file: "../test/index.test.ts",
+      reason:
+        'imports "../src/lib/db", which moves to "backend/lib/db.ts" - it is outside src/, so the migration does not rewrite it',
+    })
+    expect(read(pkg, "test/index.test.ts")).toContain('from "../src/routes/index"')
+    expect(
+      result.issues.find((issue) => issue.file === "routes/index.backend.ts")?.reason,
+    ).toContain("run `nifra schemas --write` after the migration")
   })
 })
 
