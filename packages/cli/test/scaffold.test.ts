@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { discoverRoutes } from "@nifrajs/web/fs"
 import {
   type Framework,
   frameworkFromClientModule,
@@ -82,7 +83,7 @@ describe("scaffoldRoute", () => {
 
   test("vanilla gets a zero-runtime stub carrying the golden island pattern", () => {
     const r = scaffoldRoute("/hotels", "vanilla")
-    expect(r.file).toBe("routes/hotels.ts")
+    expect(r.file).toBe("routes/hotels.tsx")
     expect(r.content).toContain('import { html } from "@nifrajs/web-vanilla"')
     // `hydrate` is a server-only export now: it belongs to the backend half, never the page.
     expect(r.content).not.toContain("export const hydrate")
@@ -94,7 +95,7 @@ describe("scaffoldRoute", () => {
 
   test("vanilla + variant stateful emits the golden nano pattern", () => {
     const r = scaffoldRoute("/todos", "vanilla", "stateful")
-    expect(r.file).toBe("routes/todos.ts")
+    expect(r.file).toBe("routes/todos.tsx")
     expect(r.backend.content).toContain("export const hydrate = false") // still zero-runtime
     expect(r.content).toContain(
       'import { signal, computed, bind, bindList } from "@nifrajs/web/nano"',
@@ -159,9 +160,32 @@ describe("writeScaffoldRoute", () => {
     try {
       const r = await writeScaffoldRoute(dir, "/todos", "vanilla", "stateful")
       expect(r.written).toBe(true)
-      expect(await readFile(join(dir, "routes/todos.ts"), "utf8")).toContain('@nifrajs/web/nano"')
+      expect(await readFile(join(dir, "routes/todos.tsx"), "utf8")).toContain('@nifrajs/web/nano"')
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("route discovery accepts every page it writes", async () => {
+    for (const [framework, variant] of [
+      ["react", "default"],
+      ["preact", "default"],
+      ["solid", "default"],
+      ["vanilla", "default"],
+      ["vanilla", "stateful"],
+    ] satisfies ReadonlyArray<readonly [Framework, "default" | "stateful"]>) {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-scaffold-"))
+      try {
+        expect((await writeScaffoldRoute(dir, "/hotels/:id", framework, variant)).written).toBe(
+          true,
+        )
+        const routes = discoverRoutes(join(dir, "routes")).routes
+        expect(routes.map(({ pattern, backend }) => ({ pattern, backend }))).toEqual([
+          { pattern: "/hotels/:id", backend: "hotels/[id].backend.ts" },
+        ])
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
     }
   })
 

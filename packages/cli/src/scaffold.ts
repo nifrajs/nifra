@@ -29,7 +29,7 @@ const EXT: Record<Framework, string> = {
   solid: "tsx",
   vue: "vue",
   svelte: "svelte",
-  vanilla: "ts",
+  vanilla: "tsx",
 }
 
 /** Derive the framework from a `clientModule` like `@nifrajs/web-react/client`. Defaults to react. */

@@ -32,7 +32,7 @@ const FRAMEWORKS: ReadonlyArray<{
 
 const VANILLA = `import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
 
-// routes/hotels.ts - a route file, no .tsx needed.
+// routes/hotels.tsx - a page keeps a route extension even with no JSX in it.
 export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
   // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
   return html\`<ul>\${data.hotels.map((h) => html\`<li>\${h.name}</li>\`)}</ul>\`
