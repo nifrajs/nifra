@@ -20,7 +20,13 @@ events inside them with `splitAgentText` (a long reply as consecutive events tha
 input or output; the tool itself still gets the whole value). `agentEventProblem` says why an event
 was refused, naming the field and the limit but never its content.
 
-A backend's own frames (a vendor's plan, reasoning, or context usage) travel as extension events:
+Three events carry what most coding agents report besides their reply: `reasoning.delta` (a piece
+of the model's reasoning, grouped by an optional `itemId`), `plan.updated` (the whole current plan,
+entries of `content`, `status`, and optional `priority`, each event replacing the last), and
+`context.usage` (`usedTokens` of the latest request, the model's `windowTokens` when known, and
+optional input, output, cached, and reasoning counts).
+
+Any other frame a backend has of its own travels as an extension event:
 `type` is `x-<vendor>.<name>` (lowercase, at most 64 characters), with an optional `turnId` and a
 `data` value inside the same payload bounds. Hosts that do not know the type pass it through; a host
 that does can register a check for it.

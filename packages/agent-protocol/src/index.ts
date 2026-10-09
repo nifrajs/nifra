@@ -16,6 +16,9 @@ export type AgentEventType =
   | "turn.started"
   | "assistant.delta"
   | "assistant.message"
+  | "reasoning.delta"
+  | "plan.updated"
+  | "context.usage"
   | "tool.started"
   | "tool.delta"
   | "tool.completed"
@@ -90,6 +93,48 @@ export interface AgentAssistantMessageEvent extends AgentSessionEventBase {
   readonly type: "assistant.message"
   readonly turnId: string
   readonly text: string
+}
+
+/** A piece of the model's reasoning. `itemId` groups the pieces of one reasoning block. */
+export interface AgentReasoningDeltaEvent extends AgentSessionEventBase {
+  readonly type: "reasoning.delta"
+  readonly turnId: string
+  readonly itemId?: string
+  readonly text: string
+}
+
+export type AgentPlanEntryStatus = "pending" | "in_progress" | "completed"
+
+export interface AgentPlanEntry {
+  readonly content: string
+  readonly status: AgentPlanEntryStatus
+  readonly priority?: "high" | "medium" | "low"
+}
+
+/** The agent's whole current plan: each event replaces the one before. */
+export interface AgentPlanUpdatedEvent extends AgentSessionEventBase {
+  readonly type: "plan.updated"
+  readonly turnId: string
+  /** The tool call that carried the plan, when a tool did. */
+  readonly callId?: string
+  readonly explanation?: string
+  readonly entries: readonly AgentPlanEntry[]
+}
+
+/** How full the model's context is after its latest request. Token counts only. */
+export interface AgentContextUsageEvent extends AgentSessionEventBase {
+  readonly type: "context.usage"
+  readonly turnId?: string
+  /** Tokens the latest request used: its prompt plus its answer. */
+  readonly usedTokens: number
+  /** The model's context window, when known. */
+  readonly windowTokens?: number
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly cachedInputTokens?: number
+  readonly reasoningTokens?: number
+  /** True when the provider reported no usage and the counts are an estimate. */
+  readonly estimated?: boolean
 }
 
 export interface AgentToolStartedEvent extends AgentSessionEventBase {
@@ -204,6 +249,9 @@ export type AgentEvent =
   | AgentTurnStartedEvent
   | AgentAssistantDeltaEvent
   | AgentAssistantMessageEvent
+  | AgentReasoningDeltaEvent
+  | AgentPlanUpdatedEvent
+  | AgentContextUsageEvent
   | AgentToolStartedEvent
   | AgentToolDeltaEvent
   | AgentToolCompletedEvent
@@ -225,6 +273,9 @@ export type AgentEventPayload =
   | Omit<AgentTurnStartedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentAssistantDeltaEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentAssistantMessageEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentReasoningDeltaEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentPlanUpdatedEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentContextUsageEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentToolStartedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentToolDeltaEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentToolCompletedEvent, "version" | "sessionId" | "seq" | "at">
@@ -435,6 +486,9 @@ const AGENT_STATUSES: ReadonlySet<string> = new Set([
   "failed",
   "stopped",
 ])
+const AGENT_PLAN_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed"])
+const AGENT_PLAN_PRIORITIES: ReadonlySet<string> = new Set(["high", "medium", "low"])
+const AGENT_MAX_PLAN_ENTRY = 4_096
 const AGENT_COMPACTION_REASONS: ReadonlySet<string> = new Set([
   "manual",
   "threshold",
@@ -688,6 +742,30 @@ function valueProblem(record: Record<string, unknown>, key: string, field: strin
     : `${field} is outside the payload bounds (strings ${AGENT_MAX_PAYLOAD_TEXT} characters, ${AGENT_MAX_ARRAY} items or keys, depth ${AGENT_MAX_PAYLOAD_DEPTH})`
 }
 
+function optionalCountProblem(value: unknown, field: string): AgentProblem {
+  return value === undefined ? undefined : countProblem(value, field)
+}
+
+function planEntriesProblem(value: unknown, field: string): AgentProblem {
+  if (!Array.isArray(value) || value.length > AGENT_MAX_ARRAY)
+    return `${field} must be an array of at most ${AGENT_MAX_ARRAY} entries`
+  for (const [index, entry] of value.entries()) {
+    const at = `${field}[${index}]`
+    if (!agentRecord(entry)) return `${at} must be an object`
+    const problem =
+      textProblem(entry.content, `${at}.content`, AGENT_MAX_PLAN_ENTRY) ??
+      (typeof entry.status === "string" && AGENT_PLAN_STATUSES.has(entry.status)
+        ? undefined
+        : `${at}.status must be one of ${[...AGENT_PLAN_STATUSES].join(", ")}`) ??
+      (entry.priority === undefined ||
+      (typeof entry.priority === "string" && AGENT_PLAN_PRIORITIES.has(entry.priority))
+        ? undefined
+        : `${at}.priority must be one of ${[...AGENT_PLAN_PRIORITIES].join(", ")}`)
+    if (problem !== undefined) return problem
+  }
+  return undefined
+}
+
 function errorProblem(value: unknown, field: string): AgentProblem {
   if (!agentRecord(value)) return `${field} must be an object`
   return (
@@ -777,6 +855,34 @@ export function agentEventProblem(value: unknown): string | undefined {
     case "assistant.delta":
     case "assistant.message":
       return tokenProblem(value.turnId, `${type}.turnId`) ?? textProblem(value.text, `${type}.text`)
+    case "reasoning.delta":
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        optionalTokenProblem(value.itemId, `${type}.itemId`) ??
+        textProblem(value.text, `${type}.text`)
+      )
+    case "plan.updated":
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        optionalTokenProblem(value.callId, `${type}.callId`) ??
+        (value.explanation === undefined
+          ? undefined
+          : textProblem(value.explanation, `${type}.explanation`, AGENT_MAX_PAYLOAD_TEXT)) ??
+        planEntriesProblem(value.entries, `${type}.entries`)
+      )
+    case "context.usage":
+      return (
+        optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+        countProblem(value.usedTokens, `${type}.usedTokens`) ??
+        optionalCountProblem(value.windowTokens, `${type}.windowTokens`) ??
+        optionalCountProblem(value.inputTokens, `${type}.inputTokens`) ??
+        optionalCountProblem(value.outputTokens, `${type}.outputTokens`) ??
+        optionalCountProblem(value.cachedInputTokens, `${type}.cachedInputTokens`) ??
+        optionalCountProblem(value.reasoningTokens, `${type}.reasoningTokens`) ??
+        (value.estimated === undefined
+          ? undefined
+          : booleanProblem(value.estimated, `${type}.estimated`))
+      )
     case "tool.started":
       return (
         tokenProblem(value.turnId, `${type}.turnId`) ??

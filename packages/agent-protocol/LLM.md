@@ -25,7 +25,7 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
 - **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
 
-_…and 103 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 108 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

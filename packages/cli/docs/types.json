@@ -379,6 +379,13 @@
     "doc": "/**\n * The erased, read-only handle accepted by capability registries.\n *\n * A real application commonly registers tools with unrelated input and output types. Registry\n * boundaries therefore use this structural view instead of pretending the whole array has one\n * homogeneous generic type. Individual calls remain validated and typed at their capability's\n * `tool` boundary.\n */"
   },
   {
+    "name": "AgentContextUsageEvent",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentContextUsageEvent extends AgentSessionEventBase {\n    readonly type: \"context.usage\";\n    readonly turnId?: string;\n    /** Tokens the latest request used: its prompt plus its answer. */\n    readonly usedTokens: number;\n    /** The model's context window, when known. */\n    readonly windowTokens?: number;\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n    readonly cachedInputTokens?: number;\n    readonly reasoningTokens?: number;\n    /** True when the provider reported no usage and the counts are an estimate. */\n    readonly estimated?: boolean;\n}",
+    "doc": "/** How full the model's context is after its latest request. Token counts only. */"
+  },
+  {
     "name": "AgentDefinition",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -470,13 +477,13 @@
     "name": "AgentEvent",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type AgentEvent = AgentSessionStartedEvent | AgentSessionUpdatedEvent | AgentTurnStartedEvent | AgentAssistantDeltaEvent | AgentAssistantMessageEvent | AgentToolStartedEvent | AgentToolDeltaEvent | AgentToolCompletedEvent | AgentApprovalRequiredEvent | AgentApprovalResolvedEvent | AgentRepairRequiredEvent | AgentVerificationCompletedEvent | AgentMemoryCompactedEvent | AgentExtensionReloadedEvent | AgentSessionCompletedEvent | AgentSessionFailedEvent | AgentSessionStoppedEvent | AgentExtensionEvent;"
+    "signature": "export type AgentEvent = AgentSessionStartedEvent | AgentSessionUpdatedEvent | AgentTurnStartedEvent | AgentAssistantDeltaEvent | AgentAssistantMessageEvent | AgentReasoningDeltaEvent | AgentPlanUpdatedEvent | AgentContextUsageEvent | AgentToolStartedEvent | AgentToolDeltaEvent | AgentToolCompletedEvent | AgentApprovalRequiredEvent | AgentApprovalResolvedEvent | AgentRepairRequiredEvent | AgentVerificationCompletedEvent | AgentMemoryCompactedEvent | AgentExtensionReloadedEvent | AgentSessionCompletedEvent | AgentSessionFailedEvent | AgentSessionStoppedEvent | AgentExtensionEvent;"
   },
   {
     "name": "AgentEventPayload",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type AgentEventPayload = Omit<AgentSessionStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionUpdatedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentTurnStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantMessageEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalResolvedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentRepairRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentVerificationCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentMemoryCompactedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionReloadedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionFailedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionStoppedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\">;",
+    "signature": "export type AgentEventPayload = Omit<AgentSessionStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionUpdatedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentTurnStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentAssistantMessageEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentReasoningDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentPlanUpdatedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentContextUsageEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolStartedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolDeltaEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentToolCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentApprovalResolvedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentRepairRequiredEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentVerificationCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentMemoryCompactedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionReloadedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionCompletedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionFailedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentSessionStoppedEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\"> | Omit<AgentExtensionEvent, \"version\" | \"sessionId\" | \"seq\" | \"at\">;",
     "doc": "/** Event payload before the transport adds protocol version, session id, sequence, and timestamp. */"
   },
   {
@@ -495,13 +502,13 @@
     "name": "AgentEventType",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type AgentEventType = \"session.started\" | \"session.updated\" | \"turn.started\" | \"assistant.delta\" | \"assistant.message\" | \"tool.started\" | \"tool.delta\" | \"tool.completed\" | \"approval.required\" | \"approval.resolved\" | \"repair.required\" | \"verification.completed\" | \"memory.compacted\" | \"extension.reloaded\" | \"session.completed\" | \"session.failed\" | \"session.stopped\" | AgentExtensionEventType;"
+    "signature": "export type AgentEventType = \"session.started\" | \"session.updated\" | \"turn.started\" | \"assistant.delta\" | \"assistant.message\" | \"reasoning.delta\" | \"plan.updated\" | \"context.usage\" | \"tool.started\" | \"tool.delta\" | \"tool.completed\" | \"approval.required\" | \"approval.resolved\" | \"repair.required\" | \"verification.completed\" | \"memory.compacted\" | \"extension.reloaded\" | \"session.completed\" | \"session.failed\" | \"session.stopped\" | AgentExtensionEventType;"
   },
   {
     "name": "AgentEventView",
     "kind": "type",
     "package": "@nifrajs/agent-app",
-    "signature": "export type AgentEventView = SessionLifecycleView | TurnStartedView | AssistantChunkView | ToolStartedView | ToolDeltaView | ToolCompletedView | ApprovalRequiredView | ApprovalResolvedView | RepairRequiredView | VerificationCompletedView | MemoryCompactedView | ExtensionReloadedView | SessionFailedView | SessionStoppedView | ExtensionEventView;"
+    "signature": "export type AgentEventView = SessionLifecycleView | TurnStartedView | AssistantChunkView | ToolStartedView | ToolDeltaView | ToolCompletedView | ApprovalRequiredView | ApprovalResolvedView | RepairRequiredView | VerificationCompletedView | MemoryCompactedView | ExtensionReloadedView | SessionFailedView | SessionStoppedView | ReasoningDeltaView | PlanUpdatedView | ContextUsageView | ExtensionEventView;"
   },
   {
     "name": "AgentEvidenceLog",
@@ -640,6 +647,25 @@
     "signature": "export interface AgentPlan {\n    readonly id: string;\n    readonly goal: string;\n    readonly phases: readonly PlanPhase[];\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n}"
   },
   {
+    "name": "AgentPlanEntry",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentPlanEntry {\n    readonly content: string;\n    readonly status: AgentPlanEntryStatus;\n    readonly priority?: \"high\" | \"medium\" | \"low\";\n}"
+  },
+  {
+    "name": "AgentPlanEntryStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type AgentPlanEntryStatus = \"pending\" | \"in_progress\" | \"completed\";"
+  },
+  {
+    "name": "AgentPlanUpdatedEvent",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentPlanUpdatedEvent extends AgentSessionEventBase {\n    readonly type: \"plan.updated\";\n    readonly turnId: string;\n    /** The tool call that carried the plan, when a tool did. */\n    readonly callId?: string;\n    readonly explanation?: string;\n    readonly entries: readonly AgentPlanEntry[];\n}",
+    "doc": "/** The agent's whole current plan: each event replaces the one before. */"
+  },
+  {
     "name": "AgentPorts",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -656,6 +682,13 @@
     "kind": "type",
     "package": "@nifrajs/coding-agent",
     "signature": "export type AgentPresetName = \"planner\" | \"implementer\" | \"test-fixer\" | \"reviewer\" | \"security-reviewer\" | \"final-verifier\";"
+  },
+  {
+    "name": "AgentReasoningDeltaEvent",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentReasoningDeltaEvent extends AgentSessionEventBase {\n    readonly type: \"reasoning.delta\";\n    readonly turnId: string;\n    readonly itemId?: string;\n    readonly text: string;\n}",
+    "doc": "/** A piece of the model's reasoning. `itemId` groups the pieces of one reasoning block. */"
   },
   {
     "name": "AgentRepairRequiredEvent",
@@ -3677,6 +3710,12 @@
     "kind": "type",
     "package": "@nifrajs/agent",
     "signature": "export type ContextTokenCounter = (text: string) => number;"
+  },
+  {
+    "name": "ContextUsageView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ContextUsageView extends EventViewBase {\n    readonly kind: \"context.usage\";\n    readonly turnId?: string;\n    readonly usedTokens: number;\n    readonly windowTokens?: number;\n    /** `usedTokens` over `windowTokens`, capped at 1, when the window is known. */\n    readonly fill?: number;\n    readonly estimated: boolean;\n}"
   },
   {
     "name": "ContextWindow",
@@ -9150,7 +9189,7 @@
     "name": "NativeModelChunk",
     "kind": "type",
     "package": "@nifrajs/coding-agent",
-    "signature": "export type NativeModelChunk = {\n    readonly type: \"text_delta\";\n    readonly text: string;\n} | {\n    readonly type: \"response\";\n    readonly response: NativeModelResponse;\n};"
+    "signature": "export type NativeModelChunk = {\n    readonly type: \"text_delta\";\n    readonly text: string;\n} | {\n    readonly type: \"reasoning_delta\";\n    readonly text: string;\n    readonly itemId?: string;\n}\n/** Token counts for the request; becomes a `context.usage` event. */\n | {\n    readonly type: \"usage\";\n    readonly usedTokens: number;\n    readonly windowTokens?: number;\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n    readonly cachedInputTokens?: number;\n    readonly reasoningTokens?: number;\n    readonly estimated?: boolean;\n} | {\n    readonly type: \"response\";\n    readonly response: NativeModelResponse;\n};"
   },
   {
     "name": "NativeModelPort",
@@ -10230,6 +10269,13 @@
     "signature": "export interface PlanRunnerOptions {\n    readonly signal?: AbortSignal;\n    readonly onEvent?: (event: PlanEvent | WorkflowEvent) => void | PromiseLike<void>;\n}"
   },
   {
+    "name": "PlanUpdatedView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface PlanUpdatedView extends EventViewBase {\n    readonly kind: \"plan.updated\";\n    readonly turnId: string;\n    readonly entries: number;\n    readonly inProgress: number;\n    readonly completed: number;\n}",
+    "doc": "/** A plan as counts per status: its entries' text stays with the event. */"
+  },
+  {
     "name": "Platform",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -11239,6 +11285,12 @@
     "package": "@nifrajs/web",
     "signature": "export interface Readable<T> {\n    get(): T;\n    subscribe(listener: (value: T) => void): () => void;\n}",
     "doc": "/** A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so\n * `bind`/`bindList` accept either. */"
+  },
+  {
+    "name": "ReasoningDeltaView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ReasoningDeltaView extends EventViewBase {\n    readonly kind: \"reasoning.delta\";\n    readonly turnId: string;\n    readonly itemId?: string;\n    readonly chars: number;\n}"
   },
   {
     "name": "ReconciliationLease",

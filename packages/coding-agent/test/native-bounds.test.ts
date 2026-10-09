@@ -116,6 +116,38 @@ describe("native backend event bounds", () => {
     expect(() => new NifraBackend({ model, maxReplyChars: 255 })).toThrow(RangeError)
   })
 
+  test("reasoning and usage chunks become reasoning.delta and context.usage events", async () => {
+    const model: NativeModelPort = {
+      complete: async function* () {
+        yield { type: "reasoning_delta", text: "think", itemId: "r1" }
+        yield { type: "reasoning_delta", text: "more", itemId: "not a token!" }
+        yield { type: "usage", usedTokens: 1200, windowTokens: 200_000, inputTokens: 1000 }
+        yield { type: "usage", usedTokens: -1 }
+        yield { type: "usage", usedTokens: 5, outputTokens: 1.5, estimated: true }
+        yield { type: "response", response: { type: "text", text: "done" } }
+      },
+    }
+    const events = await run(new NifraBackend({ model }), "think")
+    const picked = events.flatMap((event): unknown[] =>
+      event.type === "reasoning.delta"
+        ? [{ text: event.text, itemId: event.itemId }]
+        : event.type === "context.usage"
+          ? [{ used: event.usedTokens, window: event.windowTokens, out: event.outputTokens }]
+          : [],
+    )
+    expect(picked).toEqual([
+      { text: "think", itemId: "r1" },
+      { text: "more", itemId: undefined },
+      { used: 1200, window: 200_000, out: undefined },
+      { used: 5, window: undefined, out: undefined },
+    ])
+    expect(
+      events.find((event) => event.type === "context.usage" && event.usedTokens === 5),
+    ).toMatchObject({
+      estimated: true,
+    })
+  })
+
   test("a message past one event's text runs, with the event showing a bounded prompt", async () => {
     let received = ""
     const backend = new NifraBackend({

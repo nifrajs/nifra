@@ -318,6 +318,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The minimal boundary facts a decision needs. A `BoundaryItemView` from the client satisfies it.
 - **CommandOutcome** _(type)_ - `type CommandOutcome<T> = | { readonly ok: true; readonly status: number; readonly value: T } | { readonly ok: false; readonly status: number; readonly error: string }`
   The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state instead of unwinding; `error` carries only the server's status text, never a credential.
+- **ContextUsageView** _(interface)_ - `interface ContextUsageView`
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
 - **EvalComparisonView** _(interface)_ - `interface EvalComparisonView`
 - **EvidenceTimelineView** _(interface)_ - `interface EvidenceTimelineView`
@@ -334,6 +335,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
   Orders events by their sequence number and suppresses duplicates before they reach the UI.
 - **PendingApprovalView** _(interface)_ - `interface PendingApprovalView`
+- **PlanUpdatedView** _(interface)_ - `interface PlanUpdatedView`
+  A plan as counts per status: its entries' text stays with the event.
+- **ReasoningDeltaView** _(interface)_ - `interface ReasoningDeltaView`
 - **RegistryCapabilityView** _(interface)_ - `interface RegistryCapabilityView`
   A registry capability projected to its content-free identity card.
 - **RepairRequiredView** _(interface)_ - `interface RepairRequiredView`
@@ -400,6 +404,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentAssistantMessageEvent** _(interface)_ - `interface AgentAssistantMessageEvent`
 - **AgentBackend** _(interface)_ - `interface AgentBackend`
 - **AgentBackendInfo** _(interface)_ - `interface AgentBackendInfo`
+- **AgentContextUsageEvent** _(interface)_ - `interface AgentContextUsageEvent`
+  How full the model's context is after its latest request. Token counts only.
 - **AgentError** _(interface)_ - `interface AgentError`
 - **AgentEvent** _(type)_ - `type AgentEvent`
 - **AgentEventPayload** _(type)_ - `type AgentEventPayload`
@@ -413,6 +419,12 @@ Every public export of every package and documented subpath - name, kind, signat
   The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64 characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
 - **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 - **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
+- **AgentPlanEntry** _(interface)_ - `interface AgentPlanEntry`
+- **AgentPlanEntryStatus** _(type)_ - `type AgentPlanEntryStatus = "pending" | "in_progress" | "completed"`
+- **AgentPlanUpdatedEvent** _(interface)_ - `interface AgentPlanUpdatedEvent`
+  The agent's whole current plan: each event replaces the one before.
+- **AgentReasoningDeltaEvent** _(interface)_ - `interface AgentReasoningDeltaEvent`
+  A piece of the model's reasoning. `itemId` groups the pieces of one reasoning block.
 - **AgentRepairRequiredEvent** _(interface)_ - `interface AgentRepairRequiredEvent`
 - **AgentRepairTask** _(interface)_ - `interface AgentRepairTask`
 - **AgentSessionCheckpoint** _(interface)_ - `interface AgentSessionCheckpoint`
@@ -1072,7 +1084,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
 - **NativeGatewayModelPortOptions** _(interface)_ - `interface NativeGatewayModelPortOptions`
 - **NativeMessage** _(interface)_ - `interface NativeMessage`
-- **NativeModelChunk** _(type)_ - `type NativeModelChunk = | { readonly type: "text_delta"; readonly text: string } | { readonly type: "response"; readonly response: NativeModelResponse }`
+- **NativeModelChunk** _(type)_ - `type NativeModelChunk`
 - **NativeModelPort** _(interface)_ - `interface NativeModelPort`
 - **NativeModelRequest** _(interface)_ - `interface NativeModelRequest`
 - **NativeModelResponse** _(type)_ - `type NativeModelResponse = | { readonly type: "text"; readonly text: string } | { readonly type: "tool"; readonly name: string; readonly input: unknown }`

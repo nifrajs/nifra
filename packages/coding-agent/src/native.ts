@@ -53,6 +53,18 @@ export type NativeModelResponse =
 
 export type NativeModelChunk =
   | { readonly type: "text_delta"; readonly text: string }
+  | { readonly type: "reasoning_delta"; readonly text: string; readonly itemId?: string }
+  /** Token counts for the request; becomes a `context.usage` event. */
+  | {
+      readonly type: "usage"
+      readonly usedTokens: number
+      readonly windowTokens?: number
+      readonly inputTokens?: number
+      readonly outputTokens?: number
+      readonly cachedInputTokens?: number
+      readonly reasoningTokens?: number
+      readonly estimated?: boolean
+    }
   | { readonly type: "response"; readonly response: NativeModelResponse }
 
 export interface NativeModelPort {
@@ -556,8 +568,19 @@ export class NifraBackend implements AgentBackend {
       let room = this.options.maxReplyChars
       for await (const chunk of raw) {
         this.assertCurrentTurn(session, stream, turnId, signal)
-        if (chunk.type !== "text_delta") {
+        if (chunk.type === "response") {
           response = chunk.response
+          continue
+        }
+        if (chunk.type === "reasoning_delta") {
+          const itemId = isEventToken(chunk.itemId) ? { itemId: chunk.itemId } : {}
+          for (const piece of splitAgentText(chunk.text))
+            this.emit(session, { type: "reasoning.delta", turnId, ...itemId, text: piece })
+          continue
+        }
+        if (chunk.type === "usage") {
+          const usage = nativeUsage(chunk)
+          if (usage !== undefined) this.emit(session, { type: "context.usage", turnId, ...usage })
           continue
         }
         if (room <= 0) continue
@@ -913,4 +936,39 @@ function removeActiveTurn(
 ): Omit<AgentSessionSnapshot, "activeTurnId"> {
   const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = snapshot
   return withoutActiveTurn
+}
+
+function isEventToken(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
+}
+
+const USAGE_COUNTS = [
+  "windowTokens",
+  "inputTokens",
+  "outputTokens",
+  "cachedInputTokens",
+  "reasoningTokens",
+] as const
+
+type NativeUsage = {
+  -readonly [Key in keyof Omit<Extract<NativeModelChunk, { type: "usage" }>, "type">]: Extract<
+    NativeModelChunk,
+    { type: "usage" }
+  >[Key]
+}
+
+// A model port is application code; a count it gets wrong is dropped, never a failed turn.
+function nativeUsage(chunk: Extract<NativeModelChunk, { type: "usage" }>): NativeUsage | undefined {
+  if (!isTokenCount(chunk.usedTokens)) return undefined
+  const usage: NativeUsage = { usedTokens: chunk.usedTokens }
+  for (const key of USAGE_COUNTS) {
+    const count = chunk[key]
+    if (isTokenCount(count)) usage[key] = count
+  }
+  if (chunk.estimated === true) usage.estimated = true
+  return usage
+}
+
+function isTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
