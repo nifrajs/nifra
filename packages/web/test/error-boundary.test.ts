@@ -141,6 +141,23 @@ describe("agnostic loader-error rendering", () => {
     }
   })
 
+  test("with NODE_ENV unset the _error page gets the generic message too", async () => {
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(new Error('password authentication failed for user "app_rw"')),
+      clientEntry: "/c.js",
+    })
+    const previous = process.env.NODE_ENV
+    delete process.env.NODE_ENV
+    try {
+      const html = await (await app.fetch(new Request("http://x/boom"))).text()
+      expect(html).toContain('{"name":"Error","message":"Internal Server Error"}')
+      expect(html).not.toContain("app_rw")
+    } finally {
+      if (previous !== undefined) process.env.NODE_ENV = previous
+    }
+  })
+
   test("nearest boundary keeps layouts at/above its segment, drops deeper ones", async () => {
     const app = createWebApp({
       adapter: stub,

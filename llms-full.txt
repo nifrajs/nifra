@@ -441,8 +441,9 @@ renders in its place, wrapped by the layouts at/above that segment, at status 50
 non-hydrated). On the **client** - a render error during navigation/interaction is caught by
 the nearest boundary, which renders `_error` in place (all five adapters). It
 receives the serialized error as `{ data: { name, message } }` (never the
-stack; on the server in production, a generic `Internal Server Error` rather
-than the error's own text); a thrown control-flow value (e.g. a guard
+stack; on the server, a generic `Internal Server Error` rather than the error's
+own text unless `NODE_ENV` is `development` or `test`); a
+thrown control-flow value (e.g. a guard
 `redirect`) passes through.
 
 -

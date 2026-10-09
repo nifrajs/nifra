@@ -712,11 +712,13 @@ export function createPageRequestExecutor<Env = unknown>(
     })
     const errorModule = await (manifest.errors?.[errorId] as LayoutEntry).load()
     const e = err instanceof Error ? err : new Error(String(err))
-    // An error's text can carry a connection string or a query, so a production page gets neither.
-    const production = typeof process === "undefined" || process.env.NODE_ENV === "production"
-    const data = production
-      ? { name: "Error", message: "Internal Server Error" }
-      : { name: e.name, message: e.message }
+    // An error's text can carry a connection string or a query, so only a run that says it is
+    // development or test shows it; an unset NODE_ENV (an unbuilt `bun app.ts`) counts as production.
+    const nodeEnv = typeof process === "undefined" ? undefined : process.env.NODE_ENV
+    const data =
+      nodeEnv === "development" || nodeEnv === "test"
+        ? { name: e.name, message: e.message }
+        : { name: "Error", message: "Internal Server Error" }
     const inLayouts = errorModule.inLayouts !== false
     const chain =
       inLayouts && layouts !== undefined && keptLayoutIds.length > 0
