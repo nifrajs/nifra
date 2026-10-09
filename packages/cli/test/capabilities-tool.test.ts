@@ -173,6 +173,43 @@ describe("project provenance firewall", () => {
     expect(project.report.ok).toBe(false)
   })
 
+  test("follows an installed package the same way in the app and hoisted above it", async () => {
+    const sdk = (dir: string) =>
+      Promise.all([
+        writeFile(
+          join(dir, "package.json"),
+          JSON.stringify({ name: "@example/sdk", version: "1.0.0", main: "index.js" }),
+        ),
+        writeFile(
+          join(dir, "index.js"),
+          'import db from "postgres"\nexport const mutate = () => ({ ok: Boolean(db) })\n',
+        ),
+      ])
+    const backend = `import { server } from "@nifrajs/core"
+       import { mutate } from "@example/sdk"
+       export const backend = server().post("/orders", { capabilities: ["db.write"] }, mutate)`
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+
+    const single = join(FIXTURES, "installed-in-app")
+    await mkdir(join(single, "node_modules", "@example", "sdk"), { recursive: true })
+    await sdk(join(single, "node_modules", "@example", "sdk"))
+    await writeFile(join(single, "backend.ts"), backend)
+    const root = join(FIXTURES, "installed-hoisted")
+    const hoisted = join(root, "apps", "web")
+    await mkdir(hoisted, { recursive: true })
+    await mkdir(join(root, "node_modules", "@example", "sdk"), { recursive: true })
+    await sdk(join(root, "node_modules", "@example", "sdk"))
+    await writeFile(join(hoisted, "backend.ts"), backend)
+
+    for (const cwd of [single, hoisted]) {
+      const project = await collectCapabilityProjectReport(cwd, app, policy)
+      expect([cwd, project.violations.map((violation) => violation.chain)]).toEqual([
+        cwd,
+        [["backend.ts", "@example/sdk", "postgres"]],
+      ])
+    }
+  })
+
   test("covers every form of an optional-param route and the routes of all() and method()", async () => {
     const cwd = join(FIXTURES, "route-forms")
     await mkdir(join(cwd, "src"), { recursive: true })
