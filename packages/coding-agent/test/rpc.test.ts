@@ -512,7 +512,7 @@ describe("coding agent RPC", () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-workflow-rpc-"))
     await writeFile(
       join(cwd, "workflow.ts"),
-      `export default ({ registerWorkflow }) => registerWorkflow("smoke", () => ({ type: "task", id: "smoke", run: () => "ok" }))`,
+      `export default ({ registerWorkflow }) => registerWorkflow("smoke", () => ({ type: "task", id: "smoke", run: ({ set }) => set("answer", 42) }))`,
     )
     const rpc = new CodingAgentRpcServer({
       cwd,
@@ -543,7 +543,7 @@ describe("coding agent RPC", () => {
         body: JSON.stringify({ method: "workflow.run", params: { name: "smoke" } }),
       })
       expect(run.status).toBe(200)
-      expect(((await run.json()) as { ok: boolean }).ok).toBe(true)
+      expect(await run.json()).toEqual({ ok: true, values: { answer: 42 }, completed: ["smoke"] })
     } finally {
       await rpc.stop()
       await rm(cwd, { recursive: true, force: true })

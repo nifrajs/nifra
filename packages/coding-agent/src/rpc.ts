@@ -609,7 +609,13 @@ export class CodingAgentRpcServer {
             : {}),
           exposeErrorStacks: this.options.exposeErrorStacks === true,
         })
-        return json(result, result.ok ? 200 : 422, cors, this.options.exposeErrorStacks === true)
+        return json(
+          // A Map serialises to `{}`; the wire carries the values as a plain object.
+          { ...result, values: Object.fromEntries(result.values) },
+          result.ok ? 200 : 422,
+          cors,
+          this.options.exposeErrorStacks === true,
+        )
       }
       case "verification.run": {
         const params = record(request.params)
