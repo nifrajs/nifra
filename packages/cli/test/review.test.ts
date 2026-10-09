@@ -8,7 +8,14 @@ import {
   findCommandSpec,
   renderCommandCatalogLines,
 } from "../src/command-catalog.ts"
-import { parseReviewInput, ReviewInputError, renderReviewReport, runReview } from "../src/review.ts"
+import {
+  CHECK_CODES,
+  parseReviewInput,
+  ReviewInputError,
+  renderReviewReport,
+  runReview,
+} from "../src/review.ts"
+import { RULE_CODES } from "../src/rules/codes.ts"
 
 async function reviewProject(source = ""): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "nifra-review-"))
@@ -108,6 +115,12 @@ describe("nifra review command contract", () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  test("every built-in code reports under its own check, data and secret rules under security", () => {
+    expect(Object.keys(RULE_CODES).filter((code) => CHECK_CODES[code] === undefined)).toEqual([])
+    for (const code of ["NF-C006", "NF-C029", "NF-C030", "NF-C031", "NF-C032", "NF-C033"])
+      expect([code, CHECK_CODES[code]]).toEqual([code, "security"])
   })
 
   test("maps a blocking diagnostic without forwarding its message", async () => {

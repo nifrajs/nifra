@@ -110,7 +110,8 @@ const CHECK_SOURCES: Readonly<Record<ReviewCheckId, ReviewEvidenceSource>> = {
 
 const ALLOWED_FIXES = new Set<ReviewFixRecipeId>(["manifest.sync", "workspace-dist.rebuild"])
 
-const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
+/** The review check each built-in code reports under; a code missing here would read as configuration. */
+export const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C001": "typecheck",
   "NF-C002": "typed-client",
   "NF-C003": "typed-client",
@@ -134,6 +135,22 @@ const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C021": "route-boundary",
   "NF-C022": "route-boundary",
   "NF-C023": "route-boundary",
+  "NF-C024": "route-boundary",
+  "NF-C025": "route-boundary",
+  "NF-C026": "route-boundary",
+  "NF-C027": "route-boundary",
+  "NF-C028": "server-boundary",
+  "NF-C029": "security",
+  "NF-C030": "security",
+  "NF-C031": "security",
+  "NF-C032": "security",
+  "NF-C033": "security",
+  "NF-C034": "route-boundary",
+  "NF-C035": "route-boundary",
+  "NF-C036": "route-boundary",
+  "NF-C037": "configuration",
+  "NF-C038": "configuration",
+  "NF-C039": "contract-witness",
   "NF-D001": "dependency",
   "NF-D002": "dependency",
   "NF-A001": "route-assurance",
@@ -142,19 +159,15 @@ const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-H003": "hydration",
   "NF-H004": "hydration",
   "NF-K001": "contract-witness",
+  "NF-S001": "security",
+  "NF-S002": "security",
+  "NF-S003": "security",
+  "NF-S004": "security",
+  "NF-S005": "security",
+  "NF-S006": "security",
+  "NF-S007": "security",
+  "NF-S008": "security",
 }
-
-for (const code of [
-  "NF-S001",
-  "NF-S002",
-  "NF-S003",
-  "NF-S004",
-  "NF-S005",
-  "NF-S006",
-  "NF-S007",
-  "NF-S008",
-])
-  (CHECK_CODES as Record<string, ReviewCheckId>)[code] = "security"
 
 const REVIEW_INPUT_SCHEMA = {
   type: "object",
