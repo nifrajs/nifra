@@ -8,7 +8,7 @@
 
 import { type Dirent, realpathSync } from "node:fs"
 import { readdir, stat } from "node:fs/promises"
-import { relative, resolve } from "node:path"
+import { isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import {
@@ -48,20 +48,29 @@ import { loadTypesCorpus } from "./types-search.ts"
 
 const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
 
+type GatePaths = Pick<typeof import("node:path"), "isAbsolute" | "relative" | "resolve">
+
 /** The files a stack the caller supplies may show a codeframe from: project source, never a dotfile
- * or anything under a dot directory (`.env`, `.git/`, `.nifra/`). */
-function explainSourceGate(root: string): (file: string) => boolean {
+ * or anything under a dot directory (`.env`, `.git/`, `.nifra/`), and never a file outside the root -
+ * which on Windows includes one on another drive, where `relative` answers with an absolute path. */
+export function explainSourceGate(
+  root: string,
+  paths: GatePaths = { isAbsolute, relative, resolve },
+): (file: string) => boolean {
   // The codeframe reads a native realpath, which expands a Windows short name (`RUNNER~1`); the root
   // has to be spelled the same way or every file looks like it sits outside it.
-  let base = resolve(root)
+  let base = paths.resolve(root)
   try {
     base = realpathSync.native(base)
   } catch {}
-  return (file) =>
-    CODEFRAME_SOURCE.test(file) &&
-    !relative(base, file)
-      .split(/[\\/]/)
-      .some((segment) => segment.startsWith("."))
+  return (file) => {
+    const inside = paths.relative(base, file)
+    return (
+      CODEFRAME_SOURCE.test(file) &&
+      !paths.isAbsolute(inside) &&
+      !inside.split(/[\\/]/).some((segment) => segment.startsWith("."))
+    )
+  }
 }
 
 /** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
