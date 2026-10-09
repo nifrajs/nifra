@@ -39,6 +39,8 @@ const RANGES: readonly [keyof Omit<CronFields, "domRestricted" | "dowRestricted"
   ["dow", { min: 0, max: 6 }],
 ]
 
+const CRON_TERM = /^(?:\*|(\d{1,2})(?:-(\d{1,2}))?)(?:\/(\d{1,2}))?$/
+
 /** Parse one field into the set of allowed values, validating against the field's range. */
 function parseField(
   raw: string,
@@ -49,29 +51,18 @@ function parseField(
   const out = new Set<number>()
   for (const part of raw.split(",")) {
     if (part === "") throw new CronError(`empty term in ${fieldName} field`, expr)
-    // step: `<range>/<n>` (range may be `*`)
-    const [rangePart, stepPart] = part.split("/") as [string, string | undefined]
-    let step = 1
-    if (stepPart !== undefined) {
-      step = Number(stepPart)
-      if (!Number.isInteger(step) || step < 1) {
-        throw new CronError(`invalid step "${stepPart}" in ${fieldName} field`, expr)
-      }
-    }
-    let lo: number
-    let hi: number
-    if (rangePart === "*") {
-      lo = min
-      hi = max
-    } else if (rangePart.includes("-")) {
-      const [a, b] = rangePart.split("-") as [string, string]
-      lo = Number(a)
-      hi = Number(b)
-    } else {
-      lo = Number(rangePart)
-      hi = lo
-    }
-    if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < min || hi > max || lo > hi) {
+    // `*`, `n` or `a-b`, each with an optional `/step`. Decimal digits only: `Number()` would also
+    // take `0x1F`, `1e1`, `+3` and an empty side of a range.
+    const term = CRON_TERM.exec(part)
+    if (term === null) throw new CronError(`invalid term "${part}" in ${fieldName} field`, expr)
+    const [, start, end, stepText] = term
+    const step = stepText === undefined ? 1 : Number(stepText)
+    if (step < 1) throw new CronError(`invalid step "${stepText}" in ${fieldName} field`, expr)
+    const lo = start === undefined ? min : Number(start)
+    // A bare `n/step` runs from n to the field's end, as `*/step` runs from its start.
+    const hi =
+      end !== undefined ? Number(end) : start === undefined || stepText !== undefined ? max : lo
+    if (lo < min || hi > max || lo > hi) {
       throw new CronError(
         `out-of-range value "${part}" in ${fieldName} field (${min}-${max})`,
         expr,
