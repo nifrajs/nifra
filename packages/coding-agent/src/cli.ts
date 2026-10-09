@@ -179,6 +179,35 @@ function parseVerificationNames(value: string): readonly ("check" | "assure" | "
   return Object.freeze([...new Set(names)] as ("check" | "assure" | "test")[])
 }
 
+export interface LineHandlers {
+  /** Answers an approval command and returns true; returns false for any other line. */
+  readonly answerApproval: (message: string) => Promise<boolean>
+  readonly run: (message: string) => Promise<void>
+  readonly stopReading: () => void
+}
+
+/**
+ * Route interactive input. A running turn can be waiting on an approval, so approval commands answer
+ * at once; every other line runs in order behind the turn in flight. Reading ends at `/quit`, `/exit`
+ * or end of input, and settles once the queued lines have run. The first failure stops reading and
+ * is rethrown.
+ */
+export async function dispatchLines(
+  lines: AsyncIterable<string>,
+  handlers: LineHandlers,
+): Promise<void> {
+  let queue: Promise<void> = Promise.resolve()
+  for await (const line of lines) {
+    const message = line.trim()
+    if (message.length === 0) continue
+    if (message === "/quit" || message === "/exit") break
+    if (await handlers.answerApproval(message)) continue
+    queue = queue.then(() => handlers.run(message))
+    queue.catch(handlers.stopReading)
+  }
+  await queue
+}
+
 function printEvent(event: AgentEvent, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(event))
@@ -401,19 +430,8 @@ async function main(): Promise<void> {
     return false
   }
 
-  // A running turn can be waiting on an approval, so approval commands answer at once; every
-  // other line runs in order behind the turn in flight.
-  let queue: Promise<void> = Promise.resolve()
   try {
-    for await (const line of readline) {
-      const message = line.trim()
-      if (message.length === 0) continue
-      if (message === "/quit" || message === "/exit") break
-      if (await answerApproval(message)) continue
-      queue = queue.then(() => run(message))
-      queue.catch(() => readline.close())
-    }
-    await queue
+    await dispatchLines(readline, { answerApproval, run, stopReading: () => readline.close() })
   } finally {
     readline.close()
     await stop()

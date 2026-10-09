@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseArgs } from "../src/cli.ts"
+import { dispatchLines, parseArgs } from "../src/cli.ts"
 
 describe("nifra-agent CLI arguments", () => {
   test("parses bounded RPC and session options", () => {
@@ -50,6 +50,65 @@ describe("nifra-agent CLI arguments", () => {
       "events.jsonl",
     )
     expect(() => parseArgs(["--backend", "replay"])).toThrow("requires --replay")
+  })
+})
+
+describe("dispatchLines", () => {
+  async function* feed(lines: readonly string[]): AsyncGenerator<string> {
+    for (const line of lines) yield line
+  }
+  const approvalsOnly = async (message: string): Promise<boolean> => message.startsWith("/approve")
+
+  test("an approval answers while the turn waiting on it is still running", async () => {
+    const answered = Promise.withResolvers<void>()
+    const log: string[] = []
+    await dispatchLines(feed(["do it", "/approve a1"]), {
+      answerApproval: async (message) => {
+        if (!(await approvalsOnly(message))) return false
+        log.push(message)
+        answered.resolve()
+        return true
+      },
+      run: async (message) => {
+        log.push(`start ${message}`)
+        await answered.promise
+        log.push(`end ${message}`)
+      },
+      stopReading: () => {},
+    })
+    expect(log).toEqual(["start do it", "/approve a1", "end do it"])
+  })
+
+  test("other lines run one at a time in the order typed, and /quit waits for them", async () => {
+    const log: string[] = []
+    await dispatchLines(feed(["  ", "first", "/reload", "/quit", "never"]), {
+      answerApproval: approvalsOnly,
+      run: async (message) => {
+        log.push(`start ${message}`)
+        await Promise.resolve()
+        log.push(`end ${message}`)
+      },
+      stopReading: () => {},
+    })
+    expect(log).toEqual(["start first", "end first", "start /reload", "end /reload"])
+  })
+
+  test("the first failure stops reading, skips what was queued after it, and is rethrown", async () => {
+    const ran: string[] = []
+    let stopped = 0
+    const dispatching = dispatchLines(feed(["boom", "after"]), {
+      answerApproval: approvalsOnly,
+      run: async (message) => {
+        ran.push(message)
+        if (message === "boom") throw new Error("turn failed")
+      },
+      stopReading: () => {
+        stopped++
+      },
+    })
+    await expect(dispatching).rejects.toThrow("turn failed")
+    expect(ran).toEqual(["boom"])
+    expect(stopped).toBeGreaterThan(0)
   })
 })
 
