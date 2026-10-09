@@ -1260,7 +1260,9 @@ function resolveStaticSqlText(
   if (ts.isTemplateExpression(node)) {
     let text = node.head.text
     for (const span of node.templateSpans) {
-      const part = resolveStaticSqlText(ts, span.expression, scope, depth + 1)
+      const part =
+        placeholderNumber(ts, text, span.expression, depth) ??
+        resolveStaticSqlText(ts, span.expression, scope, depth + 1)
       if (part === undefined) return undefined
       text += part + span.literal.text
     }
@@ -1362,28 +1364,47 @@ const ARRAY_READS: ReadonlySet<string> = new Set(["join", "includes", "indexOf"]
 /**
  * Whether every use of `name` in `source` other than its declaration is a call of `.join(`,
  * `.includes(` or `.indexOf(`, or a `.length` read: then nothing pushes to, sorts, exports or hands
- * away the array, so it still holds its literal elements. A same-named binding elsewhere only adds
- * uses, so the answer can only err toward refusing.
+ * away the array, so it still holds its literal elements. With `pushed`, a `.push(...)` is accepted
+ * too and its arguments collected, for the caller to prove (the `where.push(...)` builder). A
+ * same-named binding elsewhere only adds uses, so the answer can only err toward refusing.
  */
 function onlyReadsArray(
   ts: TypeScriptApi,
   source: TSApi.SourceFile,
   name: string,
   declaration: TSApi.Node,
+  pushed?: TSApi.Expression[],
 ): boolean {
   let ok = true
   const visit = (node: TSApi.Node): void => {
     if (!ok) return
     if (ts.isIdentifier(node) && node.text === name && node !== declaration) {
       const access = node.parent
+      const call =
+        ts.isPropertyAccessExpression(access) &&
+        access.expression === node &&
+        ts.isCallExpression(access.parent) &&
+        access.parent.expression === access
+          ? access.parent
+          : undefined
+      if (
+        pushed !== undefined &&
+        call !== undefined &&
+        ts.isPropertyAccessExpression(access) &&
+        access.name.text === "push"
+      ) {
+        if (call.arguments.some((argument) => ts.isSpreadElement(argument))) ok = false
+        else pushed.push(...call.arguments)
+        // An argument can mention the array again; those uses are checked as well.
+        for (const argument of call.arguments) visit(argument)
+        return
+      }
       const read =
         ts.isPropertyAccessExpression(access) &&
         access.expression === node &&
         (access.name.text === "length"
           ? !isWrittenTo(ts, access)
-          : ARRAY_READS.has(access.name.text) &&
-            ts.isCallExpression(access.parent) &&
-            access.parent.expression === access)
+          : ARRAY_READS.has(access.name.text) && call !== undefined)
       if (!read) ok = false
       return
     }
@@ -1428,6 +1449,7 @@ function staticArrayItems(
   const node = unwrapExpression(ts, receiver)
   let array = ts.isArrayLiteralExpression(node) ? node : frozenArrayLiteral(ts, node)
   let itemScope = scope
+  const pushed: TSApi.Expression[] = []
   if (array === undefined && ts.isIdentifier(node)) {
     const local = localConstInitializer(ts, node)
     if (local === "shadow") return undefined
@@ -1457,7 +1479,7 @@ function staticArrayItems(
         !exported &&
         ts.isArrayLiteralExpression(literal) &&
         ts.isVariableDeclaration(initializer.parent) &&
-        onlyReadsArray(ts, node.getSourceFile(), node.text, initializer.parent.name)
+        onlyReadsArray(ts, node.getSourceFile(), node.text, initializer.parent.name, pushed)
       ) {
         array = literal
       }
@@ -1465,7 +1487,8 @@ function staticArrayItems(
   }
   if (array === undefined) return undefined
   const items: string[] = []
-  for (const element of array.elements) {
+  // What the array may hold: its literal elements, and anything pushed onto it in any order.
+  for (const element of [...array.elements, ...pushed]) {
     if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return undefined
     const text = resolveStaticSqlText(ts, element, itemScope, depth + 1)
     if (text === undefined) return undefined
@@ -1498,7 +1521,262 @@ function resolveStaticJoin(
         ? separatorArg.text
         : undefined
   if (separator === undefined) return undefined
-  return staticArrayItems(ts, callee.expression, scope, depth + 1)?.join(separator)
+  const items =
+    staticArrayItems(ts, callee.expression, scope, depth + 1) ??
+    mappedItem(ts, callee.expression, scope, depth + 1)
+  return items?.join(separator)
+}
+
+/**
+ * `xs.map(fn)`, `xs.flatMap(fn)` or `Array.from(src, fn)` whose callback returns text that resolves
+ * for every element - `(_, i) => \`($${i * 2 + 1}, $${i * 2 + 2})\``, the batch `VALUES` idiom. How
+ * many items there are is runtime data, what each one says is not, so one item stands for all.
+ */
+function mappedItem(
+  ts: TypeScriptApi,
+  receiver: TSApi.Expression,
+  scope: SqlScope,
+  depth: number,
+): readonly string[] | undefined {
+  const call = unwrapExpression(ts, receiver)
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression))
+    return undefined
+  // Only these return what the callback returns; `filter` and the rest hand back the elements.
+  const method = call.expression.name.text
+  const argument = indexCallbackArgument(ts, call)
+  if (argument === undefined || !(method === "map" || method === "flatMap" || argument === 1))
+    return undefined
+  const fn = call.arguments[argument]
+  if (fn === undefined || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) return undefined
+  const only =
+    ts.isBlock(fn.body) && fn.body.statements.length === 1 ? fn.body.statements[0] : undefined
+  const body = ts.isBlock(fn.body)
+    ? only !== undefined && ts.isReturnStatement(only)
+      ? only.expression
+      : undefined
+    : fn.body
+  const text = body === undefined ? undefined : resolveStaticSqlText(ts, body, scope, depth + 1)
+  return text === undefined ? undefined : [text]
+}
+
+/** Array methods whose callback receives the element's index, and where in the callback it is. */
+const INDEX_PARAMETER: ReadonlyMap<string, number> = new Map([
+  ["map", 1],
+  ["flatMap", 1],
+  ["forEach", 1],
+  ["filter", 1],
+  ["some", 1],
+  ["every", 1],
+  ["find", 1],
+  ["findIndex", 1],
+  ["reduce", 2],
+  ["reduceRight", 2],
+])
+
+/** Which argument of `call` is a callback handed an array index: the first for `xs.map(fn)` and its
+ * kin, the second for an unshadowed `Array.from(src, fn)`. */
+function indexCallbackArgument(ts: TypeScriptApi, call: TSApi.CallExpression): number | undefined {
+  const callee = call.expression
+  if (!ts.isPropertyAccessExpression(callee) || callee.questionDotToken !== undefined)
+    return undefined
+  if (INDEX_PARAMETER.has(callee.name.text)) return 0
+  return callee.name.text === "from" &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Array" &&
+    !isShadowedAt(ts, callee.expression, "Array")
+    ? 1
+    : undefined
+}
+
+/**
+ * `"1"` for a span written right after a `$` whose expression provably evaluates to a number: a
+ * Postgres placeholder index (`$${i + 1}`), which binds a parameter and can carry no SQL. Any string
+ * there could, so anything not proved numeric stays unresolved.
+ */
+function placeholderNumber(
+  ts: TypeScriptApi,
+  before: string,
+  node: TSApi.Expression,
+  depth: number,
+): string | undefined {
+  return before.endsWith("$") && isNumericExpression(ts, node, depth) ? "1" : undefined
+}
+
+const NUMERIC_OPERATORS = (ts: TypeScriptApi): ReadonlySet<TSApi.SyntaxKind> =>
+  new Set([
+    ts.SyntaxKind.MinusToken,
+    ts.SyntaxKind.AsteriskToken,
+    ts.SyntaxKind.AsteriskAsteriskToken,
+    ts.SyntaxKind.SlashToken,
+    ts.SyntaxKind.PercentToken,
+    ts.SyntaxKind.AmpersandToken,
+    ts.SyntaxKind.BarToken,
+    ts.SyntaxKind.CaretToken,
+    ts.SyntaxKind.LessThanLessThanToken,
+    ts.SyntaxKind.GreaterThanGreaterThanToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ])
+const NUMBER_FUNCTIONS: ReadonlySet<string> = new Set(["Number", "parseInt", "parseFloat"])
+
+/**
+ * Whether an expression evaluates to a number whatever its inputs hold. Every arithmetic operator but
+ * `+` converts its operands, so `i * 2` is a number even if `i` were a string; `+` is one only when
+ * both sides are. A name proves it when it is a callback's array index, or a `const`, never-reassigned
+ * `let` or `for` counter bound to a number and only ever updated by arithmetic. Also `xs.push(...)`
+ * (the new length), `Number`/`parseInt`/`parseFloat`/`Math.*` calls, and `.length` of an array a
+ * nearby binding builds from a literal. A type annotation proves nothing: it does not run.
+ */
+function isNumericExpression(ts: TypeScriptApi, node: TSApi.Expression, depth: number): boolean {
+  if (depth > CONST_RESOLUTION_DEPTH) return false
+  const expression = unwrapExpression(ts, node)
+  if (ts.isNumericLiteral(expression)) return true
+  if (ts.isPrefixUnaryExpression(expression))
+    return expression.operator !== ts.SyntaxKind.ExclamationToken
+  if (ts.isPostfixUnaryExpression(expression)) return true
+  if (ts.isBinaryExpression(expression)) {
+    const operator = expression.operatorToken.kind
+    if (operator === ts.SyntaxKind.PlusToken) {
+      return (
+        isNumericExpression(ts, expression.left, depth + 1) &&
+        isNumericExpression(ts, expression.right, depth + 1)
+      )
+    }
+    return NUMERIC_OPERATORS(ts).has(operator)
+  }
+  if (ts.isIdentifier(expression)) return isNumericName(ts, expression, depth)
+  if (ts.isCallExpression(expression)) {
+    const callee = expression.expression
+    if (ts.isIdentifier(callee))
+      return NUMBER_FUNCTIONS.has(callee.text) && !isShadowedAt(ts, callee, callee.text)
+    if (!ts.isPropertyAccessExpression(callee) || callee.questionDotToken !== undefined)
+      return false
+    if (callee.name.text === "push") return true
+    return (
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Math" &&
+      !isShadowedAt(ts, callee.expression, "Math")
+    )
+  }
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "length" &&
+    ts.isIdentifier(expression.expression)
+  ) {
+    const binding = nameBinding(ts, expression.expression)
+    return (
+      binding.kind === "value" &&
+      ts.isArrayLiteralExpression(unwrapExpression(ts, binding.initializer))
+    )
+  }
+  return false
+}
+
+/** How the nearest scope binds a name: a readable value ({@link directBinding}), a parameter, a `let`
+ * counter a `for` statement declares and updates, or nothing this walk can read. */
+type NameBinding =
+  | { readonly kind: "value"; readonly initializer: TSApi.Expression }
+  | {
+      readonly kind: "parameter"
+      readonly fn: TSApi.SignatureDeclaration
+      readonly position: number
+    }
+  | { readonly kind: "counter"; readonly initializer: TSApi.Expression }
+  | { readonly kind: "unknown" }
+
+function nameBinding(ts: TypeScriptApi, node: TSApi.Identifier): NameBinding {
+  const source = node.getSourceFile()
+  for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
+    if (ts.isFunctionLike(scope)) {
+      const position = scope.parameters.findIndex((p) => bindingNameCovers(ts, p.name, node.text))
+      if (position !== -1) {
+        return ts.isIdentifier(scope.parameters[position]?.name ?? node)
+          ? { kind: "parameter", fn: scope, position }
+          : { kind: "unknown" }
+      }
+    }
+    const binding = directBinding(ts, source, scope, node.text)
+    if (binding === "shadow") {
+      // `for (let i = 0; ...; i++)`: the one reassigned `let` worth reading, checked by the caller.
+      const list = ts.isForStatement(scope) ? scope.initializer : undefined
+      const declaration =
+        list !== undefined && ts.isVariableDeclarationList(list)
+          ? list.declarations.find((d) => ts.isIdentifier(d.name) && d.name.text === node.text)
+          : undefined
+      return declaration?.initializer === undefined
+        ? { kind: "unknown" }
+        : { kind: "counter", initializer: declaration.initializer }
+    }
+    if (binding !== undefined) return { kind: "value", initializer: binding.initializer }
+    if (ts.isSourceFile(scope)) break
+  }
+  return { kind: "unknown" }
+}
+
+function isNumericName(ts: TypeScriptApi, node: TSApi.Identifier, depth: number): boolean {
+  const source = node.getSourceFile()
+  const binding = nameBinding(ts, node)
+  if (binding.kind === "value") return isNumericExpression(ts, binding.initializer, depth + 1)
+  if (binding.kind === "counter") {
+    return (
+      isNumericExpression(ts, binding.initializer, depth + 1) &&
+      onlyNumericWrites(ts, source, node.text, depth)
+    )
+  }
+  if (binding.kind !== "parameter") return false
+  // An array callback's index parameter, never reassigned.
+  const call = binding.fn.parent
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false
+  const argument = indexCallbackArgument(ts, call)
+  const position = argument === 1 ? 1 : INDEX_PARAMETER.get(call.expression.name.text)
+  return (
+    argument !== undefined &&
+    call.arguments[argument] === binding.fn &&
+    binding.position === position &&
+    !isReassignedInFile(ts, source, node.text)
+  )
+}
+
+/** Compound assignments that always store a number. */
+const NUMERIC_ASSIGNMENTS = (ts: TypeScriptApi): ReadonlySet<TSApi.SyntaxKind> =>
+  new Set([
+    ts.SyntaxKind.MinusEqualsToken,
+    ts.SyntaxKind.AsteriskEqualsToken,
+    ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+    ts.SyntaxKind.SlashEqualsToken,
+    ts.SyntaxKind.PercentEqualsToken,
+    ts.SyntaxKind.AmpersandEqualsToken,
+    ts.SyntaxKind.BarEqualsToken,
+    ts.SyntaxKind.CaretEqualsToken,
+    ts.SyntaxKind.LessThanLessThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ])
+
+/** Every write to `name` in the file is `++`/`--`, or an assignment that stores a number. */
+function onlyNumericWrites(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+  name: string,
+  depth: number,
+): boolean {
+  let ok = true
+  const visit = (node: TSApi.Node): void => {
+    if (!ok) return
+    if (ts.isIdentifier(node) && node.text === name && isWrittenTo(ts, node)) {
+      const parent = node.parent
+      if (ts.isBinaryExpression(parent)) {
+        const operator = parent.operatorToken.kind
+        ok =
+          operator === ts.SyntaxKind.EqualsToken || operator === ts.SyntaxKind.PlusEqualsToken
+            ? isNumericExpression(ts, parent.right, depth + 1)
+            : NUMERIC_ASSIGNMENTS(ts).has(operator)
+      } else ok = !ts.isDeleteExpression(parent)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return ok
 }
 
 /** A template's contribution to the shape: resolved span texts fold into `staticText` (so the
@@ -1512,7 +1790,10 @@ function templateShape(
   let dynamic = false
   for (const span of template.templateSpans) {
     const resolved =
-      scope === undefined ? undefined : resolveStaticSqlText(ts, span.expression, scope, 0)
+      scope === undefined
+        ? undefined
+        : (placeholderNumber(ts, staticText, span.expression, 0) ??
+          resolveStaticSqlText(ts, span.expression, scope, 0))
     if (resolved === undefined) dynamic = true
     else staticText += resolved
     staticText += span.literal.text
@@ -1850,8 +2131,8 @@ export function scanInterpolatedSql(
         if (unsafeEscape || assembledSql) {
           const index = node.getStart(source)
           const line = source.getLineAndCharacterOfPosition(index).line + 1
-          // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (batch VALUES placeholder
-          // generation, an allowlisted identifier). The reason is mandatory: a bare `// nifra-expect
+          // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (an allowlisted identifier,
+          // placeholders numbered from data the scan cannot prove numeric). The reason is mandatory: a bare `// nifra-expect
           // NF-C006` with no reason after the colon does NOT silence, so the hatch always leaves a
           // greppable audit trail instead of becoming a second laundering trick.
           const silenced =

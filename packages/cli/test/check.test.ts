@@ -2045,12 +2045,13 @@ describe("scanInterpolatedSql", () => {
   })
 
   describe("sql-dynamic pragma - a reason-carrying opt-out for bound-but-dynamic SQL", () => {
+    // `city.slot` is a number only by the author's word: nothing the scan reads proves it.
     const genPlaceholders = [
-      "const rows = cities.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')",
+      "const rows = cities.map((city) => `($${city.slot}, $${city.slot + 1})`).join(', ')",
       "const q = `INSERT INTO cities (name, country) VALUES ${rows}`",
     ]
 
-    test("generated-placeholder batch insert flags without the pragma", () => {
+    test("placeholders the scan cannot prove numeric flag without the pragma", () => {
       const src = [...genPlaceholders, "db.query(q, params)"].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
@@ -2109,6 +2110,71 @@ describe("scanInterpolatedSql", () => {
       ].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
+  })
+
+  describe("placeholder numbers - `$${n}` where n is provably a number", () => {
+    const query = (body: string): string =>
+      `export async function f(db: any, rows: any[], ids: string[], n: number, x: string) {\n${body}\n}`
+    const clean: Record<string, string> = {
+      "batch VALUES from the map index": [
+        "const values = rows.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')",
+        "return db.query(`INSERT INTO t (a, b) VALUES ${values}`, rows.flat())",
+      ].join("\n"),
+      "IN list from the map index":
+        "return db.query(`SELECT * FROM t WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids)",
+      "Array.from with a length":
+        "return db.query(`SELECT * FROM t WHERE id IN (${Array.from({ length: n }, (_, i) => `$${i + 1}`).join(',')})`)",
+      "a WHERE builder numbered by params.push": [
+        "const params: unknown[] = []",
+        "const where: string[] = []",
+        "if (x) where.push(`name = $${params.push(x)}`)",
+        "return db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`, params)",
+      ].join("\n"),
+      "the length of a local array": [
+        "const params: unknown[] = [x]",
+        "return db.query(`SELECT * FROM t WHERE a = $1 AND b = $${params.length + 1}`, [...params, x])",
+      ].join("\n"),
+      "a for counter":
+        "for (let i = 1; i <= 3; i++) db.query(`SELECT * FROM t WHERE a = $${i}`, [i])",
+      "a map to fixed text":
+        "return db.query(`SELECT * FROM t WHERE id IN (${ids.map(() => '?').join(', ')})`, ids)",
+    }
+    const flagged: Record<string, string> = {
+      "a parameter, whatever its annotation": "return db.query(`SELECT * FROM t WHERE id = $${n}`)",
+      "a string concatenated with a number":
+        "return db.query(`SELECT * FROM t WHERE id = $${x + n}`)",
+      "an element's field":
+        "return db.query(`INSERT INTO t VALUES ${rows.map((r) => `('${r.name}')`).join(',')}`)",
+      "the element itself after a $": "return db.query(`SELECT $${rows.map((r) => r).join(',')}`)",
+      "filter, which keeps the elements":
+        "return db.query(`SELECT * FROM t WHERE id IN (${ids.filter((_, i) => `$${i}`).join(',')})`)",
+      "a reassigned index":
+        "return db.query(`SELECT ${ids.map((_, i) => { i = x as any; return `$${i}` }).join(',')}`)",
+      "a nearer binding over the index":
+        "return db.query(`SELECT ${ids.map((_, i) => { { const i = x; return `$${i}` } }).join(',')}`)",
+      "the length of a parameter":
+        "return db.query(`SELECT * FROM t WHERE a = $${(x as any).length}`)",
+      "a counter assigned a string":
+        "for (let i = 0; i < 2; i++) { i = x as any; db.query(`SELECT * FROM t WHERE a = $${i}`) }",
+      "a shadowed Number":
+        "const Number = (v: string) => v\nreturn db.query(`SELECT * FROM t WHERE a = $${Number(x)}`)",
+      "a builder that pushes caller text":
+        "const where: string[] = []\nwhere.push(`${x} = 1`)\nreturn db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`)",
+      "a builder that pushes a spread":
+        "const where: string[] = []\nwhere.push(...ids)\nreturn db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`)",
+      "a builder handed to other code":
+        "const where: string[] = ['a = 1']\nrows.push(where)\nreturn db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`)",
+    }
+    for (const [name, body] of Object.entries(clean)) {
+      test(`clean: ${name}`, () => {
+        expect(scanInterpolatedSql("a.ts", query(body), ts)).toEqual([])
+      })
+    }
+    for (const [name, body] of Object.entries(flagged)) {
+      test(`flags: ${name}`, () => {
+        expect(scanInterpolatedSql("a.ts", query(body), ts)).toHaveLength(1)
+      })
+    }
   })
 
   /**
