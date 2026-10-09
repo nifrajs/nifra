@@ -3441,11 +3441,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const controller = timeoutMs > 0 ? new AbortController() : undefined
     const signal = controller?.signal ?? getNeverAbortSignal()
     const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined
-    const timeoutResponse = jsonError(503, "request_timeout")
-    const onTimeout = (): WebSocketUpgradeOutcome => ({
+    // A refusal carries the static response headers an HTTP answer would; a guard's already does.
+    const refuse = (response: Response): WebSocketUpgradeOutcome => ({
       kind: "reject",
-      response: timeoutResponse,
+      response: this.wrapWebResponse(response),
     })
+    const onTimeout = (): WebSocketUpgradeOutcome => refuse(jsonError(503, "request_timeout"))
     const bounded = <T>(work: Promise<T>, onDone: () => T): Promise<T> =>
       controller === undefined
         ? work
@@ -3458,7 +3459,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
       // already did and made every plain dynamic route pay for unrelated static path bytes.
       const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
-      if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
+      if (params === null) return refuse(jsonError(400, "malformed_path"))
       const { handler, chain } = match.payload
       // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
       const pubsub = this.topics as TopicRegistry
@@ -3472,13 +3473,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           typeof handler.allowedOrigins === "function"
             ? handler.allowedOrigins(origin)
             : origin !== null && handler.allowedOrigins.includes(origin)
-        if (!allowed) return { kind: "reject", response: jsonError(403, "forbidden_origin") }
+        if (!allowed) return refuse(jsonError(403, "forbidden_origin"))
       } else if (origin !== null && !wsSameOrigin(origin, request)) {
         // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake - the
         // CSWSH case, since browsers send cookies on WS handshakes and don't apply CORS. Non-browser
         // clients send no `Origin` and pass; same-origin browsers pass. Set `allowedOrigins` to permit
         // specific cross-origin clients (or `() => true` for a genuinely public socket).
-        return { kind: "reject", response: jsonError(403, "forbidden_origin") }
+        return refuse(jsonError(403, "forbidden_origin"))
       }
       const budget =
         controller === undefined
@@ -3514,13 +3515,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       try {
         outcome = executeRouteProgram(this, chain, chain.program, request, ctx, finalize, wrap)
       } catch {
-        return { kind: "reject", response: jsonError(500, "internal_error") }
+        return refuse(jsonError(500, "internal_error"))
       }
       if (!(outcome instanceof Promise)) return outcome
-      const pending = outcome.then(undefined, () => ({
-        kind: "reject" as const,
-        response: jsonError(500, "internal_error"),
-      }))
+      const pending = outcome.then(undefined, () => refuse(jsonError(500, "internal_error")))
       return bounded(pending, onTimeout)
     }
 
@@ -3551,13 +3549,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           child = selected.resolveWebSocketUpgrade!(childRequest, platform)
         } catch {
-          return { kind: "reject", response: jsonError(500, "internal_error") }
+          return refuse(jsonError(500, "internal_error"))
         }
         const settle = (outcome: WebSocketUpgradeOutcome): MaybePromise<WebSocketUpgradeOutcome> =>
           outcome.kind === "pass" ||
           (outcome.kind === "reject" && outcome.response.status === 404 && selected!.fallbackOn404)
             ? dispatch(selectedIndex + 1)
-            : outcome
+            : outcome.kind === "reject"
+              ? refuse(outcome.response)
+              : outcome
         return child instanceof Promise ? child.then(settle) : settle(child)
       }
       return dispatch(0)
@@ -3590,19 +3590,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     try {
       hooked = this.runWebSocketRequestHooks(req, platform)
     } catch {
-      return { kind: "reject", response: jsonError(500, "internal_error") }
+      return refuse(jsonError(500, "internal_error"))
     }
     if (!(hooked instanceof Promise)) {
-      return hooked instanceof Response
-        ? { kind: "reject", response: hooked }
-        : resolveHooked(hooked)
+      return hooked instanceof Response ? refuse(hooked) : resolveHooked(hooked)
     }
     const pending = hooked.then(
-      (result) =>
-        result instanceof Response
-          ? { kind: "reject" as const, response: result }
-          : resolveHooked(result),
-      () => ({ kind: "reject" as const, response: jsonError(500, "internal_error") }),
+      (result) => (result instanceof Response ? refuse(result) : resolveHooked(result)),
+      () => refuse(jsonError(500, "internal_error")),
     )
     return bounded(
       Promise.resolve(pending).then((result) => result),

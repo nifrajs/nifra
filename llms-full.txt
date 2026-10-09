@@ -3030,7 +3030,8 @@ routes declared after them.
 A **WebSocket** route, listed as `WS /path`, runs the request hooks, then the
 authentication stages, `derive`s, `beforeHandle`s and
 `onError` declared before it. Its handshake runs no `around`,
-`afterHandle` or response hooks.
+`afterHandle` or response hooks, but a refused handshake carries the
+app&rsquo;s `responseHeaders()`.
 
 `nifra routes --hooks --json` writes the report; `--since <file>`
 prints what runs differently from a saved one. `nifra upgrade --write` saves the

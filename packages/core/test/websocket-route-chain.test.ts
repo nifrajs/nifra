@@ -157,6 +157,28 @@ describe("a WebSocket handshake runs the route chain an HTTP GET runs", () => {
     expect(ran).toBe(1)
   })
 
+  test("every refused handshake carries the app's static response headers", async () => {
+    const child = base().ws("/live", {})
+    const app = server()
+      .responseHeaders({ "x-frame-options": "DENY" })
+      .use(websocket())
+      .onRequest((req) =>
+        req.headers.has("x-block") ? new Response("no", { status: 429 }) : undefined,
+      )
+      .beforeHandle(() => status(401, { error: "no" }))
+      .ws("/socket", {})
+      .mount({ path: "/m", app: child, stripPrefix: true })
+    const refused = async (path: string, headers: Record<string, string>) => {
+      const outcome = await resolve(app, path, headers)
+      if (outcome.kind !== "reject") throw new Error(`expected a rejection, got ${outcome.kind}`)
+      return [outcome.response.status, outcome.response.headers.get("x-frame-options")]
+    }
+    expect(await refused("/socket", { origin: "https://evil.test" })).toEqual([403, "DENY"])
+    expect(await refused("/socket", { "x-block": "1" })).toEqual([429, "DENY"])
+    expect(await refused("/socket", {})).toEqual([401, "DENY"])
+    expect(await refused("/m/live", { origin: "https://evil.test" })).toEqual([403, "DENY"])
+  })
+
   test("a guard's rejection carries the cookies and status it set, rendered as HTTP renders it", async () => {
     const app = base()
       .derive((c) => {
