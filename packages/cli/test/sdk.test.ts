@@ -236,6 +236,73 @@ describe("SDK generation", () => {
     }
   }, 30_000)
 
+  test("a Python alias may name a model declared after it, and aliases decode", async () => {
+    const aliased: OpenAPIDocument = {
+      openapi: "3.1.0",
+      info: { title: "t", version: "1" },
+      paths: {
+        "/users": {
+          get: {
+            operationId: "getUsers",
+            responses: {
+              "200": {
+                description: "ok",
+                content: {
+                  "application/json": { schema: { $ref: "#/components/schemas/Users" } },
+                },
+              },
+              "404": {
+                description: "missing",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { reason: { type: "string" } },
+                      required: ["reason"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          Users: {
+            type: "array",
+            items: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+          },
+        },
+      },
+    }
+    const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))
+    try {
+      await Bun.write(join(dir, "nifra_sdk.py"), renderSdk(aliased, "python"))
+      const script = [
+        "import sys",
+        "sys.path.insert(0, sys.argv[1])",
+        "import nifra_sdk",
+        "print(nifra_sdk._decode([{'id': 'u1'}], nifra_sdk.Users))",
+        "print(nifra_sdk._decode({'reason': 'gone'}, nifra_sdk.GetUsersError))",
+      ].join("\n")
+      const process = Bun.spawn(["python3", "-c", script, dir], { stdout: "pipe", stderr: "pipe" })
+      const [exitCode, output, errors] = await Promise.all([
+        process.exited,
+        new Response(process.stdout).text(),
+        new Response(process.stderr).text(),
+      ])
+      expect(errors).toBe("")
+      expect(exitCode).toBe(0)
+      expect(output.trim().split("\n")).toEqual([
+        "[UsersItem(id='u1')]",
+        "GetUsersError404(reason='gone')",
+      ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   test("generated Go refuses a path parameter that is a dot segment", () => {
     expect(renderSdk(document, "go")).toContain('if segment == "." || segment == ".."')
   })

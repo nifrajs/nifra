@@ -435,9 +435,11 @@ function renderPythonModels(catalog: SchemaCatalog, tracker: OpaqueTracker): str
           pythonModelFields(schema, name, catalog, tracker),
       )
     } else {
+      // A `type` statement evaluates lazily, so an alias may name a model declared below it.
       rendered.push(
-        name +
-          ": TypeAlias = " +
+        "type " +
+          name +
+          " = " +
           pythonType(schema, name, catalog, tracker, "schema", `model ${name}`),
       )
     }
@@ -633,7 +635,7 @@ function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string
     "import urllib.parse",
     "import urllib.request",
     "from dataclasses import dataclass, field, fields, is_dataclass",
-    "from typing import Any, Generic, Literal, Mapping, Never, TypeAlias, TypeVar, get_args, get_origin, get_type_hints",
+    "from typing import Any, Generic, Literal, Mapping, Never, TypeAliasType, TypeVar, get_args, get_origin, get_type_hints",
     "",
     'T = TypeVar("T")',
     "",
@@ -644,6 +646,8 @@ function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string
     "        self.body = body",
     "",
     "def _decode(value: Any, target: Any) -> Any:",
+    "    if isinstance(target, TypeAliasType):",
+    "        return _decode(value, target.__value__)",
     "    if target is None or target is Any or target is object:",
     "        return value",
     "    origin = get_origin(target)",
