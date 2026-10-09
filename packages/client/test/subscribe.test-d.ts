@@ -37,3 +37,29 @@ export type _PlainHasNoSubscribe = Expect<"subscribe" extends keyof typeof api.p
 
 // The sse route still has its plain GET too.
 export type _FeedKeepsGet = Expect<"get" extends keyof typeof api.feed ? true : false>
+
+// A schema with a body makes the stream a POST route; its subscribe requires that body.
+declare const promptSchema: StandardSchemaV1<{ prompt: string }, { prompt: string }>
+declare const tokenSchema: StandardSchemaV1<unknown, { token: string }>
+const chat = server().sse("/chat", { body: promptSchema, sse: tokenSchema }, (_c, stream) => {
+  stream.send({ token: "hi" })
+})
+const chatApi = testClient<typeof chat>(chat)
+
+const chatSubscription = chatApi.chat.subscribe(
+  (event) => {
+    const token: string = event.token
+    void token
+  },
+  { body: { prompt: "hello" } },
+)
+export type _ChatIsSubscription = Expect<
+  typeof chatSubscription extends Subscription ? true : false
+>
+// @ts-expect-error - a POST stream needs its body
+chatApi.chat.subscribe(() => {})
+// @ts-expect-error - the body is contracted by the body schema
+chatApi.chat.subscribe(() => {}, { body: { prompt: 1 } })
+// The POST stream is a POST route, not a GET one.
+export type _ChatIsPost = Expect<"post" extends keyof typeof chatApi.chat ? true : false>
+export type _ChatHasNoGet = Expect<"get" extends keyof typeof chatApi.chat ? false : true>

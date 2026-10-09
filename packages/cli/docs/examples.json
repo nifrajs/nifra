@@ -606,6 +606,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { sse } from \"@nifrajs/core/sse\"\n\nconst app = server()\n// Your pub-sub of choice - subscribe returns an unsubscribe function.\ndeclare const notifications: { subscribe(on: (n: { id: string }) => void): () => void }\n\n// A live feed - push events until the client disconnects.\napp.get(\"/notifications\", (c) =>\n  sse(c, (stream) => {\n    const off = notifications.subscribe((n) =>\n      stream.send({ event: \"notification\", id: n.id, data: JSON.stringify(n) }),\n    )\n    // Keep the connection open until the client leaves, then tear down.\n    return new Promise<void>((resolve) =>\n      stream.signal.addEventListener(\"abort\", () => { off(); resolve() }, { once: true }),\n    )\n  }, { keepAlive: 15_000 }),\n)"
   },
   {
+    "name": "TYPED_SSE",
+    "topic": "Nifra - Streaming",
+    "slug": "streaming",
+    "code": "import { client } from \"@nifrajs/client\"\nimport { server } from \"@nifrajs/core/server\"\nimport { streaming } from \"@nifrajs/core/sse\"\nimport { t } from \"@nifrajs/schema\"\n\ndeclare function generate(prompt: string): AsyncIterable<string>\n\nexport const app = server()\n  .use(streaming())\n  // A GET stream: the event payload is contracted by `sse`.\n  .sse(\"/feed\", { sse: t.object({ id: t.integer(), title: t.string() }) }, (_c, stream) => {\n    stream.send({ id: 1, title: \"hello\" })\n    stream.close()\n  })\n  // A body makes it a POST stream, validated like any POST: a chat that posts its prompt.\n  .sse(\n    \"/chat\",\n    { body: t.object({ prompt: t.string() }), sse: t.object({ token: t.string() }) },\n    async (c, stream) => {\n      for await (const token of generate(c.body.prompt)) stream.send({ token })\n      stream.close()\n    },\n  )\n\nconst api = client<typeof app>(\"https://example.com\")\nconst feed = api.feed.subscribe((post) => console.log(post.title))\napi.chat.subscribe((event) => console.log(event.token), { body: { prompt: \"Hi\" } })\nfeed.close()"
+  },
+  {
     "name": "BACKEND_HALF",
     "topic": "Nifra - Project structure",
     "slug": "structure",
