@@ -286,11 +286,11 @@ export class CodingAgentRpcServer {
           backend: this.options.backend.info.name,
           ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
         })
-        return json(snapshot, 200, cors)
+        return json(this.advertised(snapshot), 200, cors)
       }
       case "session.snapshot": {
         const snapshot = this.requireSnapshot()
-        return json(snapshot, 200, cors)
+        return json(this.advertised(snapshot), 200, cors)
       }
       case "session.resume": {
         const params = record(request.params)
@@ -305,7 +305,7 @@ export class CodingAgentRpcServer {
           backend: this.options.backend.info.name,
           sessionId: params.sessionId,
         })
-        return json(snapshot, 200, cors)
+        return json(this.advertised(snapshot), 200, cors)
       }
       case "session.events": {
         const snapshot = this.requireSnapshot()
@@ -329,7 +329,11 @@ export class CodingAgentRpcServer {
             422,
             cors,
           )
-        return json({ snapshot, resume: resumeFromCursor(window, cursor) }, 200, cors)
+        return json(
+          { snapshot: this.advertised(snapshot), resume: resumeFromCursor(window, cursor) },
+          200,
+          cors,
+        )
       }
       case "session.checkpoint": {
         this.requireSnapshot()
@@ -746,6 +750,17 @@ export class CodingAgentRpcServer {
       this.creating = undefined
     })
     return await this.creating
+  }
+
+  /** The backend's capabilities plus the Agent App features this server answers itself. */
+  private advertised(snapshot: AgentSessionSnapshot): AgentSessionSnapshot {
+    const { backend, sessionStore, extensions } = this.options
+    const served = ["approvals", "resume"]
+    if (backend.checkpoint !== undefined || sessionStore !== undefined) served.push("checkpoint")
+    if (backend.fork !== undefined || sessionStore !== undefined) served.push("fork")
+    if (extensions !== undefined) served.push("workflows")
+    const capabilities = [...new Set([...snapshot.capabilities, ...served])]
+    return Object.freeze({ ...snapshot, capabilities: Object.freeze(capabilities) })
   }
 
   private requireSnapshot(): AgentSessionSnapshot {

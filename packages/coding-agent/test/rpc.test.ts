@@ -116,6 +116,46 @@ describe("coding agent RPC", () => {
     }
   })
 
+  test("session snapshots advertise the Agent App features the server answers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-rpc-features-"))
+    const create = async (rpc: CodingAgentRpcServer) => {
+      const handle = await rpc.start()
+      try {
+        const response = await fetch(`${handle.url}/rpc`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${handle.token}`, "content-type": "application/json" },
+          body: JSON.stringify({ method: "session.create" }),
+        })
+        const body: { capabilities: string[] } = await response.json()
+        return body.capabilities
+      } finally {
+        await handle.stop()
+      }
+    }
+    const backend = () =>
+      new NifraBackend({ model: { complete: () => ({ type: "text", text: "ok" }) } })
+    try {
+      const plain = await create(new CodingAgentRpcServer({ cwd: root, backend: backend() }))
+      expect(plain).toEqual(expect.arrayContaining(["approvals", "resume"]))
+      expect(plain).not.toEqual(expect.arrayContaining(["checkpoint"]))
+      expect(plain).not.toEqual(expect.arrayContaining(["workflows"]))
+      const full = await create(
+        new CodingAgentRpcServer({
+          cwd: root,
+          backend: backend(),
+          sessionStore: new FileSessionStore({ root }),
+          extensions: new ExtensionHost({ cwd: root, roots: [] }),
+        }),
+      )
+      expect(full).toEqual(
+        expect.arrayContaining(["approvals", "resume", "checkpoint", "fork", "workflows"]),
+      )
+      expect(new Set(full).size).toBe(full.length)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   test("returns actionable errors and opts into stacks only on loopback", async () => {
     for (const exposeErrorStacks of [false, true]) {
       const rpc = new CodingAgentRpcServer({
