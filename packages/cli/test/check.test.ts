@@ -3082,9 +3082,88 @@ describe("data guard from source (NF-C030, NF-C031)", () => {
       ].join("\n"),
     })
     expect(await findings(dir, "NF-C030")).toEqual([
-      "routes/a.backend.ts:1 warning",
-      "routes/a.backend.ts:4 warning",
+      "routes/a.backend.ts:1 error",
+      "routes/a.backend.ts:4 error",
     ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an error only when the function's own body returns a data literal", async () => {
+    const cases: Record<string, string> = {
+      // Proven: the runtime refuses every one of these without a schema.
+      object: "export const loader = async () => ({ items: [] })",
+      array:
+        'export async function loader() {\n  if (Date.now() < 0) return redirect("/")\n  return [1, 2]\n}',
+      text: "export const loader = () => 'text'",
+      template: "export const loader = (n: number) => `n=${n}`",
+      number: "export const loader = () => -42",
+      boolean: "export const action = async () => {\n  return true\n}",
+      blocks: [
+        "export async function loader(a: boolean, xs: number[]) {",
+        "  for (const x of xs) {",
+        "    try {",
+        "      if (a) { return { x } } else { return null }",
+        "    } catch {",
+        "      return null",
+        "    }",
+        "  }",
+        "  return null",
+        "}",
+      ].join("\n"),
+      switchCase:
+        "export function loader(n: number) {\n  switch (n) {\n    case 1: return { n }\n  }\n  return null\n}",
+      // Possible: what an expression evaluates to is not read from source.
+      call: "export const loader = async () => rows()",
+      variable: "export function loader() {\n  const data = { n: 1 }\n  return data\n}",
+      ternary: "export const loader = (a: boolean) => (a ? { n: 1 } : null)",
+      member: "export const loader = () => ({ n: 1 }).n",
+      concat: "export const loader = (s: string) => 'a' + s",
+      // A return inside a nested function, method, class or case block is not the loader's own.
+      nested: [
+        "export async function loader(xs: number[]) {",
+        "  const a = xs.map(function (x) { return { x } })",
+        "  const b = xs.map((x) => { return [x] })",
+        "  const o = { get() { return { o: 1 } } }",
+        "  class K { m() { return {} } }",
+        "  switch (xs.length) { case 1: { return { a, b, o, K } } }",
+        '  return redirect("/")',
+        "}",
+      ].join("\n"),
+    }
+    const files: Record<string, string> = {}
+    for (const [name, source] of Object.entries(cases)) {
+      files[`routes/${name}.tsx`] = "export default () => null\n"
+      files[`routes/${name}.backend.ts`] =
+        `import { redirect } from "@nifrajs/web"\ndeclare const rows: () => Promise<unknown[]>\n${source}\n`
+    }
+    const dir = await project(files)
+    const found = await findings(dir, "NF-C030")
+    expect(found).toEqual(
+      [
+        "array error",
+        "blocks error",
+        "boolean error",
+        "call warning",
+        "concat warning",
+        "member warning",
+        "nested warning",
+        "number error",
+        "object error",
+        "switchCase error",
+        "template error",
+        "ternary warning",
+        "text error",
+        "variable warning",
+      ].map((entry) => {
+        const [name, severity] = entry.split(" ")
+        return `routes/${name}.backend.ts:3 ${severity}`
+      }),
+    )
+    const message = (await collectCheckResult(dir, { lintsOnly: true })).diagnostics.find(
+      (d) => d.code === "NF-C030" && d.file === "routes/object.backend.ts",
+    )
+    expect(message?.message).toContain("It returns a data literal, so every request that reaches")
+    expect(message?.evidence).toContain("returns: a data literal")
     await rm(dir, { recursive: true, force: true })
   })
 

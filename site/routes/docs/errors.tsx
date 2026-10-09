@@ -154,8 +154,10 @@ export default function Errors() {
       <p>
         <strong>Fix:</strong> declare <code>loaderOutput</code>/<code>actionOutput</code> as a Standard
         Schema that describes exactly the fields the page needs. <code>nifra check</code> flags routes
-        without one (NF-C030), and <code>nifra schemas --write</code> drafts one from the loader's
-        return type for review.
+        without one (NF-C030): an error when the loader's own body returns a literal (an object,
+        array, string, number or boolean), since every request that reaches that return fails, and a
+        warning when only running it shows what it returns. <code>nifra schemas --write</code> drafts
+        a schema from the loader's return type for review.
       </p>
       <FixPrompts code="NIFRA_OUTPUT_GUARD" />
 

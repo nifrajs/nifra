@@ -4,7 +4,9 @@
  * The server enforces both at runtime, on every request: data a loader or action returns without an
  * output schema fails the request, and an output schema naming a sensitive field without
  * `t.declassified` fails the route when it loads. These report what source alone shows, before a
- * request ever does. NF-C030 is a warning because only running the loader proves it returns data.
+ * request ever does. NF-C030 is an error when the loader's own body returns a literal the runtime
+ * refuses (an object, array, string, number or boolean) and a warning otherwise, since only running
+ * the loader proves what an expression evaluates to.
  */
 import { isSensitiveFieldName } from "@nifrajs/web/zones"
 import { codePositionMask } from "../check-scan.ts"
@@ -41,33 +43,125 @@ const closing = (mask: string, open: number): number => {
   return mask.length
 }
 
+const opening = (mask: string, close: number): number => {
+  let depth = 0
+  for (let i = close; i >= 0; i--) {
+    const c = mask[i]
+    if (c === ")" || c === "}" || c === "]") depth++
+    else if (c === "(" || c === "{" || c === "[") {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return 0
+}
+
+const CONTROL_HEAD = /(?:^|[^\w$.])(?:if|for(?:\s+await)?|while|catch|switch|with)\s*$/
+const BLOCK_WORD = /(?:^|[^\w$.])(?:else|try|finally|do)$/
+
 /**
- * Whether the function exported as `name` may return data, read from its type-stripped source: an
- * arrow's expression body, or a `return <value>` that is not a redirect or a status.
+ * Whether the `{` at `open` starts a statement block of the enclosing function: after a control
+ * head, `else`/`try`/`finally`/`do`, or a statement boundary. A function, method, class, object or
+ * `case` body is not one, so a `return` inside it is never counted as the outer function's.
  */
-function mayReturnData(js: string, name: string): boolean {
+function isStatementBlock(mask: string, open: number): boolean {
+  let p = open - 1
+  while (p >= 0 && /\s/.test(mask[p] ?? "")) p--
+  const prev = mask[p]
+  if (prev === undefined || prev === ";" || prev === "{" || prev === "}") return true
+  if (prev === ")") {
+    const head = opening(mask, p)
+    return CONTROL_HEAD.test(mask.slice(Math.max(0, head - 16), head))
+  }
+  return BLOCK_WORD.test(mask.slice(Math.max(0, p - 8), p + 1))
+}
+
+/** Offsets of the `return`s that belong to the block at `open` itself, not to a nested function. */
+function ownReturns(mask: string, open: number, close: number): number[] {
+  const own: boolean[] = []
+  const found: number[] = []
+  for (let i = open; i < close; i++) {
+    const c = mask[i]
+    if (c === "{") own.push(i === open || (own.at(-1) === true && isStatementBlock(mask, i)))
+    else if (c === "}") own.pop()
+    else if (
+      c === "r" &&
+      own.at(-1) === true &&
+      mask.startsWith("return", i) &&
+      !/[\w$.]/.test(mask[i - 1] ?? "") &&
+      !/[\w$]/.test(mask[i + 6] ?? "")
+    ) {
+      found.push(i)
+    }
+  }
+  return found
+}
+
+const NUMBER = /^-?(?:0[xob][\da-f_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:e[+-]?\d+)?)n?$/i
+
+/**
+ * Whether the expression at `start` is one literal the runtime refuses without an output schema: an
+ * object, array, string, template, number or boolean, alone, not part of a larger expression.
+ */
+function isDataLiteral(js: string, mask: string, start: number): boolean {
+  let from = start
+  let to = expressionEnd(mask, start)
+  for (;;) {
+    // Skip on the source: the mask blanks a string literal, quotes included.
+    while (from < to && /\s/.test(js[from] ?? "")) from++
+    while (to > from && /\s/.test(js[to - 1] ?? "")) to--
+    if (from >= to) return false
+    if (mask[from] !== "(" || closing(mask, from) !== to - 1) break
+    from++
+    to--
+  }
+  const first = mask[from]
+  if (first === "{" || first === "[") return closing(mask, from) === to - 1
+  const text = mask.slice(from, to)
+  if (text.trim() === "") {
+    const quote = js[from] ?? ""
+    return `"'\``.includes(quote) && js[to - 1] === quote
+  }
+  return NUMBER.test(text) || text === "true" || text === "false"
+}
+
+type DataReturn = "none" | "possible" | "proven"
+
+/**
+ * What the function exported as `name` returns, read from its type-stripped source. `proven` when
+ * its expression body, or a `return` of its own body, is a data literal; `possible` when an
+ * expression body or some `return <value>` is not a redirect or a status; `none` otherwise.
+ */
+function dataReturn(js: string, name: string): DataReturn {
   const mask = codePositionMask(js)
   const found = exported(mask, name)
   if (found === null || found[0].startsWith("export {") || found[0].startsWith("export{")) {
-    return true // declared elsewhere in the file and re-exported: assume it does
+    return "possible" // declared elsewhere in the file and re-exported: assume it does
   }
   const params = mask.indexOf("(", found.index + found[0].length)
-  if (params === -1) return true
+  if (params === -1) return "possible"
   let at = closing(mask, params) + 1
   while (/\s/.test(mask[at] ?? "")) at++
   if (mask.startsWith("=>", at)) {
     at += 2
-    while (/\s/.test(mask[at] ?? "")) at++
-    if (mask[at] !== "{") return !CONTROL_FLOW.test(js.slice(at, at + 40))
+    while (/\s/.test(js[at] ?? "")) at++
+    if (mask[at] !== "{") {
+      if (CONTROL_FLOW.test(js.slice(at, at + 40))) return "none"
+      return isDataLiteral(js, mask, at) ? "proven" : "possible"
+    }
   }
-  if (mask[at] !== "{") return true
-  const body = mask.slice(at, closing(mask, at))
+  if (mask[at] !== "{") return "possible"
+  const end = closing(mask, at)
+  for (const index of ownReturns(mask, at, end)) {
+    if (isDataLiteral(js, mask, index + "return".length)) return "proven"
+  }
+  const body = mask.slice(at, end)
   for (const match of body.matchAll(/\breturn\b/g)) {
     const from = at + match.index + "return".length
     const rest = js.slice(from, from + 40).replace(/^[ \t]+/, "")
-    if (!CONTROL_FLOW.test(rest)) return true
+    if (!CONTROL_FLOW.test(rest)) return "possible"
   }
-  return false
+  return "none"
 }
 
 /** Where an expression starting at `start` ends: a `,`, `;` or closer at its own depth. */
@@ -136,6 +230,8 @@ export interface MissingOutputSchema {
   readonly name: "loader" | "action"
   readonly schema: "loaderOutput" | "actionOutput"
   readonly line: number
+  /** Its own body returns a data literal, so every request that reaches that return fails. */
+  readonly proven: boolean
 }
 
 let transpiler: Bun.Transpiler | undefined
@@ -157,7 +253,10 @@ export function missingOutputSchemas(content: string): MissingOutputSchema[] {
     } catch {
       js = content
     }
-    if (mayReturnData(js, name)) missing.push({ name, schema, line: lineAt(content, fn.index) })
+    const returns = dataReturn(js, name)
+    if (returns !== "none") {
+      missing.push({ name, schema, line: lineAt(content, fn.index), proven: returns === "proven" })
+    }
   }
   return missing
 }
@@ -171,15 +270,22 @@ export const missingOutputRule: CheckRule = {
       if (classification.zone !== "route-backend") continue
       const content = ctx.sources.read(file)
       if (content === undefined) continue
-      for (const { name, schema, line } of missingOutputSchemas(content)) {
+      for (const { name, schema, line, proven } of missingOutputSchemas(content)) {
+        const returns = proven
+          ? "It returns a data literal, so every request that reaches that return fails"
+          : "Data it returns fails the request"
         findings.push(
           diagnostic({
             code: "NF-C030",
-            severity: "warn",
+            severity: proven ? "error" : "warn",
             file,
             line,
-            message: `${file} exports a ${name} but no ${schema}. Data it returns fails the request: everything sent to the browser needs an output schema. Export one: export const ${schema} = t.object({ ... })`,
-            evidence: [`export: ${name}`, `missing: ${schema}`],
+            message: `${file} exports a ${name} but no ${schema}. ${returns}: everything sent to the browser needs an output schema. Export one: export const ${schema} = t.object({ ... })`,
+            evidence: [
+              `export: ${name}`,
+              `missing: ${schema}`,
+              ...(proven ? ["returns: a data literal"] : []),
+            ],
             verify: "nifra check",
           }),
         )
