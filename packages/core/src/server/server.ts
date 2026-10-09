@@ -171,6 +171,7 @@ import {
   INSTALL_SSE,
   INSTALL_WS,
   NODE_NATIVE_MOUNT,
+  REPORT_ERROR,
   RESOLVE_NODE_MOUNT,
 } from "./install.ts"
 import type { EffectLedgerRuntime } from "./ledger-lane.ts"
@@ -2482,6 +2483,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_NODE_DIRECT](runtime: NodeOutcomeRuntime): void {
     this.assertConfigurable("nodeDirect()")
     this.nodeOutcomeRuntime = runtime
+  }
+
+  /** @internal An adapter reports a failure no response hook saw (a hook that threw past `fetch`, a
+   * response the runtime refused to write), logged as Bun's `listen()` logs one. */
+  [REPORT_ERROR](error: unknown): void {
+    emitRequestErrorLog(this.logger, this.errorLogDetail, error, undefined)
   }
 
   /** @internal Symbol-keyed install seam for the `streaming()` plugin. Off the public typed surface. */

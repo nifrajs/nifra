@@ -90,6 +90,10 @@ cap live **inside `app.fetch`**, not Bun's `listen()` - so they apply through th
 with no extra wiring. Slow-client / slow-loris protection is Node's built-in
 `requestTimeout` (300s) and `headersTimeout` (60s) defaults.
 
+A hook that throws past `app.fetch` answers `500` and is logged through the app's own `logger`,
+as Bun's `listen()` logs it. The `req` a hook sees is a lazy stand-in for Node's request: copy it
+with `req.clone()`, not `new Request(req)`, which Node's `Request` constructor refuses.
+
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM-only. MIT.
 
 ## For AI agents

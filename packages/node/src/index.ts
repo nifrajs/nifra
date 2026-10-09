@@ -1207,6 +1207,14 @@ async function readStatic(
 // @nifrajs/core, and no-op on a handler that does not expose the seam (a plain `{ fetch }`) or one that
 // is already frozen (the per-request `resolveNodeSource` path supplies the runtime regardless).
 const INSTALL_NODE_DIRECT = Symbol.for("@nifrajs/core/install-node-direct")
+// A nifra server logs what an adapter reports through this seam, as Bun's `listen()` does; a plain
+// `{ fetch }` handler has no logger, so its failures stay a bare 500.
+const REPORT_ERROR = Symbol.for("@nifrajs/core/report-error")
+function errorReporterOf(app: FetchHandler): ((error: unknown) => void) | undefined {
+  const report: unknown = Reflect.get(app, REPORT_ERROR)
+  return typeof report === "function" ? (error) => report.call(app, error) : undefined
+}
+
 function enableNodeDirect(app: FetchHandler): void {
   const install = (app as unknown as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
   if (typeof install !== "function") return
@@ -1238,6 +1246,8 @@ interface ActiveResponseState {
   readonly socket: { readonly destroyed: boolean; destroy(): void }
   active: number
   parserError: boolean
+  /** The served app's own error log, when it has one. */
+  readonly report: ((error: unknown) => void) | undefined
 }
 
 const ACTIVE_RESPONSE_STATE = Symbol("nifra.node.active-response-state")
@@ -1274,6 +1284,7 @@ function clearActiveResponseState(this: TrackedSocket): void {
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
   activateAsyncContextFrame()
   enableNodeDirect(app)
+  const report = errorReporterOf(app)
   if (options.fastResponse === true) installFastResponse()
   let inFlight = 0
   let closed = false
@@ -1301,7 +1312,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     const socket = nodeReq.socket as TrackedSocket
     let responseState = socket[ACTIVE_SOCKET_STATE]
     if (responseState === undefined) {
-      responseState = { socket, active: 0, parserError: false }
+      responseState = { socket, active: 0, parserError: false, report }
       socket[ACTIVE_SOCKET_STATE] = responseState
       socket.once("close", clearActiveResponseState)
     }
@@ -1319,15 +1330,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
         // writer already ends its own failures (`failWrite`), so anything arriving here is a fault
         // no response can still be built from - the connection is the only thing left to end.
         void handled
-          .catch(() => failWrite(nodeRes))
+          .catch((error: unknown) => failAndReport(nodeRes, error))
           .finally(() => {
             inFlight -= 1
           })
         return
       }
       inFlight -= 1
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       inFlight -= 1
     }
   }
@@ -1449,11 +1460,11 @@ function runNodeSource(
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            () => failWrite(nodeRes),
+            (error: unknown) => failAndReport(nodeRes, error),
           )
         : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       return
     }
   }
@@ -1466,11 +1477,11 @@ function runNodeSource(
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            () => failWrite(nodeRes),
+            (error: unknown) => failAndReport(nodeRes, error),
           )
         : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       return
     }
   }
@@ -1480,12 +1491,12 @@ function runNodeSource(
     return response instanceof Promise
       ? response.then(
           (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
-          () => failWrite(nodeRes),
+          (error: unknown) => failAndReport(nodeRes, error),
         )
       : writeResponseSafely(response, nodeRes, nodeReq.method)
-  } catch {
-    // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
-    failWrite(nodeRes)
+  } catch (error) {
+    // A request hook that throws escapes `fetch`; never leak a stack to the wire.
+    failAndReport(nodeRes, error)
     return
   }
 }
@@ -1608,12 +1619,12 @@ function handle(
                 handled === false
                   ? runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
                   : undefined,
-              () => failWrite(nodeRes),
+              (error: unknown) => failAndReport(nodeRes, error),
             )
           }
           if (outcome !== false) return
-        } catch {
-          failWrite(nodeRes)
+        } catch (error) {
+          failAndReport(nodeRes, error)
           return
         }
       }
@@ -1630,11 +1641,11 @@ function handle(
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            () => failWrite(nodeRes),
+            (error: unknown) => failAndReport(nodeRes, error),
           )
         : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       return
     }
   }
@@ -1644,12 +1655,12 @@ function handle(
     return response instanceof Promise
       ? response.then(
           (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
-          () => failWrite(nodeRes),
+          (error: unknown) => failAndReport(nodeRes, error),
         )
       : writeResponseSafely(response, nodeRes, nodeReq.method)
-  } catch {
-    // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
-    failWrite(nodeRes)
+  } catch (error) {
+    // A request hook that throws escapes `fetch`; never leak a stack to the wire.
+    failAndReport(nodeRes, error)
     return
   }
 }
@@ -1703,6 +1714,18 @@ function failWrite(nodeRes: ServerResponse): void {
     // The socket went away between the check and the write; fall through to the destroy.
   }
   nodeRes.destroy()
+}
+
+/** {@link failWrite} for a failure the app never answered, logged through the app's own logger. */
+function failAndReport(nodeRes: ServerResponse, error: unknown): void {
+  const state: ActiveResponseState | undefined = Reflect.get(nodeRes, ACTIVE_RESPONSE_STATE)
+  const report = state?.report
+  try {
+    report?.(error)
+  } catch {
+    // A logger that throws must not keep the 500 from going out.
+  }
+  failWrite(nodeRes)
 }
 
 /** {@link writeNodeOutcome} with {@link failWrite} behind it, sync throw and async rejection alike. */

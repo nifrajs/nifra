@@ -236,7 +236,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-effect-ledger": 35.8,
   "nifra-mcp": 34.1,
   "nifra-sse": 34.7,
-  "nifra-valibot": 34.8,
+  "nifra-valibot": 34.9,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,
