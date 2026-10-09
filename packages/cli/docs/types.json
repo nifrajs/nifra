@@ -5478,7 +5478,7 @@
     "name": "EventContract",
     "kind": "interface",
     "package": "@nifrajs/events",
-    "signature": "export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV1> {\n    readonly type: string;\n    readonly version: number;\n    readonly payload: Schema;\n    /**\n     * Validate a payload and stamp a full envelope (`id`, `occurredAt`). Throws {@link EventContractError}\n     * on an invalid payload. Sync validators only - an async schema throws (use a sync payload schema for\n     * events; the whole point is a cheap boundary check).\n     */\n    create(payload: InferInput<Schema>, options?: {\n        id?: string;\n        occurredAt?: string;\n        causality?: CausalityContext;\n    }): EventEnvelope<InferOutput<Schema>>;\n    /** Parse untrusted input against this exact contract (type + version + payload). Never throws. */\n    parse(input: unknown): EventParseResult<InferOutput<Schema>>;\n    /** Boolean guard form of {@link parse}. */\n    is(input: unknown): input is EventEnvelope<InferOutput<Schema>>;\n}"
+    "signature": "export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV1> {\n    readonly type: string;\n    readonly version: number;\n    readonly payload: Schema;\n    /**\n     * Validate a payload and stamp a full envelope (`id`, `occurredAt`). Throws {@link EventContractError}\n     * on an invalid payload. Sync validators only - an async schema throws (use a sync payload schema for\n     * events; the whole point is a cheap boundary check).\n     */\n    create(payload: InferInput<Schema>, options?: {\n        id?: string;\n        occurredAt?: string;\n        causality?: CausalityContext;\n    }): EventEnvelope<InferOutput<Schema>>;\n    /**\n     * Parse untrusted input against this exact contract (type + version + payload). Bad input never\n     * throws; it returns the issues. An async payload schema throws, as in {@link create}.\n     */\n    parse(input: unknown): EventParseResult<InferOutput<Schema>>;\n    /** Boolean guard form of {@link parse}. */\n    is(input: unknown): input is EventEnvelope<InferOutput<Schema>>;\n}"
   },
   {
     "name": "EventContractError",
@@ -5504,7 +5504,7 @@
     "name": "EventRegistry",
     "kind": "interface",
     "package": "@nifrajs/events",
-    "signature": "export interface EventRegistry {\n    readonly contracts: readonly EventContract[];\n    /** Look up a contract by type + version (defaults to version 0). */\n    get(type: string, version?: number): EventContract | undefined;\n    /** Dispatch untrusted input to its contract by `type`/`version` and parse. Never throws. */\n    parse(input: unknown): RegistryParseResult;\n}"
+    "signature": "export interface EventRegistry {\n    readonly contracts: readonly EventContract[];\n    /** Look up a contract by type + version (defaults to version 0). */\n    get(type: string, version?: number): EventContract | undefined;\n    /**\n     * Dispatch untrusted input to its contract by `type`/`version` and parse. Bad input never throws;\n     * a contract with an async payload schema does.\n     */\n    parse(input: unknown): RegistryParseResult;\n}"
   },
   {
     "name": "EventTracingOptions",

@@ -63,7 +63,10 @@ export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV
     payload: InferInput<Schema>,
     options?: { id?: string; occurredAt?: string; causality?: CausalityContext },
   ): EventEnvelope<InferOutput<Schema>>
-  /** Parse untrusted input against this exact contract (type + version + payload). Never throws. */
+  /**
+   * Parse untrusted input against this exact contract (type + version + payload). Bad input never
+   * throws; it returns the issues. An async payload schema throws, as in {@link create}.
+   */
   parse(input: unknown): EventParseResult<InferOutput<Schema>>
   /** Boolean guard form of {@link parse}. */
   is(input: unknown): input is EventEnvelope<InferOutput<Schema>>
