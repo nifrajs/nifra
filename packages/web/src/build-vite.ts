@@ -74,6 +74,7 @@ type ViteBuildManifest = Readonly<Record<string, ViteManifestEntry>>
 
 interface ViteModule {
   build(config: Record<string, unknown>): Promise<unknown>
+  loadEnv(mode: string, envDir: string, prefixes: string): Record<string, string>
 }
 
 /** Load the app's Vite. Resolved from `root` so it's the project's copy, not this package's. */
@@ -222,7 +223,11 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     generatedFiles: [entryFile],
     verified,
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
-    secrets: { env: buildEnv, ...(exemptions ? { exemptions } : {}) },
+    // Vite reads `.env.<mode>` files too; a value only there is still the app's secret to keep.
+    secrets: {
+      env: { ...vite.loadEnv(mode, root, ""), ...buildEnv },
+      ...(exemptions ? { exemptions } : {}),
+    },
   }
   // nifra copies `public/` after the build; the main guard scans it with the bundle.
   const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")

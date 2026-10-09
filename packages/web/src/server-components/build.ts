@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import {
   createBuilder,
   createServer,
+  loadEnv,
   type Plugin,
   type PluginOption,
   type UserConfig,
@@ -14,6 +15,8 @@ import {
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { assertDisposableDir } from "../internal/disposable-dir.ts"
 import { publicEnvDefines } from "../internal/public-env.ts"
+import { buildEnvironment } from "../internal/secret-scan.ts"
+import { vitePublicEnvPrefix } from "../internal/server-boundary.ts"
 import { unsupportedBuiltin } from "../internal/target-compat.ts"
 import {
   viteAssetUrlGuard,
@@ -117,7 +120,12 @@ export async function serverComponentsConfig(
     publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
   }
   const compiler = serverComponentsPlugin({ root, adapter: options.adapter })
-  const client = viteLeakGuard({ ...guards, outDir: resolve(out, "client") })
+  // Vite reads `.env.production` too; a value only there is still the app's secret to keep.
+  const client = viteLeakGuard({
+    ...guards,
+    outDir: resolve(out, "client"),
+    secrets: { env: { ...loadEnv("production", root, ""), ...buildEnvironment() } },
+  })
   const server = viteServerZoneGuard({
     ...guards,
     generatedFiles,
@@ -243,6 +251,8 @@ export async function serverComponentsConfig(
     plugins,
     publicDir: false,
     cacheDir: resolve(root, ".nifra/cache/components-vite"),
+    // Without it Vite inlines every `VITE_*` value from the app's .env files into client code.
+    envPrefix: vitePublicEnvPrefix(options.publicEnvPrefix),
     define: {
       ...publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", process.env),
       "process.env.NIFRA_SSR_BUNDLED": '"1"',
