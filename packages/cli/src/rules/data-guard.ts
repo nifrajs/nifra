@@ -298,6 +298,27 @@ export const missingOutputRule: CheckRule = {
 const OUTPUT_DECLARATION =
   /\bexport\s+(?:const|let|var)\s+(?:loaderOutput|actionOutput)\b[^=]*=|\boutput\s*:/g
 
+/**
+ * Where the schema an output declaration names is written: the expression itself, or, when it is a
+ * bare name, the initializer of the top-level declaration of that name in the same file, followed
+ * through aliases.
+ */
+function schemaExpression(mask: string, start: number): { start: number; end: number } {
+  let range = { start, end: expressionEnd(mask, start) }
+  const seen = new Set<string>()
+  for (;;) {
+    const name = mask.slice(range.start, range.end).trim()
+    if (!/^[A-Za-z_$][\w$]*$/.test(name) || seen.has(name)) return range
+    seen.add(name)
+    const declaration = new RegExp(
+      `(?:^|\\n)(?:export\\s+)?(?:const|let|var)\\s+${name.replaceAll("$", "\\$")}(?![\\w$])[^=]*=`,
+    ).exec(mask)
+    if (declaration === null) return range
+    const from = declaration.index + declaration[0].length
+    range = { start: from, end: expressionEnd(mask, from) }
+  }
+}
+
 export const sensitiveOutputRule: CheckRule = {
   code: "NF-C031",
   title: "Sensitive field in an output schema",
@@ -308,14 +329,13 @@ export const sensitiveOutputRule: CheckRule = {
       const content = ctx.sources.read(file)
       if (content === undefined) continue
       const mask = codePositionMask(content)
+      // A schema several declarations name is reported once.
+      const reported = new Set<number>()
       for (const declaration of mask.matchAll(OUTPUT_DECLARATION)) {
-        const start = declaration.index + declaration[0].length
-        for (const { key, index } of sensitiveKeys(
-          content,
-          mask,
-          start,
-          expressionEnd(mask, start),
-        )) {
+        const schema = schemaExpression(mask, declaration.index + declaration[0].length)
+        for (const { key, index } of sensitiveKeys(content, mask, schema.start, schema.end)) {
+          if (reported.has(index)) continue
+          reported.add(index)
           findings.push(
             diagnostic({
               code: "NF-C031",

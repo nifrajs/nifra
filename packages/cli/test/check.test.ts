@@ -3487,6 +3487,35 @@ describe("data guard from source (NF-C030, NF-C031)", () => {
     ])
     await rm(dir, { recursive: true, force: true })
   })
+
+  test("an output schema given by name is read where the name is declared", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "const member = t.object({ name: t.string(), apiKey: t.string() })",
+        "const userOutput = member",
+        "export const loaderOutput = userOutput",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "backend/me.fn.ts": [
+        'import { t } from "@nifrajs/schema"',
+        'import { serverFn } from "@nifrajs/web/fn"',
+        "const meOutput = t.object({",
+        "  name: t.string(),",
+        "  password: t.string(),",
+        "})",
+        'export const me = serverFn({ output: meOutput }, () => ({ name: "a", password: "b" }))',
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C031")).toEqual([
+      "backend/me.fn.ts:5 error",
+      "routes/a.backend.ts:2 error",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
 })
 
 describe("credentials in browser code (NF-C032)", () => {
