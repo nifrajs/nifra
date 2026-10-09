@@ -51,8 +51,11 @@ function tokenize(
       onDoctype() {
         throw new ServerComponentError("component_protocol", 400)
       },
-      onParseError() {
-        throw new ServerComponentError("component_protocol", 400)
+      onParseError(error) {
+        // `<!>` (Solid's template markers, `<!$>` and `<!/>` too) is a comment to the tokenizer and to
+        // every browser alike; any other parse error is refused.
+        if (error.code !== "incorrectly-opened-comment")
+          throw new ServerComponentError("component_protocol", 400)
       },
     },
   )

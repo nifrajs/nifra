@@ -143,6 +143,13 @@ test("SSR token policy rejects NUL, document declarations and malformed characte
   expect(() => validateComponentHTML("<!--public--><p>Safe &amp; escaped</p>")).not.toThrow()
 })
 
+test("SSR token policy reads Solid's template markers as the comments a browser makes of them", () => {
+  expect(() => validateComponentHTML("<p>Count <!>, total <!$><!/></p>")).not.toThrow()
+  // Other markup a browser turns into a bogus comment is still refused.
+  for (const html of ["<?xml version='1.0'?><p>x</p>", "<p><![CDATA[x]]></p>", "</ p>"])
+    expect(() => validateComponentHTML(html)).toThrow()
+})
+
 test("SSR token policy sees markup that a browser reads inside title, textarea and other text-mode elements", () => {
   const img = "<img src=x onerror=alert(1)>"
   for (const html of [
