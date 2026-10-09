@@ -226,6 +226,58 @@ describe("mountA2A", () => {
     expect(last.status.state).toBe("TASK_STATE_COMPLETED")
   })
 
+  test("a client that cancels the stream aborts the run's signal", async () => {
+    const { app, callPost } = captureApp()
+    const called = Promise.withResolvers<AbortSignal>()
+    const model: AgentModelPort = {
+      complete: (request) => {
+        called.resolve(request.signal)
+        return new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () => reject(new Error("aborted"))),
+        )
+      },
+    }
+    mountA2A(app, { agent: definition(), card: cardInfo, ports: ports({ model }) })
+    const res = await callPost(
+      rpc("SendStreamingMessage", message([], { metadata: { input: { prompt: "hey" } } })),
+    )
+    const signal = await called.promise
+    expect(signal.aborted).toBe(false)
+    await res.body?.cancel()
+    expect(signal.aborted).toBe(true)
+  })
+
+  test("a signal the caller passes through ports still reaches the streamed run", async () => {
+    const { app, callPost } = captureApp()
+    const caller = new AbortController()
+    const called = Promise.withResolvers<AbortSignal>()
+    const model: AgentModelPort = {
+      complete: (request) => {
+        called.resolve(request.signal)
+        return new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () => reject(new Error("aborted"))),
+        )
+      },
+    }
+    mountA2A(app, {
+      agent: definition(),
+      card: cardInfo,
+      ports: ports({ model, signal: caller.signal }),
+    })
+    const res = await callPost(
+      rpc("SendStreamingMessage", message([], { metadata: { input: { prompt: "hey" } } })),
+    )
+    const signal = await called.promise
+    caller.abort()
+    expect(signal.aborted).toBe(true)
+    expect(frames(await res.text()).at(-1)?.result).toEqual({
+      statusUpdate: expect.objectContaining({
+        final: true,
+        status: expect.objectContaining({ state: "TASK_STATE_CANCELED" }),
+      }),
+    })
+  })
+
   test("suspends for approval as input-required and resumes via message metadata", async () => {
     const { app, callPost } = captureApp()
     const store = new MemoryAgentStateStore()
