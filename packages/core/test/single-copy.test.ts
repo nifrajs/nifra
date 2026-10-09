@@ -722,6 +722,30 @@ test("the load hook re-exports the app's counterpart, and returns a file with no
   }
 })
 
+test("a file with no counterpart is handed back with the loader its extension names", async () => {
+  const { ground, app, theirs } = await linkedRepos("load-hook-loader", { declaration: ["state"] })
+  try {
+    const load = hook(hooksOf(singleCopyPlugin({ cwd: app, onSkip: () => {} })).load)
+    const contents = "export const extra: Set<string> = new Set();\n"
+    const cases: [file: string, loader: string][] = [
+      ["extra.ts", "ts"],
+      ["extra.mts", "ts"],
+      ["extra.cts", "ts"],
+      ["extra.tsx", "tsx"],
+      ["extra.jsx", "jsx"],
+      ["extra.mjs", "js"],
+    ]
+    for (const [file, loader] of cases) {
+      const path = join(theirs, file)
+      await writeFile(path, contents)
+      expect(load.filter.test(path)).toBe(true)
+      expect(load.run(path)).toEqual({ contents, loader })
+    }
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
 test("no declaration registers no hook, and a version skew registers the resolver alone", async () => {
   const { ground, app } = await linkedRepos("hooks-registered", { siblingVersion: "2.0.0" })
   try {
