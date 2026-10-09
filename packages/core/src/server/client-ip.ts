@@ -22,6 +22,9 @@
  * - `{ header: name }` - trust a single named header's first value (e.g. a CDN that overwrites it at
  *   the edge). Only declare this when the app is reachable **exclusively** through that edge; a
  *   directly-reachable app lets any client forge the header.
+ *
+ * A hop count that is not a non-negative integer throws when the server is created; an invalid
+ * header name fails on the first request that reads `c.clientIp`.
  */
 export type ClientIpTrust = { readonly trustedHops: number } | { readonly header: string }
 

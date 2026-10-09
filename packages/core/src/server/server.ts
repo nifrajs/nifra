@@ -1095,7 +1095,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.wsMaxPayloadBytes = wsMaxPayloadBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
     this.wsUpgradeTimeoutMs = options.wsUpgradeTimeoutMs ?? DEFAULT_WS_UPGRADE_TIMEOUT_MS
-    this.clientIpTrust = options.clientIp
+    const trust = options.clientIp
+    if (
+      trust !== undefined &&
+      !("header" in trust) &&
+      !(Number.isSafeInteger(trust.trustedHops) && trust.trustedHops >= 0)
+    ) {
+      throw new RangeError("clientIp trustedHops must be a non-negative integer")
+    }
+    this.clientIpTrust = trust
     this.acceptInboundDeadlines = options.acceptInboundDeadlines ?? false
     this.maxInboundDeadlineMs = options.maxInboundDeadlineMs ?? 30_000
     this.deadlineAdmissionOptions = Object.freeze({
