@@ -6063,10 +6063,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // SvelteKit semantics): as built, plus the cookies the request queued, so a session set or
     // cleared before `throw redirect(...)` / `requireSession(...)` ships. Don't run onError or log
     // it as a 500.
-    if (err instanceof Response) return finalize(err, responseSet(ctx), ctx)
-    // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
-    // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
-    if (isResponseResult(err))
+    if (err instanceof Response && err !== ctx.jsonReply)
+      return finalize(err, responseSet(ctx), ctx)
+    // Same rule for a thrown `status(...)` or `c.json(...)`, which stay held to the route's contract.
+    if (err instanceof Response || isResponseResult(err))
       return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, err)
     if (entry.onError.length === 0) {
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
@@ -6091,7 +6091,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (let i = 0; i < entry.onError.length; i++) {
       const outcome = entry.onError[i]!(err, ctx)
       const handled = outcome instanceof Promise ? await outcome : outcome
-      if (handled !== undefined) return finalize(handled, responseSet(ctx), ctx)
+      if (handled === undefined) continue
+      const contract = entry.responseContract
+      if (contract === undefined || (handled !== ctx.jsonReply && !isResponseResult(handled)))
+        return finalize(handled, responseSet(ctx), ctx)
+      // Checked here, not through finishLifecycleContract: a throwing schema must not re-enter onError.
+      try {
+        const checked = await contract.runtime.check(contract.definition, handled, ctx)
+        return this.finishContractOutcome(ctx, finalize, wrapResponse, checked)
+      } catch (checkError) {
+        this.logRequestError(checkError, ctx)
+        return wrapResponse(plainError(500, "internal_error"))
+      }
     }
     this.logRequestError(err, ctx)
     return wrapResponse(plainError(500, "internal_error"))

@@ -158,7 +158,9 @@ contract-first registry.
 
 `response` and `errors` are typed by default but are not runtime enforcement by themselves. Install
 `responseContract("enforce")` before the routes it should cover to validate JSON/status payloads and
-prevent extra fields from reaching the wire. `warn` preserves the original payload during migration.
+prevent extra fields from reaching the wire. That covers a `status(...)` or `c.json(...)` reply a
+handler returns or throws, a hook returns, or `onError` answers with. `warn` preserves the original
+payload during migration.
 Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
 must be governed by assurance/static review.
 

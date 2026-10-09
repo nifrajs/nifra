@@ -381,8 +381,10 @@ export default function Security() {
         serves the payload <strong>unchanged</strong> - so turning it on in staging can never be the
         thing that broke production. <code>&quot;enforce&quot;</code> serializes the validated value
         instead of the raw result. Both cover a returned value, a <code>status(...)</code> result and
-        a <code>c.json(...)</code> reply alike; only a hand-built <code>Response</code> (a redirect, a
-        stream) passes unchecked. Install it before the routes it should cover: like{" "}
+        a <code>c.json(...)</code> reply alike, whether the handler returns or throws it, a hook
+        returns it early, or <code>onError</code> answers with it; only a hand-built{" "}
+        <code>Response</code> (a redirect, a stream) passes unchecked. Install it before the routes it
+        should cover: like{" "}
         <code>idempotency()</code>, the decision is made per route at registration.
       </p>
       <p>

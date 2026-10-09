@@ -160,6 +160,22 @@ function isEarly(value: unknown): value is Response | ResponseResult {
   return value instanceof Response || isResponseResult(value)
 }
 
+/** A hook's early reply. A `status(...)` or `c.json(...)` one is held to the route's response
+ * contract like the handler's. */
+function finishEarly<T>(
+  host: RouteProgramRuntime,
+  entry: RouteEntry,
+  ctx: RawContext,
+  value: unknown,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
+): ProgramResult<T> {
+  return entry.responseContract !== undefined &&
+    (value === ctx.jsonReply || isResponseResult(value))
+    ? host.finishProgramResult(entry, ctx, value, finalize, wrapResponse)
+    : finalize(value, responseSet(ctx), ctx)
+}
+
 function authHeadersOf(source: RequestSource): import("../server/auth.ts").AuthHeaders {
   return Object.freeze({
     get: (name: string) => source.headers.get(name),
@@ -550,14 +566,15 @@ async function runAuthBeforeValidation<T>(
     for (const derive of program.derives) {
       const result = derive(ctx)
       const settled = result instanceof Promise ? await result : result
-      if (isEarly(settled)) return finalize(settled, responseSet(ctx), ctx)
+      if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       Object.assign(ctx, settled)
     }
 
     for (const before of program.beforeHandle) {
       const result = before(ctx)
       const settled = result instanceof Promise ? await result : result
-      if (settled !== undefined) return finalize(settled, responseSet(ctx), ctx)
+      if (settled !== undefined)
+        return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
     }
 
     for (const stage of program.validationStages) {
@@ -689,7 +706,7 @@ function runHooksSync<T>(
         initial,
       )
     }
-    if (isEarly(outcome)) return finalize(outcome, responseSet(ctx), ctx)
+    if (isEarly(outcome)) return finishEarly(host, entry, ctx, outcome, finalize, wrapResponse)
     Object.assign(ctx, outcome)
   }
   for (let i = beforeIndex; i < program.beforeHandle.length; i++) {
@@ -708,7 +725,7 @@ function runHooksSync<T>(
         initial,
       )
     }
-    if (outcome !== undefined) return finalize(outcome, responseSet(ctx), ctx)
+    if (outcome !== undefined) return finishEarly(host, entry, ctx, outcome, finalize, wrapResponse)
   }
 
   const output = program.handler(ctx)
@@ -766,10 +783,11 @@ async function continueProgram<T>(
     if (pendingPhase.kind === "validation") {
       if (settled !== undefined) return wrapResponse(settled as Response | ResponseResult)
     } else if (pendingPhase.kind === "derive") {
-      if (isEarly(settled)) return finalize(settled, responseSet(ctx), ctx)
+      if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       Object.assign(ctx, settled)
     } else if (pendingPhase.kind === "before") {
-      if (settled !== undefined) return finalize(settled, responseSet(ctx), ctx)
+      if (settled !== undefined)
+        return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
     } else if (pendingPhase.kind === "handler") {
       result = settled
     } else {
@@ -821,7 +839,7 @@ async function runAsyncStages<T>(
       for (let i = deriveStart; i < program.derives.length; i++) {
         const outcome = program.derives[i]!(ctx)
         const settled = outcome instanceof Promise ? await outcome : outcome
-        if (isEarly(settled)) return finalize(settled, responseSet(ctx), ctx)
+        if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
         Object.assign(ctx, settled)
       }
     }
@@ -835,7 +853,8 @@ async function runAsyncStages<T>(
       for (let i = beforeStart; i < program.beforeHandle.length; i++) {
         const outcome = program.beforeHandle[i]!(ctx)
         const settled = outcome instanceof Promise ? await outcome : outcome
-        if (settled !== undefined) return finalize(settled, responseSet(ctx), ctx)
+        if (settled !== undefined)
+          return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       }
       const output = program.handler(ctx)
       result = output instanceof Promise ? await output : output

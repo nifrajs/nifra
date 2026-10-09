@@ -3438,8 +3438,10 @@ keeps the lane out of your bundle rather than shipping a disabled branch to ever
 serves the payload **unchanged** - so turning it on in staging can never be the
 thing that broke production. `"enforce"` serializes the validated value
 instead of the raw result. Both cover a returned value, a `status(...)` result and
-a `c.json(...)` reply alike; only a hand-built `Response` (a redirect, a
-stream) passes unchecked. Install it before the routes it should cover: like
+a `c.json(...)` reply alike, whether the handler returns or throws it, a hook
+returns it early, or `onError` answers with it; only a hand-built
+`Response` (a redirect, a stream) passes unchecked. Install it before the routes it
+should cover: like
 `idempotency()`, the decision is made per route at registration.
 
 Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes
@@ -13434,7 +13436,9 @@ contract-first registry.
 
 `response` and `errors` are typed by default but are not runtime enforcement by themselves. Install
 `responseContract("enforce")` before the routes it should cover to validate JSON/status payloads and
-prevent extra fields from reaching the wire. `warn` preserves the original payload during migration.
+prevent extra fields from reaching the wire. That covers a `status(...)` or `c.json(...)` reply a
+handler returns or throws, a hook returns, or `onError` answers with. `warn` preserves the original
+payload during migration.
 Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
 must be governed by assurance/static review.
 
