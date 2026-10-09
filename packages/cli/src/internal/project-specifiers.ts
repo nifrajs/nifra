@@ -20,6 +20,8 @@ export interface ProjectResolver extends SpecifierResolver {
    * target of its alias covers `file`. Paths are absolute and unresolved, as `fromFile` is spelled.
    */
   readonly respell: (fromFile: string, specifier: string, file: string) => string | undefined
+  /** The `paths` patterns of the nearest tsconfig at or above `dir`, after its `extends` chain. */
+  readonly pathPatterns: (dir: string) => readonly string[]
 }
 
 /** How an alias specifier reached its file: what a rewrite through the same alias has to fit. */
@@ -390,7 +392,13 @@ export function createSpecifierResolver(): ProjectResolver {
     resolved.set(key, path)
     return path
   }
-  return Object.assign(resolve, { respell })
+  const pathPatterns = (dir: string): readonly string[] => {
+    const tsconfig = tsconfigFor(dir)
+    const config = tsconfig === undefined ? undefined : pathsConfig(tsconfig)
+    return (config?.paths ?? []).map(([pattern]) => pattern)
+  }
+
+  return Object.assign(resolve, { respell, pathPatterns })
 
   function resolveFrom(fromFile: string, specifier: string): string | undefined {
     let found: string | undefined

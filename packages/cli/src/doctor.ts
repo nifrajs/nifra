@@ -38,6 +38,7 @@ import {
 } from "./hand-built-manifest.ts"
 import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
@@ -366,16 +367,6 @@ const declaredPackages = (pkg: Record<string, unknown>): ReadonlySet<string> => 
   return declared
 }
 
-const tsconfigPaths = async (
-  root: string,
-): Promise<Readonly<Record<string, unknown>> | undefined> => {
-  const tsconfig = await readJson(join(root, "tsconfig.json"))
-  const compilerOptions = tsconfig?.compilerOptions as
-    | { paths?: Record<string, unknown> }
-    | undefined
-  return compilerOptions?.paths
-}
-
 /** Build per-package declaration scopes for a workspace. Longest roots are first so nested packages
  * own their source; files outside a workspace package remain owned by the root manifest. */
 async function doctorPackageScopes(
@@ -384,16 +375,16 @@ async function doctorPackageScopes(
 ): Promise<readonly DoctorPackageScope[]> {
   const importers = await workspaceImporters(cwd, rootPackage, true)
   const packages = importers.length > 0 ? importers : [{ root: cwd, package: rootPackage }]
-  const rootPaths = await tsconfigPaths(cwd)
-  const scopes = await Promise.all(
-    packages.map(async (entry): Promise<DoctorPackageScope> => {
-      const paths = (await tsconfigPaths(entry.root)) ?? rootPaths
-      return {
-        root: entry.root,
-        relativeRoot: relative(cwd, entry.root).split("\\").join("/"),
-        declared: declaredPackages(entry.package),
-        isAlias: aliasMatcher(paths),
-      }
+  // The nearest tsconfig, read as TypeScript does: comments, trailing commas and `extends` included.
+  const resolver = createSpecifierResolver()
+  const scopes = packages.map(
+    (entry): DoctorPackageScope => ({
+      root: entry.root,
+      relativeRoot: relative(cwd, entry.root).split("\\").join("/"),
+      declared: declaredPackages(entry.package),
+      isAlias: aliasMatcher(
+        Object.fromEntries(resolver.pathPatterns(entry.root).map((pattern) => [pattern, []])),
+      ),
     }),
   )
   return scopes.sort((a, b) => b.relativeRoot.length - a.relativeRoot.length)

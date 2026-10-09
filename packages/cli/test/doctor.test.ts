@@ -181,6 +181,28 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("tsconfig is read as TypeScript reads it: comments, trailing commas and extends", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+    await writeFile(
+      join(dir, "tsconfig.json"),
+      '{\n  // the shared base holds the aliases\n  "extends": "./tsconfig.base.json",\n}\n',
+    )
+    await writeFile(
+      join(dir, "tsconfig.base.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./src/*"] } } }),
+    )
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "util.ts"), "export const x = 1\n")
+    await writeFile(
+      join(dir, "src", "a.ts"),
+      'import { x } from "@lib/util"\nimport { z } from "zod"\nexport const y = [x, z]\n',
+    )
+    const result = await collectDoctorResult(dir)
+    expect(result.findings.map((finding) => finding.package)).toEqual(["zod"])
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("clean project (all imports declared) passes", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
     await writeFile(
