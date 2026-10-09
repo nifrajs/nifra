@@ -8,10 +8,36 @@
  * process, and the MCP server is long-lived. A resolver caches what it reads for one check run only.
  */
 import { readFileSync, realpathSync, statSync } from "node:fs"
-import { dirname, extname, isAbsolute, join } from "node:path"
+import { basename, dirname, extname, isAbsolute, join } from "node:path"
 
 /** `(absolute importing file, specifier)` to the real path of the file it loads, or `undefined`. */
 export type SpecifierResolver = (fromFile: string, specifier: string) => string | undefined
+
+export interface ProjectResolver extends SpecifierResolver {
+  /**
+   * `specifier`, an alias as `fromFile` writes it, rewritten through the same alias to name `file`
+   * instead, in the same style (extension, index). `undefined` when `specifier` is not an alias or no
+   * target of its alias covers `file`. Paths are absolute and unresolved, as `fromFile` is spelled.
+   */
+  readonly respell: (fromFile: string, specifier: string, file: string) => string | undefined
+}
+
+/** How an alias specifier reached its file: what a rewrite through the same alias has to fit. */
+interface AliasRule {
+  /** The pattern the specifier matched; `undefined` for a `baseUrl` name, which matches none. */
+  readonly key: string | undefined
+  /** Every pattern in the same scope: a rewritten name must still match `key`, or none for `baseUrl`. */
+  readonly keys: readonly string[]
+  /** The directory targets resolve against. */
+  readonly base: string
+  /** The key's targets in try order, `STAR` where the matched text goes. */
+  readonly templates: readonly string[]
+  /** The path the specifier spells before probing, and the file probing found. */
+  readonly written: string
+  readonly found: string
+}
+
+const STAR = "\u0000"
 
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json"]
 // TypeScript's ESM convention: `./x.js` names `x.ts` when only the source exists.
@@ -65,7 +91,7 @@ export function parseJsonc(text: string): unknown {
     } else if (ch === "," && /^\s*[}\]]/.test(code.slice(i + 1))) {
     } else json += ch
   }
-  return JSON.parse(json.replace(/^﻿/, ""))
+  return JSON.parse(json.replace(/^\uFEFF/, ""))
 }
 
 const record = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
@@ -101,6 +127,21 @@ function probe(base: string): string | undefined {
   return undefined
 }
 
+/**
+ * `file` written the way `written` names `found`: as is, without its extension, as its folder when
+ * `found` is an index, or with the `.js` name of a `.ts` source.
+ */
+function sameStyle(written: string, found: string, file: string): string {
+  if (written === found) return file
+  const ext = extname(file)
+  const bare = file.slice(0, file.length - ext.length)
+  if (found.startsWith(`${written}/index.`) || found.startsWith(`${written}\\index.`))
+    return basename(file).startsWith("index.") ? dirname(file) : bare
+  if (found.startsWith(written)) return bare
+  const writtenExt = extname(written)
+  return SOURCE_FOR[writtenExt] === undefined ? file : `${bare}${writtenExt}`
+}
+
 /** Longest-prefix `*` match, TypeScript's rule for `paths` and Node's for `imports`. */
 function matchPattern(
   patterns: readonly string[],
@@ -121,7 +162,7 @@ function matchPattern(
   return best
 }
 
-export function createSpecifierResolver(): SpecifierResolver {
+export function createSpecifierResolver(): ProjectResolver {
   const configs = new Map<string, PathsConfig | undefined>()
   const tsconfigByDir = new Map<string, string | undefined>()
   const manifests = new Map<string, Readonly<Record<string, unknown>> | undefined>()
@@ -228,23 +269,8 @@ export function createSpecifierResolver(): SpecifierResolver {
     aliases.set(key, found)
     return found
   }
-  const aliasTarget = (tsconfig: string, specifier: string): string | undefined => {
-    const config = pathsConfig(tsconfig)
-    if (config === undefined) return undefined
-    const match = matchPattern(
-      config.paths.map(([pattern]) => pattern),
-      specifier,
-    )
-    if (match !== undefined) {
-      const targets = config.paths.find(([pattern]) => pattern === match.pattern)?.[1] ?? []
-      for (const target of targets) {
-        const found = probe(join(config.pathsBase, target.replace("*", match.star ?? "")))
-        if (found !== undefined) return found
-      }
-      return undefined
-    }
-    return config.baseUrl === undefined ? undefined : probe(join(config.baseUrl, specifier))
-  }
+  const aliasTarget = (tsconfig: string, specifier: string): string | undefined =>
+    pathsRule(tsconfig, specifier)?.found
 
   /** The nearest package.json at or above `dir`: the package scope Node reads `imports` from. */
   const packageFor = (dir: string): string | undefined => {
@@ -274,20 +300,89 @@ export function createSpecifierResolver(): SpecifierResolver {
     return undefined
   }
 
-  const viaImports = (fromFile: string, specifier: string): string | undefined => {
+  const importsRule = (fromFile: string, specifier: string): AliasRule | undefined => {
     const manifestPath = packageFor(dirname(fromFile))
     if (manifestPath === undefined) return undefined
     if (!manifests.has(manifestPath)) manifests.set(manifestPath, readJsonc(manifestPath))
     const imports = record(manifests.get(manifestPath)?.imports)
     if (imports === undefined) return undefined
-    const match = matchPattern(Object.keys(imports), specifier)
+    const keys = Object.keys(imports)
+    const match = matchPattern(keys, specifier)
     if (match === undefined) return undefined
-    const target = importTarget(imports[match.pattern], match.star)
-    return target === undefined ? undefined : probe(join(dirname(manifestPath), target))
+    const template = importTarget(imports[match.pattern], STAR)
+    if (template === undefined) return undefined
+    const base = dirname(manifestPath)
+    const written = join(base, template.replaceAll(STAR, match.star ?? ""))
+    const found = probe(written)
+    return found === undefined
+      ? undefined
+      : { key: match.pattern, keys, base, templates: [template], written, found }
+  }
+  const viaImports = (fromFile: string, specifier: string): string | undefined =>
+    importsRule(fromFile, specifier)?.found
+
+  const tsconfigRule = (fromFile: string, specifier: string): AliasRule | undefined => {
+    const tsconfig = tsconfigFor(dirname(fromFile))
+    return tsconfig === undefined ? undefined : pathsRule(tsconfig, specifier)
+  }
+  const pathsRule = (tsconfig: string, specifier: string): AliasRule | undefined => {
+    const config = pathsConfig(tsconfig)
+    if (config === undefined) return undefined
+    const keys = config.paths.map(([pattern]) => pattern)
+    const match = matchPattern(keys, specifier)
+    if (match === undefined) {
+      if (config.baseUrl === undefined) return undefined
+      const written = join(config.baseUrl, specifier)
+      const found = probe(written)
+      return found === undefined
+        ? undefined
+        : { key: undefined, keys, base: config.baseUrl, templates: [STAR], written, found }
+    }
+    const targets = config.paths.find(([pattern]) => pattern === match.pattern)?.[1] ?? []
+    for (const target of targets) {
+      const written = join(config.pathsBase, target.replace("*", match.star ?? ""))
+      const found = probe(written)
+      if (found === undefined) continue
+      const templates = targets.map((t) => t.replace("*", STAR))
+      return { key: match.pattern, keys, base: config.pathsBase, templates, written, found }
+    }
+    return undefined
+  }
+
+  const respell = (fromFile: string, specifier: string, file: string): string | undefined => {
+    if (/^\.\.?(?:\/|$)/.test(specifier) || isAbsolute(specifier)) return undefined
+    const rule =
+      (specifier.startsWith("#") ? importsRule(fromFile, specifier) : undefined) ??
+      tsconfigRule(fromFile, specifier)
+    if (rule === undefined) return undefined
+    const spelled = sameStyle(rule.written, rule.found, file)
+    for (const template of rule.templates) {
+      const at = template.indexOf(STAR)
+      if (at === -1) continue
+      // An empty head still ends at a folder boundary: `src2/x` is not under a `baseUrl` of `src`.
+      const prefix = join(rule.base, template.slice(0, at) || "./")
+      const suffix = template.slice(at + STAR.length)
+      if (!spelled.startsWith(prefix) || !spelled.endsWith(suffix)) continue
+      if (spelled.length < prefix.length + suffix.length) continue
+      const star = spelled
+        .slice(prefix.length, spelled.length - suffix.length)
+        .replaceAll("\\", "/")
+      if (star === "" || star.startsWith("/")) continue
+      const keyAt = rule.key?.indexOf("*") ?? 0
+      if (keyAt === -1) continue
+      const next =
+        rule.key === undefined
+          ? star
+          : `${rule.key.slice(0, keyAt)}${star}${rule.key.slice(keyAt + 1)}`
+      // The rewritten name must take the same route: another, longer pattern would claim it.
+      if (matchPattern(rule.keys, next)?.pattern !== rule.key) continue
+      return next
+    }
+    return undefined
   }
 
   const resolved = new Map<string, string | undefined>()
-  return (fromFile, specifier) => {
+  const resolve: SpecifierResolver = (fromFile, specifier) => {
     // Every rule below reads only the importing file's directory, so the answer is the directory's.
     const key = `${dirname(fromFile)}\0${specifier}`
     if (resolved.has(key)) return resolved.get(key)
@@ -295,6 +390,7 @@ export function createSpecifierResolver(): SpecifierResolver {
     resolved.set(key, path)
     return path
   }
+  return Object.assign(resolve, { respell })
 
   function resolveFrom(fromFile: string, specifier: string): string | undefined {
     let found: string | undefined

@@ -246,10 +246,13 @@ export default function Structure() {
         which follows the imports the bundler follows: relative paths, tsconfig <code>paths</code>{" "}
         and <code>baseUrl</code>, <code>package.json</code> <code>imports</code>, and the{" "}
         <code>clientModule</code> the browser entry loads. An app on the older layout moves with <code>nifra migrate layout</code>: a dry run that
-        reports every move, then <code>--write</code>. It rewrites imports and test-runner mocks,
-        adds the zone folders to tsconfig <code>include</code> and <code>.nifra/</code> to{" "}
+        reports every move, then <code>--write</code>. It follows the same imports, rewrites them
+        and test-runner mocks (an alias through the same alias), moves the config's{" "}
+        <code>clientModule</code> and component pipeline entries with their modules, adds the zone
+        folders to tsconfig <code>include</code> and <code>.nifra/</code> to{" "}
         <code>.gitignore</code>, and leaves data files and folders zoned in{" "}
-        <code>package.json</code> where they are, reporting what still needs a hand.
+        <code>package.json</code> where they are. It reports what still needs a hand, such as an
+        alias with no target that covers a moved file, or a specifier that names nothing installed.
       </p>
     </div>
   )

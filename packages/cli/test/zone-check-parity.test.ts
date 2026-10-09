@@ -2,9 +2,11 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { realpathSync } from "node:fs"
 import { join } from "node:path"
 import { buildClient } from "@nifrajs/web/build"
+import * as ts from "typescript"
 import { collectCheckResult } from "../src/check.ts"
 import { appDirs, clientModuleRoot } from "../src/client-module.ts"
 import { createSpecifierResolver } from "../src/internal/project-specifiers.ts"
+import { migrateLayout } from "../src/migrate-layout.ts"
 import {
   createFixtureProject,
   createFixtureRoot,
@@ -166,5 +168,36 @@ describe("clientModuleRoot", () => {
     })
     expect(clientModuleRoot(root, "pkg", resolve)).toBeUndefined()
     expect(clientModuleRoot(root, "missing", resolve)).toBeUndefined()
+  })
+})
+
+describe("nifra migrate layout", () => {
+  test("moves an aliased app into zones that both check and build accept", async () => {
+    const root = app({
+      "nifra.config.ts": 'export const clientModule = "./lib/client.tsx"\n',
+      "lib/client.tsx":
+        'import { fmt } from "~/lib/fmt"\nexport function mountRouter() {\n  return fmt(1)\n}\n',
+      "lib/fmt.ts":
+        'import { pad } from "~/lib/pad"\nexport const fmt = (n: number) => pad(String(n))\n',
+      "lib/pad.ts": "export const pad = (s: string) => s.padStart(2)\n",
+      "server/session.ts": "export const session = 1\n",
+      "routes/index.tsx": [
+        'import { fmt } from "~/lib/fmt"',
+        'import { session } from "~/server/session"',
+        "export const loader = () => ({ n: session })",
+        "export default () => fmt(1)",
+        "",
+      ].join("\n"),
+    })
+    expect(await buildRefuses(root, "lib/client.tsx")).not.toEqual([])
+    const result = await migrateLayout(root, { typescript: ts, write: true })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "lib/client.tsx -> frontend/lib/client.tsx",
+      "lib/fmt.ts -> frontend/lib/fmt.ts",
+      "lib/pad.ts -> frontend/lib/pad.ts",
+      "server/session.ts -> backend/server/session.ts",
+    ])
+    expect(await buildRefuses(root, "frontend/lib/client.tsx")).toEqual([])
+    expect(await zoneFindings(root)).toEqual([])
   })
 })

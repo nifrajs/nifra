@@ -8,9 +8,11 @@
  *   2. folds each `_middleware.ts` into its directory's `_layout.backend.ts` as `middleware`;
  *   3. moves `backend.ts` to `backend/app.ts` and `framework.ts` to `backend/framework.ts`;
  *   4. moves each `x.server.ts` under `backend/` without the retired suffix, and zones every other module
- *      by who imports it at runtime: only route frontends -> `frontend/`, only the server side ->
- *      `backend/`, both -> `shared/`;
- *   5. rewrites every relative import in the app to the new locations (test-runner mocks included),
+ *      by who imports it at runtime: only route frontends and the `clientModule` -> `frontend/`, only
+ *      the server side -> `backend/`, both -> `shared/`. Imports through tsconfig `paths`/`baseUrl` and
+ *      package.json `imports` count as the bundler reads them;
+ *   5. rewrites every import in the app to the new locations (test-runner mocks included), an alias
+ *      through the same alias, the config's `clientModule` and `componentPipeline.entries` paths,
  *      `@nifrajs/web/server-only` to `@nifrajs/web/backend-only`, and `ServerOnly` to `BackendOnly`;
  *   6. adds the zone folders moved TypeScript lands in to tsconfig `include`, and `.nifra/` to
  *      `.gitignore`.
@@ -18,24 +20,27 @@
  * Data files (JSON, YAML, CSV, ...) and folders the app zones in package.json stay where they are.
  *
  * It is a dry run unless `write` is set, and it reports what it could not decide (a frontend that uses
- * a moved name at runtime, a helper both halves need, a loader with no output schema) instead of
- * guessing.
+ * a moved name at runtime, a helper both halves need, a loader with no output schema, an alias no
+ * target covers after a move, a specifier that names nothing) instead of guessing.
  */
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, extname, join, posix, relative, resolve } from "node:path"
+import { builtinModules } from "node:module"
+import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path"
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import { parseZoneConfig, type ZoneConfig } from "@nifrajs/web/zones"
 import type * as TS from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
 
@@ -1017,6 +1022,87 @@ const ROOT_MOVES: Readonly<Record<string, string>> = {
   "framework.ts": "backend/framework.ts",
 }
 /** Root files that stay where they are: the CLI's config, and scripts no build loads. */
+/** The config files the loader reads, old layout included; a path field may live in any of them. */
+const CONFIG_FILES = ["nifra.config.ts", "framework.ts", "backend/framework.ts"]
+
+interface ConfigEntry {
+  /** `clientModule`, or `componentPipeline.entries.<name>`. */
+  readonly field: string
+  readonly role: "frontend" | "backend"
+  readonly value: string
+  /** The literal's text, quotes excluded: [start, end). */
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * The module paths a config exports as string literals: `clientModule` and the component pipeline's
+ * `entries`. The browser loads `clientModule` and `entries.client`; `ssr` and `rsc` run on the server.
+ */
+function configEntries(ts: typeof TS, file: string, text: string): ConfigEntry[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bare = (node: TS.Expression | undefined): TS.Expression | undefined => {
+    let current = node
+    while (
+      current !== undefined &&
+      (ts.isAsExpression(current) ||
+        ts.isSatisfiesExpression(current) ||
+        ts.isParenthesizedExpression(current))
+    )
+      current = current.expression
+    return current
+  }
+  const out: ConfigEntry[] = []
+  const literal = (field: string, role: ConfigEntry["role"], node: TS.Expression | undefined) => {
+    const value = bare(node)
+    if (value === undefined || !ts.isStringLiteralLike(value)) return
+    out.push({
+      field,
+      role,
+      value: value.text,
+      start: value.getStart(sf) + 1,
+      end: value.getEnd() - 1,
+    })
+  }
+  for (const statement of sf.statements) {
+    if (
+      !ts.isVariableStatement(statement) ||
+      !hasModifier(ts, statement, ts.SyntaxKind.ExportKeyword)
+    )
+      continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name)) continue
+      if (declaration.name.text === "clientModule")
+        literal("clientModule", "frontend", declaration.initializer)
+      if (declaration.name.text !== "componentPipeline") continue
+      const pipeline = bare(declaration.initializer)
+      if (pipeline === undefined || !ts.isObjectLiteralExpression(pipeline)) continue
+      for (const property of pipeline.properties) {
+        if (!ts.isPropertyAssignment(property) || property.name.getText(sf) !== "entries") continue
+        const entries = bare(property.initializer)
+        if (entries === undefined || !ts.isObjectLiteralExpression(entries)) continue
+        for (const entry of entries.properties) {
+          if (!ts.isPropertyAssignment(entry)) continue
+          const name = entry.name.getText(sf).replace(/^["']|["']$/g, "")
+          if (name === "client" || name === "ssr" || name === "rsc")
+            literal(
+              `componentPipeline.entries.${name}`,
+              name === "client" ? "frontend" : "backend",
+              entry.initializer,
+            )
+        }
+      }
+    }
+  }
+  return out
+}
+
+/** The package an import names: `@scope/pkg` or `pkg`, without a subpath. */
+const packageName = (specifier: string): string => {
+  const parts = specifier.split("/")
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? "")
+}
+
 const isRootScript = (file: string): boolean =>
   !file.includes("/") && SOURCE_FILE.test(file) && ROOT_MOVES[file] === undefined
 const isTestFile = (file: string): boolean =>
@@ -1109,9 +1195,62 @@ export async function migrateLayout(
   for (const [from, to] of Object.entries(ROOT_MOVES)) if (next.has(from)) moveMap.set(from, to)
   // Assets (images, fonts) resolve too, so they move with the modules that import them.
   const known = new Set([...next.keys(), ...everyFile])
+  const resolver = createSpecifierResolver()
+  const realRoot = (() => {
+    try {
+      return realpathSync(root)
+    } catch {
+      return root
+    }
+  })()
+  /** A non-relative specifier the app's tsconfig `paths`/`baseUrl` or package.json `imports` maps to
+   * one of its files, read from disk as the bundler reads it. */
+  const viaAlias = (file: string, specifier: string): string | undefined => {
+    if (specifier.startsWith(".") || isAbsolute(specifier)) return undefined
+    const found = resolver(join(root, file), specifier)
+    if (found === undefined) return undefined
+    const rel = toPosix(relative(realRoot, found))
+    return rel.startsWith("../") || isAbsolute(rel) || !known.has(rel) ? undefined : rel
+  }
+  const resolveAny = (file: string, specifier: string): string | undefined =>
+    resolveIn(known, file, specifier) ?? viaAlias(file, specifier)
+  const ownName = (() => {
+    try {
+      const name: unknown = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).name
+      return typeof name === "string" ? name : undefined
+    } catch {
+      return undefined
+    }
+  })()
+  const installed = new Map<string, boolean>()
+  /** Whether a bare specifier names something outside the app that exists: a built-in, a URL or a
+   * scheme the bundler owns, the app's own package name, or a package installed at or above it. */
+  const external = (specifier: string): boolean => {
+    if (/^[a-z][a-z\d+.-]*:/i.test(specifier) || specifier === "bun") return true
+    const name = packageName(specifier.replace(/[?#].*$/, ""))
+    if (builtinModules.includes(name) || name === ownName) return true
+    let found = installed.get(name)
+    if (found === undefined) {
+      const types = `@types/${name.startsWith("@") ? name.slice(1).replace("/", "__") : name}`
+      found = false
+      for (let dir = root; ; dir = dirname(dir)) {
+        if (
+          existsSync(join(dir, "node_modules", name)) ||
+          existsSync(join(dir, "node_modules", types))
+        ) {
+          found = true
+          break
+        }
+        if (dirname(dir) === dir) break
+      }
+      installed.set(name, found)
+    }
+    return found
+  }
   const edges = new Map<string, Array<{ target: string; typeOnly: boolean }>>()
   for (const [file, text] of next) {
     const refs: Array<{ target: string; typeOnly: boolean }> = []
+    const reported = new Set<string>()
     for (const ref of importsOf(ts, file, text)) {
       if (ref.specifier === "@nifrajs/web/plugins/vite-server-only") {
         issues.push({
@@ -1120,23 +1259,52 @@ export async function migrateLayout(
             "imports the retired @nifrajs/web/plugins/vite-server-only; remove it: nifra's Vite builds and dev server enforce the zones themselves (a hand-built Vite config uses viteLeakGuard from @nifrajs/web/plugins/vite-leak-guard)",
         })
       }
-      const target = resolveIn(known, file, ref.specifier)
+      const target = resolveAny(file, ref.specifier)
       if (target !== undefined) refs.push({ target, typeOnly: ref.typeOnly })
-      else if (/^[@~]\//.test(ref.specifier))
+      else if (
+        !ref.specifier.startsWith(".") &&
+        !isAbsolute(ref.specifier) &&
+        RETIRED_SPECIFIERS[ref.specifier] === undefined &&
+        resolver(join(root, file), ref.specifier) === undefined &&
+        !external(ref.specifier) &&
+        !reported.has(ref.specifier)
+      ) {
+        reported.add(ref.specifier)
         issues.push({
           file,
-          reason: `the path alias "${ref.specifier}" is left as written; point it at the new location by hand`,
+          reason: `"${ref.specifier}" names no installed package and no file through the app's tsconfig paths or package.json imports, so the migration cannot tell where it belongs; check it by hand`,
         })
+      }
     }
     edges.set(file, refs)
   }
-  const files = [...new Set([...next.keys(), ...everyFile.filter((f) => !original.has(f))])]
-  const frontendRoots = files.filter(
-    (f) => f.startsWith("routes/") && ROUTE_FILE.test(f) && !f.includes(".backend."),
+  // The config's module paths are entries too: the browser loads `clientModule`.
+  const entries = CONFIG_FILES.filter((file) => next.has(file)).flatMap((file) =>
+    configEntries(ts, file, next.get(file) ?? "").map((entry) => ({
+      ...entry,
+      file,
+      // Relative to the app root, as the loader reads it, whichever config file holds it.
+      target: resolveAny("nifra.config.ts", entry.value),
+    })),
   )
+  const entryTargets = (role: ConfigEntry["role"]): Set<string> =>
+    new Set(
+      entries.flatMap((entry) =>
+        entry.role === role && entry.target !== undefined ? [entry.target] : [],
+      ),
+    )
+  const browserEntries = entryTargets("frontend")
+  const serverEntries = entryTargets("backend")
+  const files = [...new Set([...next.keys(), ...everyFile.filter((f) => !original.has(f))])]
+  const frontendRoots = [
+    ...files.filter(
+      (f) => f.startsWith("routes/") && ROUTE_FILE.test(f) && !f.includes(".backend."),
+    ),
+    ...browserEntries,
+  ]
   // A route page the server imports - a generated `server-manifest.ts` imports them all - is rendered
   // there, not run as server code, so the server's walk stops at it: what only pages use stays frontend.
-  const pages = new Set(frontendRoots)
+  const pages = new Set(frontendRoots.filter((f) => !browserEntries.has(f)))
   const reach = (roots: readonly string[], stopAt?: ReadonlySet<string>): Set<string> => {
     const seen = new Set<string>()
     const queue = [...roots]
@@ -1149,19 +1317,24 @@ export async function migrateLayout(
     }
     return seen
   }
-  const backendRoots = files.filter(
-    (f) =>
-      (f.startsWith("routes/") && f.includes(".backend.")) ||
-      f.startsWith("backend/") ||
-      ROOT_MOVES[f] !== undefined ||
-      (isRootScript(f) && f !== "nifra.config.ts" && !isTestFile(f)),
-  )
+  const backendRoots = [
+    ...files.filter(
+      (f) =>
+        (f.startsWith("routes/") && f.includes(".backend.")) ||
+        f.startsWith("backend/") ||
+        ROOT_MOVES[f] !== undefined ||
+        (isRootScript(f) && f !== "nifra.config.ts" && !isTestFile(f) && !browserEntries.has(f)),
+    ),
+    ...serverEntries,
+  ]
   const browser = reach(frontendRoots)
   const server = reach(backendRoots, pages)
   // What the app's own server modules reach, without the root scripts: a root file in here is a module
   // the app imports, not an entry, so it moves into a zone.
   const appServer = reach(
-    backendRoots.filter((f) => f.includes("/") || ROOT_MOVES[f] !== undefined),
+    backendRoots.filter(
+      (f) => f.includes("/") || ROOT_MOVES[f] !== undefined || serverEntries.has(f),
+    ),
     pages,
   )
   // A `.server` module ran empty in the browser, so only server code used it: it moves under backend/.
@@ -1231,19 +1404,56 @@ export async function migrateLayout(
   const newPath = (file: string): string => moveMap.get(file) ?? file
   const final: Files = new Map()
   const rewritten: string[] = []
+  const unspelled = new Set<string>()
+  /** An alias for a target that moves, through the same alias, or an issue when none covers it. */
+  const respellAlias = (file: string, specifier: string, target: string): string | undefined => {
+    if (newPath(target) === target) return undefined
+    const respelled = resolver.respell(join(root, file), specifier, join(root, newPath(target)))
+    if (respelled === undefined && !unspelled.has(`${file}\0${specifier}`)) {
+      unspelled.add(`${file}\0${specifier}`)
+      issues.push({
+        file,
+        reason: `the path alias "${specifier}" names "${target}", which moves to "${newPath(target)}", and no target of that alias covers the new location; point it there by hand`,
+      })
+    }
+    return respelled
+  }
   for (const [file, text] of next) {
     const imports = rewriteImports(ts, file, text, (specifier) => {
       const retired = RETIRED_SPECIFIERS[specifier]
       if (retired !== undefined) return retired
-      const target = resolveIn(known, file, specifier)
+      const target = resolveAny(file, specifier)
       // Outside the app (or a skipped dir): the target stays put, so only a moved importer re-bases it.
       if (target === undefined) return rebase(specifier, file, newPath(file))
+      if (!specifier.startsWith(".")) return respellAlias(file, specifier, target)
       if (newPath(target) === target && newPath(file) === file) return undefined
       return respecify(specifier, target, newPath(file), newPath(target))
     })
     const updated = renameRetiredTypes(ts, file, imports)
     final.set(newPath(file), updated)
     if (updated !== text && !moveMap.has(file) && original.get(file) === text) rewritten.push(file)
+  }
+
+  // A config path names its module from the app root, so it follows the module, never the config file.
+  for (const configFile of CONFIG_FILES) {
+    const at = newPath(configFile)
+    const text = final.get(at)
+    if (text === undefined || !next.has(configFile)) continue
+    const edits: Array<{ start: number; end: number; text: string }> = []
+    for (const entry of configEntries(ts, at, text)) {
+      const target = resolveAny("nifra.config.ts", entry.value)
+      if (target === undefined || newPath(target) === target) continue
+      const value = entry.value.startsWith(".")
+        ? respecify(entry.value, target, "nifra.config.ts", newPath(target))
+        : respellAlias(configFile, entry.value, target)
+      if (value !== undefined) edits.push({ start: entry.start, end: entry.end, text: value })
+    }
+    if (edits.length === 0) continue
+    let updated = text
+    for (const edit of edits.sort((a, b) => b.start - a.start))
+      updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
+    final.set(at, updated)
+    if (!moveMap.has(configFile) && !rewritten.includes(configFile)) rewritten.push(configFile)
   }
 
   const moves = [...moveMap]

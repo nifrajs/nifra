@@ -213,6 +213,74 @@ describe("migrateLayout", () => {
     })
   })
 
+  test("aliases and the config's module paths are followed, rewritten, or reported", async () => {
+    const dir = app({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "~/*": ["./*"], "@app/*": ["./src/*"] } },
+      }),
+      "package.json": JSON.stringify({ name: "alias-app", imports: { "#db/*": "./db/*.ts" } }),
+      "nifra.config.ts": [
+        'export const clientModule = "./client.tsx"',
+        "export const componentPipeline = {",
+        '  adapter: "react",',
+        '  entries: { client: "./entry-client.tsx", ssr: "./entry-server.tsx" },',
+        "} as const",
+        "",
+      ].join("\n"),
+      "client.tsx":
+        'import { theme } from "~/lib/theme"\nexport function mountRouter() {\n  return theme\n}\n',
+      "entry-client.tsx": "export const hydrate = 1\n",
+      "entry-server.tsx": "export const render = 1\n",
+      "lib/theme.ts": 'export const theme = "dark"\n',
+      "lib/fmt.ts": "export const fmt = (n: number) => String(n)\n",
+      "src/money.ts": "export const money = 1\n",
+      "db/pool.ts": "export const pool = 1\n",
+      "routes/index.tsx": [
+        'import { fmt } from "~/lib/fmt"',
+        'import { money } from "@app/money"',
+        'import { pool } from "#db/pool"',
+        'import ts from "typescript"',
+        'import { nothing } from "not-a-real-package-xyz"',
+        "export async function loader() { return { n: pool } }",
+        "export default function Page() { return fmt(money) + String(ts) + nothing }",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toEqual([
+      { from: "client.tsx", to: "frontend/client.tsx" },
+      { from: "db/pool.ts", to: "backend/db/pool.ts" },
+      { from: "entry-client.tsx", to: "frontend/entry-client.tsx" },
+      { from: "entry-server.tsx", to: "backend/entry-server.tsx" },
+      { from: "lib/fmt.ts", to: "frontend/lib/fmt.ts" },
+      { from: "lib/theme.ts", to: "frontend/lib/theme.ts" },
+      { from: "src/money.ts", to: "frontend/src/money.ts" },
+    ])
+    expect(read(dir, "routes/index.tsx")).toContain('from "~/frontend/lib/fmt"')
+    expect(read(dir, "frontend/client.tsx")).toContain('from "~/frontend/lib/theme"')
+    const config = read(dir, "nifra.config.ts")
+    expect(config).toContain('export const clientModule = "./frontend/client.tsx"')
+    expect(config).toContain(
+      'entries: { client: "./frontend/entry-client.tsx", ssr: "./backend/entry-server.tsx" }',
+    )
+    expect(result.rewritten).toContain("nifra.config.ts")
+    // No target of `@app/*` or `#db/*` covers the new place: left as written and reported.
+    expect(read(dir, "routes/index.tsx")).toContain('from "@app/money"')
+    expect(read(dir, "routes/index.backend.ts")).toContain('from "#db/pool"')
+    const reasons = result.issues.map((issue) => `${issue.file}: ${issue.reason}`)
+    expect(reasons).toContain(
+      'routes/index.tsx: "not-a-real-package-xyz" names no installed package and no file through the app\'s tsconfig paths or package.json imports, so the migration cannot tell where it belongs; check it by hand',
+    )
+    expect(reasons).toContain(
+      'routes/index.backend.ts: the path alias "#db/pool" names "db/pool.ts", which moves to "backend/db/pool.ts", and no target of that alias covers the new location; point it there by hand',
+    )
+    expect(reasons).toContain(
+      'routes/index.tsx: the path alias "@app/money" names "src/money.ts", which moves to "frontend/src/money.ts", and no target of that alias covers the new location; point it there by hand',
+    )
+    // An installed package and the aliases that still resolve are not issues.
+    expect(reasons.filter((reason) => /typescript|~\/|clientModule/.test(reason))).toEqual([])
+  })
+
   test("a page the server imports is rendered there, so what only pages use still goes to frontend/", async () => {
     const dir = app({
       "routes/index.tsx":

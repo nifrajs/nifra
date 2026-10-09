@@ -27,7 +27,7 @@ describe("parseJsonc", () => {
   test("reads comments and trailing commas, and leaves strings alone", () => {
     expect(
       parseJsonc(
-        '﻿{\n  // a comment\n  "a": "http://x//y", /* block */\n  "b": [1, 2,],\n  "c": "a,]",\n}\n',
+        '\uFEFF{\n  // a comment\n  "a": "http://x//y", /* block */\n  "b": [1, 2,],\n  "c": "a,]",\n}\n',
       ),
     ).toEqual({ a: "http://x//y", b: [1, 2], c: "a,]" })
   })
@@ -193,5 +193,52 @@ describe("package.json imports", () => {
     expect(resolve(from, "#first")).toBe(join(root, "lib/fmt.ts"))
     expect(resolve(from, "#missing")).toBeUndefined()
     expect(resolve(join(root, "nested/y.ts"), "#fmt")).toBe(join(root, "nested/own.ts"))
+  })
+})
+
+describe("respell", () => {
+  test("rewrites an alias through the same alias, in the same style, or not at all", () => {
+    const root = project({
+      "tsconfig.json": tsconfig({
+        paths: { "~/*": ["./*"], "@app/*": ["./src/*"], "@app/ui/*": ["./ui/*"] },
+      }),
+      "package.json": JSON.stringify({
+        imports: { "#lib/*": "./lib/*.ts", "#db": "./db/index.ts" },
+      }),
+      "lib/fmt.ts": "",
+      "lib/index.ts": "",
+      "src/money.ts": "",
+      "esm.ts": "",
+      "db/index.ts": "",
+      "x.ts": "",
+    })
+    const { respell } = createSpecifierResolver()
+    const from = join(root, "x.ts")
+    const at = (path: string) => join(root, path)
+    expect(respell(from, "~/lib/fmt", at("shared/lib/fmt.ts"))).toBe("~/shared/lib/fmt")
+    expect(respell(from, "~/lib/fmt.ts", at("shared/lib/fmt.ts"))).toBe("~/shared/lib/fmt.ts")
+    expect(respell(from, "~/lib", at("shared/lib/index.ts"))).toBe("~/shared/lib")
+    expect(respell(from, "~/esm.js", at("shared/esm.ts"))).toBe("~/shared/esm.js")
+    expect(respell(from, "@app/money", at("src/shared/money.ts"))).toBe("@app/shared/money")
+    // No target of `@app/*` covers it, and a longer pattern would claim the other spelling.
+    expect(respell(from, "@app/money", at("frontend/src/money.ts"))).toBeUndefined()
+    expect(respell(from, "@app/money", at("src/ui/money.ts"))).toBeUndefined()
+    expect(respell(from, "#lib/fmt", at("lib/text/fmt.ts"))).toBe("#lib/text/fmt")
+    expect(respell(from, "#lib/fmt", at("shared/lib/fmt.ts"))).toBeUndefined()
+    expect(respell(from, "#db", at("backend/db/index.ts"))).toBeUndefined()
+    expect(respell(from, "./lib/fmt", at("shared/lib/fmt.ts"))).toBeUndefined()
+    expect(respell(from, "react", at("shared/lib/fmt.ts"))).toBeUndefined()
+  })
+
+  test("a baseUrl name stays one, and only below baseUrl", () => {
+    const root = project({
+      "tsconfig.json": tsconfig({ baseUrl: "./src" }),
+      "src/plain.ts": "",
+      "x.ts": "",
+    })
+    const { respell } = createSpecifierResolver()
+    const from = join(root, "x.ts")
+    expect(respell(from, "plain", join(root, "src/sub/plain.ts"))).toBe("sub/plain")
+    expect(respell(from, "plain", join(root, "src2/plain.ts"))).toBeUndefined()
   })
 })

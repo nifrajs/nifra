@@ -10851,10 +10851,13 @@ its source is sent), in both bundlers, for every framework, and in `nifra check`
 which follows the imports the bundler follows: relative paths, tsconfig `paths`
 and `baseUrl`, `package.json` `imports`, and the
 `clientModule` the browser entry loads. An app on the older layout moves with `nifra migrate layout`: a dry run that
-reports every move, then `--write`. It rewrites imports and test-runner mocks,
-adds the zone folders to tsconfig `include` and `.nifra/` to
+reports every move, then `--write`. It follows the same imports, rewrites them
+and test-runner mocks (an alias through the same alias), moves the config's
+`clientModule` and component pipeline entries with their modules, adds the zone
+folders to tsconfig `include` and `.nifra/` to
 `.gitignore`, and leaves data files and folders zoned in
-`package.json` where they are, reporting what still needs a hand.
+`package.json` where they are. It reports what still needs a hand, such as an
+alias with no target that covers a moved file, or a specifier that names nothing installed.
 
 ## Nifra - Contract-derived adversarial testing
 
