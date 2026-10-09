@@ -106,4 +106,30 @@ describe("platform adapters", () => {
     expect(result.cookies).toBeUndefined()
     expect(result.multiValueHeaders).toBeUndefined()
   })
+
+  test("a path that starts with // stays a path on the Host when the event names no origin", async () => {
+    const urlOf = (result: { body: string }): string =>
+      JSON.parse(new TextDecoder().decode(Uint8Array.fromBase64(result.body))).url
+    const headers = { host: "app.example" }
+    const netlify = await toNetlifyHandler(app)({
+      httpMethod: "GET",
+      path: "//evil.example/admin",
+      rawQuery: "x=1",
+      headers,
+    })
+    expect(urlOf(netlify)).toBe("https://app.example//evil.example/admin?x=1")
+    const v2 = await toLambdaHandler(app)({
+      version: "2.0",
+      rawPath: "//evil.example/admin",
+      headers,
+      requestContext: { http: { method: "GET" } },
+    })
+    expect(urlOf(v2)).toBe("https://app.example//evil.example/admin")
+    const v1 = await toLambdaHandler(app)({
+      httpMethod: "GET",
+      path: "//evil.example/admin",
+      headers,
+    })
+    expect(urlOf(v1)).toBe("https://app.example//evil.example/admin")
+  })
 })
