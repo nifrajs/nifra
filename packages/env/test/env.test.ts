@@ -121,6 +121,26 @@ describe("defineEnv", () => {
     expect(message).not.toContain("sk_live_supersecret_value")
   })
 
+  test("a BYO validator that quotes the value has it redacted", () => {
+    const echo: StandardSchemaV1<string> = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "valibot",
+        validate: (v: unknown) => ({
+          issues: [{ message: `Invalid email: Received ${JSON.stringify(v)}` }],
+        }),
+      },
+    }
+    let message = ""
+    try {
+      defineEnv({ SECRET: echo }, { source: { SECRET: "sk_live_supersecret_value" } })
+    } catch (e) {
+      message = e instanceof Error ? e.message : ""
+    }
+    expect(message).toContain('SECRET: Invalid email: Received "<redacted>"')
+    expect(message).not.toContain("sk_live_supersecret_value")
+  })
+
   test("accepts a BYO Standard Schema (no coercion), validating the raw string", () => {
     const upper: StandardSchemaV1<string> = {
       "~standard": {
