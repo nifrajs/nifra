@@ -14,6 +14,7 @@ export { registerFormat } from "./formats.ts"
 export {
   type OpenAPIDocument,
   type OpenAPIInfo,
+  type OpenAPIVersion,
   toOpenAPI,
   toOpenAPIFromEvidence,
 } from "./openapi.ts"

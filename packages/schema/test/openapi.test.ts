@@ -5,6 +5,7 @@ import { bodyParser } from "@nifrajs/core/body-parser"
 import { defineContract } from "@nifrajs/core/contract"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { all, method } from "@nifrajs/core/methods"
+import { streaming } from "@nifrajs/core/sse"
 import { t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
 
 // A BYO Standard Schema: validates at runtime but exposes no JSON Schema.
@@ -773,5 +774,56 @@ describe("routes registered by method name", () => {
 
   test("a stored snapshot produces the same document", () => {
     expect(toOpenAPIFromEvidence(snapshotProjectEvidence(app))).toEqual(toOpenAPI(app))
+  })
+})
+
+describe("typed SSE routes", () => {
+  const post = t.object({ id: t.integer(), title: t.string() })
+  const app = server()
+    .use(streaming())
+    .sse("/feed/:room", { sse: post }, (_c, stream) => stream.close())
+    .sse("/feed/:room/", { sse: t.object({ n: t.integer() }) }, (_c, stream) => stream.close())
+
+  const item = (ref: string) => ({
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "string",
+        contentMediaType: "application/json",
+        contentSchema: { $ref: ref },
+      },
+      event: { type: "string" },
+      id: { type: "string" },
+      retry: { type: "integer", minimum: 0 },
+    },
+  })
+
+  test("3.2 describes each event with itemSchema and names the payload", () => {
+    const doc = toOpenAPI(app, { openapiVersion: "3.2.0" })
+    expect(doc.openapi).toBe("3.2.0")
+    const ok = doc.paths["/feed/{room}"]?.get?.responses["200"]
+    expect(ok).toEqual({
+      description: "Server-Sent Events",
+      content: { "text/event-stream": { itemSchema: item("#/components/schemas/FeedRoomEvent") } },
+    })
+    expect(doc.components?.schemas?.FeedRoomEvent).toMatchObject({
+      type: "object",
+      required: ["id", "title"],
+    })
+    // Two routes whose names collide each keep their own payload.
+    expect(Object.keys(doc.components?.schemas ?? {})).toEqual(["FeedRoomEvent", "FeedRoomEvent_2"])
+  })
+
+  test("3.1 keeps a valid media type and carries the item schema as an extension", () => {
+    const doc = toOpenAPI(app)
+    expect(doc.openapi).toBe("3.1.0")
+    expect(doc.paths["/feed/{room}"]?.get?.responses["200"]?.content).toEqual({
+      "text/event-stream": {
+        schema: { type: "string" },
+        "x-itemSchema": item("#/components/schemas/FeedRoomEvent"),
+      },
+    })
+    expect(toOpenAPIFromEvidence(snapshotProjectEvidence(app))).toEqual(doc)
   })
 })

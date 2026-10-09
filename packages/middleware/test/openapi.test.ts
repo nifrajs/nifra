@@ -22,6 +22,16 @@ const build = (routes: RouteLike[], options?: Parameters<typeof buildOpenApiDocu
   buildOpenApiDocument(routes, options) as unknown as Doc
 
 describe("buildOpenApiDocument()", () => {
+  test("openapiVersion 3.2.0 declares 3.2 and describes a typed SSE route's events", () => {
+    const routes: RouteLike[] = [
+      { method: "GET", path: "/events", schema: { sse: t.object({ n: t.integer() }) } },
+    ]
+    const doc = buildOpenApiDocument(routes, { openapiVersion: "3.2.0" })
+    expect(doc.openapi).toBe("3.2.0")
+    expect(JSON.stringify(doc)).toContain('"itemSchema"')
+    expect(buildOpenApiDocument(routes).openapi).toBe("3.1.0")
+  })
+
   test("emits 3.1 paths, methods, and templated path params", () => {
     const doc = build(
       [

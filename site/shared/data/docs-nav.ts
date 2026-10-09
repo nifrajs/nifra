@@ -27,6 +27,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
       { href: "/docs/structure", label: "Project structure" },
       { href: "/docs/contract", label: "Framework contract" },
       { href: "/docs/api", label: "API & typed client" },
+      { href: "/docs/control-api", label: "Control APIs" },
       { href: "/docs/types-first", label: "Types-first" },
       { href: "/docs/testing", label: "Contract testing" },
       { href: "/docs/database", label: "Database" },

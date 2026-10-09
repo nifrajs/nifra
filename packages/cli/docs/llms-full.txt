@@ -9128,6 +9128,159 @@ See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for th
 two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
 data layer in depth.
 
+## Nifra - Control APIs (one schema, every client)
+
+> Build an RPC-style control API on core routes: one schema per method gives request validation, a typed TypeScript client, and an OpenAPI 3.2 document whose SSE events let Swift, Kotlin, or Python clients be generated.
+
+A desktop app, a CLI, or a mobile companion that drives a local service needs a control API:
+a set of methods, a stream of events, and clients in more than one language. Write each
+method once as a route with a schema. The schema validates requests, types the TypeScript
+client, and describes the method in an OpenAPI document that generators turn into clients for
+other languages.
+
+### One file, three methods
+
+Two methods take a JSON body and answer JSON. The third is a typed event stream. This file
+typechecks against the current packages.
+
+```ts
+import { timingSafeEqual } from "node:crypto"
+import { server } from "@nifrajs/core"
+import { streaming } from "@nifrajs/core/sse"
+import { t, toOpenAPI } from "@nifrajs/schema"
+
+const token = process.env.CONTROL_TOKEN
+if (token === undefined || token.length < 32) throw new Error("CONTROL_TOKEN must be 32+ characters")
+const expected = Buffer.from(`Bearer ${token}`)
+const authorized = (request: Request): boolean => {
+  const given = Buffer.from(request.headers.get("authorization") ?? "")
+  return given.length === expected.length && timingSafeEqual(given, expected)
+}
+
+const Session = t.object({
+  id: t.string(),
+  status: t.union([t.literal("idle"), t.literal("running")]),
+})
+const TurnEvent = t.object({
+  seq: t.integer({ minimum: 0 }),
+  type: t.string(),
+  text: t.optional(t.string()),
+})
+
+export const app = server()
+  .use(streaming())
+  .onRequest((request) =>
+    authorized(request) ? undefined : Response.json({ error: "unauthorized" }, { status: 401 }),
+  )
+  .post(
+    "/session/create",
+    { body: t.object({ cwd: t.string({ minLength: 1, maxLength: 4096 }) }), response: Session },
+    () => ({ id: crypto.randomUUID(), status: "idle" as const }),
+  )
+  .post(
+    "/turn/send",
+    {
+      body: t.object({
+        sessionId: t.string(),
+        message: t.string({ minLength: 1, maxLength: 256 * 1024 }),
+      }),
+      response: t.object({ turnId: t.string() }),
+      bodyLimit: 512 * 1024,
+    },
+    () => ({ turnId: crypto.randomUUID() }),
+  )
+  .sse(
+    "/turn/events",
+    { query: t.object({ turnId: t.string() }), sse: TurnEvent },
+    (c, stream) => {
+      const after = Number(c.req.headers.get("last-event-id") ?? -1)
+      for (let seq = after + 1; seq < 3; seq++)
+        stream.send({ seq, type: "assistant.delta", text: `part ${seq}` }, { id: String(seq) })
+      stream.close()
+    },
+  )
+
+export const spec = toOpenAPI(app, { openapiVersion: "3.2.0", title: "Control API", version: "1.0.0" })
+```
+
+-
+**Methods are routes.** A method name like `session/create` is a path, so a
+call is `POST /session/create` and the typed client reads
+`api.session.create.post(body)`. Use `POST` for anything that changes
+state; one envelope endpoint that dispatches on a method field would hide every method
+from the schema, the client, and the document.
+
+-
+**The schema is the validator.** A body that does not match answers `422`
+before the handler runs. `maxLength` bounds each field and
+`bodyLimit` bounds the request as it arrives.
+
+-
+**Authorization runs first.** An `onRequest` hook that returns a response
+ends the request before routing, so no method is reachable without the token. The
+comparison is constant-time, and the server refuses to start without a long token.
+
+-
+**Retries.** A method that must not run twice declares
+`idempotency` on its route, with `.use(idempotency())` from
+`@nifrajs/core/idempotency-plugin` and a namespace per caller.
+
+### Event streams that resume
+
+`.sse(path, { sse: schema }, run)` declares the type of every event the stream
+sends. Give each event an `id` (here its sequence number). A browser
+`EventSource`, or the typed client's `subscribe`, sends the last id it
+saw as `Last-Event-ID` when it reconnects, so the handler replays only what the
+client missed. Keep the events a reconnect may need in memory or in your own store: core
+sends the header, and what to replay is your service's to decide.
+
+### The TypeScript client
+
+```ts
+// doc-check: skip - fragment: app is the control server above, imported from its module.
+import { client } from "@nifrajs/client"
+
+const api = client<typeof app>("http://127.0.0.1:4100", {
+  headers: { authorization: `Bearer ${token}` },
+})
+
+const session = await api.session.create.post({ cwd: "/work/repo" })
+if (!session.ok) throw new Error(`create failed: ${session.status}`)
+
+const subscription = api.turn.events.subscribe((event) => render(event.seq, event.text ?? ""), {
+  query: { turnId },
+  // After a dropped connection the client reconnects and sends Last-Event-ID itself.
+})
+// subscription.close() ends it.
+```
+
+Every call is typed from the server's routes, with no generated code. A call returns a
+`Result`: check `ok`, then read `data`, or
+`status` and `error`.
+
+### Clients in other languages
+
+`toOpenAPI(app, { openapiVersion: "3.2.0" })` from `@nifrajs/schema`
+describes each method's request and response, and each typed stream as
+`text/event-stream` whose `itemSchema` is the SSE event: a
+`data` field holding JSON that matches the route's event schema, plus
+`event`, `id`, and `retry`. The event schema is also a named
+component (`TurnEventsEvent` here), so a generator emits a type for it. The
+`openapi()` plugin from `@nifrajs/middleware` takes the same option and
+serves the document.
+
+```ts
+// doc-check: skip - shell commands, not TypeScript.
+// Write the document at build time, then hand it to any OpenAPI 3.2 generator.
+bun -e 'import { spec } from "./control.ts"; await Bun.write("openapi.json", JSON.stringify(spec, null, 2))'
+```
+
+OpenAPI 3.1 has no field for the items of a stream. Without `openapiVersion` the
+document stays 3.1, declares the stream as a string, and carries the same item schema as
+`x-itemSchema`; the named event component is there either way. A generator that
+reads only 3.1 still produces the event type, and your code decodes each
+`data` line with it.
+
 ## Nifra - Custom server (createWebApp)
 
 > Run a page app from your own server entry with createWebApp: static and hashed files, a strict CSP on nifra's nonce, middleware order, loader error logging, graceful shutdown, and nifra check settings.
@@ -16343,7 +16496,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
-`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `JsonValue`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
+`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `JsonValue`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenAPIVersion`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
 
 ## @nifrajs/storage
 

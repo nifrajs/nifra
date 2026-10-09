@@ -4446,6 +4446,7 @@ _No named exports (side-effect entrypoint)._
   OpenAPI 3.x inventory import - the structural half of an export/import roundtrip.
 - **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
+- **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
 - **OpenApiInventoryDrift** _(interface)_ - `interface OpenApiInventoryDrift`
 - **Page** _(interface)_ - `interface Page<Item>`
   A cursor-pagination page - matches the shape of `t.paginated(item)`.
@@ -4485,6 +4486,7 @@ _No named exports (side-effect entrypoint)._
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
 - **OpenAPIServer** _(interface)_ - `interface OpenAPIServer`
 - **OpenAPITag** _(interface)_ - `interface OpenAPITag`
+- **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
 - **SecurityRequirement** _(type)_ - `type SecurityRequirement = Readonly<Record<string, readonly string[]>>`
   A document-wide / per-operation security requirement: scheme name → required scopes.
 - **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions`
