@@ -1,24 +1,27 @@
 /**
- * The DEFAULT `reflectJsonSchema` hook: recognize a zod schema by its Standard Schema vendor tag and
- * derive the inspectable JSON Schema the mock/mutation generators read - with no wiring at all.
+ * The DEFAULT `reflectJsonSchema` hook: derive the inspectable JSON Schema the mock/mutation generators
+ * read from an opaque Standard Schema - with no wiring at all.
  *
  * Standard Schema standardizes validation, not introspection, so an opaque validator normally leaves a
- * route unmockable (`{}`) and unwitnessed (`NO_WITNESS`) unless the caller passes a bridge. But every
- * Standard Schema carries `"~standard".vendor`, and zod ships its own converter (`z.toJSONSchema`,
- * zod 4+) - so when the vendor says "zod" and zod is resolvable (from the project first, then from
- * this package), the bridge can be applied
- * automatically. Everything about it fails soft: no zod installed, an older zod without `toJSONSchema`,
- * a non-zod vendor, or a schema zod cannot convert (custom transforms) all return `undefined`, which is
- * exactly the opaque behavior a caller saw before this existed. An explicit `reflectJsonSchema` option
- * always wins over this default.
+ * route unmockable (`{}`) and unwitnessed (`NO_WITNESS`) unless the caller passes a bridge. Two sources,
+ * in order:
+ *   1. The schema's own Standard JSON Schema converter (`"~standard".jsonSchema.input`, zod 4.2+ and
+ *      other libraries that implement it). The library that built the schema converts it, so nothing is
+ *      resolved from disk and a monorepo whose zod sits in one app reads the same as a single package.
+ *   2. For a zod schema without that converter, zod's `z.toJSONSchema` (zod 4+), with zod resolved from
+ *      the project first, then from this package.
+ * Everything about it fails soft: no converter, no zod installed, an older zod without `toJSONSchema`,
+ * or a schema the library cannot convert (custom transforms) all return `undefined`, which is exactly
+ * the opaque behavior a caller saw before this existed. An explicit `reflectJsonSchema` option always
+ * wins over this default.
  *
  * zod stays an OPTIONAL peer: it is loaded lazily via `createRequire` (never a static import), probed
  * once per project directory, and its absence is a cached miss. {@link explainAutoReflectJsonSchema}
- * says why a zod schema stayed opaque.
+ * says why a schema stayed opaque.
  * Conversion options mirror `@nifrajs/testing/zod` (`zodJsonSchema`), which remains the explicit form:
- *   - target "draft-7" → the keyword set the mock generator + `candidateMutations` read
- *   - io "input"       → the request-side constraints a hostile payload must violate (pre-transform)
- *   - reused "inline"  → no `$ref`/`$defs`; the mock generator fails closed on `$ref`
+ *   - target draft-07 → the keyword set the mock generator + `candidateMutations` read
+ *   - the input side  → the request-side constraints a hostile payload must violate (pre-transform)
+ *   - reused "inline" → no `$ref`/`$defs`; the mock generator fails closed on `$ref` (zod only)
  */
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -74,11 +77,38 @@ const probeZod = (): ZodProbe => {
   return probe
 }
 
-type ZodReflection = { readonly jsonSchema: JsonSchema } | { readonly reason: string }
+type AutoReflection = { readonly jsonSchema: JsonSchema } | { readonly reason: string }
 
-function reflectZod(schema: unknown): ZodReflection | undefined {
+// zod's name for the inline-refs option of its converter; other libraries get only the target.
+const ZOD_LIBRARY_OPTIONS = { reused: "inline" } as const
+
+/** The schema's own `~standard.jsonSchema.input` result, or `undefined` when it has no converter. */
+function reflectStandardJsonSchema(standard: unknown, vendor: unknown): AutoReflection | undefined {
+  const converter: unknown = Reflect.get(Object(standard), "jsonSchema")
+  const input: unknown = Reflect.get(Object(converter), "input")
+  if (typeof input !== "function") return undefined
+  const options: { target: string; libraryOptions?: Record<string, unknown> } = {
+    target: "draft-07",
+  }
+  if (vendor === "zod") options.libraryOptions = ZOD_LIBRARY_OPTIONS
+  try {
+    const json: unknown = Reflect.apply(input, converter, [options])
+    return json !== null && typeof json === "object"
+      ? { jsonSchema: json as JsonSchema }
+      : { reason: `the ${String(vendor)} schema's ~standard.jsonSchema.input returned no schema` }
+  } catch (error) {
+    return {
+      reason: `the ${String(vendor)} schema's ~standard.jsonSchema.input threw: ${error instanceof Error ? error.message : String(error)}`,
+    }
+  }
+}
+
+function reflectAuto(schema: unknown): AutoReflection | undefined {
   const standard: unknown = Reflect.get(Object(schema), "~standard")
-  if (Reflect.get(Object(standard), "vendor") !== "zod") return undefined
+  const vendor: unknown = Reflect.get(Object(standard), "vendor")
+  const own = reflectStandardJsonSchema(standard, vendor)
+  if (own !== undefined) return own
+  if (vendor !== "zod") return undefined
   const probe = probeZod()
   if ("reason" in probe) return probe
   try {
@@ -94,20 +124,21 @@ function reflectZod(schema: unknown): ZodReflection | undefined {
 }
 
 /**
- * Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors,
- * zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an
+ * Derive a JSON Schema from a Standard Schema's own converter, or from zod for a zod schema without one;
+ * `undefined` for anything else (no converter and not zod, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an
  * opaque schema inspectable, never change one that already carries JSON Schema metadata.
  */
 export function autoReflectJsonSchema(schema: unknown): JsonSchema | undefined {
-  const reflected = reflectZod(schema)
+  const reflected = reflectAuto(schema)
   return reflected !== undefined && "jsonSchema" in reflected ? reflected.jsonSchema : undefined
 }
 
 /**
- * Why {@link autoReflectJsonSchema} could not read a zod schema: zod is not resolvable, it is older
- * than 4, or its converter threw. `undefined` for a schema it reads, or one that is not zod's.
+ * Why {@link autoReflectJsonSchema} could not read a schema: its converter threw or returned nothing,
+ * or, for a zod schema without one, zod is not resolvable or is older than 4. `undefined` for a schema
+ * it reads, or one it has no way to read.
  */
 export function explainAutoReflectJsonSchema(schema: unknown): string | undefined {
-  const reflected = reflectZod(schema)
+  const reflected = reflectAuto(schema)
   return reflected !== undefined && "reason" in reflected ? reflected.reason : undefined
 }

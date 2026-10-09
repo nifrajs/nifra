@@ -356,9 +356,10 @@ export interface MockServerOptions {
    * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or
    * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.
    *
-   * Defaults to {@link autoReflectJsonSchema}, which recognizes zod by its Standard Schema vendor tag and
-   * converts via `z.toJSONSchema` when zod is installed - so zod routes mock real data with no wiring.
-   * Pass a hook to override, or `() => undefined` to force every opaque schema back to `{}`.
+   * Defaults to {@link autoReflectJsonSchema}, which reads the schema's own Standard JSON Schema converter
+   * (`~standard.jsonSchema`, zod 4.2+ and other libraries) and, for an older zod, converts via
+   * `z.toJSONSchema` - so these routes mock real data with no wiring. Pass a hook to override, or
+   * `() => undefined` to force every opaque schema back to `{}`.
    */
   readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }

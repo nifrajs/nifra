@@ -133,10 +133,10 @@ export interface AdversarialContractOptions {
    * generation for that route. Fail-safe: throwing or returning undefined leaves the schema opaque
    * (NO_WITNESS, as today). Ready-made for zod: `import { zodJsonSchema } from "@nifrajs/testing/zod"`.
    *
-   * Defaults to `@nifrajs/mock`'s `autoReflectJsonSchema`, which recognizes zod by its Standard Schema
-   * vendor tag and converts via `z.toJSONSchema` when zod is installed - so zod routes get witnesses and
-   * constraint-driven mutations with no wiring. Pass a hook to override, or `() => undefined` to force
-   * every opaque schema to stay opaque.
+   * Defaults to `@nifrajs/mock`'s `autoReflectJsonSchema`, which reads the schema's own Standard JSON
+   * Schema converter (`~standard.jsonSchema`, zod 4.2+ and other libraries) and, for an older zod,
+   * converts via `z.toJSONSchema` - so these routes get witnesses and constraint-driven mutations with
+   * no wiring. Pass a hook to override, or `() => undefined` to force every opaque schema to stay opaque.
    */
   readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }
