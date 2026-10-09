@@ -308,6 +308,39 @@ describe("nifra mcp runs no project code in its own process", () => {
     expect(new Set(workers.map((entry) => entry.pid)).size).toBe(1)
   }, 60_000)
 
+  test("closing stdin ends the server and its warm worker", async () => {
+    const root = tempRoot()
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
+    writeApp(root)
+    const proc = Bun.spawn([process.execPath, CLI, "mcp"], {
+      cwd: root,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    try {
+      const warmRun = call(2, "nifra_run", { requests: [{ path: "/health" }], warm: true })
+      for (const message of [INITIALIZE, INITIALIZED, warmRun])
+        proc.stdin.write(`${JSON.stringify(message)}\n`)
+      const reader = proc.stdout.getReader()
+      const decoder = new TextDecoder()
+      let buffered = ""
+      while (!buffered.includes('"id":2')) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        buffered += decoder.decode(chunk.value, { stream: true })
+      }
+      reader.releaseLock()
+      const workers = seen(root, "backend.log").filter((entry) => entry.script === "mcp-run.ts")
+      expect(workers).toHaveLength(1)
+      await proc.stdin.end()
+      expect(await proc.exited).toBe(0)
+      for (const { pid } of workers) expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      proc.kill()
+    }
+  }, 60_000)
+
   test("--env-file values reach every subprocess: app tools, project tools, run, test, database and hydrate", async () => {
     const root = tempRoot()
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))

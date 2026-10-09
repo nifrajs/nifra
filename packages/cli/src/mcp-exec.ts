@@ -791,6 +791,16 @@ type PipeSubprocess = ReturnType<typeof Bun.spawn> & {
   readonly stderr: ReadableStream<Uint8Array>
 }
 
+const liveWarmWorkers = new Set<WarmWorker>()
+let warmWorkersClosed = false
+
+/** Stop every warm worker and start no more, once the MCP client has closed stdin. A live worker
+ * holds the process open, so the server would otherwise never exit. */
+export function closeWarmWorkers(): void {
+  warmWorkersClosed = true
+  for (const worker of liveWarmWorkers) worker.stop()
+}
+
 /** A persistent `mcp-run`/`mcp-render` `--worker` subprocess: the backend/web app is loaded ONCE and
  * reused across newline-delimited `{ id, input }` requests, replying `{ id, output }`. The same machinery
  * powers both `nifra_run warm` and `nifra_render warm` - `child` selects which engine, `label` shapes the
@@ -827,10 +837,12 @@ export class WarmWorker {
       stdout: "pipe",
       stderr: "pipe",
     }) as PipeSubprocess
+    liveWarmWorkers.add(this)
     void this.readStdout()
     void this.readStderr()
     void this.proc.exited.then((code) => {
       this.closed = true
+      liveWarmWorkers.delete(this)
       const err = new Error(
         `warm ${this.label} worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,
       )
@@ -1025,8 +1037,10 @@ export function createWarmHandler(
   label: string,
 ): (input: unknown, signal?: AbortSignal) => Promise<string> {
   let worker: WarmWorker | undefined
+  const shuttingDown = `${label} cancelled: the MCP server is shutting down.`
   return async (input, signal) => {
     const fingerprint = await warmRunFingerprint(cwd)
+    if (warmWorkersClosed) return shuttingDown
     let current = worker
     if (current === undefined || current.fingerprint !== fingerprint) {
       current?.stop()
@@ -1044,6 +1058,7 @@ export function createWarmHandler(
         const reason = cancellationSuffix(signal)
         return `${label} cancelled${reason}.`
       }
+      if (warmWorkersClosed) return shuttingDown
       return spawnChild(child, cwd, input, label, signal)
     }
   }

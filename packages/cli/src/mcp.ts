@@ -108,7 +108,7 @@ export {
 } from "./mcp-io.ts"
 export { clientSupportsRoots, guardTools } from "./mcp-root.ts"
 
-import { projectTools } from "./mcp-exec.ts"
+import { closeWarmWorkers, projectTools } from "./mcp-exec.ts"
 import {
   createAppSurface,
   detectMonorepoIsolated,
@@ -422,6 +422,7 @@ export async function runMcpServer(
       send(rpcError(null, -32600, "MCP message exceeded the size limit"))
     }
   }
+  closeWarmWorkers()
 }
 
 function responseIdOf(message: JsonRpcResponse | JsonRpcNotification): string | number | null {
