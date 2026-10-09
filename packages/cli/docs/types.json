@@ -5399,7 +5399,7 @@
     "name": "EnableDraftOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface EnableDraftOptions {\n    /** Cookie lifetime in **seconds** (default `3600` = 1h). Keep it short - draft is an editor session. */\n    readonly maxAgeSeconds?: number;\n    /** Cookie `Path` (default `\"/\"`). */\n    readonly path?: string;\n    /** Override the `Secure` attribute (defaults to `true` - secure-by-default). Pass `false` only for\n     * local `http://` dev, where a `Secure` cookie isn't stored. */\n    readonly secure?: boolean;\n}"
+    "signature": "export interface EnableDraftOptions {\n    /** Draft session lifetime in **seconds** (default `3600` = 1h): the cookie's `Max-Age`, and the expiry\n     * signed into the cookie that the server enforces. Keep it short - draft is an editor session. */\n    readonly maxAgeSeconds?: number;\n    /** Cookie `Path` (default `\"/\"`). */\n    readonly path?: string;\n    /** Override the `Secure` attribute (defaults to `true` - secure-by-default). Pass `false` only for\n     * local `http://` dev, where a `Secure` cookie isn't stored. */\n    readonly secure?: boolean;\n}"
   },
   {
     "name": "EndObservation",
@@ -19428,7 +19428,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function isDraftEnabled(request: Request, secret: string): Promise<boolean>;",
-    "doc": "/**\n * Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`).\n * `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A\n * missing, forged, or tampered cookie returns `false`.\n */"
+    "doc": "/**\n * Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via\n * `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for\n * editors. A missing, forged, tampered, or expired cookie returns `false`.\n */"
   },
   {
     "name": "isHydrationMismatch",

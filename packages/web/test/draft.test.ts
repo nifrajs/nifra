@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { signValue } from "@nifrajs/core"
+import { signValue, unsignValue } from "@nifrajs/core"
 import {
   createWebApp,
   DRAFT_COOKIE,
@@ -34,6 +34,13 @@ function fakeContext() {
   return { set }
 }
 
+// A cookie exactly as enableDraft issues it.
+async function draftCookie(): Promise<string> {
+  const c = fakeContext()
+  await enableDraft(c, SECRET)
+  return c.set.written[0]?.value ?? ""
+}
+
 const cookieReq = (signed: string): Request =>
   new Request("http://x/", { headers: { cookie: `${DRAFT_COOKIE}=${signed}` } })
 
@@ -48,11 +55,26 @@ test("enableDraft sets a signed, HttpOnly, SameSite=Lax cookie that isDraftEnabl
 })
 
 test("isDraftEnabled rejects a missing, forged, or wrong-secret cookie (constant-time verify)", async () => {
-  const signed = await signValue("1", SECRET)
+  const signed = await draftCookie()
   expect(await isDraftEnabled(cookieReq(signed), SECRET)).toBe(true)
   expect(await isDraftEnabled(new Request("http://x/"), SECRET)).toBe(false) // no cookie
   expect(await isDraftEnabled(cookieReq("1.not-a-real-signature"), SECRET)).toBe(false) // forged
   expect(await isDraftEnabled(cookieReq(signed), "a-different-secret-padded-32bytes!")).toBe(false) // wrong secret
+})
+
+test("isDraftEnabled refuses a correctly signed cookie past the expiry signed into it", async () => {
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  // A replayed copy: Max-Age is the browser's rule, so the server must check the signed expiry itself.
+  expect(
+    await isDraftEnabled(cookieReq(await signValue(`1:${nowSeconds - 1}`, SECRET)), SECRET),
+  ).toBe(false)
+  expect(
+    await isDraftEnabled(cookieReq(await signValue(`1:${nowSeconds + 600}`, SECRET)), SECRET),
+  ).toBe(true)
+  // A signed value without an expiry (the earlier marker) or with a malformed one never qualifies.
+  for (const payload of ["1", "1:", "1:soon", `1:${nowSeconds + 600}.5`, `2:${nowSeconds + 600}`]) {
+    expect(await isDraftEnabled(cookieReq(await signValue(payload, SECRET)), SECRET)).toBe(false)
+  }
 })
 
 test("disableDraft clears the draft cookie", () => {
@@ -92,7 +114,7 @@ test("createWebApp sets ctx.draft=true only for a valid cookie when draftSecret 
     clientEntry: "/c.js",
     draftSecret: SECRET,
   })
-  const signed = await signValue("1", SECRET)
+  const signed = await draftCookie()
   expect(await (await app.fetch(dataReq(`${DRAFT_COOKIE}=${signed}`))).json()).toEqual({
     draft: true,
   })
@@ -130,7 +152,7 @@ test("a draft render is private and never stored, whatever cache-control its loa
   const app = createWebApp({ adapter, manifest, clientEntry: "/c.js", draftSecret: SECRET })
   // withISR is given no draftSecret: the draft render itself must refuse the cache.
   const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 1000 })
-  const cookie = `${DRAFT_COOKIE}=${await signValue("1", SECRET)}`
+  const cookie = `${DRAFT_COOKIE}=${await draftCookie()}`
   const editor = await isr(new Request("http://x/post", { headers: { cookie } }))
   expect(editor.headers.get("cache-control")).toBe("private, no-store")
   expect(await editor.text()).toContain("UNPUBLISHED")
@@ -144,7 +166,7 @@ test("a draft render is private and never stored, whatever cache-control its loa
 
 test("createWebApp leaves ctx.draft=false when no draftSecret is set (even with a cookie)", async () => {
   const app = createWebApp({ adapter: stub, manifest: draftManifest(), clientEntry: "/c.js" })
-  const signed = await signValue("1", SECRET)
+  const signed = await draftCookie()
   expect(await (await app.fetch(dataReq(`${DRAFT_COOKIE}=${signed}`))).json()).toEqual({
     draft: false,
   })
@@ -178,7 +200,7 @@ test("withISR bypasses the cache for a valid draft request (fresh render, never 
   expect(fetches).toBe(0)
 
   // An editor (valid draft cookie) bypasses the cache → the app renders fresh.
-  const signed = await signValue("1", SECRET)
+  const signed = await draftCookie()
   const res = await handler(
     new Request("http://x/", { headers: { cookie: `${DRAFT_COOKIE}=${signed}` } }),
   )
@@ -307,4 +329,32 @@ test("previewEndpoint refuses an empty token, which would match a link with no ?
   expect(() =>
     previewEndpoint({ secret: undefined as unknown as string, draftSecret: SECRET }),
   ).toThrow(/non-empty secret/)
+})
+
+test("enableDraft and previewEndpoint sign an expiry of now plus maxAgeSeconds", async () => {
+  const before = Math.floor(Date.now() / 1000)
+  const c = fakeContext()
+  await enableDraft(c, SECRET, { maxAgeSeconds: 90 })
+  const endpoint = previewEndpoint({
+    secret: PREVIEW_TOKEN,
+    draftSecret: SECRET,
+    cookie: { maxAgeSeconds: 90 },
+  })
+  const res = await endpoint(new Request(`http://x/p?token=${PREVIEW_TOKEN}`))
+  const after = Math.floor(Date.now() / 1000)
+  const fromEndpoint = /__nifra_draft=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? ""
+  for (const signed of [c.set.written[0]?.value ?? "", decodeURIComponent(fromEndpoint)]) {
+    const expires = Number((await unsignValue(signed, SECRET))?.slice(2))
+    expect(expires).toBeGreaterThanOrEqual(before + 90)
+    expect(expires).toBeLessThanOrEqual(after + 90)
+  }
+})
+
+test("a draft lifetime that is not a positive whole number of seconds throws", async () => {
+  for (const maxAgeSeconds of [0, -5, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+    await expect(enableDraft(fakeContext(), SECRET, { maxAgeSeconds })).rejects.toThrow(RangeError)
+    expect(() =>
+      previewEndpoint({ secret: PREVIEW_TOKEN, draftSecret: SECRET, cookie: { maxAgeSeconds } }),
+    ).toThrow(RangeError)
+  }
 })

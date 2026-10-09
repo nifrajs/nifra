@@ -5262,7 +5262,7 @@ _No named exports (side-effect entrypoint)._
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
   Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization, an explicit `public`. The one rule b…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
-  Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, or tampered cookie returns `false`.
+  Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
