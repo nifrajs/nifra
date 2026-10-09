@@ -117,6 +117,7 @@ const agents = server().get("/api/agents", (c) => ({ ok: new URL(c.req.url).path
 
 // merge() folds both groups into ONE flat path space at their defined paths; a path+method clash
 // throws a RouteConfigError right here at merge time (fail-closed), never a silent shadow at runtime.
+// A group holding .ws() routes or mount()s is refused the same way: add those on the parent.
 export const backend = server().merge(listings).merge(agents)`
 
 export default function Backends() {

@@ -229,6 +229,16 @@ describe("merge - domain-group composition", () => {
     expect(() => server().merge(wsGroup)).toThrow(/WebSocket/)
   })
 
+  test("a server holding mounts is refused, not merged without them", () => {
+    const external = { fetch: () => new Response("external") }
+    const withMount = server()
+      .get("/own", () => ({}))
+      .mount({ path: "/docs", app: external })
+    const parent = server()
+    expect(() => parent.merge(withMount)).toThrow(/mount/)
+    expect(parent.routes()).toEqual([])
+  })
+
   test("a failed multi-route merge leaves the parent unchanged", async () => {
     const parent = server().get("/taken", () => ({ parent: true }))
     const group = server()

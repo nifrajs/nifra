@@ -2559,8 +2559,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * (`onResponse`/`onResponseFinalized`) are appended to this server's. This server's
    * route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like routes
    * registered before a `derive`). Fail closed: a path+method collision throws
-   * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register
-   * those on the parent).
+   * `RouteConfigError` at merge time, and a group with WebSocket routes or mounts is refused
+   * (register those on the parent).
    */
   merge<R2 extends Registry, Ctx2, HookOutput2>(
     other: Server<R2, Ctx2, HookOutput2>,
@@ -2580,10 +2580,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     const source = other as unknown as Server<Registry, EmptyContext>
-    if (source.wsRoutes.length > 0) {
+    if (source.wsRoutes.length > 0 || source.fetchMounts.length > 0) {
       throw new RouteConfigError(
         "INVALID_PATH",
-        "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
+        "merge() does not carry WebSocket routes or mounts - register them on the parent server",
       )
     }
     this.adopt(source, undefined, 0)

@@ -231,9 +231,9 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 // Each ceiling is the measured gzip size rounded up to the next 0.1 KB, tight enough that a newly
 // reachable optional subsystem fails CI. A commit that raises one states the measured cost.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 33.8,
-  "nifra-idempotency": 37.4,
-  "nifra-effect-ledger": 35.8,
+  "nifra-bare": 33.9,
+  "nifra-idempotency": 37.5,
+  "nifra-effect-ledger": 35.9,
   "nifra-mcp": 34.1,
   "nifra-sse": 34.7,
   "nifra-valibot": 34.9,
