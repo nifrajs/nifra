@@ -50,6 +50,7 @@ export interface ComponentPipelineOptions {
   readonly outDir?: string
   readonly port?: number
   readonly publicEnvPrefix?: string
+  /** The deployment target (default `"bun"`, as `nifra build`'s): compiled for and assembled as one. */
   readonly target?: "bun" | "node" | "deno" | "cloudflare" | "vercel"
 }
 
@@ -110,7 +111,7 @@ export async function serverComponentsConfig(
     )
   let build = generationId ?? componentBuildId(root, options.outDir)
   const sources = new Map<string, string>()
-  const target = options.target ?? "node"
+  const target = options.target ?? "bun"
   const edge = target === "cloudflare"
   const generatedFiles = Object.values(entries)
   const guards = {
@@ -353,7 +354,7 @@ export async function buildServerComponents(
         .update(
           JSON.stringify({
             adapter: options.adapter,
-            target: options.target ?? "node",
+            target: options.target ?? "bun",
             env: publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", process.env),
           }),
         )

@@ -3470,7 +3470,7 @@
     "name": "ComponentPipelineOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ComponentPipelineOptions {\n    readonly root: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\" | \"preact\";\n    readonly entries: {\n        readonly client: string;\n        readonly ssr: string;\n        readonly rsc?: string;\n    };\n    readonly plugins?: readonly PluginOption[];\n    readonly outDir?: string;\n    readonly port?: number;\n    readonly publicEnvPrefix?: string;\n    readonly target?: \"bun\" | \"node\" | \"deno\" | \"cloudflare\" | \"vercel\";\n}"
+    "signature": "export interface ComponentPipelineOptions {\n    readonly root: string;\n    readonly adapter: \"react\" | \"vue\" | \"svelte\" | \"solid\" | \"preact\";\n    readonly entries: {\n        readonly client: string;\n        readonly ssr: string;\n        readonly rsc?: string;\n    };\n    readonly plugins?: readonly PluginOption[];\n    readonly outDir?: string;\n    readonly port?: number;\n    readonly publicEnvPrefix?: string;\n    /** The deployment target (default `\"bun\"`, as `nifra build`'s): compiled for and assembled as one. */\n    readonly target?: \"bun\" | \"node\" | \"deno\" | \"cloudflare\" | \"vercel\";\n}"
   },
   {
     "name": "ComponentRecord",

@@ -52,6 +52,36 @@ test("one generation covers imported files outside the root and failed builds pr
   }
 }, 30000)
 
+test("without a target the build compiles for the Bun server it assembles", async () => {
+  const base = resolve(import.meta.dirname, "../../../.nifra-components-fixtures")
+  await mkdir(base, { recursive: true })
+  const root = await mkdtemp(resolve(base, "target-"))
+  await writeFile(
+    resolve(root, "package.json"),
+    '{"name":"component-target-proof","type":"module"}',
+  )
+  await writeFile(resolve(root, "entry.frontend.ts"), 'document.body.textContent = "public"')
+  await writeFile(
+    resolve(root, "entry.backend.ts"),
+    'export function createApp() { return { fetch: async () => { const { Database } = await import("bun:sqlite"); return new Response(String(new Database(":memory:"))) } } }',
+  )
+  const options = {
+    root,
+    adapter: "vue" as const,
+    outDir: "output",
+    entries: { client: "entry.frontend.ts", ssr: "entry.backend.ts" },
+  }
+  try {
+    const result = await buildServerComponents(options)
+    expect(result.target).toBe("bun")
+    await expect(buildServerComponents({ ...options, target: "node" })).rejects.toThrow(
+      /bun:sqlite is unsupported on node/,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 60000)
+
 async function envFixture(files: Record<string, string>) {
   const base = resolve(import.meta.dirname, "../../../.nifra-components-fixtures")
   await mkdir(base, { recursive: true })
