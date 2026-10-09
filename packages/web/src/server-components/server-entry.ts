@@ -69,7 +69,12 @@ export function componentServerEntry(options: ComponentEntryOptions): string {
     "  try {",
     "    const headers = new Headers()",
     "    for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1])",
-    '    const request = new Request(new URL(req.url, "http://" + (req.headers.host ?? "localhost")), { method: req.method, headers, signal: abort.signal, ...(["GET", "HEAD"].includes(req.method) ? {} : { body: Readable.toWeb(req), duplex: "half" }) })',
+    // Resolving the target against a base reads `//evil.example/admin` as a host; the origin comes
+    // from a validated Host header, and an absolute-form target is routed by its path.
+    '    const host = req.headers.host ?? "localhost"',
+    "    if (!/^[\\w.:[\\]-]+$/.test(host)) { res.writeHead(400); res.end(); return }",
+    '    const target = req.url.startsWith("/") ? req.url : ((url) => url.pathname + url.search)(new URL(req.url))',
+    '    const request = new Request("http://" + host + target, { method: req.method, headers, signal: abort.signal, ...(["GET", "HEAD"].includes(req.method) ? {} : { body: Readable.toWeb(req), duplex: "half" }) })',
     "    const response = await serve(request)",
     "    res.statusCode = response.status",
     '    for (const [name, value] of response.headers) if (name !== "set-cookie") res.setHeader(name, value)',

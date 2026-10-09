@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
+import { connect } from "node:net"
 import { resolve } from "node:path"
 import { assembleComponentTarget } from "../src/server-components/build-target.ts"
 
@@ -117,6 +119,49 @@ test("target assembly rejects malformed manifests, missing assets and symbolic l
     await expect(assembleComponentTarget(options(root), "build_1")).rejects.toThrow(
       "symbolic links",
     )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("the generated Node handler takes the origin from Host, never from a target that starts with //", async () => {
+  const root = await stage(manifest, "react")
+  try {
+    await writeFile(
+      resolve(root, "ssr/index.js"),
+      'export const __nifraComponentBuild = "build_1"; export function createApp() { return { fetch: (request) => new Response(request.url) } }',
+    )
+    await assembleComponentTarget(
+      { ...options(root), target: "vercel", adapter: "react" },
+      "build_1",
+    )
+    const { default: handle } = await import(resolve(root, "functions/index.func/index.js"))
+    const server = createServer(handle)
+    await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening))
+    const address = server.address()
+    const port = typeof address === "object" && address !== null ? address.port : 0
+    const send = (target: string, host: string) =>
+      new Promise<string>((answered) => {
+        let raw = ""
+        const socket = connect(port, "127.0.0.1", () =>
+          socket.write(`GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
+        )
+        socket.on("data", (chunk) => {
+          raw += chunk
+        })
+        socket.on("end", () => answered(raw))
+      })
+    try {
+      expect(await send("//evil.example/admin", "app.example")).toContain(
+        "\r\nhttp://app.example//evil.example/admin\r\n",
+      )
+      expect(await send("http://evil.example/admin?x=1", "app.example")).toContain(
+        "\r\nhttp://app.example/admin?x=1\r\n",
+      )
+      expect(await send("/admin", "evil.example/x?")).toStartWith("HTTP/1.1 400")
+    } finally {
+      server.close()
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
