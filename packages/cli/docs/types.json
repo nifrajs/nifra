@@ -571,6 +571,12 @@
     "doc": "/** Fault boundaries covered by the public deterministic matrix. */"
   },
   {
+    "name": "AgentFailureMatrixOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentFailureMatrixOptions {\n    readonly seed?: number;\n    /**\n     * Drive the agent under test across one boundary, calling `checkpoint()` where that boundary's\n     * fault lands. The case passes only when the injected crash surfaces from `execute`. Without it\n     * each case runs a bare fixture, which proves the schedule and replay identity, not an agent.\n     */\n    readonly execute?: (boundary: {\n        readonly id: string;\n        readonly kind: AgentFailureMatrixKind;\n    }, checkpoint: () => void) => unknown;\n}"
+  },
+  {
     "name": "AgentFailureMatrixReport",
     "kind": "interface",
     "package": "@nifrajs/testing",
@@ -1764,7 +1770,7 @@
     "name": "BaselineOptions",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface BaselineOptions {\n    readonly tolerances?: readonly ScoreTolerance[];\n    /** Comparison codes that fail the assertion. Default `[\"regressed\"]`. */\n    readonly failOn?: readonly ComparisonCode[];\n}"
+    "signature": "export interface BaselineOptions {\n    readonly tolerances?: readonly ScoreTolerance[];\n    /**\n     * Comparison codes that fail the assertion. Default `[\"regressed\", \"missing\", \"incomparable\"]`:\n     * a verdict that disappeared or whose rubric changed shape cannot show it did not regress.\n     */\n    readonly failOn?: readonly ComparisonCode[];\n}"
   },
   {
     "name": "BasicAuthPlugin",
@@ -3371,7 +3377,7 @@
     "name": "ComparisonCode",
     "kind": "type",
     "package": "@nifrajs/testing",
-    "signature": "export type ComparisonCode = \"equal\" | \"improved\" | \"tolerated\" | \"regressed\" | \"missing\" | \"incomparable\";"
+    "signature": "export type ComparisonCode = \"equal\" | \"improved\" | \"tolerated\" | \"regressed\"\n/** The baseline has a verdict the current report no longer produces. */\n | \"missing\"\n/** The current report has a verdict the baseline lacks. */\n | \"added\" | \"incomparable\";"
   },
   {
     "name": "CompatibleReplayFile",
@@ -21823,8 +21829,8 @@
     "name": "runAgentFailureMatrix",
     "kind": "function",
     "package": "@nifrajs/testing",
-    "signature": "export declare function runAgentFailureMatrix(options?: {\n    readonly seed?: number;\n}): Promise<AgentFailureMatrixReport>;",
-    "doc": "/**\n * Run the same token-only crash fixture at each agent boundary. The implementation intentionally\n * delegates scheduling and replay identity to the existing failure laboratory; this is a matrix\n * consumer, not a second fault engine.\n */"
+    "signature": "export declare function runAgentFailureMatrix(options?: AgentFailureMatrixOptions): Promise<AgentFailureMatrixReport>;",
+    "doc": "/**\n * Inject a crash at each agent boundary. The implementation intentionally delegates scheduling and\n * replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault\n * engine.\n */"
   },
   {
     "name": "runAgentSurfaceConformance",

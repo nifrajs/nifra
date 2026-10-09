@@ -4561,6 +4561,7 @@ _No named exports (side-effect entrypoint)._
 - **AgentFailureMatrixError** _(class)_ - `class AgentFailureMatrixError`
 - **AgentFailureMatrixKind** _(type)_ - `type AgentFailureMatrixKind = | "model" | "tool" | "approval" | "cancellation" | "lease" | "cursor" | "registry" | "deployment"`
   Fault boundaries covered by the public deterministic matrix.
+- **AgentFailureMatrixOptions** _(interface)_ - `interface AgentFailureMatrixOptions`
 - **AgentFailureMatrixReport** _(interface)_ - `interface AgentFailureMatrixReport`
 - **AppLike** _(interface)_ - `interface AppLike`
   The minimal shape a nifra `server()` app satisfies - its own `fetch`.
@@ -4589,7 +4590,7 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
-- **ComparisonCode** _(type)_ - `type ComparisonCode = | "equal" | "improved" | "tolerated" | "regressed" | "missing" | "incomparable"`
+- **ComparisonCode** _(type)_ - `type ComparisonCode`
 - **ContractAuthContext** _(type)_ - `type ContractAuthContext = "authenticated" | "unauthenticated"`
 - **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
@@ -4746,8 +4747,8 @@ _No named exports (side-effect entrypoint)._
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **runAgentEvalComposition** _(function)_ - `runAgentEvalComposition: (options: AgentEvalCompositionOptions) => Promise<AgentEvalCompositionReport>`
   Compose existing trajectory, fault, contract, idempotency, and certification owners.
-- **runAgentFailureMatrix** _(function)_ - `runAgentFailureMatrix: (options?: { readonly seed?: number; }) => Promise<AgentFailureMatrixReport>`
-  Run the same token-only crash fixture at each agent boundary. The implementation intentionally delegates scheduling and replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault engine.
+- **runAgentFailureMatrix** _(function)_ - `runAgentFailureMatrix: (options?: AgentFailureMatrixOptions) => Promise<AgentFailureMatrixReport>`
+  Inject a crash at each agent boundary. The implementation intentionally delegates scheduling and replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault engine.
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
 - **runContractLabOverHttp** _(function)_ - `runContractLabOverHttp: (origin: string, fetcher?: typeof fetch) => Promise<void>`
