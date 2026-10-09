@@ -4,8 +4,7 @@
  *
  * The point of `use` is ORDER, so the control tests matter as much as the positive ones. Both
  * directions are pinned: a late `onResponse` DOES cover pages (app-global), a late `beforeHandle`
- * or `derive` does NOT (snapshotted per route at declaration). If the second one ever starts
- * passing, this option is redundant and should be deleted rather than kept.
+ * or `derive` cannot (snapshotted per route at declaration), so it throws in development.
  */
 import { expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
@@ -89,11 +88,11 @@ test("a LATE onResponse still covers pages - that hook is app-global, not order-
   expect(res.headers.get("x-stamp")).toBe("late-but-global")
 })
 
-test("a LATE beforeHandle does NOT cover pages (why the option exists)", async () => {
-  // The real order-scoped class: `beforeHandle`/`afterHandle`/`around`/`derive`/`decorate` are
-  // snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every page before it
-  // returns. So a guard added afterwards silently protects nothing - including `requestId()`, which
-  // is a `derive`.
+test("a LATE order-scoped hook throws instead of silently skipping the pages", async () => {
+  // The real order-scoped class: `beforeHandle`/`afterHandle`/`around`/`derive`/`decorate`/`onError`
+  // are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every page before it
+  // returns. A guard added afterwards would protect no page - including `requestId()`, which is a
+  // `derive` - so it is refused where it is written.
   let ran = 0
   const guard: Middleware = {
     name: "late-guard",
@@ -103,8 +102,11 @@ test("a LATE beforeHandle does NOT cover pages (why the option exists)", async (
   }
 
   const late = createWebApp({ adapter: stub, manifest: manifestOf(), clientEntry: "/c.js" })
-  late.use(guard)
-  expect((await late.fetch(new Request("http://x/"))).status).toBe(200)
+  expect(() => late.use(guard)).toThrow(/beforeHandle\(\) at .* was added after createWebApp/)
+  expect(() => late.derive(() => ({ user: "x" }))).toThrow(
+    expect.objectContaining({ code: "HOOK_AFTER_PAGES" }),
+  )
+  expect(() => late.onError(() => undefined)).toThrow(/onError\(\)/)
   expect(ran).toBe(0)
 
   const early = createWebApp({
@@ -223,42 +225,31 @@ test("without the server option the same slow page is not timed out", async () =
   expect(settled).toBe("still-running")
 }, 10_000)
 
-test("a post-hoc order-scoped use() warns at seal, while the use seam stays silent", async () => {
-  // The exact failure the `use` seam exists to prevent: `app.use(guard)` after `createWebApp` reaches
-  // zero page routes (they were all declared inside). `unusedScopedHooks` (default "warn") now surfaces
-  // it at seal. The `use:` seam runs before the routes, so the same guard there covers them and is silent.
-  const guard: Middleware = { name: "late-guard", beforeHandle: () => {} }
-
-  const captureWarnings = async (act: () => Promise<unknown>): Promise<string[]> => {
-    const original = console.warn
-    const messages: string[] = []
-    console.warn = (...args: unknown[]): void => {
-      messages.push(String(args[0]))
-    }
-    try {
-      await act()
-    } finally {
-      console.warn = original
-    }
-    return messages
-  }
-
-  const late = createWebApp({ adapter: stub, manifest: manifestOf(), clientEntry: "/c.js" })
-  late.use(guard)
-  const lateWarnings = await captureWarnings(() =>
-    Promise.resolve(late.fetch(new Request("http://x/"))),
+test("after the pages: global hooks, routes, groups and a named plugin's re-application stay allowed", async () => {
+  // The refusal covers only what would skip the pages. A global hook runs per request, a group is its
+  // own scope, and re-applying a named plugin already applied in `use:` is a no-op that recovers its type.
+  const seen: string[] = []
+  const tagger = defineContextPlugin<{ tag: string }>("tagger", (app) =>
+    app.derive(() => {
+      seen.push("derive")
+      return { tag: "t" }
+    }),
   )
-  expect(lateWarnings.length).toBe(1)
-  expect(lateWarnings[0]).toContain("beforeHandle()")
-
-  const early = createWebApp({
+  const app = createWebApp({
     adapter: stub,
     manifest: manifestOf(),
     clientEntry: "/c.js",
-    use: (a) => a.use(guard),
+    use: (a) => void a.use(tagger),
   })
-  const earlyWarnings = await captureWarnings(() =>
-    Promise.resolve(early.fetch(new Request("http://x/"))),
-  )
-  expect(earlyWarnings.length).toBe(0)
+  app.use(tagger)
+  app.onRequest(() => {
+    seen.push("onRequest")
+  })
+  app.get("/health", () => "ok")
+  app.group("/api", (api) => api.beforeHandle(() => undefined).get("/x", () => "x"))
+
+  expect((await app.fetch(new Request("http://x/"))).status).toBe(200)
+  expect(await (await app.fetch(new Request("http://x/health"))).json()).toBe("ok")
+  expect(await (await app.fetch(new Request("http://x/api/x"))).json()).toBe("x")
+  expect(seen).toEqual(["onRequest", "derive", "onRequest", "derive", "onRequest", "derive"])
 })

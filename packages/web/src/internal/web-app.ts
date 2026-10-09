@@ -81,9 +81,10 @@ export interface CreateWebAppOptions<Env = unknown> {
    *
    * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and
    * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every
-   * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards binds
-   * them to nothing, silently. `requestId()` is exactly that case: it is a `derive`, so applied late
-   * it leaves every page without `c.requestId`. Route assurance evidence is order-scoped the same
+   * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards would
+   * bind them to no page, and outside production it throws (`HOOK_AFTER_PAGES`). `requestId()` is
+   * exactly that case: it is a `derive`, so applied late it would leave every page without
+   * `c.requestId`. A `group()` is its own scope and stays allowed. Route assurance evidence is order-scoped the same
    * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`
    * even though it does still set it.
    *
@@ -563,6 +564,8 @@ export function createWebApp<Env = unknown>(
     value: evidenceProvider,
     writable: false,
   })
+  // Core's dev-time hook audit reads this: an order-scoped hook added from here on skips every page.
+  Object.defineProperty(app, Symbol.for("nifra.web.pagesDeclared"), { value: true })
 
   return app
 }

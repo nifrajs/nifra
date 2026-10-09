@@ -9156,9 +9156,11 @@ The older `nonce` option puts a nonce on every document, so nothing is cacheable
 `createWebApp` declares every page route, and the `/*` catch-all, before
 it returns. `beforeHandle`, `afterHandle`, `around`,
 `derive`, `decorate` and `onError` are copied into each route
-when the route is declared. An `app.use(...)` on the returned app therefore reaches no
-page, and nothing reports it. `requestId()` is a `derive`: added late, no
-page sees `c.requestId`.
+when the route is declared. One of those hooks added to the returned app would therefore reach
+no page. `requestId()` is a `derive`: added late, no page would see
+`c.requestId`. Outside production, adding one throws a `FrameworkError`
+with code `HOOK_AFTER_PAGES` that names the call site. Hooks added inside
+`app.group(prefix, ...)` are still allowed, because a group is its own scope.
 
 Apply middleware in the `use` option instead. It runs before any page is declared,
 and ahead of `mounts` and the `api` mount, so an `onRequest`

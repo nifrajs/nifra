@@ -816,6 +816,9 @@ interface HookAuditState {
 }
 const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
 
+/** Set by `@nifrajs/web`'s `createWebApp` on its app once the page routes are declared. */
+const PAGES_DECLARED = /* @__PURE__ */ Symbol.for("nifra.web.pagesDeclared")
+
 /** Start tracking one server's order-scoped hook pushes (once, from the constructor). */
 const beginHookAudit = (
   key: object,
@@ -829,6 +832,14 @@ const beginHookAudit = (
  * seal means no route was declared after it) and the caller's frame. Hooks a WebSocket handshake runs
  * count sockets as routes; `around` and `afterHandle` wrap a response, so they count HTTP routes only. */
 const recordScopedHook = (key: object, routesAtPush: number, kind: string): void => {
+  // Not a dead hook when routes follow it, but every page already copied its chain without it.
+  if (PAGES_DECLARED in key) {
+    const site = captureCallerSite()
+    throw new FrameworkError(
+      "HOOK_AFTER_PAGES",
+      `${kind}()${site === undefined ? "" : ` at ${site}`} was added after createWebApp declared the page routes, so no page runs it: each route keeps the order-scoped hooks that existed when it was declared. Apply it in createWebApp({ use: (app) => ... }) to cover the pages, or inside app.group(prefix, ...) to scope it to the routes declared there.`,
+    )
+  }
   const state = hookAudit.get(key)
   if (state === undefined || state.policy === "off") return
   state.sites.push({ kind, routesAtPush, site: captureCallerSite() })

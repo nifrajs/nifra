@@ -146,9 +146,11 @@ export default function CustomServer() {
         <code>createWebApp</code> declares every page route, and the <code>/*</code> catch-all, before
         it returns. <code>beforeHandle</code>, <code>afterHandle</code>, <code>around</code>,{" "}
         <code>derive</code>, <code>decorate</code> and <code>onError</code> are copied into each route
-        when the route is declared. An <code>app.use(...)</code> on the returned app therefore reaches no
-        page, and nothing reports it. <code>requestId()</code> is a <code>derive</code>: added late, no
-        page sees <code>c.requestId</code>.
+        when the route is declared. One of those hooks added to the returned app would therefore reach
+        no page. <code>requestId()</code> is a <code>derive</code>: added late, no page would see{" "}
+        <code>c.requestId</code>. Outside production, adding one throws a <code>FrameworkError</code>{" "}
+        with code <code>HOOK_AFTER_PAGES</code> that names the call site. Hooks added inside{" "}
+        <code>app.group(prefix, ...)</code> are still allowed, because a group is its own scope.
       </p>
       <p>
         Apply middleware in the <code>use</code> option instead. It runs before any page is declared,
