@@ -303,8 +303,14 @@ describe("route assurance policy", () => {
           id: "test.guard",
           source: "guard",
           scope: "global",
-          methods: ["NOPE" as never],
+          methods: ["TRACE"],
         },
+      ),
+    ).toThrow("unsupported HTTP method")
+    expect(() =>
+      withRouteAssurance(
+        {},
+        { id: "test.guard", source: "guard", scope: "global", exceptMethods: ["NO PE"] },
       ),
     ).toThrow("unsupported HTTP method")
     expect(() =>

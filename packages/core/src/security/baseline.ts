@@ -1,5 +1,6 @@
 import type { AssurancePolicy, AssuranceRule } from "../assurance.ts"
 import { NIFRA_ASSURANCE_IDS } from "../internal/route-assurance.ts"
+import type { Method } from "../router/router.ts"
 
 /**
  * How much a {@link securityBaseline} demands. Each level is a superset of the one before it, so
@@ -40,7 +41,8 @@ export interface SecurityBaselineOptions {
   readonly requireRuntimeProvenance?: boolean
 }
 
-const MUTATING = ["POST", "PUT", "PATCH", "DELETE"] as const
+/** A mutation is every method these leave out: POST, PUT, PATCH, DELETE and any custom method. */
+const NOT_MUTATING: readonly (Method | "WS")[] = ["GET", "HEAD", "OPTIONS", "WS"]
 const READING = ["GET", "HEAD"] as const
 /** The classification threshold above which the baseline demands authentication. */
 const SENSITIVE = "pii" as const
@@ -67,6 +69,9 @@ const SENSITIVE = "pii" as const
  * | every route carries a response contract | | | ✓ |
  * | every read carries security headers | | | ✓ |
  * | every mutation is rate limited | | | ✓ |
+ *
+ * A mutation is any method but GET, HEAD and OPTIONS, so a route under a custom method such as
+ * `PURGE` is held to the mutation rules, CSRF included. WebSocket routes are not mutations here.
  *
  * The baseline deliberately does not select on `access`/`zone` capabilities: those selectors require
  * capability definitions and would make the preset refuse an app that declares none. Extend the
@@ -112,14 +117,14 @@ export function securityBaseline(options: SecurityBaselineOptions = {}): Assuran
     rules.push(
       {
         name: "sensitive-mutation-body",
-        match: { methods: [...MUTATING], hasBody: true, classificationAtLeast: SENSITIVE },
+        match: { exceptMethods: NOT_MUTATING, hasBody: true, classificationAtLeast: SENSITIVE },
         require: [A.BODY_BOUNDED, ...authed, ...contract, ...rateLimit],
         requireCsrfWithAuthenticated: true,
         requireProvenance: provenance,
       },
       {
         name: "sensitive-mutation",
-        match: { methods: [...MUTATING], classificationAtLeast: SENSITIVE },
+        match: { exceptMethods: NOT_MUTATING, classificationAtLeast: SENSITIVE },
         require: [...authed, ...contract, ...rateLimit],
         requireCsrfWithAuthenticated: true,
         requireProvenance: provenance,
@@ -130,14 +135,14 @@ export function securityBaseline(options: SecurityBaselineOptions = {}): Assuran
   rules.push(
     {
       name: "mutation-body",
-      match: { methods: [...MUTATING], hasBody: true },
+      match: { exceptMethods: NOT_MUTATING, hasBody: true },
       require: [A.BODY_BOUNDED, ...contract, ...rateLimit],
       requireCsrfWithAuthenticated: true,
       requireProvenance: provenance,
     },
     {
       name: "mutation",
-      match: { methods: [...MUTATING] },
+      match: { exceptMethods: NOT_MUTATING },
       require: [...contract, ...rateLimit],
       requireCsrfWithAuthenticated: true,
       requireProvenance: provenance,

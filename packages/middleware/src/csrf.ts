@@ -1,5 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { isSameOriginRequest, METHODS, type Middleware } from "@nifrajs/core/server"
+import { isRegistrableMethod } from "@nifrajs/core/methods"
+import { isSameOriginRequest, type Middleware } from "@nifrajs/core/server"
 import {
   base64UrlEncode,
   guardName,
@@ -234,9 +235,8 @@ export function csrf(options: CsrfOptions): Middleware {
     scope: "global",
     // Middleware may intentionally mention methods the Nifra router does not expose (for example
     // TRACE). Keep runtime behavior unchanged, but publish evidence only for registerable routes.
-    methods:
-      options.methods === undefined
-        ? ["POST", "PUT", "PATCH", "DELETE"]
-        : METHODS.filter((method) => methods?.has(method)),
+    ...(methods === undefined
+      ? { exceptMethods: [...SAFE_METHODS].filter(isRegistrableMethod) }
+      : { methods: [...methods].filter(isRegistrableMethod) }),
   })
 }

@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import {
+  type AssuranceRouteSelector,
   evaluateRouteAssurance,
   matchesAssuranceSelector,
   NIFRA_ASSURANCE,
+  withRouteAssurance,
 } from "../src/assurance.ts"
-import { server } from "../src/index.ts"
+import { type Middleware, server } from "../src/index.ts"
 import type { ReflectedRoute, SchemaReflection } from "../src/reflection.ts"
 import type { StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 import { securityBaseline } from "../src/security/baseline.ts"
+import { method } from "../src/server/methods.ts"
 
 const bodySchema: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
@@ -127,5 +130,62 @@ describe("securityBaseline preset", () => {
     expect(report.findings).toContainEqual(
       expect.objectContaining({ rule: "banned-unlimited-body", code: "missing-evidence" }),
     )
+  })
+})
+
+describe("custom methods under the baseline", () => {
+  const sessionAuth = (): Middleware =>
+    withRouteAssurance<Middleware>(
+      { name: "session-auth", beforeHandle: () => undefined },
+      { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "session-auth", scope: "subsequent" },
+    )
+
+  test("an authenticated custom-method route must prove CSRF like a POST", () => {
+    const app = server()
+      .use(sessionAuth())
+      .use(method("PURGE", "/cache", () => ({})))
+    const report = evaluateRouteAssurance(app, securityBaseline({ level: "essential" }))
+    expect(report.routes).toContainEqual(
+      expect.objectContaining({ method: "PURGE", path: "/cache", rule: "mutation" }),
+    )
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        method: "PURGE",
+        rule: "mutation",
+        code: "missing-evidence",
+        evidence: NIFRA_ASSURANCE.CSRF,
+      }),
+    )
+  })
+
+  test("OPTIONS and WebSocket routes stay outside the mutation rules", () => {
+    const authenticated = [{ id: NIFRA_ASSURANCE.AUTHENTICATED, source: "session-auth" }]
+    const report = evaluateRouteAssurance(
+      [
+        { method: "OPTIONS", path: "/cache", assurance: authenticated },
+        { method: "WS", path: "/live", assurance: authenticated },
+      ],
+      securityBaseline({ level: "essential" }),
+    )
+    expect(report.ok).toBe(true)
+    expect(report.routes.map((entry) => entry.rule)).toEqual([undefined, undefined])
+  })
+
+  test("exceptMethods skips the methods it names and refuses a typo", () => {
+    const selector: AssuranceRouteSelector = { exceptMethods: ["GET", "HEAD", "OPTIONS", "WS"] }
+    expect(matchesAssuranceSelector(route({ method: "PURGE" }), selector)).toBe(true)
+    expect(matchesAssuranceSelector(route({ method: "DELETE" }), selector)).toBe(true)
+    expect(matchesAssuranceSelector(route({ method: "GET" }), selector)).toBe(false)
+    expect(matchesAssuranceSelector(route({ method: "WS" }), selector)).toBe(false)
+    expect(() =>
+      evaluateRouteAssurance([route({})], {
+        rules: [{ name: "typo", match: JSON.parse('{"exceptMethods":["GTE"]}') }],
+      }),
+    ).toThrow("unsupported HTTP method")
+    expect(() =>
+      evaluateRouteAssurance([route({})], {
+        rules: [{ name: "empty", match: { exceptMethods: [] } }],
+      }),
+    ).toThrow("non-empty array")
   })
 })

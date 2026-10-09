@@ -1005,9 +1005,11 @@ in the same call keep both. Call a custom one with
 `fetch(url, { method: "PURGE" })`.
 
 -
-**An assurance policy selects standard methods only.** A rule with `methods`
-never matches a custom-method route, so classify it with a path rule. Left unmatched, it is
-reported as `unclassified-route`.
+**An assurance rule names standard methods only.** A rule with `methods`
+never matches a custom-method route; one with `exceptMethods` does, unless the
+route is under a method it lists. `securityBaseline()` holds a custom method to
+its mutation rules, CSRF included, and `csrf()` publishes its evidence for one.
+Left unmatched, a route is reported as `unclassified-route`.
 
 Whether a custom method reaches the app is up to the runtime's HTTP parser.
 `PROPFIND`, `REPORT`, `PURGE` and `QUERY` arrive on
@@ -4006,7 +4008,8 @@ export default defineAssuranceConfig({
     rules: [
       { name: "health", match: { paths: ["/health"] }, require: [],
         forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
-      { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+      // Every method but these, so a custom one such as PURGE is a mutation too.
+      { name: "mutation", match: { exceptMethods: ["GET", "HEAD", "OPTIONS", "WS"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF,
           NIFRA_ASSURANCE.BODY_BOUNDED] },
       { name: "read", match: { methods: ["GET", "HEAD"] },

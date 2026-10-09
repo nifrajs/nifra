@@ -179,6 +179,12 @@ export function assure(
 export interface AssuranceRouteSelector {
   /** Omit for every method. `"WS"` selects WebSocket routes. */
   readonly methods?: readonly (Method | "WS")[]
+  /**
+   * Skip routes under these methods; `"WS"` skips WebSocket routes. Every other method matches, a
+   * custom one such as `PURGE` included, so `["GET", "HEAD", "OPTIONS", "WS"]` selects every route
+   * that can change state.
+   */
+  readonly exceptMethods?: readonly (Method | "WS")[]
   /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */
   readonly paths?: readonly string[]
   /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */
@@ -379,6 +385,23 @@ export interface AssuranceConfig {
 
 const nonEmpty = (value: string): boolean => value.trim() !== ""
 
+/** A selector's method list, upper-cased. Standard methods and `"WS"` only, so a typo throws rather
+ * than leaving a rule that never matches. */
+function selectorMethods(
+  values: readonly string[] | undefined,
+): readonly (Method | "WS")[] | undefined {
+  if (values === undefined) return undefined
+  return Object.freeze(
+    values.map((value): Method | "WS" => {
+      const method = value.toUpperCase()
+      if (method !== "WS" && !validMethod(method)) {
+        throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
+      }
+      return method
+    }),
+  )
+}
+
 function normalizeEvidenceIds(
   values: readonly string[] | undefined,
   label: string,
@@ -431,6 +454,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
       (key) =>
         ![
           "methods",
+          "exceptMethods",
           "paths",
           "tools",
           "capabilities",
@@ -469,7 +493,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     }
     // An empty list matches nothing, so the rule is inert and its routes fall through to whatever
     // laxer rule comes next - the same hole as a dropped key, the other way round.
-    for (const key of ["methods", "paths"] as const) {
+    for (const key of ["methods", "exceptMethods", "paths"] as const) {
       const list = rule.match[key]
       if (list !== undefined && (!Array.isArray(list) || list.length === 0)) {
         throw new Error(
@@ -477,12 +501,8 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         )
       }
     }
-    const methods = rule.match.methods?.map((method) => method.toUpperCase())
-    for (const method of methods ?? []) {
-      if (method !== "WS" && !validMethod(method)) {
-        throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
-      }
-    }
+    const methods = selectorMethods(rule.match.methods)
+    const exceptMethods = selectorMethods(rule.match.exceptMethods)
     const paths = rule.match.paths?.map((path) => {
       routeGlob(path)
       return path
@@ -552,21 +572,22 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         `route assurance: rule ${JSON.stringify(name)} both requires and forbids ${overlap}`,
       )
     }
+    const match: { -readonly [K in keyof AssuranceRouteSelector]: AssuranceRouteSelector[K] } = {}
+    if (methods !== undefined) match.methods = methods
+    if (exceptMethods !== undefined) match.exceptMethods = exceptMethods
+    if (paths !== undefined) match.paths = Object.freeze(paths)
+    if (rule.match.tools !== undefined) match.tools = rule.match.tools
+    if (capabilities !== undefined) match.capabilities = Object.freeze([...capabilities])
+    if (access !== undefined) match.access = access
+    if (zone !== undefined) match.zone = zone
+    if (rule.match.classificationAtLeast !== undefined) {
+      match.classificationAtLeast = rule.match.classificationAtLeast
+    }
+    if (rule.match.hasBody !== undefined) match.hasBody = rule.match.hasBody
+    if (rule.match.bodyLimit !== undefined) match.bodyLimit = rule.match.bodyLimit
     return Object.freeze({
       name,
-      match: Object.freeze({
-        ...(methods !== undefined ? { methods: Object.freeze(methods as (Method | "WS")[]) } : {}),
-        ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
-        ...(rule.match.tools !== undefined ? { tools: rule.match.tools } : {}),
-        ...(capabilities !== undefined ? { capabilities: Object.freeze([...capabilities]) } : {}),
-        ...(access !== undefined ? { access } : {}),
-        ...(zone !== undefined ? { zone } : {}),
-        ...(rule.match.classificationAtLeast !== undefined
-          ? { classificationAtLeast: rule.match.classificationAtLeast }
-          : {}),
-        ...(rule.match.hasBody !== undefined ? { hasBody: rule.match.hasBody } : {}),
-        ...(rule.match.bodyLimit !== undefined ? { bodyLimit: rule.match.bodyLimit } : {}),
-      }),
+      match: Object.freeze(match),
       require: required,
       forbid: forbidden,
       ...(rule.requireProvenance !== undefined
@@ -783,8 +804,9 @@ export function matchesAssuranceSelector(
   definitions?: ReadonlyMap<string, CapabilityDefinition>,
 ): boolean {
   const { methods, paths, tools, capabilities, access, zone, classificationAtLeast } = selector
-  const { hasBody, bodyLimit } = selector
+  const { exceptMethods, hasBody, bodyLimit } = selector
   if (methods !== undefined && !methods.includes(route.method as Method | "WS")) return false
+  if (exceptMethods?.some((method) => method === route.method) === true) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false

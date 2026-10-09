@@ -250,7 +250,8 @@ export default defineAssuranceConfig({
     rules: [
       { name: "health", match: { paths: ["/health"] }, require: [],
         forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
-      { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+      // Every method but these, so a custom one such as PURGE is a mutation too.
+      { name: "mutation", match: { exceptMethods: ["GET", "HEAD", "OPTIONS", "WS"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF,
           NIFRA_ASSURANCE.BODY_BOUNDED] },
       { name: "read", match: { methods: ["GET", "HEAD"] },

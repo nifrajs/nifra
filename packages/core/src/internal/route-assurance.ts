@@ -1,4 +1,4 @@
-import { METHODS, type Method } from "../router/router.ts"
+import { isRegistrableMethod, METHODS, type Method, type RouteMethod } from "../router/router.ts"
 
 /** Where enforcement evidence follows Nifra's route-registration semantics. */
 export type AssuranceScope = "global" | "subsequent" | "plugin"
@@ -15,8 +15,11 @@ export interface AssuranceEvidence {
 /** Metadata installed on a middleware/plugin by {@link withRouteAssurance}. */
 export interface AssuranceDeclaration extends AssuranceEvidence {
   readonly scope: AssuranceScope
-  /** Restrict evidence to these HTTP methods. Omit for every method. */
-  readonly methods?: readonly Method[]
+  /** Restrict evidence to these HTTP methods, a custom one such as `PURGE` included. Omit for every
+   * method. */
+  readonly methods?: readonly RouteMethod[]
+  /** Withhold evidence from these HTTP methods. Every other method keeps it, custom ones included. */
+  readonly exceptMethods?: readonly RouteMethod[]
   /** Restrict evidence to these absolute route globs. Omit for every path. */
   readonly paths?: readonly string[]
 }
@@ -117,12 +120,8 @@ function normalizeDeclaration(value: AssuranceDeclaration): AssuranceDeclaration
   if (value.scope !== "global" && value.scope !== "subsequent" && value.scope !== "plugin") {
     throw new Error(`route assurance: invalid scope ${JSON.stringify(value.scope)}`)
   }
-  const methods = value.methods?.map((method) => method.toUpperCase())
-  for (const method of methods ?? []) {
-    if (!METHOD_SET.has(method)) {
-      throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
-    }
-  }
+  const methods = registrableMethods(value.methods)
+  const exceptMethods = registrableMethods(value.exceptMethods)
   const paths = value.paths?.map((path) => {
     routeGlob(path)
     return path
@@ -134,16 +133,31 @@ function normalizeDeclaration(value: AssuranceDeclaration): AssuranceDeclaration
   ) {
     throw new Error(`route assurance: invalid provenance ${JSON.stringify(value.provenance)}`)
   }
-  return Object.freeze({
+  const declaration: { -readonly [K in keyof AssuranceDeclaration]: AssuranceDeclaration[K] } = {
     id: value.id,
     source: value.source.trim(),
     scope: value.scope,
-    // Carried, not defaulted: evidence attached by an author (rather than installed by a running
-    // hook) must stay distinguishable so `requireProvenance: "runtime"` rules can still reject it.
-    ...(value.provenance !== undefined ? { provenance: value.provenance } : {}),
-    ...(methods !== undefined ? { methods: Object.freeze(methods as Method[]) } : {}),
-    ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
-  })
+  }
+  // Carried, not defaulted: evidence attached by an author (rather than installed by a running
+  // hook) must stay distinguishable so `requireProvenance: "runtime"` rules can still reject it.
+  if (value.provenance !== undefined) declaration.provenance = value.provenance
+  if (methods !== undefined) declaration.methods = methods
+  if (exceptMethods !== undefined) declaration.exceptMethods = exceptMethods
+  if (paths !== undefined) declaration.paths = Object.freeze(paths)
+  return Object.freeze(declaration)
+}
+
+function registrableMethods(
+  values: readonly string[] | undefined,
+): readonly RouteMethod[] | undefined {
+  if (values === undefined) return undefined
+  const methods = values.map((method) => method.toUpperCase())
+  for (const method of methods) {
+    if (!isRegistrableMethod(method)) {
+      throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
+    }
+  }
+  return Object.freeze(methods)
 }
 
 /** Validate and freeze declarations, one or many. */
@@ -179,8 +193,8 @@ export function declarationApplies(
   method: string,
   path: string,
 ): boolean {
-  if (declaration.methods !== undefined && !declaration.methods.includes(method as Method))
-    return false
+  if (declaration.methods !== undefined && !declaration.methods.includes(method)) return false
+  if (declaration.exceptMethods?.includes(method) === true) return false
   return (
     declaration.paths === undefined ||
     declaration.paths.some((pattern) => routeGlob(pattern).test(path))

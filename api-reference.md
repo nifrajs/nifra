@@ -2520,6 +2520,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What `all()` and `method()` from `@nifrajs/core/methods` return: a plugin for `app.use()` that registers one handler under the methods `M` of `Path`. It is opaque - apply it with `use`, which reads the route's types from it and adds them to the app's registry.
 - **all** _(function)_ - `all: { <Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(path: Path, schema: S, handler: H): MethodRoutesPlugin<Method, Path, S, OutputOf<H>, Ctx>; <Path extends string, H extends H…`
   Register one handler under every standard method: `app.use(all(path, handler))`.
+- **isRegistrableMethod** _(function)_ - `isRegistrableMethod: (method: string) => boolean`
+  Whether a route can be registered under `method` - one of {@link METHODS}, or another uppercase token such as `PROPFIND`. `TRACE`, `CONNECT` and `TRACK` never are.
 - **method** _(function)_ - `method: { <const M extends string, Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(name: M | readonly M[], path: Path, schema: S, handler: H): MethodRoutesPlugin<M, Path, S, Output…`
   Register one handler under the method, or the methods, you name: `app.use(method("PROPFIND", path, handler))`.
 

@@ -9,6 +9,7 @@ import type { MethodRoutesPlugin } from "./plugin.ts"
 import type { OutputOf } from "./registry.ts"
 import type { Handler } from "./server.ts"
 
+export { isRegistrableMethod } from "../router/router.ts"
 export type { MethodRoutesPlugin } from "./plugin.ts"
 
 /** The part of a server these plugins use: one atomic batch registration. */

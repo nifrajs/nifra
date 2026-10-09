@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { method } from "@nifrajs/core/methods"
 import {
   basicAuth,
   bearer,
@@ -114,5 +115,27 @@ describe("official route assurance evidence", () => {
       NIFRA_ASSURANCE.BODY_BOUNDED,
       NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
     ])
+  })
+
+  test("csrf evidence covers a custom-method route exactly when csrf() guards it", () => {
+    const secret = "0123456789abcdef0123456789abcdef"
+    const byDefault = server()
+      .use(csrf({ secret }))
+      .use(method(["PURGE", "OPTIONS"], "/cache", () => ({})))
+      .get("/cache", () => ({}))
+    const evidence = (app: ReturnType<typeof server>, verb: string): readonly string[] =>
+      app
+        .routes()
+        .find((route) => route.method === verb && route.path === "/cache")
+        ?.assurance?.map((item) => item.id) ?? []
+    expect(evidence(byDefault, "PURGE")).toContain(NIFRA_ASSURANCE.CSRF)
+    expect(evidence(byDefault, "OPTIONS")).not.toContain(NIFRA_ASSURANCE.CSRF)
+    expect(evidence(byDefault, "GET")).not.toContain(NIFRA_ASSURANCE.CSRF)
+
+    const named = server()
+      .use(csrf({ secret, methods: ["purge"] }))
+      .use(method(["PURGE", "REPORT"], "/cache", () => ({})))
+    expect(evidence(named, "PURGE")).toContain(NIFRA_ASSURANCE.CSRF)
+    expect(evidence(named, "REPORT")).not.toContain(NIFRA_ASSURANCE.CSRF)
   })
 })

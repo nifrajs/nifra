@@ -353,9 +353,11 @@ export default function Api() {
           <code>{`fetch(url, { method: "PURGE" })`}</code>.
         </li>
         <li>
-          <b>An assurance policy selects standard methods only.</b> A rule with <code>methods</code>{" "}
-          never matches a custom-method route, so classify it with a path rule. Left unmatched, it is
-          reported as <code>unclassified-route</code>.
+          <b>An assurance rule names standard methods only.</b> A rule with <code>methods</code>{" "}
+          never matches a custom-method route; one with <code>exceptMethods</code> does, unless the
+          route is under a method it lists. <code>securityBaseline()</code> holds a custom method to
+          its mutation rules, CSRF included, and <code>csrf()</code> publishes its evidence for one.
+          Left unmatched, a route is reported as <code>unclassified-route</code>.
         </li>
       </ul>
       <p className="caveat">
