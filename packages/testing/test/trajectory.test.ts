@@ -31,6 +31,62 @@ const definition = {
 }
 
 describe("agent trajectory lab", () => {
+  test("a tool fault fires during a dry replay, which still runs no tool", async () => {
+    let executions = 0
+    const counted = defineTool({
+      ...tool,
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const counting = { ...definition, tools: [counted] }
+    const responses: unknown[] = [
+      { kind: "tool", name: "trajectory.echo", input: { value: "x" } },
+      { kind: "output", value: { answer: "done" } },
+    ]
+    const recorded = await runAgent(
+      counting,
+      { value: { prompt: "run" } },
+      {
+        model: { complete: () => responses.shift() },
+        capabilities: ["trajectory.echo"],
+        clock: () => 1,
+      },
+      { state: createAgentState("trajectory-record"), maxTurns: 2 },
+    )
+    const transcript = await createTrajectoryTranscript(recorded.transcript)
+    const scenarios = [
+      { id: "s", name: "s", description: "tool fault", execute: () => {}, verify: () => true },
+    ]
+    const outcomes: string[] = []
+    for (const kind of ["tool-error", "cancellation", "budget-pressure"] as const) {
+      const replay = await replayTrajectory(
+        counting,
+        { value: { prompt: "run" } },
+        { capabilities: ["trajectory.echo"], clock: () => 1 },
+        transcript,
+        {
+          state: createAgentState("trajectory-replay"),
+          maxTurns: 2,
+          faultProfile: defineFaultProfile({
+            name: `tool-${kind}`,
+            scenarios,
+            faults: [{ point: "tool", kind }],
+          }),
+        },
+      )
+      const evidence = replay.result.evidence.find((item) => item.kind === "tool")
+      outcomes.push(`${kind} ${replay.result.status} ${evidence?.outcome}:${evidence?.code}`)
+    }
+    expect(outcomes).toEqual([
+      "tool-error completed failed:execution_failed",
+      "cancellation suspended failed:cancelled",
+      "budget-pressure suspended failed:budget_exceeded",
+    ])
+    expect(executions).toBe(1)
+  })
+
   test("replays the same transcript byte-identically with no real tool effects", async () => {
     const responses: unknown[] = [
       { kind: "tool", name: "trajectory.echo", input: { value: "x" } },
