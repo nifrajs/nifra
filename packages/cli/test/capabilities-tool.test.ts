@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, spyOn, test } from "bun:test"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
@@ -137,6 +137,40 @@ describe("project provenance firewall", () => {
         chain: ["backend.ts", "./src/orders.ts", "postgres"],
       }),
     ])
+  })
+
+  test("follows a workspace package that lives beside the app, as a monorepo links it", async () => {
+    const root = join(FIXTURES, "workspace-package")
+    const cwd = join(root, "apps", "web")
+    await mkdir(cwd, { recursive: true })
+    await mkdir(join(root, "packages", "orders"), { recursive: true })
+    await mkdir(join(root, "node_modules", "@example"), { recursive: true })
+    await writeFile(
+      join(root, "packages", "orders", "package.json"),
+      JSON.stringify({ name: "@example/orders", version: "0.0.0", main: "index.ts" }),
+    )
+    await writeFile(
+      join(root, "packages", "orders", "index.ts"),
+      `import db from "postgres"
+       export const mutate = () => ({ ok: Boolean(db) })`,
+    )
+    await symlink(
+      join(root, "packages", "orders"),
+      join(root, "node_modules", "@example", "orders"),
+    )
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import { mutate } from "@example/orders"
+       export const backend = server().post("/orders", { capabilities: ["db.write"] }, mutate)`,
+    )
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+
+    expect(project.violations.map((violation) => violation.chain)).toEqual([
+      ["backend.ts", "@example/orders", "postgres"],
+    ])
+    expect(project.report.ok).toBe(false)
   })
 
   test("covers every form of an optional-param route and the routes of all() and method()", async () => {

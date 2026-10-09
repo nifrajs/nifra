@@ -200,7 +200,10 @@ function resolveLocalModule(
     const fromAbsolute = join(cwd, from)
     const resolved = Bun.resolveSync(specifier, dirname(fromAbsolute))
     const rel = relative(cwd, resolved).replaceAll("\\", "/")
-    if (rel.startsWith("../") || isAbsolute(rel)) return undefined
+    if (isAbsolute(rel)) return undefined
+    // A workspace package resolves through its node_modules link to its real source, which in a
+    // monorepo sits beside the app (`../../packages/db`); an installed package stays under node_modules.
+    if (rel.startsWith("../") && rel.split("/").includes("node_modules")) return undefined
     if (!sources.has(rel) && existsSync(resolved)) {
       try {
         sources.set(rel, readFileSync(resolved, "utf8"))
