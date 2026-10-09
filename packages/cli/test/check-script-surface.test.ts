@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
+import { relative } from "node:path"
 import { collectCheckResult, componentScripts, walkSource } from "../src/check.ts"
 import {
   createFixtureProject,
@@ -93,6 +94,40 @@ describe("nifra check reads every file a build loads", () => {
       "routes/a.js",
       "server.ts",
     ])
+  })
+})
+
+describe("zone rules follow every way a file is zoned", () => {
+  test("a configured zone folder and a zone suffix outside the zone folders are browser code", async () => {
+    const root = project({
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "@nifrajs/web": "*" },
+        nifra: { zones: { frontend: ["components"] } },
+      }),
+      "nifra.config.ts": "export const adapter = {}\n",
+      "components/keys.ts": `export const key = "${KEY}"\nexport const url = process.env.DATABASE_URL\n`,
+      "lib/api.frontend.ts": `export const key = "${KEY}"\nexport const url = process.env.DATABASE_URL\n`,
+      "lib/server-side.ts": `export const key = "${KEY}"\nexport const url = process.env.DATABASE_URL\n`,
+      "routes/index.tsx":
+        'import { key } from "../components/keys"\nimport { url } from "../lib/api.frontend"\nexport default () => key + url\n',
+    })
+    expect(await findings(root)).toEqual([
+      "NF-C029 components/keys.ts:2",
+      "NF-C029 lib/api.frontend.ts:2",
+      "NF-C032 components/keys.ts:1",
+      "NF-C032 lib/api.frontend.ts:1",
+    ])
+  })
+
+  test("a relative project root is read like an absolute one", async () => {
+    const root = project({
+      "nifra.config.ts": "export const adapter = {}\n",
+      "frontend/keys.ts": `export const key = "${KEY}"\n`,
+    })
+    const relativeRoot = relative(process.cwd(), root)
+    expect(relativeRoot.startsWith("/")).toBe(false)
+    expect(await findings(relativeRoot)).toEqual(["NF-C032 frontend/keys.ts:1"])
   })
 })
 

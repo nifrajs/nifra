@@ -17,7 +17,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from "node:fs"
-import { dirname, isAbsolute, join, relative } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
@@ -488,9 +488,11 @@ async function buildProjectScan(
  * report, `--json`, and the MCP tool all render from. */
 /** Run the scan, freeze its facts, and project them into the public diagnostic result. */
 export async function collectCheckResult(
-  cwd: string,
+  root: string,
   opts: CheckCollectionOptions = {},
 ): Promise<CheckResult> {
+  // The zone classifier works on absolute paths; under a relative root every file read as unzoned.
+  const cwd = resolve(root)
   const scan = await buildProjectScan(cwd, opts)
   try {
     return await collectCheckDiagnostics(cwd, scan, opts)

@@ -43,11 +43,21 @@ const BACKEND = new Set(["backend", "route-backend"])
 const BROWSER_CODE = new Set(["route-frontend", "frontend", "shared"])
 const CODE_FILE = /\.(?:[cm]?[jt]sx?|svelte|vue|mdx)$/
 
-/** The app a project file belongs to: the path before its first zone folder, or `undefined`. */
-function appOf(file: string): string | undefined {
+/**
+ * The app a project file belongs to: the path before its first zone folder, else the deepest app in
+ * `apps` that encloses it, since a folder `nifra.zones` declares or a `.frontend`-style suffix zones a
+ * file anywhere in its app. `undefined` for a file in no app.
+ */
+function appOf(file: string, apps: readonly string[]): string | undefined {
   const parts = file.split("/")
   const at = parts.findIndex((part, i) => i < parts.length - 1 && ZONE_FOLDER.has(part))
-  return at === -1 ? undefined : parts.slice(0, at).join("/")
+  if (at !== -1) return parts.slice(0, at).join("/")
+  let nearest: string | undefined
+  for (const app of apps) {
+    if (app !== "" && !file.startsWith(`${app}/`)) continue
+    if (nearest === undefined || app.length > nearest.length) nearest = app
+  }
+  return nearest
 }
 
 /**
@@ -110,9 +120,10 @@ export function zonedFiles(ctx: RuleContext): {
   const inNifraProject = createNifraProjectProbe(ctx.root)
   const kindOf = createKindProbe(ctx.root)
   const apiOnly = createApiOnlyProbe(ctx.root)
+  const apps = appDirs(ctx.sources.files)
   for (const file of ctx.sources.files) {
     if (!CODE_FILE.test(file)) continue
-    const app = appOf(file)
+    const app = appOf(file, apps)
     if (app === undefined || !inNifraProject(app)) continue
     const declared = kindOf(app)
     if (declared.invalid !== undefined) {
