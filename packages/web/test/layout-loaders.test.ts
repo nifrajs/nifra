@@ -712,6 +712,7 @@ test("a layout's notFound() on a soft-nav answers with the status, not a documen
 const gatedApp = (gateLoader: () => unknown, counts: { page: number; action: number }) =>
   createWebApp({
     adapter: stub,
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: the stub adapter renders string defaults, which Manifest's component types cannot express.
     manifest: {
       routes: [
         {

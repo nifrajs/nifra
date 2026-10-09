@@ -91,6 +91,7 @@ export function rejected(
 }
 
 // Keyed in the global symbol registry so two copies of core agree on one record.
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: only this module writes the slot, and only a WeakSet<Request>.
 const shared = globalThis as unknown as Record<symbol, WeakSet<Request> | undefined>
 const AUTHENTICATED = Symbol.for("nifra.authenticated")
 shared[AUTHENTICATED] ??= new WeakSet()

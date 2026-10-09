@@ -145,6 +145,11 @@ describe("sse", () => {
 describe("sse maxBufferedBytes", () => {
   const frame = { data: "x".repeat(1000) } // 1008 bytes on the wire
 
+  function bodyReader(res: Response) {
+    if (res.body === null) throw new Error("sse() returned no body")
+    return res.body.getReader()
+  }
+
   // Sends without reading until the stream drops the client, at most `limit` times.
   function flood(init: Parameters<typeof sse>[2], limit: number) {
     let stream!: SSEStream
@@ -168,8 +173,7 @@ describe("sse maxBufferedBytes", () => {
     const { res, stream, sends } = flood({ maxBufferedBytes: 4096 }, 1000)
     expect(sends).toBe(6)
     expect(String(stream.signal.reason)).toContain("sse_client_too_slow")
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
-    await expect(reader.read()).rejects.toThrow("sse_client_too_slow")
+    await expect(bodyReader(res).read()).rejects.toThrow("sse_client_too_slow")
   })
 
   test("the default cap is 1 MiB; Infinity turns it off", () => {
@@ -195,7 +199,7 @@ describe("sse maxBufferedBytes", () => {
       },
       { maxBufferedBytes: 4096 },
     )
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+    const reader = bodyReader(res)
     let bytes = 0
     let reads = 0
     for (;;) {
@@ -213,7 +217,11 @@ describe("sse maxBufferedBytes", () => {
   })
 
   test("a negative, NaN, or non-numeric cap throws", () => {
-    for (const maxBufferedBytes of [-1, Number.NaN, "1mb" as unknown as number])
-      expect(() => sse(ctx(), () => {}, { maxBufferedBytes })).toThrow(RangeError)
+    for (const init of [
+      { maxBufferedBytes: -1 },
+      { maxBufferedBytes: Number.NaN },
+      JSON.parse('{ "maxBufferedBytes": "1mb" }'),
+    ])
+      expect(() => sse(ctx(), () => {}, init)).toThrow(RangeError)
   })
 })
