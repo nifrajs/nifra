@@ -169,6 +169,18 @@ describe("signDownloadUrl / verifyDownloadUrl", () => {
     expect(await verifyDownloadUrl(signed, secret, { now: 1061 })).toBe(false) // exp = 1060
   })
 
+  test("rejects an expiry spelled any way but the signed one", async () => {
+    const signed = await signDownloadUrl("/uploads/a.png", secret, {
+      expiresInSeconds: 60,
+      now: 1000,
+    })
+    expect(signed).toContain("vexp=1060")
+    for (const alias of ["vexp=01060", "vexp=0001060"])
+      expect(
+        await verifyDownloadUrl(signed.replace("vexp=1060", alias), secret, { now: 1000 }),
+      ).toBe(false)
+  })
+
   test("rejects a tampered path", async () => {
     const signed = await signDownloadUrl("/uploads/a.png", secret, {
       expiresInSeconds: 60,

@@ -107,7 +107,8 @@ export async function verifyDownloadUrl(
   const u = new URL(url, DUMMY_BASE)
   const exp = getSingleParam(u, "vexp")
   const sig = getSingleParam(u, "vsig")
-  if (exp === null || sig === null || !/^\d+$/.test(exp)) return false
+  // Only the form signDownloadUrl writes: `0042` or `42.0` would be a second URL for one grant.
+  if (exp === null || sig === null || !/^(?:0|[1-9]\d{0,15})$/.test(exp)) return false
   const now = options?.now ?? Math.floor(Date.now() / 1000)
   if (Number(exp) < now) return false
   const sigBytes = fromBase64Url(sig)
