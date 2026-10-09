@@ -48,6 +48,7 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
 import {
   assertDevelopmentProductionParity,
@@ -619,21 +620,27 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const renamed = sanitizeOutputNames(outputs)
   const toUrl = (path: string): string =>
     `${publicPath}${renamed.get(basename(path)) ?? basename(path)}`
-  // Entry-point outputs come back in entrypoint order: [bootstrap, ...routeFiles]. Map each route file
-  // to its chunk URL by that order (guarded against drift), then a route's chunks = its layout chain +
-  // own file.
+  // Each entry's chunk is the output the metafile names that entry's source for. The position among the
+  // entry-point outputs ([bootstrap, ...routeFiles]) is only the fallback, for an entry the metafile
+  // does not name by path (a `resolve` that returns a bare specifier). A route's chunks = its layout
+  // chain + own file.
   const entryPoints = outputs.filter((o) => o.kind === "entry-point")
-  const bootstrap = entryPoints[0]
-  if (bootstrap === undefined) throw new Error("[nifra/web] build produced no entry-point output")
   if (entryPoints.length !== routeFiles.length + 1) {
     throw new Error(
       `[nifra/web] expected ${routeFiles.length + 1} entry-point outputs (bootstrap + ${routeFiles.length} routes), got ${entryPoints.length}`,
     )
   }
+  const bySource = entryChunks(clientMeta?.outputs ?? {}, cwd)
+  const chunkOf = (source: string, position: number): string | undefined => {
+    const path = bySource.get(resolvePath(source)) ?? entryPoints[position]?.path
+    return path === undefined ? undefined : toUrl(path)
+  }
+  const entryUrl = chunkOf(entryFile, 0)
+  if (entryUrl === undefined) throw new Error("[nifra/web] build produced no entry-point output")
   const fileToChunk = new Map<string, string>()
   routeFiles.forEach((file, i) => {
-    const out = entryPoints[i + 1] // in range - length checked above
-    if (out !== undefined) fileToChunk.set(file, toUrl(out.path))
+    const url = chunkOf(resolve(file), i + 1)
+    if (url !== undefined) fileToChunk.set(file, url)
   })
   const chunksFor = (chainFiles: readonly string[]): string[] =>
     chainFiles.map((f) => fileToChunk.get(f)).filter((u): u is string => u !== undefined)
@@ -719,7 +726,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const manifest: BuildManifest = {
-    entry: toUrl(bootstrap.path),
+    entry: entryUrl,
     assets: outputs.map((o) => toUrl(o.path)),
     routes,
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
