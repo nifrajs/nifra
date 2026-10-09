@@ -51,6 +51,40 @@ describe("owned effect scope", () => {
     ).rejects.toThrow("effect errorCode is invalid")
   })
 
+  test("a misconfigured error code still settles the effect as failed", async () => {
+    for (const misconfigured of [
+      { errorCode: () => JSON.parse("null"), thrown: "effect errorCode is invalid" },
+      {
+        errorCode: () => {
+          throw new Error("mapper broke")
+        },
+        thrown: "mapper broke",
+      },
+    ]) {
+      const failed: string[] = []
+      const phases: string[] = []
+      const scope = createEffectScope({ observers: [(event) => phases.push(event.phase)] })
+      await expect(
+        scope.run(
+          {
+            capability: "payments.charge",
+            errorCode: misconfigured.errorCode,
+            transitions: {
+              failed: (_context, { began, errorCode }) => {
+                failed.push(`${began}:${errorCode}`)
+              },
+            },
+          },
+          async () => {
+            throw new Error("provider down")
+          },
+        ),
+      ).rejects.toThrow(misconfigured.thrown)
+      expect(failed).toEqual(["true:execution_failed"])
+      expect(phases).toEqual(["started", "ambiguous"])
+    }
+  })
+
   test("manual evidence preserves retry safety and terminal certainty", () => {
     const scope = createEffectScope()
     scope.markSafeToRetry()
