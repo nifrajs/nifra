@@ -552,3 +552,145 @@ describe("createMutation", () => {
     expect(m.snapshot().data).toBe(101)
   })
 })
+
+describe("infinite queries share the cache's invalidation, SSR bridge and eviction", () => {
+  const opts = {
+    initialPageParam: 0,
+    getNextPageParam: (_last: string, all: readonly string[]) =>
+      all.length < 2 ? all.length : undefined,
+  }
+
+  test("invalidateQueries refetches a mounted one's loaded pages and marks an unmounted one stale", async () => {
+    let version = 1
+    const c = createQueryClient({ now: () => 0, staleTime: 1e9 })
+    const mounted = c.infiniteQuery(["posts", "a"], async (p: number) => `a${p}@v${version}`, opts)
+    const unmounted = c.infiniteQuery(
+      ["posts", "b"],
+      async (p: number) => `b${p}@v${version}`,
+      opts,
+    )
+    const stop = mounted.subscribe(() => {})
+    await mounted.fetch()
+    await mounted.fetchNextPage()
+    await unmounted.fetch()
+
+    version = 2
+    c.invalidateQueries(["posts"])
+    await mounted.fetch() // joins the refetch the invalidation started
+    expect(mounted.snapshot().data).toEqual({ pages: ["a0@v2", "a1@v2"], pageParams: [0, 1] })
+    expect(unmounted.snapshot().data?.pages).toEqual(["b0@v1"])
+    expect(await unmounted.fetch()).toEqual({ pages: ["b0@v2"], pageParams: [0] })
+    stop()
+  })
+
+  test("a fetch begun before an invalidation does not publish", async () => {
+    const g = gated()
+    const c = createQueryClient({ now: () => 0 })
+    const h = c.infiniteQuery(["feed"], async () => String(await g.fn()), opts)
+    const before = h.fetch()
+    c.invalidateQueries(["feed"])
+    const after = h.fetch()
+    expect(g.calls()).toBe(2)
+    g.resolve(1, "new")
+    g.resolve(0, "old")
+    await Promise.all([before, after])
+    expect(h.snapshot().data?.pages).toEqual(["new"])
+  })
+
+  test("dehydrate carries the pages; hydrate seeds them before or after the query exists", async () => {
+    const server = createQueryClient({ now: () => 100 })
+    const h = server.infiniteQuery(["feed"], async (p: number) => `p${p}`, opts)
+    await h.fetch()
+    await h.fetchNextPage()
+    const state = server.dehydrate()
+    expect(state.infiniteQueries).toEqual([
+      { key: ["feed"], data: { pages: ["p0", "p1"], pageParams: [0, 1] }, updatedAt: 100 },
+    ])
+
+    let calls = 0
+    const later = createQueryClient({ now: () => 150, staleTime: 1000 })
+    later.hydrate(state)
+    const seeded = later.infiniteQuery(
+      ["feed"],
+      async () => {
+        calls++
+        return "x"
+      },
+      opts,
+    )
+    expect(seeded.snapshot().data).toEqual({ pages: ["p0", "p1"], pageParams: [0, 1] })
+    await seeded.fetch()
+    expect(calls).toBe(0)
+
+    const early = createQueryClient({ now: () => 150 })
+    const existing = early.infiniteQuery(["feed"], async () => "x", opts)
+    early.hydrate(state)
+    expect(existing.snapshot().data?.pages).toEqual(["p0", "p1"])
+  })
+
+  test("an unmounted one is evicted after gcTime and past max; a mounted one stays", () => {
+    let t = 0
+    const c = createQueryClient({ now: () => t, gcTime: 10, max: 2 })
+    const query = (n: number) => c.infiniteQuery(["s", n], async () => "x", opts)
+    const idle = query(0)
+    idle.subscribe(() => {})()
+    t = 10
+    expect(query(0)).not.toBe(idle)
+
+    const mounted = query(1)
+    const stop = mounted.subscribe(() => {})
+    const oldest = query(2)
+    query(3)
+    query(4)
+    expect(query(1)).toBe(mounted)
+    expect(query(2)).not.toBe(oldest)
+    stop()
+  })
+})
+
+describe("createMutation callbacks that throw", () => {
+  test("an onMutate that throws fails the mutation like a failed write", async () => {
+    const order: string[] = []
+    let writes = 0
+    const m = createMutation(
+      async () => {
+        writes++
+      },
+      {
+        onMutate: () => {
+          throw new Error("no")
+        },
+        onError: (e) => {
+          order.push(`error:${String(e)}`)
+        },
+        onSettled: () => {
+          order.push("settled")
+        },
+      },
+    )
+    await expect(m.mutate(undefined)).rejects.toThrow("no")
+    expect([m.snapshot().status, writes, order]).toEqual([
+      "error",
+      0,
+      ["error:Error: no", "settled"],
+    ])
+  })
+
+  test("an onSuccess that throws rejects the call but keeps the write's success", async () => {
+    const order: string[] = []
+    const m = createMutation(async (v: number) => v, {
+      onSuccess: () => {
+        throw new Error("refresh failed")
+      },
+      onError: () => {
+        order.push("error")
+      },
+      onSettled: (d, e) => {
+        order.push(`settled:${d}:${e}`)
+      },
+    })
+    await expect(m.mutate(1)).rejects.toThrow("refresh failed")
+    expect(m.snapshot()).toEqual({ status: "success", data: 1, error: undefined, variables: 1 })
+    expect(order).toEqual(["settled:1:undefined"])
+  })
+})

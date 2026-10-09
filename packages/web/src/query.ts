@@ -111,6 +111,12 @@ export interface DehydratedState {
     readonly data: unknown
     readonly updatedAt: number
   }>
+  /** The successful infinite queries, pages and page params. */
+  readonly infiniteQueries?: ReadonlyArray<{
+    readonly key: unknown
+    readonly data: InfiniteData<unknown, unknown>
+    readonly updatedAt: number
+  }>
 }
 
 /** The keyed query cache. One per app (a binding registers it like the router). */
@@ -125,8 +131,9 @@ export interface QueryClient {
     fn: (pageParam: P) => Promise<T>,
     options: InfiniteQueryOptions<T, P>,
   ) => InfiniteQueryHandle<T, P>
-  /** Mark matching cached queries stale and refetch the **mounted** ones (subscribers > 0). Array
-   * keys match by **prefix** (`["todo"]` ⇒ every `["todo", …]`); other keys match exactly. */
+  /** Mark matching cached queries, infinite ones included, stale and refetch the **mounted** ones
+   * (subscribers > 0). Array keys match by **prefix** (`["todo"]` ⇒ every `["todo", …]`); other keys
+   * match exactly. */
   invalidateQueries: (keyOrPrefix: unknown) => void
   /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */
   getQueryData: <T>(key: unknown) => T | undefined
@@ -218,16 +225,23 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   // Lazily evict entries whose GC timer has elapsed (no subscribers), then enforce the hard cap by
   // dropping the oldest-inserted unsubscribed entries. Called on every `query()` - no background timer.
+  const sweepEntries = (
+    entries: Map<string, { readonly subscribers: number; readonly gcAt: number | undefined }>,
+    t: number,
+  ): void => {
+    for (const [h, e] of entries) {
+      if (e.subscribers === 0 && e.gcAt !== undefined && t >= e.gcAt) entries.delete(h)
+    }
+    if (entries.size <= max) return
+    for (const [h, e] of entries) {
+      if (entries.size <= max) break
+      if (e.subscribers === 0) entries.delete(h) // oldest-inserted unsubscribed first (Map order)
+    }
+  }
   const sweep = (): void => {
     const t = now()
-    for (const [h, e] of cache) {
-      if (e.subscribers === 0 && e.gcAt !== undefined && t >= e.gcAt) cache.delete(h)
-    }
-    if (cache.size <= max) return
-    for (const [h, e] of cache) {
-      if (cache.size <= max) break
-      if (e.subscribers === 0) cache.delete(h) // oldest-inserted unsubscribed first (Map order)
-    }
+    sweepEntries(cache, t)
+    sweepEntries(infinite, t)
   }
 
   // Build a cache entry + its handle. `fn`/`staleTime` are mutated in place on re-bind (closures change
@@ -348,6 +362,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       entry.generation++
       if (entry.subscribers > 0) void entry.handle.refetch().catch(() => {}) // refresh mounted now (best-effort)
     }
+    for (const entry of infinite.values()) {
+      if (keyMatchesPrefix(entry.key, keyOrPrefix)) entry.invalidate()
+    }
   }
 
   const getQueryData = <T>(key: unknown): T | undefined => {
@@ -392,7 +409,17 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       if (entry.state.status === "success")
         queries.push({ key: entry.key, data: entry.state.data, updatedAt: entry.state.updatedAt })
     }
-    return { queries }
+    const infiniteQueries: Array<{
+      key: unknown
+      data: InfiniteData<unknown, unknown>
+      updatedAt: number
+    }> = []
+    for (const entry of infinite.values()) {
+      const { status, data, updatedAt } = entry.handle.snapshot()
+      if (status === "success" && data !== undefined)
+        infiniteQueries.push({ key: entry.key, data, updatedAt })
+    }
+    return { queries, infiniteQueries }
   }
 
   const hydrate = (state: DehydratedState): void => {
@@ -408,6 +435,14 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       // incoming snapshot is newer.
       if (entry.state.status !== "success" || q.updatedAt > entry.state.updatedAt)
         entry.setState(successState(q.data, q.updatedAt))
+    }
+    // An infinite entry needs its page options before it can exist, so a snapshot for a key not yet
+    // queried waits here until `infiniteQuery` creates it.
+    for (const q of state.infiniteQueries ?? []) {
+      const h = hashQueryKey(q.key)
+      const existing = infinite.get(h)
+      if (existing === undefined) seeded.set(h, q)
+      else existing.seed(q.data, q.updatedAt)
     }
   }
 
@@ -427,19 +462,33 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       )
       return existing.handle as InfiniteQueryHandle<T, P>
     }
-    const created = makeInfinite<T, P>(fn, opts)
+    const created = makeInfinite<T, P>(key, fn, opts)
     infinite.set(h, created as InfiniteEntry<unknown, unknown>)
+    const snapshot = seeded.get(h)
+    if (snapshot !== undefined) {
+      seeded.delete(h)
+      created.seed(snapshot.data, snapshot.updatedAt)
+    }
     return created.handle
   }
 
   // Infinite entries live in their own map (their data shape + fetch model differ from plain queries).
   interface InfiniteEntry<T, P> {
+    readonly key: unknown
     handle: InfiniteQueryHandle<T, P>
     rebind: (fn: (p: P) => Promise<T>, opts: InfiniteQueryOptions<T, P>) => void
+    /** Mark stale, drop an in-flight fetch's result, and refetch when mounted. */
+    invalidate: () => void
+    /** Take a dehydrated snapshot unless the entry already holds fresher data. */
+    seed: (data: InfiniteData<unknown, unknown>, updatedAt: number) => void
+    subscribers: number
+    gcAt: number | undefined
   }
   const infinite = new Map<string, InfiniteEntry<unknown, unknown>>()
+  const seeded = new Map<string, NonNullable<DehydratedState["infiniteQueries"]>[number]>()
 
   const makeInfinite = <T, P>(
+    key: unknown,
     fetchPage: (pageParam: P) => Promise<T>,
     initialOpts: InfiniteQueryOptions<T, P>,
   ): InfiniteEntry<T, P> => {
@@ -447,6 +496,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     let opts = initialOpts
     let state: QueryState<InfiniteData<T, P>> = PENDING as QueryState<InfiniteData<T, P>>
     let generation = 0
+    let invalidated = false
     let promise: Promise<InfiniteData<T, P>> | undefined
     const listeners = new Set<() => void>()
     const emit = (): void => {
@@ -475,7 +525,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         data.pageParams,
       )
     }
-    const isStale = (): boolean => now() - state.updatedAt >= (opts.staleTime ?? defaultStaleTime)
+    const isStale = (): boolean =>
+      invalidated || now() - state.updatedAt >= (opts.staleTime ?? defaultStaleTime)
 
     // Run a paged operation under a fresh generation, guarding against a superseding op (like `run`).
     const runPaged = (build: () => Promise<InfiniteData<T, P>>): Promise<InfiniteData<T, P>> => {
@@ -486,6 +537,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         try {
           const data = await build()
           if (gen !== generation) return data
+          invalidated = false
           setState(successState(data, now()))
           return data
         } catch (error) {
@@ -511,9 +563,13 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     const handle: InfiniteQueryHandle<T, P> = {
       snapshot: () => state,
       subscribe: (listener) => {
+        entry.subscribers++
+        entry.gcAt = undefined
         listeners.add(listener)
         return () => {
           listeners.delete(listener)
+          entry.subscribers--
+          if (entry.subscribers === 0) entry.gcAt = now() + gcTime
         }
       },
       fetch: () => fetchFirst(false),
@@ -558,13 +614,30 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         return p !== undefined && p !== null
       },
     }
-    return {
-      handle: handle as InfiniteQueryHandle<unknown, unknown>,
+    const entry: InfiniteEntry<T, P> = {
+      key,
+      handle,
       rebind: (nextFn, nextOpts) => {
         fn = nextFn
         opts = nextOpts
       },
-    } as InfiniteEntry<T, P>
+      invalidate: () => {
+        invalidated = true
+        // A fetch begun before this point read pre-mutation data: it may not publish, and a new fetch
+        // must not join it.
+        generation++
+        promise = undefined
+        if (entry.subscribers > 0) void handle.refetch().catch(() => {})
+      },
+      seed: (data, updatedAt) => {
+        if (state.status === "success" && state.updatedAt >= updatedAt) return
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the snapshot was dehydrated from an entry under this key, whose pages and params are T and P
+        setState(successState(data as InfiniteData<T, P>, updatedAt))
+      },
+      subscribers: 0,
+      gcAt: undefined,
+    }
+    return entry
   }
 
   return {
@@ -609,8 +682,10 @@ export interface MutationCallbacks<TData, TVariables> {
 export interface MutationHandle<TData, TVariables> {
   snapshot: () => MutationState<TData, TVariables>
   subscribe: (listener: () => void) => () => void
-  /** Run the mutation. Resolves to the data (and runs onSuccess/onSettled) or rejects (onError/onSettled).
-   * The latest concurrent call wins the published state (older results are dropped). */
+  /** Run the mutation. Resolves to the data (and runs onSuccess/onSettled) or rejects (onError/onSettled);
+   * a throwing `onMutate` fails it the same way. A throwing `onSuccess` or `onSettled` after the write
+   * rejects the call but leaves the state `success` and never calls `onError`. The latest concurrent
+   * call wins the published state (older results are dropped). */
   mutate: (variables: TVariables) => Promise<TData>
   /** Rebind the latest `fn`/callbacks (closures change between renders) without losing state. */
   rebind: (
@@ -667,21 +742,27 @@ export function createMutation<TData, TVariables>(
     mutate: async (variables) => {
       const mine = ++latest
       setState({ status: "pending", data: undefined, error: undefined, variables })
-      // Only await a callback when one is actually supplied - an `await undefined` would insert a
-      // needless microtask before the mutationFn runs (and complicates single-flight timing).
-      if (cbs.onMutate !== undefined) await cbs.onMutate(variables)
+      let data: TData
       try {
-        const data = await mutationFn(variables)
-        if (mine === latest) setState({ status: "success", data, error: undefined, variables })
-        if (cbs.onSuccess !== undefined) await cbs.onSuccess(data, variables)
-        if (cbs.onSettled !== undefined) await cbs.onSettled(data, undefined, variables)
-        return data
+        // Only await a callback when one is actually supplied - an `await undefined` would insert a
+        // needless microtask before the mutationFn runs (and complicates single-flight timing).
+        if (cbs.onMutate !== undefined) await cbs.onMutate(variables)
+        data = await mutationFn(variables)
       } catch (error) {
         if (mine === latest) setState({ status: "error", data: undefined, error, variables })
         if (cbs.onError !== undefined) await cbs.onError(error, variables)
         if (cbs.onSettled !== undefined) await cbs.onSettled(undefined, error, variables)
         throw error
       }
+      if (mine === latest) setState({ status: "success", data, error: undefined, variables })
+      // The write happened: a success callback that throws rejects the call, but is no failure of the
+      // write, so it never reaches onError (which would roll back what the server kept).
+      try {
+        if (cbs.onSuccess !== undefined) await cbs.onSuccess(data, variables)
+      } finally {
+        if (cbs.onSettled !== undefined) await cbs.onSettled(data, undefined, variables)
+      }
+      return data
     },
   }
 }
