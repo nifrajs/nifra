@@ -25,7 +25,7 @@ import {
   assertAuthableDb,
   writeAuthFiles,
 } from "./auth.ts"
-import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "./db.ts"
+import { DB_CHOICES, DB_PRESETS, type DbChoice, type Orm, writeDbFiles } from "./db.ts"
 import { applyFeatures, type FeatureContribution } from "./scaffold/features.ts"
 import { starterRouteTypes } from "./scaffold/route-types.ts"
 import { materializeSite } from "./scaffold/site.ts"
@@ -472,6 +472,17 @@ interface ParsedArgs {
   readonly link?: string
 }
 
+/** The first migration, in the scripts each ORM's preset writes: only Drizzle has a generate step,
+ * Prisma's migrate creates and applies in one, and Kysely migrations are written by hand. */
+const MIGRATION_STEPS: Readonly<Record<Orm, readonly string[]>> = {
+  drizzle: [
+    "bun run db:generate  # SQL from backend/db/schema.ts",
+    "bun run db:migrate   # apply it",
+  ],
+  prisma: ["bun run db:migrate   # create + apply a migration from prisma/schema.prisma"],
+  kysely: ["bun run db:migrate   # apply backend/db/migrations"],
+}
+
 /** Parse `[dir] [--template|-t <t>] [--framework|-f <fw>] [--target <t>] [--docker] [--ci|-c github]
  *  [--db <preset>] [--auth <preset>] [--force] [--link <path>]`.
  * `--framework`/`--target`/`--docker`/`--ci` all default the template to `site`. Throws on the retired
@@ -587,10 +598,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     if (result.auth !== undefined) {
       steps.push("bunx @better-auth/cli@latest generate --config backend/auth.ts # the auth tables")
     }
-    steps.push(
-      "bun run db:generate  # SQL from backend/db/schema.ts",
-      "bun run db:migrate   # apply it",
-    )
+    steps.push(...MIGRATION_STEPS[DB_PRESETS[result.db].orm])
   }
   // Tag the chosen framework + deploy target + db + auth, e.g. "(Vue, Drizzle + libSQL, better-auth)".
   const tags = [

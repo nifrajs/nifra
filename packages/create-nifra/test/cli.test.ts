@@ -983,6 +983,19 @@ describe("run - db/auth next steps + --link dependency rewriting", () => {
     expect(message).toContain("better-auth") // preset tag in the header
   })
 
+  test("every db preset's next steps run only scripts it scaffolded", async () => {
+    for (const db of ["drizzle-sqlite", "prisma-sqlite", "kysely-postgres"]) {
+      const dir = await freshDir(`steps-${db}`)
+      const { code, message } = await run([dir, "--db", db])
+      expect(code).toBe(0)
+      const scripts = (await readPkg(dir)).scripts ?? {}
+      const named = [...message.matchAll(/bun run ([\w:-]+)/g)].map((match) => match[1] ?? "")
+      expect(named).toContain("db:migrate")
+      for (const script of named)
+        expect([db, script, script in scripts]).toEqual([db, script, true])
+    }
+  })
+
   test("--link rewrites @nifrajs/* deps that exist in the linked repo to file: paths", async () => {
     // A fake nifra monorepo exposing only @nifrajs/core - other deps must stay on the registry.
     const linkRoot = await mkdtemp(join(tmpdir(), "nifra-link-"))
