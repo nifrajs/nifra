@@ -4165,32 +4165,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         : createRequestBudget({ deadline: admission!.deadline as number, signal })
     const plan = entry.execution
     const nativeContext = controller === undefined
-    const outcome: MaybePromise<T> =
-      webFast && plan.fusedWeb !== undefined
-        ? (plan.fusedWeb(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            nativeContext,
-          ) as MaybePromise<T>)
-        : !webFast && plan.fusedBody !== undefined
-          ? plan.fusedBody(
-              source,
-              params,
-              search,
-              signal,
-              budget,
-              platform,
-              false,
-              finalize,
-              wrapResponse,
-            )
-          : plan.run(
-              this,
-              entry,
+    let outcome: MaybePromise<T>
+    try {
+      outcome =
+        webFast && plan.fusedWeb !== undefined
+          ? (plan.fusedWeb(
               source,
               params,
               search,
@@ -4198,9 +4177,46 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               budget,
               platform,
               nativeContext,
-              finalize,
-              wrapResponse,
-            )
+            ) as MaybePromise<T>)
+          : !webFast && plan.fusedBody !== undefined
+            ? plan.fusedBody(
+                source,
+                params,
+                search,
+                signal,
+                budget,
+                platform,
+                false,
+                finalize,
+                wrapResponse,
+              )
+            : plan.run(
+                this,
+                entry,
+                source,
+                params,
+                search,
+                signal,
+                budget,
+                platform,
+                nativeContext,
+                finalize,
+                wrapResponse,
+              )
+    } catch (err) {
+      // A lane's synchronous render throw (a BigInt, a header value with a line break): the lanes
+      // guard only their async continuations, since a `try` around a fused render slows it.
+      return this.contextlessBareError(
+        err,
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        wrapResponse,
+      )
+    }
     // The request timeout only bounds work that is actually pending - a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
     if (controller !== undefined && outcome instanceof Promise) {
@@ -4255,7 +4271,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     if (result instanceof Promise) {
       return result.then(
-        (value) => finalize(value, EMPTY_RESPONSE_CONTROLS),
+        (value) => {
+          try {
+            return finalize(value, EMPTY_RESPONSE_CONTROLS)
+          } catch (err) {
+            return this.contextlessBareError(
+              err,
+              source,
+              params,
+              search,
+              signal,
+              budget,
+              platform,
+              wrapResponse,
+            )
+          }
+        },
         (err) =>
           this.contextlessBareError(
             err,
@@ -4325,7 +4356,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (result instanceof Promise) {
       // Async handler on an otherwise-bare route: finish on a microtask, with the same error handling.
       return result.then(
-        (value) => finalize(value, responseSet(ctx), ctx),
+        (value) => {
+          // A synchronous finalize throw reaches runMatchedLanes; this one would reject.
+          try {
+            return finalize(value, responseSet(ctx), ctx)
+          } catch (err) {
+            return this.bareError(err, ctx, finalize, wrapResponse)
+          }
+        },
         (err) => this.bareError(err, ctx, finalize, wrapResponse),
       )
     }
@@ -4361,67 +4399,62 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // `() => ...` can't observe the context - skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
       const contextlessHandler = handler as unknown as ContextlessHandler
+      const fail = (
+        err: unknown,
+        source: RequestSource,
+        params: Record<string, string>,
+        search: string | undefined,
+        signal: AbortSignal,
+        budget: RequestBudget,
+        platform: Platform | undefined,
+        nativeContext: boolean,
+      ): Response =>
+        logError(
+          err,
+          nativeContext
+            ? RequestContext.native(
+                source,
+                params,
+                search,
+                maxBodyBytes,
+                platform,
+                this.protoPoisoning,
+              )
+            : new RequestContext(
+                source,
+                params,
+                search,
+                signal,
+                budget,
+                platform,
+                maxBodyBytes,
+                this.protoPoisoning,
+              ),
+        )
       return (source, params, search, signal, budget, platform, nativeContext) => {
         let result: unknown
         try {
           result = contextlessHandler()
         } catch (err) {
-          return logError(
-            err,
-            nativeContext
-              ? RequestContext.native(
-                  source,
-                  params,
-                  search,
-                  maxBodyBytes,
-                  platform,
-                  this.protoPoisoning,
-                )
-              : new RequestContext(
-                  source,
-                  params,
-                  search,
-                  signal,
-                  budget,
-                  platform,
-                  maxBodyBytes,
-                  this.protoPoisoning,
-                ),
-          )
+          return fail(err, source, params, search, signal, budget, platform, nativeContext)
         }
         if (result instanceof Promise) {
           return result.then(
-            (value) =>
-              fusedRespondNoSet(
-                value,
-                this.responseBodyTag,
-                this.staticResponseHeaders,
-                this.onResponseHooks.length === 0,
-                this.onResponseHooks.length === 0 ? undefined : requestOf(source),
-              ),
-            (err) =>
-              logError(
-                err,
-                nativeContext
-                  ? RequestContext.native(
-                      source,
-                      params,
-                      search,
-                      maxBodyBytes,
-                      platform,
-                      this.protoPoisoning,
-                    )
-                  : new RequestContext(
-                      source,
-                      params,
-                      search,
-                      signal,
-                      budget,
-                      platform,
-                      maxBodyBytes,
-                      this.protoPoisoning,
-                    ),
-              ),
+            (value) => {
+              // A synchronous render throw reaches runMatchedLanes; this one would reject.
+              try {
+                return fusedRespondNoSet(
+                  value,
+                  this.responseBodyTag,
+                  this.staticResponseHeaders,
+                  this.onResponseHooks.length === 0,
+                  this.onResponseHooks.length === 0 ? undefined : requestOf(source),
+                )
+              } catch (err) {
+                return fail(err, source, params, search, signal, budget, platform, nativeContext)
+              }
+            },
+            (err) => fail(err, source, params, search, signal, budget, platform, nativeContext),
           )
         }
         return fusedRespondNoSet(
@@ -4455,14 +4488,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) =>
-            fusedRespond(
-              value,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            ),
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
           (err) => logError(err, ctx),
         )
       }
@@ -4472,6 +4498,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.responseBodyTag,
         this.staticResponseHeaders,
         this.onResponseHooks.length === 0,
+      )
+    }
+  }
+
+  /** A fused Web lane's render in an async continuation, where a result that cannot be rendered
+   * must fail like a handler throw; a synchronous render throw reaches {@link runMatchedLanes}. */
+  private respondFused(result: unknown, ctx: RawContext, unstamped?: boolean): Response {
+    try {
+      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders, unstamped)
+    } catch (err) {
+      return this.bareError(
+        err,
+        ctx,
+        (value, set) => this.wrapWebResponse(toResponse(value, set)),
+        this.wrapWebResponse,
       )
     }
   }
@@ -4659,24 +4700,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (settled) =>
-            fusedRespond(
-              settled,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            ),
+          (settled) => this.respondFused(settled, ctx, this.onResponseHooks.length === 0),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(
-        result,
-        ctx,
-        this.responseBodyTag,
-        this.staticResponseHeaders,
-        this.onResponseHooks.length === 0,
-      )
+      return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
@@ -4765,13 +4793,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Continuations capture route state once; each request supplies its own context.
     const runAfter = (result: unknown, ctx: RawContext): MaybePromise<Response> => {
       if (after === undefined)
-        return fusedRespond(
-          result,
-          ctx,
-          this.responseBodyTag,
-          this.staticResponseHeaders,
-          this.onResponseHooks.length === 0,
-        )
+        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
       let transformed: unknown
       try {
         transformed = after(result, ctx)
@@ -4780,24 +4802,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (transformed instanceof Promise) {
         return transformed.then(
-          (value) =>
-            fusedRespond(
-              value,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            ),
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(
-        transformed,
-        ctx,
-        this.responseBodyTag,
-        this.staticResponseHeaders,
-        this.onResponseHooks.length === 0,
-      )
+      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
     }
     const runHandler = (ctx: RawContext): MaybePromise<Response> => {
       let result: unknown
@@ -4825,13 +4834,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return early.then(
           (settled) => {
             if (settled === undefined) return runHandler(ctx)
-            return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+            return this.respondFused(settled, ctx)
           },
           (err) => logError(err, ctx),
         )
       }
       if (early === undefined) return runHandler(ctx)
-      return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+      return this.respondFused(early, ctx)
     }
     const runDerive = (ctx: RawContext): MaybePromise<Response> => {
       let derived: unknown
@@ -4844,7 +4853,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return derived.then(
           (settled) => {
             if (isResponseResult(settled) || settled instanceof Response) {
-              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+              return this.respondFused(settled, ctx)
             }
             Object.assign(ctx, settled as object)
             return runBefore(ctx)
@@ -4853,7 +4862,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       if (isResponseResult(derived) || derived instanceof Response) {
-        return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+        return this.respondFused(derived, ctx)
       }
       Object.assign(ctx, derived as object)
       return runBefore(ctx)
@@ -4939,13 +4948,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const runHandlerValidated = (): MaybePromise<Response> => {
         const runAfter = (result: unknown): MaybePromise<Response> => {
           if (after === undefined) {
-            return fusedRespond(
-              result,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            )
+            return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
           }
           let transformed: unknown
           try {
@@ -4955,24 +4958,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           }
           if (transformed instanceof Promise) {
             return transformed.then(
-              (value) =>
-                fusedRespond(
-                  value,
-                  ctx,
-                  this.responseBodyTag,
-                  this.staticResponseHeaders,
-                  this.onResponseHooks.length === 0,
-                ),
+              (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
               (err) => logError(err, ctx),
             )
           }
-          return fusedRespond(
-            transformed,
-            ctx,
-            this.responseBodyTag,
-            this.staticResponseHeaders,
-            this.onResponseHooks.length === 0,
-          )
+          return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
         }
         const runHandler = (): MaybePromise<Response> => {
           let result: unknown
@@ -5000,13 +4990,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             return early.then(
               (settled) => {
                 if (settled === undefined) return runHandler()
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+                return this.respondFused(settled, ctx)
               },
               (err) => logError(err, ctx),
             )
           }
           if (early === undefined) return runHandler()
-          return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+          return this.respondFused(early, ctx)
         }
         let derived: unknown
         try {
@@ -5018,7 +5008,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           return derived.then(
             (settled) => {
               if (isResponseResult(settled) || settled instanceof Response) {
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+                return this.respondFused(settled, ctx)
               }
               Object.assign(ctx, settled as object)
               return runBefore()
@@ -5027,7 +5017,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           )
         }
         if (isResponseResult(derived) || derived instanceof Response) {
-          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+          return this.respondFused(derived, ctx)
         }
         Object.assign(ctx, derived as object)
         return runBefore()
@@ -6229,7 +6219,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       request: Request,
       params: Record<string, string>,
     ): MaybePromise<Response> => {
-      const outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
+      let outcome: MaybePromise<Response>
+      try {
+        outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
+      } catch (err) {
+        // A synchronous render throw, as in runMatchedLanes.
+        outcome = this.contextlessBareError(
+          err,
+          request,
+          params,
+          undefined,
+          signal!,
+          budget!,
+          peer,
+          this.wrapWebResponse,
+        )
+      }
       return outcome instanceof Promise
         ? outcome.then((response) => finishNative(request, response))
         : finishNative(request, outcome)
