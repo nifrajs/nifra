@@ -49,6 +49,12 @@ describe("localizePathname", () => {
     expect(r.localizePathname("/\\evil.com", "en")).toBe("/evil.com")
     expect(r.localizePathname("/fr//evil.com", "en")).toBe("/evil.com")
     expect(r.localizePathname("\\\\evil.com", "fr")).toBe("/fr/evil.com")
+    // URL parsing drops tabs and newlines, so a segment of only those is an empty one.
+    for (const input of ["/\t/evil.com", "/\n/evil.com", "/\r\\evil.com"]) {
+      const out = r.localizePathname(input, "en")
+      expect([input, new URL(out, "https://app.example").host]).toEqual([input, "app.example"])
+    }
+    expect(r.unlocalizePathname("/fr/\n/evil.com").pathname).toBe("/evil.com")
   })
 
   test("prefixDefaultLocale prefixes the default too", () => {
