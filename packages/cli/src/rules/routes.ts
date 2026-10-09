@@ -165,6 +165,54 @@ export const duplicateRouteRule: CheckRule = {
   },
 }
 
+/** A segment the router reads as exactly its own text. */
+const PLAIN_SEGMENT = /^[A-Za-z0-9_.~-]+$/
+
+/** Routes keyed by their leading plain segments: two routes can overlap only if one's lead prefixes the other's. */
+interface LeadNode {
+  readonly routes: number[]
+  readonly children: Map<string, LeadNode>
+}
+
+function leadOf(path: string): readonly string[] {
+  const lead: string[] = []
+  for (const segment of path.split("/").slice(1)) {
+    if (!PLAIN_SEGMENT.test(segment)) break
+    lead.push(segment)
+  }
+  return lead
+}
+
+/** The routes in `root` whose lead is compatible with `lead`, in registration order. */
+function routesSharingLead(root: LeadNode, lead: readonly string[]): number[] {
+  const found: number[] = []
+  let node: LeadNode | undefined = root
+  for (const segment of lead) {
+    for (const route of node.routes) found.push(route)
+    node = node.children.get(segment)
+    if (node === undefined) return found.sort((a, b) => a - b)
+  }
+  const below = [node]
+  for (const next of below) {
+    for (const route of next.routes) found.push(route)
+    for (const child of next.children.values()) below.push(child)
+  }
+  return found.sort((a, b) => a - b)
+}
+
+function addLead(root: LeadNode, lead: readonly string[], route: number): void {
+  let node = root
+  for (const segment of lead) {
+    let child = node.children.get(segment)
+    if (child === undefined) {
+      child = { routes: [], children: new Map() }
+      node.children.set(segment, child)
+    }
+    node = child
+  }
+  node.routes.push(route)
+}
+
 /**
  * NF-C024: two different same-method route patterns in one source file accept at least one of the
  * same paths. This is deliberately file-scoped, like NF-C019: the static scanner cannot prove
@@ -195,17 +243,32 @@ export const overlappingRouteRule: CheckRule = {
         return value
       }
 
+      const expectationByLine = new Map<number, ReturnType<typeof commentBlockExpectation>>()
+      const expectationAt = (line: number): ReturnType<typeof commentBlockExpectation> => {
+        if (!expectationByLine.has(line))
+          expectationByLine.set(
+            line,
+            commentBlockExpectation(lines(), line, ROUTE_OVERLAP_EXPECTATION),
+          )
+        return expectationByLine.get(line)
+      }
+      const leads = new Map<string, LeadNode>()
       for (let laterIndex = 0; laterIndex < routes.length; laterIndex += 1) {
         const later = routes[laterIndex]!
         const laterKey = `${later.method} ${later.path}`
-        for (let earlierIndex = 0; earlierIndex < laterIndex; earlierIndex += 1) {
+        const lead = leadOf(later.path)
+        let methodLeads = leads.get(later.method)
+        if (methodLeads === undefined) {
+          methodLeads = { routes: [], children: new Map() }
+          leads.set(later.method, methodLeads)
+        }
+        const candidates = routesSharingLead(methodLeads, lead)
+        addLead(methodLeads, lead, laterIndex)
+        for (const earlierIndex of candidates) {
           const earlier = routes[earlierIndex]!
-          if (earlier.method !== later.method || `${earlier.method} ${earlier.path}` === laterKey)
-            continue
+          if (`${earlier.method} ${earlier.path}` === laterKey) continue
           // Both are errors, so the comment silences only with a reason.
-          const expectations = [later.line, earlier.line].map((line) =>
-            commentBlockExpectation(lines(), line, ROUTE_OVERLAP_EXPECTATION),
-          )
+          const expectations = [later.line, earlier.line].map(expectationAt)
           if (expectations.some((expected) => expected?.reason !== undefined)) continue
           const unreasoned = expectations.some((expected) => expected !== undefined)
 

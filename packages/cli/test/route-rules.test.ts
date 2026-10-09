@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
+import * as core from "@nifrajs/core"
 import { scanStaticRouteText, scanUnresolvedRoutePaths } from "../src/check.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { routeRules } from "../src/rules/routes.ts"
@@ -155,6 +156,24 @@ describe("NF-C024 overlapping route registration", () => {
       ]),
     )
     expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("routes whose leading literal segments differ are never compared", async () => {
+    const overlap = spyOn(core, "routePatternOverlap")
+    try {
+      const routes = Array.from({ length: 40 }, (_, i) => `  .get("/r${i}/:id/items", () => ({}))`)
+      const findings = await scan("backend.ts", backend(routes))
+      expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+      expect(overlap).not.toHaveBeenCalled()
+
+      await scan(
+        "backend.ts",
+        backend(['  .get("/users/:id", () => ({}))', '  .get("/users/me", () => ({}))']),
+      )
+      expect(overlap).toHaveBeenCalledTimes(1)
+    } finally {
+      overlap.mockRestore()
+    }
   })
 
   test("a nifra-expect comment with a reason silences the pair, by code or slug", async () => {
