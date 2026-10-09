@@ -1395,12 +1395,29 @@ function findCliCommand(values: readonly string[]): number {
   return values.findIndex((value) => isCliCommandToken(value))
 }
 
+/**
+ * The command vector from one runtime argv: the command, then its arguments. Arguments typed before
+ * the command (`nifra --json check`) follow the command's own, ahead of any `--`, rather than being
+ * dropped. Only when index 1 is the script: a runtime flag there means the leading entries are the
+ * runtime's own, not the caller's.
+ */
+export function commandArgv(values: readonly string[], commandIndex: number): readonly string[] {
+  const command = values.slice(commandIndex)
+  const script = values[1]
+  if (commandIndex <= 2 || script === undefined || script.startsWith("-")) return command
+  const leading = values.slice(2, commandIndex)
+  const separator = command.indexOf("--")
+  return separator === -1
+    ? [...command, ...leading]
+    : [...command.slice(0, separator), ...leading, ...command.slice(separator)]
+}
+
 function cliArgv(): readonly string[] {
   const reexec = reexecCliArgv()
   if (reexec !== undefined) return reexec
   for (const values of [Bun.argv, process.argv]) {
     const commandIndex = findCliCommand(values)
-    if (commandIndex >= 0) return values.slice(commandIndex)
+    if (commandIndex >= 0) return commandArgv(values, commandIndex)
   }
   return Bun.argv.slice(2)
 }

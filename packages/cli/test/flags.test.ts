@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
-import { assureBundleRequested, formatCliError, parseFlags } from "../src/cli.ts"
+import { assureBundleRequested, commandArgv, formatCliError, parseFlags } from "../src/cli.ts"
 
 // parseFlags reads Bun.env.PORT; snapshot + restore so tests don't leak the override into each other.
 const savedPort = Bun.env.PORT
@@ -120,4 +120,25 @@ test("a configured Bun child recovers its command vector when argv is empty", as
   expect(code).toBe(0)
   expect(stderr).toBe("")
   expect(stdout).toContain("nifra (@nifrajs/cli)")
+})
+
+test("arguments typed before the command follow it instead of being dropped", () => {
+  const runtime = ["/usr/local/bin/bun", "/app/node_modules/.bin/nifra"]
+  expect(commandArgv([...runtime, "--json", "check"], 3)).toEqual(["check", "--json"])
+  expect(commandArgv([...runtime, "--env-file", ".env", "upgrade", "4.0.0"], 4)).toEqual([
+    "upgrade",
+    "4.0.0",
+    "--env-file",
+    ".env",
+  ])
+  expect(commandArgv([...runtime, "--json", "run", "--", "x"], 3)).toEqual([
+    "run",
+    "--json",
+    "--",
+    "x",
+  ])
+  expect(commandArgv([...runtime, "check", "--json"], 2)).toEqual(["check", "--json"])
+  // A runtime flag at index 1: what precedes the command is the runtime's, not the caller's.
+  expect(commandArgv(["bun", "--config=a.toml", "/app/cli.ts", "dev"], 3)).toEqual(["dev"])
+  expect(commandArgv(["dev", "--port", "3000"], 0)).toEqual(["dev", "--port", "3000"])
 })
