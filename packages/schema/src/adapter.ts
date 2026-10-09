@@ -195,7 +195,9 @@ function convertFlat(plan: CoercionPlan, value: unknown): unknown {
  * generation**, so that first compile throws there. We catch it once per schema and
  * fall back to TypeBox's eval-free `Value` checker - same semantics (and same global
  * `FormatRegistry`, so `t.string({ format })` behaves identically), no `new Function`.
- * The branch is decided once and memoized, so the hot path is a single check either way.
+ * A browser page starts on that checker, so a strict CSP or Trusted Types sees no
+ * compile attempt. The branch is decided once and memoized, so the hot path is a single
+ * check either way.
  *
  * Exposed (not just used internally by `t`) so a TypeBox schema authored directly can
  * be adapted without leaving the Standard Schema world.
@@ -216,8 +218,10 @@ export function fromTypeBox<T extends TSchema>(
   const coercionPlan = coerce ? flatCoercionPlan(schema) : null
   let compiled: TypeCheck<T> | undefined
   // A backslash-carrying key/literal would MISCOMPILE (not throw) under TypeCompiler - see
-  // hasCompileHazard. Start such schemas on the eval-free path; everything else compiles as before.
-  let evalFree = hasCompileHazard(schema)
+  // hasCompileHazard. Start such schemas on the eval-free path. So does a browser page: under a CSP
+  // without 'unsafe-eval', or Trusted Types, the compile attempt is a violation the browser logs and
+  // reports, once per schema, before the fallback below catches it.
+  let evalFree = hasCompileHazard(schema) || "document" in globalThis
   return {
     "~standard": {
       version: 1,

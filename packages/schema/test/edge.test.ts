@@ -77,3 +77,32 @@ describe("edge runtime - no dynamic codegen", () => {
     expect(isIssues(bad.result)).toBe(true)
   })
 })
+
+describe("browser page - no compile attempt", () => {
+  test("a schema made in a page validates without ever calling the Function constructor", () => {
+    const RealFunction = globalThis.Function
+    let attempts = 0
+    const counting = (): never => {
+      attempts++
+      throw new EvalError("Refused to evaluate a string as JavaScript")
+    }
+    Reflect.set(globalThis, "document", {})
+    let valid: unknown
+    let invalid: unknown
+    try {
+      const schema = t.object({ name: t.string({ minLength: 1 }) })
+      Reflect.set(globalThis, "Function", counting)
+      try {
+        valid = schema["~standard"].validate({ name: "Ada" })
+        invalid = schema["~standard"].validate({ name: "" })
+      } finally {
+        Reflect.set(globalThis, "Function", RealFunction)
+      }
+    } finally {
+      Reflect.deleteProperty(globalThis, "document")
+    }
+    expect(attempts).toBe(0)
+    expect(valid).toEqual({ value: { name: "Ada" } })
+    expect(isIssues(invalid) && invalid.issues[0]?.path).toEqual(["name"])
+  })
+})
