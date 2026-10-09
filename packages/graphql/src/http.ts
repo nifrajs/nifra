@@ -91,7 +91,11 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
    * Validation compares every such pair, so this bounds its cost. Default 2,000.
    */
   readonly maxFieldOverlaps?: number
-  /** Maximum asynchronous resolver execution time. Default 10 seconds. */
+  /**
+   * Maximum asynchronous resolver execution time. Default 10 seconds. The execution's abort signal,
+   * which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline and when the
+   * request itself is aborted.
+   */
   readonly executionTimeoutMs?: number
   /** Prototype-pollution policy for the parsed JSON body. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
@@ -311,15 +315,20 @@ async function run<Context, Env>(
 
   let result: ExecutionResult
   try {
-    const execution = execute({
-      schema: opts.schema,
-      document,
-      rootValue: opts.rootValue,
-      contextValue,
-      variableValues: params.variables ?? undefined,
-      operationName: params.operationName ?? undefined,
-    })
-    result = (await withExecutionTimeout(execution, executionTimeoutMs)) as ExecutionResult
+    result = await withExecutionTimeout(
+      (abortSignal) =>
+        execute({
+          schema: opts.schema,
+          document,
+          rootValue: opts.rootValue,
+          contextValue,
+          variableValues: params.variables ?? undefined,
+          operationName: params.operationName ?? undefined,
+          abortSignal,
+        }),
+      request.signal,
+      executionTimeoutMs,
+    )
   } catch (err) {
     const gqlErr =
       err instanceof GraphQLError
@@ -358,11 +367,23 @@ class ExecutionTimeoutError extends Error {
   }
 }
 
-async function withExecutionTimeout<T>(work: T | Promise<T>, timeoutMs: number): Promise<T> {
+/** Run `start` under a deadline. A timeout rejects and aborts the signal resolvers were given. */
+async function withExecutionTimeout<T>(
+  start: (abortSignal: AbortSignal) => T | Promise<T>,
+  outer: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController()
+  const work = start(AbortSignal.any([outer, controller.signal]))
   if (!(work instanceof Promise) || timeoutMs === 0) return work
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new ExecutionTimeoutError()), timeoutMs)
+    timer = setTimeout(() => {
+      const error = new ExecutionTimeoutError()
+      // Rejected first: the abort can reject the work, and the race must settle on the timeout.
+      reject(error)
+      controller.abort(error)
+    }, timeoutMs)
   })
   try {
     return await Promise.race([work, timeout])

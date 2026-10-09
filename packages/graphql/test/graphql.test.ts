@@ -257,3 +257,50 @@ describe("privacy guardrail", () => {
     }
   })
 })
+
+describe("respondGraphql execution deadline", () => {
+  const waiting = () => {
+    const seen: { signal?: AbortSignal | undefined } = {}
+    const resolving = Promise.withResolvers<void>()
+    const slowSchema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: "Query",
+        fields: {
+          slow: {
+            type: GraphQLString,
+            resolve: (_source, _args, _context, info) => {
+              const signal = info.getAbortSignal()
+              seen.signal = signal
+              resolving.resolve()
+              return new Promise((_resolve, reject) =>
+                signal?.addEventListener("abort", () => reject(signal.reason)),
+              )
+            },
+          },
+        },
+      }),
+    })
+    return { seen, slowSchema, resolving: resolving.promise }
+  }
+
+  test("a timeout answers 504 and aborts the signal the resolver holds", async () => {
+    const { seen, slowSchema } = waiting()
+    const res = await respondGraphql(post({ query: "{ slow }" }), {
+      schema: slowSchema,
+      executionTimeoutMs: 20,
+    })
+    expect(res.status).toBe(504)
+    expect(seen.signal?.aborted).toBe(true)
+  })
+
+  test("an aborted request aborts the resolver's signal", async () => {
+    const { seen, slowSchema, resolving } = waiting()
+    const client = new AbortController()
+    const request = new Request(post({ query: "{ slow }" }), { signal: client.signal })
+    const responding = respondGraphql(request, { schema: slowSchema })
+    await resolving
+    client.abort()
+    expect(seen.signal?.aborted).toBe(true)
+    await responding
+  })
+})
