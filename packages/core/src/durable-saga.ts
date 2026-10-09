@@ -760,7 +760,7 @@ async function scanSagaRecords(
 ): Promise<ReconciliationScanPage<SagaRecord>> {
   if (store.scan !== undefined) return await store.scan(input)
   if (store.list === undefined) throw new TypeError("saga store does not support reconciliation")
-  return memoryScan(await store.list(), input)
+  return memoryScan(await store.list(), (record) => record.sagaId, input)
 }
 
 export async function reconcileSagasPage(

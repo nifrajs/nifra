@@ -13,6 +13,7 @@ import {
   createDurableEffectJournal,
   createSagaEngine,
   type DurableEffectRecord,
+  type DurableEffectStore,
   defineSaga,
   MemoryApprovalStore,
   MemoryDurableEffectStore,
@@ -334,13 +335,13 @@ describe("durable journal and saga reconciliation", () => {
     await journal.intent({ effectId: "effect_ambiguous", capability: "payments.charge" })
     await journal.executing("effect_ambiguous")
     expect(await reconcileEffects(store, { staleBefore: 10 })).toEqual([
-      { effectId: "effect_incomplete", capability: "db.write", state: "incomplete", updatedAt: 10 },
       {
         effectId: "effect_ambiguous",
         capability: "payments.charge",
         state: "ambiguous",
         updatedAt: 10,
       },
+      { effectId: "effect_incomplete", capability: "db.write", state: "incomplete", updatedAt: 10 },
     ])
   })
 
@@ -360,6 +361,52 @@ describe("durable journal and saga reconciliation", () => {
     })
     expect(second.findings.map((finding) => finding.effectId)).toEqual(["effect_2"])
     expect(second.cursor).toBeUndefined()
+  })
+
+  test("a record reconciled between pages moves no other record past the cursor", async () => {
+    const indexed = new MemoryDurableEffectStore()
+    const listed = new MemoryDurableEffectStore()
+    // `list` alone, so reconciliation falls back to scanning the listed records.
+    const listOnly: DurableEffectStore = {
+      create: (record) => listed.create(record),
+      get: (effectId) => listed.get(effectId),
+      transition: (input) => listed.transition(input),
+      list: () => listed.list(),
+    }
+    for (const store of [indexed, listOnly]) {
+      for (let i = 0; i < 25; i++) {
+        await store.create({
+          effectId: `e${i}`,
+          capability: "pay.send",
+          state: "admission",
+          createdAt: 1,
+          updatedAt: 1,
+          version: 1,
+        })
+      }
+      const handled = new Set<string>()
+      let cursor: string | undefined
+      for (let pages = 0; pages < 10; pages++) {
+        const page =
+          cursor === undefined
+            ? await reconcileEffectsPage(store, { staleBefore: 10, limit: 10 })
+            : await reconcileEffectsPage(store, { staleBefore: 10, limit: 10, cursor })
+        for (const finding of page.findings) {
+          handled.add(finding.effectId)
+          await store.transition({
+            effectId: finding.effectId,
+            version: 1,
+            from: "admission",
+            to: "failed",
+            updatedAt: 5,
+            errorCode: "reconciled",
+          })
+        }
+        cursor = page.cursor
+        if (cursor === undefined) break
+      }
+      expect(handled.size).toBe(25)
+    }
   })
 
   test("indexed effect scans remain correct after terminal state transitions", async () => {

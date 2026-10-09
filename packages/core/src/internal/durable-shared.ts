@@ -63,12 +63,22 @@ export function reconciliationLimit(value = DEFAULT_RECONCILIATION_LIMIT): numbe
   return value
 }
 
-export function cursorOffset(cursor?: string): number {
-  if (cursor === undefined) return 0
-  if (!/^(?:0|[1-9][0-9]*)$/u.test(cursor)) throw new TypeError("invalid reconciliation cursor")
-  const offset = Number(cursor)
-  if (!Number.isSafeInteger(offset)) throw new TypeError("invalid reconciliation cursor")
-  return offset
+/**
+ * One page of `matches` in id order, the cursor being the last id returned. Keyed rather than an
+ * offset into the matching set: a caller reconciles each page before asking for the next, so the
+ * set shrinks under it, and an offset then lands past records that were never returned.
+ */
+function keysetPage<Record>(
+  matches: [id: string, record: Record][],
+  limit: number,
+): ReconciliationScanPage<Record> {
+  // Code-unit order, the order the `id > cursor` comparisons use.
+  matches.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const page = matches.slice(0, limit)
+  const records = Object.freeze(page.map(([, record]) => cloneValue(record)))
+  const last = page.at(-1)
+  if (matches.length <= limit || last === undefined) return Object.freeze({ records })
+  return Object.freeze({ records, cursor: last[0] })
 }
 
 export function memoryScan<
@@ -76,28 +86,18 @@ export function memoryScan<
   State extends string,
 >(
   source: Iterable<Record>,
+  idOf: (record: Record) => string,
   input: ReconciliationScanOptions<State>,
 ): ReconciliationScanPage<Record> {
   const states = new Set(input.states)
-  const offset = cursorOffset(input.cursor)
-  const end = offset + input.limit
-  const records: Record[] = []
-  let seen = 0
-  let more = false
+  const matches: [string, Record][] = []
   for (const record of source) {
     if (!states.has(record.state)) continue
     if (input.updatedBefore !== undefined && record.updatedAt > input.updatedBefore) continue
-    if (seen >= end) {
-      more = true
-      break
-    }
-    if (seen >= offset) records.push(cloneValue(record))
-    seen++
+    const id = idOf(record)
+    if (input.cursor === undefined || id > input.cursor) matches.push([id, record])
   }
-  return Object.freeze({
-    records: Object.freeze(records),
-    ...(more ? { cursor: String(offset + records.length) } : {}),
-  })
+  return keysetPage(matches, input.limit)
 }
 
 export function bucketAdd<State extends string>(
@@ -129,29 +129,17 @@ export function indexedScan<Record extends { readonly updatedAt: number }, State
   resolve: (id: string) => Record | undefined,
   input: ReconciliationScanOptions<State>,
 ): ReconciliationScanPage<Record> {
-  const offset = cursorOffset(input.cursor)
-  const end = offset + input.limit
-  const records: Record[] = []
-  let seen = 0
-  let more = false
+  const matches: [string, Record][] = []
   for (const state of new Set(input.states)) {
-    if (more) break
     const bucket = byState.get(state)
     if (bucket === undefined) continue
     for (const id of bucket) {
+      if (input.cursor !== undefined && id <= input.cursor) continue
       const record = resolve(id)
       if (record === undefined) continue
       if (input.updatedBefore !== undefined && record.updatedAt > input.updatedBefore) continue
-      if (seen >= end) {
-        more = true
-        break
-      }
-      if (seen >= offset) records.push(cloneValue(record))
-      seen++
+      matches.push([id, record])
     }
   }
-  return Object.freeze({
-    records: Object.freeze(records),
-    ...(more ? { cursor: String(offset + records.length) } : {}),
-  })
+  return keysetPage(matches, input.limit)
 }
