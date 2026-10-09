@@ -36,6 +36,7 @@ import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-pr
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+import { forwardTerminalSignals, OWN_PROCESS_GROUP, signalProcessGroup } from "./mcp-io.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
@@ -154,13 +155,18 @@ async function runTsc(
     cwd,
     stdout: "pipe",
     stderr: "pipe",
+    // Its own group, so a cancel also stops a compiler process the `tsc` entry started; one left
+    // holding the pipes would keep the cancelled check waiting for the whole typecheck.
+    detached: OWN_PROCESS_GROUP,
   })
   let cancelled = false
+  const stop = (): void => signalProcessGroup(proc, "SIGTERM")
   const abort = (): void => {
     cancelled = true
-    proc.kill()
+    stop()
   }
   signal?.addEventListener("abort", abort, { once: true })
+  const releaseSignals = forwardTerminalSignals(stop)
   let out = ""
   let err = ""
   let code: number | null = null
@@ -175,6 +181,7 @@ async function runTsc(
     code = result[2]
   } finally {
     signal?.removeEventListener("abort", abort)
+    releaseSignals()
   }
   if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
   const listed = listFiles ? splitListedFiles(out) : undefined

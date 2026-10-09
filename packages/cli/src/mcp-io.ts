@@ -36,6 +36,27 @@ export function signalProcessGroup(
   }
 }
 
+const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+
+/**
+ * A child in its own group no longer gets the Ctrl+C the terminal sends its parent: on SIGINT,
+ * SIGTERM or SIGHUP run `stop`, then let this process take the signal as it would have. Returns the
+ * function that removes the listeners.
+ */
+export function forwardTerminalSignals(stop: () => void): () => void {
+  if (!OWN_PROCESS_GROUP) return () => {}
+  const remove = (): void => {
+    for (const name of FORWARDED_SIGNALS) process.off(name, forward)
+  }
+  const forward = (signal: NodeJS.Signals): void => {
+    stop()
+    remove()
+    process.kill(process.pid, signal)
+  }
+  for (const name of FORWARDED_SIGNALS) process.on(name, forward)
+  return remove
+}
+
 /** Accept only a concrete TCP port. Port 0 (bind-any-free-port) is not a valid read target. */
 export function validateLocalPort(port: unknown): number | undefined {
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65_535

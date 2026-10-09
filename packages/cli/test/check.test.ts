@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: SQL scanner fixtures intentionally contain literal interpolation syntax.
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { existsSync, readFileSync } from "node:fs"
+import { mkdir, mkdtemp, realpath, rm, symlink, watch, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import ts from "typescript"
@@ -2917,6 +2918,51 @@ describe("typecheck gate - project TypeScript resolution", () => {
     expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
     await rm(root, { recursive: true, force: true })
   })
+})
+
+describe("typecheck gate - cancel", () => {
+  test.skipIf(process.platform === "win32")(
+    "a cancel stops a compiler process the tsc entry started, so the check ends",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+      const marker = join(dir, "compiler.pid")
+      await mkdir(join(dir, "node_modules", "typescript", "bin"), { recursive: true })
+      await writeFile(join(dir, "tsconfig.json"), "{}")
+      // Like a TS 7 entry: the real compiler is another process, holding the gate's output pipes.
+      await writeFile(
+        join(dir, "node_modules", "typescript", "bin", "tsc"),
+        [
+          'const { spawn } = require("node:child_process")',
+          'const { writeFileSync } = require("node:fs")',
+          'const compiler = spawn("sleep", ["600"], { stdio: ["ignore", "inherit", "inherit"] })',
+          `writeFileSync(${JSON.stringify(marker)}, String(compiler.pid))`,
+          "setInterval(() => {}, 60_000)",
+          "",
+        ].join("\n"),
+      )
+      const controller = new AbortController()
+      const watcher = new AbortController()
+      const started = (async () => {
+        const events = watch(dir, { signal: watcher.signal })
+        if (existsSync(marker)) return
+        for await (const _event of events) if (existsSync(marker)) return
+      })()
+      const run = collectCheckResult(dir, { signal: controller.signal })
+      try {
+        await started
+        controller.abort()
+        const result = await run
+        expect(result.typecheck).toBe("fail")
+      } finally {
+        watcher.abort()
+        try {
+          process.kill(Number(readFileSync(marker, "utf8")), "SIGKILL")
+        } catch {}
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
 })
 
 describe("nifra.check.json rule overrides", () => {

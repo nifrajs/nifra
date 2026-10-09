@@ -13,6 +13,7 @@ import { collectDoctorResult } from "./doctor.ts"
 import { loadApp, resolvePlugins } from "./load.ts"
 import {
   CHILD_OUTPUT_MAX_BYTES,
+  forwardTerminalSignals,
   joinHeadTail,
   OWN_PROCESS_GROUP,
   readBoundedStream,
@@ -653,15 +654,7 @@ export async function runHydrationAssurance(
   }
   const onAbort = (): void => stop("cancelled")
   control.signal?.addEventListener("abort", onAbort, { once: true })
-  // Out of the terminal's group, the run no longer gets the Ctrl+C its parent does: pass it on, then
-  // let the parent take the signal as it would have without this listener.
-  const forwarded = ["SIGINT", "SIGTERM", "SIGHUP"] as const
-  const forward = (signal: NodeJS.Signals): void => {
-    stop("interrupted")
-    for (const name of forwarded) process.off(name, forward)
-    process.kill(process.pid, signal)
-  }
-  if (OWN_PROCESS_GROUP) for (const name of forwarded) process.on(name, forward)
+  const releaseSignals = forwardTerminalSignals(() => stop("interrupted"))
   const timeoutMs = control.timeoutMs ?? HYDRATION_RUN_TIMEOUT_MS
   const timer = setTimeout(() => stop(`timed out after ${timeoutMs} ms`), timeoutMs)
   try {
@@ -692,7 +685,7 @@ export async function runHydrationAssurance(
   } finally {
     clearTimeout(timer)
     control.signal?.removeEventListener("abort", onAbort)
-    for (const name of forwarded) process.off(name, forward)
+    releaseSignals()
   }
 }
 
