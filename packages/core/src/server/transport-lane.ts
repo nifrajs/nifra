@@ -27,7 +27,13 @@ export interface TransportRuntime {
 }
 
 export interface TransportCodecsOptions {
-  /** Maximum encoded request bytes. Keep aligned with `server({ maxBodyBytes })`. */
+  /**
+   * Maximum encoded request bytes. Default 1,000,000. Keep aligned with `server({ maxBodyBytes })`.
+   *
+   * The plugin decodes a codec body in an `onRequest` hook, before routing, so a route's own
+   * `bodyLimit` and its `authenticate()` stages run only after the decode. This cap is the only
+   * bound on that work: set it to the largest codec body any route should accept.
+   */
   readonly maxBytes?: number
   /**
    * Prototype-poisoning policy for decoded request bodies, mirroring

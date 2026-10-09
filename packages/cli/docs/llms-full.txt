@@ -13402,7 +13402,9 @@ route. Split groups before the compiler reports `TS2589`, rather than weakening 
   client's `transport` option with the same registry. `@nifrajs/core/transport-codec` negotiates
   bounded HTTP representations and supplies the same frame/loader adapters for WebSockets and
   deferred data. Import `richWireCodec()` from `@nifrajs/core/transport-codec-rich`; the separate
-  subpath keeps rich-wire code out of plain JSON bundles.
+  subpath keeps rich-wire code out of plain JSON bundles. The plugin decodes a codec body before
+  routing, so a route's `bodyLimit` and its authentication run after the decode; its own `maxBytes`
+  is the bound on that work.
 - **Typed data seam (opt in).** `@nifrajs/core/data` defines token-only operation contracts,
   `db.read`/`db.write` capability names, an opaque request-local `RlsScope`, typed adapter requests,
   drift snapshots, and `createDataPort(contract, adapter, { beacon: useCapability })`, which emits the
