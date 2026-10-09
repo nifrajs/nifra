@@ -1052,6 +1052,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
     )
   private readonly responseRequests: WeakMap<Request, Request>
+  /** A request the WebSocket handshake check ran the onRequest hooks on and then passed to HTTP →
+   * what the hooks returned, so `fetch` routes that instead of running the hooks a second time. */
+  private wsHookedPasses: WeakMap<object, Request> | undefined
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
   /** Memoized NodeRequestContext per plain-`Request` source - see {@link nodeRequestContextOf}. */
@@ -1153,6 +1156,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.responseBodyTag = undefined
     this.responseBodyOwners = new Set()
     this.responseRequests = new WeakMap()
+    this.wsHookedPasses = undefined
     this.responseSources = new WeakMap()
     this.nodeContexts = new WeakMap()
     this.appliedPlugins = new Map()
@@ -3416,6 +3420,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
     // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
     if (req.method !== "GET") return WS_PASS
+    // The adapter answers a pass by handing this same object to `fetch`.
+    const received = req
     // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
     if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
@@ -3568,6 +3574,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
 
     if (this.onRequestHooks.length === 0) return resolveWithDeadline(req)
+    // On a pass the adapter hands `received` to `fetch`, which then routes these results. An upgrade
+    // or a rejection never reaches `fetch`, so the entry dies with the request.
+    const resolveHooked = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      this.wsHookedPasses ??= new WeakMap()
+      this.wsHookedPasses.set(received, request)
+      return resolveWithDeadline(request)
+    }
     let hooked: MaybePromise<Request | Response>
     try {
       hooked = this.runWebSocketRequestHooks(req, platform)
@@ -3577,13 +3590,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!(hooked instanceof Promise)) {
       return hooked instanceof Response
         ? { kind: "reject", response: hooked }
-        : resolveWithDeadline(hooked)
+        : resolveHooked(hooked)
     }
     const pending = hooked.then(
       (result) =>
         result instanceof Response
           ? { kind: "reject" as const, response: result }
-          : resolveWithDeadline(result),
+          : resolveHooked(result),
       () => ({ kind: "reject" as const, response: jsonError(500, "internal_error") }),
     )
     return bounded(
@@ -3667,6 +3680,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // answers it 404 or 405 and no hook reads a method string it would misjudge.
     if (this.onRequestHooks.length === 0 || !isRoutableMethod(source.method)) {
       return this.routeAndRun(source, resolved, finalize, wrapResponse, onTimeout, webFast)
+    }
+    const hooked = this.wsHookedPasses?.get(source)
+    if (hooked !== undefined) {
+      const request = requestOf(source)
+      this.wsHookedPasses?.delete(request)
+      this.responseRequests.set(request, hooked)
+      return this.routeAndRun(hooked, resolved, finalize, wrapResponse, onTimeout, webFast)
     }
     if (!webFast && this.canUseNodeRequestHooks()) {
       return this.runWithNodeRequest(source, resolved, finalize, wrapResponse, onTimeout)

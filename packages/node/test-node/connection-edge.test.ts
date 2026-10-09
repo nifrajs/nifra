@@ -111,6 +111,30 @@ test("a websocket upgrade to a path with no WS route is answered by its HTTP rou
   }
 })
 
+test("onRequest hooks run once for a websocket upgrade its HTTP route answers", async () => {
+  let hits = 0
+  const app = server()
+    .use(websocket())
+    .onRequest(() => {
+      hits += 1
+      return undefined
+    })
+    .ws("/ws", { message: (ws, data) => ws.send(data) })
+    .get("/plain", () => ({ plain: true }))
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const got = await rawRequest(
+      running.port,
+      "GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade, close\r\nUpgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    )
+    assert.match(got, /^HTTP\/1\.1 200 /)
+    assert.equal(hits, 1)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("a client that disconnects aborts the request signal and stops an SSE producer", async () => {
   let requestAborted!: () => void
   const requestSignalFired = new Promise<void>((resolve) => {
