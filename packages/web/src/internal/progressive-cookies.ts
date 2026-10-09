@@ -7,17 +7,24 @@ export interface ProgressiveCookie {
   readonly deleted?: boolean
 }
 
-/** Parent-domain acceptance belongs to the browser's cookie jar and public-suffix policy. */
+/** Parent-domain acceptance belongs to the browser's cookie jar and public-suffix policy. A Secure
+ * cookie on a request seen as `http:` does too: behind a TLS terminator only the browser knows its
+ * scheme, so it decides whether the cookie is kept. */
 export function progressiveCookieRedirect(
   request: Request,
   changes: readonly ProgressiveCookie[],
 ): boolean {
-  const host = new URL(request.url).hostname.toLowerCase()
-  return changes.some(({ options }) => {
-    const domain = options?.domain?.replace(/^\./, "").toLowerCase()
-    return domain !== undefined && domain !== host && host.endsWith("." + domain)
+  const url = new URL(request.url)
+  const host = url.hostname.toLowerCase()
+  return changes.some((change) => {
+    const domain = change.options?.domain?.replace(/^\./, "").toLowerCase()
+    if (domain !== undefined && domain !== host && host.endsWith("." + domain)) return true
+    return secureOnPlainHttp(url, change)
   })
 }
+
+const secureOnPlainHttp = (url: URL, change: ProgressiveCookie): boolean =>
+  (change.options?.secure ?? !change.deleted) && url.protocol !== "https:"
 
 /** Reauthorize the internal GET with action cookies that are valid for this exact owner URL. */
 export function progressiveCookieHeader(
@@ -34,7 +41,7 @@ export function progressiveCookieHeader(
     const domain = options?.domain?.replace(/^\./, "").toLowerCase()
     // Parent-domain cookies need a browser cookie jar/public-suffix decision; never synthesize them.
     if (domain !== undefined && domain !== url.hostname.toLowerCase()) continue
-    if ((options?.secure ?? !change.deleted) && url.protocol !== "https:") continue
+    if (secureOnPlainHttp(url, change)) continue
     const path = options?.path ?? "/"
     if (
       url.pathname !== path &&

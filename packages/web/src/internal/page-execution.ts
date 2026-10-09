@@ -1532,9 +1532,13 @@ export function createPageRequestExecutor<Env = unknown>(
           if (options.rerenderOwnerGET === undefined) throw new Error("component_contract")
           const actionHeaders = controls.documentHeaders()
           if (controls.progressiveRedirect(c.req)) {
+            // Relative, so a browser behind a TLS terminator stays on its own scheme. A `//` path
+            // would read as another host, so that one keeps the absolute URL.
+            const { pathname, search } = new URL(c.req.url)
+            const location = pathname.startsWith("//") ? c.req.url : pathname + search
             return new Response(null, {
               status: 303,
-              headers: { ...actionHeaders, location: c.req.url, "cache-control": PRIVATE_NO_STORE },
+              headers: { ...actionHeaders, location, "cache-control": PRIVATE_NO_STORE },
             })
           }
           const headers = new Headers(c.req.headers)
