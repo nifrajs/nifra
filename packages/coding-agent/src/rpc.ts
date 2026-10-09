@@ -11,6 +11,7 @@ import type { ExtensionHost } from "./extensions.ts"
 import { CodingAgentHost, type CodingAgentHostOptions } from "./host.ts"
 import { readBoundedText } from "./process.ts"
 import type { ContextWindowOptions, SessionStore } from "./sessions.ts"
+import { ReplayableTurn, type TurnReplayLimits } from "./turn-replay.ts"
 import type { UiExtensionHost, UiExtensionManifest } from "./ui.ts"
 import { isSafeReviewDiff, runNifraReview, runNifraVerification } from "./verification.ts"
 
@@ -35,6 +36,20 @@ export interface CodingAgentRpcServerOptions {
   readonly verifyAfterTurn?: readonly ("check" | "assure" | "test")[]
   readonly maxRepairAttempts?: number
   readonly verification?: CodingAgentHostOptions["verification"]
+  readonly extensionEvents?: CodingAgentHostOptions["extensionEvents"]
+  /**
+   * Keep a `turn.send` running when its client disconnects, and let a client that comes back read
+   * what it missed with `turn.attach` (an `afterSeq` cursor, or `Last-Event-ID`). The newest
+   * `replayEvents` frames, up to `replayBytes`, are held (defaults 1024 and 8 MiB); a turn no client
+   * has followed for `detachedTimeoutMs` (default 2 minutes) is cancelled.
+   */
+  readonly resumableTurns?:
+    | boolean
+    | {
+        readonly replayEvents?: number
+        readonly replayBytes?: number
+        readonly detachedTimeoutMs?: number
+      }
 }
 
 export interface CodingAgentRpcServerHandle {
@@ -61,6 +76,13 @@ const MIN_REMOTE_TOKEN_BYTES = 32
 const AUTH_FAILURE_WINDOW_MS = 60_000
 const AUTH_FAILURE_THRESHOLD = 3
 const AUTH_MAX_BACKOFF_MS = 2_000
+const MAX_REPLAY_EVENTS = 65_536
+const MAX_REPLAY_BYTES = 256 * 1024 * 1024
+const MAX_DETACHED_TIMEOUT_MS = 24 * 60 * 60 * 1000
+
+interface ResumableTurnConfig extends TurnReplayLimits {
+  readonly detachedTimeoutMs: number
+}
 
 /**
  * Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion.
@@ -78,6 +100,10 @@ export class CodingAgentRpcServer {
   private authLastFailureAt = 0
   private authBackoffUntil = 0
   private creating: Promise<AgentSessionSnapshot> | undefined
+  private readonly resumable: ResumableTurnConfig | undefined
+  private turn: ReplayableTurn | undefined
+  private turnController: AbortController | undefined
+  private detachedTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(options: CodingAgentRpcServerOptions) {
     this.options = Object.freeze({ ...options })
@@ -94,7 +120,11 @@ export class CodingAgentRpcServer {
         : { maxRepairAttempts: options.maxRepairAttempts }),
       exposeErrorStacks: options.exposeErrorStacks === true,
       ...(options.verification === undefined ? {} : { verification: options.verification }),
+      ...(options.extensionEvents === undefined
+        ? {}
+        : { extensionEvents: options.extensionEvents }),
     })
+    this.resumable = resumableTurnConfig(options.resumableTurns)
     this.token = options.authToken ?? randomAuthToken()
     if (!/^[A-Za-z0-9._~-]{16,256}$/.test(this.token))
       throw new TypeError("agent rpc: authToken must be a bounded token")
@@ -149,6 +179,8 @@ export class CodingAgentRpcServer {
   async stop(): Promise<void> {
     const listener = this.listener
     this.listener = undefined
+    clearTimeout(this.detachedTimer)
+    this.turnController?.abort()
     try {
       await this.host.stop("rpc server stopped")
     } finally {
@@ -333,25 +365,23 @@ export class CodingAgentRpcServer {
             422,
             cors,
           )
+        if (this.resumable !== undefined)
+          return this.sendResumableTurn(params.message, this.resumable, cors)
         const stream = this.host.prompt(params.message, httpRequest.signal)
         const sessionId = this.host.snapshot?.id
         const encoder = new TextEncoder()
         const includeErrorStacks = this.options.exposeErrorStacks === true
         const maxResponseBytes = this.maxResponseBytes
         let finished = false
-        const turnError = (error: unknown) => ({
-          code: "turn_failed",
-          ...publicErrorDetails(error, "turn could not be completed", includeErrorStacks),
-        })
         const body = new ReadableStream<Uint8Array>({
           async start(controller) {
             try {
               for await (const event of stream) {
                 if (finished) return
-                const serialized = serializeRpcValue(event, includeErrorStacks)
-                if (serializedByteLength(`data: ${serialized}\n\n`) > maxResponseBytes)
+                const frame = eventFrame(event, includeErrorStacks)
+                if (serializedByteLength(frame) > maxResponseBytes)
                   throw new Error("turn event exceeded the configured response limit")
-                controller.enqueue(encoder.encode(`data: ${serialized}\n\n`))
+                controller.enqueue(encoder.encode(frame))
               }
               if (!finished) {
                 finished = true
@@ -361,14 +391,8 @@ export class CodingAgentRpcServer {
               if (finished) return
               finished = true
               try {
-                const detail = JSON.stringify(turnError(error))
-                const frame = `event: error\ndata: ${detail}\n\n`
                 controller.enqueue(
-                  encoder.encode(
-                    serializedByteLength(frame) <= maxResponseBytes
-                      ? frame
-                      : 'event: error\ndata: {"code":"turn_failed","message":"turn could not be completed"}\n\n',
-                  ),
+                  encoder.encode(turnErrorFrame(error, includeErrorStacks, maxResponseBytes)),
                 )
                 controller.close()
               } catch {
@@ -384,15 +408,50 @@ export class CodingAgentRpcServer {
               await this.host.backend.cancel(sessionId, "client disconnected").catch(() => {})
           },
         })
-        return new Response(body, {
-          status: 200,
-          headers: new Headers({
-            ...Object.fromEntries(cors),
-            "content-type": "text/event-stream; charset=utf-8",
-            "cache-control": "no-cache, no-transform",
-            connection: "keep-alive",
-          }),
-        })
+        return eventStreamResponse(body, cors)
+      }
+      case "turn.attach": {
+        if (this.resumable === undefined)
+          return json(
+            {
+              error: {
+                code: "feature_unsupported",
+                message: "this server does not keep turns for clients that come back",
+              },
+            },
+            501,
+            cors,
+          )
+        const params = record(request.params)
+        const header = httpRequest.headers.get("last-event-id")
+        const raw = params.afterSeq ?? (header === null || header === "" ? undefined : header)
+        const cursor = raw === undefined ? undefined : Number(raw)
+        if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < -1))
+          return json(
+            { error: { code: "invalid_cursor", message: "afterSeq must be a safe integer >= -1" } },
+            422,
+            cors,
+          )
+        const turn = this.turn
+        if (turn === undefined)
+          return json(
+            { error: { code: "no_turn", message: "no turn has run on this server" } },
+            404,
+            cors,
+          )
+        const stream = turn.attach(cursor)
+        if (stream === undefined)
+          return json(
+            {
+              error: {
+                code: "resync_required",
+                message: "the events after that seq are no longer held; read session.events",
+              },
+            },
+            409,
+            cors,
+          )
+        return eventStreamResponse(stream, cors)
       }
       case "session.reload": {
         const result: ReloadResult = await this.host.reload()
@@ -630,6 +689,55 @@ export class CodingAgentRpcServer {
     }
   }
 
+  private sendResumableTurn(message: string, config: ResumableTurnConfig, cors: Headers): Response {
+    if (this.turn !== undefined && !this.turn.done)
+      return this.response(
+        {
+          error: {
+            code: "turn_running",
+            message: "a turn is already running; follow it with turn.attach",
+          },
+        },
+        409,
+        cors,
+      )
+    clearTimeout(this.detachedTimer)
+    const controller = new AbortController()
+    const turn = new ReplayableTurn(this.turn?.latestSeq ?? -1, config, (count) => {
+      clearTimeout(this.detachedTimer)
+      if (count > 0 || this.turn !== turn) return
+      this.detachedTimer = setTimeout(() => {
+        if (this.turn !== turn || turn.done || turn.following > 0) return
+        controller.abort()
+        const sessionId = this.host.snapshot?.id
+        if (sessionId !== undefined)
+          void this.host.backend.cancel(sessionId, "no client followed the turn").catch(() => {})
+      }, config.detachedTimeoutMs)
+    })
+    this.turn = turn
+    this.turnController = controller
+    const stream = turn.follow()
+    const includeErrorStacks = this.options.exposeErrorStacks === true
+    const maxResponseBytes = this.maxResponseBytes
+    const encoder = new TextEncoder()
+    void (async () => {
+      try {
+        for await (const event of this.host.prompt(message, controller.signal)) {
+          const frame = eventFrame(event, includeErrorStacks)
+          if (serializedByteLength(frame) > maxResponseBytes)
+            throw new Error("turn event exceeded the configured response limit")
+          turn.push(event.seq, encoder.encode(frame))
+        }
+        turn.end()
+      } catch (error) {
+        turn.end(encoder.encode(turnErrorFrame(error, includeErrorStacks, maxResponseBytes)))
+      } finally {
+        if (this.turn === turn) clearTimeout(this.detachedTimer)
+      }
+    })()
+    return eventStreamResponse(stream, cors)
+  }
+
   /** The active session, or one started from `input`; concurrent requests share a single start. */
   private async ensureSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
     const active = this.host.snapshot
@@ -822,6 +930,70 @@ function json(
     responseStatus = 500
   }
   return new Response(body, { status: responseStatus, headers })
+}
+
+function resumableTurnConfig(
+  option: CodingAgentRpcServerOptions["resumableTurns"],
+): ResumableTurnConfig | undefined {
+  if (option === undefined || option === false) return undefined
+  const settings = option === true ? {} : option
+  const config: ResumableTurnConfig = {
+    maxEvents: settings.replayEvents ?? 1024,
+    maxBytes: settings.replayBytes ?? 8 * 1024 * 1024,
+    detachedTimeoutMs: settings.detachedTimeoutMs ?? 120_000,
+  }
+  if (
+    !Number.isSafeInteger(config.maxEvents) ||
+    config.maxEvents < 1 ||
+    config.maxEvents > MAX_REPLAY_EVENTS
+  )
+    throw new RangeError(`agent rpc: replayEvents must be between 1 and ${MAX_REPLAY_EVENTS}`)
+  if (
+    !Number.isSafeInteger(config.maxBytes) ||
+    config.maxBytes < 1024 ||
+    config.maxBytes > MAX_REPLAY_BYTES
+  )
+    throw new RangeError(`agent rpc: replayBytes must be between 1024 and ${MAX_REPLAY_BYTES}`)
+  if (
+    !Number.isSafeInteger(config.detachedTimeoutMs) ||
+    config.detachedTimeoutMs < 1 ||
+    config.detachedTimeoutMs > MAX_DETACHED_TIMEOUT_MS
+  )
+    throw new RangeError(
+      `agent rpc: detachedTimeoutMs must be between 1 and ${MAX_DETACHED_TIMEOUT_MS}`,
+    )
+  return Object.freeze(config)
+}
+
+function eventFrame(event: { readonly seq: number }, includeErrorStacks: boolean): string {
+  return `id: ${event.seq}\ndata: ${serializeRpcValue(event, includeErrorStacks)}\n\n`
+}
+
+function turnErrorFrame(
+  error: unknown,
+  includeErrorStacks: boolean,
+  maxResponseBytes: number,
+): string {
+  const detail = JSON.stringify({
+    code: "turn_failed",
+    ...publicErrorDetails(error, "turn could not be completed", includeErrorStacks),
+  })
+  const frame = `event: error\ndata: ${detail}\n\n`
+  return serializedByteLength(frame) <= maxResponseBytes
+    ? frame
+    : 'event: error\ndata: {"code":"turn_failed","message":"turn could not be completed"}\n\n'
+}
+
+function eventStreamResponse(body: ReadableStream<Uint8Array>, cors: Headers): Response {
+  return new Response(body, {
+    status: 200,
+    headers: new Headers({
+      ...Object.fromEntries(cors),
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+    }),
+  })
 }
 
 function serializeRpcValue(value: unknown, includeErrorStacks: boolean): string {

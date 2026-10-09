@@ -13169,6 +13169,14 @@ loopback debugger, set `exposeErrorStacks: true` (or pass
 `--expose-error-stacks` to `nifra-agent --rpc`) to include bounded exception
 stacks. This option is rejected for remote binding.
 
+Each `turn.send` SSE frame carries `id: <seq>`. By default a client that disconnects cancels its
+turn. With `resumableTurns: true` the turn keeps running: a client that comes back calls
+`turn.attach` with `{ afterSeq }` (or a `Last-Event-ID` header) to read the frames it missed and
+follow the rest. A cursor older than the held frames (`replayEvents`, default 1024; `replayBytes`,
+default 8 MiB) answers `409 resync_required`, so read `session.events` instead; a second
+`turn.send` while one runs answers `409 turn_running`; and a turn no client has followed for
+`detachedTimeoutMs` (default 2 minutes) is cancelled.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only
