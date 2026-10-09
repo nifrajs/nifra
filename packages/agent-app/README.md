@@ -19,6 +19,11 @@ counts.
 - **Ordered, deduplicated streaming.** A turn arrives as an ordered stream of `AgentEventView`s.
   Out-of-order and redelivered frames are reordered and de-duplicated by sequence; a bounded buffer
   skips an unfilled gap rather than stalling.
+- **Turns that survive a dropped connection.** When a turn's stream breaks mid-turn, `send` follows
+  the turn again with `turn.attach` from the last seq it received (`resumeAttempts`, default 3;
+  `resumeDelayMs`, default 250), so the views continue without a gap or a repeat. The host must keep
+  turns (`resumableTurns` on `CodingAgentRpcServer`); one that cannot resume refuses, and `send`
+  throws the original break.
 - **Cursor resume.** A persisted log can be replayed from a cursor. A cursor whose next record was
   evicted from the retained window asks the caller to resync.
 - **Approvals and handoffs.** Pending approvals list as identifiers; decisions and handoff outcomes go

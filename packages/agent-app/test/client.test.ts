@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentEvent, AgentSessionSnapshot } from "@nifrajs/agent-protocol"
 import { AgentAppClient, AgentAppError } from "../src/client.ts"
-import type { AgentTransport, AgentTransportRequest, CommandOutcome } from "../src/transport.ts"
+import {
+  type AgentTransport,
+  AgentTransportError,
+  type AgentTransportRequest,
+  type CommandOutcome,
+} from "../src/transport.ts"
 import { OrderedEventBuffer, toEventView } from "../src/view-models.ts"
 
 const snapshot = (overrides: Partial<AgentSessionSnapshot> = {}): AgentSessionSnapshot => ({
@@ -319,5 +324,131 @@ describe("OrderedEventBuffer gap recovery", () => {
     expect(buffer.expected).toBe(5)
     expect(buffer.offer(view(3))).toEqual([])
     expect(buffer.flush()).toEqual([])
+  })
+})
+
+describe("AgentAppClient.send resumes a broken turn", () => {
+  const completed = (seq: number): AgentEvent => ({
+    version: 1,
+    sessionId: "session-1",
+    seq,
+    at: seq,
+    type: "session.completed",
+    snapshot: snapshot({ lastSeq: seq }),
+  })
+  const reset = (method: string) => new AgentTransportError(method, "connection reset")
+
+  /** Each stream call plays the next script; a script throws to break its connection. */
+  class ScriptedTransport extends FakeTransport {
+    constructor(private readonly scripts: Array<() => AsyncIterable<AgentEvent>>) {
+      super(() => ({ ok: true, status: 200, value: snapshot() }))
+    }
+    override stream(request: AgentTransportRequest): AsyncIterable<AgentEvent> {
+      this.calls.push(request)
+      const script = this.scripts.shift()
+      if (script === undefined) throw new Error("no script left")
+      return script()
+    }
+  }
+
+  async function run(transport: ScriptedTransport, resumeAttempts?: number) {
+    const client = new AgentAppClient(
+      transport,
+      resumeAttempts === undefined ? { resumeDelayMs: 0 } : { resumeDelayMs: 0, resumeAttempts },
+    )
+    await client.createSession()
+    const seqs: number[] = []
+    try {
+      for await (const view of client.send("hi")) seqs.push(view.seq)
+      return { seqs, error: undefined, calls: transport.calls.slice(1) }
+    } catch (error) {
+      return { seqs, error, calls: transport.calls.slice(1) }
+    }
+  }
+
+  test("re-attaches from the last seq it received and goes on without a repeat", async () => {
+    const transport = new ScriptedTransport([
+      async function* () {
+        yield delta(1, "a")
+        yield delta(2, "b")
+        throw reset("turn.send")
+      },
+      async function* () {
+        yield delta(2, "b")
+        yield delta(3, "c")
+        yield completed(4)
+      },
+    ])
+    const { seqs, error, calls } = await run(transport)
+    expect(error).toBeUndefined()
+    expect(seqs).toEqual([1, 2, 3, 4])
+    expect(calls.map((call) => [call.method, call.params])).toEqual([
+      ["turn.send", { message: "hi" }],
+      ["turn.attach", { afterSeq: 2 }],
+    ])
+  })
+
+  test("a host that refuses the attach gets the original break thrown", async () => {
+    const broken = reset("turn.send")
+    const transport = new ScriptedTransport([
+      async function* () {
+        yield delta(1, "a")
+        throw broken
+      },
+      // biome-ignore lint/correctness/useYield: the refusal comes before any event.
+      async function* () {
+        throw new AgentTransportError("turn.attach", "feature_unsupported", 501)
+      },
+    ])
+    const { seqs, error, calls } = await run(transport)
+    expect(seqs).toEqual([1])
+    expect(error).toBe(broken)
+    expect(calls).toHaveLength(2)
+  })
+
+  test("stops after resumeAttempts breaks without progress", async () => {
+    const breaks = [1, 2, 3].map(
+      () =>
+        // biome-ignore lint/correctness/useYield: each attach breaks before any event.
+        async function* (): AsyncIterable<AgentEvent> {
+          throw reset("turn.attach")
+        },
+    )
+    const transport = new ScriptedTransport([
+      async function* () {
+        yield delta(1, "a")
+        throw reset("turn.send")
+      },
+      ...breaks,
+    ])
+    const { error, calls } = await run(transport, 2)
+    expect(error).toBeInstanceOf(AgentTransportError)
+    expect(calls.map((call) => call.method)).toEqual(["turn.send", "turn.attach", "turn.attach"])
+  })
+
+  test("resumeAttempts 0, a refusal, or a break before any event is thrown as it is", async () => {
+    const before = reset("turn.send")
+    const refused = new AgentTransportError("turn.send", "turn_running", 409)
+    for (const [error, resumeAttempts] of [
+      [before, 3],
+      [refused, 3],
+      [reset("turn.send"), 0],
+    ] as const) {
+      const transport = new ScriptedTransport([
+        async function* () {
+          if (error !== before) yield delta(1, "a")
+          throw error
+        },
+      ])
+      const outcome = await run(transport, resumeAttempts)
+      expect(outcome.error).toBe(error)
+      expect(outcome.calls).toHaveLength(1)
+    }
+  })
+
+  test("refuses a negative resume option", () => {
+    const transport = new ScriptedTransport([])
+    expect(() => new AgentAppClient(transport, { resumeAttempts: -1 })).toThrow("resumeAttempts")
+    expect(() => new AgentAppClient(transport, { resumeDelayMs: 0.5 })).toThrow("resumeDelayMs")
   })
 })

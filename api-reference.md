@@ -309,7 +309,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventView** _(type)_ - `type AgentEventView`
 - **AgentTransport** _(interface)_ - `interface AgentTransport`
 - **AgentTransportError** _(class)_ - `class AgentTransportError`
-  Thrown only for transport-level faults (network, malformed body). Carries no credential.
+  Thrown only for transport-level faults (network, malformed body) and for a stream the host refused, which carries the response `status`. Carries no credential.
 - **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
   One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request.
 - **ApprovalRequiredView** _(interface)_ - `interface ApprovalRequiredView`
