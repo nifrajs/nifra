@@ -126,6 +126,35 @@ describe("splitRouteSource", () => {
       true,
     )
   })
+
+  test("the page keeps the import its classic JSX compiles to", () => {
+    const pragma = split(
+      [
+        "/** @jsx h */",
+        "/** @jsxFrag Fragment */",
+        'import { Fragment, h } from "preact"',
+        'import { t } from "@nifrajs/schema"',
+        "export const loaderOutput = t.object({ title: t.string() })",
+        'export const loader = async () => ({ title: "x" })',
+        "export default function Page() { return <><main /></> }",
+        "",
+      ].join("\n"),
+    )
+    expect(pragma.frontend).toContain('import { Fragment, h } from "preact"')
+    expect(pragma.frontend).not.toContain("@nifrajs/schema")
+    expect(pragma.backend).not.toContain("preact")
+
+    const defaultFactory = split(
+      [
+        'import React from "react"',
+        "export const loader = async () => 1",
+        "export default function Page() { return <main /> }",
+        "",
+      ].join("\n"),
+    )
+    expect(defaultFactory.frontend).toContain('import React from "react"')
+    expect(defaultFactory.backend).not.toContain("react")
+  })
 })
 
 describe("middlewareSource", () => {

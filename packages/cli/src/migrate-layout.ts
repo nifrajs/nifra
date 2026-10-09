@@ -177,10 +177,38 @@ const hasModifier = (ts: typeof TS, node: TS.Node, kind: TS.SyntaxKind): boolean
 
 /** Identifiers a statement reads, split into value and type positions. Over-approximates on purpose:
  * an extra name only keeps a declaration in a half that did not need it. */
-function references(ts: typeof TS, node: TS.Node): { value: Set<string>; type: Set<string> } {
+interface JsxBindings {
+  readonly element: readonly string[]
+  readonly fragment: readonly string[]
+}
+
+/**
+ * The bindings classic JSX compiles to calls of, which no identifier in the source names: the roots
+ * of the `@jsx`/`@jsxFrag` pragmas, else TypeScript's default `React`. A file that names its own
+ * `@jsxImportSource` imports the runtime itself.
+ */
+function jsxBindings(ts: typeof TS, source: string): JsxBindings {
+  const comments = (ts.getLeadingCommentRanges(source, 0) ?? [])
+    .map(({ pos, end }) => source.slice(pos, end))
+    .join("\n")
+  if (/@jsxImportSource\s/.test(comments)) return { element: [], fragment: [] }
+  const root = (pragma: string): string | undefined =>
+    new RegExp(`@${pragma}\\s+([A-Za-z_$][\\w$]*)`).exec(comments)?.[1]
+  const element = root("jsx") ?? "React"
+  return { element: [element], fragment: [root("jsxFrag") ?? element] }
+}
+
+function references(
+  ts: typeof TS,
+  node: TS.Node,
+  jsx: JsxBindings,
+): { value: Set<string>; type: Set<string> } {
   const value = new Set<string>()
   const type = new Set<string>()
   const visit = (current: TS.Node, inType: boolean): void => {
+    if (ts.isJsxOpeningElement(current) || ts.isJsxSelfClosingElement(current))
+      for (const name of jsx.element) value.add(name)
+    else if (ts.isJsxFragment(current)) for (const name of jsx.fragment) value.add(name)
     const typed =
       inType ||
       ts.isTypeNode(current) ||
@@ -214,6 +242,7 @@ function references(ts: typeof TS, node: TS.Node): { value: Set<string>; type: S
 }
 
 function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
+  const jsx = jsxBindings(ts, sf.text)
   return sf.statements.map((node) => {
     const declares = new Set<string>()
     const exports = new Map<string, string[]>()
@@ -264,7 +293,7 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
     }
     const refs = ts.isImportDeclaration(node)
       ? { value: new Set<string>(), type: new Set<string>() }
-      : references(ts, node)
+      : references(ts, node, jsx)
     for (const name of declares) {
       refs.value.delete(name)
       refs.type.delete(name)
