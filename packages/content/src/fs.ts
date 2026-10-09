@@ -3,7 +3,8 @@
  * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno); for the edge, bake the
  * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) - tracked as a follow-up.
  */
-import { readdirSync, readFileSync, type Stats, statSync } from "node:fs"
+import type { Stats } from "node:fs"
+import { readdir, readFile, stat as statPath } from "node:fs/promises"
 import { resolve, sep } from "node:path"
 import { type Entry, type InferSchema, parseEntry, type StandardSchemaV1 } from "./index.ts"
 
@@ -88,7 +89,7 @@ export function defineCollection<S extends StandardSchemaV1>(
     const cached = fileCache.get(path)
     if (cached?.stamp === stamp) return cached.entry
     const entry = await parseEntry({
-      raw: readFileSync(path, "utf8"),
+      raw: await readFile(path, "utf8"),
       slug,
       schema: config.schema,
     })
@@ -96,19 +97,21 @@ export function defineCollection<S extends StandardSchemaV1>(
     return entry
   }
 
-  const listFiles = (): FileRecord[] =>
-    readdirSync(root)
-      .filter(matches)
-      .sort()
-      .map((file) => {
+  // Async throughout: a collection read on a long-lived server must not block its event loop.
+  const listFiles = async (): Promise<FileRecord[]> => {
+    const files = (await readdir(root)).filter(matches).sort()
+    return Promise.all(
+      files.map(async (file) => {
         const path = resolve(root, file)
-        const stat = statSync(path)
+        const stat = await statPath(path)
         return { file, path, stamp: `${stat.mtimeMs}:${stat.size}` }
-      })
+      }),
+    )
+  }
 
   return {
     async all() {
-      const files = listFiles()
+      const files = await listFiles()
       const fingerprint = files.map((file) => `${file.file}\0${file.stamp}`).join("\0")
       if (collectionCache?.fingerprint === fingerprint) return [...collectionCache.entries]
 
@@ -129,7 +132,7 @@ export function defineCollection<S extends StandardSchemaV1>(
         if (!insideRoot(root, file)) return null
         let stat: Stats
         try {
-          stat = statSync(file)
+          stat = await statPath(file)
         } catch {
           continue // Not this extension; try the next configured one.
         }

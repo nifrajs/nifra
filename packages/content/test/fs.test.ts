@@ -123,3 +123,8 @@ test("bakeCollection + fromBaked: fs collection → serializable → edge-safe r
   expect((await edge.get("first-post"))?.html).toContain("<h1>First</h1>")
   expect(await edge.get("missing")).toBeNull()
 })
+
+test("collections never block the event loop on file IO", async () => {
+  const source = await Bun.file(new URL("../src/fs.ts", import.meta.url)).text()
+  expect(source).not.toMatch(/\b\w+Sync\b/)
+})
