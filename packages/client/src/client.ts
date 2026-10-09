@@ -78,7 +78,7 @@ export interface ClientRetryOptions {
 
 export interface ClientOptions {
   /**
-   * Headers sent on every HTTP request (a per-call `headers` option is merged on top). A WebSocket
+   * Headers sent on every HTTP request (a per-call `headers` option is merged on top, names matched in any letter case). A WebSocket
    * handshake carries none of them, on any runtime: a browser cannot set them, and a socket that
    * authenticated under Bun but not in the browser would be worse than one that never did.
    */
@@ -582,6 +582,29 @@ function formBody(body: unknown): FormData | undefined {
   return form
 }
 
+// Header names are case-insensitive: a plain object keyed `Authorization` and `authorization` would
+// send both values joined into one header.
+function assignHeaders(
+  target: Record<string, string>,
+  source: Record<string, string> | undefined,
+): Record<string, string> {
+  if (source === undefined) return target
+  for (const [name, value] of Object.entries(source)) {
+    deleteHeader(target, name)
+    target[name] = value
+  }
+  return target
+}
+
+function deleteHeader(headers: Record<string, string>, name: string): void {
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(headers)) if (key.toLowerCase() === lower) delete headers[key]
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === name)
+}
+
 async function execute(
   base: string,
   path: string,
@@ -603,7 +626,7 @@ async function execute(
   if (query !== "") url += `?${query}`
 
   const method = verb.toUpperCase()
-  const baseHeaders: Record<string, string> = { ...options.headers, ...callOptions?.headers }
+  const baseHeaders = assignHeaders(assignHeaders({}, options.headers), callOptions?.headers)
   const init: RequestInit = { method }
   const form = body === undefined ? undefined : formBody(body)
   const codec = options.transport?.codec ?? plainJsonCodec
@@ -614,17 +637,17 @@ async function execute(
     const headers = { ...baseHeaders }
     if (options.onRequest !== undefined) {
       const extra = await options.onRequest({ url, method, headers, body })
-      if (extra !== undefined) Object.assign(headers, extra)
+      assignHeaders(headers, extra)
     }
     if (form !== undefined) {
       // The platform writes this header itself, boundary included; one set by hand would name a
       // boundary the body does not use and the server would refuse the request.
-      for (const name of Object.keys(headers)) {
-        if (name.toLowerCase() === "content-type") delete headers[name]
-      }
+      deleteHeader(headers, "content-type")
     } else if (body !== undefined) {
-      headers["content-type"] = codec.mediaType
-      if (options.transport !== undefined) headers.accept ??= codec.mediaType
+      // The codec labels the bytes it wrote; a type set by hand would name a different encoding.
+      assignHeaders(headers, { "content-type": codec.mediaType })
+      if (options.transport !== undefined && !hasHeader(headers, "accept"))
+        headers.accept = codec.mediaType
     }
     return headers
   }
@@ -884,12 +907,9 @@ function subscribeSse(
     let attempt = 0
     while (!closed) {
       try {
-        const headers: Record<string, string> = {
-          ...options.headers,
-          ...callOptions?.headers,
-          accept: "text/event-stream",
-          ...(lastEventId ? { "last-event-id": lastEventIdHeader(lastEventId) } : {}),
-        }
+        const headers = assignHeaders(assignHeaders({}, options.headers), callOptions?.headers)
+        assignHeaders(headers, { accept: "text/event-stream" })
+        if (lastEventId) assignHeaders(headers, { "last-event-id": lastEventIdHeader(lastEventId) })
         const response = await doFetch(url, { headers, signal: controller.signal })
         if (!response.ok || response.body === null) {
           void response.body?.cancel().catch(() => {})
