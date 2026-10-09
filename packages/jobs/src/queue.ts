@@ -26,6 +26,7 @@ import type {
   Backoff,
   CapabilityBeacon,
   EnqueueOptions,
+  JobContext,
   JobCounts,
   JobDefinition,
   JobHandle,
@@ -54,6 +55,17 @@ export class JobValidationError extends Error {
     super(
       `job ${JSON.stringify(job)} payload is invalid: ${issues.map((i) => i.message).join("; ")}`,
     )
+  }
+}
+
+/** What an attempt that outran its job's `timeoutMs` fails with; the attempt's `ctx.signal` aborts with it. */
+export class JobTimeoutError extends Error {
+  override readonly name = "JobTimeoutError"
+  constructor(
+    readonly job: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`job ${JSON.stringify(job)} did not finish within ${timeoutMs}ms`)
   }
 }
 
@@ -86,7 +98,7 @@ export interface QueueOptions {
 }
 
 export interface WorkerOptions {
-  /** Max jobs in flight at once. Default 1. */
+  /** Max jobs in flight at once. Default 1. A slot frees as soon as its job settles, and the next poll fills it. */
   readonly concurrency?: number
   /** How often to poll the store for due jobs (ms). Default 250. */
   readonly pollIntervalMs?: number
@@ -98,7 +110,7 @@ export interface WorkerOptions {
 }
 
 export interface Worker {
-  /** Stop polling and await the in-flight round (graceful). */
+  /** Stop polling and await every job in flight (graceful). */
   stop(): Promise<void>
   readonly running: boolean
 }
@@ -129,11 +141,11 @@ export interface Queue {
   define<Payload>(name: string, definition: JobDefinition<Payload>): JobHandle<Payload>
   /** Enqueue by name (the {@link JobHandle} is the typed alternative). */
   enqueue(name: string, payload: unknown, options?: EnqueueOptions): Promise<string>
-  /** Run ONE poll round: lease up to `concurrency` due jobs, run them, await them. Returns the count run.
-   * Re-entrant-safe (a concurrent call returns the in-flight round). Used by `start()` and by Workers. */
+  /** Run ONE poll round: lease due jobs into the free slots (up to `concurrency`), run them, await them.
+   * Returns the count run. With nothing new to start it awaits the jobs already in flight instead.
+   * Slots are shared with the worker and concurrent calls, so no more than `concurrency` jobs run. */
   process(): Promise<number>
-  /** Process repeatedly until no job is due (one-shot batch drain). Rounds are shared with
-   * {@link process}, so a concurrent drain or poll never runs more than `concurrency` jobs. */
+  /** Process repeatedly until no job is due and none is in flight (one-shot batch drain). */
   drain(): Promise<number>
   /** Start the background worker (Bun/Node/Deno). */
   start(options?: WorkerOptions): Worker
@@ -150,6 +162,7 @@ interface Def {
   readonly input: StandardSchemaV1 | undefined
   readonly attempts: number
   readonly backoff: Backoff
+  readonly timeoutMs: number | undefined
 }
 
 function normalizeRetries(
@@ -189,6 +202,28 @@ function handled<T>(promise: Promise<T>): Promise<T> {
 const lateNext = (hook: string): Promise<never> =>
   handled(Promise.reject(new JobError(`instrument.${hook} called next() after it returned`)))
 
+// setTimeout clamps a longer delay to 1ms.
+const MAX_TIMEOUT_MS = 2_147_483_647
+
+function bounded(
+  handler: JobHandler<unknown>,
+  payload: unknown,
+  context: JobContext,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController()
+  const run = (async () => handler(payload, { ...context, signal: controller.signal }))()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new JobTimeoutError(context.name, timeoutMs)
+      controller.abort(error)
+      reject(error)
+    }, timeoutMs)
+  })
+  return Promise.race([run, expired]).finally(() => clearTimeout(timer))
+}
+
 /** Create a job queue. Define jobs, enqueue payloads, and `start()` a worker (or `drain()` once). */
 export function createQueue(options: QueueOptions = {}): Queue {
   const store = options.store ?? new MemoryJobStore()
@@ -205,7 +240,8 @@ export function createQueue(options: QueueOptions = {}): Queue {
   let timer: ReturnType<typeof setInterval> | undefined
   let concurrency = 1
   let leaseMs = 30_000
-  let round: Promise<number> | undefined
+  const running = new Set<Promise<void>>()
+  let leasing: Promise<readonly Promise<void>[]> | undefined
 
   const safeOnError = (error: unknown, name: string): void => {
     try {
@@ -228,6 +264,15 @@ export function createQueue(options: QueueOptions = {}): Queue {
 
   function define<Payload>(name: string, definition: JobDefinition<Payload>): JobHandle<Payload> {
     if (defs.has(name)) throw new JobError(`duplicate job ${JSON.stringify(name)}`)
+    const timeoutMs = definition.timeoutMs
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS)
+    ) {
+      throw new RangeError(
+        `jobs: timeoutMs must be a positive number of ms up to ${MAX_TIMEOUT_MS}`,
+      )
+    }
     const { attempts, backoff } = normalizeRetries(
       definition.retries,
       defaultAttempts,
@@ -238,6 +283,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
       input: definition.input,
       attempts,
       backoff,
+      timeoutMs,
     })
     const handle: JobHandle<Payload> = {
       name,
@@ -317,12 +363,13 @@ export function createQueue(options: QueueOptions = {}): Queue {
     trace: JobTraceContext | undefined,
   ): Promise<JobRunOutcome> {
     try {
-      await def.handler(
-        job.payload,
+      const context: JobContext =
         trace === undefined
           ? { id: job.id, name: job.name, attempt }
-          : { id: job.id, name: job.name, attempt, trace },
-      )
+          : { id: job.id, name: job.name, attempt, trace }
+      await (def.timeoutMs === undefined
+        ? def.handler(job.payload, context)
+        : bounded(def.handler, job.payload, context, def.timeoutMs))
       await store.complete(job.id)
       return "completed"
     } catch (err) {
@@ -372,26 +419,38 @@ export function createQueue(options: QueueOptions = {}): Queue {
     await (attempted ?? attemptJob(job, def, attempt, undefined))
   }
 
-  async function processInner(): Promise<number> {
-    const leased = await store.lease(now(), concurrency, leaseMs)
-    if (leased.length === 0) return 0
-    // The round outlives every handler it leased: a store failure in one job must not free the
-    // round (and its concurrency) or let `stop()` return while a sibling is still running.
-    const settled = await Promise.allSettled(leased.map(runOne))
-    for (const outcome of settled) if (outcome.status === "rejected") throw outcome.reason
-    return leased.length
-  }
-
-  function process(): Promise<number> {
-    if (round !== undefined) return round // one round at a time
-    const p = processInner().finally(() => {
-      if (round === p) round = undefined
+  // One lease at a time, sized to the slots free when it starts, so callers sharing the slots
+  // never over-lease. A slot is held until its own job settles, store failures included.
+  function admit(): Promise<readonly Promise<void>[]> {
+    if (leasing !== undefined) return leasing
+    const free = concurrency - running.size
+    if (free <= 0) return Promise.resolve([])
+    const p = (async () => {
+      const leased = await store.lease(now(), free, leaseMs)
+      return leased.map((job) => {
+        const run = runOne(job)
+        const release = (): void => {
+          running.delete(run)
+        }
+        running.add(run)
+        run.then(release, release)
+        return run
+      })
+    })().finally(() => {
+      if (leasing === p) leasing = undefined
     })
-    round = p
+    leasing = p
     return p
   }
 
-  // Through `process()`, so concurrent drains and the worker's polls share one round at a time.
+  async function process(): Promise<number> {
+    const started = await admit()
+    const batch = started.length > 0 ? started : [...running]
+    const settled = await Promise.allSettled(batch)
+    for (const outcome of settled) if (outcome.status === "rejected") throw outcome.reason
+    return batch.length
+  }
+
   async function drain(): Promise<number> {
     let total = 0
     for (let n = await process(); n > 0; n = await process()) total += n
@@ -405,15 +464,19 @@ export function createQueue(options: QueueOptions = {}): Queue {
     const intervalMs = opts.pollIntervalMs ?? 250
     const onPollError =
       opts.onPollError ?? ((error: unknown) => console.error("[nifra/jobs] poll failed:", error))
-    // A store outage must not become an unhandled rejection, which ends a Node process.
+    const report = (error: unknown): void => {
+      try {
+        onPollError(error)
+      } catch {
+        /* a throwing onPollError must not crash the worker */
+      }
+    }
+    // Fills free slots without waiting on busy ones. A store outage must not become an unhandled
+    // rejection, which ends a Node process.
     const poll = (): void => {
-      process().catch((error: unknown) => {
-        try {
-          onPollError(error)
-        } catch {
-          /* a throwing onPollError must not crash the worker */
-        }
-      })
+      admit().then((started) => {
+        for (const run of started) run.catch(report)
+      }, report)
     }
     if (timer === undefined) timer = setInterval(poll, intervalMs)
     return {
@@ -425,8 +488,9 @@ export function createQueue(options: QueueOptions = {}): Queue {
           clearInterval(timer)
           timer = undefined
         }
-        // A failed round was already reported to onPollError.
-        if (round !== undefined) await round.catch(() => {})
+        // Failures were already reported to onPollError.
+        await leasing?.catch(() => {})
+        await Promise.allSettled([...running])
       },
     }
   }

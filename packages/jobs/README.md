@@ -56,6 +56,15 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+A job's `timeoutMs` bounds each attempt: one still running after that many ms fails with a
+`JobTimeoutError` (then retries or dead-letters), frees its worker slot, and aborts `ctx.signal`. Pass the
+signal on to `fetch` or your driver, since a handler that ignores it keeps running unobserved. Keep
+`timeoutMs` below `leaseMs`, after which the job can be leased again.
+
+```ts
+q.define("render", { timeoutMs: 10_000, async handler(id, ctx) { await fetch(url(id), { signal: ctx.signal }) } })
+```
+
 `enqueue` may pass an optional `traceparent` (the producer's W3C trace context); a store should persist
 it and hand it back on every `lease`. A store that drops it still runs every job - a traced run only
 loses its link to the producer. `jobStoreCertificationProfile({ traceparent: true })` from
@@ -119,10 +128,10 @@ the run stays in the producer's trace.
 ## API
 
 - `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff?, beacon?, capabilities?, instrument? }`.
-- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt?, traceparent? })` and `.for(context)`.
+- `queue.define(name, { handler, input?, retries?, timeoutMs? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt?, traceparent? })` and `.for(context)`.
 - `queue.enqueue(name, payload, options?)` - enqueue by name.
-- `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully).
-- `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until empty.
+- `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully). Each poll fills the slots free at that moment, so one slow job holds only its own slot.
+- `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until nothing is due or in flight.
 - `queue.counts()` → `{ pending, active, dead }`. `queue.store` - the underlying store.
 - Stores: `MemoryJobStore`. Backoff: `exponentialBackoff`, `fixedBackoff`, `noBackoff`.
 

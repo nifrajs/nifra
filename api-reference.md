@@ -3648,6 +3648,8 @@ _No named exports (side-effect entrypoint)._
   How an attempt ended: removed, rescheduled, or moved to the dead-letter set.
 - **JobStore** _(interface)_ - `interface JobStore`
   Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async - the queue awaits them.
+- **JobTimeoutError** _(class)_ - `class JobTimeoutError`
+  What an attempt that outran its job's `timeoutMs` fails with; the attempt's `ctx.signal` aborts with it.
 - **JobTraceContext** _(interface)_ - `interface JobTraceContext`
   The trace an instrumented attempt runs in. It has the shape of `c.trace` from `@nifrajs/otel`, so `cache.for(ctx)` and a nested `job.for(ctx).enqueue()` inside the handler stay in the same trace.
 - **JobValidationError** _(class)_ - `class JobValidationError`

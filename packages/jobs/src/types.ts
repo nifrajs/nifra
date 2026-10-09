@@ -42,6 +42,8 @@ export interface JobContext {
   readonly attempt: number
   /** Set when the queue's `instrument.run` opened a span for this attempt (see `jobTracing()`). */
   readonly trace?: JobTraceContext
+  /** Set when the job has a `timeoutMs`: aborts with a `JobTimeoutError` when the attempt runs out of time. */
+  readonly signal?: AbortSignal
 }
 
 /** A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter - never crashes the worker. */
@@ -64,6 +66,12 @@ export interface JobDefinition<Payload> {
   readonly input?: StandardSchemaV1<Payload>
   /** `number` is shorthand for `{ attempts }`. */
   readonly retries?: number | RetryPolicy
+  /**
+   * Fail an attempt that has not settled after this many ms: it is retried or dead-lettered like a
+   * throw, its worker slot frees, and `ctx.signal` aborts. A handler that ignores the signal keeps
+   * running unobserved. Keep it below the worker's `leaseMs`, after which the job can be leased again.
+   */
+  readonly timeoutMs?: number
 }
 
 /**

@@ -25,6 +25,7 @@ export { MemoryJobStore } from "./memory-store.ts"
 export {
   createQueue,
   JobError,
+  JobTimeoutError,
   JobValidationError,
   type Queue,
   type QueueOptions,

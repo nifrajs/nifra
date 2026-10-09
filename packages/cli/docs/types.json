@@ -7253,7 +7253,7 @@
     "name": "JobContext",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface JobContext {\n    readonly id: string;\n    readonly name: string;\n    /** 1 on the first run, 2 on the first retry, … */\n    readonly attempt: number;\n    /** Set when the queue's `instrument.run` opened a span for this attempt (see `jobTracing()`). */\n    readonly trace?: JobTraceContext;\n}",
+    "signature": "export interface JobContext {\n    readonly id: string;\n    readonly name: string;\n    /** 1 on the first run, 2 on the first retry, … */\n    readonly attempt: number;\n    /** Set when the queue's `instrument.run` opened a span for this attempt (see `jobTracing()`). */\n    readonly trace?: JobTraceContext;\n    /** Set when the job has a `timeoutMs`: aborts with a `JobTimeoutError` when the attempt runs out of time. */\n    readonly signal?: AbortSignal;\n}",
     "doc": "/** What a handler receives alongside the payload: identity + which attempt this is (1-based). */"
   },
   {
@@ -7266,7 +7266,7 @@
     "name": "JobDefinition",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface JobDefinition<Payload> {\n    readonly handler: JobHandler<Payload>;\n    /** Optional Standard Schema - validates the payload at `enqueue` (the trust boundary); a failure throws. */\n    readonly input?: StandardSchemaV1<Payload>;\n    /** `number` is shorthand for `{ attempts }`. */\n    readonly retries?: number | RetryPolicy;\n}",
+    "signature": "export interface JobDefinition<Payload> {\n    readonly handler: JobHandler<Payload>;\n    /** Optional Standard Schema - validates the payload at `enqueue` (the trust boundary); a failure throws. */\n    readonly input?: StandardSchemaV1<Payload>;\n    /** `number` is shorthand for `{ attempts }`. */\n    readonly retries?: number | RetryPolicy;\n    /**\n     * Fail an attempt that has not settled after this many ms: it is retried or dead-lettered like a\n     * throw, its worker slot frees, and `ctx.signal` aborts. A handler that ignores the signal keeps\n     * running unobserved. Keep it below the worker's `leaseMs`, after which the job can be leased again.\n     */\n    readonly timeoutMs?: number;\n}",
     "doc": "/** A job definition registered on a queue. */"
   },
   {
@@ -7317,6 +7317,13 @@
     "package": "@nifrajs/jobs",
     "signature": "export interface JobStore {\n    /** Persist a new job; return its id. Hand `traceparent` back on {@link StoredJob} when present. */\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n        traceparent?: string;\n    }): string | Promise<string>;\n    /** Atomically claim up to `limit` jobs due at/before `now`, hiding them for `leaseMs`. */\n    lease(now: number, limit: number, leaseMs: number): StoredJob[] | Promise<StoredJob[]>;\n    /** A job finished successfully - remove it. */\n    complete(id: string): void | Promise<void>;\n    /** A job failed but has attempts left - bump its attempt count and reschedule for `runAt`. */\n    retry(id: string, runAt: number): void | Promise<void>;\n    /** A job exhausted its attempts - move it to the dead-letter set with the last error. */\n    deadLetter(id: string, error: string): void | Promise<void>;\n    /** Snapshot counts (observability + tests). */\n    counts(): JobCounts | Promise<JobCounts>;\n}",
     "doc": "/**\n * Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a\n * single long-running server); implement this over Redis/Postgres/etc. for durability or multiple\n * workers. All methods may be sync or async - the queue awaits them.\n */"
+  },
+  {
+    "name": "JobTimeoutError",
+    "kind": "class",
+    "package": "@nifrajs/jobs",
+    "signature": "export declare class JobTimeoutError extends Error {\n    readonly job: string;\n    readonly timeoutMs: number;\n    readonly name = \"JobTimeoutError\";\n    constructor(job: string, timeoutMs: number);\n}",
+    "doc": "/** What an attempt that outran its job's `timeoutMs` fails with; the attempt's `ctx.signal` aborts with it. */"
   },
   {
     "name": "JobTraceContext",
@@ -10912,7 +10919,7 @@
     "name": "Queue",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface Queue {\n    /** Register a typed job. Throws now (not at run time) on a duplicate name. */\n    define<Payload>(name: string, definition: JobDefinition<Payload>): JobHandle<Payload>;\n    /** Enqueue by name (the {@link JobHandle} is the typed alternative). */\n    enqueue(name: string, payload: unknown, options?: EnqueueOptions): Promise<string>;\n    /** Run ONE poll round: lease up to `concurrency` due jobs, run them, await them. Returns the count run.\n     * Re-entrant-safe (a concurrent call returns the in-flight round). Used by `start()` and by Workers. */\n    process(): Promise<number>;\n    /** Process repeatedly until no job is due (one-shot batch drain). Rounds are shared with\n     * {@link process}, so a concurrent drain or poll never runs more than `concurrency` jobs. */\n    drain(): Promise<number>;\n    /** Start the background worker (Bun/Node/Deno). */\n    start(options?: WorkerOptions): Worker;\n    /** Current store counts. */\n    counts(): JobCounts | Promise<JobCounts>;\n    /** The underlying store (for dead-letter inspection, custom drivers). */\n    readonly store: JobStore;\n}"
+    "signature": "export interface Queue {\n    /** Register a typed job. Throws now (not at run time) on a duplicate name. */\n    define<Payload>(name: string, definition: JobDefinition<Payload>): JobHandle<Payload>;\n    /** Enqueue by name (the {@link JobHandle} is the typed alternative). */\n    enqueue(name: string, payload: unknown, options?: EnqueueOptions): Promise<string>;\n    /** Run ONE poll round: lease due jobs into the free slots (up to `concurrency`), run them, await them.\n     * Returns the count run. With nothing new to start it awaits the jobs already in flight instead.\n     * Slots are shared with the worker and concurrent calls, so no more than `concurrency` jobs run. */\n    process(): Promise<number>;\n    /** Process repeatedly until no job is due and none is in flight (one-shot batch drain). */\n    drain(): Promise<number>;\n    /** Start the background worker (Bun/Node/Deno). */\n    start(options?: WorkerOptions): Worker;\n    /** Current store counts. */\n    counts(): JobCounts | Promise<JobCounts>;\n    /** The underlying store (for dead-letter inspection, custom drivers). */\n    readonly store: JobStore;\n}"
   },
   {
     "name": "QueueHealth",
@@ -15899,13 +15906,13 @@
     "name": "Worker",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface Worker {\n    /** Stop polling and await the in-flight round (graceful). */\n    stop(): Promise<void>;\n    readonly running: boolean;\n}"
+    "signature": "export interface Worker {\n    /** Stop polling and await every job in flight (graceful). */\n    stop(): Promise<void>;\n    readonly running: boolean;\n}"
   },
   {
     "name": "WorkerOptions",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface WorkerOptions {\n    /** Max jobs in flight at once. Default 1. */\n    readonly concurrency?: number;\n    /** How often to poll the store for due jobs (ms). Default 250. */\n    readonly pollIntervalMs?: number;\n    /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */\n    readonly leaseMs?: number;\n    /** Called when a poll round fails (the store's `lease` threw); polling continues on the next tick.\n     * Default: `console.error`. A throwing handler here is swallowed. */\n    readonly onPollError?: (error: unknown) => void;\n}"
+    "signature": "export interface WorkerOptions {\n    /** Max jobs in flight at once. Default 1. A slot frees as soon as its job settles, and the next poll fills it. */\n    readonly concurrency?: number;\n    /** How often to poll the store for due jobs (ms). Default 250. */\n    readonly pollIntervalMs?: number;\n    /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */\n    readonly leaseMs?: number;\n    /** Called when a poll round fails (the store's `lease` threw); polling continues on the next tick.\n     * Default: `console.error`. A throwing handler here is swallowed. */\n    readonly onPollError?: (error: unknown) => void;\n}"
   },
   {
     "name": "WorkersCacheLike",
