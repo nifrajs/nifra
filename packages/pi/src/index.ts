@@ -846,6 +846,8 @@ export class PiBackend implements AgentBackend {
     if (stream !== undefined && session.active !== stream) return
     if (turnId !== undefined && session.turnId !== turnId) return
     this.clearTurnSignal(session)
+    // An approval belongs to its turn; an answer after the turn ended must not reach Pi.
+    session.approvals.clear()
     if (stream === undefined || session.active === stream) session.active = undefined
     if (turnId === undefined || session.turnId === turnId) session.turnId = undefined
   }

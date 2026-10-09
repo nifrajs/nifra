@@ -345,7 +345,19 @@
     "name": "AgentBackend",
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export interface AgentBackend {\n    readonly info: AgentBackendInfo;\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    /** Backends may provide native branching; the host can fall back to its session store. */\n    fork?(input: ForkSessionInput): Promise<ForkSessionResult>;\n    checkpoint?(sessionId: string, payload?: unknown): Promise<AgentSessionCheckpoint>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    /** Resolve an approval surfaced by a backend UI/tool, when that backend supports interactive approvals. */\n    resolveApproval?(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n}"
+    "signature": "export interface AgentBackend {\n    readonly info: AgentBackendInfo;\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    /** Backends may provide native branching; the host can fall back to its session store. */\n    fork?(input: ForkSessionInput): Promise<ForkSessionResult>;\n    checkpoint?(sessionId: string, payload?: unknown): Promise<AgentSessionCheckpoint>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    /**\n     * Resolve an approval surfaced by a backend UI/tool, when that backend supports interactive\n     * approvals. Returns a boolean once the backend has taken the answer, or `undefined` when it does not\n     * know the approval (never asked, already settled, or its turn ended).\n     */\n    resolveApproval?(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n}"
+  },
+  {
+    "name": "AgentBackendConformanceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentBackendConformanceOptions {\n    /** A fresh backend for each scenario. The kit closes every session it opens. */\n    readonly backend: () => AgentBackend | PromiseLike<AgentBackend>;\n    /** The working directory each session is created in. */\n    readonly cwd: string;\n    /** A message the backend answers with a turn that ends by itself. */\n    readonly prompt: string;\n    /** A message that makes the backend ask for an approval. Enables the approval checks. */\n    readonly approvalPrompt?: string;\n    /** A message whose turn keeps running until it is cancelled. Enables the busy and cancel checks. */\n    readonly slowPrompt?: string;\n    /** Longest one scenario may wait for the backend. Default 10 seconds. */\n    readonly timeoutMs?: number;\n}"
+  },
+  {
+    "name": "AgentBackendConformanceReport",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentBackendConformanceReport {\n    readonly backend: string;\n    /** No check failed. Skipped checks do not count against it. */\n    readonly ok: boolean;\n    readonly checks: readonly AgentConformanceCheck[];\n}"
   },
   {
     "name": "AgentBackendInfo",
@@ -377,6 +389,18 @@
     "package": "@nifrajs/webmcp",
     "signature": "export type AgentCapabilityReference = {\n    readonly tool: Omit<ToolContract, \"input\" | \"output\" | \"execute\" | \"idempotency\" | \"cost\" | \"policy\"> & {\n        readonly input: StandardSchemaV1;\n        readonly output: StandardSchemaV1;\n        readonly execute: (...args: never[]) => unknown | PromiseLike<unknown>;\n        readonly idempotency?: unknown;\n        readonly cost?: unknown;\n        readonly policy?: unknown;\n    };\n    readonly surface: AgentSurfaceDescriptor;\n};",
     "doc": "/**\n * The erased, read-only handle accepted by capability registries.\n *\n * A real application commonly registers tools with unrelated input and output types. Registry\n * boundaries therefore use this structural view instead of pretending the whole array has one\n * homogeneous generic type. Individual calls remain validated and typed at their capability's\n * `tool` boundary.\n */"
+  },
+  {
+    "name": "AgentConformanceCheck",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface AgentConformanceCheck {\n    readonly id: string;\n    readonly status: AgentConformanceStatus;\n    /** What went wrong, or why the check was skipped. */\n    readonly detail?: string;\n}"
+  },
+  {
+    "name": "AgentConformanceStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type AgentConformanceStatus = \"passed\" | \"failed\" | \"skipped\";"
   },
   {
     "name": "AgentContextUsageEvent",
@@ -16876,6 +16900,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function channelReadableStream<Message>(subscription: ChannelSubscription<Message>): ReadableStream<ChannelEvent<Message>>;",
     "doc": "/** Adapt a channel subscription to a cancellable Web stream for SSE/HTTP adapters. */"
+  },
+  {
+    "name": "checkAgentBackend",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function checkAgentBackend(options: AgentBackendConformanceOptions): Promise<AgentBackendConformanceReport>;",
+    "doc": "/**\n * Drive a backend through the scenarios a host depends on: a session's snapshot, a whole turn's\n * events (valid, in order, one turn, one terminal event), a refused second message while busy,\n * cancellation, approvals granted, denied, unknown and cancelled, and a closed session. Scenarios\n * whose prompt is not given are reported as skipped.\n */"
   },
   {
     "name": "checkCatalogs",

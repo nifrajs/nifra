@@ -344,7 +344,11 @@ export interface AgentBackend {
   fork?(input: ForkSessionInput): Promise<ForkSessionResult>
   checkpoint?(sessionId: string, payload?: unknown): Promise<AgentSessionCheckpoint>
   reload(sessionId: string): Promise<ReloadResult>
-  /** Resolve an approval surfaced by a backend UI/tool, when that backend supports interactive approvals. */
+  /**
+   * Resolve an approval surfaced by a backend UI/tool, when that backend supports interactive
+   * approvals. Returns a boolean once the backend has taken the answer, or `undefined` when it does not
+   * know the approval (never asked, already settled, or its turn ended).
+   */
   resolveApproval?(
     sessionId: string,
     approvalId: string,

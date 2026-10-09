@@ -12645,6 +12645,31 @@ Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
 runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI
 clients can share it without pulling in the Nifra application framework.
 
+## Conformance kit
+
+`@nifrajs/agent-protocol/conformance` drives an `AgentBackend` through what a host relies on and
+returns a report, so an adapter for another agent can prove itself in any test runner:
+
+```ts
+import { checkAgentBackend } from "@nifrajs/agent-protocol/conformance"
+
+const report = await checkAgentBackend({
+  backend: () => new MyBackend(),
+  cwd: process.cwd(),
+  prompt: "say hi",
+  slowPrompt: "wait until cancelled", // enables turn.busy and turn.cancel
+  approvalPrompt: "write a file", // enables the approval checks
+})
+expect(report.checks.filter((check) => check.status === "failed")).toEqual([])
+```
+
+Each scenario gets a fresh backend and session. The checks: a valid session snapshot; a turn whose
+events are valid, ordered, of one turn, and end with exactly one terminal event; `session.completed`
+for a plain turn and an idle snapshot after it; a second message refused while a turn runs, without
+ending it; a cancel that ends with `session.stopped` and leaves the session usable; approvals allowed
+and denied; `undefined` from `resolveApproval` for an approval it never asked for or whose turn was
+cancelled; and no turn for a closed session.
+
 ## Version 1 compatibility
 
 Version 1 is additive. Hosts advertise capabilities and clients use only the negotiated intersection;

@@ -8,24 +8,28 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/agent-protocol` · `@nifrajs/agent-protocol/conformance`
+
 ## Key exports
 
-- **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
-- **agentEventProblem** _(function)_ - `agentEventProblem: (value: unknown) => string | undefined`
-- **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
-- **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
-- **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string`
-- **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown`
-- **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
-- **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
-- **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
-- **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
-- **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
-- **isAgentExtensionEventType** _(function)_ - `isAgentExtensionEventType: (type: unknown) => type is AgentExtensionEventType`
-- **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
-- **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
+- **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError` · from `@nifrajs/agent-protocol`
+- **agentEventProblem** _(function)_ - `agentEventProblem: (value: unknown) => string | undefined` · from `@nifrajs/agent-protocol`
+- **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void` · from `@nifrajs/agent-protocol`
+- **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void` · from `@nifrajs/agent-protocol`
+- **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string` · from `@nifrajs/agent-protocol`
+- **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown` · from `@nifrajs/agent-protocol`
+- **checkAgentBackend** _(function)_ - `checkAgentBackend: (options: AgentBackendConformanceOptions) => Promise<AgentBackendConformanceReport>` · from `@nifrajs/agent-protocol/conformance`
+- **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean` · from `@nifrajs/agent-protocol`
+- **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean` · from `@nifrajs/agent-protocol`
+- **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream` · from `@nifrajs/agent-protocol`
+- **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string` · from `@nifrajs/agent-protocol`
+- **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent` · from `@nifrajs/agent-protocol`
+- **isAgentExtensionEventType** _(function)_ - `isAgentExtensionEventType: (type: unknown) => type is AgentExtensionEventType` · from `@nifrajs/agent-protocol`
+- **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean` · from `@nifrajs/agent-protocol`
 
-_…and 108 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 113 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

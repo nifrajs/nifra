@@ -392,6 +392,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-protocol
 
+### `@nifrajs/agent-protocol`
+
 - **AGENT_MAX_EVENT_TEXT** _(const)_ - `AGENT_MAX_EVENT_TEXT: number`
   Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units.
 - **AGENT_MAX_PAYLOAD_STRING** _(const)_ - `AGENT_MAX_PAYLOAD_STRING: number`
@@ -591,6 +593,15 @@ Every public export of every package and documented subpath - name, kind, signat
   Split text into pieces that each fit an event's text field, so a long reply travels as consecutive events instead of failing validation. Joined, the pieces give back the text with each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last quarter, and never between the …
 - **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`
   Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any boundary has opened for the run.
+
+### `@nifrajs/agent-protocol/conformance`
+
+- **AgentBackendConformanceOptions** _(interface)_ - `interface AgentBackendConformanceOptions`
+- **AgentBackendConformanceReport** _(interface)_ - `interface AgentBackendConformanceReport`
+- **AgentConformanceCheck** _(interface)_ - `interface AgentConformanceCheck`
+- **AgentConformanceStatus** _(type)_ - `type AgentConformanceStatus = "passed" | "failed" | "skipped"`
+- **checkAgentBackend** _(function)_ - `checkAgentBackend: (options: AgentBackendConformanceOptions) => Promise<AgentBackendConformanceReport>`
+  Drive a backend through the scenarios a host depends on: a session's snapshot, a whole turn's events (valid, in order, one turn, one terminal event), a refused second message while busy, cancellation, approvals granted, denied, unknown and cancelled, and a closed session. Scenarios whose prompt is …
 
 ## @nifrajs/agent-review
 
