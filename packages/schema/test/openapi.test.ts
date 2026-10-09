@@ -826,4 +826,22 @@ describe("typed SSE routes", () => {
     })
     expect(toOpenAPIFromEvidence(snapshotProjectEvidence(app))).toEqual(doc)
   })
+
+  test("a stream with a body is a POST with its request body and typed events", () => {
+    const posted = server()
+      .use(streaming())
+      .sse("/turn/events", { body: t.object({ message: t.string() }), sse: post }, (_c, stream) =>
+        stream.close(),
+      )
+    const doc = toOpenAPI(posted, { openapiVersion: "3.2.0" })
+    const operation = doc.paths["/turn/events"]?.post
+    expect(doc.paths["/turn/events"]?.get).toBeUndefined()
+    expect(Object.keys(operation?.requestBody?.content ?? {})).toEqual(["application/json"])
+    expect(operation?.responses["200"]?.content?.["text/event-stream"]?.itemSchema).toEqual(
+      item("#/components/schemas/TurnEventsEvent"),
+    )
+    expect(
+      toOpenAPIFromEvidence(snapshotProjectEvidence(posted), { openapiVersion: "3.2.0" }),
+    ).toEqual(doc)
+  })
 })
