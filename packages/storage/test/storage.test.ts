@@ -496,3 +496,36 @@ describe("FileStorage writes", () => {
     await expect(stat(`${dir}.nifra-metadata/old.json`)).rejects.toThrow()
   })
 })
+
+describe("FileStorage list()", () => {
+  test("a prefix and a limit give the first matching keys in key order", async () => {
+    const storage = await freshFileStorage()
+    for (const key of ["a.txt", "a/b", "a/c/d", "ab", "b/z", "avatars/u1.png", "avatars/u2.png"])
+      await storage.put(key, "x")
+    expect(await storage.list()).toEqual([
+      "a.txt",
+      "a/b",
+      "a/c/d",
+      "ab",
+      "avatars/u1.png",
+      "avatars/u2.png",
+      "b/z",
+    ])
+    expect(await storage.list({ limit: 3 })).toEqual(["a.txt", "a/b", "a/c/d"])
+    expect(await storage.list({ prefix: "a" })).toEqual([
+      "a.txt",
+      "a/b",
+      "a/c/d",
+      "ab",
+      "avatars/u1.png",
+      "avatars/u2.png",
+    ])
+    expect(await storage.list({ prefix: "a/" })).toEqual(["a/b", "a/c/d"])
+    expect(await storage.list({ prefix: "avatars/u", limit: 1 })).toEqual(["avatars/u1.png"])
+    expect(await storage.list({ prefix: "a/c/d" })).toEqual(["a/c/d"])
+    expect(await storage.list({ prefix: "missing/x" })).toEqual([])
+    expect(await storage.list({ prefix: "/a" })).toEqual([])
+    expect(await storage.list({ prefix: "a//b" })).toEqual([])
+    expect(await storage.list({ limit: 0 })).toEqual([])
+  })
+})

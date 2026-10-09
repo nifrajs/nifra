@@ -523,30 +523,68 @@ export class FileStorage implements StorageAdapter {
   }
 
   async list(options: ListOptions = {}): Promise<string[]> {
-    const keys: string[] = []
-    await this.walk(this.root, "", keys)
-    let out = keys.sort()
-    if (options.prefix !== undefined)
-      out = out.filter((k) => k.startsWith(options.prefix as string))
-    if (options.limit !== undefined) out = out.slice(0, options.limit)
+    const prefix = options.prefix ?? ""
+    const limit = options.limit ?? Number.POSITIVE_INFINITY
+    // Start below the directories the prefix already names, and stop once `limit` keys are found:
+    // the walk visits entries in key order, so the first keys found are the first keys sorted.
+    const slash = prefix.lastIndexOf("/")
+    const dirKey = slash === -1 ? "" : prefix.slice(0, slash)
+    const start = slash === -1 ? this.root : await this.listingDirectory(dirKey)
+    const out: string[] = []
+    if (start !== undefined && limit > 0)
+      await this.walk(start, dirKey, prefix.slice(slash + 1), limit, out)
     return out
   }
 
-  private async walk(dir: string, prefix: string, out: string[]): Promise<void> {
+  /** The directory for key prefix `dirKey`, or `undefined` when no plain directory chain leads there. */
+  private async listingDirectory(dirKey: string): Promise<string | undefined> {
+    try {
+      assertSafeKey(dirKey)
+    } catch {
+      return undefined // no safe key lies beneath an unsafe prefix
+    }
+    let current = this.root
+    for (const segment of dirKey.split("/")) {
+      current = join(current, segment)
+      try {
+        const info = await lstat(current)
+        if (info.isSymbolicLink() || !info.isDirectory()) return undefined
+      } catch {
+        return undefined
+      }
+    }
+    return current
+  }
+
+  private async walk(
+    dir: string,
+    prefix: string,
+    namePrefix: string,
+    limit: number,
+    out: string[],
+  ): Promise<void> {
     let names: string[]
     try {
       names = await readdir(dir)
     } catch {
       return // missing root → empty listing
     }
+    const entries: { readonly name: string; readonly order: string; readonly kind: string }[] = []
     for (const name of names) {
-      const full = join(dir, name)
-      // POSIX-join the key segments so listed keys are portable regardless of the host separator.
-      const key = prefix === "" ? name : posix.join(prefix, name)
-      const info = await lstat(full)
+      if (!name.startsWith(namePrefix)) continue
+      const info = await lstat(join(dir, name))
       if (info.isSymbolicLink()) continue
-      if (info.isDirectory()) await this.walk(full, key, out)
-      else if (info.isFile()) out.push(key)
+      // A directory's keys all start with `name/`, so it sorts there among its siblings.
+      if (info.isDirectory()) entries.push({ name, order: `${name}/`, kind: "dir" })
+      else if (info.isFile()) entries.push({ name, order: name, kind: "file" })
+    }
+    entries.sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0))
+    for (const entry of entries) {
+      if (out.length >= limit) return
+      // POSIX-join the key segments so listed keys are portable regardless of the host separator.
+      const key = prefix === "" ? entry.name : posix.join(prefix, entry.name)
+      if (entry.kind === "dir") await this.walk(join(dir, entry.name), key, "", limit, out)
+      else out.push(key)
     }
   }
 }
