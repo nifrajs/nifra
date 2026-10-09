@@ -717,10 +717,13 @@ async function execute(
     if (isPayloadTooLarge(cause)) {
       return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
     }
-    // A codec refusing the payload stays a throw. Anything else is the read itself failing - the
-    // deadline or the caller's signal firing mid-body, or the connection dropping - which the fetch
-    // above already reports as a Result.
-    if (cause instanceof Error && cause.name === "TransportCodecError") throw cause
+    // A body its content type does not decode - a proxy's HTML error page labelled JSON, say - is
+    // no answer the caller can use either. Anything else is the read itself failing - the deadline
+    // or the caller's signal firing mid-body, or the connection dropping - which the fetch above
+    // already reports as a Result.
+    if (cause instanceof Error && cause.name === "TransportCodecError") {
+      return { ok: false, status: 0, data: null, error: { error: "malformed_response" } }
+    }
     const code = timeout?.aborted === true ? "timeout" : "network_error"
     return { ok: false, status: 0, data: null, error: { error: code } }
   }
@@ -1007,7 +1010,20 @@ const TEXTUAL_TYPES = new Set([
   "application/ecmascript",
   "application/x-www-form-urlencoded",
   "application/x-ndjson",
+  "application/jsonl",
 ])
+
+const JSON_MEDIA = "application/json"
+
+/** A content type the transport codecs decode. `application/json-patch+json` and `application/jsonl`
+ * share the JSON prefix but are other formats, read like any other textual body. */
+function isTransportMedia(contentType: string): boolean {
+  if (contentType.startsWith(JSON_MEDIA)) {
+    const next = contentType[JSON_MEDIA.length]
+    return next === undefined || next === ";" || next === " " || next === "\t"
+  }
+  return contentType.startsWith("application/vnd.nifra.")
+}
 
 /**
  * True when a body can survive being decoded as UTF-8 text.
@@ -1062,10 +1078,7 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // is ~23x cheaper and the SAME cap is enforced on the result (identical error). A network
   // client is never marked and keeps the bounded-while-streaming read.
   const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
-  if (
-    contentType.startsWith("application/json") ||
-    contentType.startsWith("application/vnd.nifra.")
-  ) {
+  if (isTransportMedia(contentType)) {
     if (local) {
       return decodeTransportText(
         await response.text(),

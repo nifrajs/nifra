@@ -557,9 +557,11 @@ export default function Api() {
       </p>
       <CodeBlock code={RESULT} />
       <p>
-        A call that gets no HTTP answer has <code>status: 0</code> and one of four codes:{" "}
-        <code>network_error</code>, <code>timeout</code>, <code>response_too_large</code>, or{" "}
-        <code>invalid_path</code>. <code>invalid_path</code> means a param value was <code>.</code>{" "}
+        A call that gets no HTTP answer it can read has <code>status: 0</code> and one of five
+        codes: <code>network_error</code>, <code>timeout</code>, <code>response_too_large</code>,{" "}
+        <code>malformed_response</code>, or <code>invalid_path</code>.{" "}
+        <code>malformed_response</code> means the body did not decode as its content type says - a
+        proxy's HTML error page labelled JSON, say. <code>invalid_path</code> means a param value was <code>.</code>{" "}
         or <code>..</code>: a URL reads those as steps to another path, in every encoding, so the
         client sends nothing rather than reach a route the call does not name.{" "}
         <code>.subscribe()</code> reports it through <code>onError</code> and closes;{" "}

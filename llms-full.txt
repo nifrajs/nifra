@@ -1311,9 +1311,11 @@ if (res.ok) {
 const { data, error } = await api.users.post({ name: "" })  // 422 if the schema rejects it
 ```
 
-A call that gets no HTTP answer has `status: 0` and one of four codes:
-`network_error`, `timeout`, `response_too_large`, or
-`invalid_path`. `invalid_path` means a param value was `.`
+A call that gets no HTTP answer it can read has `status: 0` and one of five
+codes: `network_error`, `timeout`, `response_too_large`,
+`malformed_response`, or `invalid_path`.
+`malformed_response` means the body did not decode as its content type says - a
+proxy's HTML error page labelled JSON, say. `invalid_path` means a param value was `.`
 or `..`: a URL reads those as steps to another path, in every encoding, so the
 client sends nothing rather than reach a route the call does not name.
 `.subscribe()` reports it through `onError` and closes;
@@ -13118,8 +13120,10 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
   pass `{ query, headers, signal }` as call options. A DELETE route with a body schema takes
-  its body as an option: `api.items.delete({ body: { ids } })`. A call that gets no HTTP answer has
-  `status: 0` and the code `network_error`, `timeout`, `response_too_large` or `invalid_path`.
+  its body as an option: `api.items.delete({ body: { ids } })`. A call that gets no HTTP answer it
+  can read has `status: 0` and the code `network_error`, `timeout`, `response_too_large`,
+  `malformed_response` (a body its content type does not decode, like a proxy's HTML error page
+  labelled JSON) or `invalid_path`.
 - **A param value is never a path step.** `.` and `..` are resolved by URL parsing in every
   encoding, so `api.users({ id: ".." }).delete()` sends nothing and returns `invalid_path`
   instead of reaching another route. `.subscribe()` reports it through `onError`; `.ws()` throws.
