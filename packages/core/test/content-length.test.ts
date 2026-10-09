@@ -368,8 +368,8 @@ describe("trusted body framing", () => {
 })
 
 describe("cappedBodyRequest", () => {
-  const post = (body: BodyInit | null, headers?: Record<string, string>) =>
-    new Request("http://test/", { method: "POST", body, ...(headers ? { headers } : {}) })
+  const post = (body: BodyInit | null, headers: Record<string, string> = {}) =>
+    new Request("http://test/", { method: "POST", body, headers })
   const rejection = async (request: Request) => {
     const thrown = await request.text().then(
       () => undefined,

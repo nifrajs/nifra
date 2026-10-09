@@ -545,7 +545,13 @@ test("a route with no body schema holds direct reads of c.request to maxBodyByte
   const cases: ReadonlyArray<readonly [string, () => RequestInit]> = [
     ["/raw", () => ({ body: "x".repeat(64) })],
     ["/raw", () => ({ body: "x".repeat(65) })],
-    ["/raw", () => ({ body: stream(128), duplex: "half" }) as RequestInit],
+    [
+      "/raw",
+      () => {
+        const init: RequestInit & { duplex: "half" } = { body: stream(128), duplex: "half" }
+        return init
+      },
+    ],
     ["/raw", () => ({ body: "x", headers: { "content-length": "1e3" } })],
     ["/ignore", () => ({ body: "x".repeat(1000) })],
   ]
@@ -561,8 +567,9 @@ test("a route with no body schema holds direct reads of c.request to maxBodyByte
       return out
     }),
   )
-  expect(answers[0]).toEqual(answers[1] as string[])
-  expect(answers[0]).toEqual([
+  const [edge, core] = answers
+  expect(edge).toEqual(core)
+  expect(edge).toEqual([
     '200 {"length":64}',
     '413 {"ok":false,"error":"payload_too_large"}',
     '413 {"ok":false,"error":"payload_too_large"}',
