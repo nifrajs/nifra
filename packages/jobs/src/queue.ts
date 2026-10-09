@@ -370,8 +370,6 @@ export function createQueue(options: QueueOptions = {}): Queue {
       await (def.timeoutMs === undefined
         ? def.handler(job.payload, context)
         : bounded(def.handler, job.payload, context, def.timeoutMs))
-      await store.complete(job.id)
-      return "completed"
     } catch (err) {
       safeOnError(err, job.name)
       if (attempt >= job.maxAttempts) {
@@ -381,6 +379,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
       await store.retry(job.id, now() + Math.max(0, def.backoff(attempt)))
       return "retried"
     }
+    // Outside the try: a store that fails to record a success must not retry or dead-letter a job
+    // whose handler finished. It surfaces as a store failure, and the lease decides any redelivery.
+    await store.complete(job.id)
+    return "completed"
   }
 
   async function runOne(job: StoredJob): Promise<void> {

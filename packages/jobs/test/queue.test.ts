@@ -157,6 +157,30 @@ describe("createQueue - scheduling", () => {
   })
 })
 
+describe("a store that fails to record a success", () => {
+  for (const retries of [3, 1])
+    test(`never reruns or dead-letters the finished handler (retries: ${retries})`, async () => {
+      class LossyStore extends MemoryJobStore {
+        override async complete(): Promise<void> {
+          throw new Error("store down")
+        }
+      }
+      const store = new LossyStore()
+      const q = createQueue({ store, backoff: noBackoff, onError: () => {} })
+      let runs = 0
+      q.define("send", {
+        retries,
+        handler() {
+          runs++
+        },
+      })
+      await q.enqueue("send", {})
+      await expect(q.drain()).rejects.toThrow("store down")
+      expect(runs).toBe(1)
+      expect(await q.counts()).toEqual({ pending: 0, active: 1, dead: 0 })
+    })
+})
+
 describe("createQueue - worker lifecycle (real timers)", () => {
   test("start() processes enqueued jobs; stop() drains the in-flight round", async () => {
     const q = createQueue() // real clock
