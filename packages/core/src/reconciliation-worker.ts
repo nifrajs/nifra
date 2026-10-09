@@ -116,14 +116,22 @@ async function boundedMap<T>(
   run: (value: T) => Promise<void>,
 ): Promise<void> {
   let next = 0
+  let failure: { readonly error: unknown } | undefined
   const worker = async (): Promise<void> => {
-    for (;;) {
+    while (failure === undefined) {
       const index = next++
       if (index >= values.length) return
-      await run(values[index] as T)
+      try {
+        await run(values[index] as T)
+      } catch (error) {
+        failure ??= { error }
+      }
     }
   }
+  // A failure starts no new work but lets every started handler settle: the caller releases the
+  // lease next, and a handler still running then overlaps the worker that takes the lease over.
   await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()))
+  if (failure !== undefined) throw failure.error
 }
 
 export async function runReconciliationWorker<Finding>(

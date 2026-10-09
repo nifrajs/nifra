@@ -56,6 +56,49 @@ describe("bounded reconciliation worker", () => {
     ).toBeUndefined()
   })
 
+  test("a failed handler releases the lease only after its siblings settle", async () => {
+    const leases = new MemoryReconciliationLeaseStore()
+    const order: string[] = []
+    let finishB: () => void = () => {}
+    const bGate = new Promise<void>((resolve) => {
+      finishB = resolve
+    })
+    let bStarted: () => void = () => {}
+    const bRunning = new Promise<void>((resolve) => {
+      bStarted = resolve
+    })
+    const run = runReconciliationWorker<string>({
+      name: "sibling",
+      owner: "one",
+      leases,
+      concurrency: 2,
+      scan: () => ({ findings: ["A", "B"] }),
+      handle: async (finding) => {
+        if (finding === "A") {
+          await bRunning
+          throw new Error("A failed")
+        }
+        bStarted()
+        await bGate
+        order.push("B settled")
+      },
+      observe: (event) => {
+        if (event.type === "released") order.push("released")
+      },
+    }).catch((error: Error) => order.push(`rejected: ${error.message}`))
+    await bRunning
+    // Let A's failure run as far as it can without B: nothing but B's gate is pending after this.
+    for (let tick = 0; tick < 100; tick++) await Promise.resolve()
+    expect(order).toEqual([])
+    // While B still runs, the lease stays held: no other owner can take the work over.
+    expect(
+      await leases.acquire({ name: "sibling", owner: "two", now: Date.now(), leaseMs: 1 }),
+    ).toBe(undefined)
+    finishB()
+    await run
+    expect(order).toEqual(["B settled", "released", "rejected: A failed"])
+  })
+
   test("fails closed when another owner holds the lease", async () => {
     const leases = new MemoryReconciliationLeaseStore()
     await leases.acquire({
