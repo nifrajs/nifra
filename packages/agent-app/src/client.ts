@@ -175,27 +175,36 @@ export class AgentAppClient {
   /**
    * Stream a turn as ordered, deduplicated view models. The underlying transport receives the host's
    * full event stream, but every value yielded here is content-free.
+   *
+   * The host numbers events per session, and other clients can share the session, so the turn starts
+   * at its first event: seqs between the last one this client saw and that event belong to other
+   * clients' turns. Events still held behind a gap when the stream ends are released in order.
    */
   async *send(message: string, options?: { signal?: AbortSignal }): AsyncIterable<AgentEventView> {
     if (this.currentSession === undefined)
       throw new AgentAppError("createSession must be called before send")
-    const buffer = new OrderedEventBuffer({
-      from: this.currentSession.lastSeq,
-      ...(this.maxPending === undefined ? {} : { maxPending: this.maxPending }),
-    })
+    const cursor = this.currentSession.lastSeq
+    let buffer: OrderedEventBuffer | undefined
     const stream = this.transport.stream({
       method: "turn.send",
       params: { message },
       ...(options?.signal ? { signal: options.signal } : {}),
     })
-    for await (const event of stream) {
-      for (const view of buffer.offer(toEventView(event))) {
-        // The host numbers events per session, so the next turn's buffer starts after this one.
-        if (this.currentSession !== undefined && view.seq > this.currentSession.lastSeq)
-          this.currentSession = Object.freeze({ ...this.currentSession, lastSeq: view.seq })
-        yield view
-      }
+    const advance = (view: AgentEventView): AgentEventView => {
+      // The next turn's buffer starts after this one.
+      if (this.currentSession !== undefined && view.seq > this.currentSession.lastSeq)
+        this.currentSession = Object.freeze({ ...this.currentSession, lastSeq: view.seq })
+      return view
     }
+    for await (const event of stream) {
+      const view = toEventView(event)
+      buffer ??= new OrderedEventBuffer({
+        from: Math.max(cursor, view.seq - 1),
+        ...(this.maxPending === undefined ? {} : { maxPending: this.maxPending }),
+      })
+      for (const ready of buffer.offer(view)) yield advance(ready)
+    }
+    for (const ready of buffer?.flush() ?? []) yield advance(ready)
   }
 
   /** Resume a persisted log by cursor. A cursor whose next record was evicted asks for a resync. */

@@ -129,6 +129,52 @@ describe("AgentAppClient.send", () => {
     }
   })
 
+  test("a turn that starts past seqs another client's turns used streams live", async () => {
+    const gate = Promise.withResolvers<void>()
+    class SharedSessionTransport extends FakeTransport {
+      override async *stream(): AsyncIterable<AgentEvent> {
+        yield delta(5, "a")
+        await gate.promise
+        yield delta(6, "b")
+      }
+    }
+    const client = new AgentAppClient(
+      new SharedSessionTransport(() => ({ ok: true, status: 200, value: snapshot() })),
+    )
+    await client.createSession()
+    const views = client.send("hi")[Symbol.asyncIterator]()
+    expect((await views.next()).value?.seq).toBe(5)
+    gate.resolve()
+    expect((await views.next()).value?.seq).toBe(6)
+    expect((await views.next()).done).toBe(true)
+    expect(client.session?.lastSeq).toBe(6)
+  })
+
+  test("events held behind a gap the stream never fills are released when it ends", async () => {
+    const transport = new FakeTransport(
+      () => ({ ok: true, status: 200, value: snapshot() }),
+      [delta(1, "a"), delta(3, "c"), delta(5, "e")],
+    )
+    const client = new AgentAppClient(transport)
+    await client.createSession()
+    const seen: number[] = []
+    for await (const view of client.send("hi")) seen.push(view.seq)
+    expect(seen).toEqual([1, 3, 5])
+    expect(client.session?.lastSeq).toBe(5)
+  })
+
+  test("a redelivered event at or below the last seen seq is still dropped", async () => {
+    const transport = new FakeTransport(
+      () => ({ ok: true, status: 200, value: snapshot({ lastSeq: 4 }) }),
+      [delta(3, "old"), delta(5, "new")],
+    )
+    const client = new AgentAppClient(transport)
+    await client.createSession()
+    const seen: number[] = []
+    for await (const view of client.send("hi")) seen.push(view.seq)
+    expect(seen).toEqual([5])
+  })
+
   test("send before createSession is rejected", async () => {
     const transport = new FakeTransport(() => ({ ok: true, status: 200, value: snapshot() }))
     const client = new AgentAppClient(transport)
@@ -261,5 +307,17 @@ describe("OrderedEventBuffer gap recovery", () => {
     expect(buffer.offer(view(6)).map((v) => v.seq)).toEqual([3, 4])
     expect(buffer.dropped).toBeGreaterThan(0)
     expect(buffer.offer(view(6))).toEqual([]) // duplicate of an already-buffered seq
+  })
+
+  test("flush releases every held event in order and counts the missing seqs", () => {
+    const buffer = new OrderedEventBuffer({ from: 0 })
+    const view = (seq: number) => toEventView(delta(seq, "x"))
+    expect(buffer.offer(view(4))).toEqual([])
+    expect(buffer.offer(view(2))).toEqual([])
+    expect(buffer.flush().map((v) => v.seq)).toEqual([2, 4])
+    expect(buffer.dropped).toBe(2)
+    expect(buffer.expected).toBe(5)
+    expect(buffer.offer(view(3))).toEqual([])
+    expect(buffer.flush()).toEqual([])
   })
 })

@@ -525,6 +525,20 @@ export class OrderedEventBuffer {
     return this.next
   }
 
+  /**
+   * Release every held event in seq order, counting the seqs still missing between them on
+   * {@link dropped}. For a stream that has ended, so no gap can fill any more.
+   */
+  flush(): readonly AgentEventView[] {
+    const held = [...this.pending.values()].sort((a, b) => a.seq - b.seq)
+    this.pending.clear()
+    for (const view of held) {
+      if (this.next !== undefined) this.droppedCount += view.seq - this.next
+      this.next = view.seq + 1
+    }
+    return held
+  }
+
   offer(view: AgentEventView): readonly AgentEventView[] {
     if (this.next === undefined) this.next = view.seq
     if (view.seq < this.next) return [] // already delivered
