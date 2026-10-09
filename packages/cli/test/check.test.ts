@@ -44,6 +44,22 @@ import {
 } from "../src/verification-plan.ts"
 import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
+test("the help and README say a contract lock makes check import backend/app.ts, --lints-only too", async () => {
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "--help"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [help, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+  expect(code).toBe(0)
+  expect(help.replace(/\s+/g, " ")).toContain(
+    "With a contracts.lock.json, both modes import backend/app.ts (running its top-level code)",
+  )
+  const readme = await Bun.file(join(import.meta.dir, "../README.md")).text()
+  expect(readme.replace(/\s+/g, " ")).toContain(
+    "`nifra check` (with `--lints-only` too) imports `backend/app.ts`, running its top-level code",
+  )
+})
+
 describe("release verification", () => {
   test("uses explicit gate IDs so default-plan edits cannot re-point the release plan", () => {
     expect(verificationPlanIds()).toEqual([

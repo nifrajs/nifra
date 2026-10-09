@@ -205,6 +205,8 @@ Usage:
                                          backend code in browser code). Run as "done"; --json for agents;
                                          --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
                                          review tools; --lints-only skips tsc for a near-instant inner-loop pass.
+                                         With a contracts.lock.json, both modes import backend/app.ts
+                                         (running its top-level code) to compare the routes it serves.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
                                          full build, test, coverage, corpus, consumer, and cross-runtime gate.
   nifra fix     [--code <NF-code>]       Apply a registered diagnostic recipe, then print the remaining
