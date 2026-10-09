@@ -229,6 +229,23 @@ export interface LoadedApp {
   readonly backend: unknown
 }
 
+/** An API-only app as the backend readers see it: `backend/app.ts` and no web config. */
+export interface BackendOnlyApp {
+  readonly cwd: string
+  readonly backend: unknown
+  readonly framework?: undefined
+}
+
+/** What the backend readers (routes, context, hooks, OpenAPI, the app's MCP surface) load. */
+export type IntrospectedApp = LoadedApp | BackendOnlyApp
+
+/** How a command reaches the app. The MCP server hands out one whose calls both refuse. */
+export interface AppLoader {
+  (outDirName?: string): Promise<LoadedApp>
+  /** The whole app with a web config, else `backend/app.ts` alone. */
+  readonly backend: () => Promise<IntrospectedApp>
+}
+
 export interface LoadAppOptions {
   /** Optional dynamic-import query used by long-lived MCP processes to bust Bun's module cache. */
   readonly importQuery?: string
@@ -289,22 +306,24 @@ const isAdapter = (v: unknown): boolean => typeof v === "object" && v !== null
 const importWithQuery = (path: string, query: string | undefined): Promise<unknown> =>
   import(query === undefined || query === "" ? path : `${path}?${query}`)
 
+/** Whether `cwd` has a web config file, the one thing that makes it more than its backend. */
+export const hasAppConfig = (cwd: string): boolean =>
+  existsSync(resolve(cwd, CONFIG_FILE)) || existsSync(resolve(cwd, FRAMEWORK_FILE))
+
 /**
- * What reads only the backend (`nifra openapi`): the whole app when it has a web config, else
- * `backend/app.ts` alone, so an API-only app needs no adapter to describe its routes.
+ * What reads only the backend: the whole app when it has a web config, else `backend/app.ts`
+ * alone, so an API-only app needs no adapter for its routes, context, hooks or OpenAPI document.
  */
 export async function loadBackendApp(
   cwd: string,
   options: LoadAppOptions = {},
-): Promise<Pick<LoadedApp, "cwd" | "backend">> {
-  if (existsSync(resolve(cwd, CONFIG_FILE)) || existsSync(resolve(cwd, FRAMEWORK_FILE))) {
-    return loadApp(cwd, "dist", options)
-  }
+): Promise<IntrospectedApp> {
+  if (hasAppConfig(cwd)) return loadApp(cwd, "dist", options)
   assertCurrentLayout(cwd)
   const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) {
     throw new Error(
-      `[nifra] no ${BACKEND_APP_FILE} in ${cwd}: the OpenAPI document describes its routes`,
+      `[nifra] no ${CONFIG_FILE}, ${FRAMEWORK_FILE} or ${BACKEND_APP_FILE} in ${cwd}: a web app needs its config, an API-only app its ${BACKEND_APP_FILE}`,
     )
   }
   const backend = (
@@ -334,7 +353,11 @@ export async function loadApp(
         "      nifra is zero-config but needs one of them exporting at least:\n" +
         "        export const adapter = reactAdapter            // from @nifrajs/web-react\n" +
         '        export const clientModule = "@nifrajs/web-react/client"\n' +
-        "      (create-nifra scaffolds this for you.)",
+        "      (create-nifra scaffolds this for you.)" +
+        (existsSync(resolve(cwd, BACKEND_APP_FILE))
+          ? `\n      With ${BACKEND_APP_FILE} and no web config this is an API-only app: \`nifra routes\`,\n` +
+            "      `nifra context`, `nifra openapi` and `nifra mcp` read its backend; pages need the config."
+          : ""),
     )
   }
   if (!existsSync(resolve(cwd, "routes"))) {

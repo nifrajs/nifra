@@ -505,6 +505,27 @@ describe("project subprocess", () => {
     for (const entry of seen(root, "backend.log")) expect(entry.script).toBe(PROJECT_CHILD)
   }, 60_000)
 
+  test("an API-only app (backend/app.ts, no web config) declares its tools, and its routes and context answer", async () => {
+    const root = tempRoot()
+    mkdirSync(join(root, "backend"), { recursive: true })
+    writeFileSync(join(root, "backend", "app.ts"), BACKEND)
+    symlinkSync(REPO_NODE_MODULES, join(root, "node_modules"))
+    const surface = await answerProjectRequest(root, { op: "surface" })
+    expect(dig(surface, "surface", "tools", 0, "name")).toBe("whoami")
+    const routes = await answerProjectRequest(root, { op: "resource", uri: "nifra://routes" })
+    expect(JSON.stringify(routes)).toContain("/health")
+    const openapi = await answerProjectRequest(root, { op: "resource", uri: "nifra://openapi" })
+    expect(JSON.stringify(openapi)).toContain("/secret")
+    const context = await answerProjectRequest(root, {
+      op: "tool",
+      name: "nifra_context",
+      args: {},
+    })
+    expect(JSON.stringify(context)).toContain("An API-only nifra app")
+    const table = await answerProjectRequest(root, { op: "tool", name: "nifra_routes", args: {} })
+    expect(JSON.stringify(table)).toContain("/health")
+  }, 60_000)
+
   test("a config that never finishes is killed at the deadline, and a cancelled call kills its process", async () => {
     const root = tempRoot()
     writeApp(

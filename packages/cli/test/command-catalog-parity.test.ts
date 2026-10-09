@@ -54,9 +54,10 @@ test("the stable catalog is the public command allowlist", () => {
 
 test("CLI help/card projection and MCP descriptors read the same catalog", () => {
   const lines = renderCommandCatalogLines()
-  const tools = catalogProjectTools("/fake", async () => {
+  const refuse = async (): Promise<never> => {
     throw new Error("not called while describing tools")
-  })
+  }
+  const tools = catalogProjectTools("/fake", Object.assign(refuse, { backend: refuse }))
   for (const entry of commandCatalog) {
     const spec = findCommandSpec(entry.name)
     expect(spec).toBeDefined()
@@ -68,9 +69,7 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
       expect(tool?.inputSchema).toEqual(commandMcpInputSchema(entry))
       const adapted = toMcpTool(entry, {
         cwd: "/fake",
-        loadAppCached: async () => {
-          throw new Error("not called while describing tools")
-        },
+        loadAppCached: Object.assign(refuse, { backend: refuse }),
       })
       expect(adapted.name).toBe(tool!.name)
       expect(adapted.inputSchema).toEqual(commandMcpInputSchema(entry))

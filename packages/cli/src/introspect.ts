@@ -18,7 +18,7 @@ import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { normalizeMountPath } from "@nifrajs/web/route-manifest"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
-import type { LoadedApp } from "./load.ts"
+import type { IntrospectedApp } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
@@ -252,6 +252,10 @@ export function pageRoutesSection(manifest: Manifest | undefined): string {
   return `## Page routes (routes/)\n\n${lines.join("\n")}`
 }
 
+const PAGES_CONVENTION = `- **Pages:** file-routed under \`routes/\`. A route is two files: \`x.tsx\` (browser) and \`x.backend.ts\`
+  (\`loader\`, \`action\`, \`middleware\`; server only). Server code lives under \`backend/\`, code both sides
+  use under \`shared/\`, components under \`frontend/\`; the browser build refuses backend code outright.`
+
 const CONVENTIONS = `## Conventions (summary)
 
 - **Backend:** \`server()\` from \`@nifrajs/core\`; returning a value sends JSON. Validate untrusted input with
@@ -269,9 +273,7 @@ const CONVENTIONS = `## Conventions (summary)
   \`res.data\` from the backend's route types, so the compiler catches any frontend/backend drift. Never
   hand-roll \`fetch\` + ad-hoc response types for an internal API - that's exactly how screens drift. It
   never throws: branch on \`res.ok ? res.data : res.error\`.
-- **Pages:** file-routed under \`routes/\`. A route is two files: \`x.tsx\` (browser) and \`x.backend.ts\`
-  (\`loader\`, \`action\`, \`middleware\`; server only). Server code lives under \`backend/\`, code both sides
-  use under \`shared/\`, components under \`frontend/\`; the browser build refuses backend code outright.
+${PAGES_CONVENTION}
 - \`app.fetch(Request)\` is the universal entry. Full reference: this repo's \`AGENTS.md\`, or \`llms-full.txt\`.`
 
 /** Optional narrowing for {@link describeProject} - a path prefix and/or one section. A filtered
@@ -290,12 +292,14 @@ export interface ContextFilter {
  * body/query/response shapes + the typed-client `call` form), and omits the conventions block (the agent
  * already has it from the index call).
  */
-export function describeProject(app: LoadedApp, filter?: ContextFilter): string {
+export function describeProject(app: IntrospectedApp, filter?: ContextFilter): string {
   let manifest: Manifest | undefined
-  try {
-    manifest = discoverRoutes(app.routesDir)
-  } catch {
-    // No (or unreadable) routes/ - the page-routes section reports that.
+  if (app.framework !== undefined) {
+    try {
+      manifest = discoverRoutes(app.routesDir)
+    } catch {
+      // No (or unreadable) routes/ - the page-routes section reports that.
+    }
   }
   const prefix = filter?.path
   const evidence = snapshotProjectEvidence(app.backend)
@@ -313,22 +317,34 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
   const sections: string[] = [`# nifra project: ${app.cwd.slice(app.cwd.lastIndexOf("/") + 1)}`]
   if (isIndex) {
     sections.push(
-      "A full-stack nifra app - Web-standard, one app on Bun, Node, Deno, and the edge. This is the route INDEX; fetch a route's full body/query/response contract on demand (see below).",
+      app.framework === undefined
+        ? "An API-only nifra app (backend/app.ts, no web config) - Web-standard, one backend on Bun, Node, Deno, and the edge. This is the route INDEX; fetch a route's full body/query/response contract on demand (see below)."
+        : "A full-stack nifra app - Web-standard, one app on Bun, Node, Deno, and the edge. This is the route INDEX; fetch a route's full body/query/response contract on demand (see below).",
       // Point agents at the verified surface, not recalled APIs - nifra is young, so training data is the
       // wrong source. The MCP tools (nifra_docs / nifra_example) are checked against the installed version.
       "> **Build against THIS surface + the verified tools - do not write nifra APIs from memory** (the\n> framework is young; recalled APIs drift). For framework code, call `nifra_example` (snippets\n> typechecked against the installed version) or `nifra_docs`; verify edits with `nifra_run` + `nifra_check`.",
+    )
+    if (app.framework !== undefined) {
       // The authoritative answer, not the static reading `nifra_check`/`nifra_doctor` give: this runs on
       // the LOADED config, so it is the same decision `nifra dev` and `nifra build` make. Stated in the
       // index because it governs where a plugin goes and which toolchain compiles a component - an edit
       // put in the other pipeline's slot is accepted and then silently never runs.
-      `**Bundler**: ${describePipeline(chooseBuildPipeline(app.resolvedPlugins))}. \`vitePlugins\` feed Vite; \`clientPlugins\`/\`serverPlugins\` feed Bun.build. Both phases (dev and build) use the same one.`,
-    )
+      sections.push(
+        `**Bundler**: ${describePipeline(chooseBuildPipeline(app.resolvedPlugins))}. \`vitePlugins\` feed Vite; \`clientPlugins\`/\`serverPlugins\` feed Bun.build. Both phases (dev and build) use the same one.`,
+      )
+    }
   }
   if (filter?.kind !== "pages") {
     // Index → compact `METHOD path` list; a slice → the full schema + call-form detail.
     sections.push(isIndex ? apiRoutesIndexSection(routes) : apiRoutesSection(routes))
     const declared = declaredMountRoutesSection(evidence.mounts ?? [], prefix || undefined)
     if (declared !== undefined) sections.push(declared)
+  }
+  if (app.framework === undefined) {
+    if (filter?.kind === "pages")
+      sections.push("## Page routes\n\nAn API-only app serves no pages.")
+    if (isIndex) sections.push(CONVENTIONS.replace(`${PAGES_CONVENTION}\n`, ""))
+    return sections.join("\n\n")
   }
   if (filter?.kind !== "api") sections.push(pageRoutesSection(pages))
   if (isIndex) sections.push(CONVENTIONS)
@@ -387,7 +403,7 @@ export function routesToJsonFromEvidence(
 }
 
 export function routesToJson(
-  app: LoadedApp,
+  app: IntrospectedApp,
   pathPrefix?: string,
   evidence?: ProjectEvidenceSnapshot,
 ): RouteJson[] {
@@ -702,12 +718,15 @@ interface MaybeActionModule {
  * text (default) or JSON (`--json`). The page-route load mirrors what SSR would do; a load failure
  * degrades to GET-only for that route (never throws the whole command).
  */
-async function collectRouteTable(app: LoadedApp): Promise<RouteTableEntry[]> {
+async function collectRouteTable(app: IntrospectedApp): Promise<RouteTableEntry[]> {
+  const { framework } = app
   let manifest: Manifest | undefined
-  try {
-    manifest = discoverRoutes(app.routesDir)
-  } catch {
-    // No (or unreadable) routes/ - fall through with no pages; the table still shows API routes.
+  if (framework !== undefined) {
+    try {
+      manifest = discoverRoutes(app.routesDir)
+    } catch {
+      // No (or unreadable) routes/ - fall through with no pages; the table still shows API routes.
+    }
   }
   const pages: PageRouteInput[] = []
   for (const route of manifest?.routes ?? []) {
@@ -723,14 +742,14 @@ async function collectRouteTable(app: LoadedApp): Promise<RouteTableEntry[]> {
   const rows = buildRouteTable({
     pages,
     api: backendRoutes(app.backend),
-    ...(app.framework.apiPrefix !== undefined ? { apiPrefix: app.framework.apiPrefix } : {}),
-    ...(app.framework.apiStrip !== undefined ? { apiStrip: app.framework.apiStrip } : {}),
+    ...(framework?.apiPrefix !== undefined ? { apiPrefix: framework.apiPrefix } : {}),
+    ...(framework?.apiStrip !== undefined ? { apiStrip: framework.apiStrip } : {}),
   })
   return rows
 }
 
 export async function describeRoutes(
-  app: LoadedApp,
+  app: IntrospectedApp,
   opts: { readonly json?: boolean } = {},
 ): Promise<string> {
   const rows = await collectRouteTable(app)
@@ -739,7 +758,7 @@ export async function describeRoutes(
 
 /** Gather and render the public route graph for `nifra routes --graph`. */
 export async function describeRouteGraph(
-  app: LoadedApp,
+  app: IntrospectedApp,
   opts: { readonly json?: boolean } = {},
 ): Promise<string> {
   const graph = buildRouteGraph(await collectRouteTable(app))

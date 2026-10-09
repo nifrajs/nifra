@@ -22,7 +22,7 @@ import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./di
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
-import type { LoadedApp } from "./load.ts"
+import type { AppLoader, IntrospectedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import type { LayoutMigrationResult } from "./migrate-layout.ts"
 import type { OutputSchemaStatus, OutputSchemasReport } from "./output-schemas.ts"
@@ -81,8 +81,8 @@ export interface CommandCtx {
   readonly signal?: AbortSignal
   readonly progress?: (message: string) => void
   readonly cliVersion?: string
-  /** Adapter-provided cache for commands that need the loaded web app. */
-  readonly loadApp?: () => Promise<LoadedApp>
+  /** Adapter-provided cache for commands that need the loaded app. */
+  readonly loadApp?: AppLoader
 }
 
 export interface CommandSpec<Input, Output> {
@@ -969,9 +969,10 @@ const I18N_SCHEMA = input<I18nInput>(
   },
 )
 
-function loadAppFor(ctx: CommandCtx): Promise<LoadedApp> {
-  if (ctx.loadApp !== undefined) return ctx.loadApp()
-  return import("./load.ts").then(({ loadApp }) => loadApp(ctx.cwd))
+/** The app as the backend readers see it: an API-only app is its `backend/app.ts` alone. */
+function backendAppFor(ctx: CommandCtx): Promise<IntrospectedApp> {
+  if (ctx.loadApp !== undefined) return ctx.loadApp.backend()
+  return import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
 }
 
 function structuredDiagnostics(out: CheckCommandOutput): readonly Diagnostic[] {
@@ -1242,11 +1243,7 @@ const routesSpec: CommandSpec<RoutesInput, RoutesCommandOutput> = {
   },
   async run(value, ctx) {
     if (value.hooks === true) {
-      // Hooks live on the backend server, so an API-only app (no web config) is reported too.
-      const app =
-        ctx.loadApp !== undefined
-          ? await ctx.loadApp()
-          : await import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
+      const app = await backendAppFor(ctx)
       const hooks = await import("./hooks-report.ts")
       const report = await hooks.collectHookReport(app.backend)
       if (value.since === undefined) {
@@ -1273,8 +1270,13 @@ const routesSpec: CommandSpec<RoutesInput, RoutesCommandOutput> = {
         text: hooks.renderHookDiff(changes),
       }
     }
-    const app = await loadAppFor(ctx)
+    const app = await backendAppFor(ctx)
     if (value.modes === true) {
+      if (app.framework === undefined) {
+        throw new Error(
+          `[nifra] routes --modes reads page routes, and ${ctx.cwd} is an API-only app (backend/app.ts, no web config)`,
+        )
+      }
       const { buildRouteManifest, renderRouteManifest } = await import(
         "@nifrajs/web/route-manifest"
       )
@@ -1324,7 +1326,7 @@ const contextSpec: CommandSpec<ContextInput, ContextCommandOutput> = {
   async run(value, ctx) {
     return {
       ok: true,
-      text: (await import("./introspect.ts")).describeProject(await loadAppFor(ctx), {
+      text: (await import("./introspect.ts")).describeProject(await backendAppFor(ctx), {
         ...(value.path === undefined ? {} : { path: value.path }),
         ...(value.kind === undefined ? {} : { kind: value.kind }),
       }),
@@ -1352,10 +1354,7 @@ const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
     ],
   },
   async run(value, ctx) {
-    const app =
-      ctx.loadApp !== undefined
-        ? await ctx.loadApp()
-        : await import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
+    const app = await backendAppFor(ctx)
     const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
     const format = value.format ?? "json"
     return {

@@ -723,9 +723,10 @@ describe("monorepo detection + tool namespacing", () => {
   })
 
   test("projectTools names are prefixed nifra_<app>_ after namespacing", () => {
-    const fakeLoader = async (): Promise<LoadedApp> => {
+    const refuse = async (): Promise<never> => {
       throw new Error("should not load")
     }
+    const fakeLoader = Object.assign(refuse, { backend: refuse })
     const rawTools = projectTools("/fake", fakeLoader)
     const rawNames = rawTools.map((t) => t.name)
     // Simulate what namespaceForApp does (inline, since it's private)
@@ -851,9 +852,10 @@ describe("monorepo detection + tool namespacing", () => {
   })
 
   test("projectFeatures resource URIs are prefixed after namespacing", () => {
-    const fakeLoader = async (): Promise<LoadedApp> => {
+    const refuse = async (): Promise<never> => {
       throw new Error("should not load")
     }
+    const fakeLoader = Object.assign(refuse, { backend: refuse })
     const features = projectFeatures("/fake", fakeLoader)
     const namespaced = (features.resources ?? []).map((r) => ({
       ...r,

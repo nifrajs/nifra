@@ -52,7 +52,7 @@ import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { LoadedApp } from "./load.ts"
+import type { AppLoader } from "./load.ts"
 import { loadMonorepoApps } from "./load.ts"
 import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
@@ -147,10 +147,11 @@ export {
  * The loader the server builds its tool and resource lists with. It never loads: every handler that
  * reaches the app runs in a project subprocess (`./mcp-isolate.ts`), so one that tried here fails.
  */
-const noAppInServer = (): Promise<LoadedApp> =>
+const refuseApp = (): Promise<never> =>
   Promise.reject(
     new Error("[nifra] the MCP server does not load the app; project code runs in a subprocess"),
   )
+const noAppInServer: AppLoader = Object.assign(refuseApp, { backend: refuseApp })
 
 const isolatedToolsByDir = new Map<string, McpTool[]>()
 

@@ -10757,6 +10757,11 @@ and only takes values `"api"` and `"web"`. A directory with web config
 `backend/framework.ts`) keeps its zone checks under it, and
 `nifra check` reports the clash (NF-C037); builds and dev servers never read it.
 
+A directory with `backend/app.ts` and no web config is read as an API-only app
+whether or not it declares the kind: `nifra routes`, `nifra context`,
+`nifra openapi` and `nifra mcp` load `backend/app.ts` alone,
+and the tools, resources and prompts its backend declares reach `nifra mcp`.
+
 ### A route is two files
 
 The page renders; its backend half loads. A server-only export (`loader`,

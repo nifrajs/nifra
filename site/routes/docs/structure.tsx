@@ -173,6 +173,12 @@ export default function Structure() {
         <code>backend/framework.ts</code>) keeps its zone checks under it, and{" "}
         <code>nifra check</code> reports the clash (NF-C037); builds and dev servers never read it.
       </p>
+      <p>
+        A directory with <code>backend/app.ts</code> and no web config is read as an API-only app
+        whether or not it declares the kind: <code>nifra routes</code>, <code>nifra context</code>,{" "}
+        <code>nifra openapi</code> and <code>nifra mcp</code> load <code>backend/app.ts</code> alone,
+        and the tools, resources and prompts its backend declares reach <code>nifra mcp</code>.
+      </p>
 
       <h2>A route is two files</h2>
       <p>

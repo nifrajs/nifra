@@ -24,7 +24,7 @@ import {
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { LoadAppOptions, LoadedApp } from "./load.ts"
+import type { AppLoader, IntrospectedApp, LoadAppOptions, LoadedApp } from "./load.ts"
 import {
   type CommandMcpToolOptions,
   dirError,
@@ -143,7 +143,7 @@ export function toMcpTool(
 
 export function catalogProjectTools(
   cwd: string,
-  loadAppCached: () => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: AppLoader = createCachedAppLoader(cwd),
 ): McpTool[] {
   return commandCatalog
     .filter((entry) => entry.transports.includes("mcp"))
@@ -156,11 +156,11 @@ export function catalogProjectTools(
 
 export function projectTools(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: AppLoader = createCachedAppLoader(cwd),
 ): McpTool[] {
   const warmRun = createWarmHandler("mcp-run", cwd, "run")
   const warmRender = createWarmHandler("mcp-render", cwd, "render")
-  const catalogTools = catalogProjectTools(cwd, () => loadAppCached())
+  const catalogTools = catalogProjectTools(cwd, loadAppCached)
   const legacyTools: McpTool[] = [
     {
       name: "nifra_verify",
@@ -1146,7 +1146,7 @@ export async function appFingerprint(cwd: string): Promise<string> {
 export function createCachedAppLoader(
   cwd: string,
   options: CachedAppLoaderOptions = {},
-): (outDirName?: string) => Promise<LoadedApp> {
+): AppLoader {
   const loadAppCached =
     options.loadApp ??
     (async (root: string, outDirName?: string, loadOptions?: LoadAppOptions) => {
@@ -1162,7 +1162,7 @@ export function createCachedAppLoader(
       }
     | undefined
 
-  return async (outDirName = "dist") => {
+  const whole = async (outDirName = "dist"): Promise<LoadedApp> => {
     const nextFingerprint = await fingerprint(cwd)
     if (
       cached !== undefined &&
@@ -1177,4 +1177,11 @@ export function createCachedAppLoader(
     cached = { outDirName, fingerprint: nextFingerprint, app }
     return app
   }
+  const backend = async (): Promise<IntrospectedApp> => {
+    const { hasAppConfig, loadBackendApp } = await import("./load.ts")
+    if (hasAppConfig(cwd)) return whole()
+    // The fingerprint names backend/app.ts, so an edit loads a fresh module and no edit reuses it.
+    return loadBackendApp(cwd, { importQuery: cacheToken(await fingerprint(cwd)) })
+  }
+  return Object.assign(whole, { backend })
 }
