@@ -22,6 +22,21 @@ const v2Event = (overrides: Partial<LambdaEvent> = {}): LambdaEvent => ({
 })
 
 describe("handle()", () => {
+  test("without a domain in the event, a Host that is not a plain authority is not used", async () => {
+    const app = server().get("/*", (c) => c.json({ url: c.req.url }))
+    const urlFor = async (host: string): Promise<string> => {
+      const result = await handle(app)(
+        v2Event({ rawPath: "/me", headers: { host }, requestContext: { http: { method: "GET" } } }),
+      )
+      return JSON.parse(result.body).url
+    }
+    expect(await urlFor("api.example.com:8443")).toBe("https://api.example.com:8443/me")
+    expect(await urlFor("[::1]:3000")).toBe("https://[::1]:3000/me")
+    for (const host of ["x.example/admin#", "evil.example@api.example.com", "x.example?"]) {
+      expect([host, await urlFor(host)]).toEqual([host, "https://localhost/me"])
+    }
+  })
+
   test("golden GET: method, URL, query, and headers reach the app", async () => {
     const app = server().get("/items", (c) =>
       c.json({
