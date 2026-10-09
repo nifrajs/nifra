@@ -107,8 +107,8 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
    */
   readonly allowedOrigins?: readonly string[]
   /**
-   * Per-request authorization, run after the body parses and before execution. Return `false` to answer
-   * `401` with a GraphQL error envelope and skip execution entirely.
+   * Per-request authorization, run after the origin check and before the body is read or parsed; a
+   * CORS preflight (`OPTIONS`) skips it. Return `false` to answer `401` with a GraphQL error envelope.
    */
   readonly authorize?: (request: Request) => boolean | Promise<boolean>
   /** Emit the legacy always-200 `application/json` response shape instead of `application/graphql-response+json`. */

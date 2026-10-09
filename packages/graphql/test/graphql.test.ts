@@ -304,3 +304,10 @@ describe("respondGraphql execution deadline", () => {
     await responding
   })
 })
+
+test("authorize refuses a request before its body is read", async () => {
+  const request = post("{not json")
+  const res = await respondGraphql(request, { schema, rootValue, authorize: () => false })
+  expect(res.status).toBe(401)
+  expect(request.bodyUsed).toBe(false)
+})
