@@ -1326,6 +1326,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Resolves step names to handlers. Immutable after construction; lookup is deterministic.
 - **StepEffectContext** _(interface)_ - `interface StepEffectContext`
   Read-only view handed to a step's pure effect selector. No port, no mutation.
+- **StepFailure** _(interface)_ - `interface StepFailure`
+  Why one node failed, handed to {@link OrchestrationHostOptions.onStepFailed}.
 - **StepRunContext** _(interface)_ - `interface StepRunContext`
   Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
