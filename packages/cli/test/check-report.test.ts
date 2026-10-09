@@ -91,7 +91,7 @@ describe("renderCheckReport parity", () => {
       }),
     ).join("\n")
     expect(text).toContain("• APP-X001: 1 (info)")
-    expect(text).toContain("⚠ APP-X002: 2 (advisory)")
+    expect(text).toContain("⚠ APP-X002: 1 (advisory) (+1 info)")
   })
 
   test("trailer states error and advisory counts", () => {
@@ -118,6 +118,28 @@ describe("renderCheckReport parity", () => {
 
     const clean = renderCheckReport(result({}))
     expect(clean.at(-1)).toBe("✓ check passed")
+  })
+
+  test("info findings are counted as info, never as advisory", () => {
+    const mixed = renderCheckReport(
+      result({
+        diagnostics: [
+          { rule: "typed-client", severity: "error", message: "e1" },
+          { rule: "typed-client", severity: "info", message: "i1" },
+          { rule: "response-route", severity: "warning", message: "w1" },
+          { rule: "NF-C006", severity: "info", message: "i2" },
+        ],
+      }),
+    )
+    expect(mixed).toContain(
+      "✗ hand-rolled fetch()/EventSource/WebSocket to your own API: 1 (+1 info)",
+    )
+    expect(mixed.at(-1)).toBe("✗ check failed: 1 error (+1 advisory, 2 info)")
+
+    const infoOnly = renderCheckReport(
+      result({ diagnostics: [{ rule: "NF-C006", severity: "info", message: "silenced" }] }),
+    )
+    expect(infoOnly.at(-1)).toBe("✓ check passed (1 info)")
   })
 
   test("truncation is stated in the report", () => {

@@ -556,7 +556,7 @@ const REPORT_SECTIONS = [
 /**
  * Render the human-readable check report as lines. Pure (no I/O, no cwd) so tests can assert
  * report/exit-code parity: every diagnostic in `result.diagnostics` appears in the output, and the
- * trailer states the error/advisory counts that produced `ok`.
+ * trailer states the error, advisory and info counts that produced `ok`.
  */
 export function renderCheckReport(result: CheckResult): string[] {
   const lines: string[] = []
@@ -607,15 +607,17 @@ export function renderCheckReport(result: CheckResult): string[] {
       // resolve condition the Bun dev bundler can't take does not), so the counts are split rather than
       // rounded up to the worse of the two.
       const errors = ds.filter((d) => d.severity === "error").length
-      const advisory = ds.length - errors
+      const warnings = ds.filter((d) => d.severity === "warning").length
+      const infos = ds.length - errors - warnings
+      const rest = belowError(warnings, infos)
       lines.push(
         ds.length === 0
           ? `✓ ${label}: none`
-          : ds.every((d) => d.severity === "info")
+          : errors + warnings === 0
             ? `• ${label}: ${ds.length} (info)`
             : errors === 0
-              ? `⚠ ${label}: ${advisory} (advisory)`
-              : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+              ? `⚠ ${label}: ${warnings} (advisory)${infos > 0 ? ` (+${infos} info)` : ""}`
+              : `✗ ${label}: ${errors}${rest === "" ? "" : ` (+${rest})`}`,
       )
     }
     for (const d of ds) {
@@ -662,16 +664,25 @@ export function renderCheckReport(result: CheckResult): string[] {
     )
   }
   const errors = result.diagnostics.filter((d) => d.severity === "error").length
-  const advisory = result.diagnostics.length - errors
+  const warnings = result.diagnostics.filter((d) => d.severity === "warning").length
+  const rest = belowError(warnings, result.diagnostics.length - errors - warnings)
   lines.push(
     "",
     result.ok
-      ? advisory > 0
-        ? `✓ check passed (${advisory} advisory)`
-        : "✓ check passed"
-      : `✗ check failed: ${errors} error${errors === 1 ? "" : "s"}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+      ? rest === ""
+        ? "✓ check passed"
+        : `✓ check passed (${rest})`
+      : `✗ check failed: ${errors} error${errors === 1 ? "" : "s"}${rest === "" ? "" : ` (+${rest})`}`,
   )
   return lines
+}
+
+/** The findings that do not fail the check, named by severity: an info finding is not advisory. */
+function belowError(warnings: number, infos: number): string {
+  const parts: string[] = []
+  if (warnings > 0) parts.push(`${warnings} advisory`)
+  if (infos > 0) parts.push(`${infos} info`)
+  return parts.join(", ")
 }
 
 /** Run the full check; print a report (`--json` for machine output) and return whether it passed. */
