@@ -18,6 +18,7 @@ import { shadowedPages } from "@nifrajs/web/route-manifest"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { hasWebConfig } from "../internal/nifra-project.ts"
 import type { CheckRule } from "./index.ts"
 
 /** What a static read of a framework config says about `apiPrefix`. */
@@ -164,7 +165,8 @@ export const implicitApiMountRule: CheckRule = {
   title: "Backend not served over HTTP",
   async scan(ctx) {
     const backendFile = join(ctx.root, BACKEND_APP_FILE)
-    if (!existsSync(backendFile)) return []
+    // An API-only app serves its backend itself; there is no page routing to fall into.
+    if (!existsSync(backendFile) || !hasWebConfig(ctx.root, ".")) return []
     if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
     const configFile = CONFIG_FILES.find((file) => existsSync(join(ctx.root, file)))
     if (

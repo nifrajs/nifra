@@ -17,9 +17,9 @@ async function project(
   options: { assurance?: boolean; shellEvidence?: boolean } = {},
 ): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, `${name}-`)
-  await mkdir(cwd, { recursive: true })
+  await mkdir(join(cwd, "backend"), { recursive: true })
   await writeFile(
-    join(cwd, "backend.ts"),
+    join(cwd, "backend/app.ts"),
     [
       `import { server } from "@nifrajs/core"`,
       ...(options.shellEvidence === true
@@ -47,7 +47,7 @@ async function project(
       join(cwd, "nifra.assurance.ts"),
       [
         `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
-        `import { backend } from "./backend.ts"`,
+        `import { backend } from "./backend/app.ts"`,
         `export default defineAssuranceConfig({`,
         `  source: backend,`,
         `  policy: { rules: [{ name: "all", match: {}, require: [] }] },`,
@@ -122,9 +122,9 @@ async function invariantProject(
   options: { guarded?: boolean; opaque?: boolean } = {},
 ): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, `${name}-`)
-  await mkdir(cwd, { recursive: true })
+  await mkdir(join(cwd, "backend"), { recursive: true })
   await writeFile(
-    join(cwd, "backend.ts"),
+    join(cwd, "backend/app.ts"),
     [
       `import { server } from "@nifrajs/core"`,
       `const body = {`,
@@ -149,7 +149,7 @@ async function invariantProject(
     join(cwd, "nifra.assurance.ts"),
     [
       `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
-      `import { backend } from "./backend.ts"`,
+      `import { backend } from "./backend/app.ts"`,
       `const calls = ((globalThis as Record<string, unknown>).__levelsCalls ??= {}) as Record<string, string[]>`,
       `const log = (calls[${JSON.stringify(name)}] ??= [])`,
       `export default defineAssuranceConfig({`,

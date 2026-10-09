@@ -458,4 +458,16 @@ describe("NF-C035", () => {
     }
     expect(await scan(project({ "backend/framework.ts": adapterSource.join("\n") }))).toEqual([])
   })
+
+  test("an API-only app, with no web config or a nifra.config.ts with no adapter, is not reported", async () => {
+    expect(await scan(project({ "backend/app.ts": backendSource }))).toEqual([])
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "nifra.config.ts": "export const target = 'bun'\n",
+        }),
+      ),
+    ).toEqual([])
+  })
 })

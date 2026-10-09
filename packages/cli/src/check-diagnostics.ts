@@ -25,6 +25,7 @@ import { contractVisibilityRule } from "./rules/contract-visibility.ts"
 import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
 import { islandRules } from "./rules/islands.ts"
+import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
 import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
@@ -444,6 +445,7 @@ export async function collectCheckDiagnostics(
   }
 
   const builtInRules = [
+    retiredLayoutRule,
     ...legacyRules,
     ...securityRules,
     ...routeRules,

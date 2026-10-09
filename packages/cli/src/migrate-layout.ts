@@ -39,7 +39,7 @@ import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "no
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import { parseZoneConfig, type ZoneConfig } from "@nifrajs/web/zones"
 import type * as TS from "typescript"
-import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE, retiredRootFiles } from "./app-files.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
@@ -1021,10 +1021,6 @@ function renameRetiredTypes(ts: typeof TS, file: string, text: string): string {
 // The migration
 // ---------------------------------------------------------------------------------------------------
 
-const ROOT_MOVES: Readonly<Record<string, string>> = {
-  "backend.ts": "backend/app.ts",
-  "framework.ts": "backend/framework.ts",
-}
 /** Root files that stay where they are: the CLI's config, and scripts no build loads. */
 /** The config files the loader reads, old layout included; a path field may live in any of them. */
 const CONFIG_FILES = ["nifra.config.ts", "framework.ts", "backend/framework.ts"]
@@ -1107,24 +1103,32 @@ const packageName = (specifier: string): string => {
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? "")
 }
 
-const isRootScript = (file: string): boolean =>
-  !file.includes("/") && SOURCE_FILE.test(file) && ROOT_MOVES[file] === undefined
+const isRootScript = (file: string, rootMoves: Readonly<Record<string, string>>): boolean =>
+  !file.includes("/") && SOURCE_FILE.test(file) && rootMoves[file] === undefined
 const isTestFile = (file: string): boolean =>
   /(?:^|\/)(?:test|tests|__tests__)\//.test(file) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
 
 /** The web config an app has, old root `framework.ts` included, or `undefined`. */
-const webConfigFile = (root: string): string | undefined =>
-  ["framework.ts", FRAMEWORK_FILE].find((file) => existsSync(join(root, file))) ??
-  (hasWebConfig(root, ".") ? CONFIG_FILE : undefined)
+const webConfigFile = (
+  root: string,
+  rootMoves: Readonly<Record<string, string>>,
+): string | undefined =>
+  rootMoves["framework.ts"] !== undefined
+    ? "framework.ts"
+    : existsSync(join(root, FRAMEWORK_FILE))
+      ? FRAMEWORK_FILE
+      : hasWebConfig(root, ".")
+        ? CONFIG_FILE
+        : undefined
 
 /**
  * `"api"` when the app declares `"nifra": { "kind": "api" }`, or has no web config, no `routes/` and a
  * backend; `"web"` when it has `routes/`. Web config without `routes/` could be either, so it throws.
  */
-function layoutMode(root: string): "web" | "api" {
+function layoutMode(root: string, rootMoves: Readonly<Record<string, string>>): "web" | "api" {
   const declared = createKindProbe(root)(root)
   if (declared.invalid !== undefined) throw new Error(declared.invalid)
-  const config = webConfigFile(root)
+  const config = webConfigFile(root, rootMoves)
   if (declared.kind === "api") {
     if (config === undefined) return "api"
     throw new Error(
@@ -1138,9 +1142,9 @@ function layoutMode(root: string): "web" | "api" {
     )
   }
   if (declared.kind === "web") throw new Error(`[nifra] no routes/ directory in ${root}`)
-  if (!existsSync(join(root, "backend.ts")) && !existsSync(join(root, BACKEND_APP_FILE))) {
+  if (rootMoves["backend.ts"] === undefined && !existsSync(join(root, BACKEND_APP_FILE))) {
     throw new Error(
-      `[nifra] ${root} has no routes/, no web config and no backend.ts or ${BACKEND_APP_FILE}; there is nothing to migrate`,
+      `[nifra] ${root} has no routes/, no web config and no backend (a backend.ts that exports \`backend\`, or ${BACKEND_APP_FILE}); there is nothing to migrate`,
     )
   }
   return "api"
@@ -1154,7 +1158,9 @@ export async function migrateLayout(
   if (ts === undefined)
     throw new Error("[nifra] `nifra migrate layout` needs TypeScript: bun add -d typescript")
   const root = resolve(appRoot)
-  const mode = layoutMode(root)
+  // Only a root file that exports what the old layout read moves; any other backend.ts is a module.
+  const rootMoves: Readonly<Record<string, string>> = Object.fromEntries(retiredRootFiles(root))
+  const mode = layoutMode(root, rootMoves)
   // An API-only app has no browser: nothing to split, and every file is server code where it is.
   const api = mode === "api"
   const zones = appZones(root)
@@ -1232,7 +1238,7 @@ export async function migrateLayout(
   }
 
   // 3-4. Zoning by runtime reachability, on the post-split graph.
-  for (const [from, to] of Object.entries(ROOT_MOVES)) if (next.has(from)) moveMap.set(from, to)
+  for (const [from, to] of Object.entries(rootMoves)) if (next.has(from)) moveMap.set(from, to)
   // Assets (images, fonts) resolve too, so they move with the modules that import them.
   const known = new Set([...next.keys(), ...everyFile])
   const resolver = createSpecifierResolver()
@@ -1362,8 +1368,11 @@ export async function migrateLayout(
       (f) =>
         (f.startsWith("routes/") && f.includes(".backend.")) ||
         f.startsWith("backend/") ||
-        ROOT_MOVES[f] !== undefined ||
-        (isRootScript(f) && f !== "nifra.config.ts" && !isTestFile(f) && !browserEntries.has(f)),
+        rootMoves[f] !== undefined ||
+        (isRootScript(f, rootMoves) &&
+          f !== "nifra.config.ts" &&
+          !isTestFile(f) &&
+          !browserEntries.has(f)),
     ),
     ...serverEntries,
   ]
@@ -1373,7 +1382,7 @@ export async function migrateLayout(
   // the app imports, not an entry, so it moves into a zone.
   const appServer = reach(
     backendRoots.filter(
-      (f) => f.includes("/") || ROOT_MOVES[f] !== undefined || serverEntries.has(f),
+      (f) => f.includes("/") || rootMoves[f] !== undefined || serverEntries.has(f),
     ),
     pages,
   )
