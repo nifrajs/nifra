@@ -27,7 +27,10 @@ const ERROR_CODES: ReadonlySet<string> = new Set(MODEL_GATEWAY_ERROR_CODES)
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MAX_ATTEMPTS = 512
 const MAX_TOKENS = 10_000_000
-const MAX_EVIDENCE = 512
+// An attempt records at most four entries plus one fallback; the run adds one terminal entry.
+const MAX_EVIDENCE = MAX_ATTEMPTS * 5 + 1
+// setTimeout fires at once for any delay past 2^31 - 1 ms (about 24.8 days).
+const MAX_TIMER_MS = 2_147_483_647
 
 export interface ModelRoute {
   /** Caller-owned opaque route identifier. It is not a provider or model name. */
@@ -367,10 +370,16 @@ async function withinDeadline<T>(
     if (remaining !== undefined) {
       races.push(
         new Promise((resolve) => {
-          timer = setTimeout(
-            () => resolve({ settled: false, error: { code: "timeout" } }),
-            remaining,
-          )
+          let left = remaining
+          const arm = (): void => {
+            const delay = Math.min(left, MAX_TIMER_MS)
+            left -= delay
+            timer = setTimeout(
+              () => (left > 0 ? arm() : resolve({ settled: false, error: { code: "timeout" } })),
+              delay,
+            )
+          }
+          arm()
         }),
       )
     }

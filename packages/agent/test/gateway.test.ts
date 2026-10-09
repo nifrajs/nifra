@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import {
   FakeModelGateway,
   MODEL_GATEWAY_ERROR_CODES,
@@ -10,6 +10,71 @@ import {
 const success = (output: unknown) => ({ ok: true as const, output })
 
 describe("model gateway", () => {
+  test("a deadline beyond setTimeout's range is waited out in chunks", async () => {
+    const maxTimerMs = 2_147_483_647
+    const realSetTimeout = globalThis.setTimeout
+    const armed: { readonly fire: () => void; readonly delay: number }[] = []
+    let onArm = (): void => {}
+    const record = (handler: unknown, delay?: number) => {
+      if (typeof handler === "function") armed.push({ fire: () => handler(), delay: delay ?? 0 })
+      onArm()
+      return realSetTimeout(() => {}, 0)
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a recorder cannot meet every setTimeout overload; the gateway only ever passes a callback and a delay
+    const timers = spyOn(globalThis, "setTimeout").mockImplementation(record as never)
+    try {
+      const nextArm = () => new Promise<void>((resolve) => (onArm = resolve))
+      const first = nextArm()
+      const running = runModelGateway(
+        {
+          complete: (request) =>
+            new Promise((resolve) =>
+              request.signal.addEventListener("abort", () =>
+                resolve({ ok: false, error: { code: "cancelled" } }),
+              ),
+            ),
+        },
+        { input: "x" },
+        { routes: ["a"], retryableCodes: [], deadlineAt: 1 + maxTimerMs + 1_000, now: () => 1 },
+      )
+      await first
+      expect(armed.map((timer) => timer.delay)).toEqual([maxTimerMs])
+      const second = nextArm()
+      armed[0]?.fire()
+      await second
+      expect(armed.map((timer) => timer.delay)).toEqual([maxTimerMs, 1_000])
+      armed[1]?.fire()
+      const result = await running
+      expect(result.ok ? "ok" : result.error.code).toBe("timeout")
+    } finally {
+      timers.mockRestore()
+    }
+  })
+
+  test("a policy at the attempt cap runs every attempt, even the costliest kind", async () => {
+    const gateway = new FakeModelGateway({
+      responses: Array.from({ length: 512 }, () => success("not json")),
+    })
+    const result = await runModelGateway(
+      gateway,
+      {
+        input: {},
+        parser: structuredOutputParser(() => {
+          throw new Error("bad output")
+        }),
+      },
+      {
+        routes: ["route-a", "route-b"],
+        retryableCodes: ["malformed_output"],
+        allowFallback: true,
+        budget: { maxAttempts: 512 },
+      },
+    )
+    expect(result.ok ? "ok" : result.error.code).toBe("unavailable")
+    expect(result.attempts).toBe(512)
+    expect(gateway.calls).toBe(512)
+  })
+
   test("an attempt the deadline ends is aborted for the adapter", async () => {
     let seen: AbortSignal | undefined
     const result = await runModelGateway(
