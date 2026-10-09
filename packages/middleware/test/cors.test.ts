@@ -140,6 +140,21 @@ describe("cors", () => {
     expect(res.headers.get("access-control-allow-origin")).toBeNull()
   })
 
+  test("a merged group's cors answers a preflight to its routes", async () => {
+    const group = server()
+      .use(cors({ origin: "https://app.com" }))
+      .post("/items", () => ({ ok: true }))
+    const app = server().merge(group)
+    const res = await app.fetch(
+      new Request("http://x/items", {
+        method: "OPTIONS",
+        headers: { origin: "https://app.com", "access-control-request-method": "POST" },
+      }),
+    )
+    expect(res.status).toBe(204)
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.com")
+  })
+
   test("CORS headers land on error responses too", async () => {
     const app = server({ logger: silentLogger })
       .use(cors())

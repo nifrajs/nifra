@@ -691,11 +691,16 @@ const underPrefix = (prefix: string): HookScope => {
 }
 
 /** A merged server's hook scope: exactly the routes MERGED, snapshotted into a dedicated matcher so
- * the guard never reflects whatever the source's own catalog grows into afterwards. */
+ * the guard never reflects whatever the source's own catalog grows into afterwards. An `OPTIONS`
+ * request to a path they serve is in scope too: a CORS preflight names the path, not a route, and
+ * the group's `cors()` is the only hook that can answer it. */
 const servedBy = (routes: readonly CatalogRoute[]): HookScope => {
   const scope = new RouteCatalog()
   scope.addBatch(routes)
-  return (req) => scope.find(req.method, pathnameOf(req.url)).found
+  return (req) => {
+    const match = scope.find(req.method, pathnameOf(req.url))
+    return match.found || (req.method === "OPTIONS" && match.reason === "method-not-allowed")
+  }
 }
 
 type AdoptedHook = ((first: never, second: never) => unknown) | undefined
@@ -2532,7 +2537,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes
    * exactly as they did standalone, so a group wires its own plugins. The same locality rule
    * covers the group's `onRequest` hooks: they run only for requests that route to the GROUP's
-   * routes (a `bodyLimit()` mounted on an uploads group must not start gating the whole app
+   * routes, and for an `OPTIONS` preflight to a path they serve (a `bodyLimit()` mounted on an uploads group must not start gating the whole app
    * because the app composed it in), and the group's global assurance follows its hooks onto
    * exactly those routes. A group with hooks but NO routes is a middleware bundle - its hooks
    * can only mean app-wide intent, so they are appended globally, unchanged. Response-side hooks
