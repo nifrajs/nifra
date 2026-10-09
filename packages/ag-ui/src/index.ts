@@ -46,7 +46,8 @@
  *     `status: "cancelled"` entry without an explicit approval resumes as a denial. The runtime
  *     keeps state token-only, so a suspended tool's input must be replayed in
  *     `continuation.input`. A resume that fails validation is ignored and the POST starts a
- *     fresh run.
+ *     fresh run. Return `resumeApproval: "port"` from `ports` when the client must not approve
+ *     its own tool calls.
  * - Agent input is `forwardedProps.input` when present, otherwise the content of the last
  *   `role: "user"` message.
  * - With an `evidenceLog` configured, evidence-derived frames carry SSE `id: <seq>` and a dropped

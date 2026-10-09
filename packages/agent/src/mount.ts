@@ -14,6 +14,7 @@
  *   - otherwise -> a single JSON body: the projected run result.
  * - `resume` is `{ continuation, approval? }` (see {@link AgentTurnInput}); the runtime keeps state
  *   token-only, so a suspended tool's input must be replayed by the caller in `continuation.input`.
+ *   Return `resumeApproval: "port"` from `ports` when the caller must not approve its own tool calls.
  * - With an `evidenceLog` configured, `step` frames carry `id: <seq>` and a dropped SSE connection
  *   is resumable: re-POST the same `turnId` with a `Last-Event-ID` header to replay the missed
  *   evidence and rejoin the still-running turn (or receive the stored terminal frame) - the run is

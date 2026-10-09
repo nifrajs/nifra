@@ -22,7 +22,9 @@
  *   `TASK_STATE_INPUT_REQUIRED` whose status message carries the pending continuation in
  *   `metadata`. To resume, send the continuation back via `message.taskId` +
  *   `message.metadata.resume` (`{ continuation, approval? }`); the runtime keeps state token-only,
- *   so a suspended tool's input must be replayed in `continuation.input`.
+ *   so a suspended tool's input must be replayed in `continuation.input`. The resuming peer is
+ *   usually the agent that asked for the tool, so return `resumeApproval: "port"` from `ports` to
+ *   let the approval port, not that peer, decide.
  * - Agent input is `message.metadata.input` when present, otherwise the first `text` part.
  *   Structured output is returned as a `text` part carrying JSON.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards,

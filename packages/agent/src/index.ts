@@ -275,6 +275,8 @@ export interface AgentApprovalPort {
     readonly signal: AbortSignal
     /** Wall-clock budget reserved for this approval hop and the following tool execution. */
     readonly deadline?: RequestBudget
+    /** The decision the resuming caller sent, under `resumeApproval: "port"`. Evidence, not a verdict. */
+    readonly callerDecision?: ToolApproval
   }): AgentApprovalResult | PromiseLike<AgentApprovalResult>
 }
 
@@ -454,6 +456,13 @@ export interface AgentPorts {
   readonly idempotency?: ToolIdempotencyStore
   readonly state?: AgentStateStore
   readonly approval?: AgentApprovalPort
+  /**
+   * Who decides a step that suspended for approval when the run resumes. `"caller"` (the default)
+   * takes `resume.approval` as the decision. `"port"` asks `approval` again and hands it the caller's
+   * decision as `callerDecision`; set it when the resuming caller is the party asking for the tool,
+   * as under A2A or a public AG-UI route, so it cannot approve its own call.
+   */
+  readonly resumeApproval?: "caller" | "port"
   readonly telemetry?: AgentTelemetryPort
   /** Receives model deltas when the model port streams. Transient - nothing here is persisted. */
   readonly deltas?: AgentDeltaSink
@@ -1009,13 +1018,22 @@ async function resumeTool<
     )
   // The caller's decision answers only a step that suspended to await one; a step suspended for budget
   // or cancellation asks the approval port as it would have.
+  const callerDecision = resume.approval
+  const port = ports.approval
   const approvalPorts: AgentPorts =
-    resume.approval === undefined || pending.kind !== "approval"
+    callerDecision === undefined || pending.kind !== "approval"
       ? ports
-      : {
-          ...ports,
-          approval: { request: () => ({ status: "approved", approval: resume.approval! }) },
-        }
+      : ports.resumeApproval !== "port"
+        ? {
+            ...ports,
+            approval: { request: () => ({ status: "approved", approval: callerDecision }) },
+          }
+        : port === undefined
+          ? ports
+          : {
+              ...ports,
+              approval: { request: (input) => port.request({ ...input, callerDecision }) },
+            }
   return executeToolStep(
     { ...state, status: "ready" },
     tool,

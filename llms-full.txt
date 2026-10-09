@@ -6898,6 +6898,14 @@ resume. `@nifrajs/agent-telemetry` converts the same constrained evidence into
 fail-open OpenTelemetry run and step spans. Providers, credentials, durable storage, retention,
 and tenant policy remain application-owned ports.
 
+A step that suspends for approval resumes with the decision the caller sends in
+`resume.approval`. Over A2A, or on an AG-UI or `mountAgent` route that
+anyone can reach, that caller may be the party asking for the tool. Return
+`resumeApproval: "port"` from `ports` to keep the configured approval
+port authoritative: it is asked again on resume, receives the caller's decision as
+`callerDecision`, and its verdict stands. Without a port, such a resume suspends
+again.
+
 ### Where your code and secrets run
 
 The server your client starts runs none of your project's code. Each tool that loads the app,
