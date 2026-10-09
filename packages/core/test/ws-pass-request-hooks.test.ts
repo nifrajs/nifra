@@ -56,3 +56,27 @@ for (const mode of ["sync", "async"] as const) {
     expect(seen).toEqual(["/plain", "/old", "/plain"])
   })
 }
+
+// Under a mount the child sees a request stripped of the prefix. Its hooks ran on the stripped copy
+// the handshake check built; the HTTP answer must route that same copy, not strip a fresh one.
+for (const parentHooks of [false, true]) {
+  test(`a mounted child's onRequest hooks run once for a stray handshake (parent hooks: ${parentHooks})`, async () => {
+    const seen: string[] = []
+    const child = server()
+      .use(websocket())
+      .onRequest((request) => {
+        seen.push(new URL(request.url).pathname)
+      })
+      .get("/plain", () => ({ ok: true }))
+      .ws("/live", { message() {} })
+    const app = server()
+    if (parentHooks) app.onRequest(() => undefined)
+    app.mount({ path: "/m", app: child, stripPrefix: true })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+
+    const res = await fetch(`http://127.0.0.1:${running.port}/m/plain`, { headers: handshake })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(seen).toEqual(["/plain"])
+  })
+}

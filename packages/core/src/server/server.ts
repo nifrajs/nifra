@@ -371,6 +371,10 @@ interface FetchMount<Env = unknown> {
   readonly opaque: string | OpaqueMountDeclaration | undefined
   /** The mounted app (`mount()` only), for reflection to tell a composed child from an opaque one. */
   readonly app?: object
+  /** Parent request → the stripped copy a handshake check handed this child. On a pass the HTTP
+   * dispatch hands over that same copy, which the child's own pass record knows, so its onRequest
+   * hooks do not run a second time. */
+  wsPassed?: WeakMap<Request, Request>
 }
 
 /** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
@@ -3557,9 +3561,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           }
         }
         if (selected === undefined) return WS_PASS
-        const childRequest = selected.stripPrefix
-          ? stripMountPrefix(request, selected.path)
-          : request
+        let childRequest = request
+        if (selected.stripPrefix) {
+          childRequest = stripMountPrefix(request, selected.path)
+          selected.wsPassed ??= new WeakMap()
+          selected.wsPassed.set(request, childRequest)
+        }
         let child: MaybePromise<WebSocketUpgradeOutcome>
         try {
           child = selected.resolveWebSocketUpgrade!(childRequest, platform)
@@ -4052,7 +4059,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         }
       }
       if (mount === undefined) return fallback ?? jsonError(404, "not_found")
-      const childRequest = mount.stripPrefix ? stripMountPrefix(request, mount.path) : request
+      const childRequest = mount.stripPrefix
+        ? (mount.wsPassed?.get(request) ?? stripMountPrefix(request, mount.path))
+        : request
       const outcome = mount.handler(childRequest, platform)
       if (!replayable || !mount.fallbackOn404) return outcome
       if (outcome instanceof Promise) {
