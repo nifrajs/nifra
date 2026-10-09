@@ -229,13 +229,15 @@ function dropHeader(name: string, nominated: ReadonlySet<string>): boolean {
 
 /**
  * A request header dropped before the hop: it names the proxy (`host`, which the transport derives
- * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, or is forwarding metadata
- * (`Forwarded`, any `X-Forwarded-*`, or a client-IP alias) that only explicit proxy options may
- * reintroduce. The single predicate both lanes filter through.
+ * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, is `Expect` (the server in
+ * front already answered the client's `100-continue`, and undici refuses the header outright), or is
+ * forwarding metadata (`Forwarded`, any `X-Forwarded-*`, or a client-IP alias) that only explicit
+ * proxy options may reintroduce. The single predicate both lanes filter through.
  */
 function isDroppedRequestHeader(name: string, nominated: ReadonlySet<string>): boolean {
   return (
     name === "host" ||
+    name === "expect" ||
     dropHeader(name, nominated) ||
     name === "forwarded" ||
     name.startsWith("x-forwarded-") ||

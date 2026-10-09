@@ -111,6 +111,20 @@ describe("createProxy()", () => {
     expect(seen?.headers["x-app"]).toBe("stays")
   })
 
+  test("Expect is not forwarded: the front server already answered 100-continue", async () => {
+    const proxy = createProxy({ upstream: ORIGIN })
+    respond = () => new Response("ok")
+    await proxy(
+      new Request("http://edge.test/x", {
+        method: "POST",
+        headers: { expect: "100-continue", "x-app": "stays" },
+        body: "payload",
+      }),
+    )
+    expect(seen?.headers.expect).toBeUndefined()
+    expect(seen?.headers["x-app"]).toBe("stays")
+  })
+
   test("strips hop-by-hop and Connection-nominated response headers", async () => {
     const proxy = createProxy({ upstream: ORIGIN })
     respond = () =>
