@@ -179,6 +179,63 @@ describe("SDK generation", () => {
     // Windows takes about two seconds to report each refused connection.
   }, 30_000)
 
+  test("a Python model whose optional fields come first still imports and decodes", async () => {
+    const userFirst: OpenAPIDocument = {
+      openapi: "3.1.0",
+      info: { title: "t", version: "1" },
+      paths: {
+        "/user": {
+          get: {
+            operationId: "getUser",
+            responses: {
+              "200": {
+                description: "ok",
+                content: {
+                  "application/json": { schema: { $ref: "#/components/schemas/User" } },
+                },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          User: {
+            type: "object",
+            properties: {
+              nickname: { type: "string" },
+              "display-name": { type: "string" },
+              id: { type: "string" },
+              "user-age": { type: "integer" },
+            },
+            required: ["id", "user-age"],
+          },
+        },
+      },
+    }
+    const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))
+    try {
+      await Bun.write(join(dir, "nifra_sdk.py"), renderSdk(userFirst, "python"))
+      const script = [
+        "import sys",
+        "sys.path.insert(0, sys.argv[1])",
+        "import nifra_sdk",
+        "print(nifra_sdk._decode({'id': 'u1', 'user-age': 3, 'display-name': 'D'}, nifra_sdk.User))",
+      ].join("\n")
+      const process = Bun.spawn(["python3", "-c", script, dir], { stdout: "pipe", stderr: "pipe" })
+      const [exitCode, output, errors] = await Promise.all([
+        process.exited,
+        new Response(process.stdout).text(),
+        new Response(process.stderr).text(),
+      ])
+      expect(errors).toBe("")
+      expect(exitCode).toBe(0)
+      expect(output.trim()).toBe("User(id='u1', user_age=3, nickname=None, display_name='D')")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   test("generated Go refuses a path parameter that is a dot segment", () => {
     expect(renderSdk(document, "go")).toContain('if segment == "." || segment == ".."')
   })

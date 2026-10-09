@@ -381,7 +381,10 @@ function pythonModelFields(
   if (properties === undefined) return "    pass"
   const required = schemaRequired(schema)
   const used = new Set<string>()
+  // A dataclass rejects a field without a default after one with a default, so required fields
+  // lead and each group keeps the schema's order.
   const fields: string[] = []
+  const optionalFields: string[] = []
   for (const [jsonName, property] of Object.entries(properties)) {
     let fieldName = pythonIdentifier(jsonName, "field")
     while (used.has(fieldName)) fieldName += "_"
@@ -396,11 +399,12 @@ function pythonModelFields(
     )
     const optional = !required.has(jsonName)
     if (optional && !type.includes("None")) type += " | None"
+    const group = optional ? optionalFields : fields
     if (fieldName === jsonName) {
-      fields.push(`    ${fieldName}: ${type}${optional ? " = None" : ""}`)
+      group.push(`    ${fieldName}: ${type}${optional ? " = None" : ""}`)
     } else {
       const metadata = `{"json_name": ${JSON.stringify(jsonName)}}`
-      fields.push(
+      group.push(
         "    " +
           fieldName +
           ": " +
@@ -413,6 +417,7 @@ function pythonModelFields(
       )
     }
   }
+  fields.push(...optionalFields)
   return fields.length === 0 ? "    pass" : fields.join("\n")
 }
 
