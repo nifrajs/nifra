@@ -495,6 +495,18 @@ describe("FileStorage writes", () => {
     expect(present(await storage.get("old")).contentType).toBeUndefined()
     await expect(stat(`${dir}.nifra-metadata/old.json`)).rejects.toThrow()
   })
+
+  test("an earlier version's sidecar file does not block a put under `<key>.json/`", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-storage-"))
+    tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
+    const storage = new FileStorage(dir)
+    await storage.put("a", "body")
+    await mkdir(`${dir}.nifra-metadata`, { recursive: true, mode: 0o755 })
+    await writeFile(`${dir}.nifra-metadata/a.json`, JSON.stringify({ contentType: "text/legacy" }))
+    await storage.put("a.json/x", "2", { contentType: "application/x-two" })
+    expect(present(await storage.get("a")).contentType).toBe("text/legacy")
+    expect(present(await storage.get("a.json/x")).contentType).toBe("application/x-two")
+  })
 })
 
 describe("FileStorage list()", () => {
