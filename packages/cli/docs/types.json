@@ -13275,7 +13275,7 @@
     "name": "SagaEngineOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SagaEngineOptions {\n    readonly store: SagaStore;\n    readonly now?: () => number;\n    readonly observer?: EffectLifecycleObserver;\n    /** Tests/local development only. Production sagas require a durable store. */\n    readonly allowMemoryStore?: boolean;\n}"
+    "signature": "export interface SagaEngineOptions {\n    readonly store: SagaStore;\n    readonly now?: () => number;\n    readonly observer?: EffectLifecycleObserver;\n    /** Tests/local development only. Production sagas require a durable store. */\n    readonly allowMemoryStore?: boolean;\n    /**\n     * How long one `resume` or `compensate` call owns a saga. A second call while the lease is live\n     * throws `SagaConcurrencyError` and changes nothing; every transition renews the lease, and a call\n     * that died is taken over once it lapses. Default 5 minutes: longer than any one step should run.\n     */\n    readonly leaseMs?: number;\n}"
   },
   {
     "name": "SagaReconciliationFinding",
@@ -13287,7 +13287,7 @@
     "name": "SagaRecord",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SagaRecord {\n    readonly sagaId: string;\n    readonly definition: string;\n    readonly state: SagaState;\n    readonly input: unknown;\n    readonly steps: readonly SagaStepRecord[];\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly version: number;\n}"
+    "signature": "export interface SagaRecord {\n    readonly sagaId: string;\n    readonly definition: string;\n    readonly state: SagaState;\n    readonly input: unknown;\n    readonly steps: readonly SagaStepRecord[];\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly version: number;\n    /** The `resume`/`compensate` call that owns the saga while `leaseUntil` is in the future. */\n    readonly owner?: string;\n    readonly leaseUntil?: number;\n}"
   },
   {
     "name": "SagaResolutionError",

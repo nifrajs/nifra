@@ -4087,7 +4087,11 @@ Approval resumes are HMAC-signed, expire, bind to the tenant, principal, capabil
 digest, and are consumed atomically once. The effect journal marks execution before the provider
 call, so a crash after an external commit remains `ambiguous` for reconciliation instead
 of being retried blindly. Typed sagas persist compensation arguments separately from the sealed
-token-only ledger and compensate committed steps in reverse order with retry/backoff state.
+token-only ledger and compensate committed steps in reverse order with retry/backoff state. One
+`resume` or `compensate` call owns a saga at a time through a lease every
+transition renews (`leaseMs`, default 5 minutes): a second call meanwhile throws
+`SagaConcurrencyError` and changes nothing, and a call that died is taken over once its
+lease lapses.
 
 ```ts
 // doc-check: skip - durable store implementations are deployment-specific.

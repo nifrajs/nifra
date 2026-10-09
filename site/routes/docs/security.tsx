@@ -789,7 +789,11 @@ export default function Security() {
         digest, and are consumed atomically once. The effect journal marks execution before the provider
         call, so a crash after an external commit remains <code>ambiguous</code> for reconciliation instead
         of being retried blindly. Typed sagas persist compensation arguments separately from the sealed
-        token-only ledger and compensate committed steps in reverse order with retry/backoff state.
+        token-only ledger and compensate committed steps in reverse order with retry/backoff state. One{" "}
+        <code>resume</code> or <code>compensate</code> call owns a saga at a time through a lease every
+        transition renews (<code>leaseMs</code>, default 5 minutes): a second call meanwhile throws{" "}
+        <code>SagaConcurrencyError</code> and changes nothing, and a call that died is taken over once its
+        lease lapses.
       </p>
       <CodeBlock code={DURABLE_EFFECTS} />
 
