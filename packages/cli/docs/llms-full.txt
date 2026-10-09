@@ -9044,6 +9044,202 @@ See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for th
 two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
 data layer in depth.
 
+## Nifra - Custom server (createWebApp)
+
+> Run a page app from your own server entry with createWebApp: static and hashed files, a strict CSP on nifra's nonce, middleware order, loader error logging, graceful shutdown, and nifra check settings.
+
+The standard project layout gets its server entry from `nifra build`. An app that
+calls `createWebApp` from its own entry wires the same pieces by hand. Each one is an
+option or a single call.
+
+### A complete entry
+
+Everything on this page in one file. The sections below explain each part. This file
+typechecks against the current packages.
+
+```ts
+import { fileURLToPath } from "node:url"
+import { createCspPolicy, createWebApp, servePublicDir } from "@nifrajs/web"
+import type { Manifest, RenderAdapter } from "@nifrajs/web"
+
+// From your build: the framework adapter, the route manifest, and what buildClient() returned.
+declare const adapter: RenderAdapter
+declare const manifest: Manifest
+declare const build: {
+  readonly entry: string
+  readonly assets: readonly string[]
+  readonly routes: Readonly<Record<string, readonly string[]>>
+  readonly css?: readonly string[]
+}
+declare const errors: { capture(error: unknown, tags: Record<string, string>): void }
+
+// buildClient({ outDir: "dist/assets" }) writes the chunks where their /assets/ URLs point.
+const bundle = servePublicDir({
+  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
+  hashedFiles: new Set(build.assets),
+})
+const publicFiles = servePublicDir({ dir: fileURLToPath(new URL("./public/", import.meta.url)) })
+
+const csp = createCspPolicy({
+  header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,
+})
+
+export const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry: build.entry,
+  routePreload: build.routes,
+  styles: build.css ?? [],
+  csp,
+  server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },
+  use: (app) => {
+    app.onRequest(async (request) => (await bundle(request)) ?? (await publicFiles(request)))
+  },
+  onLoaderError: (error, { route }) => errors.capture(error, { route }),
+})
+
+app.listen(3000)
+```
+
+### Static and hashed files
+
+`servePublicDir` from `@nifrajs/web` serves a directory on Bun, Node and
+Deno. It answers `GET` and `HEAD` only, refuses paths that leave the
+directory or name a hidden file, sets the content type and `nosniff`, handles range
+requests, and returns `undefined` on a miss so the request falls through to your
+routes.
+
+-
+**Hashed build output.** Pass `buildClient()`'s `assets` as
+`hashedFiles`: those files get `immutable` for a year, and anything
+else in the directory gets one day. Write the build to `outDir: "dist/assets"` so
+a chunk's `/assets/...` URL is also its path under `dist/`.
+
+-
+**Your own files.** A second handler on `public/` serves them at the root,
+with the one-day policy.
+
+-
+**Where it runs.** Register the handlers with `app.onRequest` inside
+`use`, so a static hit never reaches page rendering.
+
+On Node, `serve()` from `@nifrajs/node` can serve the bundle itself before
+the app runs, which keeps the direct request path for everything else:
+
+```ts
+// doc-check: skip - fragment: app and build are the createWebApp app and buildClient() output above.
+import { serve } from "@nifrajs/node"
+
+await serve(app, {
+  port: 3000,
+  static: { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets },
+  signals: { drainMs: 8_000 },
+})
+```
+
+### A strict CSP on nifra's nonce
+
+Pass `createCspPolicy` as `csp` and nifra writes the
+`Content-Security-Policy` header for each document. You do not stash a nonce or set
+the header yourself. Your `header` function receives `sources`: a hash
+for each constant inline script nifra writes, plus a nonce only when the document carries a
+request-specific script (a `defer()`ed value, or `unsafeInlineScript` in
+`meta`).
+
+A document without a nonce gets the same header on every request, so it can still be cached by
+`withISR` or a CDN. A document with a nonce is sent `private, no-store`.
+The older `nonce` option puts a nonce on every document, so nothing is cacheable.
+`createWebApp` refuses `csp` and `nonce` together.
+
+### Middleware goes in use
+
+`createWebApp` declares every page route, and the `/*` catch-all, before
+it returns. `beforeHandle`, `afterHandle`, `around`,
+`derive`, `decorate` and `onError` are copied into each route
+when the route is declared. An `app.use(...)` on the returned app therefore reaches no
+page, and nothing reports it. `requestId()` is a `derive`: added late, no
+page sees `c.requestId`.
+
+Apply middleware in the `use` option instead. It runs before any page is declared,
+and ahead of `mounts` and the `api` mount, so an `onRequest`
+guard also covers a mounted auth handler:
+
+```ts
+// doc-check: skip - fragment: the use option of the createWebApp call above; @nifrajs/middleware is not installed in the docs sandbox.
+import { requestId, securityHeaders } from "@nifrajs/middleware"
+
+createWebApp({
+  // ...
+  use: (app) => {
+    app.use(securityHeaders())
+    app.use(requestId())
+  },
+})
+```
+
+`onRequest` and `onResponse` are read per request, so those two still
+work when added late. Putting everything in `use` means you never need to remember
+which hooks those are.
+
+A plugin applied in `use` works at runtime but cannot add to the returned app's type.
+To get `c.requestId` typed on routes you declare afterwards, call
+`app.use(requestId())` again on the returned app. Named plugins apply once.
+
+### Loader errors
+
+When a loader or action throws and an `_error` boundary renders the page, the error
+is written to the server's `logger`, at the detail set by
+`server.errorLogDetail`. That is the same log line an unhandled 500 produces, and you
+do not need to configure anything for it. A soft-navigation data request that fails is logged
+the same way. A thrown `Response`, such as `redirect()`, is not an
+error and is not logged.
+
+`onLoaderError` is for an error reporter. It sees every real throw with the request,
+params and route id before the boundary renders. If it throws, the error is ignored so rendering
+continues.
+
+### Graceful shutdown
+
+On Bun, `server: { gracefulSignals: { drainMs } }` makes `listen()`
+handle `SIGTERM` and `SIGINT`. The server gives in-flight requests up
+to `drainMs` (default 10 000) to finish, then stops, closing any that are still
+running. On Bun, new connections can still arrive during that window, so the load balancer
+should stop routing to the instance first, as most platforms do before they send
+`SIGTERM`. Keep `drainMs` under your platform's kill grace period:
+`docker stop` waits 10 seconds. `true` uses the default. On Node and
+Deno, pass
+`signals: { drainMs }` to `serve()` instead, as above.
+
+### nifra check for a custom entry
+
+-
+**Routes nifra cannot see.** A mounted handler such as better-auth answers paths that are
+not in your backend, so a `fetch` to them looks hand-rolled to the check. List
+those prefixes in `nifra.check.json` next to `package.json`:
+
+```ts
+{
+  "externalMounts": ["/api/auth"]
+}
+```
+
+-
+**Two repositories, one runtime.** When a linked sibling repository brings its own install
+of nifra or React, `nifra check` reports the duplicates. A reinstall in this app
+cannot remove a copy that another project installed. Declare the packages single-copy and
+nifra loads this app's copy for every importer:
+
+```ts
+{
+  "name": "my-app",
+  "nifra": { "singleCopy": ["@nifrajs/*", "react", "react-dom"] }
+}
+```
+
+Packages duplicated the same way are reported as one finding with one combined
+`singleCopy` list. The preload this needs, and the version-skew case it cannot
+cover, are in [Troubleshooting](/docs/troubleshooting).
+
 ## Nifra - Databases
 
 > Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.
