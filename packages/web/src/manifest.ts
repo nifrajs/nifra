@@ -1006,6 +1006,9 @@ const ancestorDirs = (file: string): string[] => {
  * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
  * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware`
  * files are special; other `_`-prefixed files are ignored (private/colocated, never routed).
+ * A page pairs with its `.backend.*` half only when both are in `files`, so a hand-written list that
+ * omits the half serves the page without its loader and guards; `discoverRoutes` from
+ * `@nifrajs/web/fs` scans a routes dir and never does.
  */
 export function buildManifest(
   files: readonly string[],

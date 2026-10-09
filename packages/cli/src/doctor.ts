@@ -29,6 +29,13 @@ import {
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
+import {
+  type HandBuiltManifest,
+  handBuiltManifestMessage,
+  handBuiltManifests,
+  type ManifestList,
+  manifestListsIn,
+} from "./hand-built-manifest.ts"
 import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
@@ -185,6 +192,11 @@ export interface DoctorResult {
    * {@link collectVersionDrift}.
    */
   readonly versionDrift?: VersionDrift
+  /**
+   * `buildManifest(...)` calls whose spelled-out file list reaches a page but not its backend half, so
+   * that page runs without its loader, action and guards. Advisory (never folded into `ok`).
+   */
+  readonly handBuiltManifests?: readonly HandBuiltManifest[]
   /**
    * Agent files whose MCP launch pins an `@nifrajs/cli` other than the one the project installs, so
    * the agent's server answers for a release the code no longer builds with. Advisory (never folded
@@ -790,6 +802,7 @@ export async function collectDoctorResult(
   const scopes = await doctorPackageScopes(cwd, pkg)
 
   const findings: DoctorFinding[] = []
+  const manifestLists: ManifestList[] = []
   // A standalone app owns its tests, so they remain in the declaration check. A workspace root owns
   // the published package source while its root devDependencies intentionally own shared tests,
   // benchmarks, and scaffold copy-surfaces. Keep that boundary explicit instead of reporting a
@@ -820,6 +833,7 @@ export async function collectDoctorResult(
       for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
         findings.push({ file: f.file, line: f.line, package: f.snippet })
       }
+      manifestLists.push(...manifestListsIn(rel, content))
     },
     { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
@@ -837,6 +851,7 @@ export async function collectDoctorResult(
     opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
   const staleMcpPins = await collectStaleMcpPins(cwd).catch(() => undefined)
   const versionDrift = collectVersionDrift(cwd, opts.cliVersion)
+  const handBuilt = handBuiltManifests(cwd, manifestLists)
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
@@ -855,6 +870,7 @@ export async function collectDoctorResult(
     scanScope,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
     ...(versionDrift !== undefined ? { versionDrift } : {}),
+    ...(handBuilt.length > 0 ? { handBuiltManifests: handBuilt } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
@@ -1042,6 +1058,9 @@ export async function runDoctor(
   }
   if (result.versionDrift !== undefined) {
     console.log(`⚠ ${versionDriftMessage(result.versionDrift)}\n`)
+  }
+  for (const finding of result.handBuiltManifests ?? []) {
+    console.log(`⚠ ${handBuiltManifestMessage(finding)}\n`)
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
   // release even when the CLI running doctor matches the project.

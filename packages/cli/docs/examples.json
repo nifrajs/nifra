@@ -618,6 +618,12 @@
     "code": "import { testClient } from \"@nifrajs/client\"\nimport { app } from \"./app\"\n\n// Every JSON response is checked against the route's declared schema for its status:\n// `response` for 2xx, `errors[status]` for declared failures. A mismatch THROWS.\nconst api = testClient<typeof app>(app, { validateResponses: true })\n\nconst res = await api.me.get()   // ResponseContractViolation if the payload drifted"
   },
   {
+    "name": "WEB_ROUTES",
+    "topic": "Nifra - Contract-derived adversarial testing",
+    "slug": "testing",
+    "code": "// test/routes.test.ts - render the real routes in-process, each page with its backend half.\nimport { expect, test } from \"bun:test\"\nimport { createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nconst app = createWebApp({\n  adapter: reactAdapter,\n  // Scans routes/ the way the build does: a page and its .backend.ts half always arrive together.\n  manifest: discoverRoutes(`${import.meta.dir}/../routes`),\n  clientEntry: \"/client.js\",\n})\n\ntest(\"the users page runs its loader\", async () => {\n  const res = await app.fetch(new Request(\"http://localhost/users/7\"))\n  expect(res.status).toBe(200)\n})"
+  },
+  {
     "name": "BACKEND_ONLY_MARKER",
     "topic": "Nifra - Troubleshooting",
     "slug": "troubleshooting",

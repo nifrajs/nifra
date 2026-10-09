@@ -11139,6 +11139,41 @@ await assertAdversarialContract(app, {
 })
 ```
 
+### A web app's routes in a test
+
+Give the test the same route manifest the app serves. `discoverRoutes(dir)` from
+`@nifrajs/web/fs` scans a routes directory the way the build does, so every page
+arrives with its `.backend.ts` half: its loader, action, output schemas and
+middleware. A built app can import the generated `server-manifest` instead, which
+bakes the same pairs into static imports.
+
+```ts
+// test/routes.test.ts - render the real routes in-process, each page with its backend half.
+import { expect, test } from "bun:test"
+import { createWebApp } from "@nifrajs/web"
+import { discoverRoutes } from "@nifrajs/web/fs"
+import { reactAdapter } from "@nifrajs/web-react"
+
+const app = createWebApp({
+  adapter: reactAdapter,
+  // Scans routes/ the way the build does: a page and its .backend.ts half always arrive together.
+  manifest: discoverRoutes(`${import.meta.dir}/../routes`),
+  clientEntry: "/client.js",
+})
+
+test("the users page runs its loader", async () => {
+  const res = await app.fetch(new Request("http://localhost/users/7"))
+  expect(res.status).toBe(200)
+})
+```
+
+`buildManifest(files, load)` pairs a page with its backend half only when both are
+in `files`. It is pure, so it cannot know a half is missing, and a hand-written list
+that names the page alone serves it without its loader and guards: the test passes against a
+route production never runs. `nifra doctor` flags a `buildManifest(...)`
+call whose array literal or `import.meta.glob` patterns reach a page but not the
+backend half beside it.
+
 ### Browser end-to-end
 
 API flows stay in-process through `testSession` - typed, cookie-aware, no
