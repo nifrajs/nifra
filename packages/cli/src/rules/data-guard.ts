@@ -8,10 +8,13 @@
  * refuses (an object, array, string, number or boolean) and a warning otherwise, since only running
  * the loader proves what an expression evaluates to.
  */
+import { realpathSync } from "node:fs"
+import { isAbsolute, join, relative } from "node:path"
 import { isSensitiveFieldName } from "@nifrajs/web/zones"
 import { codePositionMask } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { createSpecifierResolver } from "../internal/project-specifiers.ts"
 import type { CheckRule } from "./index.ts"
 import { zonedFiles } from "./zones.ts"
 
@@ -298,6 +301,14 @@ export const missingOutputRule: CheckRule = {
 const OUTPUT_DECLARATION =
   /\bexport\s+(?:const|let|var)\s+(?:loaderOutput|actionOutput)\b[^=]*=|\boutput\s*:/g
 
+/** The initializer of the top-level `const`/`let`/`var` named `name`, as an offset just past its `=`. */
+function declarationOf(mask: string, name: string): number | undefined {
+  const declaration = new RegExp(
+    `(?:^|\\n)(?:export\\s+)?(?:const|let|var)\\s+${name.replaceAll("$", "\\$")}(?![\\w$])[^=]*=`,
+  ).exec(mask)
+  return declaration === null ? undefined : declaration.index + declaration[0].length
+}
+
 /**
  * Where the schema an output declaration names is written: the expression itself, or, when it is a
  * bare name, the initializer of the top-level declaration of that name in the same file, followed
@@ -310,13 +321,90 @@ function schemaExpression(mask: string, start: number): { start: number; end: nu
     const name = mask.slice(range.start, range.end).trim()
     if (!/^[A-Za-z_$][\w$]*$/.test(name) || seen.has(name)) return range
     seen.add(name)
-    const declaration = new RegExp(
-      `(?:^|\\n)(?:export\\s+)?(?:const|let|var)\\s+${name.replaceAll("$", "\\$")}(?![\\w$])[^=]*=`,
-    ).exec(mask)
-    if (declaration === null) return range
-    const from = declaration.index + declaration[0].length
+    const from = declarationOf(mask, name)
+    if (from === undefined) return range
     range = { start: from, end: expressionEnd(mask, from) }
   }
+}
+
+/** A name used as a value: not an object key, a member, a callee, or the object of a member. */
+const VALUE_NAME = /(?<![\w$.])[A-Za-z_$][\w$]*(?![\w$])(?!\s*[:(.])/g
+
+/** The module `name` is imported from as a named import, and its name there. */
+function importOf(
+  source: SchemaSource,
+  name: string,
+): { readonly specifier: string; readonly name: string } | undefined {
+  // The mask blanks the specifier string, so it is read from the source past `from`.
+  for (const clause of source.mask.matchAll(/\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\b/g)) {
+    const quoted = /^\s*(["'])([^"']+)\1/.exec(
+      source.content.slice(clause.index + clause[0].length),
+    )
+    if (quoted === null) continue
+    for (const element of (clause[1] ?? "").split(",")) {
+      const [imported, local = imported] = element
+        .trim()
+        .replace(/^type\s+/, "")
+        .split(/\s+as\s+/)
+      if (local === name && imported !== undefined)
+        return { specifier: quoted[2] ?? "", name: imported }
+    }
+  }
+  return undefined
+}
+
+interface SchemaSource {
+  readonly file: string
+  readonly content: string
+  readonly mask: string
+}
+
+interface SchemaRange {
+  readonly source: SchemaSource
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * Every place an output schema is written: its own expression, then each schema it names inside it
+ * (`t.object({ user: userSchema })`), followed to this file's top-level declaration of that name or
+ * to the project file it is imported from. A schema under `declassified(...)` is not followed.
+ */
+function schemaRanges(
+  origin: SchemaSource,
+  start: number,
+  load: (from: string, specifier: string) => SchemaSource | undefined,
+): SchemaRange[] {
+  const ranges: SchemaRange[] = [{ source: origin, ...schemaExpression(origin.mask, start) }]
+  const seen = new Set<string>()
+  // An array iterator reads the length each step, so ranges pushed below are walked too.
+  for (const { source, start: from, end } of ranges) {
+    const declassified: Array<readonly [number, number]> = []
+    for (const call of source.mask.slice(from, end).matchAll(/\bdeclassified\s*\(/g)) {
+      const open = from + call.index + call[0].length - 1
+      declassified.push([open, closing(source.mask, open)])
+    }
+    for (const reference of source.mask.slice(from, end).matchAll(VALUE_NAME)) {
+      const at = from + reference.index
+      if (declassified.some(([open, close]) => at > open && at < close)) continue
+      const name = reference[0]
+      if (seen.has(`${source.file}#${name}`)) continue
+      seen.add(`${source.file}#${name}`)
+      const local = declarationOf(source.mask, name)
+      if (local !== undefined) {
+        ranges.push({ source, start: local, end: expressionEnd(source.mask, local) })
+        continue
+      }
+      const imported = importOf(source, name)
+      const target = imported === undefined ? undefined : load(source.file, imported.specifier)
+      const there =
+        target === undefined ? undefined : declarationOf(target.mask, imported?.name ?? "")
+      if (target !== undefined && there !== undefined) {
+        ranges.push({ source: target, start: there, end: expressionEnd(target.mask, there) })
+      }
+    }
+  }
+  return ranges
 }
 
 export const sensitiveOutputRule: CheckRule = {
@@ -324,29 +412,59 @@ export const sensitiveOutputRule: CheckRule = {
   title: "Sensitive field in an output schema",
   async scan(ctx) {
     const findings: Diagnostic[] = []
+    const resolve = createSpecifierResolver()
+    const realRoot = (() => {
+      try {
+        return realpathSync(ctx.root)
+      } catch {
+        return ctx.root
+      }
+    })()
+    const sources = new Map<string, SchemaSource | undefined>()
+    const sourceOf = (file: string): SchemaSource | undefined => {
+      if (!sources.has(file)) {
+        const content = ctx.sources.read(file)
+        sources.set(
+          file,
+          content === undefined ? undefined : { file, content, mask: codePositionMask(content) },
+        )
+      }
+      return sources.get(file)
+    }
+    // Only project source: an installed package's schemas are not the app's to rename.
+    const load = (from: string, specifier: string): SchemaSource | undefined => {
+      const target = resolve(join(ctx.root, from), specifier)
+      if (target === undefined) return undefined
+      const rel = relative(realRoot, target).replaceAll("\\", "/")
+      if (rel.startsWith("../") || isAbsolute(rel) || rel.split("/").includes("node_modules")) {
+        return undefined
+      }
+      return sourceOf(rel)
+    }
+    // A schema several declarations name, or several routes import, is reported once.
+    const reported = new Set<string>()
     for (const { file, classification } of zonedFiles(ctx).files) {
       if (classification.zone !== "route-backend" && classification.zone !== "fn") continue
-      const content = ctx.sources.read(file)
-      if (content === undefined) continue
-      const mask = codePositionMask(content)
-      // A schema several declarations name is reported once.
-      const reported = new Set<number>()
-      for (const declaration of mask.matchAll(OUTPUT_DECLARATION)) {
-        const schema = schemaExpression(mask, declaration.index + declaration[0].length)
-        for (const { key, index } of sensitiveKeys(content, mask, schema.start, schema.end)) {
-          if (reported.has(index)) continue
-          reported.add(index)
-          findings.push(
-            diagnostic({
-              code: "NF-C031",
-              severity: "error",
-              file,
-              line: lineAt(content, index),
-              message: `${file} declares "${key}" in an output schema, a field name that usually holds a credential or personal identifier. Remove it, or wrap its schema in t.declassified("why it may reach the browser", ...)`,
-              evidence: [`field: ${key}`],
-              verify: "nifra check",
-            }),
-          )
+      const origin = sourceOf(file)
+      if (origin === undefined) continue
+      for (const declaration of origin.mask.matchAll(OUTPUT_DECLARATION)) {
+        const ranges = schemaRanges(origin, declaration.index + declaration[0].length, load)
+        for (const { source, start, end } of ranges) {
+          for (const { key, index } of sensitiveKeys(source.content, source.mask, start, end)) {
+            if (reported.has(`${source.file}:${index}`)) continue
+            reported.add(`${source.file}:${index}`)
+            findings.push(
+              diagnostic({
+                code: "NF-C031",
+                severity: "error",
+                file: source.file,
+                line: lineAt(source.content, index),
+                message: `${source.file} declares "${key}" in an output schema, a field name that usually holds a credential or personal identifier. Remove it, or wrap its schema in t.declassified("why it may reach the browser", ...)`,
+                evidence: [`field: ${key}`],
+                verify: "nifra check",
+              }),
+            )
+          }
         }
       }
     }

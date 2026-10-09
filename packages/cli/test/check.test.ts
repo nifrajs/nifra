@@ -3564,6 +3564,47 @@ describe("data guard from source (NF-C030, NF-C031)", () => {
     ])
     await rm(dir, { recursive: true, force: true })
   })
+
+  test("a schema named inside an output schema, or imported, is read where it is declared", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        'import { account as accountSchema, type Plan } from "../shared/schemas.ts"',
+        "const member = t.object({ name: t.string(), apiKey: t.string() })",
+        "export const loaderOutput = t.object({",
+        "  user: member,",
+        "  account: accountSchema,",
+        "  members: t.array(member),",
+        '  audited: t.declassified("an audit export", auditRow),',
+        "})",
+        "const auditRow = t.object({ email: t.string() })",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "routes/b.tsx": "export default () => null\n",
+      "routes/b.backend.ts": [
+        'import { account } from "../shared/schemas.ts"',
+        "export const loaderOutput = account",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "shared/schemas.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "export type Plan = string",
+        "export const account = t.object({",
+        "  id: t.string(),",
+        "  password: t.string(),",
+        "})",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C031")).toEqual([
+      "routes/a.backend.ts:3 error",
+      "shared/schemas.ts:5 error",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
 })
 
 describe("credentials in browser code (NF-C032)", () => {
