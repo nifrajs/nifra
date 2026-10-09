@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { authenticated, rejected } from "@nifrajs/core/server"
 import {
+  apiKey,
   type IdempotencyOptions,
   idempotency,
   MemoryIdempotencyStore,
@@ -378,6 +380,62 @@ describe("idempotency middleware", () => {
     expect(() =>
       idempotency({ store: new MemoryIdempotencyStore(), lockTtlMs: Number.POSITIVE_INFINITY }),
     ).toThrow(/lockTtlMs/)
+  })
+})
+
+describe("idempotency with a credential outside principalHeaders", () => {
+  const KEY = "k".repeat(40)
+  const apps = (principalHeaders?: readonly string[]) => {
+    const store = new MemoryIdempotencyStore()
+    const options = principalHeaders === undefined ? { store } : { store, principalHeaders }
+    const runs = { guard: 0, stage: 0 }
+    return {
+      runs,
+      guard: server()
+        .use(apiKey({ keys: [KEY], header: "x-service-key" }))
+        .use(idempotency(options))
+        .post("/transfers", () => ({ transfer: ++runs.guard })),
+      stage: server()
+        .use(idempotency({ ...options, store: new MemoryIdempotencyStore() }))
+        .authenticate({
+          id: "service",
+          run: (input) =>
+            input.headers.get("x-service-key") === KEY ? authenticated("svc") : rejected(),
+        })
+        .post("/transfers", () => ({ transfer: ++runs.stage })),
+    }
+  }
+  const post = (
+    app: { fetch(req: Request): Response | Promise<Response> },
+    headers: Record<string, string>,
+  ) =>
+    Promise.resolve(
+      app.fetch(
+        new Request("http://x/transfers", {
+          method: "POST",
+          headers: { "idempotency-key": "order-1", ...headers },
+        }),
+      ),
+    ).then(
+      async (res) => `${res.status} ${res.headers.get("idempotent-replayed")} ${await res.text()}`,
+    )
+
+  test("an anonymous caller with the owner's key is never replayed the owner's response", async () => {
+    const { guard, stage } = apps()
+    for (const app of [guard, stage]) {
+      expect(await post(app, { "x-service-key": KEY })).toBe('200 null {"transfer":1}')
+      expect(await post(app, {})).toStartWith("401 null")
+    }
+  })
+
+  test("the credential header in principalHeaders scopes the key, so the owner's retry replays", async () => {
+    const { guard, stage, runs } = apps(["x-service-key"])
+    for (const app of [guard, stage]) {
+      expect(await post(app, { "x-service-key": KEY })).toBe('200 null {"transfer":1}')
+      expect(await post(app, { "x-service-key": KEY })).toBe('200 true {"transfer":1}')
+      expect(await post(app, {})).toStartWith("401 null")
+    }
+    expect(runs).toEqual({ guard: 1, stage: 1 })
   })
 })
 

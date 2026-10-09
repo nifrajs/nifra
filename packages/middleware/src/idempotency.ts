@@ -1,5 +1,10 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { METHODS, type Middleware, replacedRequestOf } from "@nifrajs/core/server"
+import {
+  isAuthenticatedRequest,
+  METHODS,
+  type Middleware,
+  replacedRequestOf,
+} from "@nifrajs/core/server"
 
 /**
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
@@ -218,6 +223,11 @@ export interface IdempotencyOptions {
    * same caller - a rotated bearer token, an analytics cookie appended mid-session - lands on a fresh
    * key and the retry executes again. Narrow the list (or supply `key`) when the app has a stable
    * principal id to scope by; that is strictly better than digesting a whole `Cookie` header.
+   *
+   * A request that carries none of these headers is keyed as anonymous. If an authentication stage
+   * then accepts it (a credential in another header), its response is not stored: under the
+   * anonymous key any caller presenting the same `Idempotency-Key` would be replayed it. Add that
+   * header here to dedupe such requests.
    */
   readonly principalHeaders?: readonly string[]
 }
@@ -440,7 +450,10 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       ? (req: Request): Promise<string | null> | null =>
           defaultIdempotencyKey(req, header, principalHeaders)
       : (req: Request): string | null | Promise<string | null> => custom(req, header)
-  const claimed = new WeakMap<Request, { readonly key: string; readonly reservation: string }>()
+  const claimed = new WeakMap<
+    Request,
+    { readonly key: string; readonly reservation: string; readonly anonymous: boolean }
+  >()
 
   const middleware: Middleware = {
     name: "idempotency",
@@ -472,7 +485,9 @@ export function idempotency(options: IdempotencyOptions): Middleware {
         })
       }
       if (claim.state !== "new") return undefined
-      claimed.set(req, { key, reservation: claim.reservation })
+      const anonymous =
+        custom === undefined && principalHeaders.every((name) => req.headers.get(name) === null)
+      claimed.set(req, { key, reservation: claim.reservation, anonymous })
       return undefined
     },
     async onResponse(res, req) {
@@ -486,7 +501,10 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       }
       if (claim === undefined || claimedReq === undefined) return res // not a claimed request
       claimed.delete(claimedReq)
-      if (!shouldCache(res)) {
+      if (
+        !shouldCache(res) ||
+        (claim.anonymous && (isAuthenticatedRequest(req) || isAuthenticatedRequest(claimedReq)))
+      ) {
         await store.release(claim.key, claim.reservation)
         return res
       }
