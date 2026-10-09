@@ -1592,6 +1592,10 @@ export function createPageRequestExecutor<Env = unknown>(
               set: controls.scope(PAGE_SCOPE),
             })
           : null
+        // The re-render answers a returned redirect or status the way the page's GET does.
+        if (isStatusSignal(data))
+          return renderStatusSignal(c.req, c.env, data, controls.personalized)
+        if (isControlFlow(data)) return data
         const responseHeaders = controls.documentHeaders()
         const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
         const { chain, head } = resolveChainAndHead(
