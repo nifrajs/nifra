@@ -489,6 +489,31 @@ describe("dedicated authentication stage", () => {
   })
 })
 
+describe("errors after an async authentication", () => {
+  test("a derive or handler that throws synchronously reaches onError", async () => {
+    const outcomes: string[] = []
+    for (const where of ["derive", "handler"] as const) {
+      let mapped = 0
+      const app = server()
+        .onError(() => {
+          mapped += 1
+          return new Response("mapped", { status: 409 })
+        })
+        .authenticate({ id: "async", mode: "async", run: async () => authenticated({ id: "u" }) })
+        .derive(() => {
+          if (where === "derive") throw new Error("derive failed")
+          return { tenant: "t" }
+        })
+        .get("/x", () => {
+          throw new Error("handler failed")
+        })
+      const response = await app.fetch(new Request("http://x/x"))
+      outcomes.push(`${where} ${response.status} ${mapped}`)
+    }
+    expect(outcomes).toEqual(["derive 409 1", "handler 409 1"])
+  })
+})
+
 describe("authenticated request record", () => {
   const stage = {
     id: "service",

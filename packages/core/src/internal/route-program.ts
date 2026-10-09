@@ -276,19 +276,26 @@ function runAuthenticationStages<T>(
   }
   if (outcome instanceof Promise) {
     return outcome.then(
-      (settled) =>
-        finishAuthentication(
-          host,
-          entry,
-          program,
-          source,
-          ctx,
-          finalize,
-          wrapResponse,
-          settled,
-          start + 1,
-          validationComplete,
-        ),
+      (settled) => {
+        // The rest of the program runs inside this callback: a derive or handler that throws
+        // synchronously would otherwise reject the request instead of reaching onError.
+        try {
+          return finishAuthentication(
+            host,
+            entry,
+            program,
+            source,
+            ctx,
+            finalize,
+            wrapResponse,
+            settled,
+            start + 1,
+            validationComplete,
+          )
+        } catch (error) {
+          return host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
+        }
+      },
       () => finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx),
     )
   }
