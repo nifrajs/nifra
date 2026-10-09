@@ -72,6 +72,49 @@ describe("compression()", () => {
     expect(await gunzip(res)).toBe(big)
   })
 
+  test("a streamed body's compressed prefix reaches the client before the upstream ends", async () => {
+    const { gunzipSync, constants } = await import("node:zlib")
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let sent = false
+    const upstream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (sent) {
+          await held
+          controller.close()
+          return
+        }
+        sent = true
+        controller.enqueue(new TextEncoder().encode(`<!doctype html>${big}`))
+      },
+    })
+    const app = server()
+      .use(compression())
+      .get("/", () => new Response(upstream, { headers: { "content-type": "text/html" } }))
+    const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+    const reader = res.body?.getReader()
+    if (reader === undefined) throw new Error("no body")
+    const received: Uint8Array[] = []
+    let text = ""
+    try {
+      // The upstream is still open here; buffering until it closes would never decode the shell.
+      while (!text.startsWith("<!doctype html>")) {
+        const chunk = await reader.read()
+        if (chunk.done) throw new Error("ended early")
+        received.push(chunk.value)
+        text = gunzipSync(Buffer.concat(received), {
+          finishFlush: constants.Z_SYNC_FLUSH,
+        }).toString()
+      }
+    } finally {
+      release()
+    }
+    expect(text).toBe(`<!doctype html>${big}`)
+    await reader.cancel()
+  }, 5000)
+
   test("a strong ETag is weakened on the compressed representation", async () => {
     const big = "x".repeat(4096)
     const app = server()

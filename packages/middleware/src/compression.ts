@@ -179,10 +179,90 @@ async function compressRawBody(
     },
     cancel: (reason) => reader.cancel(reason),
   })
-  return new Response(source.pipeThrough(new CompressionStream("gzip")), {
-    status: response.status,
-    statusText: response.statusText,
-    headers: gzipHeaders(response.headers),
+  const zlib = zlibModule()
+  return new Response(
+    zlib === undefined
+      ? source.pipeThrough(new CompressionStream("gzip"))
+      : syncFlushedGzip(zlib, source),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: gzipHeaders(response.headers),
+    },
+  )
+}
+
+interface GzipStream {
+  write(chunk: Uint8Array): boolean
+  flush(kind: number, callback: () => void): void
+  end(): void
+  destroy(): void
+  on(event: "data", listener: (chunk: Uint8Array) => void): unknown
+  once(event: "end" | "error", listener: (error?: unknown) => void): unknown
+}
+
+interface Zlib {
+  createGzip(): GzipStream
+  readonly constants: { readonly Z_SYNC_FLUSH: number }
+}
+
+const isZlib = (value: unknown): value is Zlib =>
+  typeof value === "object" &&
+  value !== null &&
+  "createGzip" in value &&
+  typeof value.createGzip === "function" &&
+  "constants" in value &&
+  typeof value.constants === "object" &&
+  value.constants !== null &&
+  "Z_SYNC_FLUSH" in value.constants
+
+let zlibLookup: { readonly zlib: Zlib | undefined } | undefined
+
+function zlibModule(): Zlib | undefined {
+  if (zlibLookup !== undefined) return zlibLookup.zlib
+  let zlib: Zlib | undefined
+  try {
+    const proc: unknown = Reflect.get(globalThis, "process")
+    const load: unknown =
+      typeof proc === "object" && proc !== null ? Reflect.get(proc, "getBuiltinModule") : undefined
+    const module: unknown = typeof load === "function" ? load.call(proc, "node:zlib") : undefined
+    if (isZlib(module)) zlib = module
+  } catch {}
+  zlibLookup = { zlib }
+  return zlib
+}
+
+/** `CompressionStream` holds deflate output until its window fills or the input closes, so a
+ * streamed shell would not reach the client until the whole page did. A sync flush after each
+ * upstream chunk emits what that chunk compressed to, at the cost of a few bytes per flush. */
+function syncFlushedGzip(
+  zlib: Zlib,
+  source: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader()
+  const gzip = zlib.createGzip()
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      gzip.on("data", (chunk) => controller.enqueue(chunk))
+      gzip.once("error", (error) => controller.error(error))
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read()
+      if (done) {
+        await new Promise((resolve) => {
+          gzip.once("end", resolve)
+          gzip.end()
+        })
+        controller.close()
+        return
+      }
+      gzip.write(value)
+      await new Promise<void>((resolve) => gzip.flush(zlib.constants.Z_SYNC_FLUSH, resolve))
+    },
+    cancel(reason) {
+      gzip.destroy()
+      return reader.cancel(reason)
+    },
   })
 }
 
