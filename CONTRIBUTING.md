@@ -154,7 +154,7 @@ If you are shipping one of these anyway, ship a **codemod with it**. Hand-editin
 
 ### Publishing
 
-Merging a release PR publishes it: `.github/workflows/release.yml` proves the merge, publishes every package version npm does not have yet, and deploys the site. npm accepts the workflow through [trusted publishing](https://docs.npmjs.com/trusted-publishers): each public package trusts `release.yml` run in the `npm-publish` environment, so there is no npm token to store or leak, and every version carries a provenance attestation.
+Merging a release PR publishes it: `.github/workflows/release.yml` proves the merge, builds the packages in a job that cannot publish, publishes every package version npm does not have yet from that build, and deploys the site. npm accepts the workflow through [trusted publishing](https://docs.npmjs.com/trusted-publishers): each public package trusts `release.yml` run in the `npm-publish` environment, so there is no npm token to store or leak, and every version carries a provenance attestation.
 
 - **A new package** cannot publish that way until it exists on npm and trusts the workflow. Before the release that first ships it, a maintainer publishes a placeholder version by hand (deprecated once the release is out) and adds the trust, with npm 11.15 or newer and 2FA on:
 
