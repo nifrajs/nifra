@@ -12,9 +12,9 @@ interface Row {
   tags: readonly string[]
 }
 
-// How many changes a fence can look back over. A load that outlives this many writes and
-// invalidations is refused its write, which costs one cache miss, never a stale value.
-const MAX_CHANGES = 1024
+// How many distinct keys (and, separately, tags) the fence remembers changing. A load that outlives
+// this many distinct changes is refused its write, which costs one cache miss, never a stale value.
+const MAX_TRACKED_CHANGES = 65_536
 
 export interface MemoryCacheOptions {
   /** Evict the least-recently-used entry once the count exceeds this. Default 10,000; `0` explicitly
@@ -31,9 +31,13 @@ export class MemoryCache implements CacheStore {
   private expirySweep = this.rows.entries()
   private readonly maxEntries: number
   private readonly now: () => number
-  // What each set, delete, invalidateTag and clear touched, oldest first; `changes[i]` happened at
-  // epoch `epoch - changes.length + i + 1`. Bounded: a fence older than the log is refused.
-  private readonly changes: Array<readonly ["key" | "tag", string] | "all"> = []
+  // The epoch of each key's and tag's latest change, oldest first. Only the change that matters to a
+  // load is compared, so unrelated writes never age its fence out. Bounded: a fence older than a
+  // forgotten change is refused.
+  private readonly keyChanges = new Map<string, number>()
+  private readonly tagChanges = new Map<string, number>()
+  private clearedAt = 0
+  private forgottenAt = 0
   private epoch = 0
 
   constructor(options: MemoryCacheOptions = {}) {
@@ -58,7 +62,7 @@ export class MemoryCache implements CacheStore {
   }
 
   set(key: string, entry: StoredEntry, tags: readonly string[]): void {
-    this.record(["key", key])
+    this.record(this.keyChanges, key)
     // Incremental expiry keeps cold, high-cardinality keys from occupying the entire bound until
     // their exact key is read. A fixed batch avoids an O(n) latency spike on a write.
     this.sweepExpired(8)
@@ -84,19 +88,22 @@ export class MemoryCache implements CacheStore {
   }
 
   delete(key: string): void {
-    this.record(["key", key])
+    this.record(this.keyChanges, key)
     this.evict(key)
   }
 
   invalidateTag(tag: string): void {
-    this.record(["tag", tag])
+    this.record(this.tagChanges, tag)
     const keys = this.tagIndex.get(tag)
     if (keys === undefined) return
     for (const key of [...keys]) this.evict(key)
   }
 
   clear(): void {
-    this.record("all")
+    // Every older fence is refused from here on, so the earlier changes need no remembering.
+    this.clearedAt = ++this.epoch
+    this.keyChanges.clear()
+    this.tagChanges.clear()
     this.rows.clear()
     this.tagIndex.clear()
     this.expirySweep = this.rows.entries()
@@ -110,13 +117,9 @@ export class MemoryCache implements CacheStore {
   setIfFence(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean {
     if (typeof token !== "number" || !Number.isSafeInteger(token) || token > this.epoch)
       return false
-    const since = this.epoch - token
-    if (since > this.changes.length) return false
-    for (const change of this.changes.slice(this.changes.length - since)) {
-      if (change === "all") return false
-      const [kind, name] = change
-      if (kind === "key" ? name === key : tags.includes(name)) return false
-    }
+    if (token < this.clearedAt || token < this.forgottenAt) return false
+    if ((this.keyChanges.get(key) ?? 0) > token) return false
+    for (const tag of tags) if ((this.tagChanges.get(tag) ?? 0) > token) return false
     this.set(key, entry, tags)
     return true
   }
@@ -126,10 +129,15 @@ export class MemoryCache implements CacheStore {
     return this.rows.size
   }
 
-  private record(change: readonly ["key" | "tag", string] | "all"): void {
-    this.epoch++
-    this.changes.push(change)
-    if (this.changes.length > MAX_CHANGES) this.changes.shift()
+  private record(changes: Map<string, number>, name: string): void {
+    changes.delete(name)
+    changes.set(name, ++this.epoch)
+    if (changes.size <= MAX_TRACKED_CHANGES) return
+    const first = changes.entries().next()
+    if (first.done) return
+    const [oldest, at] = first.value
+    changes.delete(oldest)
+    this.forgottenAt = Math.max(this.forgottenAt, at)
   }
 
   /** Remove a key and unlink it from every tag set it belonged to. */

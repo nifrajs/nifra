@@ -25,10 +25,19 @@ describe("MemoryCache", () => {
     }
   })
 
-  test("a fence older than the change log is refused, never trusted", () => {
+  test("unrelated writes never age a fence out", () => {
     const store = new MemoryCache({ now: () => 0 })
     const token = store.fence()
-    for (let i = 0; i <= 1024; i++) store.set(`other-${i}`, entry(i, 10), [])
+    for (let i = 0; i < 5_000; i++) store.set(`other-${i}`, entry(i, 10), ["other"])
+    for (let i = 0; i < 5_000; i++) store.invalidateTag(`tag-${i}`)
+    expect(store.setIfFence("k", entry("loaded", 10), ["t"], token)).toBe(true)
+    expect(store.get("k")?.value).toBe("loaded")
+  })
+
+  test("a fence older than a forgotten change is refused, never trusted", () => {
+    const store = new MemoryCache({ now: () => 0 })
+    const token = store.fence()
+    for (let i = 0; i <= 65_536; i++) store.set(`other-${i}`, entry(i, 10), [])
     expect(store.setIfFence("k", entry("loaded", 10), [], token)).toBe(false)
     expect(store.setIfFence("k", entry("loaded", 10), [], "not-a-token")).toBe(false)
     expect(store.setIfFence("k", entry("loaded", 10), [], store.fence())).toBe(true)
