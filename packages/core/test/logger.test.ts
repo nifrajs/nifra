@@ -45,6 +45,19 @@ describe("redactLogFields", () => {
     expect(out.count).toBe(5) // non-strings untouched
   })
 
+  test("the email pattern scans a long run of address characters once", () => {
+    // `a.a.a.` has a word boundary before every `a`, and the email pattern used to restart from each
+    // one and rescan the run to its end: 64 KB of it took most of a second.
+    const long = "a.".repeat(131_072)
+    const started = performance.now()
+    const out = redactLogFields(
+      { detail: `${long} id=7;ops@example.com` },
+      { valuePatterns: commonSecretPatterns },
+    )
+    expect(performance.now() - started).toBeLessThan(2000)
+    expect(out.detail).toBe(`${long} id=7;[REDACTED]`)
+  })
+
   test("default (no valuePatterns) does NOT scan values", () => {
     const out = redactLogFields({ detail: "token leaked: a@b.com" })
     expect(out.detail).toBe("token leaked: a@b.com") // unchanged; only key-name redaction by default
