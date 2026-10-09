@@ -229,7 +229,8 @@ export function isVerificationAvailable(
 
 // Bun reports a missing executable and a missing cwd alike (ENOENT), so the cwd decides which.
 function commandMissing(error: unknown, cwd: string): boolean {
-  const code = (error as { code?: unknown } | null)?.code
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined
   if (code !== "ENOENT" && code !== "EACCES") return false
   try {
     return statSync(cwd).isDirectory()

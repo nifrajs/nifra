@@ -223,16 +223,13 @@ export class CodingAgentHost {
 
   private acceptBackendEvent(rawEvent: unknown): AgentEvent {
     const session = this.requireSession()
-    const problem = this.backendEventProblem(rawEvent, session.id)
-    if (problem !== undefined) {
-      return this.createEvent({
-        type: "session.failed",
-        error: agentError("BACKEND_PROTOCOL", `backend emitted an invalid agent event: ${problem}`),
-        recoverable: false,
-      })
-    }
+    // agentEventProblem re-walks the event, so it runs only once the event is known to be bad.
+    if (!isAgentEvent(rawEvent))
+      return this.protocolFailure(agentEventProblem(rawEvent) ?? "event is invalid")
+    const problem = this.acceptedEventProblem(rawEvent, session.id)
+    if (problem !== undefined) return this.protocolFailure(problem)
     const event = Object.freeze({
-      ...(rawEvent as AgentEvent),
+      ...rawEvent,
       sessionId: session.id,
       seq: this.nextSeq++,
     }) as AgentEvent
@@ -277,17 +274,22 @@ export class CodingAgentHost {
     return event
   }
 
-  private backendEventProblem(rawEvent: unknown, sessionId: string): string | undefined {
-    const problem = agentEventProblem(rawEvent)
-    if (problem !== undefined) return problem
-    const event = rawEvent as AgentEvent
+  private protocolFailure(problem: string): AgentEvent {
+    return this.createEvent({
+      type: "session.failed",
+      error: agentError("BACKEND_PROTOCOL", `backend emitted an invalid agent event: ${problem}`),
+      recoverable: false,
+    })
+  }
+
+  private acceptedEventProblem(event: AgentEvent, sessionId: string): string | undefined {
     if (event.sessionId !== sessionId) return "sessionId is not this session's"
-    if (!isAgentExtensionEventType(event.type)) return undefined
+    if (!isExtensionEvent(event)) return undefined
     const check = this.extensionChecks.get(event.type)
     if (check === undefined) return undefined
     let accepted = false
     try {
-      accepted = check(event as AgentExtensionEvent) === true
+      accepted = check(event) === true
     } catch {
       accepted = false
     }
@@ -613,13 +615,14 @@ function boundedHostToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
 }
 
+function isExtensionEvent(event: AgentEvent): event is AgentExtensionEvent {
+  return isAgentExtensionEventType(event.type)
+}
+
 /** Default session evidence is content-free; live protocol consumers still receive the full event. */
 function eventEvidence(event: AgentEvent): unknown {
   // An extension event's data is the backend's own content; evidence keeps only where it belongs.
-  if (isAgentExtensionEventType(event.type)) {
-    const { turnId } = event as AgentExtensionEvent
-    return turnId === undefined ? {} : { turnId }
-  }
+  if (isExtensionEvent(event)) return event.turnId === undefined ? {} : { turnId: event.turnId }
   switch (event.type) {
     case "session.started":
     case "session.updated":

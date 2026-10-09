@@ -487,9 +487,7 @@ export class OrchestrationHost {
 /** A verify/approve node whose output is not a pass. Other kinds never gate. */
 function gateReason(output: unknown): string | undefined {
   const reason =
-    typeof output === "object" && output !== null
-      ? (output as { reason?: unknown }).reason
-      : undefined
+    typeof output === "object" && output !== null && "reason" in output ? output.reason : undefined
   if (typeof reason !== "string" || reason.length === 0) return undefined
   return reason.length > MAX_FAILURE_MESSAGE ? `${reason.slice(0, MAX_FAILURE_MESSAGE)}…` : reason
 }

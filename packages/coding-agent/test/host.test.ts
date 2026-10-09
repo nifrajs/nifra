@@ -7,13 +7,14 @@ import type {
   AgentBackendInfo,
   AgentEvent,
   AgentEventPayload,
+  AgentExtensionEvent,
   AgentSessionSnapshot,
   CreateSessionInput,
   ReloadResult,
   SendMessageInput,
 } from "@nifrajs/agent-protocol"
 import { CodingAgentHost } from "../src/host.ts"
-import type { SessionStore } from "../src/sessions.ts"
+import { FileSessionStore, type SessionStore } from "../src/sessions.ts"
 
 class ScriptedBackend implements AgentBackend {
   readonly info: AgentBackendInfo = {
@@ -242,15 +243,15 @@ test("a malformed backend event's failure names the field it broke", async () =>
         type: "turn.started",
         turnId: "t",
         prompt: "p".repeat(256 * 1024 + 1),
-      } as never
+      }
     })()
   const host = new CodingAgentHost({ backend })
   await host.start({ cwd: process.cwd(), sessionId: "named", backend: backend.info.name })
   const events: AgentEvent[] = []
   for await (const event of host.prompt("long")) events.push(event)
   expect(events).toHaveLength(1)
-  const failed = events[0] as Extract<AgentEvent, { type: "session.failed" }>
-  expect(failed.error).toEqual({
+  const failed = events[0]
+  expect(failed?.type === "session.failed" ? failed.error : undefined).toEqual({
     code: "BACKEND_PROTOCOL",
     message:
       "backend emitted an invalid agent event: turn.started.prompt is longer than 262144 characters",
@@ -260,67 +261,71 @@ test("a malformed backend event's failure names the field it broke", async () =>
 
 test("extension events pass through unless their registered check refuses them", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-ext-"))
-  const appended: Array<{ type: string; payload: unknown }> = []
-  const store = {
-    append: async (_id: string, type: string, payload: unknown) => {
-      appended.push({ type, payload })
-    },
-    checkpoint: async () => {},
-    read: async () => [],
-  } as unknown as SessionStore
-  const run = async (extensionEvents?: Record<string, (event: never) => boolean>) => {
+  const run = async (
+    sessionId: string,
+    extensionEvents?: Record<string, (event: AgentExtensionEvent) => boolean>,
+  ) => {
     const backend = new ScriptedBackend()
     const send = backend.send.bind(backend)
     backend.send = (input) =>
       (async function* (): AsyncGenerator<AgentEvent> {
         for await (const event of send(input)) {
           yield event
-          if (event.type === "turn.started") {
-            const base = { version: 1, sessionId: event.sessionId, at: 0 } as const
-            yield {
-              ...base,
-              seq: 100,
-              type: "x-codex.plan",
-              turnId: event.turnId,
-              data: { steps: 2 },
-            }
-            yield { ...base, seq: 101, type: "x-acme.notice", data: "unchecked" }
+          if (event.type !== "turn.started") continue
+          yield {
+            version: 1,
+            sessionId: event.sessionId,
+            seq: 100,
+            at: 0,
+            type: "x-codex.plan",
+            turnId: event.turnId,
+            data: { steps: 2 },
+          }
+          yield {
+            version: 1,
+            sessionId: event.sessionId,
+            seq: 101,
+            at: 0,
+            type: "x-acme.notice",
+            data: "unchecked",
           }
         }
       })()
-    const host = new CodingAgentHost({
-      backend,
-      sessionStore: store,
-      ...(extensionEvents === undefined ? {} : { extensionEvents }),
-    })
-    await host.start({ cwd: root, backend: backend.info.name })
+    const sessionStore = new FileSessionStore({ root })
+    const host = new CodingAgentHost(
+      extensionEvents === undefined
+        ? { backend, sessionStore }
+        : { backend, sessionStore, extensionEvents },
+    )
+    await host.start({ cwd: root, sessionId, backend: backend.info.name })
     const events: AgentEvent[] = []
     for await (const event of host.prompt("plan")) events.push(event)
     await host.stop()
-    return events.map((event) => event.type)
+    const stored = await sessionStore.read(sessionId)
+    return { types: events.map((event) => event.type), stored }
   }
   try {
-    expect(await run()).toEqual([
+    const passed = await run("passes")
+    expect(passed.types).toEqual([
       "turn.started",
       "x-codex.plan",
       "x-acme.notice",
       "assistant.message",
       "session.completed",
     ])
-    expect(appended.find((entry) => entry.type === "x-codex.plan")?.payload).toEqual({
+    expect(passed.stored.find((entry) => entry.type === "x-codex.plan")?.payload).toEqual({
       turnId: "turn-1",
     })
-    expect(appended.find((entry) => entry.type === "x-acme.notice")?.payload).toEqual({})
+    expect(passed.stored.find((entry) => entry.type === "x-acme.notice")?.payload).toEqual({})
 
     const checked: unknown[] = []
-    expect(
-      await run({
-        "x-codex.plan": (event: { data?: unknown }) => {
-          checked.push(event.data)
-          return false
-        },
-      }),
-    ).toEqual(["turn.started", "session.failed"])
+    const refused = await run("refused", {
+      "x-codex.plan": (event) => {
+        checked.push(event.data)
+        return false
+      },
+    })
+    expect(refused.types).toEqual(["turn.started", "session.failed"])
     expect(checked).toEqual([{ steps: 2 }])
 
     expect(

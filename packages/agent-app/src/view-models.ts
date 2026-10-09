@@ -12,7 +12,6 @@
 
 import {
   type AgentEvent,
-  type AgentExtensionEvent,
   type AgentExtensionEventType,
   type AgentSessionSnapshot,
   type AgentSessionStatus,
@@ -287,15 +286,13 @@ export function toEventView(event: AgentEvent): AgentEventView {
       })
     case "session.stopped":
       return Object.freeze({ ...base, kind: event.type })
-    default: {
-      const extension = event as AgentExtensionEvent
+    default:
       return Object.freeze({
         ...base,
-        kind: extension.type,
-        ...(extension.turnId === undefined ? {} : { turnId: extension.turnId }),
-        hasData: extension.data !== undefined,
+        kind: event.type,
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        hasData: event.data !== undefined,
       })
-    }
   }
 }
 

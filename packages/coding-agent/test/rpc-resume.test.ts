@@ -65,7 +65,8 @@ class GatedBackend implements AgentBackend {
   }
 
   async snapshot(): Promise<AgentSessionSnapshot> {
-    return this.current as AgentSessionSnapshot
+    if (this.current === undefined) throw new Error("gated backend: no session")
+    return this.current
   }
 
   async reload() {
@@ -75,6 +76,7 @@ class GatedBackend implements AgentBackend {
   async close(): Promise<void> {}
 
   private event(payload: AgentEventPayload): AgentEvent {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: one payload member under the envelope is its own AgentEvent member; TS cannot distribute the spread.
     return {
       version: 1,
       sessionId: this.current?.id ?? "gated-session",
@@ -86,8 +88,8 @@ class GatedBackend implements AgentBackend {
 }
 
 interface Frame {
-  readonly id?: string
-  readonly event?: string
+  readonly id: string | undefined
+  readonly event: string | undefined
   readonly data: string
 }
 
@@ -108,11 +110,7 @@ class FrameReader {
             .split("\n")
             .map((line) => [line.slice(0, line.indexOf(":")), line.slice(line.indexOf(":") + 2)]),
         )
-        return {
-          ...(fields.has("id") ? { id: fields.get("id") } : {}),
-          ...(fields.has("event") ? { event: fields.get("event") } : {}),
-          data: fields.get("data") ?? "",
-        }
+        return { id: fields.get("id"), event: fields.get("event"), data: fields.get("data") ?? "" }
       }
       const { done, value } = await this.reader.read()
       if (done) return undefined
@@ -152,7 +150,8 @@ async function serve(
         "content-type": "application/json",
         ...headers,
       },
-      body: JSON.stringify({ method, ...(params === undefined ? {} : { params }) }),
+      // JSON leaves out an undefined params.
+      body: JSON.stringify({ method, params }),
     })
   expect((await call("session.create")).status).toBe(200)
   return { call, stop: handle.stop }
@@ -163,8 +162,15 @@ function frames(response: Response): FrameReader {
   return new FrameReader(response.body.getReader())
 }
 
-const text = (frame: Frame | undefined): string | undefined =>
-  frame === undefined ? undefined : (JSON.parse(frame.data) as { text?: string }).text
+function text(frame: Frame | undefined): string | undefined {
+  const value: unknown = frame === undefined ? undefined : JSON.parse(frame.data)
+  return typeof value === "object" &&
+    value !== null &&
+    "text" in value &&
+    typeof value.text === "string"
+    ? value.text
+    : undefined
+}
 
 describe("resumable RPC turns", () => {
   test("a client that drops reads what it missed and follows the rest", async () => {
@@ -293,7 +299,7 @@ describe("ReplayableTurn", () => {
       counts.push(count),
     )
     const one = turn.follow()
-    const two = turn.attach(-1) as ReadableStream<Uint8Array>
+    const two = turn.follow()
     await one.cancel()
     turn.push(0, bytes("x"))
     turn.end()
