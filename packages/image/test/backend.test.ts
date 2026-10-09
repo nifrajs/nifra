@@ -293,7 +293,11 @@ describe("wasmImageBackend turns a JPEG upright by its EXIF orientation", () => 
     ],
   }
 
-  const encodedFrom = async (orientation: number, decoded: DecodedImage): Promise<DecodedImage> => {
+  const encodedFrom = async (
+    orientation: number,
+    decoded: DecodedImage,
+    orientsJpeg?: boolean,
+  ): Promise<DecodedImage> => {
     let encoded: DecodedImage | undefined
     const codecs: WasmImageCodecs = {
       decode: () => decoded,
@@ -303,8 +307,10 @@ describe("wasmImageBackend turns a JPEG upright by its EXIF orientation", () => 
         return new Uint8Array()
       },
     }
-    const backend = wasmImageBackend(codecs)
-    const bytes = exifJpeg(orientation, 3, 2)
+    const backend = wasmImageBackend(
+      orientsJpeg === undefined ? codecs : { ...codecs, orientsJpeg },
+    )
+    const bytes = exifJpeg(orientation, decoded.width === decoded.height ? 2 : 3, 2)
     const { width } = await backend.probe(bytes)
     await backend.transform({ bytes, width, quality: 80, format: "png" })
     if (encoded === undefined) throw new Error("nothing was encoded")
@@ -320,6 +326,22 @@ describe("wasmImageBackend turns a JPEG upright by its EXIF orientation", () => 
       height: rows.length,
     })
     expect([...image.data].filter((_, i) => i % 4 === 0)).toEqual(rows.flat())
+  })
+
+  test("a square image is turned too, though its size cannot show it was not", async () => {
+    // Stored 2x2 [[1, 2], [3, 4]]; orientation 6 shows [[3, 1], [4, 2]].
+    const data = new Uint8Array([1, 2, 3, 4].flatMap((label) => [label, 0, 0, 255]))
+    const image = await encodedFrom(6, { data, width: 2, height: 2 })
+    expect([...image.data].filter((_, i) => i % 4 === 0)).toEqual([3, 1, 4, 2])
+  })
+
+  test("a codec that declares it orients JPEGs is never turned again", async () => {
+    const square = new Uint8Array([3, 1, 4, 2].flatMap((label) => [label, 0, 0, 255]))
+    const turned = await encodedFrom(6, { data: square, width: 2, height: 2 }, true)
+    expect([...turned.data].filter((_, i) => i % 4 === 0)).toEqual([3, 1, 4, 2])
+    const flipped = new Uint8Array([3, 2, 1, 6, 5, 4].flatMap((label) => [label, 0, 0, 255]))
+    const mirrored = await encodedFrom(2, { data: flipped, width: 3, height: 2 }, true)
+    expect([...mirrored.data].filter((_, i) => i % 4 === 0)).toEqual([3, 2, 1, 6, 5, 4])
   })
 
   test("a codec that already turned the pixels is left as it is", async () => {
