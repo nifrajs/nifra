@@ -270,6 +270,15 @@ export default function Structure() {
         <code>package.json</code> where they are. It reports what still needs a hand, such as an
         alias with no target that covers a moved file, or a specifier that names nothing installed.
       </p>
+      <p>
+        An API-only app, one that declares <code>{'"nifra": { "kind": "api" }'}</code> or has no web
+        config, no <code>routes/</code> and a <code>backend.ts</code>, migrates as one: only{" "}
+        <code>backend.ts</code> moves, to <code>backend/app.ts</code>, with the imports from it and
+        to it. Nothing is split or zoned. The migration adds <code>backend</code> to tsconfig{" "}
+        <code>include</code>, <code>.nifra/</code> to <code>.gitignore</code>, and the declaration
+        to <code>package.json</code> when it is missing. Web config without <code>routes/</code>{" "}
+        could be either kind of app, so the migration stops and asks which.
+      </p>
     </div>
   )
 }

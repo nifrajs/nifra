@@ -39,7 +39,9 @@ import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "no
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import { parseZoneConfig, type ZoneConfig } from "@nifrajs/web/zones"
 import type * as TS from "typescript"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
@@ -97,6 +99,8 @@ export interface LayoutMigrationIssue {
 export interface LayoutMigrationResult {
   readonly ok: boolean
   readonly write: boolean
+  /** `"api"` for an app that serves no pages: only its backend entry moves, nothing is split or zoned. */
+  readonly mode: "web" | "api"
   /** Route files whose backend exports moved, and where they went. */
   readonly splits: ReadonlyArray<{
     readonly file: string
@@ -1108,6 +1112,40 @@ const isRootScript = (file: string): boolean =>
 const isTestFile = (file: string): boolean =>
   /(?:^|\/)(?:test|tests|__tests__)\//.test(file) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
 
+/** The web config an app has, old root `framework.ts` included, or `undefined`. */
+const webConfigFile = (root: string): string | undefined =>
+  ["framework.ts", FRAMEWORK_FILE].find((file) => existsSync(join(root, file))) ??
+  (hasWebConfig(root, ".") ? CONFIG_FILE : undefined)
+
+/**
+ * `"api"` when the app declares `"nifra": { "kind": "api" }`, or has no web config, no `routes/` and a
+ * backend; `"web"` when it has `routes/`. Web config without `routes/` could be either, so it throws.
+ */
+function layoutMode(root: string): "web" | "api" {
+  const declared = createKindProbe(root)(root)
+  if (declared.invalid !== undefined) throw new Error(declared.invalid)
+  const config = webConfigFile(root)
+  if (declared.kind === "api") {
+    if (config === undefined) return "api"
+    throw new Error(
+      `[nifra] ${declared.manifest} declares "nifra": { "kind": "api" }, but ${root} has web config (${config}); remove "kind" to migrate it as a web app, or remove the web config`,
+    )
+  }
+  if (existsSync(join(root, "routes"))) return "web"
+  if (config !== undefined) {
+    throw new Error(
+      `[nifra] no routes/ directory in ${root}, but it has web config (${config}). A web app is file-routed under routes/; if this one serves no pages, remove the web config and declare "nifra": { "kind": "api" } in package.json`,
+    )
+  }
+  if (declared.kind === "web") throw new Error(`[nifra] no routes/ directory in ${root}`)
+  if (!existsSync(join(root, "backend.ts")) && !existsSync(join(root, BACKEND_APP_FILE))) {
+    throw new Error(
+      `[nifra] ${root} has no routes/, no web config and no backend.ts or ${BACKEND_APP_FILE}; there is nothing to migrate`,
+    )
+  }
+  return "api"
+}
+
 export async function migrateLayout(
   appRoot: string,
   options: LayoutMigrationOptions = {},
@@ -1116,7 +1154,9 @@ export async function migrateLayout(
   if (ts === undefined)
     throw new Error("[nifra] `nifra migrate layout` needs TypeScript: bun add -d typescript")
   const root = resolve(appRoot)
-  if (!existsSync(join(root, "routes"))) throw new Error(`[nifra] no routes/ directory in ${root}`)
+  const mode = layoutMode(root)
+  // An API-only app has no browser: nothing to split, and every file is server code where it is.
+  const api = mode === "api"
   const zones = appZones(root)
   const configured = [...(zones.backend ?? []), ...(zones.frontend ?? []), ...(zones.shared ?? [])]
   const inConfiguredFolder = (file: string): boolean =>
@@ -1137,7 +1177,7 @@ export async function migrateLayout(
   // 1-2. Route halves and middleware.
   const backendHalves = new Map<string, string>()
   for (const [file, text] of original) {
-    if (!file.startsWith("routes/") || file.includes(".backend.")) continue
+    if (api || !file.startsWith("routes/") || file.includes(".backend.")) continue
     if (/(?:^|\/)_middleware\.[cm]?[jt]sx?$/.test(file)) {
       const target = posix.join(posix.dirname(file), "_layout.backend.ts")
       backendHalves.set(
@@ -1248,7 +1288,7 @@ export async function migrateLayout(
     return found
   }
   const edges = new Map<string, Array<{ target: string; typeOnly: boolean }>>()
-  for (const [file, text] of next) {
+  for (const [file, text] of api ? [] : next) {
     const refs: Array<{ target: string; typeOnly: boolean }> = []
     const reported = new Set<string>()
     for (const ref of importsOf(ts, file, text)) {
@@ -1338,7 +1378,7 @@ export async function migrateLayout(
     pages,
   )
   // A `.server` module ran empty in the browser, so only server code used it: it moves under backend/.
-  for (const file of files) {
+  for (const file of api ? [] : files) {
     if (!LEGACY_SERVER.test(file) || isTestFile(file)) continue
     const parts = file.replace(LEGACY_SERVER, "$1").split("/")
     if (parts.length > 1 && ZONE_DIRS.has(parts[0] ?? "")) parts.shift()
@@ -1353,7 +1393,7 @@ export async function migrateLayout(
   }
   const zoneOf = (file: string): "frontend" | "backend" | "shared" =>
     browser.has(file) && server.has(file) ? "shared" : browser.has(file) ? "frontend" : "backend"
-  for (const file of files) {
+  for (const file of api ? [] : files) {
     if (
       moveMap.has(file) ||
       isTestFile(file) ||
@@ -1573,6 +1613,13 @@ export async function migrateLayout(
     toolingWrites.set(".gitignore", gitignore)
     tooling.push({ file: ".gitignore", change: "ignore .nifra/ (dev and build state)" })
   }
+  // `nifra check` reads the declaration statically; without it, a later routes/ or config would zone the app.
+  const kind = api && createKindProbe(root)(root).kind === undefined ? declareApiKind(ts, root) : {}
+  if (kind.issue !== undefined) issues.push({ file: "package.json", reason: kind.issue })
+  if (kind.text !== undefined) {
+    toolingWrites.set("package.json", kind.text)
+    tooling.push({ file: "package.json", change: '"nifra": { "kind": "api" }' })
+  }
 
   if (options.write === true) {
     for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
@@ -1595,6 +1642,7 @@ export async function migrateLayout(
   return {
     ok: issues.length === 0,
     write: options.write === true,
+    mode,
     splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
@@ -1647,12 +1695,7 @@ function coverMovedFiles(
   const top = source.statements[0]?.expression
   if (top === undefined || !ts.isObjectLiteralExpression(top))
     return { added: [], issue: "is not a JSON object; add the zone folders to its include by hand" }
-  const include = top.properties.find(
-    (property): property is TS.PropertyAssignment =>
-      ts.isPropertyAssignment(property) &&
-      ts.isStringLiteral(property.name) &&
-      property.name.text === "include",
-  )
+  const include = jsonProperty(ts, top, "include")
   if (include === undefined) return undefined
   const array = include.initializer
   if (!ts.isArrayLiteralExpression(array))
@@ -1697,6 +1740,59 @@ function coverMovedFiles(
   }
   const insert = trailing !== null ? ` ${quoted.join(", ")},` : `, ${quoted.join(", ")}`
   return { text: `${text.slice(0, at)}${insert}${text.slice(at)}`, added }
+}
+
+const jsonProperty = (
+  ts: typeof TS,
+  object: TS.ObjectLiteralExpression,
+  key: string,
+): TS.PropertyAssignment | undefined =>
+  object.properties.find(
+    (property): property is TS.PropertyAssignment =>
+      ts.isPropertyAssignment(property) &&
+      ts.isStringLiteral(property.name) &&
+      property.name.text === key,
+  )
+
+/** `text` with `entry` as the last property of `object`, on its own line when the object spans lines. */
+function insertProperty(
+  source: TS.JsonSourceFile,
+  text: string,
+  object: TS.ObjectLiteralExpression,
+  entry: string,
+): string {
+  const open = object.getStart(source)
+  const last = object.properties[object.properties.length - 1]
+  if (last === undefined) return `${text.slice(0, open)}{ ${entry} }${text.slice(object.end)}`
+  const start = last.getStart(source)
+  if (!text.slice(open, start).includes("\n")) {
+    return `${text.slice(0, last.end)}, ${entry}${text.slice(last.end)}`
+  }
+  const indent = /^[ \t]*/.exec(text.slice(text.lastIndexOf("\n", start) + 1, start))?.[0] ?? ""
+  return `${text.slice(0, last.end)},\n${indent}${entry}${text.slice(last.end)}`
+}
+
+/** The app's package.json with `"nifra": { "kind": "api" }` added, editing only where it goes. */
+function declareApiKind(ts: typeof TS, root: string): { text?: string; issue?: string } {
+  const path = join(root, "package.json")
+  if (!existsSync(path)) {
+    return {
+      issue:
+        'there is none in the app; declare "nifra": { "kind": "api" } in the package.json that governs it',
+    }
+  }
+  const text = readFileSync(path, "utf8")
+  const source = ts.parseJsonText(path, text)
+  const top = source.statements[0]?.expression
+  if (top === undefined || !ts.isObjectLiteralExpression(top))
+    return { issue: 'is not a JSON object; add "nifra": { "kind": "api" } to it by hand' }
+  const nifra = jsonProperty(ts, top, "nifra")
+  if (nifra === undefined) {
+    return { text: insertProperty(source, text, top, '"nifra": { "kind": "api" }') }
+  }
+  if (!ts.isObjectLiteralExpression(nifra.initializer))
+    return { issue: '"nifra" is not an object; add "kind": "api" to it by hand' }
+  return { text: insertProperty(source, text, nifra.initializer, '"kind": "api"') }
 }
 
 /** Tailwind `content` globs that matched a moved file at its old path and match nothing at its new one. */

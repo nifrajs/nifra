@@ -702,3 +702,91 @@ describe("migrateLayout", () => {
     }
   })
 })
+
+describe("migrateLayout on an API-only app", () => {
+  const PACKAGE = '{\n  "name": "orders-api",\n  "scripts": { "start": "bun backend.ts" }\n}\n'
+  const backendOnly = (extra: Record<string, string> = {}) =>
+    app({
+      "package.json": PACKAGE,
+      "tsconfig.json": '{ "include": ["*.ts", "lib"] }\n',
+      "backend.ts":
+        'import { server } from "@nifrajs/core"\nimport { db } from "./lib/db"\nexport const backend = server().get("/orders", () => db.all())\n',
+      "lib/db.ts": "export const db = { all: () => [] }\n",
+      "scripts/seed.ts": 'import { backend } from "../backend"\nvoid backend\n',
+      ...extra,
+    })
+
+  test("only the backend entry moves; nothing is split or zoned, and the dry run shows the kind it declares", async () => {
+    const dir = backendOnly()
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.mode).toBe("api")
+    expect(result.splits).toEqual([])
+    expect(result.moves).toEqual([{ from: "backend.ts", to: "backend/app.ts" }])
+    expect(result.rewritten).toEqual(["scripts/seed.ts"])
+    expect(result.tooling).toContainEqual({ file: "tsconfig.json", change: "include += backend" })
+    expect(result.tooling).toContainEqual({
+      file: "package.json",
+      change: '"nifra": { "kind": "api" }',
+    })
+    expect(result.issues).toEqual([
+      {
+        file: "package.json",
+        reason: 'mentions "backend.ts" by path; it moved to "backend/app.ts"',
+      },
+    ])
+    expect(read(dir, "package.json")).toBe(PACKAGE)
+  })
+
+  test("--write moves it, follows its imports both ways and declares the kind in place", async () => {
+    const dir = backendOnly()
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(existsSync(join(dir, "backend.ts"))).toBe(false)
+    expect(read(dir, "backend/app.ts")).toContain('from "../lib/db"')
+    expect(read(dir, "lib/db.ts")).toBe("export const db = { all: () => [] }\n")
+    expect(read(dir, "scripts/seed.ts")).toContain('from "../backend/app"')
+    expect(read(dir, "package.json")).toBe(
+      '{\n  "name": "orders-api",\n  "scripts": { "start": "bun backend.ts" },\n  "nifra": { "kind": "api" }\n}\n',
+    )
+    expect(read(dir, "tsconfig.json")).toBe('{ "include": ["*.ts", "lib", "backend"] }\n')
+  })
+
+  test("a declared kind keeps routes/ unsplit and adds nothing to package.json", async () => {
+    const declared = '{ "name": "x", "nifra": { "kind": "api" } }\n'
+    const dir = app({
+      "package.json": declared,
+      "backend.ts": "export const backend = { routes: () => [] }\n",
+      "routes/index.tsx":
+        "export async function loader() { return {} }\nexport default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.mode).toBe("api")
+    expect(result.splits).toEqual([])
+    expect(result.moves).toEqual([{ from: "backend.ts", to: "backend/app.ts" }])
+    expect(result.tooling.map((edit) => edit.file)).not.toContain("package.json")
+  })
+
+  test("the kind goes into an existing nifra object, on the object's own line style", async () => {
+    const dir = backendOnly({ "package.json": '{"name":"x","nifra":{"zones":{}}}' })
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "package.json")).toBe('{"name":"x","nifra":{"zones":{}, "kind": "api"}}')
+  })
+
+  test("web config without routes/, or a kind that clashes with it, is refused with the choice to make", async () => {
+    const config = 'export const adapter = {}\nexport const clientModule = "x"\n'
+    const unrouted = app({ "nifra.config.ts": config, "backend.ts": "export const backend = 1\n" })
+    await expect(migrateLayout(unrouted, { typescript: ts })).rejects.toThrow(
+      'but it has web config (nifra.config.ts). A web app is file-routed under routes/; if this one serves no pages, remove the web config and declare "nifra": { "kind": "api" } in package.json',
+    )
+    const clash = app({
+      "package.json": '{ "nifra": { "kind": "api" } }',
+      "nifra.config.ts": config,
+      "routes/index.tsx": "export default () => null\n",
+    })
+    await expect(migrateLayout(clash, { typescript: ts })).rejects.toThrow(
+      'package.json declares "nifra": { "kind": "api" }, but',
+    )
+    await expect(migrateLayout(app({ "lib/x.ts": "" }), { typescript: ts })).rejects.toThrow(
+      "there is nothing to migrate",
+    )
+  })
+})

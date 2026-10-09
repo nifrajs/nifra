@@ -10873,6 +10873,14 @@ folders to tsconfig `include` and `.nifra/` to
 `package.json` where they are. It reports what still needs a hand, such as an
 alias with no target that covers a moved file, or a specifier that names nothing installed.
 
+An API-only app, one that declares `{'"nifra": { "kind": "api" }'}` or has no web
+config, no `routes/` and a `backend.ts`, migrates as one: only
+`backend.ts` moves, to `backend/app.ts`, with the imports from it and
+to it. Nothing is split or zoned. The migration adds `backend` to tsconfig
+`include`, `.nifra/` to `.gitignore`, and the declaration
+to `package.json` when it is missing. Web config without `routes/`
+could be either kind of app, so the migration stops and asks which.
+
 ## Nifra - Contract-derived adversarial testing
 
 > Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.
