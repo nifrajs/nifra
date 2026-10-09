@@ -215,19 +215,29 @@ export async function runDataAdapterConformance<Adapter, Row, Snapshot, Cursor =
       }
     })
 
+    const keysIn = async (scope: DataConformanceScope): Promise<ReadonlySet<string>> =>
+      new Set((await target.read(primary, scope)).map(target.rowKey))
+    const sameKeys = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean =>
+      a.size === b.size && [...a].every((key) => b.has(key))
+
     await run("cancellation", async () => {
       const controller = new AbortController()
       controller.abort()
+      let refused = false
       try {
         await target.write(primary, scopes.left, rows.rollback, controller.signal)
       } catch (error) {
-        if (isAbortLike(error) || controller.signal.aborted) return
-        throw error
+        // Any other failure (a refused connection, a rejected row) proves nothing about the signal.
+        if (!isAbortLike(error) && error !== controller.signal.reason) throw error
+        refused = true
       }
-      throw new Error("cancelled write resolved successfully")
+      if (!refused) throw new Error("cancelled write resolved successfully")
+      if ((await keysIn(scopes.left)).has(target.rowKey(rows.rollback)))
+        throw new Error("cancelled write reached durable state")
     })
 
     await run("pagination", async () => {
+      const expected = await keysIn(scopes.left)
       const seen: string[] = []
       const cursors = new Set<string>()
       let cursor: Cursor | undefined
@@ -242,16 +252,22 @@ export async function runDataAdapterConformance<Adapter, Row, Snapshot, Cursor =
         if (pageNumber === 99) throw new Error("pagination did not terminate")
       }
       if (new Set(seen).size !== seen.length) throw new Error("pagination returned a duplicate row")
+      if (!sameKeys(new Set(seen), expected))
+        throw new Error("pagination did not return exactly the scope's rows")
     })
 
     await run("backup-restore", async () => {
+      const left = await keysIn(scopes.left)
+      const right = await keysIn(scopes.right)
       const snapshot = await target.snapshot(primary)
       await target.seed(primary, scopes.left, rows.rollback)
       await target.restore(primary, snapshot)
-      const restored = new Set((await target.read(primary, scopes.left)).map(target.rowKey))
-      if (restored.has(target.rowKey(rows.rollback))) {
-        throw new Error("restore did not remove post-backup data")
-      }
+      // Restore returns every scope to the snapshot: no later row, and no row the snapshot held lost.
+      if (
+        !sameKeys(await keysIn(scopes.left), left) ||
+        !sameKeys(await keysIn(scopes.right), right)
+      )
+        throw new Error("restore did not return the snapshot's rows")
     })
 
     await run("multi-instance", async () => {
