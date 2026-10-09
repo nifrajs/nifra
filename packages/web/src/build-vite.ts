@@ -184,6 +184,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
       // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
       ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
+      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
+      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -359,14 +361,22 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     routes._404 = c !== undefined ? [c] : []
   }
 
-  // CSS per route - Vite's manifest `css` is the transitive stylesheet set for that entry.
+  // CSS per route. A manifest entry's `css` lists only that chunk's own stylesheets, so a page also
+  // needs those of every chunk it imports statically (a component two routes share gets a chunk of
+  // its own) and the bootstrap's, which every page loads (a stylesheet the client module imports).
+  // The bootstrap's come first: the whole-app stylesheet before any route-scoped one.
   const stylesFor = (files: readonly string[]): readonly string[] => {
     const urls = new Set<string>()
-    for (const file of files) {
-      const key = fileKey.get(file)
-      const entry = key !== undefined ? viteManifest[key] : undefined
+    const seen = new Set<string>()
+    const visit = (key: string | undefined): void => {
+      if (key === undefined || seen.has(key)) return
+      seen.add(key)
+      const entry = viteManifest[key]
       for (const css of entry?.css ?? []) urls.add(url(css))
+      for (const imported of entry?.imports ?? []) visit(imported)
     }
+    visit(entryKey)
+    for (const file of files) visit(fileKey.get(file))
     return [...urls]
   }
   // CSS aggregate - every stylesheet the app emits, the always-safe fallback. With native Vite
@@ -383,8 +393,13 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   // A single aggregate stylesheet is deliberately the route fallback. A per-route `[]` map would
   // suppress it in `createWebApp` and produce unstyled SSR on every route.
   if (css.length > 0 && cssCodeSplit) {
-    for (const route of routeManifest.routes) routeStyles[route.id] = stylesFor(chainFiles(route))
-    if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
+    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
+    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
+    for (const route of routeManifest.routes)
+      routeStyles[route.id] = stylesFor([...chainFiles(route), ...loadingFiles])
+    if (routeManifest.notFound)
+      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
     for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
       routeStyles[id] = stylesFor([
         ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),

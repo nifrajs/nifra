@@ -204,6 +204,41 @@ test("a _loading page is built as a lazy chunk, and its stylesheet ships with th
   expect((manifest.css ?? []).some((url) => read(url).includes(".skeleton"))).toBe(true)
 }, 60_000)
 
+test("a route links the stylesheets of the chunks it imports, the client module's, and the loading pages'", async () => {
+  const { root, routesDir } = scaffold({
+    "frontend/client.ts": 'import "./global.css"\nexport function mountRouter() {}\n',
+    "frontend/global.css": ".global { color: green }\n",
+    // Imported by two routes, so it lands in a chunk of its own.
+    "frontend/Button.ts": 'import "./button.css"\nexport const Button = () => "btn"\n',
+    "frontend/button.css": ".button { color: red }\n",
+    "frontend/skeleton.css": ".skeleton { color: gray }\n",
+    "routes/index.tsx":
+      'import { Button } from "../frontend/Button"\nexport default function Index() { return Button() }\n',
+    "routes/about.tsx":
+      'import { Button } from "../frontend/Button"\nexport default function About() { return Button() }\n',
+    "routes/_loading.tsx":
+      'import "../frontend/skeleton.css"\nexport default function Skeleton() { return null }\n',
+  })
+  const manifest = await buildClientVite({
+    root,
+    routesDir,
+    outDir: join(root, "dist", "assets"),
+    clientModule: join(root, "frontend/client.ts"),
+    minify: false,
+  })
+  const read = (url: string): string =>
+    readFileSync(join(root, "dist", "assets", url.slice(url.lastIndexOf("/") + 1)), "utf8")
+  for (const id of ["index", "about"]) {
+    const linked = (manifest.routeStyles?.[id] ?? []).map(read).join("")
+    expect({ id, global: linked.includes(".global"), button: linked.includes(".button") }).toEqual({
+      id,
+      global: true,
+      button: true,
+    })
+    expect(linked.includes(".skeleton")).toBe(true)
+  }
+}, 60_000)
+
 test("rejects deferred loading when Vite CSS remains split", async () => {
   const { root, routesDir } = scaffold({
     "routes/index.tsx":
