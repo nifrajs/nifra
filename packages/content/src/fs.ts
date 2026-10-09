@@ -3,7 +3,7 @@
  * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno); for the edge, bake the
  * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) - tracked as a follow-up.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, type Stats, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
 import { type Entry, type InferSchema, parseEntry, type StandardSchemaV1 } from "./index.ts"
 
@@ -21,7 +21,8 @@ export interface Collection<Frontmatter> {
   /** Every entry in the directory (unordered - sort/filter in your loader). Throws if any file's
    * frontmatter is invalid. */
   all(): Promise<Array<Entry<Frontmatter>>>
-  /** One entry by slug (filename without extension), or `null` if not found. */
+  /** One entry by slug (filename without extension), or `null` if not found. Throws, as `all()`
+   * does, if the file's frontmatter is invalid. */
   get(slug: string): Promise<Entry<Frontmatter> | null>
 }
 
@@ -126,13 +127,15 @@ export function defineCollection<S extends StandardSchemaV1>(
       for (const ext of extensions) {
         const file = resolve(root, `${slug}${ext}`)
         if (!insideRoot(root, file)) return null
+        let stat: Stats
         try {
-          const stat = statSync(file)
-          if (!stat.isFile()) continue
-          return await readEntry(file, slug, `${stat.mtimeMs}:${stat.size}`)
+          stat = statSync(file)
         } catch {
-          // Not this extension or unreadable; try the next configured extension.
+          continue // Not this extension; try the next configured one.
         }
+        if (!stat.isFile()) continue
+        // Outside the try: a file that exists but fails to parse is an error, not a missing entry.
+        return await readEntry(file, slug, `${stat.mtimeMs}:${stat.size}`)
       }
       return null
     },

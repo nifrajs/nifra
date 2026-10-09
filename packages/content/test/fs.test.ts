@@ -26,6 +26,24 @@ test("get(slug) loads one entry; returns null for a missing slug", async () => {
   expect(await blog.get("does-not-exist")).toBeNull()
 })
 
+test("get(slug) throws for an entry that fails to parse, as all() does, and is null only when missing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-content-"))
+  try {
+    writeFileSync(join(dir, "broken.md"), "---\ntitle: [unclosed\n---\nbody")
+    writeFileSync(join(dir, "invalid.md"), "---\ntitle: 7\ndate: 2026-01-01\ndraft: false\n---\n")
+    const posts = defineCollection({
+      dir,
+      schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),
+    })
+    await expect(posts.get("broken")).rejects.toThrow()
+    await expect(posts.get("invalid")).rejects.toThrow()
+    await expect(posts.all()).rejects.toThrow()
+    expect(await posts.get("missing")).toBeNull()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("get(slug) rejects path traversal and encoded slash route params", async () => {
   const dir = mkdtempSync(join(tmpdir(), "nifra-content-"))
   try {

@@ -3344,7 +3344,7 @@
     "name": "Collection",
     "kind": "interface",
     "package": "@nifrajs/content",
-    "signature": "export interface Collection<Frontmatter> {\n    /** Every entry in the directory (unordered - sort/filter in your loader). Throws if any file's\n     * frontmatter is invalid. */\n    all(): Promise<Array<Entry<Frontmatter>>>;\n    /** One entry by slug (filename without extension), or `null` if not found. */\n    get(slug: string): Promise<Entry<Frontmatter> | null>;\n}",
+    "signature": "export interface Collection<Frontmatter> {\n    /** Every entry in the directory (unordered - sort/filter in your loader). Throws if any file's\n     * frontmatter is invalid. */\n    all(): Promise<Array<Entry<Frontmatter>>>;\n    /** One entry by slug (filename without extension), or `null` if not found. Throws, as `all()`\n     * does, if the file's frontmatter is invalid. */\n    get(slug: string): Promise<Entry<Frontmatter> | null>;\n}",
     "doc": "/** A typed collection over a content directory. */"
   },
   {
