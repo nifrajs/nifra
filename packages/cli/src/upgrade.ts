@@ -5,6 +5,8 @@
  *
  *   1. **pin sweep** - set every matching dependency to the target version across the workspace's
  *      package.json files, preserving the caret/tilde/exact style and skipping `workspace:`/`link:` specs.
+ *      `overrides`, `resolutions` and `pnpm.overrides` are swept too, since they decide what installs;
+ *      a version pinned anywhere else (an MCP config, a Dockerfile, another lockfile) is listed only.
  *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
@@ -28,6 +30,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  statSync,
   writeFileSync,
 } from "node:fs"
 import { dirname, join, relative, sep } from "node:path"
@@ -115,6 +118,8 @@ export interface UpgradePlan {
   readonly retiredMarkers: readonly RetiredMarkerSite[]
   /** Installed group packages linked from outside the workspace root, at another version. Never edited. */
   readonly linkedOutside: readonly LinkedGroupInstall[]
+  /** Other versions pinned outside package.json. Never edited. */
+  readonly strayPins: readonly StrayPin[]
   readonly notes: readonly string[]
 }
 
@@ -240,63 +245,153 @@ export function pinSweepText(
   let out = text
   const changes: Array<Omit<PinChange, "file">> = []
   const downgrades: Array<Omit<PinChange, "file">> = []
-  for (const field of DEP_FIELDS) {
-    const deps = parsed[field]
-    if (typeof deps !== "object" || deps === null) continue
-    for (const [name, rawSpec] of Object.entries(deps as Record<string, unknown>)) {
-      if (typeof rawSpec !== "string") continue
-      const rule = rules.find(
-        (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
-      )
-      if (!rule) continue
-      const next = rewriteVersionSpec(rawSpec, rule.to, exact)
-      if (next === null) continue
-      // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
-      // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
-      const current = specVersionTuple(rawSpec)
-      const target = specVersionTuple(rule.to)
-      if (
-        !allowDowngrade &&
-        current !== null &&
-        target !== null &&
-        compareSemverSpec(rawSpec, rule.to) > 0
-      ) {
-        downgrades.push({ field, name, from: rawSpec, to: next })
-        continue
-      }
-      // Replace exactly `"name"<ws>:<ws>"spec"`, preserving the surrounding whitespace.
-      const pattern = new RegExp(`("${escapeRegExp(name)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`)
-      const replaced = out.replace(pattern, `$1${next}$2`)
-      if (replaced !== out) {
-        out = replaced
-        changes.push({ field, name, from: rawSpec, to: next })
-      }
+  for (const { path, key, target: name, spec: rawSpec } of pinEntries(parsed)) {
+    const field = path.join(".")
+    const rule = rules.find(
+      (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
+    )
+    if (!rule) continue
+    const next = rewriteVersionSpec(rawSpec, rule.to, exact)
+    if (next === null) continue
+    // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
+    // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
+    const current = specVersionTuple(rawSpec)
+    const target = specVersionTuple(rule.to)
+    if (
+      !allowDowngrade &&
+      current !== null &&
+      target !== null &&
+      compareSemverSpec(rawSpec, rule.to) > 0
+    ) {
+      downgrades.push({ field, name: key, from: rawSpec, to: next })
+      continue
+    }
+    // Replace exactly `"key"<ws>:<ws>"spec"` inside this field's object, preserving the whitespace. A
+    // nested `overrides` entry repeated with the same spec maps the same way, so every one is replaced.
+    const range = objectRangeAt(out, path)
+    if (range === undefined) continue
+    const pattern = new RegExp(`("${escapeRegExp(key)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`, "g")
+    const body = out.slice(range.start, range.end)
+    const replaced = body.replace(pattern, `$1${next}$2`)
+    if (replaced !== body) {
+      out = out.slice(0, range.start) + replaced + out.slice(range.end)
+      changes.push({ field, name: key, from: rawSpec, to: next })
     }
   }
   return { text: out, changes, downgrades }
 }
 
-function dependencyObjectRange(
+/** Where a package manager forces one version over every range: npm and Bun `overrides` (nested by
+ * parent), Yarn and Bun `resolutions`, pnpm `pnpm.overrides`. */
+const OVERRIDE_FIELDS: readonly (readonly string[])[] = [
+  ["overrides"],
+  ["resolutions"],
+  ["pnpm", "overrides"],
+]
+
+/**
+ * The package an override key pins: `@nifrajs/core`, `parent/@nifrajs/core` and the same behind a `**`
+ * glob (resolutions), `parent>@nifrajs/core` and `@nifrajs/core@<4` (pnpm).
+ */
+function overrideTarget(key: string): string {
+  const last = key.slice(key.lastIndexOf(">") + 1)
+  return /(?:^|\/)((?:@[^/@]+\/)?[^/@]+)(?:@[^/]*)?$/.exec(last)?.[1] ?? last
+}
+
+/** Every string version spec a package.json declares for a package, with the field path it sits in. */
+function pinEntries(
+  parsed: Record<string, unknown>,
+): Array<{ path: readonly string[]; key: string; target: string; spec: string }> {
+  const entries: Array<{ path: readonly string[]; key: string; target: string; spec: string }> = []
+  for (const field of DEP_FIELDS) {
+    const deps = parsed[field]
+    if (typeof deps !== "object" || deps === null) continue
+    for (const [name, spec] of Object.entries(deps))
+      if (typeof spec === "string") entries.push({ path: [field], key: name, target: name, spec })
+  }
+  for (const path of OVERRIDE_FIELDS) {
+    let value: unknown = parsed
+    for (const key of path)
+      value = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
+    // npm nests an override under the package whose dependency it pins; `.` pins that package itself.
+    const walk = (object: object, parent: string | undefined): void => {
+      for (const [key, spec] of Object.entries(object)) {
+        const target = key === "." ? parent : overrideTarget(key)
+        if (typeof spec === "string" && target !== undefined)
+          entries.push({ path, key, target, spec })
+        else if (typeof spec === "object" && spec !== null && !Array.isArray(spec))
+          walk(spec, target)
+      }
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) walk(value, undefined)
+  }
+  return entries
+}
+
+/** The body (between the braces) of the object at `path` in a JSON text: top-level key first, then
+ * each nested one, never a same-named key deeper in the document. */
+function objectRangeAt(
   text: string,
-  field: (typeof DEP_FIELDS)[number],
+  path: readonly string[],
 ): { start: number; end: number } | undefined {
-  const match = new RegExp(`"${field}"\\s*:\\s*\\{`).exec(text)
-  if (match === null) return undefined
-  const open = text.indexOf("{", match.index)
+  const rootOpen = text.indexOf("{")
+  if (rootOpen === -1) return undefined
+  let range: { start: number; end: number } | undefined = {
+    start: rootOpen + 1,
+    end: closingBrace(text, rootOpen),
+  }
+  for (const key of path) {
+    if (range === undefined) return undefined
+    range = memberObjectRange(text, range, key)
+  }
+  return range
+}
+
+/** The index of the `"` that closes the string opening at `open`. */
+function stringEnd(text: string, open: number): number {
+  for (let index = open + 1; index < text.length; index++) {
+    if (text[index] === "\\") index++
+    else if (text[index] === '"') return index
+  }
+  return text.length
+}
+
+/** The index of the brace that closes the one at `open`. */
+function closingBrace(text: string, open: number): number {
   let depth = 0
-  let quoted = false
-  let escaped = false
   for (let index = open; index < text.length; index++) {
     const char = text[index]
-    if (quoted) {
-      if (escaped) escaped = false
-      else if (char === "\\") escaped = true
-      else if (char === '"') quoted = false
-      continue
+    if (char === '"') index = stringEnd(text, index)
+    else if (char === "{" || char === "[") depth++
+    else if ((char === "}" || char === "]") && --depth === 0) return index
+  }
+  return text.length
+}
+
+/** The body of `key`'s object value among the direct members of the object body `within`. */
+function memberObjectRange(
+  text: string,
+  within: { start: number; end: number },
+  key: string,
+): { start: number; end: number } | undefined {
+  let depth = 0
+  for (let index = within.start; index < within.end; index++) {
+    const char = text[index]
+    if (char === "{" || char === "[") depth++
+    else if (char === "}" || char === "]") depth--
+    else if (char === '"') {
+      const close = stringEnd(text, index)
+      let after = close + 1
+      while (/\s/.test(text[after] ?? "")) after++
+      if (depth === 0 && text[after] === ":" && text.slice(index + 1, close) === key) {
+        after++
+        while (/\s/.test(text[after] ?? "")) after++
+        return text[after] === "{"
+          ? { start: after + 1, end: closingBrace(text, after) }
+          : undefined
+      }
+      index = close
     }
-    if (char === '"') quoted = true
-    else if (char === "{") depth++
-    else if (char === "}" && --depth === 0) return { start: open + 1, end: index }
   }
   return undefined
 }
@@ -309,7 +404,7 @@ function rewriteDependencyEntry(
   to: string | undefined,
   toVersion: string | undefined,
 ): string {
-  const range = dependencyObjectRange(text, field)
+  const range = objectRangeAt(text, [field])
   if (range === undefined) return text
   const body = text.slice(range.start, range.end)
   const key = escapeRegExp(from)
@@ -433,12 +528,12 @@ const isIgnored = (path: string): boolean =>
     .slice(0, -1)
     .some((segment) => IGNORED_DIRECTORIES.has(segment))
 
-function scan(cwd: string, pattern: string): string[] {
+function scan(cwd: string, pattern: string, dot = false): string[] {
   const glob = new Glob(pattern)
   const out: string[] = []
   // The write boundary: a symlinked file or directory (a linked repository) is never yielded, so the
   // upgrade can only edit files that live under `cwd`.
-  for (const path of glob.scanSync({ cwd, dot: false, followSymlinks: false })) {
+  for (const path of glob.scanSync({ cwd, dot, followSymlinks: false })) {
     if (!isIgnored(path)) out.push(path)
   }
   return out.sort() // deterministic order
@@ -456,7 +551,8 @@ const groupPins = (version: string): UpgradeRecipe["pins"] => [
 
 /**
  * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
- * with the files that declare it. `workspace:`, `link:` and other non-semver specs are not versions.
+ * with the files that declare it. An override counts: it decides what installs. `workspace:`, `link:`
+ * and other non-semver specs are not versions.
  */
 export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly string[]> {
   const versions = new Map<string, string[]>()
@@ -467,20 +563,76 @@ export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly stri
     } catch {
       continue
     }
-    for (const field of DEP_FIELDS) {
-      const deps = parsed[field]
-      if (typeof deps !== "object" || deps === null) continue
-      for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
-        if (!isFixedGroup(name) || typeof spec !== "string") continue
-        const version = specVersion(spec)
-        if (version === null) continue
-        const files = versions.get(version) ?? []
-        if (!files.includes(rel)) files.push(rel)
-        versions.set(version, files)
-      }
+    for (const { target, spec } of pinEntries(parsed)) {
+      if (!isFixedGroup(target)) continue
+      const version = specVersion(spec)
+      if (version === null) continue
+      const files = versions.get(version) ?? []
+      if (!files.includes(rel)) files.push(rel)
+      versions.set(version, files)
     }
   }
   return versions
+}
+
+/** A fixed-group version spelled outside package.json, which the upgrade lists and never edits. */
+export interface StrayPin {
+  readonly file: string
+  readonly line: number
+  /** As written: `@nifrajs/cli@3.1.0`. */
+  readonly pin: string
+  /** A lockfile other than the workspace's own: regenerate it. Listed once, with its other stale pins
+   * counted in `more`. */
+  readonly lockfile: boolean
+  readonly more: number
+}
+
+const STRAY_PIN_FILES = [
+  "**/{.mcp.json,mcp.json}",
+  "**/{Dockerfile,Dockerfile.*,*.Dockerfile,*.dockerfile,Containerfile}",
+  "**/{docker-compose,compose}*.{yml,yaml}",
+  ".github/workflows/*.{yml,yaml}",
+  ".gitlab-ci.yml",
+  "**/*.lock",
+  "**/{package-lock.json,pnpm-lock.yaml}",
+]
+const LOCKFILE = /(?:\.lock|package-lock\.json|pnpm-lock\.yaml)$/
+const GROUP_PIN =
+  /(?<![\w.@/-])(@nifrajs\/[a-z0-9._-]+|create-nifra|nifra)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g
+
+/**
+ * Fixed-group versions other than `version` pinned where `nifra upgrade` does not edit: MCP configs,
+ * container files, CI workflows, and lockfiles besides the workspace's own (which install rewrites).
+ */
+export function strayPins(cwd: string, version: string): StrayPin[] {
+  const found: StrayPin[] = []
+  const files = new Set(STRAY_PIN_FILES.flatMap((pattern) => scan(cwd, pattern, true)))
+  for (const rel of [...files].sort()) {
+    const lockfile = LOCKFILE.test(rel)
+    if (lockfile && !/[\\/]/.test(rel)) continue
+    let text: string
+    try {
+      if (statSync(join(cwd, rel)).size > 8_000_000) continue
+      text = readFileSync(join(cwd, rel), "utf8")
+    } catch {
+      continue
+    }
+    const stale = [...text.matchAll(GROUP_PIN)].filter(
+      (match) => compareSemverSpec(match[2] ?? "", version) !== 0,
+    )
+    const site = (match: RegExpMatchArray, more: number): StrayPin => ({
+      file: rel,
+      line: text.slice(0, match.index ?? 0).split("\n").length,
+      pin: match[0],
+      lockfile,
+      more,
+    })
+    const first = stale[0]
+    if (first === undefined) continue
+    if (lockfile) found.push(site(first, stale.length - 1))
+    else for (const match of stale) found.push(site(match, 0))
+  }
+  return found
 }
 
 /** An installed fixed-group package, followed to its real location. */
@@ -661,6 +813,7 @@ export function computeUpgrade(
     downgrades,
     retiredMarkers,
     linkedOutside,
+    strayPins: strayPins(cwd, recipe.version),
     notes: recipe.notes ?? [],
   }
 }
@@ -687,7 +840,8 @@ function renderPlan(
     plan.dependencyMoves.length === 0 &&
     plan.importMoves.length === 0 &&
     plan.retiredMarkers.length === 0 &&
-    plan.linkedOutside.length === 0
+    plan.linkedOutside.length === 0 &&
+    plan.strayPins.length === 0
   ) {
     lines.push("Already up to date - no changes.")
     return lines.join("\n")
@@ -734,6 +888,23 @@ function renderPlan(
     )
     for (const entry of plan.linkedOutside)
       lines.push(`  ${entry.package} ${entry.version} at ${entry.path}`)
+    lines.push("")
+  }
+  const pinned = plan.strayPins.filter((site) => !site.lockfile)
+  if (pinned.length > 0) {
+    lines.push(`Left alone, another version pinned outside package.json (update by hand):`)
+    for (const site of pinned) lines.push(`  ${site.file}:${site.line}  ${site.pin}`)
+    lines.push("")
+  }
+  const locks = plan.strayPins.filter((site) => site.lockfile)
+  if (locks.length > 0) {
+    lines.push(
+      `Left alone, a lockfile besides the workspace's own (regenerate it after installing):`,
+    )
+    for (const site of locks) {
+      const more = site.more === 0 ? "" : ` and ${site.more} more`
+      lines.push(`  ${site.file}:${site.line}  ${site.pin}${more}`)
+    }
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)

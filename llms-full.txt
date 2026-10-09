@@ -6189,6 +6189,8 @@ recipe between the oldest version your `package.json` files pin and the target,
 oldest first. A recipe moves a removed package to its replacement, rewrites imports that
 moved, lists comments a release stopped honoring, and pins each group dependency to the
 target, keeping its `^` or `~` unless you pass `--exact`.
+The pins in `overrides`, `resolutions` and
+`pnpm.overrides` move with them, since an override decides what installs.
 
 ```ts
 nifra upgrade --list          # the release targets this CLI knows
@@ -6203,7 +6205,11 @@ when the rollback is intended); a target newer than the running CLI prints the c
 that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
 directory or `package.json` is never followed, and a group package installed by a
 link from outside the root is listed under "Left alone" for you to upgrade in its
-own repository. With `--write` it also prints how hook scope changed across the
+own repository. So is another version pinned outside `package.json`, with its
+line: an MCP config such as `.mcp.json`, a Dockerfile or compose file, a CI
+workflow, and a lockfile other than the workspace&apos;s own (an image build&apos;s frozen
+lockfile, say), which you regenerate after installing. With `--write` it also
+prints how hook scope changed across the
 upgrade (`--no-hooks` skips that). `nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
 see [mixed nifra versions](/docs/troubleshooting#mixed-versions).
