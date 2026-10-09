@@ -8,7 +8,7 @@
  * exposes the one lane the fused body runner already calls, so a compact server reuses it verbatim:
  *
  *   - {@link readBodyFramed}   read + cap + proto-guard + content-type framing (JSON / urlencoded / 415)
- *   - {@link cappedBodyRequest}   the same byte cap on a handler's own reads of the raw request
+ *   - {@link capBodyBytes}   the same byte cap on a handler's own reads of the raw request
  *   - {@link renderResult}     render a {@link ResponseResult} (e.g. a 413 / 415 rejection) to a `Response`
  *   - {@link toResponse}       render any handler result, a handler's own `Response` included
  *   - {@link plainError}       the structured rejection envelope the lane returns
@@ -21,7 +21,7 @@
  */
 
 export { type ErrorLogDetail, emitRequestErrorLog } from "./server/bare-error-lane.ts"
-export { cappedBodyRequest } from "./server/body.ts"
+export { capBodyBytes } from "./server/body.ts"
 export { readBodyFramed } from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"
 export {

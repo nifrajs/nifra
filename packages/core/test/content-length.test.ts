@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { server, toFetchHandler } from "../src/index.ts"
 import {
   applyTransportCap,
-  cappedBodyRequest,
+  capBodyBytes,
   drainCapped,
   hasTrustedBodyFraming,
   markTransportCap,
@@ -367,7 +367,7 @@ describe("trusted body framing", () => {
   })
 })
 
-describe("cappedBodyRequest", () => {
+describe("capBodyBytes", () => {
   const post = (body: BodyInit | null, headers: Record<string, string> = {}) =>
     new Request("http://test/", { method: "POST", body, headers })
   const rejection = async (request: Request) => {
@@ -380,24 +380,24 @@ describe("cappedBodyRequest", () => {
 
   test("a bodiless request is returned as is", () => {
     const request = new Request("http://test/")
-    expect(cappedBodyRequest(request, 8)).toBe(request)
+    expect(capBodyBytes(request, 8)).toBe(request)
   })
 
   test("a body within the cap reads unchanged and keeps the request line and headers", async () => {
-    const capped = cappedBodyRequest(post("12345678", { "x-k": "v" }), 8)
+    const capped = capBodyBytes(post("12345678", { "x-k": "v" }), 8)
     expect(capped.method).toBe("POST")
     expect(capped.headers.get("x-k")).toBe("v")
     expect(await capped.text()).toBe("12345678")
   })
 
   test("delivered bytes past the cap, an over-cap or a malformed Content-Length reject the read", async () => {
-    expect(await rejection(cappedBodyRequest(post("123456789"), 8))).toBe(
+    expect(await rejection(capBodyBytes(post("123456789"), 8))).toBe(
       '413 {"ok":false,"error":"payload_too_large"}',
     )
-    expect(await rejection(cappedBodyRequest(post("1", { "content-length": "9" }), 8))).toStartWith(
+    expect(await rejection(capBodyBytes(post("1", { "content-length": "9" }), 8))).toStartWith(
       "413",
     )
-    expect(await rejection(cappedBodyRequest(post("1", { "content-length": "-1" }), 8))).toBe(
+    expect(await rejection(capBodyBytes(post("1", { "content-length": "-1" }), 8))).toBe(
       '400 {"ok":false,"error":"invalid_content_length"}',
     )
   })

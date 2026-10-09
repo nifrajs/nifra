@@ -15,7 +15,7 @@
 import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   answerNotFound,
-  cappedBodyRequest,
+  capBodyBytes,
   type NotFoundHandler,
   type NotFoundInput,
   notFoundInput,
@@ -205,7 +205,7 @@ export class EdgeServer {
       const c: EdgeContext = {
         // Built on first access, so a handler that never reads the request pays nothing for the cap.
         get request() {
-          raw ??= cap ? cappedBodyRequest(request, maxBodyBytes) : request
+          raw ??= cap ? capBodyBytes(request, maxBodyBytes) : request
           return raw
         },
         params,

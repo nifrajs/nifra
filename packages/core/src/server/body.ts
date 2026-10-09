@@ -200,7 +200,7 @@ function transportCapError(status: 400 | 413): Response {
  * malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the
  * handler its own `Request` and has no identity to preserve; nothing is read until the handler reads.
  */
-export function cappedBodyRequest(request: Request, maxBytes: number): Request {
+export function capBodyBytes(request: Request, maxBytes: number): Request {
   const body = request.body
   if (body === null) return request
   const declared = request.headers.get("content-length")

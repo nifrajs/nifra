@@ -16716,18 +16716,18 @@
     "doc": "/**\n * Return the stable UTF-8 text that identifies a review report's structural result.\n *\n * The report digest and check duration are omitted. Arrays are copied into their contract-defined\n * order, while object keys are sorted recursively. No caller-owned object is mutated.\n */"
   },
   {
+    "name": "capBodyBytes",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function capBodyBytes(request: Request, maxBytes: number): Request;",
+    "doc": "/**\n * A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes`\n * arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or\n * malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the\n * handler its own `Request` and has no identity to preserve; nothing is read until the handler reads.\n */"
+  },
+  {
     "name": "capabilityJournalOf",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function capabilityJournalOf(context: object): CapabilityExecutionJournal | undefined;",
     "doc": "/** The journal installed for this request, if any. */"
-  },
-  {
-    "name": "cappedBodyRequest",
-    "kind": "function",
-    "package": "@nifrajs/core",
-    "signature": "export declare function cappedBodyRequest(request: Request, maxBytes: number): Request;",
-    "doc": "/**\n * A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes`\n * arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or\n * malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the\n * handler its own `Request` and has no identity to preserve; nothing is read until the handler reads.\n */"
   },
   {
     "name": "captureIncident",
