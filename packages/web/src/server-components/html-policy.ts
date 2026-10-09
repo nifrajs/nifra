@@ -13,6 +13,8 @@ const forbidden = new Set([
   "template",
   "noscript",
   "xmp",
+  "noembed",
+  "noframes",
   "plaintext",
   "frame",
   "frameset",

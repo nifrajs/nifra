@@ -3,6 +3,22 @@ import { ServerComponentError } from "./error.ts"
 import { validateComponentTag } from "./html-policy.ts"
 import { COMPONENT_LIMITS } from "./protocol.ts"
 
+/**
+ * A browser reads `title` and `textarea` content as RCDATA, where `<!--` and tags are text, but
+ * only in an HTML context; a bare tokenizer never switches. Content holding no `<` before its own
+ * end tag tokenizes the same either way, so requiring that keeps this check exact wherever the
+ * HTML is inserted. Every other text-mode element is forbidden outright.
+ */
+function closesAsText(html: string, tag: string, from: number): boolean {
+  const next = html.indexOf("<", from)
+  const after = next + 2 + tag.length
+  return (
+    next !== -1 &&
+    html.slice(next, after).toLowerCase() === `</${tag}` &&
+    /^[\t\n\f />]$/.test(html[after] ?? "")
+  )
+}
+
 /** Tokenization validates attributes even in SVG/table contexts a document parser may discard. */
 function tokenize(
   html: string,
@@ -12,10 +28,15 @@ function tokenize(
   if (new TextEncoder().encode(html).length > COMPONENT_LIMITS.outputBytes)
     throw new ServerComponentError("component_limit", 413)
   const tokenizer = new Tokenizer(
-    { sourceCodeLocationInfo: hints !== undefined },
+    { sourceCodeLocationInfo: true },
     {
       onStartTag(token) {
         validateComponentTag(token.tagName, token.attrs, assets)
+        if (
+          (token.tagName === "title" || token.tagName === "textarea") &&
+          (token.location === null || !closesAsText(html, token.tagName, token.location.endOffset))
+        )
+          throw new ServerComponentError("component_protocol", 400)
         if (token.tagName === "link" && token.location !== null)
           hints?.push({ start: token.location.startOffset, end: token.location.endOffset })
       },

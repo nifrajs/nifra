@@ -142,3 +142,27 @@ test("SSR token policy rejects NUL, document declarations and malformed characte
     expect(() => validateComponentHTML(html)).toThrow()
   expect(() => validateComponentHTML("<!--public--><p>Safe &amp; escaped</p>")).not.toThrow()
 })
+
+test("SSR token policy sees markup that a browser reads inside title, textarea and other text-mode elements", () => {
+  const img = "<img src=x onerror=alert(1)>"
+  for (const html of [
+    `<title><!--</title>${img}-->`,
+    `<textarea><!--</textarea>${img}-->`,
+    `<TEXTAREA><!--</TextArea >${img}-->`,
+    `<noembed><!--</noembed>${img}-->`,
+    `<noframes><!--</noframes>${img}-->`,
+    // An HTML title before an SVG one: no single tokenizer mode reads both as a browser does.
+    `<title><!--</title><svg><title>${img}</title></svg>-->`,
+    `<textarea></textareax>${img}</textarea>`,
+    "<title>never closed",
+    "<title>a < b</title>",
+  ])
+    expect(() => validateComponentHTML(html)).toThrow()
+  for (const html of [
+    "<textarea name=note>a &lt; b &amp; &lt;!-- c --&gt;</textarea>",
+    "<svg viewBox='0 0 1 1'><title>Close</title><path d='M0 0'/></svg>",
+    "<title></title><p>after</p>",
+    "<textarea/>text</textarea>",
+  ])
+    expect(() => validateComponentHTML(html)).not.toThrow()
+})
