@@ -4,10 +4,11 @@
  * plain-data render straight to the socket. Imports only runtime-core + respond + the spine types.
  */
 import {
-  appendCookiesToResponse,
+  applySetToResponse,
   applyStaticResponseHeaders,
   markTaggedResponse,
   normalizeBodylessResponse,
+  RESPONSE_OWNED_HEADERS,
   rememberRenderedResponse,
   SENT_BODY,
   taggedResponseBody,
@@ -73,17 +74,17 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
       return {
         kind: "body",
         status: body.status,
-        headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
+        headers: applySetToNodeHeaders(body.headers, body.status, set),
         body: isBodylessStatus(body.status) ? new Uint8Array(0) : body.body,
       }
     }
     return nodeOutcomeFromResponse(
-      appendCookiesToResponse(normalizeBodylessResponse(result.toResponse()), set),
+      applySetToResponse(normalizeBodylessResponse(result.toResponse()), set),
     )
   }
   if (result instanceof Response) {
     if (result.bodyUsed) return plainNodeOutcome(SENT_BODY.plain!, EMPTY_RESPONSE_CONTROLS)
-    return nodeOutcomeFromResponse(appendCookiesToResponse(normalizeBodylessResponse(result), set))
+    return nodeOutcomeFromResponse(applySetToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)
   const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
@@ -233,13 +234,33 @@ function responseHeadersForNode(
   return headers
 }
 
-function appendCookiesToNodeHeaders(
+/** {@link applySetToResponse} for a body the node lane writes from a header record. */
+function applySetToNodeHeaders(
   headers: Readonly<Record<string, string | readonly string[]>> | undefined,
-  cookies: readonly string[] | undefined,
+  status: number,
+  set: CtxSet,
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
-  if (cookies === undefined || cookies.length === 0) return headers
-  const out = Object.create(null) as Record<string, string | readonly string[]>
-  if (headers !== undefined) Object.assign(out, headers)
+  const ambient = status >= 200 ? set._headers : undefined
+  const cookies = set._cookies
+  const copy = (): Record<string, string | readonly string[]> =>
+    Object.assign(Object.create(null) as Record<string, string | readonly string[]>, headers)
+  let out: Record<string, string | readonly string[]> | undefined
+  if (ambient !== undefined) {
+    let own: Set<string> | undefined
+    for (const name in ambient) {
+      const lower = name.toLowerCase()
+      if (RESPONSE_OWNED_HEADERS.has(lower)) continue
+      own ??= new Set(
+        headers === undefined ? [] : Object.keys(headers).map((key) => key.toLowerCase()),
+      )
+      if (own.has(lower)) continue
+      own.add(lower)
+      out ??= copy()
+      out[name] = ambient[name]!
+    }
+  }
+  if (cookies === undefined || cookies.length === 0) return out ?? headers
+  out ??= copy()
   const existing = out["set-cookie"]
   const setCookies =
     existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]

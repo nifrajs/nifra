@@ -1477,10 +1477,13 @@ test("SECURITY: c.req.clone() inherits the route cap on the lazy source", async 
   expect(cloneStatus).toBe(413)
 })
 
-test("a thrown Response ships the cookies queued before it, as a returned one does", async () => {
+test("a thrown Response ships the c.set state queued before it, as a returned one does", async () => {
   // Write-guarded headers, as `Response.redirect()` has on Node (Bun leaves them writable).
   class GuardedHeaders extends Headers {
     override append(): void {
+      throw new TypeError("immutable")
+    }
+    override set(): void {
       throw new TypeError("immutable")
     }
   }
@@ -1505,6 +1508,7 @@ test("a thrown Response ships the cookies queued before it, as a returned one do
     })
     .get("/thrown-guarded", (c) => {
       c.set.cookie("sid", "abc")
+      c.set.headers["x-from-set"] = "1"
       throw redirect(true)
     })
     .get("/returned-guarded", (c) => {
@@ -1517,7 +1521,7 @@ test("a thrown Response ships the cookies queued before it, as a returned one do
     const res = await fetch(`http://127.0.0.1:${running.port}${path}`, { redirect: "manual" })
     expect(res.status).toBe(303)
     expect(res.headers.get("location")).toBe("/home")
-    expect(res.headers.get("x-from-set")).toBeNull()
+    expect(res.headers.get("x-from-set")).toBe(path.startsWith("/thrown") ? "1" : null)
     expect(res.headers.getSetCookie()).toEqual(["sid=abc; Path=/; HttpOnly; Secure; SameSite=Lax"])
   }
 })

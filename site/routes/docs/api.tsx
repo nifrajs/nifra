@@ -363,6 +363,15 @@ export default function Api() {
         plain-object return fully typed.
       </p>
       <p>
+        A <code>Response</code> a handler or hook returns or throws still gets the{" "}
+        <code>c.set.headers</code> it lacks and the queued cookies, so a guard's{" "}
+        <code>cache-control: no-store</code> reaches it. Its own headers win, <code>content-type</code>, <code>content-length</code>,{" "}
+        <code>content-encoding</code>, <code>content-range</code> and <code>transfer-encoding</code>{" "}
+        come from it alone, and <code>c.set.status</code> does not change its status. A{" "}
+        <code>Response</code> shared across requests is copied first, so one request's headers never
+        reach another.
+      </p>
+      <p>
         When you genuinely want a <code>Response</code> - an <b>error short-circuit</b> from a{" "}
         <code>derive</code> / <code>beforeHandle</code> (auth, rate limits) - <code>c.json(body, status?)</code>{" "}
         and <code>c.text(body, status?)</code> build one in a line:{" "}

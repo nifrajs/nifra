@@ -251,6 +251,55 @@ describe("resolveNode - responses built outside the handler's plain return", () 
     expect(cookies.some((c) => c.startsWith("sid=tok"))).toBe(true)
   })
 
+  test("a lazy body outcome takes the c.set headers it lacks; its own and body headers win", async () => {
+    const responseResult = Symbol.for("nifra.response.result")
+    const app = server()
+      .use(nodeDirect())
+      .get("/lazy/:cookie", (c) => {
+        c.set.headers["cache-control"] = "no-store"
+        c.set.headers["Content-Type"] = "application/json"
+        c.set.headers["x-frame-options"] = "SAMEORIGIN"
+        if (c.params.cookie === "1") c.set.cookie("sid", "tok")
+        return {
+          [responseResult]: true,
+          toResponse: () => new Response("unused"),
+          toNodeBody: () => ({
+            status: 200,
+            headers: { "Content-Type": "text/html", "X-Frame-Options": "DENY" },
+            body: "<p>hi</p>",
+          }),
+        }
+      })
+    for (const cookie of ["0", "1"]) {
+      const outcome = await app.resolveNode(req(`/lazy/${cookie}`))
+      if (outcome.kind !== "body") throw new Error("expected a body outcome")
+      const { "set-cookie": setCookie, ...headers } = outcome.headers ?? {}
+      expect(headers).toEqual({
+        "Content-Type": "text/html",
+        "X-Frame-Options": "DENY",
+        "cache-control": "no-store",
+      })
+      expect(setCookie === undefined).toBe(cookie === "0")
+    }
+  })
+
+  test("a lazy 1xx body outcome takes no c.set headers", async () => {
+    const responseResult = Symbol.for("nifra.response.result")
+    const app = server()
+      .use(nodeDirect())
+      .get("/early", (c) => {
+        c.set.headers["cache-control"] = "no-store"
+        return {
+          [responseResult]: true,
+          toResponse: () => new Response("unused"),
+          toNodeBody: () => ({ status: 103, headers: undefined, body: "" }),
+        }
+      })
+    const outcome = await app.resolveNode(req("/early"))
+    if (outcome.kind !== "body") throw new Error("expected a body outcome")
+    expect(outcome.headers).toBeUndefined()
+  })
+
   test("a marked buffered Response becomes a node-direct body outcome", async () => {
     const nodeBody = Symbol.for("nifra.response.body")
     const html = "<!doctype html><h1>fast</h1>"

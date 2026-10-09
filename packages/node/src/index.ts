@@ -266,15 +266,15 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
         return {
           kind: "body",
           status: body.status,
-          headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
+          headers: applySetToNodeHeaders(body.headers, body.status, set),
           body: isBodylessStatus(body.status) ? new Uint8Array(0) : body.body,
         }
       }
-      return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set._cookies))
+      return nodeOutcomeFromResponse(applySetToResponse(result.toResponse(), set))
     }
     if (result instanceof Response) {
       if (result.bodyUsed) return SENT_BODY_OUTCOME
-      return nodeOutcomeFromResponse(appendCookiesToResponse(result, set._cookies))
+      return nodeOutcomeFromResponse(applySetToResponse(result, set))
     }
     const status = set.status ?? (result === undefined ? 204 : 200)
     const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
@@ -520,39 +520,57 @@ function installFastResponse(): void {
   globalThis.Response = DeferringResponse as unknown as typeof Response
 }
 
+/** Headers that describe a Response's body or its framing - core's list, mirrored here because the
+ * adapter does not import core: a `c.set` value for one describes a body the handler did not return. */
+const RESPONSE_OWNED_HEADERS: ReadonlySet<string> = new Set([
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-range",
+  "transfer-encoding",
+])
+
 /**
- * The response this request's cookies are written to - core's `writableResponse` rule, mirrored here
- * because the adapter does not import core. A Response without a body can be sent any number of times,
- * so the object a handler returns may answer other requests too and is always copied; one with a body
- * can be sent once, so it is this request's and takes the writes in place unless its `Headers` are
- * guarded (`Response.redirect()`, a raw `fetch()` result).
+ * `response` with this request's `c.set` headers it lacks and its queued cookies - core's
+ * `applySetToResponse` and `writableResponse` rules, mirrored. A Response without a body can be sent
+ * any number of times, so the object a handler returns may answer other requests too and is always
+ * copied; one with a body can be sent once, so it is this request's and takes the writes in place
+ * unless its `Headers` are guarded (`Response.redirect()`, a raw `fetch()` result).
  */
-function appendCookiesToResponse(
-  response: Response,
-  cookies: readonly string[] | undefined,
-): Response {
-  if (cookies === undefined || cookies.length === 0) return response
+function applySetToResponse(response: Response, set: NodeContextSet): Response {
+  const ambient = response.status >= 200 ? set._headers : undefined
+  const cookies = set._cookies ?? []
+  const added: Array<readonly [string, string]> = []
+  if (ambient !== undefined) {
+    for (const name in ambient) {
+      if (RESPONSE_OWNED_HEADERS.has(name.toLowerCase()) || response.headers.has(name)) continue
+      added.push([name, ambient[name]!])
+    }
+  }
+  if (added.length === 0 && cookies.length === 0) return response
+  const write = (target: Response): Response => {
+    for (const [name, value] of added) target.headers.set(name, value)
+    for (const cookie of cookies) target.headers.append("set-cookie", cookie)
+    return target
+  }
   if (response.body === null && response.status >= 200) {
-    const copy = copiedResponse(
-      response,
-      new Response(null, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      }),
+    return write(
+      copiedResponse(
+        response,
+        new Response(null, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      ),
     )
-    for (const cookie of cookies) copy.headers.append("set-cookie", cookie)
-    return copy
   }
   try {
-    for (const cookie of cookies) response.headers.append("set-cookie", cookie)
-    return response
+    return write(response)
   } catch {
-    // Guarded `Headers` reject every write, so the first append throws with nothing applied and the
-    // cookies land on a mutable copy instead.
-    const clone = copiedResponse(response, new Response(response.body, response))
-    for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
-    return clone
+    // Guarded `Headers` reject every write, so the first one throws with nothing applied and the
+    // writes land on a mutable copy instead.
+    return write(copiedResponse(response, new Response(response.body, response)))
   }
 }
 
@@ -664,13 +682,33 @@ function responseHeaders(
   return headers
 }
 
-function appendCookiesToNodeHeaders(
+/** {@link applySetToResponse} for a body the direct writer sends from a header record. */
+function applySetToNodeHeaders(
   headers: Readonly<Record<string, string | readonly string[]>> | undefined,
-  cookies: readonly string[] | undefined,
+  status: number,
+  set: NodeContextSet,
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
-  if (cookies === undefined || cookies.length === 0) return headers
-  const out = Object.create(null) as Record<string, string | readonly string[]>
-  if (headers !== undefined) Object.assign(out, headers)
+  const ambient = status >= 200 ? set._headers : undefined
+  const cookies = set._cookies
+  const copy = (): Record<string, string | readonly string[]> =>
+    Object.assign(Object.create(null) as Record<string, string | readonly string[]>, headers)
+  let out: Record<string, string | readonly string[]> | undefined
+  if (ambient !== undefined) {
+    let own: Set<string> | undefined
+    for (const name in ambient) {
+      const lower = name.toLowerCase()
+      if (RESPONSE_OWNED_HEADERS.has(lower)) continue
+      own ??= new Set(
+        headers === undefined ? [] : Object.keys(headers).map((key) => key.toLowerCase()),
+      )
+      if (own.has(lower)) continue
+      own.add(lower)
+      out ??= copy()
+      out[name] = ambient[name]!
+    }
+  }
+  if (cookies === undefined || cookies.length === 0) return out ?? headers
+  out ??= copy()
   const existing = out["set-cookie"]
   const setCookies =
     existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]

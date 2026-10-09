@@ -1045,6 +1045,14 @@ return makes the typed client infer `data: never`, so you silently lose drift
 detection for that route (`nifra check` flags it). `c.set` keeps your
 plain-object return fully typed.
 
+A `Response` a handler or hook returns or throws still gets the
+`c.set.headers` it lacks and the queued cookies, so a guard's
+`cache-control: no-store` reaches it. Its own headers win, `content-type`, `content-length`,
+`content-encoding`, `content-range` and `transfer-encoding`
+come from it alone, and `c.set.status` does not change its status. A
+`Response` shared across requests is copied first, so one request's headers never
+reach another.
+
 When you genuinely want a `Response` - an **error short-circuit** from a
 `derive` / `beforeHandle` (auth, rate limits) - `c.json(body, status?)`
 and `c.text(body, status?)` build one in a line:

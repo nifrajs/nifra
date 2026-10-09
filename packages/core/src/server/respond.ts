@@ -544,11 +544,7 @@ export function toResponse(
       )
     }
     return withStatics(
-      appendCookiesToResponse(
-        normalizeBodylessResponse(result.toResponse(), request),
-        set,
-        request,
-      ),
+      applySetToResponse(normalizeBodylessResponse(result.toResponse(), request), set, request),
       statics,
       request,
     )
@@ -558,7 +554,7 @@ export function toResponse(
       return toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, statics, request)
     }
     return withStatics(
-      appendCookiesToResponse(normalizeBodylessResponse(result, request), set, request),
+      applySetToResponse(normalizeBodylessResponse(result, request), set, request),
       statics,
       request,
     )
@@ -694,20 +690,33 @@ function withJsonContentType(
     : { ...headers, "content-type": "application/json;charset=utf-8" }
 }
 
-export function appendCookiesToResponse(
-  response: Response,
-  set: CtxSet,
-  request?: Request,
-): Response {
-  // A handler may queue cookies (`c.set.cookie` - e.g. a session cookie) AND return its own Response
-  // (e.g. `redirect("/")` after login). Cookies accumulate additively, so append them to the
-  // returned Response - otherwise the canonical set-session-then-redirect pattern would silently drop
-  // the cookie. (Other `c.set` fields stay the returned Response's own concern.) They are this
-  // request's cookies, so they go on `writableResponse`'s answer, never on an object another request
-  // may be served from.
+/** Headers that describe a Response's body or its framing: a `c.set` value for one describes a body
+ * the handler did not return. */
+export const RESPONSE_OWNED_HEADERS: ReadonlySet<string> = new Set([
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-range",
+  "transfer-encoding",
+])
+
+export function applySetToResponse(response: Response, set: CtxSet, request?: Request): Response {
+  // A guard's `c.set.headers` (a `cache-control: no-store` on private data) and queued cookies belong
+  // to this request whatever the handler returned, so they go on `writableResponse`'s answer, never on
+  // an object another request may be served from. The Response's own headers win, and the ones that
+  // describe its body or framing come from it alone. A 101 or `Response.error()` takes no headers.
+  let target = response
+  const headers = set._headers
+  if (headers !== undefined && response.status >= 200) {
+    for (const name in headers) {
+      if (RESPONSE_OWNED_HEADERS.has(name.toLowerCase()) || target.headers.has(name)) continue
+      if (target === response) target = writableResponse(response, request)
+      target.headers.set(name, headers[name]!)
+    }
+  }
   const cookies = set._cookies
-  if (cookies === undefined || cookies.length === 0) return response
-  const target = writableResponse(response, request)
+  if (cookies === undefined || cookies.length === 0) return target
+  if (target === response) target = writableResponse(response, request)
   for (const cookie of cookies) target.headers.append("set-cookie", cookie)
   return target
 }

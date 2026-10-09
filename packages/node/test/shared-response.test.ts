@@ -85,3 +85,40 @@ describe("@nifrajs/node: a Response returned to many requests", () => {
     await res.arrayBuffer()
   })
 })
+
+describe("@nifrajs/node: a handler-built Response carries the request's c.set headers", () => {
+  function guarded() {
+    const empty = new Response(null, { status: 204, headers: { "x-own": "1" } })
+    const routes = server({ logger: silentLogger })
+      .beforeHandle((c) => {
+        if (c.req.headers.get("x-user") !== "alice") return undefined
+        c.set.headers["cache-control"] = "no-store"
+        c.set.headers["content-type"] = "application/json"
+        c.set.headers["content-length"] = "999"
+        return undefined
+      })
+      .get("/built", () => new Response("data", { headers: { "content-type": "text/plain" } }))
+      .get("/own", () => new Response("data", { headers: { "cache-control": "max-age=60" } }))
+      .get("/empty", () => empty)
+      .get("/guarded", () => Response.redirect("http://x/home", 302))
+    return { routes, empty }
+  }
+
+  test("merged, the Response's own win, body headers stay its own, and a shared one stays clean", async () => {
+    const { routes, empty } = guarded()
+    running = await serve(routes, { hostname: "127.0.0.1", port: 0 })
+    const built = await send("/built", "alice")
+    expect(built.headers.get("cache-control")).toBe("no-store")
+    expect(built.headers.get("content-type")).toStartWith("text/plain")
+    expect(await built.text()).toBe("data")
+    expect((await send("/own", "alice")).headers.get("cache-control")).toBe("max-age=60")
+    const guardedRedirect = await send("/guarded", "alice")
+    expect(guardedRedirect.status).toBe(302)
+    expect(guardedRedirect.headers.get("cache-control")).toBe("no-store")
+    expect((await send("/empty", "alice")).headers.get("cache-control")).toBe("no-store")
+    const bob = await send("/empty", "bob")
+    expect(bob.headers.get("cache-control")).toBeNull()
+    expect(bob.headers.get("x-own")).toBe("1")
+    expect(empty.headers.has("cache-control")).toBe(false)
+  })
+})
