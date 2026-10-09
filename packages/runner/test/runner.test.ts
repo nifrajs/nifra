@@ -197,6 +197,17 @@ describe("runRequest", () => {
     })
   })
 
+  test("keeps every Set-Cookie value", async () => {
+    const headers = new Headers({ "content-type": "text/plain" })
+    headers.append("set-cookie", "a=1; Path=/")
+    headers.append("set-cookie", "b=2; Path=/")
+    const r = await runRequest({ fetch: () => new Response("x", { headers }) }, { path: "/" })
+    expect(r.setCookie).toEqual(["a=1; Path=/", "b=2; Path=/"])
+    expect(r.headers?.["set-cookie"]).toBe("a=1; Path=/, b=2; Path=/")
+    const plain = await runRequest({ fetch: () => new Response("x") }, { path: "/" })
+    expect("setCookie" in plain).toBe(false)
+  })
+
   test("echoes the label", async () => {
     const r = await runRequest(echoApp, { path: "/users/1", label: "fetch user" })
     expect(r.label).toBe("fetch user")

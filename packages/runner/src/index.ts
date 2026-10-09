@@ -47,7 +47,11 @@ export interface RunResult {
   /** HTTP status - present when the app returned a response (absent when it threw). */
   readonly status?: number
   readonly statusText?: string
+  /** Response headers. Repeated `set-cookie` values are joined with `, `, as `Headers.get` does;
+   * `setCookie` keeps them apart. */
   readonly headers?: Readonly<Record<string, string>>
+  /** Each `set-cookie` value, in order - present when the response set at least one cookie. */
+  readonly setCookie?: readonly string[]
   /** Parsed JSON when the response is JSON; otherwise the (possibly truncated) text. */
   readonly body?: unknown
   /** The response body as text, truncated to `maxBodyChars`. */
@@ -120,9 +124,15 @@ function buildRequest(spec: RequestSpec, origin: string): Request {
 function headersToObject(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {}
   headers.forEach((value, key) => {
-    out[key] = value
+    // Iteration yields each set-cookie on its own, so plain assignment would keep only the last.
+    out[key] = key === "set-cookie" && key in out ? `${out[key]}, ${value}` : value
   })
   return out
+}
+
+function setCookieOf(headers: Headers): { readonly setCookie?: readonly string[] } {
+  const cookies = headers.getSetCookie()
+  return cookies.length === 0 ? {} : { setCookie: cookies }
 }
 
 interface BoundedText {
@@ -220,6 +230,7 @@ export async function runRequest(
       status: res.status,
       statusText: res.statusText,
       headers: headersToObject(res.headers),
+      ...setCookieOf(res.headers),
       body,
       bodyText,
       ...(captured.truncated ? { truncated: true } : {}),
