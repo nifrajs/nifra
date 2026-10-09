@@ -25,6 +25,10 @@ export interface SourceFinding {
   readonly line: number
   readonly snippet: string
 }
+/** An interpolated-SQL site, with the reason a `nifra-expect NF-C006: <reason>` comment gives for it. */
+export interface SqlFinding extends SourceFinding {
+  readonly expected?: string
+}
 /** A server-only-import finding, carrying the offending module specifier on top of the base location so
  * the diagnostic can show the import chain `routeFile → specifier` (the direct edge the regex scan sees). */
 export interface ServerImportFinding extends SourceFinding {
@@ -2520,7 +2524,17 @@ export function scanInterpolatedSql(
   ts: TypeScriptApi,
   imports?: SqlImports,
 ): SourceFinding[] {
-  const out: SourceFinding[] = []
+  return scanSqlSites(file, content, ts, imports).filter((site) => site.expected === undefined)
+}
+
+/** {@link scanInterpolatedSql}, keeping the sites an expectation comment silences, with its reason. */
+export function scanSqlSites(
+  file: string,
+  content: string,
+  ts: TypeScriptApi,
+  imports?: SqlImports,
+): SqlFinding[] {
+  const out: SqlFinding[] = []
   const lines = content.split("\n")
   // Malformed source is already a typecheck failure. Do not turn parser recovery nodes into a second,
   // misleading SQL diagnostic (notably an unterminated template recovered as an interpolation).
@@ -2558,10 +2572,9 @@ export function scanInterpolatedSql(
           // NF-C006` with no reason after the colon does NOT silence, so the hatch always leaves a
           // greppable audit trail instead of becoming a second laundering trick.
           markerLines ??= literalsBlanked(ts, source, content).split("\n")
-          const silenced =
-            commentBlockExpectation(markerLines, line, SQL_DYNAMIC_EXPECTATION)?.reason !==
-            undefined
-          if (!silenced) out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+          const reason = commentBlockExpectation(markerLines, line, SQL_DYNAMIC_EXPECTATION)?.reason
+          const site = { file, line, snippet: (lines[line - 1] ?? "").trim() }
+          out.push(reason === undefined ? site : { ...site, expected: reason })
         }
       }
     }

@@ -64,12 +64,13 @@ import {
   type ModuleReader,
   type ModuleResolver,
   type SourceFinding,
+  type SqlFinding,
   type StaticRouteFinding,
   scanFetchText,
-  scanInterpolatedSql,
   scanRemovedImports,
   scanResponseRoutes,
   scanServerManifestDrift,
+  scanSqlSites,
   scanStaticRouteText,
   scanStreamText,
   scanUnresolvedRoutePaths,
@@ -323,7 +324,7 @@ async function buildProjectScan(
   const removedImports: SourceFinding[] = []
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
-  const interpolatedSql: SourceFinding[] = []
+  const interpolatedSql: SqlFinding[] = []
   const routePaths: UnresolvedRoutePathFinding[] = []
   const browserModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
@@ -384,7 +385,7 @@ async function buildProjectScan(
       routePaths.push(...scanUnresolvedRoutePaths(file, content, project, sourceFacts))
       responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts))
       if (sqlCompiler !== undefined)
-        interpolatedSql.push(...scanInterpolatedSql(file, content, sqlCompiler, sqlImports))
+        interpolatedSql.push(...scanSqlSites(file, content, sqlCompiler, sqlImports))
     }
 
     // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
@@ -603,9 +604,11 @@ export function renderCheckReport(result: CheckResult): string[] {
       lines.push(
         ds.length === 0
           ? `✓ ${label}: none`
-          : errors === 0
-            ? `⚠ ${label}: ${advisory} (advisory)`
-            : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+          : ds.every((d) => d.severity === "info")
+            ? `• ${label}: ${ds.length} (info)`
+            : errors === 0
+              ? `⚠ ${label}: ${advisory} (advisory)`
+              : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
       )
     }
     for (const d of ds) {

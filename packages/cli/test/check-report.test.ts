@@ -80,6 +80,20 @@ describe("renderCheckReport parity", () => {
     expect(text).toContain("⚠ APP-X001: 1 (advisory)")
   })
 
+  test("a section holding only info findings is marked as info, not as a warning", () => {
+    const text = renderCheckReport(
+      result({
+        diagnostics: [
+          { rule: "APP-X001", severity: "info", message: "expected here" },
+          { rule: "APP-X002", severity: "info", message: "expected" },
+          { rule: "APP-X002", severity: "warning", message: "advisory" },
+        ],
+      }),
+    ).join("\n")
+    expect(text).toContain("• APP-X001: 1 (info)")
+    expect(text).toContain("⚠ APP-X002: 2 (advisory)")
+  })
+
   test("trailer states error and advisory counts", () => {
     const failing = renderCheckReport(
       result({

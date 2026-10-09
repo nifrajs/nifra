@@ -556,6 +556,18 @@ const interpolatedSqlRule: CheckRule = {
       )
     }
     for (const finding of [...ctx.project.sourceFindings.interpolatedSql].sort(bySite)) {
+      if (finding.expected !== undefined) {
+        findings.push(
+          legacyDiagnostic("interpolated-sql", {
+            severity: "info",
+            file: finding.file,
+            line: finding.line,
+            message: `${finding.snippet} - interpolated SQL is expected here`,
+            evidence: [`nifra-expect NF-C006: ${finding.expected}`],
+          }),
+        )
+        continue
+      }
       findings.push(
         legacyDiagnostic("interpolated-sql", {
           severity: "error",

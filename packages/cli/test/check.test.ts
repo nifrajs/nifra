@@ -2226,6 +2226,56 @@ describe("scanInterpolatedSql", () => {
       ].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
+
+    test("a silenced site stays in the check report as info, with the comment's reason", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+      try {
+        await mkdir(join(dir, "backend"), { recursive: true })
+        await writeFile(
+          join(dir, "package.json"),
+          JSON.stringify({ name: "app", private: true, nifra: { kind: "api" } }),
+        )
+        await writeFile(
+          join(dir, "backend", "q.ts"),
+          [
+            "export async function f(db: any, id: string) {",
+            "  // nifra-expect NF-C006: id is checked against an allowlist",
+            "  return db.query(`SELECT * FROM users WHERE id = ${id}`)",
+            "}",
+            "export function g(token: string, secret: string) {",
+            "  // nifra-expect NF-S002: both values are public",
+            "  return token === secret",
+            "}",
+          ].join("\n"),
+        )
+        const result = await collectCheckResult(dir, { lintsOnly: true })
+        const silenced = result.diagnostics
+          .filter((d) => d.rule === "interpolated-sql" || d.rule === "NF-S002")
+          .map(({ rule, severity, line, evidence }) => ({ rule, severity, line, evidence }))
+        expect(silenced).toEqual([
+          {
+            rule: "interpolated-sql",
+            severity: "info",
+            line: 3,
+            evidence: ["nifra-expect NF-C006: id is checked against an allowlist"],
+          },
+          {
+            rule: "NF-S002",
+            severity: "info",
+            line: 7,
+            evidence: ["token", "nifra-expect NF-S002: both values are public"],
+          },
+        ])
+        expect(result.ok).toBe(true)
+        const report = renderCheckReport(result)
+        expect(report).toContain(
+          "• SQL built by interpolating a value into the statement: 1 (info)",
+        )
+        expect(report).toContain("• Non-constant-time secret comparison (NF-S002): 1 (info)")
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
   })
 
   describe("placeholder numbers - `$${n}` where n is provably a number", () => {

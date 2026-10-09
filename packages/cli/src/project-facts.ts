@@ -7,6 +7,7 @@ import type {
 import type {
   ManifestDriftFinding,
   SourceFinding,
+  SqlFinding,
   StaticRouteFinding,
   TransitiveServerImportFinding,
   UnresolvedRoutePathFinding,
@@ -23,7 +24,7 @@ export interface ProjectSourceFindings {
   readonly untypedClients: readonly SourceFinding[]
   readonly removedImports: readonly SourceFinding[]
   readonly responseRoutes: readonly SourceFinding[]
-  readonly interpolatedSql: readonly SourceFinding[]
+  readonly interpolatedSql: readonly SqlFinding[]
   /** Route registrations whose path is neither a literal nor a constant the scan resolves. */
   readonly routePaths: readonly UnresolvedRoutePathFinding[]
 }

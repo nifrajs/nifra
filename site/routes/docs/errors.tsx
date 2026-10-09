@@ -257,8 +257,8 @@ export default function Errors() {
         The comment answers only the code it names. A finding that fails the check, and every security
         finding, is silenced only with a reason after the colon; an advisory also accepts the comment
         without one. A blank line or a line of code ends the block, so a comment never reaches the next
-        statement. A silenced security finding stays in the report as information, with the comment and
-        its reason as evidence. Some codes also answer to a name: <code>sql-dynamic</code> (NF-C006),{" "}
+        statement. A silenced security finding, interpolated SQL (NF-C006) included, stays in the report
+        as information, with the comment and its reason as evidence. Some codes also answer to a name: <code>sql-dynamic</code> (NF-C006),{" "}
         <code>raw-response</code> (NF-C007), <code>reserved-segment</code> (NF-C018),{" "}
         <code>route-overlap</code> (NF-C024 and NF-C025) and <code>param-modifier</code> (NF-C026).{" "}
         <code>@nifra-gate-reviewed</code> silences nothing; a finding under it names the comment to

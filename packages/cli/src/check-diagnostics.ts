@@ -567,7 +567,7 @@ export async function collectCheckDiagnostics(
     if (knownLegacyCodes.has(item.code)) continue
     compatibilityRows.push({
       rule: item.code,
-      severity: item.severity === "error" ? "error" : "warning",
+      severity: item.severity === "warn" ? "warning" : item.severity,
       code: item.code,
       ...(item.file === undefined ? {} : { file: item.file }),
       ...(item.line === undefined ? {} : { line: item.line }),

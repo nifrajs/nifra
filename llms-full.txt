@@ -9776,8 +9776,8 @@ above it, says so and why:
 The comment answers only the code it names. A finding that fails the check, and every security
 finding, is silenced only with a reason after the colon; an advisory also accepts the comment
 without one. A blank line or a line of code ends the block, so a comment never reaches the next
-statement. A silenced security finding stays in the report as information, with the comment and
-its reason as evidence. Some codes also answer to a name: `sql-dynamic` (NF-C006),
+statement. A silenced security finding, interpolated SQL (NF-C006) included, stays in the report
+as information, with the comment and its reason as evidence. Some codes also answer to a name: `sql-dynamic` (NF-C006),
 `raw-response` (NF-C007), `reserved-segment` (NF-C018),
 `route-overlap` (NF-C024 and NF-C025) and `param-modifier` (NF-C026).
 `@nifra-gate-reviewed` silences nothing; a finding under it names the comment to
