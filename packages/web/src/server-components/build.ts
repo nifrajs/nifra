@@ -12,6 +12,7 @@ import {
   version as viteVersion,
 } from "vite"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { assertDisposableDir } from "../internal/disposable-dir.ts"
 import { publicEnvDefines } from "../internal/public-env.ts"
 import { unsupportedBuiltin } from "../internal/target-compat.ts"
 import {
@@ -313,6 +314,12 @@ export async function buildServerComponents(
   options: ComponentPipelineOptions,
 ): Promise<ComponentBuildResult> {
   const out = resolve(options.root, options.outDir ?? "dist")
+  const root = resolve(options.root)
+  assertDisposableDir("outDir", out, [
+    root,
+    process.cwd(),
+    ...Object.values(options.entries).map((file) => resolve(root, file)),
+  ])
   const parent = resolve(out, "..")
   const { mkdir } = await import("node:fs/promises")
   await mkdir(parent, { recursive: true })

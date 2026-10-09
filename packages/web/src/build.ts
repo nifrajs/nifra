@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import {
   dirname,
+  isAbsolute,
   join,
   basename as pathBasename,
   posix,
@@ -48,6 +49,7 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
 import {
@@ -1482,10 +1484,12 @@ async function measureOutputs(paths: readonly string[]): Promise<ChunkSize[]> {
 export interface BuildTargetOptions {
   /** The `routes/` directory to discover (absolute path). */
   readonly routesDir: string
-  /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */
+  /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated, so the
+   * build refuses one that is a filesystem root or is or contains the routes directory, the public
+   * directory, an absolute entry module, or the working directory. */
   readonly outDir: string
   /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the
-   * server bundle, cleaned up after. Absolute path. */
+   * server bundle, cleaned up after. Absolute path. Checked the same way as `outDir`. */
   readonly workDir: string
   /** The adapter's client runtime module (exports `mountRouter`), e.g. `"@nifrajs/web-react/client"`. */
   readonly clientModule: string
@@ -1637,6 +1641,20 @@ export async function buildTargetWith(
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
   const targetPlan = planBuildTarget(parseBuildTarget(target), outDir)
+  const sources = [
+    routesDir,
+    process.cwd(),
+    resolvePath(
+      typeof options.publicDir === "string"
+        ? options.publicDir
+        : join(dirname(routesDir), "public"),
+    ),
+    ...[options.adapterImport, options.backendImport, options.useImport].filter(
+      (file): file is string => file !== undefined && isAbsolute(file),
+    ),
+  ]
+  assertDisposableDir("outDir", outDir, sources)
+  assertDisposableDir("workDir", workDir, sources)
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
