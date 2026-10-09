@@ -30,12 +30,13 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs"
 import { builtinModules } from "node:module"
-import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path"
+import { dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path"
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import { parseZoneConfig, type ZoneConfig } from "@nifrajs/web/zones"
 import type * as TS from "typescript"
@@ -1924,15 +1925,19 @@ export async function migrateLayout(
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, text)
     }
+    const vacated: string[] = []
     for (const file of original.keys()) {
-      if (!final.has(file)) rmSync(join(root, file), { force: true })
+      if (final.has(file)) continue
+      rmSync(join(root, file), { force: true })
+      vacated.push(file)
     }
     for (const { from, to } of moves) {
       if (original.has(from) || !existsSync(join(root, from))) continue
       mkdirSync(dirname(join(root, to)), { recursive: true })
       renameSync(join(root, from), join(root, to))
+      vacated.push(from)
     }
-    pruneEmptyDirs(root)
+    pruneVacatedDirs(root, vacated)
   }
   return {
     ok: issues.length === 0,
@@ -2121,33 +2126,35 @@ function staleContentGlobs(
  * git. The new `.gitignore` text when it is not ignored yet, else `undefined`.
  */
 function ignoreNifraState(root: string): string | undefined {
-  const probe = Bun.spawnSync(["git", "check-ignore", "-q", ".nifra/types"], {
-    cwd: root,
-    stdout: "ignore",
-    stderr: "ignore",
-  })
-  if (probe.exitCode === 0) return undefined
+  let exitCode: number | null = null
+  try {
+    exitCode = Bun.spawnSync(["git", "check-ignore", "-q", ".nifra/types"], {
+      cwd: root,
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode
+  } catch {
+    // No git installed: the same as no checkout.
+  }
+  if (exitCode === 0) return undefined
   const path = join(root, ".gitignore")
   const current = existsSync(path) ? readFileSync(path, "utf8") : ""
   // Outside a git checkout `check-ignore` cannot answer; the app's own file decides.
-  if (probe.exitCode !== 1 && /^\/?\.nifra(?:\/|\*|\/\*\*)?\s*$/m.test(current)) return undefined
+  if (exitCode !== 1 && /^\/?\.nifra(?:\/|\*|\/\*\*)?\s*$/m.test(current)) return undefined
   const separator = current === "" || current.endsWith("\n") ? "" : "\n"
   return `${current}${separator}.nifra/\n`
 }
 
-function pruneEmptyDirs(root: string): void {
-  const prune = (dir: string): boolean => {
-    let empty = true
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) {
-        empty = false
-        continue
-      }
-      const full = join(dir, entry.name)
-      if (entry.isDirectory() ? !prune(full) : true) empty = false
+/** Remove each directory the run emptied, then each parent that leaves empty. A directory that was
+ * empty before the run is the app's own, not the migration's to remove. */
+function pruneVacatedDirs(root: string, vacated: Iterable<string>): void {
+  const dirs = new Set<string>()
+  for (const file of vacated) dirs.add(dirname(join(root, file)))
+  // Deepest first, so a parent is judged after its emptied children are gone.
+  for (const start of [...dirs].sort((a, b) => b.length - a.length)) {
+    for (let dir = start; dir !== root && dir.startsWith(`${root}${sep}`); dir = dirname(dir)) {
+      if (!existsSync(dir) || readdirSync(dir).length > 0) break
+      rmdirSync(dir)
     }
-    if (empty && dir !== root) rmSync(dir, { recursive: true, force: true })
-    return empty
   }
-  prune(root)
 }

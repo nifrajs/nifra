@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -679,6 +679,41 @@ describe("migrateLayout", () => {
       reason:
         'its content globs matched 1 file(s) that move, but none of their new paths (such as "components/card.tsx" -> "frontend/components/card.tsx"), so Tailwind would stop seeing their classes. Add globs for "./frontend/**/*" (with the extensions you use)',
     })
+  })
+
+  test("only the folders the move emptied are removed", async () => {
+    const dir = app({
+      "components/card.tsx": "export const Card = () => null\n",
+      "routes/index.tsx": 'import { Card } from "../components/card.tsx"\nexport default Card\n',
+    })
+    mkdirSync(join(dir, "assets", "uploads"), { recursive: true })
+    mkdirSync(join(dir, "routes", "drafts"))
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toContainEqual({
+      from: "components/card.tsx",
+      to: "frontend/components/card.tsx",
+    })
+    expect(existsSync(join(dir, "components"))).toBe(false)
+    expect(existsSync(join(dir, "assets", "uploads"))).toBe(true)
+    expect(existsSync(join(dir, "routes", "drafts"))).toBe(true)
+  })
+
+  test("a machine without git still migrates and ignores .nifra/", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nifra-migrate-nogit-"))
+    writeFileSync(join(dir, "package.json"), "{}\n")
+    mkdirSync(join(dir, "routes"))
+    writeFileSync(join(dir, "routes", "index.tsx"), "export default () => null\n")
+    const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
+      throw new Error('Executable not found in $PATH: "git"')
+    })
+    try {
+      await migrateLayout(dir, { typescript: ts, write: true })
+      expect(spawn).toHaveBeenCalled()
+      expect(read(dir, ".gitignore")).toBe(".nifra/\n")
+    } finally {
+      spawn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   test("folders the app already zones in package.json stay where they are", async () => {
