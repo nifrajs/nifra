@@ -179,6 +179,51 @@ describe("typed tool contracts", () => {
     }
   })
 
+  test("after the executor ran, a failing completion never frees the key for a retry", async () => {
+    let abandoned = 0
+    let runs = 0
+    const store = (complete: () => boolean): ToolIdempotencyStore => ({
+      begin: () => ({ state: "new", reservation: "r1" }),
+      complete,
+      abandon: () => {
+        abandoned++
+        return true
+      },
+    })
+    const tool = (outputSchema: typeof output) =>
+      defineTool({
+        name: "orders.ship",
+        description: "Ship an order.",
+        input,
+        output: outputSchema,
+        capability: "orders.ship",
+        idempotency: { scope: "request", key: (value) => value.name },
+        execute: () => {
+          runs++
+          return { ok: true }
+        },
+      })
+    const throwing = store(() => {
+      throw new Error("store offline")
+    })
+    const options = { capabilities: ["orders.ship"], idempotency: throwing }
+    const result = await executeTool(tool(output), { name: "a" }, options)
+    expect(result).toMatchObject({ ok: false, error: { code: "idempotency_capacity" } })
+    // An output validator that throws, after the executor ran.
+    const exploding: typeof output = {
+      ...output,
+      "~standard": {
+        ...output["~standard"],
+        validate: () => {
+          throw new Error("validator bug")
+        },
+      },
+    }
+    const failed = await executeTool(tool(exploding), { name: "a" }, options)
+    expect(failed).toMatchObject({ ok: false, error: { code: "execution_failed" } })
+    expect([runs, abandoned]).toEqual([2, 0])
+  })
+
   test("a store whose abandon() throws leaves the call's own outcome standing", async () => {
     const refusing: ToolIdempotencyStore = {
       begin: () => ({ state: "new", reservation: "r1" }),

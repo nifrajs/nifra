@@ -469,6 +469,17 @@ export async function executeTool<Input, Output>(
       await options.idempotency?.abandon(reservationInput(reservation))
     } catch {}
   }
+  // Once the executor has run, the reservation is never released: a retry would repeat a side effect
+  // that may have committed. A store that throws on completion counts as one that refused it.
+  let executed = false
+  const complete = async (): Promise<boolean> => {
+    if (reservation === undefined) return true
+    try {
+      return (await options.idempotency?.complete(reservationInput(reservation))) === true
+    } catch {
+      return false
+    }
+  }
   type ToolCallOutcome =
     | { readonly ok: true; readonly dryRun: boolean; readonly output?: Output }
     | { readonly ok: false; readonly dryRun: boolean; readonly error: ToolError }
@@ -656,21 +667,19 @@ export async function executeTool<Input, Output>(
       dryRun,
       ...(tool.policy === undefined ? {} : { policy: tool.policy }),
     })
+    executed = true
     record("execution", "committed")
     const validatedOutput = await validateStandard(tool.output, output)
     if (!validatedOutput.ok) {
       // The executor has already run. Keep the reservation completed even when its return shape is
       // invalid, so a caller cannot retry and duplicate a side effect that may have committed.
-      if (reservation !== undefined) {
-        const completed = await options.idempotency?.complete(reservationInput(reservation))
-        if (completed !== true) {
-          record("idempotency", "failed", "idempotency_capacity")
-          return finish({
-            ok: false,
-            dryRun,
-            error: { code: "idempotency_capacity", stage: "idempotency" },
-          })
-        }
+      if (!(await complete())) {
+        record("idempotency", "failed", "idempotency_capacity")
+        return finish({
+          ok: false,
+          dryRun,
+          error: { code: "idempotency_capacity", stage: "idempotency" },
+        })
       }
       record("output", "failed", "output_invalid")
       return finish({
@@ -680,20 +689,17 @@ export async function executeTool<Input, Output>(
       })
     }
     record("output", "passed")
-    if (reservation !== undefined) {
-      const completed = await options.idempotency?.complete(reservationInput(reservation))
-      if (completed !== true) {
-        record("idempotency", "failed", "idempotency_capacity")
-        return finish({
-          ok: false,
-          dryRun,
-          error: { code: "idempotency_capacity", stage: "idempotency" },
-        })
-      }
+    if (!(await complete())) {
+      record("idempotency", "failed", "idempotency_capacity")
+      return finish({
+        ok: false,
+        dryRun,
+        error: { code: "idempotency_capacity", stage: "idempotency" },
+      })
     }
     return finish({ ok: true, dryRun, output: validatedOutput.value })
   } catch (error) {
-    await abandon()
+    if (!executed) await abandon()
     const code = signal.aborted || isAbortError(error) ? "cancelled" : "execution_failed"
     record("execution", "failed", code)
     return finish({ ok: false, dryRun, error: { code, stage: "execution" } })
