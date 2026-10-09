@@ -93,6 +93,8 @@ export interface HandoffCoordinatorOptions {
   readonly approvals?: ApprovalManager
   readonly defaultTtlMs?: number
   readonly maxPending?: number
+  /** Settled boundaries kept for `list`/`inspect`; the oldest go first. Default 256. */
+  readonly maxRetained?: number
   /** Injectable clock (epoch ms). Defaults to {@link Date.now}. */
   readonly now?: () => number
 }
@@ -108,12 +110,14 @@ interface HandoffRecord {
 
 const DEFAULT_TTL_MS = 5 * 60_000
 const DEFAULT_MAX_PENDING = 64
+const DEFAULT_MAX_RETAINED = 256
 
 export class HandoffCoordinator {
   private readonly vectors: ChildVectorTracker
   private readonly approvals: ApprovalManager | undefined
   private readonly defaultTtlMs: number
   private readonly maxPending: number
+  private readonly maxRetained: number
   private readonly now: () => number
   private readonly records = new Map<string, HandoffRecord>()
 
@@ -122,11 +126,14 @@ export class HandoffCoordinator {
     this.approvals = options.approvals
     this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS
     this.maxPending = options.maxPending ?? DEFAULT_MAX_PENDING
+    this.maxRetained = options.maxRetained ?? DEFAULT_MAX_RETAINED
     this.now = options.now ?? Date.now
     if (!Number.isSafeInteger(this.defaultTtlMs) || this.defaultTtlMs < 1)
       throw new RangeError("handoff: defaultTtlMs must be positive")
     if (!Number.isSafeInteger(this.maxPending) || this.maxPending < 1)
       throw new RangeError("handoff: maxPending must be positive")
+    if (!Number.isSafeInteger(this.maxRetained) || this.maxRetained < 0)
+      throw new RangeError("handoff: maxRetained must be a non-negative integer")
   }
 
   /** Open a pending handoff. Allocates the run's next monotonic child vector. */
@@ -142,6 +149,7 @@ export class HandoffCoordinator {
       (input.sessionId !== undefined && !SESSION_TOKEN.test(input.sessionId))
     )
       throw new HandoffError("invalid_handoff")
+    this.sweep()
     if (this.records.has(input.requestId)) throw new HandoffError("duplicate")
     if (this.activeCount() >= this.maxPending) throw new HandoffError("invalid_handoff")
 
@@ -182,6 +190,7 @@ export class HandoffCoordinator {
 
   /** Every boundary, or - with `activeOnly` - just those still awaiting a decision. */
   list(activeOnly = false): readonly HandoffView[] {
+    this.sweep()
     const views: HandoffView[] = []
     for (const record of this.records.values()) {
       if (activeOnly && this.isTerminal(record.state)) continue
@@ -192,6 +201,7 @@ export class HandoffCoordinator {
 
   /** Inspect one boundary by request id, or `undefined` when unknown. */
   inspect(requestId: string): HandoffView | undefined {
+    this.sweep()
     const record = this.records.get(requestId)
     return record === undefined ? undefined : this.view(record)
   }
@@ -263,6 +273,23 @@ export class HandoffCoordinator {
     record.state = next
     if (this.isTerminal(next)) this.settleApproval(record, op)
     return this.view(record)
+  }
+
+  /** Expire every boundary past its deadline, then drop the oldest settled ones over `maxRetained`. */
+  private sweep(): void {
+    const now = this.now()
+    let settled = 0
+    for (const record of this.records.values()) {
+      if (!this.isTerminal(record.state) && !coordinateIsFresh(record.coordinate, now))
+        this.settle(record, "expired")
+      if (this.isTerminal(record.state)) settled++
+    }
+    for (const [requestId, record] of this.records) {
+      if (settled <= this.maxRetained) break
+      if (!this.isTerminal(record.state)) continue
+      this.records.delete(requestId)
+      settled--
+    }
   }
 
   private settle(record: HandoffRecord, state: HandoffLifecycleState): void {

@@ -200,3 +200,32 @@ describe("HandoffCoordinator lifecycle", () => {
     }
   })
 })
+
+describe("HandoffCoordinator bounds", () => {
+  test("an overdue boundary nobody touched frees its pending slot", () => {
+    const coordinator = new HandoffCoordinator({ now, maxPending: 2 })
+    open(coordinator, "req-1", "node-1")
+    open(coordinator, "req-2", "node-2")
+    expect(() => open(coordinator, "req-3", "node-3")).toThrow(
+      expect.objectContaining({ code: "invalid_handoff" }),
+    )
+    clock += 1_000
+    expect(coordinator.list(true)).toHaveLength(0)
+    expect(coordinator.inspect("req-1")?.state).toBe("expired")
+    expect(open(coordinator, "req-3", "node-3").state).toBe("pending")
+  })
+
+  test("settled boundaries are evicted oldest first past maxRetained", () => {
+    const coordinator = new HandoffCoordinator({ now, maxRetained: 2 })
+    for (let i = 0; i < 5; i++) {
+      const view = open(coordinator, `req-${i}`, `node-${i}`)
+      coordinator.cancel({ coordinate: coordOf(view) })
+    }
+    open(coordinator, "req-live", "node-live")
+    expect(coordinator.list().map((view) => view.requestId)).toEqual(["req-3", "req-4", "req-live"])
+  })
+
+  test("rejects a negative maxRetained", () => {
+    expect(() => new HandoffCoordinator({ maxRetained: -1 })).toThrow(RangeError)
+  })
+})
