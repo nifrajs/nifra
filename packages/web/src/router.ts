@@ -261,8 +261,9 @@ export interface ClientRouter {
    * loader is revalidated so the mutation is reflected. Pass `{ revalidate: false }` to SKIP that
    * revalidation - keep the current `data` and just publish the action's `actionData` (useful when
    * the action already returned everything that changed, saving the extra round-trip). A redirect
-   * always loads its target regardless. Rejects on failure (caller falls back); once the action has
-   * run, the rejection's `redirectTo` names the page to load instead of posting again.
+   * always loads its target regardless. Rejects on failure (caller falls back); once the server has
+   * answered, at any status, the rejection's `redirectTo` names the page to load instead of posting
+   * again.
    */
   submit: (
     action: string,
@@ -411,8 +412,8 @@ const targetUrl = (to: string): URL | undefined => {
   }
 }
 
-const redirected = (to: string): Error =>
-  Object.assign(new Error(`[nifra/web] redirected to ${to}`), { redirectTo: to })
+const redirected = (to: string, cause?: unknown): Error =>
+  Object.assign(new Error(`[nifra/web] redirected to ${to}`, { cause }), { redirectTo: to })
 
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
@@ -1097,8 +1098,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           body: prepared.body,
           headers: { [DATA_HEADER]: "1" },
         })
-        if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
+        // Whatever the status, the server took the POST: the action may have run before it failed.
         posted = true
+        if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
         if (redirectTo !== null) {
           // The action redirected (Post/Redirect/Get) - treat it as a client navigation.
@@ -1182,7 +1184,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         if (!posted) throw err
         if (mine !== generation) return // a newer navigation or submit owns the page
-        throw redirectOf(err) === undefined ? redirected(landing ?? state.path) : err
+        throw redirectOf(err) === undefined ? redirected(landing ?? state.path, err) : err
       }
     },
     hydrate,

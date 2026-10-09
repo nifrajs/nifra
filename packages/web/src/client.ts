@@ -690,23 +690,42 @@ export function applyHead(head: Meta): void {
 }
 
 export function installForms(router: ClientRouter): () => void {
+  // Forms whose data submit failed before the server answered: their next submit event is the native
+  // post that replaces it.
+  const native = new WeakSet<HTMLFormElement>()
   const onSubmit = (event: SubmitEvent): void => {
     if (event.defaultPrevented) return
     const form = event.target
     if (!(form instanceof HTMLFormElement)) return
-    if (form.method.toLowerCase() !== "post") return // GET forms submit natively
-    const url = sameDocumentUrl(form.action) // resolved (or the current document URL if unset)
+    if (native.delete(form)) return
+    // The button that submitted can override the form's method, action and target, and its
+    // name=value is part of the submission (`<button name="intent" value="delete">`).
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a submit event's submitter is the submit button or input that fired it, or null
+    const submitter = event.submitter as HTMLButtonElement | null
+    const method = submitter?.hasAttribute("formmethod") ? submitter.formMethod : form.method
+    if (method.toLowerCase() !== "post") return // GET forms submit natively
+    const target = submitter?.hasAttribute("formtarget") ? submitter.formTarget : form.target
+    if (target !== "" && target !== "_self") return // it loads in another browsing context
+    // Resolved (or the current document URL if unset).
+    const url = sameDocumentUrl(
+      submitter?.hasAttribute("formaction") ? submitter.formAction : form.action,
+    )
     if (url === null) return
     if (router.match(url.pathname) === null) return // not an app route → native submit
     event.preventDefault()
     // `data-nifra-revalidate="false"` opts out of the post-action loader revalidation (the action's
     // actionData drives the update); absent or any other value keeps the default revalidation.
     const revalidate = form.dataset.nifraRevalidate !== "false"
-    router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch((error) => {
+    const body = new FormData(form, submitter)
+    router.submit(url.pathname + url.search, body, { revalidate }).catch((error) => {
       const to = redirectOf(error)
-      // The action ran: load the page that shows its result rather than run it again.
+      // The server answered: load the page that shows the result rather than run the action again.
       if (to !== undefined) location.assign(to)
-      else form.submit() // data submit failed - fall back to a full-page POST
+      else {
+        // Nothing reached the server - post natively, through the same button.
+        native.add(form)
+        form.requestSubmit(submitter)
+      }
     })
   }
   document.addEventListener("submit", onSubmit)

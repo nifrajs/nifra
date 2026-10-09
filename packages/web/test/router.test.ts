@@ -5,6 +5,7 @@ import {
   type RouterState,
   type Submission,
 } from "../src/index.ts"
+import { redirectOf } from "../src/router.ts"
 
 describe("createMatcher", () => {
   const match = createMatcher([
@@ -1039,14 +1040,30 @@ describe("createClientRouter", () => {
 
   test("a failed submit clears pending and rethrows", async () => {
     const realFetch = globalThis.fetch
-    globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
-      new Response("nope", { status: 500 })) as typeof fetch
+    globalThis.fetch = (async (_url: string, _init?: RequestInit): Promise<Response> => {
+      throw new TypeError("offline")
+    }) as typeof fetch
     const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
     try {
-      await expect(r.submit("/", new URLSearchParams())).rejects.toThrow(/500/)
+      await expect(r.submit("/", new URLSearchParams())).rejects.toThrow(/offline/)
       expect(r.snapshot().pending).toBe(false)
     } finally {
       globalThis.fetch = realFetch
+    }
+  })
+
+  test("a non-2xx answer names the page to load: the action may have run before it failed", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("nope", { status: 500 }),
+    )
+    const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+    try {
+      const failure = await r.submit("/", new URLSearchParams()).catch((e: unknown) => e)
+      expect(redirectOf(failure)).toBe("/")
+      expect(failure instanceof Error ? String(failure.cause) : "").toMatch(/500/)
+      expect(r.snapshot().pending).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
     }
   })
 
@@ -1104,7 +1121,7 @@ describe("createClientRouter", () => {
     const fd = new FormData()
     fd.set("text", "b")
     try {
-      await expect(r.submit("/users/7", fd)).rejects.toThrow(/500/)
+      await expect(r.submit("/users/7", fd)).rejects.toThrow(/redirected to \/users\/7/)
     } finally {
       globalThis.fetch = realFetch
     }
