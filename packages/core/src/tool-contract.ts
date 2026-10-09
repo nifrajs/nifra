@@ -461,6 +461,14 @@ export async function executeTool<Input, Output>(
       ...(tool.cost === undefined ? {} : { cost: tool.cost }),
     })
   }
+  // A failed abandon leaves the key reserved until its lease lapses, as a failed renewal does; the
+  // call's own outcome still stands.
+  const abandon = async (): Promise<void> => {
+    if (reservation === undefined) return
+    try {
+      await options.idempotency?.abandon(reservationInput(reservation))
+    } catch {}
+  }
   type ToolCallOutcome =
     | { readonly ok: true; readonly dryRun: boolean; readonly output?: Output }
     | { readonly ok: false; readonly dryRun: boolean; readonly error: ToolError }
@@ -625,22 +633,19 @@ export async function executeTool<Input, Output>(
     record("idempotency", tool.idempotency === undefined ? "skipped" : "passed")
 
     if (options.budget !== undefined && !options.budget.consume(tool.cost)) {
-      if (reservation !== undefined)
-        await options.idempotency?.abandon(reservationInput(reservation))
+      await abandon()
       record("budget", "denied", "budget_exceeded")
       return finish({ ok: false, dryRun, error: { code: "budget_exceeded", stage: "budget" } })
     }
     record("budget", tool.cost === undefined ? "skipped" : "passed")
 
     if (signal.aborted) {
-      if (reservation !== undefined)
-        await options.idempotency?.abandon(reservationInput(reservation))
+      await abandon()
       record("execution", "denied", "cancelled")
       return finish({ ok: false, dryRun, error: { code: "cancelled", stage: "execution" } })
     }
     if (dryRun) {
-      if (reservation !== undefined)
-        await options.idempotency?.abandon(reservationInput(reservation))
+      await abandon()
       record("execution", "dry-run")
       return finish({ ok: true, dryRun })
     }
@@ -688,7 +693,7 @@ export async function executeTool<Input, Output>(
     }
     return finish({ ok: true, dryRun, output: validatedOutput.value })
   } catch (error) {
-    if (reservation !== undefined) await options.idempotency?.abandon(reservationInput(reservation))
+    await abandon()
     const code = signal.aborted || isAbortError(error) ? "cancelled" : "execution_failed"
     record("execution", "failed", code)
     return finish({ ok: false, dryRun, error: { code, stage: "execution" } })

@@ -179,6 +179,42 @@ describe("typed tool contracts", () => {
     }
   })
 
+  test("a store whose abandon() throws leaves the call's own outcome standing", async () => {
+    const refusing: ToolIdempotencyStore = {
+      begin: () => ({ state: "new", reservation: "r1" }),
+      complete: () => true,
+      abandon: () => {
+        throw new Error("store offline")
+      },
+    }
+    const define = (execute: () => { ok: boolean }) =>
+      defineTool({
+        name: "orders.void",
+        description: "Void an order.",
+        input,
+        output,
+        capability: "orders.void",
+        idempotency: { scope: "request", key: (value) => value.name },
+        cost: { calls: 1 },
+        execute,
+      })
+    const options = { capabilities: ["orders.void"], idempotency: refusing }
+    const overBudget = await executeTool(
+      define(() => ({ ok: true })),
+      { name: "a" },
+      { ...options, budget: createToolBudget({ limits: { calls: 0 } }) },
+    )
+    expect(overBudget).toMatchObject({ ok: false, error: { code: "budget_exceeded" } })
+    const failed = await executeTool(
+      define(() => {
+        throw new Error("gateway down")
+      }),
+      { name: "a" },
+      options,
+    )
+    expect(failed).toMatchObject({ ok: false, error: { code: "execution_failed" } })
+  })
+
   test("budget exhaustion fails before the executor", async () => {
     let executions = 0
     const tool = defineTool({
