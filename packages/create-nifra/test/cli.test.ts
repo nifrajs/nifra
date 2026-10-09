@@ -130,6 +130,15 @@ describe("scaffold - templates", () => {
     }
   })
 
+  test("the ISR starter deploys no revalidation secret; only its local dev script sets one", async () => {
+    const dir = await freshDir("isr-secret")
+    await scaffold({ target: dir, template: "isr" })
+    const toml = await readFile(join(dir, "wrangler.toml"), "utf8")
+    expect(toml).not.toMatch(/^\s*REVALIDATE_SECRET\s*=/m)
+    expect(toml).not.toMatch(/^\s*\[vars\]/m)
+    expect((await readPkg(dir)).scripts?.dev).toContain("--var REVALIDATE_SECRET:dev-secret")
+  })
+
   test("a project name a platform would refuse is lowered to one it takes in deploy config", async () => {
     const dir = await freshDir("My_Site.v2")
     await scaffold({ target: dir, template: "site", deployTarget: "cloudflare" })

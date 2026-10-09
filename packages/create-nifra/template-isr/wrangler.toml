@@ -19,7 +19,7 @@ assets = { directory = "./public" }
 binding = "ISR_CACHE"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 
-# On-demand revalidation secret. DEV placeholder - set a real one for production with
-# `bunx wrangler secret put REVALIDATE_SECRET`.
-[vars]
-REVALIDATE_SECRET = "dev-secret"
+# On-demand revalidation secret. Never a [vars] entry: `wrangler deploy` would ship it as plain text
+# and it would collide with a secret of the same name. Set it with
+# `bunx wrangler secret put REVALIDATE_SECRET`; until then the deployed Worker answers 404 on
+# /__nifra/revalidate. `bun run dev` passes a local value with --var.

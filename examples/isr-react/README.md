@@ -38,7 +38,7 @@ Cloudflare account needed:
 
 ```sh
 bun run examples/isr-react/build.ts
-cd examples/isr-react && bunx wrangler dev
+cd examples/isr-react && bunx wrangler dev --var REVALIDATE_SECRET:dev-secret
 ```
 
 The only difference from `server.ts` is the store: `MemoryCacheStore` → `KVCacheStore(env.ISR_CACHE)`,
