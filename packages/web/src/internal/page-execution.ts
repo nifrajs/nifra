@@ -207,6 +207,9 @@ export interface PageExecutionOptions<Env = unknown> {
       readonly route: string
     },
   ) => void
+  /** Logs a failure an `_error` boundary answered. Without a boundary the error propagates and the
+   * server logs it, so this runs only where the server never sees the throw. */
+  readonly logBoundaryError?: (error: unknown, request: Request) => void
 }
 
 type PageResponse = Response | ResponseResult | RenderedPage
@@ -1049,6 +1052,7 @@ export function createPageRequestExecutor<Env = unknown>(
       reportLoaderError(route, req, { ...params }, err)
       const errorId = boundaryFor(route, err)
       if (errorId === undefined) throw err
+      options.logBoundaryError?.(err, req)
       return renderError(
         req,
         route,
@@ -1075,6 +1079,7 @@ export function createPageRequestExecutor<Env = unknown>(
     reportLoaderError(route, req, params, err)
     const errorId = boundaryFor(route, err)
     if (errorId === undefined) throw err
+    options.logBoundaryError?.(err, req)
     if (req.headers.get(DATA_HEADER) !== null) {
       return new Response("Internal Server Error", {
         status: 500,

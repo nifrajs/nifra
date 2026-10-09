@@ -1,3 +1,5 @@
+import { emitRequestErrorLog } from "@nifrajs/core/edge-kit"
+import { jsonLogger } from "@nifrajs/core/logger"
 import {
   type BackendEvidenceProvider,
   type BackendMount,
@@ -207,8 +209,9 @@ export interface CreateWebAppOptions<Env = unknown> {
   readonly staticBoundaryCache?: import("../boundary.ts").StaticBoundaryCache
   /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for
    * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`
-   * boundary renders / a soft-nav 500 / a rethrow - so it sees errors that the boundary would
-   * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break
+   * boundary renders / a soft-nav 500 / a rethrow. A failure a boundary answers is also written to the
+   * server's `logger` (under its `errorLogDetail`) whether or not this is set, exactly as an unhandled
+   * error is. Observation only; its own throws are swallowed so a faulty reporter can't break
    * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover
    * pre-request work.) */
   readonly onLoaderError?: (
@@ -275,6 +278,15 @@ function mountPathPrefix(path: string): string {
   let end = withoutWildcard.length
   while (end > 0 && withoutWildcard.charCodeAt(end - 1) === 47 /* '/' */) end--
   return withoutWildcard.slice(0, end)
+}
+
+/** The server's own error log, for page failures an `_error` boundary answers before it sees them. */
+function boundaryErrorLog(
+  options: ServerOptions | undefined,
+): (error: unknown, request: Request) => void {
+  const logger = options?.logger ?? jsonLogger()
+  const detail = options?.errorLogDetail ?? "full"
+  return (error, request) => emitRequestErrorLog(logger, detail, error, { req: request })
 }
 
 /**
@@ -435,6 +447,7 @@ export function createWebApp<Env = unknown>(
       ? {}
       : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
+    logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
   })
 

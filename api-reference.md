@@ -2236,6 +2236,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string> /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
+- **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
+  How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option.
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
 - **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
   Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
@@ -2249,6 +2251,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
+- **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
+  Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.

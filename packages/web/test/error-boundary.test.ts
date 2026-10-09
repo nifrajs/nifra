@@ -310,3 +310,86 @@ describe("onLoaderError reporting hook", () => {
     expect(res.status).toBe(500) // boundary still rendered
   })
 })
+
+describe("boundary-answered failures reach the server log", () => {
+  const capture = () => {
+    const entries: Array<{ message: string; fields: Record<string, unknown> | undefined }> = []
+    const push = (message: string, fields?: Record<string, unknown>) => {
+      entries.push({ message, fields })
+    }
+    return { entries, logger: { debug: push, info: push, warn: push, error: push } }
+  }
+
+  test("a loader error an _error page renders is logged once, with the request line", async () => {
+    const { entries, logger } = capture()
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(new Error("db down")),
+      clientEntry: "/c.js",
+      server: { logger },
+    })
+    const res = await app.fetch(new Request("http://x/boom"))
+    expect(res.status).toBe(500)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.message).toBe("unhandled request error")
+    expect(entries[0]?.fields).toMatchObject({
+      method: "GET",
+      path: "/boom",
+      name: "Error",
+      detail: "db down",
+    })
+    expect(String(entries[0]?.fields?.stack)).toContain("db down")
+  })
+
+  test("a soft-navigation data request that a boundary answers is logged too", async () => {
+    const { entries, logger } = capture()
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(new Error("db down")),
+      clientEntry: "/c.js",
+      server: { logger },
+    })
+    const res = await app.fetch(new Request("http://x/boom", { headers: { "x-nifra-data": "1" } }))
+    expect(res.status).toBe(500)
+    expect(entries.map((entry) => entry.fields?.detail)).toEqual(["db down"])
+  })
+
+  test("errorLogDetail applies to the boundary path the same way", async () => {
+    const { entries, logger } = capture()
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(new Error("secret in message")),
+      clientEntry: "/c.js",
+      server: { logger, errorLogDetail: "none" },
+    })
+    await app.fetch(new Request("http://x/boom"))
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.fields).toEqual({ method: "GET", path: "/boom", name: "Error" })
+  })
+
+  test("without a boundary the server logs the error once, not twice", async () => {
+    const { entries, logger } = capture()
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(new Error("boom")),
+      clientEntry: "/c.js",
+      server: { logger },
+    })
+    const res = await app.fetch(new Request("http://x/naked"))
+    expect(res.status).toBe(500)
+    expect(entries.map((entry) => entry.fields?.detail)).toEqual(["unhandled"])
+  })
+
+  test("a redirect thrown from a loader is control flow, never logged", async () => {
+    const { entries, logger } = capture()
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(redirect("/login")),
+      clientEntry: "/c.js",
+      server: { logger },
+    })
+    const res = await app.fetch(new Request("http://x/boom"))
+    expect(res.status).toBe(303)
+    expect(entries).toHaveLength(0)
+  })
+})
