@@ -58,7 +58,12 @@ import { dirname, relative, resolve } from "node:path"
 import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
 import { explainBindFailure } from "./dev-port.ts"
-import { createDevSession, type DevAppHooks, type DevSession } from "./dev-session.ts"
+import {
+  createDevSession,
+  type DevAppHooks,
+  type DevSession,
+  isLoopbackHost,
+} from "./dev-session.ts"
 import { createSsrGraph, type SsrGraph } from "./dev-ssr-graph.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
@@ -112,6 +117,13 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
    * fix (default `true`). Off, the errors still reach the feed.
    */
   readonly indicator?: boolean
+  /**
+   * Host names the dev server answers besides loopback ones (`localhost`, `*.localhost`, `127.0.0.1`,
+   * `[::1]`), port ignored. Every other `Host` gets a 403: a page on another site whose name a DNS
+   * rebind points at 127.0.0.1 would otherwise read the dev server's pages, loader data and error
+   * overlay. Add a name here when a hosts-file entry or tunnel reaches the server under it.
+   */
+  readonly allowedHosts?: readonly string[]
 }
 
 export interface DevServer {
@@ -465,6 +477,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
     }
   }
 
+  const allowedHosts = new Set((options.allowedHosts ?? []).map(hostName))
   try {
     server = serve({
       port,
@@ -474,6 +487,12 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       routes: { [PROBE_PATH]: htmlModule.default },
       fetch: async (req: Request): Promise<Response> => {
         const url = new URL(req.url)
+        const host = req.headers.get("host") ?? url.host
+        if (!isLoopbackHost(host) && !allowedHosts.has(hostName(host)))
+          return new Response(
+            `[nifra/web/dev] ${hostName(host)} is not a loopback host; add it to allowedHosts if this server should answer it.\n`,
+            { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
+          )
         // The stable client-entry URL. Pages reference THIS; it redirects to whichever hashed chunk Bun
         // is serving at the moment the browser asks. A redirect rather than a proxy so the module's final
         // URL is Bun's own - its HMR client derives its socket and module identity from `import.meta.url`,
@@ -620,6 +639,15 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
  * whose message is just "Bundle failed" - the actionable part (which file, which import) lives in
  * `.errors`. Surface it, or the guard reports a failure while hiding the reason.
  */
+/** A Host header's name: lowercased, without its port or IPv6 brackets. */
+function hostName(host: string): string {
+  const name = host.trim().toLowerCase()
+  if (name.startsWith("["))
+    return name.slice(1, name.indexOf("]") === -1 ? undefined : name.indexOf("]"))
+  const colon = name.lastIndexOf(":")
+  return colon === -1 ? name : name.slice(0, colon)
+}
+
 export function buildFailureDetail(err: unknown): string {
   return err instanceof AggregateError && err.errors.length > 0
     ? err.errors.map((e) => `  ${e instanceof Error ? e.message : String(e)}`).join("\n")

@@ -552,6 +552,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
       indicator: showsIndicator(flags, fw),
+      allowedHosts: fw.dev?.allowedHosts ?? [],
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),

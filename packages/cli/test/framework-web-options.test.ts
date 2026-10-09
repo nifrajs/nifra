@@ -55,6 +55,14 @@ describe("loadApp validates the forwarded fields", () => {
     ["export const clientIp = 'cf-connecting-ip'", '`clientIp` must be "platform"'],
     ["export const dev = 'quiet'", "`dev` must be an object"],
     ["export const dev = { indicator: 'off' }", "`dev.indicator` must be a boolean"],
+    [
+      "export const dev = { allowedHosts: 'app.test' }",
+      "`dev.allowedHosts` must be an array of host names",
+    ],
+    [
+      "export const dev = { allowedHosts: [''] }",
+      "`dev.allowedHosts` must be an array of host names",
+    ],
   ]
   for (const [line, message] of cases) {
     test(line, async () => {

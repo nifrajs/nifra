@@ -78,8 +78,11 @@ export interface NifraFramework {
    * targets use the socket peer either way. */
   readonly clientIp?: "platform"
   /** `nifra dev` settings. `indicator: false` turns the in-page issues badge off for every run
-   * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`. */
-  readonly dev?: { readonly indicator?: boolean }
+   * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`.
+   * `allowedHosts` lists host names the Bun dev server answers besides loopback ones; it refuses
+   * every other `Host` so a DNS-rebound page cannot read it. The Vite pipeline uses Vite's own
+   * `server.allowedHosts`. */
+  readonly dev?: { readonly indicator?: boolean; readonly allowedHosts?: readonly string[] }
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
@@ -174,6 +177,13 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
     const indicator: unknown = Reflect.get(fw.dev, "indicator")
     if (indicator !== undefined && typeof indicator !== "boolean")
       wrong("dev.indicator", "a boolean")
+    const allowedHosts: unknown = Reflect.get(fw.dev, "allowedHosts")
+    if (
+      allowedHosts !== undefined &&
+      (!Array.isArray(allowedHosts) ||
+        allowedHosts.some((host) => typeof host !== "string" || host.trim() === ""))
+    )
+      wrong("dev.allowedHosts", 'an array of host names such as ["app.test"]')
   }
 }
 

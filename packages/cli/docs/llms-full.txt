@@ -7224,6 +7224,17 @@ with `export const dev = { indicator: false }` in `nifra.config.ts`,
 or with `indicator: false` on `createDevServer`; the errors still reach
 the feed.
 
+### Host check
+
+The Bun dev server listens on 127.0.0.1 and answers only loopback host names:
+`localhost`, any `*.localhost`, `127.0.0.1` and
+`[::1]`. Any other `Host` gets a 403, so a page on another site whose
+name a DNS rebind points at your machine cannot read your pages, loader data or error overlay.
+To reach the server under another name (a hosts-file entry, a tunnel), list it with
+`export const dev = { allowedHosts: ["app.test"] }` in
+`nifra.config.ts` or `allowedHosts` on `createDevServer`.
+The Vite pipeline applies Vite's own `server.allowedHosts`.
+
 ### Containers & sandboxes
 
 In Docker, networked volumes, and some sandboxes, pass
