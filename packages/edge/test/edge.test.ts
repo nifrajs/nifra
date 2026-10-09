@@ -524,3 +524,49 @@ test("a constrained param is typed by its bare name", async () => {
     id: "7",
   })
 })
+
+test("a route with no body schema holds direct reads of c.request to maxBodyBytes, as core does", async () => {
+  const read = async (c: { request: Request }) => ({ length: (await c.request.text()).length })
+  const apps = [
+    server({ maxBodyBytes: 64 })
+      .post("/raw", read)
+      .post("/ignore", () => ({ ok: true })),
+    coreServer({ maxBodyBytes: 64 })
+      .post("/raw", (c) => read({ request: c.req }))
+      .post("/ignore", () => ({ ok: true })),
+  ]
+  const stream = (size: number) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let sent = 0; sent < size; sent += 16) controller.enqueue(new Uint8Array(16))
+        controller.close()
+      },
+    })
+  const cases: ReadonlyArray<readonly [string, () => RequestInit]> = [
+    ["/raw", () => ({ body: "x".repeat(64) })],
+    ["/raw", () => ({ body: "x".repeat(65) })],
+    ["/raw", () => ({ body: stream(128), duplex: "half" }) as RequestInit],
+    ["/raw", () => ({ body: "x", headers: { "content-length": "1e3" } })],
+    ["/ignore", () => ({ body: "x".repeat(1000) })],
+  ]
+  const answers = await Promise.all(
+    apps.map(async (app) => {
+      const out: string[] = []
+      for (const [path, init] of cases) {
+        const res = await app.fetch(
+          new Request(`http://edge${path}`, { method: "POST", ...init() }),
+        )
+        out.push(`${res.status} ${await res.text()}`)
+      }
+      return out
+    }),
+  )
+  expect(answers[0]).toEqual(answers[1] as string[])
+  expect(answers[0]).toEqual([
+    '200 {"length":64}',
+    '413 {"ok":false,"error":"payload_too_large"}',
+    '413 {"ok":false,"error":"payload_too_large"}',
+    '400 {"ok":false,"error":"invalid_content_length"}',
+    '200 {"ok":true}',
+  ])
+})

@@ -5200,7 +5200,7 @@
     "name": "EdgeContext",
     "kind": "interface",
     "package": "@nifrajs/edge",
-    "signature": "export interface EdgeContext<Path extends string = string, Body = unknown> {\n    /** The raw `Request`. */\n    readonly request: Request;\n    /** Path parameters, typed from the route pattern (`/users/:id` -> `{ id: string }`). */\n    readonly params: Params<Path>;\n    /** The parsed, schema-validated body, or `undefined` on a route with no body schema. */\n    readonly body: Body;\n    /** The query string parsed to an object, computed on demand. */\n    query(): Record<string, QueryValue>;\n    /** Read a request header (case-insensitive), or `null`. */\n    header(name: string): string | null;\n}",
+    "signature": "export interface EdgeContext<Path extends string = string, Body = unknown> {\n    /**\n     * The raw `Request`. On a route with no body schema, reading its body directly is held to\n     * `maxBodyBytes` like a schema route's: past it the read throws a `413` response.\n     */\n    readonly request: Request;\n    /** Path parameters, typed from the route pattern (`/users/:id` -> `{ id: string }`). */\n    readonly params: Params<Path>;\n    /** The parsed, schema-validated body, or `undefined` on a route with no body schema. */\n    readonly body: Body;\n    /** The query string parsed to an object, computed on demand. */\n    query(): Record<string, QueryValue>;\n    /** Read a request header (case-insensitive), or `null`. */\n    header(name: string): string | null;\n}",
     "doc": "/** The request handed to a route. Compact by design: no cookies, no response builder - return a\n * value (rendered as JSON) or a `Response` for full control. */"
   },
   {
@@ -16722,6 +16722,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function capabilityJournalOf(context: object): CapabilityExecutionJournal | undefined;",
     "doc": "/** The journal installed for this request, if any. */"
+  },
+  {
+    "name": "cappedBodyRequest",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function cappedBodyRequest(request: Request, maxBytes: number): Request;",
+    "doc": "/**\n * A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes`\n * arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or\n * malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the\n * handler its own `Request` and has no identity to preserve; nothing is read until the handler reads.\n */"
   },
   {
     "name": "captureIncident",

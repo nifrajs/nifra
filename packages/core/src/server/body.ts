@@ -194,6 +194,37 @@ function transportCapError(status: 400 | 413): Response {
   return jsonError(status, status === 413 ? "payload_too_large" : "invalid_content_length")
 }
 
+/**
+ * A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes`
+ * arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or
+ * malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the
+ * handler its own `Request` and has no identity to preserve; nothing is read until the handler reads.
+ */
+export function cappedBodyRequest(request: Request, maxBytes: number): Request {
+  const body = request.body
+  if (body === null) return request
+  const declared = request.headers.get("content-length")
+  const length = declared === null ? 0 : parseContentLength(declared)
+  let total = 0
+  const init: RequestInit & { duplex: "half" } = {
+    body: body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        start(controller) {
+          if (length === undefined || length > maxBytes)
+            controller.error(transportCapError(length === undefined ? 400 : 413))
+        },
+        transform(chunk, controller) {
+          total += chunk.byteLength
+          if (total > maxBytes) controller.error(transportCapError(413))
+          else controller.enqueue(chunk)
+        },
+      }),
+    ),
+    duplex: "half",
+  }
+  return new Request(request, init)
+}
+
 /** First matching own-or-inherited descriptor, so instance shadows and prototype accessors both resolve. */
 function descriptorOf(target: object, key: string): PropertyDescriptor | undefined {
   let current: object | null = target

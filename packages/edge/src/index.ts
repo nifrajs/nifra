@@ -15,6 +15,7 @@
 import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   answerNotFound,
+  cappedBodyRequest,
   type NotFoundHandler,
   type NotFoundInput,
   notFoundInput,
@@ -38,7 +39,10 @@ const DEFAULT_MAX_BODY_BYTES = 1_000_000
 /** The request handed to a route. Compact by design: no cookies, no response builder - return a
  * value (rendered as JSON) or a `Response` for full control. */
 export interface EdgeContext<Path extends string = string, Body = unknown> {
-  /** The raw `Request`. */
+  /**
+   * The raw `Request`. On a route with no body schema, reading its body directly is held to
+   * `maxBodyBytes` like a schema route's: past it the read throws a `413` response.
+   */
   readonly request: Request
   /** Path parameters, typed from the route pattern (`/users/:id` -> `{ id: string }`). */
   readonly params: Params<Path>
@@ -195,9 +199,15 @@ export class EdgeServer {
     if (params === null) return render(plainError(400, "malformed_path"))
     const { bodySchema, handler } = match.payload
 
-    const dispatch = async (body: unknown): Promise<Response> => {
+    const maxBodyBytes = this.#maxBodyBytes
+    const dispatch = async (body: unknown, cap: boolean): Promise<Response> => {
+      let raw: Request | undefined
       const c: EdgeContext = {
-        request,
+        // Built on first access, so a handler that never reads the request pays nothing for the cap.
+        get request() {
+          raw ??= cap ? cappedBodyRequest(request, maxBodyBytes) : request
+          return raw
+        },
         params,
         body,
         query: () => queryObjectOf(searchOf(request.url)),
@@ -214,7 +224,7 @@ export class EdgeServer {
       return out instanceof Response ? out : Response.json(out)
     }
 
-    if (bodySchema === undefined) return dispatch(undefined)
+    if (bodySchema === undefined) return dispatch(undefined, true)
 
     // The body trust boundary IS the shipped lane: `readBodyFramed` does the content-type dispatch,
     // the bounded read + Content-Length pre-reject, and the prototype-poisoning guard. This layers
@@ -228,7 +238,7 @@ export class EdgeServer {
         if (result.issues !== undefined || result.value === undefined) {
           return render(plainValidationError((result.issues ?? []) as ReadonlyArray<StandardIssue>))
         }
-        return dispatch(result.value)
+        return dispatch(result.value, false)
       },
       render,
       () => render(plainError(400, "invalid_json")),
