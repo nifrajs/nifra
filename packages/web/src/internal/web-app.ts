@@ -467,7 +467,10 @@ export function createWebApp<Env = unknown>(
   // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An
   // app route at either path takes precedence, and each text is built once per app.
   if (options.llmsTxt !== false) {
-    const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
+    const llmsOptions = {
+      includeLocalGuidelines: options.publishLocalGuidelines === true,
+      apiPathPrefix: apiStrip ? mountPathPrefix(apiPrefix) : "",
+    }
     const publicApi = mountedApi !== undefined && apiPrefix !== "" ? api : undefined
     for (const [path, full] of [
       ["/llms.txt", false],

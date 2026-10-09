@@ -134,6 +134,8 @@ export async function generateLlmsTxt(
     readonly includeLocalGuidelines?: boolean
     /** Reuse the project's canonical route-evidence pass when one is already available. */
     readonly evidence?: ProjectEvidenceSnapshot
+    /** The mount prefix a visitor's URL carries but the backend's own routes do not (`apiStrip`). */
+    readonly apiPathPrefix?: string
   } = {},
 ): Promise<string> {
   let output = ""
@@ -166,8 +168,11 @@ export async function generateLlmsTxt(
   if (apiRoutes.length === 0) {
     output += `No API routes registered.\n`
   } else {
+    const prefix = options.apiPathPrefix ?? ""
     for (const route of apiRoutes) {
-      output += `- **${route.method}** \`${route.path}\`\n`
+      // The stripped backend's root is the bare prefix, as the mount matches it.
+      const path = prefix !== "" && route.path === "/" ? prefix : prefix + route.path
+      output += `- **${route.method}** \`${path}\`\n`
       if (full) {
         output += `  - Client Call: \`${clientCall(route.method, route.path, route.schema)}\`\n`
         const s = route.schema

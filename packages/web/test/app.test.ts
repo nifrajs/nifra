@@ -1465,6 +1465,27 @@ test("llms.txt lists backend routes only when the backend is served over HTTP", 
   expect(text).toContain("No API routes registered.")
 })
 
+test("llms.txt lists a stripped backend's routes at the URL a visitor calls", async () => {
+  const backend = server()
+    .get("/", () => ({ ok: true }))
+    .post("/v1/forms", () => ({ ok: true }))
+  const api = Object.assign(backend, inProcessBridge(backend))
+  const app = createWebApp({
+    apiPrefix: "/api/",
+    apiStrip: true,
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  const text = await (await app.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(text).toContain("- **POST** `/api/v1/forms`")
+  expect(text).toContain("- **GET** `/api`")
+  // The typed client is built on the backend's own route tree, so its call keeps the backend path.
+  expect(text).toContain("await api.v1.forms.post()")
+  expect(text).not.toContain("`/v1/forms`")
+})
+
 test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt page wins", async () => {
   const off = createWebApp({
     adapter: stub,
