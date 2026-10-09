@@ -33,6 +33,31 @@ describe("agent protocol", () => {
     expect((await stream.next()).done).toBe(true)
   })
 
+  test("a consumer that falls behind loses deltas before lifecycle events", async () => {
+    const lifecycle = (seq: number): AgentEvent => ({
+      version: AGENT_PROTOCOL_VERSION,
+      sessionId: "session",
+      seq,
+      at: seq,
+      type: "turn.started",
+      turnId: "turn",
+      prompt: String(seq),
+    })
+    const stream = createAgentEventStream(2)
+    stream.push(lifecycle(0))
+    stream.push(event(1))
+    stream.push(event(2))
+    stream.push(lifecycle(3))
+    stream.push(event(4))
+    expect(stream.dropped).toBe(3)
+    stream.push(lifecycle(5))
+    expect(stream.dropped).toBe(4)
+    stream.complete()
+    const seqs: number[] = []
+    for await (const received of stream) seqs.push(received.seq)
+    expect(seqs).toEqual([3, 5])
+  })
+
   test("rejects an unbounded live event queue configuration", () => {
     expect(() => createAgentEventStream(65_537)).toThrow(/between 1 and 65536/)
   })

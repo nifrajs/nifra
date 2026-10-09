@@ -17291,7 +17291,7 @@
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function createAgentEventStream(maxQueueSize?: number): AgentEventStream;",
-    "doc": "/**\n * Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to\n * the backend/session store; this live view may drop old transient events if a consumer falls behind.\n */"
+    "doc": "/**\n * Small bounded event stream for RPC clients and UIs. When a consumer falls behind, the oldest\n * delta goes first; a lifecycle event is dropped only once no delta is left to drop.\n */"
   },
   {
     "name": "createAgentEvidenceStream",

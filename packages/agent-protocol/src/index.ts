@@ -315,9 +315,13 @@ export interface AgentEventStream extends AgentEventSink, AsyncIterableIterator<
 
 const MAX_AGENT_EVENT_QUEUE_SIZE = 65_536
 
+// The final `assistant.message` / `tool.completed` carries what the deltas streamed.
+const isTransientEvent = (event: AgentEvent): boolean =>
+  event.type === "assistant.delta" || event.type === "tool.delta"
+
 /**
- * Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to
- * the backend/session store; this live view may drop old transient events if a consumer falls behind.
+ * Small bounded event stream for RPC clients and UIs. When a consumer falls behind, the oldest
+ * delta goes first; a lifecycle event is dropped only once no delta is left to drop.
  */
 export function createAgentEventStream(maxQueueSize = 256): AgentEventStream {
   if (
@@ -360,8 +364,11 @@ export function createAgentEventStream(maxQueueSize = 256): AgentEventStream {
         return
       }
       if (queue.length >= maxQueueSize) {
-        queue.shift()
         dropped += 1
+        const at = queue.findIndex(isTransientEvent)
+        if (at >= 0) queue.splice(at, 1)
+        else if (isTransientEvent(event)) return
+        else queue.shift()
       }
       queue.push(event)
     },

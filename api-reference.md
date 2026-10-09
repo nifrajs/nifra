@@ -536,7 +536,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
   True when both coordinates address the same boundary at the same child vector.
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
-  Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to the backend/session store; this live view may drop old transient events if a consumer falls behind.
+  Small bounded event stream for RPC clients and UIs. When a consumer falls behind, the oldest delta goes first; a lifecycle event is dropped only once no delta is left to drop.
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
   The stable dedupe identity for an evidence record.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
