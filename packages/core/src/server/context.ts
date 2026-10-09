@@ -31,7 +31,8 @@ export interface IdempotencyConfig {
    * Required server-owned key namespace. Use a tenant/subject-scoped opaque token for authenticated
    * routes so two principals choosing the same header key never collide. A static namespace is an
    * explicit shared/public scope and is safe only when the response is principal-independent. The
-   * resolver receives a clone and must not derive identity from unauthenticated client input.
+   * resolver receives the request's method, URL and headers, never its body, and must not derive
+   * identity from unauthenticated client input.
    */
   readonly namespace:
     | string

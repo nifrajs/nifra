@@ -703,6 +703,36 @@ describe("server({ idempotency }) - request path", () => {
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
   })
 
+  test("a namespace resolver sees the method, URL and headers but no body", async () => {
+    let view: Record<string, unknown> = {}
+    const app = server({ maxBodyBytes: 1024 })
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: {
+            scope: "request",
+            namespace: (request) => {
+              view = {
+                method: request.method,
+                url: request.url,
+                body: Reflect.get(request, "body"),
+                text: Reflect.get(request, "text"),
+              }
+              return "tenant:a"
+            },
+          },
+        },
+        async (c) => ({ body: await c.req.json() }),
+      )
+    const response = await app.fetch(post({ amount: 1 }, "key-view"))
+    expect(await response.json()).toEqual({ body: { amount: 1 } })
+    expect(view.body).toBeUndefined()
+    expect(view.text).toBeUndefined()
+    expect(view.method).toBe("POST")
+    expect(view.url).toBe("http://test/pay")
+  })
+
   test("a namespace resolver does not hold up the 413 for a length-less body over the cap", async () => {
     const app = server({ maxBodyBytes: 1024 })
       .use(idempotency())

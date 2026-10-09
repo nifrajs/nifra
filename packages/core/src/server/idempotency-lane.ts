@@ -231,7 +231,10 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       }
       const namespace =
         typeof config.namespace === "function"
-          ? await config.namespace(req.clone(), platform)
+          ? await config.namespace(
+              { method: req.method, url: req.url, headers: req.headers },
+              platform,
+            )
           : config.namespace
       if (!validIdempotencyNamespace(namespace)) {
         return wrapResponse(jsonError(500, "idempotency_namespace_invalid"))
