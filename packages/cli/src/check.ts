@@ -31,7 +31,7 @@ import {
 import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
-import { createNifraProjectProbe } from "./internal/nifra-project.ts"
+import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
@@ -324,6 +324,8 @@ async function buildProjectScan(
   const browserModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
   const inNifraProject = createNifraProjectProbe(cwd)
+  // An API-only project has no browser bundle for server code to reach.
+  const apiOnly = createApiOnlyProbe(cwd)
   const {
     config: checkConfig,
     error: checkConfigError,
@@ -339,7 +341,8 @@ async function buildProjectScan(
       streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
       untypedClients.push(...scanUntypedClient(rel, content))
       removedImports.push(...scanRemovedImports(rel, content))
-      if (isBrowserSource(rel) && inNifraProject(dirname(rel).replace(/^\.$/, "")))
+      const dir = dirname(rel).replace(/^\.$/, "")
+      if (isBrowserSource(rel) && inNifraProject(dir) && !apiOnly(dir))
         browserModules.push({ rel, content })
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),

@@ -22,6 +22,7 @@ import {
 } from "../diagnostics.ts"
 import type { DuplicateInstallFinding } from "../doctor.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { createWebAppProbe, withApiKindHint } from "../internal/nifra-project.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import { zoneFolderOf } from "../typecheck-coverage.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -501,14 +502,18 @@ const serverOnlyImportRule: CheckRule = {
   code: LEGACY_RULE_CODES["server-only-import"]!,
   title: TITLES["server-only-import"]!,
   async scan(ctx) {
+    const inWebApp = createWebAppProbe(ctx.root)
     return [...ctx.project.importGraph].sort(bySite).map((finding) => {
       const chain = finding.chain
       const sink = chain[chain.length - 1] ?? finding.specifier
+      const dir = finding.file.slice(0, Math.max(finding.file.lastIndexOf("/"), 0))
       return legacyDiagnostic("server-only-import", {
         severity: "error",
         file: finding.file,
         line: finding.line,
-        message: `${finding.snippet} - server-only "${sink}" reaches the browser bundle via ${chain.join(" → ")}${finding.fallback ? " (direct edge - couldn't resolve the transitive chain precisely)" : ""}; ${SERVER_IMPORT_HINT}`,
+        message: (inWebApp(dir) ? (text: string) => text : withApiKindHint)(
+          `${finding.snippet} - server-only "${sink}" reaches the browser bundle via ${chain.join(" → ")}${finding.fallback ? " (direct edge - couldn't resolve the transitive chain precisely)" : ""}; ${SERVER_IMPORT_HINT}`,
+        ),
         fix: SERVER_IMPORT_HINT,
         chain,
         suggestion: serverImportSuggestion(finding.specifier, chain, finding.fallback),

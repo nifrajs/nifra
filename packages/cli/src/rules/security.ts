@@ -1,8 +1,7 @@
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
 import type * as TSApi from "typescript"
 import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { createWebAppProbe } from "../internal/nifra-project.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
 import {
   commentBlockExpectation,
@@ -71,58 +70,7 @@ function unexpectedMessage(
   return message
 }
 
-const WEB_PACKAGE = /^@nifrajs\/web(?:-[a-z0-9-]+)?$/
-const DEPENDENCY_FIELDS = new Set([
-  "dependencies",
-  "devDependencies",
-  "peerDependencies",
-  "optionalDependencies",
-])
-
-/** Whether a package.json text names `@nifrajs/web` or a `@nifrajs/web-*` adapter as a dependency. */
-function declaresWeb(manifest: string): boolean {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(manifest)
-  } catch {
-    return false
-  }
-  if (typeof parsed !== "object" || parsed === null) return false
-  for (const [field, deps] of Object.entries(parsed)) {
-    if (!DEPENDENCY_FIELDS.has(field) || typeof deps !== "object" || deps === null) continue
-    if (Object.keys(deps).some((name) => WEB_PACKAGE.test(name))) return true
-  }
-  return false
-}
-
-function readText(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8")
-  } catch {
-    return undefined
-  }
-}
-
 const parentOf = (dir: string): string => dir.slice(0, Math.max(dir.lastIndexOf("/"), 0))
-
-/**
- * Whether the project-relative `dir` ("" for the root) is inside a nifra web app. Walking up, the first
- * directory with `nifra.config.ts` or `backend/framework.ts` makes it one; the first package.json
- * decides instead by naming `@nifrajs/web` or an adapter. Nothing up to the root means no.
- */
-function inWebApp(root: string, dir: string, cache: Map<string, boolean>): boolean {
-  const cached = cache.get(dir)
-  if (cached !== undefined) return cached
-  const at = join(root, dir)
-  let web: boolean
-  if (existsSync(join(at, "nifra.config.ts")) || existsSync(join(at, "backend", "framework.ts")))
-    web = true
-  else if (existsSync(join(at, "package.json")))
-    web = declaresWeb(readText(join(at, "package.json")) ?? "")
-  else web = dir !== "" && inWebApp(root, parentOf(dir), cache)
-  cache.set(dir, web)
-  return web
-}
 
 /**
  * Whether NF-S002 may treat `file` as browser code, which compares values the client already holds,
@@ -134,12 +82,12 @@ function inWebApp(root: string, dir: string, cache: Map<string, boolean>): boole
 export function provenBrowserFile(
   root: string,
   file: string,
-  cache: Map<string, boolean> = new Map(),
+  inWebApp: (dir: string) => boolean = createWebAppProbe(root),
 ): boolean {
   const path = file.replaceAll("\\", "/")
   if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return false
   if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return false
-  return inWebApp(root, parentOf(path), cache)
+  return inWebApp(parentOf(path))
 }
 
 const CONFIRMATION_NAME =
@@ -476,7 +424,7 @@ export const secretComparisonRule: CheckRule = {
     const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
     const findings: Diagnostic[] = []
-    const webDirs = new Map<string, boolean>()
+    const webDirs = createWebAppProbe(ctx.root)
     for (const file of ctx.project.source.files) {
       const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue

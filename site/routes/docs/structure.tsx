@@ -163,6 +163,16 @@ export default function Structure() {
         count as that zone folder. Builds, dev servers, <code>nifra check</code> and the editor
         plugin all read this setting.
       </p>
+      <p>
+        A project that serves no pages has no browser, so the zones do not apply to it. Declare that
+        in its <code>package.json</code> with <code>{'"nifra": { "kind": "api" }'}</code>:{" "}
+        <code>nifra check</code> then skips the zone checks and the server-only import check there,
+        and treats every file as server code. It is read from the nearest <code>package.json</code>{" "}
+        and only takes values <code>"api"</code> and <code>"web"</code>. A directory with web config
+        (<code>nifra.config.ts</code> exporting <code>adapter</code>, or{" "}
+        <code>backend/framework.ts</code>) keeps its zone checks under it, and{" "}
+        <code>nifra check</code> reports the clash (NF-C037); builds and dev servers never read it.
+      </p>
 
       <h2>A route is two files</h2>
       <p>

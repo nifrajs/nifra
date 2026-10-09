@@ -489,6 +489,17 @@ describe("NF-S002 severity by file role", () => {
     expect(await severityOf("packages/shared/frontend/x.tsx", root)).toBe("error")
   })
 
+  test('"nifra": { "kind": "api" } makes every file server code, a web dependency notwithstanding', async () => {
+    const root = project({
+      "package.json": JSON.stringify({
+        nifra: { kind: "api" },
+        dependencies: { "@nifrajs/web": "5.0.0" },
+      }),
+    })
+    expect(await severityOf("routes/login.tsx", root)).toBe("error")
+    expect(await severityOf("frontend/Login.tsx", root)).toBe("error")
+  })
+
   test("an unreadable or malformed package.json proves nothing", async () => {
     for (const text of ["{", "null", JSON.stringify({ dependencies: "@nifrajs/web" })]) {
       expect(await severityOf("routes/login.tsx", project({ "package.json": text }))).toBe("error")

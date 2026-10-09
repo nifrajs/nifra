@@ -2822,7 +2822,7 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
       "web/package.json": JSON.stringify({ dependencies: { "@nifrajs/core": "^5.0.0" } }),
     })
     expect(await findings(nifra, "NF-C028")).toEqual([
-      'web/src/routes/index.tsx:1 web/src/routes/index.tsx imports web/src/lib/catalog.ts: "lib/catalog.ts" is in no zone. Every file a build loads lives under routes/, frontend/, backend/ or shared/, or carries a .frontend/.backend/.shared suffix',
+      'web/src/routes/index.tsx:1 web/src/routes/index.tsx imports web/src/lib/catalog.ts: "lib/catalog.ts" is in no zone. Every file a build loads lives under routes/, frontend/, backend/ or shared/, or carries a .frontend/.backend/.shared suffix. If this project serves no pages, declare it in package.json: "nifra": { "kind": "api" }',
     ])
     expect(await serverOnly(nifra)).toHaveLength(1)
     // A nifra config inside another package's tree is a nifra app of its own.
@@ -2839,6 +2839,77 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     })
     expect(await findings(root, "NF-C028")).toHaveLength(1)
     for (const dir of [other, nifra, nested, root]) await rm(dir, { recursive: true, force: true })
+  })
+
+  test('"nifra": { "kind": "api" } takes an API-only project out of the zone checks', async () => {
+    const api = {
+      "src/routes/users.ts":
+        'import { db } from "../db"\nimport { readFileSync } from "node:fs"\nexport const users = () => [db, readFileSync]\n',
+      "src/db.ts": "export const db = 1\n",
+      "backend/app.ts":
+        'import { users } from "../src/routes/users"\nexport const backend = users\n',
+    }
+    const serverOnly = async (dir: string) =>
+      (await collectCheckResult(dir, { lintsOnly: true })).diagnostics.filter(
+        (d) => d.rule === "server-only-import",
+      )
+    // Undeclared, the same shape is zoned like a web app's, and each finding names the setting.
+    const undeclared = await project({
+      ...api,
+      "package.json": JSON.stringify({ dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    })
+    const zoneFindings = await findings(undeclared, "NF-C028")
+    expect(zoneFindings.length).toBeGreaterThan(0)
+    for (const found of zoneFindings) expect(found).toEndWith('"nifra": { "kind": "api" }')
+    const chains = await serverOnly(undeclared)
+    expect(chains.length).toBeGreaterThan(0)
+    for (const chain of chains) expect(chain.message).toEndWith('"nifra": { "kind": "api" }')
+    const declared = await project({
+      ...api,
+      "package.json": JSON.stringify({
+        nifra: { kind: "api" },
+        dependencies: { "@nifrajs/core": "^5.0.0" },
+      }),
+    })
+    expect(await findings(declared, "NF-C028")).toEqual([])
+    expect(await serverOnly(declared)).toEqual([])
+    expect(await findings(declared, "NF-C037")).toEqual([])
+    for (const dir of [undeclared, declared]) await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a web app keeps its zone checks under an API-only declaration, and NF-C037 names the clash", async () => {
+    const web = {
+      "web/routes/index.tsx": 'import { util } from "../lib/util"\nexport default () => util\n',
+      "web/lib/util.ts": "export const util = 1\n",
+    }
+    // Under the API root's package.json: the clash is an error, and the web app is still zoned.
+    const nested = await project({
+      ...web,
+      "package.json": JSON.stringify({ nifra: { kind: "api" } }),
+      "web/backend/framework.ts": "export const adapter = {}\n",
+    })
+    expect(await findings(nested, "NF-C037")).toEqual([
+      'package.json:undefined "nifra": { "kind": "api" } in package.json governs web/, which has web config (web/backend/framework.ts). An app that serves pages keeps its zone checks; remove "kind", or give the web app its own package.json',
+    ])
+    expect(await findings(nested, "NF-C028")).toHaveLength(1)
+    // With its own package.json, the web app is a project of its own: checked, and no clash.
+    const own = await project({
+      ...web,
+      "package.json": JSON.stringify({ nifra: { kind: "api" } }),
+      "web/package.json": JSON.stringify({ dependencies: { "@nifrajs/web": "^5.0.0" } }),
+      "web/nifra.config.ts": 'export const adapter = {}\nexport const clientModule = "x"\n',
+    })
+    expect(await findings(own, "NF-C037")).toEqual([])
+    expect(await findings(own, "NF-C028")).toHaveLength(1)
+    // Only "api" and "web" are values.
+    const invalid = await project({
+      ...web,
+      "package.json": JSON.stringify({ nifra: { kind: "server" } }),
+    })
+    expect(await findings(invalid, "NF-C028")).toEqual([
+      'package.json:undefined [nifra] package.json "nifra.kind" must be "api" or "web", not "server"',
+    ])
+    for (const dir of [nested, own, invalid]) await rm(dir, { recursive: true, force: true })
   })
 
   test("browser code reading a private variable, under the app's declared prefix", async () => {

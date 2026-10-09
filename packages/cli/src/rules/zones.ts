@@ -25,7 +25,14 @@ import { importSites, stripComments } from "../check-scan.ts"
 import { appDirs, clientModuleRoot } from "../client-module.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
-import { createNifraProjectProbe } from "../internal/nifra-project.ts"
+import {
+  createApiOnlyProbe,
+  createKindProbe,
+  createNifraProjectProbe,
+  createWebAppProbe,
+  hasWebConfig,
+  withApiKindHint,
+} from "../internal/nifra-project.ts"
 import { createSpecifierResolver } from "../internal/project-specifiers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
@@ -53,8 +60,8 @@ interface ZonedFile {
 export function zonedFiles(ctx: RuleContext): {
   readonly files: readonly ZonedFile[]
   readonly classifierFor: (app: string) => ZoneClassifier
-  /** Apps whose `nifra.zones` setting is invalid; their files are left out of `files`. */
-  readonly configErrors: ReadonlyArray<{ readonly app: string; readonly message: string }>
+  /** Settings that cannot be applied (`nifra.zones`, `nifra.kind`); their apps' files are left out. */
+  readonly configErrors: ReadonlyArray<{ readonly file: string; readonly message: string }>
 } {
   const classifiers = new Map<string, ZoneClassifier | ZoneConfigError>()
   const load = (app: string): ZoneClassifier | ZoneConfigError => {
@@ -80,17 +87,29 @@ export function zonedFiles(ctx: RuleContext): {
     return classifier
   }
   const files: ZonedFile[] = []
-  const configErrors: Array<{ app: string; message: string }> = []
+  const configErrors: Array<{ file: string; message: string }> = []
+  const reportOnce = (file: string, message: string): void => {
+    if (!configErrors.some((entry) => entry.message === message))
+      configErrors.push({ file, message })
+  }
   // Another framework's app keeps folders named `routes/` too; nifra builds none of it.
   const inNifraProject = createNifraProjectProbe(ctx.root)
+  const kindOf = createKindProbe(ctx.root)
+  const apiOnly = createApiOnlyProbe(ctx.root)
   for (const file of ctx.sources.files) {
     if (!CODE_FILE.test(file)) continue
     const app = appOf(file)
     if (app === undefined || !inNifraProject(app)) continue
+    const declared = kindOf(app)
+    if (declared.invalid !== undefined) {
+      reportOnce(declared.manifest ?? "package.json", declared.invalid)
+      continue
+    }
+    // An API-only project has no browser, so nothing in it is zoned.
+    if (apiOnly(app)) continue
     const classifier = load(app)
     if (classifier instanceof ZoneConfigError) {
-      if (!configErrors.some((entry) => entry.app === app))
-        configErrors.push({ app, message: classifier.message })
+      reportOnce(app === "" ? "package.json" : `${app}/package.json`, classifier.message)
       continue
     }
     files.push({ file, app, classification: classifier.classify(join(ctx.root, file)) })
@@ -133,15 +152,17 @@ export const zoneImportRule: CheckRule = {
     )
       ? (await import("../component-check.ts")).componentCheckReceipts(ctx.root, ctx.sources)
       : new Set<string>()
-    const findings: Diagnostic[] = configErrors.map(({ app, message }) =>
+    const findings: Diagnostic[] = configErrors.map(({ file, message }) =>
       diagnostic({
         code: "NF-C028",
         severity: "error",
-        file: app === "" ? "package.json" : `${app}/package.json`,
+        file,
         message,
         verify: "nifra check",
       }),
     )
+    // Outside any web app, a finding may only mean the project serves no pages: say how to declare it.
+    const inWebApp = createWebAppProbe(ctx.root)
     const resolveSpecifier = createSpecifierResolver()
     const queue: Importer[] = []
     const queued = new Set<string>()
@@ -220,6 +241,7 @@ export const zoneImportRule: CheckRule = {
         ) {
           message = importRuleMessage(file, from, targetName, to.zone)
         } else continue
+        if (!inWebApp(app)) message = withApiKindHint(message)
         findings.push(
           diagnostic({
             code: "NF-C028",
@@ -236,6 +258,31 @@ export const zoneImportRule: CheckRule = {
     return findings.sort(
       (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
+  },
+}
+
+/** NF-C037: `"nifra": { "kind": "api" }` governing a directory that holds web config. */
+export const apiKindRule: CheckRule = {
+  code: "NF-C037",
+  title: "API-only declaration over a web app",
+  async scan(ctx) {
+    const kindOf = createKindProbe(ctx.root)
+    const findings: Diagnostic[] = []
+    for (const app of appDirs(ctx.sources.files)) {
+      const declared = kindOf(app)
+      if (declared.kind !== "api" || !hasWebConfig(ctx.root, app)) continue
+      const where = app === "" ? "the project root" : `${app}/`
+      findings.push(
+        diagnostic({
+          code: "NF-C037",
+          severity: "error",
+          file: declared.manifest ?? "package.json",
+          message: `"nifra": { "kind": "api" } in ${declared.manifest ?? "package.json"} governs ${where}, which has web config (${app === "" ? "" : `${app}/`}${existsSync(join(ctx.root, app, FRAMEWORK_FILE)) ? FRAMEWORK_FILE : CONFIG_FILE}). An app that serves pages keeps its zone checks; remove "kind", or give the web app its own package.json`,
+          verify: "nifra check",
+        }),
+      )
+    }
+    return findings
   },
 }
 
@@ -290,4 +337,4 @@ export const privateEnvRule: CheckRule = {
   },
 }
 
-export const zoneRules = Object.freeze([zoneImportRule, privateEnvRule])
+export const zoneRules = Object.freeze([zoneImportRule, privateEnvRule, apiKindRule])

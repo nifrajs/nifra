@@ -10748,6 +10748,15 @@ by a prefix ending in `*`; a package's own declaration always wins.
 count as that zone folder. Builds, dev servers, `nifra check` and the editor
 plugin all read this setting.
 
+A project that serves no pages has no browser, so the zones do not apply to it. Declare that
+in its `package.json` with `{'"nifra": { "kind": "api" }'}`:
+`nifra check` then skips the zone checks and the server-only import check there,
+and treats every file as server code. It is read from the nearest `package.json`
+and only takes values `"api"` and `"web"`. A directory with web config
+(`nifra.config.ts` exporting `adapter`, or
+`backend/framework.ts`) keeps its zone checks under it, and
+`nifra check` reports the clash (NF-C037); builds and dev servers never read it.
+
 ### A route is two files
 
 The page renders; its backend half loads. A server-only export (`loader`,
