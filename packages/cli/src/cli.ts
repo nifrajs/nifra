@@ -24,7 +24,7 @@ import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
 import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
-import { applyEnvFiles, forgetAutoLoadedEnv, takeEnvFileFlags } from "./env-file.ts"
+import { applyEnvFiles, forgetAutoLoadedEnv, REFLECT_ENV, takeEnvFileFlags } from "./env-file.ts"
 import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 import {
@@ -1020,6 +1020,42 @@ function installReflectionExitHint(): (command: string | undefined) => void {
   }
 }
 
+/** Commands that import the app only to read what it declares, never sending it a request, so the
+ * app may skip connecting to its services. `assure` qualifies without its bundle lane, which renders. */
+const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+  "capabilities",
+  "check",
+  "context",
+  "contracts",
+  "diff",
+  "doctor",
+  "manifest",
+  "openapi",
+  "routes",
+  "sync-manifest",
+  "sync-routes",
+])
+
+const HELD_OPEN_GRACE_MS = 2_000
+
+/**
+ * A command that imports the app for its answer has already answered when the app's own work - a
+ * database or Redis client reconnecting, an interval - would keep the process alive indefinitely.
+ * A process that exits on its own never reaches this unref'd timer; a held one is ended with a note.
+ */
+function exitIfHeldOpen(command: string): void {
+  setTimeout(() => {
+    process.stderr.write(
+      `[nifra] \`nifra ${command}\` has finished, but something the app started when it was imported ` +
+        `(an open connection or a timer) is keeping the process alive, so nifra is exiting.` +
+        (process.env[REFLECT_ENV] === command
+          ? ` To skip that work while nifra only reads the app, check process.env.${REFLECT_ENV}, which is set to "${command}".\n`
+          : "\n"),
+    )
+    process.exit(typeof process.exitCode === "number" ? process.exitCode : 0)
+  }, HELD_OPEN_GRACE_MS).unref()
+}
+
 /** Set on the copy of `nifra mcp` that serves without `.env` files, so it does not restart again. */
 const MCP_WITHOUT_ENV_FILES = "NIFRA_MCP_WITHOUT_ENV_FILES"
 
@@ -1126,6 +1162,9 @@ async function main(): Promise<void> {
   const catalogSpec = findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
   if (catalogSpec?.transports.includes("cli")) {
     const markReflecting = installReflectionExitHint()
+    if (READ_ONLY_COMMANDS.has(command) || (command === "assure" && !assureBundleRequested(argv))) {
+      process.env[REFLECT_ENV] = command
+    }
     try {
       const input = bindCommandArgv(catalogSpec, argv.slice(dbSub === undefined ? 1 : 2))
       markReflecting(command)
@@ -1161,6 +1200,7 @@ async function main(): Promise<void> {
           ? candidate
           : 1
     }
+    exitIfHeldOpen(command)
     return
   }
   if (command === "verify") {

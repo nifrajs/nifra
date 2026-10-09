@@ -9212,6 +9212,37 @@ should stop routing to the instance first, as most platforms do before they send
 Deno, pass
 `signals: { drainMs }` to `serve()` instead, as above.
 
+### Letting check and assure read the app
+
+`nifra check`, `assure`, `routes` and the other commands that
+read the app import it, so everything the app does at module scope runs. A command that only
+reads what the app declares sets `NIFRA_REFLECT` to its own name first:
+`check`, `routes`, `context`, `openapi`,
+`contracts`, `capabilities`, `manifest`, `doctor`
+, `diff`, `sync-routes`, `sync-manifest`, and
+`assure` without `--bundle`, `--strict`,
+`--hydration`, `--interact` or `--out`. Commands that send the
+app requests, such as `smoke`, `prove`, `levels` and the
+`assure` bundle, leave it unset. Check it to skip work a read never needs:
+
+```ts
+// doc-check: skip - fragment: an app module's Redis client; ioredis is not installed in the docs sandbox.
+import Redis from "ioredis"
+
+// Unset when the app really runs; "check", "routes", "assure", ... while nifra only reads it.
+export const redis = process.env.NIFRA_REFLECT ? undefined : new Redis(process.env.REDIS_URL!)
+```
+
+-
+**Environment validation.** An app that validates its environment on import still needs
+values to pass it. Supply them with `--env-file`, for example
+`nifra check --env-file .env.example`. Variables already set in the shell win.
+
+-
+**A process that will not exit.** If something the app opened is still keeping the process
+alive 2 seconds after the command has answered, the command exits with its own result and
+says that the app kept it open.
+
 ### nifra check for a custom entry
 
 -

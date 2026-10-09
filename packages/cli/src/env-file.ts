@@ -44,6 +44,13 @@ function unquote(raw: string): string {
   return (comment === -1 ? value : value.slice(0, comment)).trim()
 }
 
+/**
+ * Set to the command name while a CLI command imports a project only to read its declarations
+ * (`nifra check`, `routes`, the `assure` report), so app code can skip work a read never needs, such
+ * as connecting to Redis.
+ */
+export const REFLECT_ENV = "NIFRA_REFLECT"
+
 /** Parse dotenv text into a plain record. Later assignments to the same key win, as in a shell. */
 export function parseEnvFile(text: string): Record<string, string> {
   const values: Record<string, string> = {}

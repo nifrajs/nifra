@@ -69,6 +69,12 @@ await serve(app, {
   signals: { drainMs: 8_000 },
 })`
 
+const REFLECT = `// doc-check: skip - fragment: an app module's Redis client; ioredis is not installed in the docs sandbox.
+import Redis from "ioredis"
+
+// Unset when the app really runs; "check", "routes", "assure", ... while nifra only reads it.
+export const redis = process.env.NIFRA_REFLECT ? undefined : new Redis(process.env.REDIS_URL!)`
+
 const CHECK_CONFIG = `{
   "externalMounts": ["/api/auth"]
 }`
@@ -196,6 +202,33 @@ export default function CustomServer() {
         Deno, pass{" "}
         <code>signals: {"{ drainMs }"}</code> to <code>serve()</code> instead, as above.
       </p>
+
+      <h2>Letting check and assure read the app</h2>
+      <p>
+        <code>nifra check</code>, <code>assure</code>, <code>routes</code> and the other commands that
+        read the app import it, so everything the app does at module scope runs. A command that only
+        reads what the app declares sets <code>NIFRA_REFLECT</code> to its own name first:{" "}
+        <code>check</code>, <code>routes</code>, <code>context</code>, <code>openapi</code>,{" "}
+        <code>contracts</code>, <code>capabilities</code>, <code>manifest</code>, <code>doctor</code>
+        , <code>diff</code>, <code>sync-routes</code>, <code>sync-manifest</code>, and{" "}
+        <code>assure</code> without <code>--bundle</code>, <code>--strict</code>,{" "}
+        <code>--hydration</code>, <code>--interact</code> or <code>--out</code>. Commands that send the
+        app requests, such as <code>smoke</code>, <code>prove</code>, <code>levels</code> and the{" "}
+        <code>assure</code> bundle, leave it unset. Check it to skip work a read never needs:
+      </p>
+      <CodeBlock code={REFLECT} />
+      <ul>
+        <li>
+          <b>Environment validation.</b> An app that validates its environment on import still needs
+          values to pass it. Supply them with <code>--env-file</code>, for example{" "}
+          <code>nifra check --env-file .env.example</code>. Variables already set in the shell win.
+        </li>
+        <li>
+          <b>A process that will not exit.</b> If something the app opened is still keeping the process
+          alive 2 seconds after the command has answered, the command exits with its own result and
+          says that the app kept it open.
+        </li>
+      </ul>
 
       <h2>nifra check for a custom entry</h2>
       <ul>
