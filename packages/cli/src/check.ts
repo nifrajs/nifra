@@ -58,10 +58,10 @@ import {
   COMPONENT_FILE,
   componentScripts,
   createProjectSqlImports,
+  createServerOnlyChains,
   isBrowserSource,
   type ModuleReader,
   type ModuleResolver,
-  resolveServerOnlyChains,
   type SourceFinding,
   type StaticRouteFinding,
   scanFetchText,
@@ -433,19 +433,14 @@ async function buildProjectScan(
       browserRoots.add(rel)
       browserModules.push({ rel, content })
     }
-    for (const { rel, content } of browserModules) {
-      serverImports.push(
-        ...resolveServerOnlyChains(
-          rel,
-          content,
-          resolveModule,
-          readModule,
-          sourceFacts,
-          componentReceipts,
-          browserRoots.has(rel),
-        ),
-      )
-    }
+    const serverOnlyChains = createServerOnlyChains({
+      resolve: resolveModule,
+      read: readModule,
+      facts: sourceFacts,
+      componentReceipts,
+    })
+    for (const { rel, content } of browserModules)
+      serverImports.push(...serverOnlyChains(rel, content, browserRoots.has(rel)))
 
     const facts: ProjectFactsSeed = {
       source,
