@@ -49,6 +49,23 @@ describe("metrics()", () => {
     expect(text).not.toContain('route="/metrics"')
   })
 
+  test("authorize gates the scrape endpoint", async () => {
+    const app = server()
+      .use(
+        metrics({ authorize: (req) => req.headers.get("authorization") === "Bearer scrape-token" }),
+      )
+      .get("/users/:id", (c) => ({ id: c.params.id }))
+    await app.fetch(new Request("http://t/users/1"))
+    const refused = await app.fetch(new Request("http://t/metrics"))
+    expect(refused.status).toBe(401)
+    expect(await refused.text()).toBe("")
+    const allowed = await app.fetch(
+      new Request("http://t/metrics", { headers: { authorization: "Bearer scrape-token" } }),
+    )
+    expect(allowed.status).toBe(200)
+    expect(await allowed.text()).toContain('route="/users/:id"')
+  })
+
   test("exposes Prometheus content-type", async () => {
     const app = makeApp()
     const res = await app.fetch(new Request("http://t/metrics"))

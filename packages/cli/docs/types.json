@@ -8695,7 +8695,7 @@
     "name": "MetricsOptions",
     "kind": "interface",
     "package": "@nifrajs/otel",
-    "signature": "export interface MetricsOptions {\n    /** Where to expose the Prometheus text. Default `/metrics`. This route is excluded from the metrics. */\n    readonly path?: string;\n    /** Reuse a registry (so custom app metrics render alongside the RED series). Default: a fresh one. */\n    readonly registry?: MetricsRegistry;\n    /** Histogram buckets in SECONDS for request duration. Default OpenTelemetry latency buckets. */\n    readonly buckets?: readonly number[];\n}"
+    "signature": "export interface MetricsOptions {\n    /** Where to expose the Prometheus text. Default `/metrics`. This route is excluded from the metrics. */\n    readonly path?: string;\n    /**\n     * Decide whether a scrape may read the metrics; a refusal answers 401. Without it the endpoint is\n     * public, and route templates, status mix and traffic volume are readable by anyone who can reach\n     * it. Check a scrape token here, or guard `path` in an `onRequest` hook.\n     */\n    readonly authorize?: (req: Request) => boolean | Promise<boolean>;\n    /** Reuse a registry (so custom app metrics render alongside the RED series). Default: a fresh one. */\n    readonly registry?: MetricsRegistry;\n    /** Histogram buckets in SECONDS for request duration. Default OpenTelemetry latency buckets. */\n    readonly buckets?: readonly number[];\n}"
   },
   {
     "name": "MetricsRegistry",
