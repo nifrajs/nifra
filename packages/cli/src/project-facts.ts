@@ -57,6 +57,10 @@ export interface ProjectCheckFacts {
   readonly sqlCompilerAvailable: boolean
   /** Set when a project TypeScript install is present but outside the scanner adapter range. */
   readonly unsupportedTypeScriptVersion?: string
+  /** Why component modules could not be checked: the project's TypeScript has no compiler API. */
+  readonly componentCheckUnsupported?:
+    | { readonly version: string; readonly message: string }
+    | undefined
   /** Shared syntax/checker session for built-in rules; omitted from serialized check output. */
   readonly typescriptSession?: TypeScriptSession
   readonly checkConfigError?: string

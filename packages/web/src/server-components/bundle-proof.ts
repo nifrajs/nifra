@@ -1,4 +1,5 @@
-import ts from "typescript"
+import type * as TS from "typescript"
+import { ts } from "./typescript.ts"
 
 /** RSC rewrites chunks after linking; inspect emitted imports rather than stale chunk metadata. */
 export function componentBundleImports(code: string): readonly string[] {
@@ -10,7 +11,7 @@ export function componentBundleImports(code: string): readonly string[] {
     true,
     ts.ScriptKind.JS,
   )
-  const visit = (node: ts.Node): void => {
+  const visit = (node: TS.Node): void => {
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier !== undefined &&

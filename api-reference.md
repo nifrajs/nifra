@@ -6151,10 +6151,12 @@ _No named exports (side-effect entrypoint)._
 - **CompiledComponentModule** _(interface)_ - `interface CompiledComponentModule`
 - **compileComponentModule** _(function)_ - `compileComponentModule: (source: string, file: string, root: string, environment: string, kind?: "server" | "island") => CompiledComponentModule`
 - **componentReference** _(function)_ - `componentReference: (file: string, root: string, name: string) => string`
-- **directive** _(function)_ - `directive: (file: ts.SourceFile, value: string) => boolean`
-- **exportedValues** _(function)_ - `exportedValues: (file: ts.SourceFile) => readonly string[]`
+- **directive** _(function)_ - `directive: (file: TS.SourceFile, value: string) => boolean`
+- **exportedValues** _(function)_ - `exportedValues: (file: TS.SourceFile) => readonly string[]`
 - **guardCreateElementCalls** _(function)_ - `guardCreateElementCalls: (source: string, file: string) => string`
-- **sourceFile** _(function)_ - `sourceFile: (source: string, file: string) => ts.SourceFile`
+- **sourceFile** _(function)_ - `sourceFile: (source: string, file: string) => TS.SourceFile`
+- **staticComponentPipeline** _(function)_ - `staticComponentPipeline: (source: string, file: string) => unknown`
+  The `componentPipeline` a config module exports as a plain literal, read without running the module, or `undefined` when it exports none or one that is not a literal.
 
 ### `@nifrajs/web/server-components/state`
 

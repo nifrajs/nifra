@@ -48,11 +48,14 @@ export function unsupportedTypeScriptMessage(version: string): string {
   return `${NIFRA_TS_UNSUPPORTED}: TypeScript ${version} is outside the compiler API versions supported by Nifra scanners. Use TypeScript 5, 6, or 7, or pin the project to TypeScript 6 (for example, \`bun add -d typescript@^6\`).`
 }
 
-export function unsupportedTypeScriptDiagnostic(version: string): Diagnostic {
+export function unsupportedTypeScriptDiagnostic(
+  version: string,
+  message = unsupportedTypeScriptMessage(version),
+): Diagnostic {
   return diagnostic({
     code: NIFRA_TS_UNSUPPORTED,
     severity: "error",
-    message: unsupportedTypeScriptMessage(version),
+    message,
     fix: {
       recipe: "toolchain.install-typescript",
       command: "bun add -d typescript@^6",

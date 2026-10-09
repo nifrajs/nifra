@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { resolveServerOnlyChains } from "../src/check-scan.ts"
 import { componentCheckReceipts } from "../src/component-check.ts"
 import { sourceIndex } from "../src/rules/index.ts"
+import { legacyRules } from "../src/rules/legacy.ts"
 import { zoneImportRule } from "../src/rules/zones.ts"
 import { projectFacts } from "./rule-facts.ts"
 
@@ -33,11 +34,11 @@ function fixture(enabled: boolean, forged = false) {
   const source = sourceIndex([{ file, content }])
   return { root, file, source }
 }
-test("check accepts only exact compiler receipts in an explicitly configured component lane", () => {
+test("check accepts only exact compiler receipts in an explicitly configured component lane", async () => {
   for (const enabled of [false, true])
     for (const forged of [false, true]) {
       const f = fixture(enabled, forged)
-      const receipts = componentCheckReceipts(f.root, f.source)
+      const { receipts } = await componentCheckReceipts(f.root, f.source)
       const findings = resolveServerOnlyChains(
         "frontend/Page.frontend.ts",
         'import { Summary } from "../backend/Summary.component.server"',
@@ -49,7 +50,7 @@ test("check accepts only exact compiler receipts in an explicitly configured com
       expect(findings.length).toBe(enabled && !forged ? 0 : 1)
     }
 })
-test("a valid component receipt cannot authorize a neighboring ordinary backend module", () => {
+test("a valid component receipt cannot authorize a neighboring ordinary backend module", async () => {
   const f = fixture(true)
   const findings = resolveServerOnlyChains(
     "frontend/Page.frontend.ts",
@@ -57,7 +58,7 @@ test("a valid component receipt cannot authorize a neighboring ordinary backend 
     () => "backend/secret.backend.ts",
     () => "export const secret = 'fixture'",
     undefined,
-    componentCheckReceipts(f.root, f.source),
+    (await componentCheckReceipts(f.root, f.source)).receipts,
   )
   expect(findings[0]?.chain).toEqual(["frontend/Page.frontend.ts", "../backend/secret.backend"])
 })
@@ -82,4 +83,34 @@ test("NF-C028 permits only exact component handles from the configured compiler"
       })
       expect(findings.length).toBe(enabled && !forged ? 0 : 1)
     }
+})
+
+test("a TypeScript with no compiler API leaves component modules to the import rule, and says why", async () => {
+  const f = fixture(true)
+  const message =
+    "NIFRA_TS_UNSUPPORTED: server components read component modules with the TypeScript compiler API"
+  const unsupported = Object.assign(new Error(message), {
+    code: "NIFRA_TS_UNSUPPORTED",
+    version: "7.0.2",
+  })
+  const check = await componentCheckReceipts(f.root, f.source, () => Promise.reject(unsupported))
+  expect(check.receipts.size).toBe(0)
+  expect(check.unsupported?.version).toBe("7.0.2")
+  await expect(
+    componentCheckReceipts(f.root, f.source, () => Promise.reject(new Error("other"))),
+  ).rejects.toThrow("other")
+
+  const facts = projectFacts(f.file, f.source.read(f.file)!)
+  const rule = legacyRules.find((candidate) => candidate.code === "NF-C004")!
+  const findings = await rule.scan({
+    root: f.root,
+    sources: f.source,
+    project: {
+      ...facts,
+      check: { ...facts.check, componentCheckUnsupported: { version: "7.0.2", message } },
+    },
+  })
+  expect(findings.map((finding) => [finding.code, finding.message])).toEqual([
+    ["NIFRA_TS_UNSUPPORTED", message],
+  ])
 })

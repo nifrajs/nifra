@@ -18353,7 +18353,7 @@
     "name": "directive",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function directive(file: ts.SourceFile, value: string): boolean;"
+    "signature": "export declare function directive(file: TS.SourceFile, value: string): boolean;"
   },
   {
     "name": "disableDraft",
@@ -18680,7 +18680,7 @@
     "name": "exportedValues",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function exportedValues(file: ts.SourceFile): readonly string[];"
+    "signature": "export declare function exportedValues(file: TS.SourceFile): readonly string[];"
   },
   {
     "name": "extensionDescriptor",
@@ -22506,7 +22506,7 @@
     "name": "sourceFile",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function sourceFile(source: string, file: string): ts.SourceFile;"
+    "signature": "export declare function sourceFile(source: string, file: string): TS.SourceFile;"
   },
   {
     "name": "sourceIndex",
@@ -22575,6 +22575,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function startDynamicBoundaries(boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx): DynamicBoundaryBatch;",
     "doc": "/**\n * Start all dynamic boundary loads at once without making the page wait for the slowest sibling.\n * The initial states contain `status: \"pending\"`; callers that support deferred values can attach\n * each `pending.promise` to its own slot. `complete` still provides settled, isolated states to\n * non-streaming callers, preserving the simple reference API.\n */"
+  },
+  {
+    "name": "staticComponentPipeline",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function staticComponentPipeline(source: string, file: string): unknown;",
+    "doc": "/** The `componentPipeline` a config module exports as a plain literal, read without running the\n * module, or `undefined` when it exports none or one that is not a literal. */"
   },
   {
     "name": "status",

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { resolve } from "node:path"
-import ts from "typescript"
+import type * as TS from "typescript"
 import { type Plugin, version as viteVersion } from "vite"
 import {
   compileComponentModule,
@@ -11,6 +11,7 @@ import {
   guardCreateElementCalls,
   sourceFile,
 } from "./source.ts"
+import { ts } from "./typescript.ts"
 
 const componentFile = /\.component\.server\.[cm]?[jt]sx?$/
 const islandFile = /\.island\.[cm]?[jt]sx?$/
@@ -51,7 +52,7 @@ function nativeFacade(source: string, file: string): string {
       )
         throw new Error("[nifra/components] Managed slot names must be a literal array")
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The compiler inspects trusted AST/package metadata and its own populated stub map; application data never supplies these values.
-      const names = value.elements.map((node) => (node as ts.StringLiteral).text)
+      const names = value.elements.map((node) => (node as TS.StringLiteral).text)
       if (
         names.some(
           (name) =>

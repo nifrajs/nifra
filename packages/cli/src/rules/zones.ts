@@ -23,6 +23,7 @@ import {
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { COMPONENT_FILE, importSites, stripComments } from "../check-scan.ts"
 import { appDirs, clientModuleRoot } from "../client-module.ts"
+import { componentCheckReceipts } from "../component-check.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import {
@@ -172,11 +173,7 @@ export const zoneImportRule: CheckRule = {
   title: "Zone import check",
   async scan(ctx) {
     const { files, classifierFor, configErrors } = zonedFiles(ctx)
-    const receipts = ctx.sources.files.some((file) =>
-      /\.component\.server\.[cm]?[jt]sx?$/.test(file),
-    )
-      ? (await import("../component-check.ts")).componentCheckReceipts(ctx.root, ctx.sources)
-      : new Set<string>()
+    const { receipts } = await componentCheckReceipts(ctx.root, ctx.sources)
     const findings: Diagnostic[] = configErrors.map(({ file, message }) =>
       diagnostic({
         code: "NF-C028",

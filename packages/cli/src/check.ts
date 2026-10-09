@@ -78,6 +78,7 @@ import {
   type UnresolvedRoutePathFinding,
   walkSource,
 } from "./check-scan.ts"
+import { componentCheckReceipts } from "./component-check.ts"
 
 export * from "./check-scan.ts"
 
@@ -417,11 +418,8 @@ async function buildProjectScan(
       }
       return COMPONENT_FILE.test(path) ? componentScripts(text) : text
     }
-    const componentReceipts = source.files.some((file) =>
-      /\.component\.server\.[cm]?[jt]sx?$/.test(file),
-    )
-      ? (await import("./component-check.ts")).componentCheckReceipts(cwd, source)
-      : new Set<string>()
+    const components = await componentCheckReceipts(cwd, source)
+    const componentReceipts = components.receipts
     // An app's `clientModule` is browser code wherever it lives: the generated client entry imports it.
     const browserRoots = new Set<string>()
     for (const app of appDirs(source.files)) {
@@ -478,6 +476,10 @@ async function buildProjectScan(
       check: {
         typecheck: typecheckResult,
         sqlCompilerAvailable: sqlCompiler !== undefined,
+        componentCheckUnsupported:
+          components.unsupported === undefined
+            ? undefined
+            : { version: components.unsupported.version, message: components.unsupported.message },
         ...(loadedTypeScript.unsupported === undefined
           ? {}
           : { unsupportedTypeScriptVersion: loadedTypeScript.unsupported.version }),

@@ -506,11 +506,16 @@ const serverOnlyImportRule: CheckRule = {
   title: TITLES["server-only-import"]!,
   async scan(ctx) {
     const inWebApp = createWebAppProbe(ctx.root)
-    return [...ctx.project.importGraph].sort(bySite).map((finding) => {
+    const findings: Diagnostic[] = []
+    // No component module got a receipt, so each is judged as an ordinary import: say why.
+    const components = ctx.project.check.componentCheckUnsupported
+    if (components !== undefined)
+      findings.push(unsupportedTypeScriptDiagnostic(components.version, components.message))
+    for (const finding of [...ctx.project.importGraph].sort(bySite)) {
       const chain = finding.chain
       const sink = chain[chain.length - 1] ?? finding.specifier
       const dir = finding.file.slice(0, Math.max(finding.file.lastIndexOf("/"), 0))
-      return legacyDiagnostic("server-only-import", {
+      const found = legacyDiagnostic("server-only-import", {
         severity: "error",
         file: finding.file,
         line: finding.line,
@@ -522,7 +527,9 @@ const serverOnlyImportRule: CheckRule = {
         modules: finding.modules,
         suggestion: serverImportSuggestion(finding.specifier, chain, finding.fallback),
       })
-    })
+      findings.push(found)
+    }
+    return findings
   },
 }
 

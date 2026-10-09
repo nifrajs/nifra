@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { relative } from "node:path"
-import ts from "typescript"
+import type * as TS from "typescript"
+import { ts } from "./typescript.ts"
 
 export interface CompiledComponentModule {
   readonly code: string
@@ -17,7 +18,7 @@ export function componentReference(file: string, root: string, name: string): st
   )
 }
 
-export function sourceFile(source: string, file: string): ts.SourceFile {
+export function sourceFile(source: string, file: string): TS.SourceFile {
   return ts.createSourceFile(
     file,
     source,
@@ -27,16 +28,66 @@ export function sourceFile(source: string, file: string): ts.SourceFile {
   )
 }
 
-function modifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
+function modifier(node: TS.Node, kind: TS.SyntaxKind): boolean {
   return (
     ts.canHaveModifiers(node) &&
     (ts.getModifiers(node)?.some((item) => item.kind === kind) ?? false)
   )
 }
 
-export function directive(file: ts.SourceFile, value: string): boolean {
+function literal(node: TS.Expression): unknown {
+  if (
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isParenthesizedExpression(node)
+  )
+    return literal(node.expression)
+  if (ts.isStringLiteral(node)) return node.text
+  if (!ts.isObjectLiteralExpression(node)) throw new Error("component_pipeline_literal")
+  const result: Record<string, unknown> = Object.create(null)
+  for (const member of node.properties) {
+    if (
+      !ts.isPropertyAssignment(member) ||
+      !(ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))
+    )
+      throw new Error("component_pipeline_literal")
+    if (
+      Object.hasOwn(result, member.name.text) ||
+      ["__proto__", "prototype", "constructor"].includes(member.name.text)
+    )
+      throw new Error("component_pipeline_literal")
+    result[member.name.text] = literal(member.initializer)
+  }
+  return result
+}
+
+/** The `componentPipeline` a config module exports as a plain literal, read without running the
+ * module, or `undefined` when it exports none or one that is not a literal. */
+export function staticComponentPipeline(source: string, file: string): unknown {
+  let pipeline: unknown
+  for (const statement of sourceFile(source, file).statements) {
+    if (!ts.isVariableStatement(statement) || !modifier(statement, ts.SyntaxKind.ExportKeyword))
+      continue
+    for (const variable of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(variable.name) ||
+        variable.name.text !== "componentPipeline" ||
+        variable.initializer === undefined
+      )
+        continue
+      try {
+        pipeline = literal(variable.initializer)
+      } catch {
+        return undefined
+      }
+    }
+  }
+  return pipeline
+}
+
+export function directive(file: TS.SourceFile, value: string): boolean {
   let found = false
-  const visit = (node: ts.Node): void => {
+  const visit = (node: TS.Node): void => {
     if (ts.isSourceFile(node) || ts.isBlock(node)) {
       for (const statement of node.statements) {
         if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break
@@ -49,7 +100,7 @@ export function directive(file: ts.SourceFile, value: string): boolean {
   return found
 }
 
-export function exportedValues(file: ts.SourceFile): readonly string[] {
+export function exportedValues(file: TS.SourceFile): readonly string[] {
   const names = new Set<string>()
   for (const statement of file.statements) {
     if (ts.isExportAssignment(statement)) {
@@ -122,7 +173,7 @@ export function compileComponentModule(
     } else if (bindings !== undefined && ts.isNamespaceImport(bindings))
       namespaces.add(bindings.name.text)
   }
-  const definitions = new Map<string, ts.CallExpression>()
+  const definitions = new Map<string, TS.CallExpression>()
   for (const statement of ast.statements) {
     if (!ts.isVariableStatement(statement)) continue
     for (const declaration of statement.declarationList.declarations) {
@@ -240,7 +291,7 @@ export function guardCreateElementCalls(source: string, file: string): string {
       }
   }
   const changes: Array<{ start: number; end: number }> = []
-  const visit = (node: ts.Node): void => {
+  const visit = (node: TS.Node): void => {
     if (ts.isCallExpression(node)) {
       const expression = node.expression
       const named = ts.isIdentifier(expression) && factories.has(expression.text)
