@@ -272,6 +272,41 @@ describe("a generated schema over time", () => {
     expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["declared"])
   }, 60_000)
 
+  test("a generated schema edited under its marker is stale, and --write restores it", async () => {
+    const root = project({ "routes/me.backend.ts": initial })
+    await outputSchemas(root, { write: true })
+    const generated = read(root, "routes/me.backend.ts")
+    const widen = (schema: string): void =>
+      writeFileSync(
+        join(root, "routes/me.backend.ts"),
+        generated.replace("t.object({\n  name: t.string(),\n})", schema),
+      )
+    const fs = (file: string) => readFileSync(join(root, file), "utf8")
+
+    // Quote style, comments, trailing commas and semicolons are a formatter's, not an edit.
+    widen("t.object({\n  'name': t.string() /* shown */,\n});")
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
+
+    widen("t.json()")
+    const report = await outputSchemas(root)
+    expect(report.ok).toBe(false)
+    expect(report.entries.map((e) => [e.status, e.edited])).toEqual([["stale", true]])
+    const { stale } = await staleGeneratedSchemas(root, ["routes/me.backend.ts"], fs)
+    expect(stale.map((e) => e.file)).toEqual(["routes/me.backend.ts"])
+    writeFileSync(join(root, "routes/me.tsx"), "export default () => null\n")
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    expect(check.diagnostics.find((d) => d.code === "NF-C033")?.message).toContain(
+      "it was edited by hand since",
+    )
+
+    widen("t.object({\n  name: t.string(),\n  passwordHash: t.string(),\n})")
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
+    expect((await outputSchemas(root, { write: true })).entries.map((e) => e.status)).toEqual([
+      "regenerated",
+    ])
+    expect(read(root, "routes/me.backend.ts")).toBe(generated)
+  }, 90_000)
+
   test("a generated schema whose return type turns any is reported unchecked, never passed", async () => {
     const root = project({
       "routes/me.backend.ts": initial,

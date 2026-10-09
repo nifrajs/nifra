@@ -375,9 +375,11 @@ export const staleGeneratedOutputRule: CheckRule = {
       ...stale.map((entry) => {
         const fn = entry.schema === "loaderOutput" ? "loader" : "action"
         const change =
-          entry.dropped.length > 0
-            ? `it now returns ${entry.dropped.join(", ")}, which the schema drops`
-            : "what it returns has changed"
+          entry.edited === true
+            ? "it was edited by hand since"
+            : entry.dropped.length > 0
+              ? `it now returns ${entry.dropped.join(", ")}, which the schema drops`
+              : "what it returns has changed"
         return diagnostic({
           code: "NF-C033",
           severity: "error",

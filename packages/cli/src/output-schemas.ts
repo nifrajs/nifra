@@ -384,6 +384,50 @@ export function undeclaredPaths(returned: Shape, declared: Shape, path = ""): st
 
 const hashOf = (body: string): string => createHash("sha256").update(body).digest("hex").slice(0, 8)
 
+/**
+ * A schema expression as a formatter cannot change it: comments, whitespace, a comma before a closing
+ * bracket and a trailing semicolon dropped, every string written with double quotes, and a quoted key
+ * that needs no quotes written bare. Two texts
+ * that read the same here are the same schema; an edit to what it declares is not.
+ */
+function schemaTokens(text: string): string {
+  let out = ""
+  let i = 0
+  while (i < text.length) {
+    const c = text.charAt(i)
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i)
+      i = end === -1 ? text.length : end
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2)
+      i = end === -1 ? text.length : end + 2
+    } else if (c === '"' || c === "'" || c === "`") {
+      let value = ""
+      let j = i + 1
+      while (j < text.length && text[j] !== c) {
+        if (text[j] === "\\") {
+          const next = text[j + 1] ?? ""
+          value += next === c ? next : `\\${next}`
+          j += 2
+        } else {
+          value += text[j]
+          j++
+        }
+      }
+      i = j + 1
+      let after = i
+      while (/\s/.test(text[after] ?? "")) after++
+      // `"name": …` and `name: …` declare the same key.
+      out +=
+        text[after] === ":" && IDENTIFIER.test(value) ? value : `"${value.replaceAll('"', '\\"')}"`
+    } else {
+      if (!/\s/.test(c)) out += c
+      i++
+    }
+  }
+  return out.replace(/,(?=[}\])])/g, "").replace(/;+$/, "")
+}
+
 function declarationText(schema: OutputExport, fn: RouteFn, body: string): string {
   return [
     `// ${GENERATED_MARK} ${hashOf(body)} - from the ${fn}'s return type; \`nifra schemas --write\` keeps it current. Delete this line to edit it by hand.`,
@@ -708,6 +752,8 @@ export interface OutputSchemaEntry {
   readonly generated: boolean
   /** Returned paths the schema does not declare, so the output guard drops them. */
   readonly dropped: readonly string[]
+  /** A generated schema whose text was changed under its marker: stale though its route is not. */
+  readonly edited?: boolean
   readonly reason?: string
 }
 
@@ -715,6 +761,8 @@ interface SchemaDeclaration {
   /** Start of the marker line when generated, else of the `export`. */
   readonly start: number
   readonly end: number
+  /** The text the schema is declared with, after the `=`. */
+  readonly value: string
   readonly line: number
   readonly hash: string | undefined
 }
@@ -763,6 +811,7 @@ function declarationOf(
   return {
     start: marker === null ? found.index : markerStart,
     end,
+    value: content.slice(valueStart, end),
     line: lineAt(content, found.index),
     hash: marker?.[1],
   }
@@ -862,13 +911,13 @@ async function plan(
         status: OutputSchemaStatus,
         dropped: readonly string[] = [],
         reason?: string,
+        edited = false,
       ): number => {
         const schema = target.schema
         const generated = declaration?.hash !== undefined
+        const base: OutputSchemaEntry = { file, line, schema, status, generated, dropped }
         const item: OutputSchemaEntry =
-          reason === undefined
-            ? { file, line, schema, status, generated, dropped }
-            : { file, line, schema, status, generated, dropped, reason }
+          reason !== undefined ? { ...base, reason } : edited ? { ...base, edited } : base
         return entries.push(item) - 1
       }
       if (target.annotated) {
@@ -912,10 +961,15 @@ async function plan(
         const written = declarationText(target.schema, target.fn, body)
         const text = target.insertAt === content.length ? `\n${written}\n` : `${written}\n\n`
         replacements.push({ start: target.insertAt, end: target.insertAt, text, entry: at })
-      } else if (declaration.hash === hashOf(body)) {
+      } else if (
+        declaration.hash === hashOf(body) &&
+        schemaTokens(declaration.value) === schemaTokens(body)
+      ) {
         entry("current")
       } else {
-        const at = entry("stale", dropped)
+        // The marker still matches what would be written, so the text under it was edited.
+        const edited = declaration.hash === hashOf(body)
+        const at = entry("stale", dropped, undefined, edited)
         const text = declarationText(target.schema, target.fn, body)
         replacements.push({ start: declaration.start, end: declaration.end, text, entry: at })
       }

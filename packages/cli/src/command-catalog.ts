@@ -1705,7 +1705,11 @@ const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
       ...shown.map((entry) => {
         const detail =
           entry.reason ??
-          (entry.dropped.length > 0 ? `drops ${entry.dropped.join(", ")}` : undefined)
+          (entry.edited === true
+            ? "edited by hand under its nifra:generated line"
+            : entry.dropped.length > 0
+              ? `drops ${entry.dropped.join(", ")}`
+              : undefined)
         return `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`
       }),
       ...(out.write || !out.entries.some((e) => e.status === "missing" || e.status === "stale")

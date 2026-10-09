@@ -134,8 +134,9 @@ export default function Data() {
         that is not JSON, says so in a comment, and marks what it wrote with a{" "}
         <code>nifra:generated</code> line. While that line stays, a later{" "}
         <code>nifra schemas --write</code> keeps the schema in step with the return type, and{" "}
-        <code>nifra check</code> fails (NF-C033) when the two have drifted apart; delete the line to
-        own the schema by hand. A hand-written schema is never rewritten: the report lists the
+        <code>nifra check</code> fails (NF-C033) when the two have drifted apart, or when the schema
+        under the line was edited (reformatting it is not an edit); delete the line to own the
+        schema by hand. A hand-written schema is never rewritten: the report lists the
         returned fields it drops, by path. Nothing is derived at request time - the schema in the
         file is the one the guard enforces.
       </p>
