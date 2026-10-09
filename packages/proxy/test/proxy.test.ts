@@ -152,6 +152,32 @@ describe("createProxy()", () => {
     expect(kept.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"])
   })
 
+  test("client-IP aliases a caller sends never reach the upstream", async () => {
+    respond = () => new Response("ok")
+    const aliases = {
+      "x-real-ip": "10.0.0.1",
+      "true-client-ip": "10.0.0.2",
+      "CF-Connecting-IP": "10.0.0.3",
+      "x-client-ip": "10.0.0.4",
+      "x-cluster-client-ip": "10.0.0.5",
+      "fastly-client-ip": "10.0.0.6",
+      "client-ip": "10.0.0.7",
+    }
+    for (const options of [{}, { forwardClientIp: true, trustForwardedFor: true }]) {
+      await createProxy({ upstream: ORIGIN, ...options })({
+        req: new Request("http://edge.test/x", { headers: aliases }),
+        clientIp: "203.0.113.9",
+      })
+      for (const name of Object.keys(aliases))
+        expect(seen?.headers[name.toLowerCase()]).toBeUndefined()
+    }
+    // A fixed static header is still the explicit way to emit one.
+    await createProxy({ upstream: ORIGIN, headers: { "x-real-ip": "198.51.100.1" } })(
+      new Request("http://edge.test/x", { headers: aliases }),
+    )
+    expect(seen?.headers["x-real-ip"]).toBe("198.51.100.1")
+  })
+
   test("forwarding metadata is stripped by default, replaced safely on opt-in", async () => {
     respond = () => new Response("ok")
     const forged = {
