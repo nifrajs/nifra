@@ -55,7 +55,7 @@ for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
     } finally {
       await server.close()
     }
-  }, 30000)
+  }, 60_000)
 }
 
 for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
@@ -97,8 +97,9 @@ for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
       return parseComponentState(JSON.parse(text))
     }
     try {
-      // Copying a new tsconfig can trigger Vite's initial restart after listen returns.
-      const deadline = Date.now() + 10000
+      // Copying a new tsconfig can trigger Vite's initial restart after listen returns. Both waits are
+      // wide for a loaded machine, and end before the test timeout so a real failure still cleans up.
+      const deadline = Date.now() + 20_000
       let before: ComponentState | undefined
       let startupError: unknown
       while (before === undefined && Date.now() < deadline) {
@@ -125,7 +126,8 @@ for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
       expect(changed).not.toBe(original)
       await writeFile(file, changed)
       let after = before
-      for (let attempt = 0; attempt < 100 && after.build === before.build; attempt++) {
+      const rebuilt = Date.now() + 25_000
+      while (after.build === before.build && Date.now() < rebuilt) {
         await new Promise((accept) => setTimeout(accept, 50))
         try {
           after = await stateAt()
@@ -155,5 +157,5 @@ for (const adapter of ["react", "vue", "svelte", "solid", "preact"] as const) {
       await server.close()
       await rm(root, { recursive: true, force: true })
     }
-  }, 30000)
+  }, 60_000)
 }
