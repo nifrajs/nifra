@@ -568,7 +568,7 @@ export interface DbRoleInput {
 export const dbRoleSpec: CommandSpec<DbRoleInput, DbToolOutput> = {
   name: "db-role",
   summary:
-    "Print the SQL that creates a read-only Postgres role for the declared development database (pg_read_all_data on 14+, else GRANT SELECT, with a REVOKE per excluded table). Nothing is run.",
+    "Print the SQL that creates a read-only Postgres role for the declared development database (GRANT SELECT on each allowed schema, with a REVOKE per excluded table). Nothing is run.",
   input: {
     jsonSchema: {
       type: "object",

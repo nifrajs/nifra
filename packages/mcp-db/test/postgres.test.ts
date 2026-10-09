@@ -881,19 +881,19 @@ describe("schema and role SQL over a scripted client", () => {
       ],
     ])
 
-  test("Postgres 14+ with nothing excluded grants pg_read_all_data", async () => {
+  test("Postgres 14+ with nothing excluded grants the allowed schemas only, never pg_read_all_data", async () => {
     const sql = await postgresRoleSql(roleClient(160002).client, { timeoutMs: 1000 })
     if (isDbRefusal(sql)) throw new Error(sql.message)
-    expect(sql).toMatchObject({
-      role: "nifra_dev_reader",
-      database: 'app"db',
-      serverVersionNum: 160002,
-    })
+    expect(sql.role).toBe("nifra_dev_reader")
+    expect(sql.database).toBe('app"db')
+    expect(sql.serverVersionNum).toBe(160002)
     expect(sql.statements.filter((line) => !line.startsWith("--"))).toEqual([
       'CREATE ROLE "nifra_dev_reader" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;',
       'ALTER ROLE "nifra_dev_reader" SET default_transaction_read_only = on;',
       'GRANT CONNECT ON DATABASE "app""db" TO "nifra_dev_reader";',
-      'GRANT pg_read_all_data TO "nifra_dev_reader";',
+      'GRANT USAGE ON SCHEMA "public" TO "nifra_dev_reader";',
+      'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "nifra_dev_reader";',
+      'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" GRANT SELECT ON TABLES TO "nifra_dev_reader";',
     ])
   })
 

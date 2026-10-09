@@ -709,10 +709,10 @@ export interface PostgresRoleSql {
 }
 
 /**
- * Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data`
- * on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default
- * privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would
- * override a REVOKE, so it is not used then). Nothing is executed.
+ * Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT`
+ * per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions.
+ * `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a
+ * REVOKE. Nothing is executed.
  */
 export async function postgresRoleSql(
   client: PostgresClient,
@@ -756,21 +756,17 @@ export async function postgresRoleSql(
       `ALTER ROLE ${who} SET default_transaction_read_only = on;`,
       `GRANT CONNECT ON DATABASE ${quoteIdent(database)} TO ${who};`,
     ]
-    if (version >= 140000 && excluded.length === 0) {
-      statements.push(`GRANT pg_read_all_data TO ${who};`)
-    } else {
-      for (const schema of schemas) {
-        statements.push(
-          `GRANT USAGE ON SCHEMA ${quoteIdent(schema)} TO ${who};`,
-          `GRANT SELECT ON ALL TABLES IN SCHEMA ${quoteIdent(schema)} TO ${who};`,
-          `ALTER DEFAULT PRIVILEGES IN SCHEMA ${quoteIdent(schema)} GRANT SELECT ON TABLES TO ${who};`,
-        )
-      }
-      for (const row of excluded) {
-        statements.push(
-          `REVOKE SELECT ON TABLE ${quoteIdent(String(row.schema))}.${quoteIdent(String(row.name))} FROM ${who};`,
-        )
-      }
+    for (const schema of schemas) {
+      statements.push(
+        `GRANT USAGE ON SCHEMA ${quoteIdent(schema)} TO ${who};`,
+        `GRANT SELECT ON ALL TABLES IN SCHEMA ${quoteIdent(schema)} TO ${who};`,
+        `ALTER DEFAULT PRIVILEGES IN SCHEMA ${quoteIdent(schema)} GRANT SELECT ON TABLES TO ${who};`,
+      )
+    }
+    for (const row of excluded) {
+      statements.push(
+        `REVOKE SELECT ON TABLE ${quoteIdent(String(row.schema))}.${quoteIdent(String(row.name))} FROM ${who};`,
+      )
     }
     return { role, database, serverVersionNum: version, statements }
   })

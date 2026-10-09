@@ -3965,7 +3965,7 @@ _No named exports (side-effect entrypoint)._
 - **postgresRoleRefusal** _(function)_ - `postgresRoleRefusal: (report: PostgresRoleReport, options?: { readonly allowExtensions?: readonly string[]; }) => DbRefusal | undefined`
   The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}.
 - **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
-  Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data` on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would override a…
+  Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions. `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a REVOKE. Not…
 - **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
   Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name is masked as well.
 - **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`

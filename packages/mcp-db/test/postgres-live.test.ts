@@ -618,10 +618,9 @@ describe.skipIf(SKIP)(SUITE, () => {
     const plain = await postgresRoleSql(su, { timeoutMs: TIMEOUT_MS })
     if (isDbRefusal(plain)) throw new Error(plain.message)
     expect(plain.statements).toContain(
-      serverVersion >= 140000
-        ? 'GRANT pg_read_all_data TO "nifra_dev_reader";'
-        : 'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "nifra_dev_reader";',
+      'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "nifra_dev_reader";',
     )
+    expect(plain.statements.some((line) => line.includes("pg_read_all_data"))).toBe(false)
   })
 })
 

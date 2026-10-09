@@ -20810,7 +20810,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function postgresRoleSql(client: PostgresClient, options: PostgresRoleSqlOptions): Promise<PostgresRoleSql | DbRefusal>;",
-    "doc": "/**\n * Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data`\n * on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default\n * privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would\n * override a REVOKE, so it is not used then). Nothing is executed.\n */"
+    "doc": "/**\n * Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT`\n * per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions.\n * `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a\n * REVOKE. Nothing is executed.\n */"
   },
   {
     "name": "poweredBy",
