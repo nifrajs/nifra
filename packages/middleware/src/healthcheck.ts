@@ -14,6 +14,9 @@ export interface HealthcheckOptions {
 
 const noStore = { "cache-control": "no-store" } as const
 
+// Named per call, so a second, differently configured instance applies instead of being deduped.
+let instances = 0
+
 /**
  * Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200`
  * (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }`
@@ -34,7 +37,7 @@ export function healthcheck(options: HealthcheckOptions = {}): IdentityPlugin {
   // A router plugin: the probes are registered as a side effect and the app comes back with its type
   // unchanged, so routes declared after `.use(healthcheck())` keep theirs. The probes are deliberately
   // absent from the caller's typed registry - they are operational endpoints, not part of the contract.
-  return defineRouterPlugin("healthcheck", (app) => {
+  return defineRouterPlugin(`healthcheck#${++instances}`, (app) => {
     app.register("GET", path, undefined, () =>
       Response.json({ status: "ok" }, { headers: noStore }),
     )

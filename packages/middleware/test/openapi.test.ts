@@ -155,4 +155,13 @@ describe("openapi() plugin", () => {
       .get("/", () => ({ ok: true }))
     expect((await app.fetch(new Request("http://x/spec.json"))).status).toBe(200)
   })
+
+  test("a second instance at another path serves too", async () => {
+    const app = server()
+      .use(openapi())
+      .use(openapi({ path: "/internal/openapi.json" }))
+      .get("/", () => ({ ok: true }))
+    expect((await app.fetch(new Request("http://x/openapi.json"))).status).toBe(200)
+    expect((await app.fetch(new Request("http://x/internal/openapi.json"))).status).toBe(200)
+  })
 })

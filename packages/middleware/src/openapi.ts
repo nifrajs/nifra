@@ -104,6 +104,9 @@ export function buildOpenApiDocument(
 
 const SCALAR_CDN = "https://cdn.jsdelivr.net/npm/@scalar/api-reference"
 
+// Named per call, so a second, differently configured instance applies instead of being deduped.
+let instances = 0
+
 /**
  * Minimal HTML that mounts the Scalar API reference against a spec URL. The interpolated values are
  * dev-provided config (not request input), but they're still escaped so a stray quote or `<` can't
@@ -149,7 +152,7 @@ export function openapi(options: OpenApiOptions = {}): IdentityPlugin {
   let uiCached: string | undefined
   // A router plugin: it serves the spec (and optionally the UI page) as a side effect and returns the
   // app type-unchanged, so every route declared after `.use(openapi())` keeps its types.
-  return defineRouterPlugin("openapi", (app) => {
+  return defineRouterPlugin(`openapi#${++instances}`, (app) => {
     // Capture `app` (the same mutable builder every later `.get()`/`.post()` registers on) and read its
     // routes lazily, at request time - so all routes exist regardless of where the plugin sits.
     app.register("GET", docPath, undefined, () => {
