@@ -149,6 +149,50 @@ describe("built-in security rules", () => {
     expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S001:2"])
   })
 
+  test("NF-S001 reads the catch's statements, not its words", async () => {
+    const findings = await scan(
+      "routes/words.server.ts",
+      [
+        "function requireAuth() { try { check() } catch { /* throw later */ return true } }",
+        'function requireRole() { try { check() } catch { log("throw away"); return true } }',
+        "function requireUser() { try { check() } catch (e) { setTimeout(() => { throw e }); return true } }",
+        'function requireOwner() { try { check() } catch { log("return false"); return true } }',
+        "function requireA() { try { check() } catch (e) { if (e) throw e; return true } }",
+        "function requireB() { try { check() } catch { return (false) } }",
+        "function requireC() { try { check() } catch { return new Response(null, { status: 403 }) } }",
+        "async function requireD() { try { check() } catch { return await denyRequest() } }",
+        "function requireE() { try { check() } catch (e) { reject(e) } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S001:1",
+      "NF-S001:2",
+      "NF-S001:3",
+      "NF-S001:4",
+    ])
+  })
+
+  test("NF-S001 knows the names gates go by", async () => {
+    const gates = [
+      "verifyToken",
+      "verifySession",
+      "ensureLoggedIn",
+      "checkPermission",
+      "validateCsrf",
+      "authenticate",
+      "authoriseUser",
+      "adminGuard",
+    ]
+    const other = ["ensureDir", "checkHealth", "verifyChecksum", "validateEmail", "Guard"]
+    const findings = await scan(
+      "backend/names.ts",
+      [...gates, ...other]
+        .map((name) => `function ${name}() { try { check() } catch { return true } }`)
+        .join("\n"),
+    )
+    expect(findings.map((finding) => finding.line)).toEqual(gates.map((_, index) => index + 1))
+  })
+
   test("NF-S002 skips enum-member accesses (ts.SyntaxKind.PlusToken is a kind, not a secret)", async () => {
     const findings = await scan(
       "scanner.server.ts",

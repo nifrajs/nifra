@@ -547,6 +547,71 @@ function functionName(ts: typeof TSApi, fn: TSApi.Node): string | undefined {
   return undefined
 }
 
+/**
+ * A gate's name. `can` only names a gate in camelCase (`canEdit`, `canAccess`) - matching it
+ * case-insensitively swept in `canonicalize…`, `cancel…`, `candidate…`, none of them authorization
+ * decisions. `ensure`/`verify`/`check`/`validate` name one only before what a gate decides on
+ * (`verifyToken`, `ensureLoggedIn`, `checkPermission`), so `ensureDir` and `checkHealth` are not gates.
+ */
+const GATE_NAMES = [
+  /^(?:require|assert|authori[sz]e|authenticate)/i,
+  /^can[A-Z]/,
+  /.Guard$/,
+  /^(?:ensure|verify|check|validate)(?:Auth|LoggedIn|Login|Session|Token|Jwt|JWT|Signature|Webhook|Hmac|HMAC|Password|Credential|Permission|Access|Role|Admin|Owner|Scope|Csrf|CSRF|ApiKey|Origin|Tenant|User|Member)/,
+]
+
+/** Helpers whose whole job is to fail (`fail(…)`, `deny(…)`, `reject(…)`, …). */
+const FAILING_HELPERS = new Set(["fail", "deny", "reject", "forbid", "unauthorized", "abort"])
+
+/**
+ * Whether a gate's catch block fails closed: it throws, returns `false`, a `new Response(…)` or a
+ * `deny…(…)` call, or hands the failure to a {@link FAILING_HELPERS} helper. The last form is why
+ * conformance/invariant asserts that funnel every error through a `never`-returning `fail()` are not
+ * fail-open - the scanner reads no types, so it trusts the helper by name, the same trade the SQL and
+ * gate-name heuristics already make. Read from the syntax, so a "throw" in a comment or a string counts
+ * for nothing, and a nested function's statements are not the catch's own.
+ */
+function failsClosed(ts: typeof TSApi, block: TSApi.Block): boolean {
+  let closed = false
+  const visit = (node: TSApi.Node): void => {
+    if (closed || ts.isFunctionLike(node)) return
+    if (
+      ts.isThrowStatement(node) ||
+      (ts.isReturnStatement(node) &&
+        node.expression !== undefined &&
+        isDenial(ts, node.expression)) ||
+      (ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        FAILING_HELPERS.has(node.expression.text))
+    ) {
+      closed = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(block)
+  return closed
+}
+
+function isDenial(ts: typeof TSApi, expression: TSApi.Expression): boolean {
+  let value = expression
+  while (
+    ts.isParenthesizedExpression(value) ||
+    ts.isAwaitExpression(value) ||
+    ts.isAsExpression(value) ||
+    ts.isSatisfiesExpression(value)
+  )
+    value = value.expression
+  if (value.kind === ts.SyntaxKind.FalseKeyword) return true
+  if (ts.isNewExpression(value))
+    return ts.isIdentifier(value.expression) && value.expression.text === "Response"
+  return (
+    ts.isCallExpression(value) &&
+    ts.isIdentifier(value.expression) &&
+    value.expression.text.startsWith("deny")
+  )
+}
+
 export const failOpenGateRule: CheckRule = {
   code: "NF-S001",
   title: "Fail-open gate",
@@ -565,23 +630,8 @@ export const failOpenGateRule: CheckRule = {
           let parent: TSApi.Node | undefined = node.parent
           while (parent !== undefined && !ts.isFunctionLike(parent)) parent = parent.parent
           const name = parent === undefined ? undefined : functionName(ts, parent)
-          // `can` only names a gate in camelCase (`canEdit`, `canAccess`) - matching it
-          // case-insensitively swept in `canonicalize…`, `cancel…`, `candidate…`, none of them
-          // authorization decisions. The other roots stay case-insensitive.
-          const gateName =
-            name !== undefined &&
-            (/^(?:require|assert|authorize)/i.test(name) || /^can[A-Z]/.test(name))
-          if (name !== undefined && gateName) {
-            const text = node.block.getText(tree)
-            // A catch fails closed when it rethrows, returns an explicit denial, or hands the failure
-            // to a helper whose whole job is to fail (`fail(…)`, `deny(…)`, `reject(…)`, …). The last
-            // form is why conformance/invariant asserts that funnel every error through a
-            // `never`-returning `fail()` are not fail-open - the scanner reads no types, so it trusts
-            // the helper by name, the same trade the SQL and gate-name heuristics already make.
-            if (
-              !/\b(?:throw|return\s+(?:false|new\s+Response|deny))/s.test(text) &&
-              !/(?:^|[^.\w])(?:fail|deny|reject|forbid|unauthorized|abort)\s*\(/s.test(text)
-            ) {
+          if (name !== undefined && GATE_NAMES.some((gate) => gate.test(name))) {
+            if (!failsClosed(ts, node.block)) {
               const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
               const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
               findings.push(
