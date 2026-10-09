@@ -1103,26 +1103,31 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact) : preview
   const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
 
-  if (options.json) {
-    console.log(
-      JSON.stringify(
-        { ...plan, from, steps: recipe.steps, write, ...(hooks === undefined ? {} : { hooks }) },
-        null,
-        2,
-      ),
-    )
-  } else {
-    console.log(renderPlan(plan, write, from, recipe.steps))
-    if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
-  }
-
   // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.
-  if (write && options.verify !== false) {
+  const verify = write && options.verify !== false
+  if (options.json) {
+    // The check result rides inside the one JSON document; its human report would break the stream.
+    const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
+    if (hooks !== undefined) report.hooks = hooks
+    let ok = true
+    if (verify) {
+      const { collectProjectVerification } = await import("./verification.ts")
+      const verification = await collectProjectVerification(cwd, { lintsOnly: false })
+      const check = await verification.check()
+      report.check = check
+      ok = check.ok
+    }
+    console.log(JSON.stringify(report, null, 2))
+    return ok
+  }
+  console.log(renderPlan(plan, write, from, recipe.steps))
+  if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
+
+  if (verify) {
     const { runCheck } = await import("./check.ts")
     const ok = await runCheck(cwd, { json: false })
     if (!ok) {
-      if (!options.json)
-        console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
+      console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
       return false
     }
   }

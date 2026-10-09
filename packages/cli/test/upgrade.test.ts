@@ -556,6 +556,30 @@ describe("chained upgrades", () => {
     )
   })
 
+  test("--write --json verifies inside the one JSON document", async () => {
+    const root = await scaffoldV1("chain-json-verify")
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    const error = spyOn(console, "error").mockImplementation(() => {})
+    let result: boolean
+    try {
+      result = await runUpgrade(root, {
+        version: "4.0.0",
+        cliVersion: "4.0.0",
+        write: true,
+        json: true,
+        hooks: false,
+      })
+    } finally {
+      log.mockRestore()
+      error.mockRestore()
+    }
+    const report = JSON.parse(lines.join("\n"))
+    expect(report.write).toBe(true)
+    expect(typeof report.check.ok).toBe("boolean")
+    expect(result).toBe(report.check.ok)
+  }, 120_000)
+
   test("--exact pins the exact version", async () => {
     const root = await scaffoldV1("chain-exact")
     const { result } = await captureConsole(() =>
