@@ -45,25 +45,42 @@ describe("local execution policy adapter", () => {
     expect(result.timedOut).toBe(true)
   })
 
-  test("escalates to SIGKILL when a timed-out process ignores SIGTERM", async () => {
-    const adapter = createLocalProcessAdapter()
-    const result = await adapter.run({
-      command: process.execPath,
-      args: ["-e", 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 30000)'],
-      policy: {
-        filesystem: "cwd",
-        network: "allow",
-        timeMs: 50,
-        capabilityCeiling: ["process.run"],
-      },
-    })
-    expect(result.ok).toBe(false)
-    expect(result.timedOut).toBe(true)
-    // POSIX exposes the escalation signal. On Windows taskkill ends the tree, and the child-process
-    // layer reports SIGTERM on some runs and no signal on others; timeout and completion are the
-    // portable contract there.
-    if (process.platform === "win32") expect([undefined, "SIGTERM"]).toContain(result.signal)
-    else expect(result.signal).toBe("SIGKILL")
+  test("escalates to SIGKILL when a stopped process ignores SIGTERM", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-exec-ignore-"))
+    const ready = join(dir, "ready")
+    // The run is stopped only once the child has said its handler is in place: a SIGTERM that lands
+    // during its startup would end it by default and never reach the escalation. Timeout and cancel
+    // stop a run through the same path.
+    const script = [
+      'process.on("SIGTERM", () => {})',
+      `require("node:fs").writeFileSync(${JSON.stringify(ready)}, "1")`,
+      "setTimeout(() => {}, 30000)",
+    ].join("\n")
+    const controller = new AbortController()
+    try {
+      const running = createLocalProcessAdapter().run({
+        command: process.execPath,
+        args: ["-e", script],
+        signal: controller.signal,
+        policy: {
+          filesystem: "cwd",
+          network: "allow",
+          timeMs: 30_000,
+          capabilityCeiling: ["process.run"],
+        },
+      })
+      while (!(await Bun.file(ready).exists())) await Bun.sleep(10)
+      controller.abort()
+      const result = await running
+      expect({ ok: result.ok, cancelled: result.cancelled }).toEqual({ ok: false, cancelled: true })
+      // POSIX exposes the escalation signal. On Windows taskkill ends the tree, and the child-process
+      // layer reports SIGTERM on some runs and no signal on others; completion is the portable
+      // contract there.
+      if (process.platform === "win32") expect([undefined, "SIGTERM"]).toContain(result.signal)
+      else expect(result.signal).toBe("SIGKILL")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   }, 10_000)
 
   const policy = (timeMs: number) => ({

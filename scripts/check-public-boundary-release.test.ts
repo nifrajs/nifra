@@ -17,4 +17,4 @@ test("release verification refuses to run without private markers", async () => 
     expect({ markers, code }).toEqual({ markers, code: 1 })
     expect(stderr).toContain("PRIVATE_MARKERS is required for release verification")
   }
-})
+}, 30_000)

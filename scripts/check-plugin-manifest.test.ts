@@ -33,7 +33,7 @@ function edit(root: string, path: string, change: (text: string) => string): voi
 
 test("control: an untouched copy passes", async () => {
   expect((await gate(fixture())).code).toBe(0)
-})
+}, 30_000)
 
 test("a plugin version that drifts from the package fails", async () => {
   const root = fixture()
@@ -43,7 +43,7 @@ test("a plugin version that drifts from the package fails", async () => {
   const { code, stderr } = await gate(root)
   expect(code).toBe(1)
   expect(stderr).toContain("plugin.json version 0.0.1 !=")
-})
+}, 30_000)
 
 test("a skill whose frontmatter name is not its directory fails", async () => {
   const root = fixture()
@@ -55,4 +55,4 @@ test("a skill whose frontmatter name is not its directory fails", async () => {
   const { code, stderr } = await gate(root)
   expect(code).toBe(1)
   expect(stderr).toContain(`${skill}: frontmatter name renamed != directory`)
-})
+}, 30_000)

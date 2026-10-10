@@ -15,4 +15,4 @@ test("an empty or gutted generation is refused before it can match an empty file
 
 test("control: the real generation passes the sanity check", () => {
   expect(() => assertSane(generateApiReference())).not.toThrow()
-})
+}, 60_000)

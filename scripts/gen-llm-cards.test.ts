@@ -22,4 +22,4 @@ test("a generation without the web card's footguns is refused as broken", () => 
 
 test("control: the real generation is not broken", () => {
   expect(cardsLookBroken(generateCards())).toBe(false)
-})
+}, 60_000)

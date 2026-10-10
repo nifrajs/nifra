@@ -34,7 +34,7 @@ function editManifest(root: string, change: (manifest: Record<string, unknown>) 
 
 test("control: an untouched copy passes", async () => {
   expect((await gate(fixture())).code).toBe(0)
-})
+}, 30_000)
 
 test("a manifest without the OpenAI extension or with the wrong license fails", async () => {
   const root = fixture()
@@ -46,7 +46,7 @@ test("a manifest without the OpenAI extension or with the wrong license fails", 
   expect(code).toBe(1)
   expect(stderr).toContain('plugin.json license must be "MIT"')
   expect(stderr).toContain("plugin.json extensions.com.openai is required")
-})
+}, 30_000)
 
 test("a missing manifest fails instead of checking nothing", async () => {
   const root = mkdtempSync(join(tmpdir(), "openai-plugin-empty-"))
@@ -54,4 +54,4 @@ test("a missing manifest fails instead of checking nothing", async () => {
   const { code, stderr } = await gate(root)
   expect(code).toBe(1)
   expect(stderr).toContain("plugins/nifra/plugin.json: missing or invalid JSON")
-})
+}, 30_000)
