@@ -12492,6 +12492,11 @@ terminal events - the run is never re-executed. A disconnected run keeps going a
 real terminal events for that reconnect. Without an `evidenceLog` nothing can rejoin a dropped
 stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 
+Exceeding `maxOutputBytes` detaches the viewer in the same way, including an oversized initial state
+snapshot. The response closes immediately, with an `output_limit` error frame when the remaining
+budget permits it. Without a log the turn is aborted; with a log it continues recording its real
+terminal result for reconnect rather than storing the viewer's output-limit error as the run result.
+
 ```ts
 import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
 
@@ -12590,6 +12595,11 @@ dropped stream, so the disconnect aborts `ports.signal` and the turn suspends as
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.
+
+One SSE response emits at most `maxOutputBytes` (default 4 MiB), so a client that stops reading
+cannot make the server queue a whole run. Past the cap the response ends with an `error` frame
+(`output_limit`): with an `evidenceLog` the run keeps recording and a `Last-Event-ID` reconnect reads
+on from where the response stopped; without one the run is cancelled.
 When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
 tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
 reused `turnId` finds none of them. Without it a turn id works as a bearer capability. The owner
@@ -13906,6 +13916,13 @@ The plugin is enabled by default only when `NODE_ENV=development`. It records a 
 and serves the overlay stream at `/_nifra/devtools`; remote hosts and cross-origin access stay denied
 unless explicitly allowed. Leave it unregistered in production for zero request-path overhead.
 
+Each SSE connection also has a finite pending-byte budget (`maxPendingBytes`, default 64 KiB),
+including keep-alive frames. A slow reader that fills that budget is closed and releases its
+connection slot. Already queued frames drain before EOF; the overflow frame is dropped. Browser
+`EventSource` reconnects automatically. Initial delivery includes only the newest history suffix
+that fits the byte budget. This is a recent trace view, so reconnects can have event-id gaps when
+older events no longer fit the history or connection budget; it does not guarantee lossless replay.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
@@ -14187,6 +14204,15 @@ Resolvers read it as their third argument.
 ## Subscriptions
 
 Subscriptions run over the same route via `graphql-transport-ws`. Bring a subscription source - the bundled in-memory `createPubSub` is the reference implementation; swap in a durable bus (Redis, a Durable Object, NATS) that exposes the same `{ publish, subscribe }` shape for multi-instance deploys.
+
+Each reference subscriber queues at most 1024 events by default. If publication outruns consumption,
+the overloaded iterator detaches, clears its queued values, and its next pull rejects with
+`GraphqlPubSubOverflowError` (`code: "graphql_pubsub_overflow"`). Configure
+`createPubSub({ maxQueuedEvents: 256, overflow: "error" })` to change the finite limit. Explicit
+`"drop-oldest"` and `"drop-newest"` policies support consumers that accept missing events. Returning or
+throwing into an iterator clears its queue and terminates delivery. This is an event-count bound;
+publishers remain responsible for payload sizes. Synchronous `publish` does not provide producer
+backpressure or cross-instance delivery.
 
 ```ts
 import { server } from "@nifrajs/core"
@@ -16555,7 +16581,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/graphql
 
-`GraphqlContextBuilder`, `GraphqlContextInput`, `GraphqlHttpOptions`, `GraphqlPubSub`, `GraphqlWsOptions`, `MountGraphqlOptions`, `NifraContextLike`, `buildContext`, `createPubSub`, `graphqlWebSocket`, `mountGraphql`, `respondGraphql`
+`GraphqlContextBuilder`, `GraphqlContextInput`, `GraphqlHttpOptions`, `GraphqlPubSub`, `GraphqlPubSubOptions`, `GraphqlPubSubOverflowError`, `GraphqlWsOptions`, `MountGraphqlOptions`, `NifraContextLike`, `buildContext`, `createPubSub`, `graphqlWebSocket`, `mountGraphql`, `respondGraphql`
 
 ## @nifrajs/i18n
 
