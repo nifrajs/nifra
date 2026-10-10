@@ -68,6 +68,9 @@ const isMissing = (error: unknown): boolean => {
   return code === "ENOENT" || code === "ENOTDIR"
 }
 
+/** Remove a staging file that may already be gone. */
+const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => {})
+
 export class FileStorage implements StorageAdapter {
   private readonly root: string
   private readonly metadataRoot: string
@@ -305,7 +308,7 @@ export class FileStorage implements StorageAdapter {
       if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
     } finally {
       // Gone already once the rename landed; this clears a staged file the write abandoned.
-      await unlink(staged.path).catch(() => {})
+      await discardStaged(staged.path)
     }
   }
 
@@ -333,7 +336,7 @@ export class FileStorage implements StorageAdapter {
       const info = await handle.stat()
       return { path, dev: info.dev, ino: info.ino }
     } catch (error) {
-      await unlink(path).catch(() => {})
+      await discardStaged(path)
       throw error
     } finally {
       await handle.close()

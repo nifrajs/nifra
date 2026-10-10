@@ -63,6 +63,9 @@ describe("scanServerFnExports", () => {
         `export const a = serverFn({}, () => ({}))\n/* export const b = serverFn(`,
       ),
     ).toEqual(["a"])
+    expect(
+      scanServerFnExports("export const a = serverFn({}, () => ({}))\nconst open = `left open"),
+    ).toEqual(["a"])
   })
 
   test("comment markers inside a string do not hide a declaration", () => {
