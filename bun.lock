@@ -136,6 +136,26 @@
         "vue-tsc": "^3.3.12",
       },
     },
+    "internal/invariants": {
+      "name": "@nifrajs/invariants",
+      "version": "4.0.2",
+      "devDependencies": {
+        "@nifrajs/a2a": "workspace:*",
+        "@nifrajs/ag-ui": "workspace:*",
+        "@nifrajs/agent": "workspace:*",
+        "@nifrajs/core": "workspace:*",
+        "@nifrajs/devtools": "workspace:*",
+        "@nifrajs/graphql": "workspace:*",
+        "@nifrajs/mcp": "workspace:*",
+        "@nifrajs/middleware": "workspace:*",
+        "@nifrajs/otel": "workspace:*",
+        "@nifrajs/schema": "workspace:*",
+        "@nifrajs/testing": "workspace:*",
+        "@nifrajs/web": "workspace:*",
+        "graphql": "17.0.2",
+        "typescript": "6.0.3",
+      },
+    },
     "internal/test-utils": {
       "name": "@nifrajs/test-utils",
       "version": "4.0.2",
@@ -1283,6 +1303,8 @@
     "@nifrajs/i18n": ["@nifrajs/i18n@workspace:packages/i18n"],
 
     "@nifrajs/image": ["@nifrajs/image@workspace:packages/image"],
+
+    "@nifrajs/invariants": ["@nifrajs/invariants@workspace:internal/invariants"],
 
     "@nifrajs/island-trigger": ["@nifrajs/island-trigger@workspace:packages/island-trigger"],
 

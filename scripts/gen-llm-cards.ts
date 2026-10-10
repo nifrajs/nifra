@@ -478,12 +478,29 @@ export function generateCards(): Card[] {
   }))
 }
 
+/**
+ * Whether a generation looks broken: the high-traffic packages must produce a non-trivial card, so a
+ * broken extractor (e.g. a resolution change that empties the export list) fails loudly rather than
+ * shipping stubs.
+ */
+export function cardsLookBroken(
+  cards: readonly { readonly pkg: { readonly name: string }; readonly content: string }[],
+): boolean {
+  const web = cards.find((c) => c.pkg.name === "@nifrajs/web")?.content ?? ""
+  return !web.includes("## Footguns") || !web.includes("reached the client bundle")
+}
+
+/** The cards whose committed copy, as `read` returns it, is not what this run generated. */
+export function staleCards<C extends { readonly path: string; readonly content: string }>(
+  cards: readonly C[],
+  read: (path: string) => string | undefined,
+): C[] {
+  return cards.filter((card) => read(card.path) !== card.content)
+}
+
 if (import.meta.main) {
   const cards = generateCards()
-  // Sanity-check: the high-traffic packages must produce a non-trivial card, so a broken extractor
-  // (e.g. a resolution change that empties the export list) fails loudly rather than shipping stubs.
-  const web = cards.find((c) => c.pkg.name === "@nifrajs/web")?.content ?? ""
-  if (!web.includes("## Footguns") || !web.includes("reached the client bundle")) {
+  if (cardsLookBroken(cards)) {
     console.error("✗ LLM.md card generation looks broken (missing @nifrajs/web footguns)")
     process.exit(1)
   }
@@ -498,8 +515,8 @@ if (import.meta.main) {
       process.exit(1)
     }
 
-    const stale = cards.filter(
-      (c) => (existsSync(c.path) ? readFileSync(c.path, "utf8") : "") !== c.content,
+    const stale = staleCards(cards, (path) =>
+      existsSync(path) ? readFileSync(path, "utf8") : undefined,
     )
     if (stale.length > 0) {
       console.error(

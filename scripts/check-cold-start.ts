@@ -33,6 +33,7 @@ import { FRAMEWORK_IDS, FRAMEWORK_SPECS } from "../packages/create-nifra/src/sca
 import { renderPackageJson } from "../packages/create-nifra/src/scaffold/site-files.ts"
 import { DEPLOY_TARGETS } from "../packages/create-nifra/src/scaffold/targets.ts"
 import { packCurrentSource, pinToPacked } from "./packed-tree.ts"
+import { unsatisfiablePins } from "./scaffold-pins.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PKGS_DIR = join(ROOT, "packages")
@@ -59,9 +60,6 @@ for (const entry of readdirSync(PKGS_DIR, { withFileTypes: true })) {
   }
   if (m.name && m.version) versionByName.set(m.name, m.version)
 }
-
-const isInternal = (dep: string): boolean =>
-  dep.startsWith("@nifrajs/") || dep === "nifra" || dep === "create-nifra"
 
 let failures = 0
 
@@ -90,30 +88,13 @@ for (const id of FRAMEWORK_IDS) {
   }
 }
 
+if (manifests.length === 0) {
+  failures += 1
+  console.error("✗ no template manifest found - nothing was checked")
+}
+
 for (const { label: tpl, manifest: m } of manifests) {
-  const deps = { ...(m.dependencies ?? {}), ...(m.devDependencies ?? {}) }
-  const bad: string[] = []
-  for (const [dep, range] of Object.entries(deps)) {
-    if (!isInternal(dep)) continue
-    const current = versionByName.get(dep)
-    if (current === undefined) {
-      bad.push(`${dep}="${range}" → no such monorepo package`)
-      continue
-    }
-    // `workspace:` shouldn't appear in a shipped template; the publish rewrite is for real packages, not
-    // these static files. Flag it - a scaffolded app can't resolve a `workspace:` dep.
-    if (range.startsWith("workspace:")) {
-      bad.push(
-        `${dep}="${range}" → workspace: protocol in a template (unresolvable for an external app)`,
-      )
-      continue
-    }
-    if (!Bun.semver.satisfies(current, range)) {
-      bad.push(
-        `${dep}="${range}" does NOT satisfy the current ${current} (caret excludes the prerelease?)`,
-      )
-    }
-  }
+  const bad = unsatisfiablePins(m, versionByName)
   if (bad.length > 0) {
     failures += 1
     console.error(`✗ ${tpl}: ${bad.length} unsatisfiable pin(s):`)

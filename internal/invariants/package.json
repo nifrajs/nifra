@@ -1,0 +1,23 @@
+{
+  "name": "@nifrajs/invariants",
+  "version": "4.0.2",
+  "description": "Internal regression suites, one per class of defect: every member of a class runs the same scenarios, and a registry fails when a new member is not enrolled.",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@nifrajs/a2a": "workspace:*",
+    "@nifrajs/ag-ui": "workspace:*",
+    "@nifrajs/agent": "workspace:*",
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/devtools": "workspace:*",
+    "@nifrajs/graphql": "workspace:*",
+    "@nifrajs/mcp": "workspace:*",
+    "@nifrajs/middleware": "workspace:*",
+    "@nifrajs/otel": "workspace:*",
+    "@nifrajs/schema": "workspace:*",
+    "@nifrajs/testing": "workspace:*",
+    "@nifrajs/web": "workspace:*",
+    "graphql": "17.0.2",
+    "typescript": "6.0.3"
+  }
+}

@@ -124,6 +124,9 @@ export async function findAgentBoundaryFailures(
   root = resolve(import.meta.dir, ".."),
 ): Promise<readonly string[]> {
   const failures: string[] = []
+  // A root holding none of the protected packages checks nothing, which must not read as a pass.
+  if (!PROTECTED.some((packageName) => existsSync(`${root}/packages/${packageName}`)))
+    return [`${root}: no protected package found - nothing was checked`]
   for (const packageName of PROTECTED) {
     const packageRoot = `${root}/packages/${packageName}`
     if (!existsSync(packageRoot)) continue

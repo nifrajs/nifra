@@ -97,6 +97,7 @@
     "packages/*/src/**/*",
     "packages/*/test/**/*",
     "internal/*/src/**/*",
+    "internal/*/test/**/*",
     "bench/**/*",
     "examples/**/*"
   ],

@@ -10,6 +10,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -178,6 +179,7 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository &&
        startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -207,6 +209,7 @@ jobs:
 
   deno:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -244,6 +247,7 @@ jobs:
   # the runtimes they exist for. This closes the Node half.
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -277,6 +281,7 @@ jobs:
   # SQLite state in a temporary directory owned by the job.
   workers:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -308,6 +313,7 @@ jobs:
   # turns this job red. Hashed filenames are intentionally ignored by the checker.
   pipeline-parity:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
