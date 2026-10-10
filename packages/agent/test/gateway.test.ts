@@ -77,6 +77,7 @@ describe("model gateway", () => {
 
   test("an attempt the deadline ends is aborted for the adapter", async () => {
     let seen: AbortSignal | undefined
+    // A fixed clock: the adapter is reached however long the run takes to get there.
     const result = await runModelGateway(
       {
         complete: (request) => {
@@ -89,7 +90,7 @@ describe("model gateway", () => {
         },
       },
       { input: "x" },
-      { routes: ["a"], retryableCodes: [], deadlineAt: Date.now() + 5 },
+      { routes: ["a"], retryableCodes: [], deadlineAt: 5, now: () => 0 },
     )
     expect(result.ok ? "ok" : result.error.code).toBe("timeout")
     expect(seen?.aborted).toBe(true)

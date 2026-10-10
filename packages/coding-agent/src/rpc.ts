@@ -413,7 +413,7 @@ export class CodingAgentRpcServer {
           cancel: async () => {
             if (finished) return
             finished = true
-            void events.return?.().catch(() => {})
+            void events.return?.()
             if (sessionId !== undefined)
               await this.host.backend.cancel(sessionId, "client disconnected").catch(() => {})
           },

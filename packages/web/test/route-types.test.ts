@@ -107,6 +107,21 @@ describe("generated route types", () => {
     )
   })
 
+  test("a quote or line break in a route file name still generates valid TypeScript", () => {
+    const name = `it's" x`
+    write(`routes/${name}.tsx`, "export default () => null\n")
+    write(`routes/${name}.backend.ts`, "export const loader = () => ({})\n")
+    const [source] = [...routeTypeFiles({ appRoot: root }).values()]
+    if (source === undefined) throw new Error("no route type file generated")
+    const diagnostics = ts.transpileModule(source, {
+      fileName: "route.ts",
+      reportDiagnostics: true,
+    })
+    expect(diagnostics.diagnostics ?? []).toEqual([])
+    expect(source).toContain(`it's\\"\\u2028x.backend`)
+    expect(source.split("\n")[0]).toContain("\\u2028")
+  })
+
   test("data is the output schema's type, and api is the registered backend's", () => {
     write(
       "backend/app.ts",
