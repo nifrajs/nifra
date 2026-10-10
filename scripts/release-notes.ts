@@ -51,8 +51,10 @@ export const ownChanges = (section: string): string | undefined => {
 /** Each entry cut to its first paragraph. */
 export const firstParagraphs = (changes: string): string => {
   let cut = false
+  // Changesets 3 indents the blank line between an entry's paragraphs.
   return changes
     .split("\n")
+    .map((line) => (line.trim() === "" ? "" : line))
     .filter((line) => {
       if (line.startsWith("- ") || line.startsWith("### ")) cut = false
       else if (line === "" && !cut) {
