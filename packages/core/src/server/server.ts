@@ -446,6 +446,9 @@ function requireWsRuntime(runtime: WsRuntime | undefined): WsRuntime {
   return runtime
 }
 
+/** The method `app.sse()` registers: POST when the schema declares a body, which a GET cannot carry. */
+type SseMethodOf<S> = S extends { readonly body: StandardSchemaV1 } ? "POST" : "GET"
+
 function requireSseRuntime(runtime: SseRuntime | undefined): SseRuntime {
   if (runtime === undefined) {
     throw new FrameworkError(
@@ -1832,8 +1835,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /**
-   * Register a **typed SSE route** - a GET endpoint streaming `text/event-stream` whose event
-   * payloads are contracted by `schema.sse`. The handler receives the validated context plus a
+   * Register a **typed SSE route** - an endpoint streaming `text/event-stream` whose event
+   * payloads are contracted by `schema.sse`. It is a GET route, or a POST route when the schema
+   * declares a `body` (a GET carries none): the body validates as on any POST, and the client sends
+   * it with `.subscribe(onEvent, { body })` - the shape of a chat stream that posts its prompt. The handler receives the validated context plus a
    * {@link TypedSSEStream}: `stream.send(event)` is compile-time-checked against the schema and
    * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a
    * `.subscribe(onEvent)` for the route with the same payload type - end-to-end typed streaming.
@@ -1861,14 +1866,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ) => void | Promise<void>,
     init?: SSEInit,
   ): Server<
-    AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response, HookOutput>>,
+    AddRoute<R, SseMethodOf<S>, Path, RouteInfoFor<Path, S, Response, HookOutput>>,
     Ctx,
     HookOutput
   > {
     const handler = (context: Context<Path, S> & Ctx): Response =>
       requireSseRuntime(this.sseRuntime).response(context, (stream) => run(context, stream), init)
-    return this.route("GET", path, schema, handler as unknown as ErasedHandler) as Server<
-      AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response, HookOutput>>,
+    return this.route(
+      schema.body ? "POST" : "GET",
+      path,
+      schema,
+      handler as unknown as ErasedHandler,
+    ) as Server<
+      AddRoute<R, SseMethodOf<S>, Path, RouteInfoFor<Path, S, Response, HookOutput>>,
       Ctx,
       HookOutput
     >

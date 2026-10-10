@@ -739,6 +739,8 @@ async function execute(
 
 interface SubscribeCallOptions {
   readonly query?: Record<string, unknown>
+  /** The body of a POST stream (`app.sse()` with a body schema). */
+  readonly body?: unknown
   readonly headers?: Record<string, string>
   readonly signal?: AbortSignal
   readonly reconnect?: boolean | { baseDelayMs?: number; maxDelayMs?: number }
@@ -857,7 +859,9 @@ function lastEventIdHeader(id: string): string {
  * streams over the configured fetcher - network, an in-process bridge, or a test mock - with
  * EventSource semantics where they matter: auto-reconnect with backoff + jitter (honoring the
  * server's `retry:` hint after a stream it served), `Last-Event-ID` resumption, JSON-parsed typed
- * events. Never throws: failures reach `onError`; a terminal end reaches `onClose`.
+ * events. A `body` makes it a POST stream, encoded like a POST call's body; it is sent on every
+ * connect, so such a stream reconnects only when asked to. `onRequest` runs before each connect.
+ * Never throws: failures reach `onError`; a terminal end reaches `onClose`.
  */
 function subscribeSse(
   base: string,
@@ -871,7 +875,10 @@ function subscribeSse(
   let lastEventId: string | undefined
   let serverRetryMs: number | undefined
 
-  const reconnectConfig = callOptions?.reconnect ?? true
+  const body = callOptions?.body
+  const method = body === undefined ? "GET" : "POST"
+  const codec = options.transport?.codec ?? plainJsonCodec
+  const reconnectConfig = callOptions?.reconnect ?? body === undefined
   const reconnectEnabled = reconnectConfig !== false
   const baseDelayMs =
     (typeof reconnectConfig === "object" ? reconnectConfig.baseDelayMs : undefined) ?? 1_000
@@ -907,13 +914,34 @@ function subscribeSse(
       close()
       return
     }
+    let form: FormData | undefined
+    let encoded: FormData | string | undefined
+    try {
+      form = body === undefined ? undefined : formBody(body)
+      encoded = form ?? (body === undefined ? undefined : codec.encode(body))
+    } catch (error) {
+      // A body that cannot be encoded sends nothing; reported after `subscribe()` returns.
+      await Promise.resolve()
+      if (closed) return
+      callOptions?.onError?.(error)
+      close()
+      return
+    }
     let attempt = 0
     while (!closed) {
       try {
         const headers = assignHeaders(assignHeaders({}, options.headers), callOptions?.headers)
+        if (options.onRequest !== undefined) {
+          assignHeaders(headers, await options.onRequest({ url, method, headers, body }))
+        }
         assignHeaders(headers, { accept: "text/event-stream" })
+        // The platform writes a form's content type, boundary included; the codec labels its bytes.
+        if (form !== undefined) deleteHeader(headers, "content-type")
+        else if (body !== undefined) assignHeaders(headers, { "content-type": codec.mediaType })
         if (lastEventId) assignHeaders(headers, { "last-event-id": lastEventIdHeader(lastEventId) })
-        const response = await doFetch(url, { headers, signal: controller.signal })
+        const init: RequestInit = { method, headers, signal: controller.signal }
+        if (encoded !== undefined) init.body = encoded
+        const response = await doFetch(url, init)
         if (!response.ok || response.body === null) {
           void response.body?.cancel().catch(() => {})
           throw new Error(`sse_http_${response.status}`)

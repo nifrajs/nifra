@@ -168,7 +168,7 @@ The runner is the center; protocol adapters are edges:
 - [`@nifrajs/a2a`](packages/a2a) mounts an A2A 1.0 card plus JSON-RPC/SSE.
 - [`@nifrajs/ag-ui`](packages/ag-ui) mounts AG-UI events over SSE.
 - [`@nifrajs/agent-app`](packages/agent-app) provides a backend-neutral browser client.
-- [`@nifrajs/coding-agent`](packages/coding-agent), [`@nifrajs/agent-protocol`](packages/agent-protocol), and [`@nifrajs/pi`](packages/pi) provide a standalone coding-agent host.
+- [`@nifrajs/coding-agent`](packages/coding-agent), [`@nifrajs/agent-protocol`](packages/agent-protocol), and [`@nifrajs/pi`](packages/pi) provide a standalone coding-agent host; [`@nifrajs/acp`](packages/acp) drives any Agent Client Protocol agent through it.
 
 Every protocol boundary still needs application authentication and authorization. Public reference
 adapters keep credentials, durable storage, tenant state, and operated policy outside the package so
@@ -231,7 +231,7 @@ results separate.
 See [benchmark methodology and full results](https://nifra.dev/benchmarks), and run
 `bun run bench:http` / `bun run bench:ssr` yourself.
 
-## Batteries (56 packages, all typed, all optional)
+## Batteries (57 packages, all typed, all optional)
 
 The package map is organized by job:
 
@@ -241,7 +241,7 @@ The package map is organized by job:
 | Full-stack web | [`web`](packages/web) · `web-react` · `web-vue` · `web-solid` · `web-svelte` · `web-preact` |
 | Agent runtime | [`agent`](packages/agent) · [`prompt`](packages/prompt) · [`runner`](packages/runner) · [`agent-telemetry`](packages/agent-telemetry) |
 | Agent UI and protocols | [`webmcp`](packages/webmcp) · [`agent-app`](packages/agent-app) · [`mcp`](packages/mcp) · [`a2a`](packages/a2a) · [`ag-ui`](packages/ag-ui) |
-| Coding agents | [`coding-agent`](packages/coding-agent) · [`agent-protocol`](packages/agent-protocol) · [`pi`](packages/pi) · [`skills`](packages/skills) |
+| Coding agents | [`coding-agent`](packages/coding-agent) · [`agent-protocol`](packages/agent-protocol) · [`pi`](packages/pi) · [`acp`](packages/acp) · [`skills`](packages/skills) |
 | App services and quality | [`auth`](packages/auth) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`testing`](packages/testing) · [`mock`](packages/mock) · [`otel`](packages/otel) |
 
 All packages are optional and typed. Start with the core, then add only the surfaces your product

@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { sse, streaming } from "@nifrajs/core/sse"
 import { t } from "@nifrajs/schema"
-import { type ClientOptions, client, type FetchFn, testClient } from "../src/index.ts"
+import {
+  type ClientOptions,
+  client,
+  type FetchFn,
+  type Subscription,
+  testClient,
+} from "../src/index.ts"
 
 const post = t.object({ id: t.integer(), title: t.string() })
 
@@ -264,6 +270,108 @@ function eventStream(...chunks: string[]): Response {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** A stream route seen with any body: method syntax compares parameters both ways, so a typed route
+ * is assignable to it and a test can send a body its schema refuses. */
+interface LooseStream {
+  subscribe(
+    onEvent: (event: unknown) => void,
+    options: {
+      body: unknown
+      onError?: (error: unknown) => void
+      onClose?: () => void
+    },
+  ): Subscription
+}
+
+describe("a POST stream (app.sse() with a body schema)", () => {
+  const prompt = t.object({ prompt: t.string() })
+  const token = t.object({ token: t.string() })
+  const chat = () =>
+    server()
+      .use(streaming())
+      .sse("/chat", { body: prompt, sse: token }, (c, stream) => {
+        for (const word of c.body.prompt.split(" ")) stream.send({ token: word })
+        stream.close()
+      })
+
+  test("posts the body, streams typed events and does not reconnect by default", async () => {
+    const app = chat()
+    const seen: Array<{ method: string; type: string | null; body: string }> = []
+    const fetch: FetchFn = async (input, init) => {
+      const request = new Request(input, init)
+      seen.push({
+        method: request.method,
+        type: request.headers.get("content-type"),
+        body: await request.clone().text(),
+      })
+      return app.fetch(request)
+    }
+    const api = client<typeof app>("http://x", { fetch })
+    const { events, push, done } = collect<{ token: string }>(2)
+    let closed = 0
+    api.chat.subscribe(push, { body: { prompt: "hello world" }, onClose: () => closed++ })
+    await done
+    while (closed === 0) await Promise.resolve()
+    expect(events).toEqual([{ token: "hello" }, { token: "world" }])
+    expect(seen).toEqual([
+      { method: "POST", type: "application/json", body: '{"prompt":"hello world"}' },
+    ])
+    expect(closed).toBe(1)
+  })
+
+  test("the server validates the body as on any POST", async () => {
+    const app = chat()
+    const chatRoute: LooseStream = testClient<typeof app>(app).chat
+    const errors: unknown[] = []
+    let closed = false
+    chatRoute.subscribe(() => {}, {
+      body: { prompt: 1 },
+      onError: (error) => errors.push(error),
+      onClose: () => {
+        closed = true
+      },
+    })
+    while (!closed) await Promise.resolve()
+    expect(String(errors[0])).toContain("sse_http_422")
+    expect(await app.fetch(new Request("http://x/chat"))).toHaveProperty("status", 405)
+  })
+
+  test("onRequest runs before each connect, for a GET stream too", async () => {
+    const app = server()
+      .use(streaming())
+      .sse("/feed", { sse: post }, (c, stream) => {
+        stream.send({ id: 1, title: c.req.headers.get("authorization") ?? "none" })
+        stream.close()
+      })
+    const api = client<typeof app>("http://x", {
+      fetch: async (input, init) => app.fetch(new Request(input, init)),
+      onRequest: async ({ method }) => ({ authorization: `Bearer for-${method}` }),
+    })
+    const { events, push, done } = collect<{ id: number; title: string }>(1)
+    api.feed.subscribe(push, { reconnect: false })
+    await done
+    expect(events).toEqual([{ id: 1, title: "Bearer for-GET" }])
+  })
+
+  test("a body that cannot be encoded reaches onError after subscribe returns", async () => {
+    const app = chat()
+    const chatRoute: LooseStream = testClient<typeof app>(app).chat
+    const errors: unknown[] = []
+    let returned = false
+    // A file makes the body a form, and a form part cannot carry the nested object.
+    chatRoute.subscribe(() => {}, {
+      body: { prompt: "x", file: new Blob(["a"]), deep: { no: true } },
+      onError: (error) => {
+        expect(returned).toBe(true)
+        errors.push(error)
+      },
+    })
+    returned = true
+    while (errors.length === 0) await Promise.resolve()
+    expect(errors).toHaveLength(1)
+  })
+})
 
 describe("subscribe() reconnect and framing", () => {
   test("a retry hint times the reconnect after a served stream, never a failing one", async () => {

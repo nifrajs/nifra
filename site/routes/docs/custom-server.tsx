@@ -246,6 +246,12 @@ export default function CustomServer() {
       <CodeBlock code={CHECK_CONFIG} />
       <ul>
         <li>
+          <b>One call nifra cannot type.</b> For a single call rather than a whole prefix, such as a
+          static file, put <code>{"// nifra-expect NF-C002: <reason>"}</code> on the line or in the
+          comment block above it. The finding stays in the report as info, with your reason. A comment
+          with no reason silences nothing.
+        </li>
+        <li>
           <b>Two repositories, one runtime.</b> When a linked sibling repository brings its own install
           of nifra or React, <code>nifra check</code> reports the duplicates. A reinstall in this app
           cannot remove a copy that another project installed. Declare the packages single-copy and

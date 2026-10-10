@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   autoReflectJsonSchema,
   createMockServer,
+  explainAutoReflectJsonSchema,
   generateMockValue,
   UnsupportedMockSchemaError,
 } from "../src/index.ts"
@@ -360,7 +361,7 @@ describe("autoReflectJsonSchema - zod routes mock real data with no wiring", () 
     expect(typeof body.age).toBe("number")
   })
 
-  test("recognizes only the zod vendor; other opaque validators stay {} (fail-safe)", async () => {
+  test("a validator with no converter that is not zod stays {} (fail-safe)", async () => {
     const opaque = {
       "~standard": { version: 1, vendor: "someone-else", validate: (v: unknown) => ({ value: v }) },
     }
@@ -371,6 +372,72 @@ describe("autoReflectJsonSchema - zod routes mock real data with no wiring", () 
     const mock = createMockServer(fakeApp, { seed: 42 })
     const res = await mock.fetch(new Request("http://localhost/x"))
     expect(await res.json()).toEqual({})
+  })
+
+  test("any library's ~standard.jsonSchema converter is read, with the draft-07 target", () => {
+    const calls: unknown[] = []
+    const schema = {
+      "~standard": {
+        version: 1,
+        vendor: "another-lib",
+        validate: (v: unknown) => ({ value: v }),
+        jsonSchema: {
+          input: (options: unknown) => {
+            calls.push(options)
+            return { type: "object", properties: { id: { type: "integer" } } }
+          },
+          output: () => ({}),
+        },
+      },
+    }
+    expect(autoReflectJsonSchema(schema)).toEqual({
+      type: "object",
+      properties: { id: { type: "integer" } },
+    })
+    expect(calls).toEqual([{ target: "draft-07" }])
+  })
+
+  test("a zod schema's own converter is read first, with nothing resolved from disk", () => {
+    // A zod-vendored schema whose converter answers: a zod the project cannot resolve never matters.
+    const schema = {
+      "~standard": {
+        version: 1,
+        vendor: "zod",
+        validate: (v: unknown) => ({ value: v }),
+        jsonSchema: { input: () => ({ type: "string" }), output: () => ({}) },
+      },
+    }
+    expect(autoReflectJsonSchema(schema)).toEqual({ type: "string" })
+  })
+
+  test("zod's converter inlines reused schemas, matching toJSONSchema's input side", async () => {
+    const z = await import("zod")
+    const name = z.string().min(1)
+    const schema = z.object({ first: name, last: name, nick: name.optional().default("x") })
+    const reflected = autoReflectJsonSchema(schema)
+    expect(JSON.stringify(reflected)).not.toContain("$defs")
+    const direct = z.toJSONSchema(schema, { target: "draft-7", io: "input", reused: "inline" })
+    expect(JSON.stringify(reflected)).toBe(JSON.stringify(direct))
+  })
+
+  test("a converter that throws is opaque, and the reason names it", () => {
+    const schema = {
+      "~standard": {
+        version: 1,
+        vendor: "another-lib",
+        validate: (v: unknown) => ({ value: v }),
+        jsonSchema: {
+          input: () => {
+            throw new Error("unsupported target")
+          },
+          output: () => ({}),
+        },
+      },
+    }
+    expect(autoReflectJsonSchema(schema)).toBeUndefined()
+    expect(explainAutoReflectJsonSchema(schema)).toBe(
+      "the another-lib schema's ~standard.jsonSchema.input threw: unsupported target",
+    )
   })
 
   test("an explicit hook overrides the auto default", async () => {

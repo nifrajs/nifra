@@ -22,6 +22,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **mountA2A** _(function)_ - `mountA2A: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: A2AMountableApp, options: MountA2AOptions<InputSchema, OutputSchema>) => void`
   Mount an agent as an A2A server: the agent card on GET, the JSON-RPC binding on POST.
 
+## @nifrajs/acp
+
+- **AcpBackend** _(class)_ - `class AcpBackend`
+  Drive an agent that speaks the Agent Client Protocol (version 1) over stdio, one agent process per session, and translate its session updates into the Nifra agent protocol.
+- **AcpBackendOptions** _(interface)_ - `interface AcpBackendOptions`
+- **AcpClientInfo** _(interface)_ - `interface AcpClientInfo`
+
 ## @nifrajs/ag-ui
 
 - **AgUIMountableApp** _(interface)_ - `interface AgUIMountableApp`
@@ -302,7 +309,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventView** _(type)_ - `type AgentEventView`
 - **AgentTransport** _(interface)_ - `interface AgentTransport`
 - **AgentTransportError** _(class)_ - `class AgentTransportError`
-  Thrown only for transport-level faults (network, malformed body). Carries no credential.
+  Thrown only for transport-level faults (network, malformed body) and for a stream the host refused, which carries the response `status`. Carries no credential.
 - **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
   One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request.
 - **ApprovalRequiredView** _(interface)_ - `interface ApprovalRequiredView`
@@ -318,6 +325,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The minimal boundary facts a decision needs. A `BoundaryItemView` from the client satisfies it.
 - **CommandOutcome** _(type)_ - `type CommandOutcome<T> = | { readonly ok: true; readonly status: number; readonly value: T } | { readonly ok: false; readonly status: number; readonly error: string }`
   The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state instead of unwinding; `error` carries only the server's status text, never a credential.
+- **ContextUsageView** _(interface)_ - `interface ContextUsageView`
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
 - **EvalComparisonView** _(interface)_ - `interface EvalComparisonView`
 - **EvidenceTimelineView** _(interface)_ - `interface EvidenceTimelineView`
@@ -334,6 +342,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
   Orders events by their sequence number and suppresses duplicates before they reach the UI.
 - **PendingApprovalView** _(interface)_ - `interface PendingApprovalView`
+- **PlanUpdatedView** _(interface)_ - `interface PlanUpdatedView`
+  A plan as counts per status: its entries' text stays with the event.
+- **ReasoningDeltaView** _(interface)_ - `interface ReasoningDeltaView`
 - **RegistryCapabilityView** _(interface)_ - `interface RegistryCapabilityView`
   A registry capability projected to its content-free identity card.
 - **RepairRequiredView** _(interface)_ - `interface RepairRequiredView`
@@ -388,6 +399,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-protocol
 
+### `@nifrajs/agent-protocol`
+
 - **AGENT_MAX_EVENT_TEXT** _(const)_ - `AGENT_MAX_EVENT_TEXT: number`
   Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units.
 - **AGENT_MAX_PAYLOAD_STRING** _(const)_ - `AGENT_MAX_PAYLOAD_STRING: number`
@@ -400,6 +413,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentAssistantMessageEvent** _(interface)_ - `interface AgentAssistantMessageEvent`
 - **AgentBackend** _(interface)_ - `interface AgentBackend`
 - **AgentBackendInfo** _(interface)_ - `interface AgentBackendInfo`
+- **AgentContextUsageEvent** _(interface)_ - `interface AgentContextUsageEvent`
+  How full the model's context is after its latest request. Token counts only.
 - **AgentError** _(interface)_ - `interface AgentError`
 - **AgentEvent** _(type)_ - `type AgentEvent`
 - **AgentEventPayload** _(type)_ - `type AgentEventPayload`
@@ -413,6 +428,12 @@ Every public export of every package and documented subpath - name, kind, signat
   The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64 characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
 - **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 - **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
+- **AgentPlanEntry** _(interface)_ - `interface AgentPlanEntry`
+- **AgentPlanEntryStatus** _(type)_ - `type AgentPlanEntryStatus = "pending" | "in_progress" | "completed"`
+- **AgentPlanUpdatedEvent** _(interface)_ - `interface AgentPlanUpdatedEvent`
+  The agent's whole current plan: each event replaces the one before.
+- **AgentReasoningDeltaEvent** _(interface)_ - `interface AgentReasoningDeltaEvent`
+  A piece of the model's reasoning. `itemId` groups the pieces of one reasoning block.
 - **AgentRepairRequiredEvent** _(interface)_ - `interface AgentRepairRequiredEvent`
 - **AgentRepairTask** _(interface)_ - `interface AgentRepairTask`
 - **AgentSessionCheckpoint** _(interface)_ - `interface AgentSessionCheckpoint`
@@ -579,6 +600,15 @@ Every public export of every package and documented subpath - name, kind, signat
   Split text into pieces that each fit an event's text field, so a long reply travels as consecutive events instead of failing validation. Joined, the pieces give back the text with each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last quarter, and never between the …
 - **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`
   Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any boundary has opened for the run.
+
+### `@nifrajs/agent-protocol/conformance`
+
+- **AgentBackendConformanceOptions** _(interface)_ - `interface AgentBackendConformanceOptions`
+- **AgentBackendConformanceReport** _(interface)_ - `interface AgentBackendConformanceReport`
+- **AgentConformanceCheck** _(interface)_ - `interface AgentConformanceCheck`
+- **AgentConformanceStatus** _(type)_ - `type AgentConformanceStatus = "passed" | "failed" | "skipped"`
+- **checkAgentBackend** _(function)_ - `checkAgentBackend: (options: AgentBackendConformanceOptions) => Promise<AgentBackendConformanceReport>`
+  Drive a backend through the scenarios a host depends on: a session's snapshot, a whole turn's events (valid, in order, one turn, one terminal event), a refused second message while busy, cancellation, approvals granted, denied, unknown and cancelled, and a closed session. Scenarios whose prompt is …
 
 ## @nifrajs/agent-review
 
@@ -1072,7 +1102,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
 - **NativeGatewayModelPortOptions** _(interface)_ - `interface NativeGatewayModelPortOptions`
 - **NativeMessage** _(interface)_ - `interface NativeMessage`
-- **NativeModelChunk** _(type)_ - `type NativeModelChunk = | { readonly type: "text_delta"; readonly text: string } | { readonly type: "response"; readonly response: NativeModelResponse }`
+- **NativeModelChunk** _(type)_ - `type NativeModelChunk`
 - **NativeModelPort** _(interface)_ - `interface NativeModelPort`
 - **NativeModelRequest** _(interface)_ - `interface NativeModelRequest`
 - **NativeModelResponse** _(type)_ - `type NativeModelResponse = | { readonly type: "text"; readonly text: string } | { readonly type: "tool"; readonly name: string; readonly input: unknown }`
@@ -4188,11 +4218,11 @@ _No named exports (side-effect entrypoint)._
   Minimal route shape returned by `app.routes()`.
 - **UnsupportedMockSchemaError** _(class)_ - `class UnsupportedMockSchemaError`
 - **autoReflectJsonSchema** _(function)_ - `autoReflectJsonSchema: (schema: unknown) => JsonSchema | undefined`
-  Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change one that already carries JSON Schema metadata.
+  Derive a JSON Schema from a Standard Schema's own converter, or from zod for a zod schema without one; `undefined` for anything else (no converter and not zod, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change o…
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
   Create a mock server from a Nifra app's route definitions. For each route with a `schema.response`, generates a handler returning fake data that matches the response schema structure. Routes without response schemas return `{}`.
 - **explainAutoReflectJsonSchema** _(function)_ - `explainAutoReflectJsonSchema: (schema: unknown) => string | undefined`
-  Why {@link autoReflectJsonSchema} could not read a zod schema: zod is not resolvable, it is older than 4, or its converter threw. `undefined` for a schema it reads, or one that is not zod's.
+  Why {@link autoReflectJsonSchema} could not read a schema: its converter threw or returned nothing, or, for a zod schema without one, zod is not resolvable or is older than 4. `undefined` for a schema it reads, or one it has no way to read.
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
   Generate a mock value from a schema object. Inspects JSON Schema properties (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema objects carry directly. Unsupported constraints fail closed with {@link UnsupportedMockSchemaError} rather than returning a known-invalid response.
 
@@ -4436,6 +4466,7 @@ _No named exports (side-effect entrypoint)._
   OpenAPI 3.x inventory import - the structural half of an export/import roundtrip.
 - **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
+- **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
 - **OpenApiInventoryDrift** _(interface)_ - `interface OpenApiInventoryDrift`
 - **Page** _(interface)_ - `interface Page<Item>`
   A cursor-pagination page - matches the shape of `t.paginated(item)`.
@@ -4475,6 +4506,7 @@ _No named exports (side-effect entrypoint)._
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
 - **OpenAPIServer** _(interface)_ - `interface OpenAPIServer`
 - **OpenAPITag** _(interface)_ - `interface OpenAPITag`
+- **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
 - **SecurityRequirement** _(type)_ - `type SecurityRequirement = Readonly<Record<string, readonly string[]>>`
   A document-wide / per-operation security requirement: scheme name → required scopes.
 - **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions`
@@ -5075,7 +5107,7 @@ _No named exports (side-effect entrypoint)._
 - **Meta** _(interface)_ - `interface Meta`
   The document head a route contributes - title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and ac…
 - **MetaArgs** _(interface)_ - `interface MetaArgs<Data = unknown>`
-  Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through l…
+  Args for a route's or layout's `meta` function: its own loader's `data` + the page's `pageData` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (s…
 - **MetaDescriptor** _(interface)_ - `interface MetaDescriptor`
   One managed `<meta>` tag. Standard attributes and inert `data-*` metadata only.
 - **MetaInput** _(type)_ - `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
@@ -5305,6 +5337,8 @@ _No named exports (side-effect entrypoint)._
 - **renderPage** _(function)_ - `renderPage: (options: RenderPageInput) => MaybePromise<Response>`
   Server: render a full HTML document for a page - the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module - as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
 - **renderPageResult** _(function)_ - `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
+- **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
+  Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveDynamicBoundaries** _(function)_ - `resolveDynamicBoundaries: (boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx) => Promise<BoundaryStates>`
   Resolve all dynamic boundaries concurrently. Each receives a fresh frozen context object; one failure becomes that boundary's error state and never rejects a sibling or exposes sibling data. Static/intercepting modes remain `unresolved` until their phase-specific runtime owns them.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
@@ -5565,6 +5599,8 @@ _No named exports (side-effect entrypoint)._
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
+- **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
+  Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
 - **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`

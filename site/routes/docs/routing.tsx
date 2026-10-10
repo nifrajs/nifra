@@ -291,6 +291,14 @@ export default function Routing() {
         <code>loader</code> in its <code>.backend.ts</code> half - see{" "}
         <a href="/docs/data">Loaders &amp; actions</a>.
       </p>
+      <p>
+        A layout's <code>meta</code> receives its own loader's data as <code>data</code>, the value its
+        component renders, or <code>null</code> when the layout has no loader. The page's data is{" "}
+        <code>pageData</code>, for a layout title template. A layout that loads the locale can set{" "}
+        <code>lang</code> from its data, and a client navigation keeps it. <code>nifra check</code>{" "}
+        reports a layout with no loader whose <code>meta</code> reads <code>data</code> as{" "}
+        <code>NF-C040</code>.
+      </p>
       <CodeBlock code={ROUTE} />
       <CodeBlock code={ROUTE_BACKEND} lang="ts" />
 

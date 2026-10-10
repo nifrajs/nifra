@@ -88,8 +88,9 @@ export interface SubscribeOptions<I extends RouteInfo> {
   /** Abort to close the subscription (same effect as calling `close()`). */
   signal?: AbortSignal
   /**
-   * Reconnect after a dropped/errored stream (default true - EventSource semantics, so a proxy
-   * closing an idle feed doesn't silently kill it). A FINITE stream should pass `false` so a clean
+   * Reconnect after a dropped/errored stream. Default `true` for a GET stream (EventSource semantics,
+   * so a proxy closing an idle feed doesn't silently kill it) and `false` for one that posts a body,
+   * since a reconnect sends the body again. A FINITE stream should pass `false` so a clean
    * server-side end completes the subscription instead of replaying it. Delays follow exponential
    * backoff with jitter, honoring the server's `retry:` hint when sent.
    */
@@ -110,12 +111,24 @@ type SubscribeCall<I extends RouteInfo> = (
   options?: SubscribeOptions<I>,
 ) => Subscription
 
-/** Routes declared via `app.sse()` grow a `.subscribe()` beside their verbs. */
-type SseMethods<MethodMap> = MethodMap extends { GET: infer G }
+/** A POST stream's `.subscribe()`: the route's body is required and is posted on every connect. */
+type SubscribeBodyCall<I extends RouteInfo> = (
+  onEvent: (event: Jsonify<SseOf<I>>) => void,
+  options: SubscribeOptions<I> & { body: I["body"] },
+) => Subscription
+
+/** Routes declared via `app.sse()` grow a `.subscribe()` beside their verbs; one whose schema
+ * declares a body is a POST route, and its `.subscribe()` takes that body. */
+type SseMethods<MethodMap> = (MethodMap extends { GET: infer G }
   ? [SseOf<G>] extends [never]
     ? unknown
     : { subscribe: SubscribeCall<G & RouteInfo> }
-  : unknown
+  : unknown) &
+  (MethodMap extends { POST: infer P }
+    ? [SseOf<P>] extends [never]
+      ? unknown
+      : { subscribe: SubscribeBodyCall<P & RouteInfo> }
+    : unknown)
 
 // --- typed WebSocket handles ---
 

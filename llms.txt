@@ -39,6 +39,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra - Execution causality](/docs/causality): Carry one bounded, payload-free lineage across the durable seams a trace cannot span: commands, events, workflows, projections, and repairs.
 - [Nifra - Adapter certification](/docs/certification): Prove a storage, cache, job, runtime, or event adapter against its interface and emit a hash-verifiable capability matrix.
 - [Nifra - Framework contract](/docs/contract): The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract - every signature verified against the source.
+- [Nifra - Control APIs (one schema, every client)](/docs/control-api): Build an RPC-style control API on core routes: one schema per method gives request validation, a typed TypeScript client, and an OpenAPI 3.2 document whose SSE events let Swift, Kotlin, or Python clients be generated.
 - [Nifra - Custom server (createWebApp)](/docs/custom-server): Run a page app from your own server entry with createWebApp: static and hashed files, a strict CSP on nifra's nonce, middleware order, loader error logging, graceful shutdown, and nifra check settings.
 - [Nifra - Databases](/docs/database): Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.
 - [Nifra - Error codes](/docs/errors): Every error code Nifra recognises: what each one means and how to fix it. The dev overlay, nifra_explain and nifra_errors name these codes and link here.
@@ -61,6 +62,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 ## Packages
 
 - `@nifrajs/a2a` - Mount a nifra agent as an Agent2Agent (A2A) protocol server - the agent card on GET, the A2A 1.0 JSON-RPC binding on POST with SendMessage, streaming SendStreamingMessage over SSE, and GetTask projected from the runner's turn state. A protocol bridge over @nifrajs/agent; the model, state store, and approval transport stay injected per request.
+- `@nifrajs/acp` - Agent Client Protocol backend for the Nifra agent protocol: drive Claude Code, Gemini CLI, Codex, or any ACP agent over stdio.
 - `@nifrajs/ag-ui` - Mount a nifra agent as an AG-UI (Agent-User Interaction protocol) endpoint - one POST accepting RunAgentInput, a stream of AG-UI events out over SSE: run lifecycle, step and tool-call events from the runner's step evidence, text message events for the output, and a typed continuation for human-in-the-loop resume. A protocol bridge over @nifrajs/agent; the model, state store, and approval transport stay injected per request.
 - `@nifrajs/agent` - Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - `@nifrajs/agent-app` - Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordered event streaming, and content-free view models over the agent protocol.

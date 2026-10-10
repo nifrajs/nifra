@@ -4,8 +4,8 @@
  * carries no `.jsonSchema`, so without a bridge the laboratory reports NO_WITNESS for every zod route and
  * emits only generic type-confusion mutations, and the mock server returns `{}` for zod responses.
  *
- * Since the vendor-sniffing default (`@nifrajs/mock`'s `autoReflectJsonSchema`), the laboratory and the
- * mock server apply this bridge AUTOMATICALLY when zod is installed - no wiring. This module remains the
+ * The laboratory and the mock server apply the same conversion AUTOMATICALLY through `@nifrajs/mock`'s
+ * `autoReflectJsonSchema`, which reads a zod schema's own converter - no wiring. This module remains the
  * EXPLICIT form: pass it when you want the conversion pinned regardless of the default's behavior, or as
  * the base of a custom hook that handles more vendors:
  *

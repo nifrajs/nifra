@@ -35,6 +35,7 @@ const AGENT_PRODUCT_PACKAGES = [
   "@nifrajs/agent-app",
   "@nifrajs/agent-review",
   "@nifrajs/pi",
+  "@nifrajs/acp",
   "@nifrajs/coding-agent",
   "@nifrajs/workbench",
 ] as const
@@ -76,7 +77,7 @@ const TARGETS: readonly Target[] = [
   },
   {
     name: "@nifrajs/agent-protocol",
-    entries: ["@nifrajs/agent-protocol"],
+    entries: ["@nifrajs/agent-protocol", "@nifrajs/agent-protocol/conformance"],
     tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
   },
   {
@@ -89,6 +90,16 @@ const TARGETS: readonly Target[] = [
   {
     name: "@nifrajs/pi",
     entries: ["@nifrajs/pi"],
+    consumerDependencies: {
+      "@types/bun": "^1.3.0",
+      "@types/node": "^25.0.0",
+      "undici-types": "^7.0.0",
+    },
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"], types: ["bun", "node"] },
+  },
+  {
+    name: "@nifrajs/acp",
+    entries: ["@nifrajs/acp"],
     consumerDependencies: {
       "@types/bun": "^1.3.0",
       "@types/node": "^25.0.0",

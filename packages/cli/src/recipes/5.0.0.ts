@@ -30,5 +30,6 @@ export const recipe: UpgradeRecipe = {
     "Root status pages (`_404.tsx`, `_<status>.tsx`) and `_error.tsx` render inside the layouts above them with their loader data, and a page rendered with layout data is `private, no-store`. A root status page that imports the root layout to wrap itself now renders it twice: `nifra check` reports it (NF-C034); remove the wrap. `export const inLayouts = false` renders a page the 4.x way and runs no layout loader for it.",
     "A Response returned to more than one request is no longer shared: a body-less one is copied for each request before cookies and headers are written, and one whose body was already sent answers `500`. Build a Response per request, or return data and let the handler serialize it.",
     "`invariants.executor` in `nifra.assurance.ts` is optional now that `invariants.setup` can provision the target, so code that reads the config's type handles a missing `executor`.",
+    "A layout's `meta` receives its own loader data as `data`, `null` when the layout has no loader; the page's data moved to `pageData`. A layout `meta` written against the page's data, such as a title template, reads `pageData` now: `({ pageData }) => ({ title: pageData.title })`. `nifra check` reports a layout with no loader whose `meta` reads `data` (NF-C040). A page's own `meta` is unchanged.",
   ],
 }

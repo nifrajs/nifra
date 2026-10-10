@@ -637,7 +637,25 @@ function eventEvidence(event: AgentEvent): unknown {
       return { turnId: event.turnId }
     case "assistant.delta":
     case "assistant.message":
+    case "reasoning.delta":
       return { turnId: event.turnId }
+    case "plan.updated":
+      return {
+        turnId: event.turnId,
+        entries: event.entries.length,
+        completed: event.entries.filter((entry) => entry.status === "completed").length,
+      }
+    case "context.usage": {
+      const {
+        version: _version,
+        sessionId: _sessionId,
+        seq: _seq,
+        at: _at,
+        type: _type,
+        ...counts
+      } = event
+      return counts
+    }
     case "tool.started":
       return { turnId: event.turnId, callId: event.callId, name: event.name }
     case "tool.delta":

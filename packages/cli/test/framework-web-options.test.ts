@@ -479,3 +479,60 @@ describe("NF-C035", () => {
     ).toEqual([])
   })
 })
+
+describe("NF-C040", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C040")
+  }
+
+  test("a layout with no loader whose meta reads data is reported at the read", async () => {
+    const findings = await scan(
+      project({
+        "routes/_layout.tsx": [
+          'import type { MetaArgs } from "@nifrajs/web"',
+          "export const meta = ({ data }: MetaArgs) => ({",
+          "  title: `${(data as { title: string }).title} | Site`,",
+          "})",
+          "export default () => null",
+          "",
+        ].join("\n"),
+        "routes/docs/_layout.tsx":
+          "export function meta(args) {\n  return { title: args.data.title }\n}\nexport default () => null\n",
+        "routes/blog/_layout.tsx":
+          "export const meta = ({ data: page }) => ({ title: page.title })\nexport default () => null\n",
+        "routes/index.tsx": "export default () => null\n",
+      }),
+    )
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.line])).toEqual([
+      ["warn", "routes/_layout.tsx", 2],
+      ["warn", "routes/blog/_layout.tsx", 1],
+      ["warn", "routes/docs/_layout.tsx", 2],
+    ])
+    expect(findings[0]?.message).toContain("Read the page's data from `pageData`")
+  })
+
+  test("a layout that loads, reads pageData, or has static meta is not reported", async () => {
+    expect(
+      await scan(
+        project({
+          "routes/_layout.tsx":
+            "export const meta = ({ data }) => ({ lang: data.locale })\nexport default () => null\n",
+          "routes/_layout.backend.ts": "export const loader = () => ({ locale: 'hi' })\n",
+          "routes/a/_layout.tsx":
+            "export const meta = ({ pageData }) => ({ title: pageData.title })\nexport default () => null\n",
+          "routes/b/_layout.tsx": 'export const meta = { title: "B" }\nexport default () => null\n',
+          "routes/c/_layout.tsx":
+            "// export const meta = ({ data }) => data\nexport default () => null\n",
+          "routes/d/_layout.tsx":
+            "export const loader = () => ({})\nexport const meta = ({ data }) => data\nexport default () => null\n",
+          "routes/index.tsx": "export default () => null\n",
+        }),
+      ),
+    ).toEqual([])
+  })
+})

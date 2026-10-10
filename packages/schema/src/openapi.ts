@@ -25,6 +25,11 @@ import type { Server } from "@nifrajs/core/server"
  * detail. A **contract** is richest - its operations carry `response`, `tags`, `security`, additional
  * `responses`, etc.; an **app** emits request shapes + a generic `200` (an inline handler has no
  * response *schema* to serialize), enrichable via `options.operations`.
+ *
+ * A typed SSE route (`app.sse()`) answers `text/event-stream`, and its event payload becomes a named
+ * component (`<OperationId>Event`, or one named after the path) so a client generator emits a type
+ * for it. With `openapiVersion: "3.2.0"` the media type carries the standard `itemSchema` describing
+ * each event; a 3.1 document has no field for that, so it carries the same schema as `x-itemSchema`.
  */
 export interface OpenAPIInfo {
   readonly title: string
@@ -46,6 +51,8 @@ export interface OpenAPITag {
 export type SecurityRequirement = Readonly<Record<string, readonly string[]>>
 
 export interface ToOpenAPIOptions {
+  /** The OpenAPI version to declare. `"3.2.0"` describes SSE events with the standard `itemSchema`. */
+  readonly openapiVersion?: OpenAPIVersion
   readonly title?: string
   readonly version?: string
   readonly description?: string
@@ -97,8 +104,13 @@ interface OpenAPIParameter {
   readonly schema: JsonSchema
 }
 
+export type OpenAPIVersion = "3.1.0" | "3.2.0"
+
 interface OpenAPIMediaType {
-  readonly schema: JsonSchema
+  readonly schema?: JsonSchema
+  /** OpenAPI 3.2: the schema of each item of a sequential media type such as an event stream. */
+  readonly itemSchema?: JsonSchema
+  readonly "x-itemSchema"?: JsonSchema
 }
 
 interface OpenAPIRequestBody {
@@ -129,7 +141,7 @@ interface OpenAPIComponents {
 }
 
 export interface OpenAPIDocument {
-  readonly openapi: "3.1.0"
+  readonly openapi: OpenAPIVersion
   readonly info: OpenAPIInfo
   readonly paths: Record<string, Record<string, OpenAPIOperation>>
   readonly servers?: readonly OpenAPIServer[]
@@ -184,6 +196,26 @@ class SchemaStore {
       })
     }
     return { $ref: `#/components/schemas/${componentName}` }
+  }
+
+  /** Keep `schema` as a component named after `base` (deduped), unless it is one already. */
+  named(base: string, schema: JsonSchema): JsonSchema {
+    const collected = this.collect(schema) ?? schema
+    if (typeof collected === "object" && typeof collected.$ref === "string") return collected
+    let name = base
+    let suffix = 2
+    while (Object.hasOwn(this.schemas, name) || this.componentIds.has(name)) {
+      name = `${base}_${suffix}`
+      suffix += 1
+    }
+    this.componentIds.set(name, name)
+    Object.defineProperty(this.schemas, name, {
+      value: collected,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    return { $ref: `#/components/schemas/${name}` }
   }
 }
 
@@ -294,6 +326,8 @@ interface OperationInput {
   /** Reflected params schema - per-field constraints merge into path parameters. */
   readonly params: SchemaReflection | undefined
   readonly response: SchemaReflection | undefined
+  /** A typed SSE route's event payload schema. */
+  readonly sse?: SchemaReflection | undefined
   readonly operationId: string | undefined
   // `| undefined` (not just `?`) so a contract op's optional fields - `string | undefined` etc. - are
   // assignable under `exactOptionalPropertyTypes` when spread into this literal.
@@ -343,12 +377,55 @@ function reflectedErrorsToResponses(
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+function sseComponentName(input: OperationInput): string {
+  if (input.operationId !== undefined && /^[A-Za-z0-9._-]+$/.test(input.operationId))
+    return `${input.operationId}Event`
+  const words = input.path
+    .split(/[^A-Za-z0-9]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => `${word[0]?.toUpperCase()}${word.slice(1)}`)
+  return `${words.join("") || "Root"}Event`
+}
+
+/** OAS 3.2 4.14.4's event shape, with `data` carrying JSON that matches the route's payload schema. */
+function sseItemSchema(payload: JsonSchema | undefined): JsonSchema {
+  return {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data:
+        payload === undefined
+          ? { type: "string" }
+          : { type: "string", contentMediaType: "application/json", contentSchema: payload },
+      event: { type: "string" },
+      id: { type: "string" },
+      retry: { type: "integer", minimum: 0 },
+    },
+  }
+}
+
 function buildResponses(
   input: OperationInput,
   store: SchemaStore,
+  version: OpenAPIVersion,
 ): Record<string, OpenAPIResponse> {
   const responses: Record<string, OpenAPIResponse> = {}
-  if (input.response !== undefined) {
+  if (input.sse !== undefined) {
+    const payload =
+      input.sse.jsonSchema === undefined
+        ? undefined
+        : store.named(sseComponentName(input), input.sse.jsonSchema)
+    const item = sseItemSchema(payload)
+    responses["200"] = {
+      description: "Server-Sent Events",
+      content: {
+        "text/event-stream":
+          version === "3.2.0"
+            ? { itemSchema: item }
+            : { schema: { type: "string" }, "x-itemSchema": item },
+      },
+    }
+  } else if (input.response !== undefined) {
     const schema = store.collect(input.response.jsonSchema)
     responses["200"] =
       schema !== undefined
@@ -414,8 +491,12 @@ function hasFileField(schema: JsonSchema | undefined): boolean {
   )
 }
 
-function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOperation {
-  const operation: OpenAPIOperation = { responses: buildResponses(input, store) }
+function buildOperation(
+  input: OperationInput,
+  store: SchemaStore,
+  version: OpenAPIVersion,
+): OpenAPIOperation {
+  const operation: OpenAPIOperation = { responses: buildResponses(input, store, version) }
   if (input.operationId !== undefined) operation.operationId = input.operationId
   if (input.summary !== undefined) operation.summary = input.summary
   if (input.description !== undefined) operation.description = input.description
@@ -463,6 +544,7 @@ function addOperation(
   input: OperationInput,
   store: SchemaStore,
   operations: ToOpenAPIOptions["operations"],
+  version: OpenAPIVersion,
 ): void {
   // A path item has a field for each standard method and no place for any other, so a route
   // registered under a custom method is left out of the document.
@@ -470,7 +552,7 @@ function addOperation(
   const templated = templatedPath(input.path).template
   const pathItem = paths[templated] ?? {}
   paths[templated] = pathItem
-  let operation = buildOperation(input, store)
+  let operation = buildOperation(input, store, version)
   // Shallow-merge an override keyed by operationId or "METHOD /path".
   const override =
     operations?.[input.operationId ?? ""] ?? operations?.[`${method.toUpperCase()} ${input.path}`]
@@ -491,6 +573,7 @@ export function toOpenAPI(
 ): OpenAPIDocument {
   const paths: Record<string, Record<string, OpenAPIOperation>> = {}
   const store = new SchemaStore()
+  const version = options.openapiVersion ?? "3.1.0"
 
   if (isApp(input)) {
     const routes =
@@ -510,6 +593,7 @@ export function toOpenAPI(
           params: route.schema?.params,
           // A route may now declare a `response` contract - emit it as the 200 body schema.
           response: route.schema?.response,
+          sse: route.schema?.sse,
           // …and an `errors` contract - emit each as a non-2xx response.
           responses: reflectedErrorsToResponses(route.schema?.errors),
           inferredResponses:
@@ -518,6 +602,7 @@ export function toOpenAPI(
         },
         store,
         options.operations,
+        version,
       )
     }
   } else {
@@ -568,6 +653,7 @@ export function toOpenAPI(
           },
           store,
           options.operations,
+          version,
         )
       }
     }
@@ -578,7 +664,7 @@ export function toOpenAPI(
   if (options.securitySchemes !== undefined) components.securitySchemes = options.securitySchemes
 
   return {
-    openapi: "3.1.0",
+    openapi: version,
     info: {
       title: options.title ?? "API",
       version: options.version ?? "1.0.0",

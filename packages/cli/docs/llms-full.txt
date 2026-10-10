@@ -480,6 +480,13 @@ Each page default-exports a component; an optional `meta` export drives
 `loader` in its `.backend.ts` half - see
 [Loaders & actions](/docs/data).
 
+A layout's `meta` receives its own loader's data as `data`, the value its
+component renders, or `null` when the layout has no loader. The page's data is
+`pageData`, for a layout title template. A layout that loads the locale can set
+`lang` from its data, and a client navigation keeps it. `nifra check`
+reports a layout with no loader whose `meta` reads `data` as
+`NF-C040`.
+
 ```ts
 // routes/users/[id].tsx
 import type { Route } from "./+types/[id]"
@@ -2692,6 +2699,48 @@ MiB) of events unread: `stream.signal` aborts with `sse_client_too_slow`,
 the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
 server memory without limit. Raise it for a burst larger than that sent before the client can
 read, or pass `Infinity` to turn the limit off.
+
+### Typed SSE routes
+
+`app.sse(path, schema, run)` declares the event payload with `sse`, so
+`stream.send()` is type-checked and the typed client grows
+`.subscribe(onEvent)` with the same event type. A route whose schema declares a
+`body` is a POST stream: the body validates as on any POST, and
+`.subscribe(onEvent, &#123; body &#125;)` sends it. A GET stream reconnects after a
+drop and resumes with `Last-Event-ID`; a POST stream does not reconnect unless you
+pass `reconnect: true`, since a reconnect sends the body again. The client&apos;s
+`onRequest` hook runs before each connect, so a refreshed token reaches the stream.
+
+```ts
+import { client } from "@nifrajs/client"
+import { server } from "@nifrajs/core/server"
+import { streaming } from "@nifrajs/core/sse"
+import { t } from "@nifrajs/schema"
+
+declare function generate(prompt: string): AsyncIterable<string>
+
+export const app = server()
+  .use(streaming())
+  // A GET stream: the event payload is contracted by `sse`.
+  .sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) }, (_c, stream) => {
+    stream.send({ id: 1, title: "hello" })
+    stream.close()
+  })
+  // A body makes it a POST stream, validated like any POST: a chat that posts its prompt.
+  .sse(
+    "/chat",
+    { body: t.object({ prompt: t.string() }), sse: t.object({ token: t.string() }) },
+    async (c, stream) => {
+      for await (const token of generate(c.body.prompt)) stream.send({ token })
+      stream.close()
+    },
+  )
+
+const api = client<typeof app>("https://example.com")
+const feed = api.feed.subscribe((post) => console.log(post.title))
+api.chat.subscribe((event) => console.log(event.token), { body: { prompt: "Hi" } })
+feed.close()
+```
 
 ## Nifra - Query cache
 
@@ -6785,8 +6834,10 @@ database connection is not the same as handing it a query tool, and this is the 
 `@nifrajs/agent-protocol` is the small versioned session and event contract.
 `@nifrajs/coding-agent` provides the standalone `nifra-agent` host with
 bounded sessions, checkpoints, workflows, extensions, verification, and authenticated local
-RPC. `@nifrajs/pi` is an optional Pi backend; other backends implement the same
-protocol port.
+RPC. `@nifrajs/pi` is an optional Pi backend, and `@nifrajs/acp` drives
+any Agent Client Protocol agent (Claude Code, Codex, Gemini CLI) over stdio; other backends
+implement the same protocol port and can prove it with `checkAgentBackend` from
+`@nifrajs/agent-protocol/conformance`.
 
 ```ts
 bun add @nifrajs/coding-agent @nifrajs/pi
@@ -8498,11 +8549,13 @@ A route is two files. The page (`x.tsx`) holds the view and its head:
 // own backend, so it can't compile standalone (see the typed examples elsewhere).
 import type { Route } from "./+types/[id]"
 
-// Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
-// recomputes per request (its content can vary with loader data). `origin` is the request's
-// scheme+host (server-resolved, matches the client's location.origin) - use it for ABSOLUTE
-// canonical / og:url / og:image URLs without threading siteUrl through loader data.
-export const meta = ({ data, params, origin }) => ({
+// Static OR a function of { data, pageData, params, origin }. Static meta is serialized once; function
+// meta recomputes per request (its content can vary with loader data). `data` is the exporting
+// module's own loader data: a layout's meta gets its layout's (null without a loader) and reads the
+// page's as `pageData`. `origin` is the request's scheme+host (server-resolved, matches the
+// client's location.origin) - use it for ABSOLUTE canonical / og:url / og:image URLs without threading
+// siteUrl through loader data.
+export const meta = ({ data, params, origin }: Route.MetaArgs) => ({
   title: `User ${data.name}`,
   meta: [{ name: "description", content: data.bio }],
   link: [{ rel: "canonical", href: `${origin}/users/${params.id}` }],
@@ -8767,7 +8820,7 @@ base, a CDN host) belongs in the `loader`, not `meta()`.
 ```ts
 // routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
 // with ABSOLUTE URLs built from `origin`. The three helpers (canonical/openGraph/jsonLd) are public
-// exports of @nifrajs/web; `origin` is the third MetaArgs field (after data + params).
+// exports of @nifrajs/web; `origin` is a MetaArgs field beside data, pageData and params.
 import { canonical, jsonLd, openGraph, type MetaArgs } from "@nifrajs/web"
 
 // CAVEAT: meta() runs in BOTH SSR and client navigation, so it has NO server env - never read
@@ -9092,6 +9145,159 @@ See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for th
 two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
 data layer in depth.
 
+## Nifra - Control APIs (one schema, every client)
+
+> Build an RPC-style control API on core routes: one schema per method gives request validation, a typed TypeScript client, and an OpenAPI 3.2 document whose SSE events let Swift, Kotlin, or Python clients be generated.
+
+A desktop app, a CLI, or a mobile companion that drives a local service needs a control API:
+a set of methods, a stream of events, and clients in more than one language. Write each
+method once as a route with a schema. The schema validates requests, types the TypeScript
+client, and describes the method in an OpenAPI document that generators turn into clients for
+other languages.
+
+### One file, three methods
+
+Two methods take a JSON body and answer JSON. The third is a typed event stream. This file
+typechecks against the current packages.
+
+```ts
+import { timingSafeEqual } from "node:crypto"
+import { server } from "@nifrajs/core"
+import { streaming } from "@nifrajs/core/sse"
+import { t, toOpenAPI } from "@nifrajs/schema"
+
+const token = process.env.CONTROL_TOKEN
+if (token === undefined || token.length < 32) throw new Error("CONTROL_TOKEN must be 32+ characters")
+const expected = Buffer.from(`Bearer ${token}`)
+const authorized = (request: Request): boolean => {
+  const given = Buffer.from(request.headers.get("authorization") ?? "")
+  return given.length === expected.length && timingSafeEqual(given, expected)
+}
+
+const Session = t.object({
+  id: t.string(),
+  status: t.union([t.literal("idle"), t.literal("running")]),
+})
+const TurnEvent = t.object({
+  seq: t.integer({ minimum: 0 }),
+  type: t.string(),
+  text: t.optional(t.string()),
+})
+
+export const app = server()
+  .use(streaming())
+  .onRequest((request) =>
+    authorized(request) ? undefined : Response.json({ error: "unauthorized" }, { status: 401 }),
+  )
+  .post(
+    "/session/create",
+    { body: t.object({ cwd: t.string({ minLength: 1, maxLength: 4096 }) }), response: Session },
+    () => ({ id: crypto.randomUUID(), status: "idle" as const }),
+  )
+  .post(
+    "/turn/send",
+    {
+      body: t.object({
+        sessionId: t.string(),
+        message: t.string({ minLength: 1, maxLength: 256 * 1024 }),
+      }),
+      response: t.object({ turnId: t.string() }),
+      bodyLimit: 512 * 1024,
+    },
+    () => ({ turnId: crypto.randomUUID() }),
+  )
+  .sse(
+    "/turn/events",
+    { query: t.object({ turnId: t.string() }), sse: TurnEvent },
+    (c, stream) => {
+      const after = Number(c.req.headers.get("last-event-id") ?? -1)
+      for (let seq = after + 1; seq < 3; seq++)
+        stream.send({ seq, type: "assistant.delta", text: `part ${seq}` }, { id: String(seq) })
+      stream.close()
+    },
+  )
+
+export const spec = toOpenAPI(app, { openapiVersion: "3.2.0", title: "Control API", version: "1.0.0" })
+```
+
+-
+**Methods are routes.** A method name like `session/create` is a path, so a
+call is `POST /session/create` and the typed client reads
+`api.session.create.post(body)`. Use `POST` for anything that changes
+state; one envelope endpoint that dispatches on a method field would hide every method
+from the schema, the client, and the document.
+
+-
+**The schema is the validator.** A body that does not match answers `422`
+before the handler runs. `maxLength` bounds each field and
+`bodyLimit` bounds the request as it arrives.
+
+-
+**Authorization runs first.** An `onRequest` hook that returns a response
+ends the request before routing, so no method is reachable without the token. The
+comparison is constant-time, and the server refuses to start without a long token.
+
+-
+**Retries.** A method that must not run twice declares
+`idempotency` on its route, with `.use(idempotency())` from
+`@nifrajs/core/idempotency-plugin` and a namespace per caller.
+
+### Event streams that resume
+
+`.sse(path, { sse: schema }, run)` declares the type of every event the stream
+sends. Give each event an `id` (here its sequence number). A browser
+`EventSource`, or the typed client's `subscribe`, sends the last id it
+saw as `Last-Event-ID` when it reconnects, so the handler replays only what the
+client missed. Keep the events a reconnect may need in memory or in your own store: core
+sends the header, and what to replay is your service's to decide.
+
+### The TypeScript client
+
+```ts
+// doc-check: skip - fragment: app is the control server above, imported from its module.
+import { client } from "@nifrajs/client"
+
+const api = client<typeof app>("http://127.0.0.1:4100", {
+  headers: { authorization: `Bearer ${token}` },
+})
+
+const session = await api.session.create.post({ cwd: "/work/repo" })
+if (!session.ok) throw new Error(`create failed: ${session.status}`)
+
+const subscription = api.turn.events.subscribe((event) => render(event.seq, event.text ?? ""), {
+  query: { turnId },
+  // After a dropped connection the client reconnects and sends Last-Event-ID itself.
+})
+// subscription.close() ends it.
+```
+
+Every call is typed from the server's routes, with no generated code. A call returns a
+`Result`: check `ok`, then read `data`, or
+`status` and `error`.
+
+### Clients in other languages
+
+`toOpenAPI(app, { openapiVersion: "3.2.0" })` from `@nifrajs/schema`
+describes each method's request and response, and each typed stream as
+`text/event-stream` whose `itemSchema` is the SSE event: a
+`data` field holding JSON that matches the route's event schema, plus
+`event`, `id`, and `retry`. The event schema is also a named
+component (`TurnEventsEvent` here), so a generator emits a type for it. The
+`openapi()` plugin from `@nifrajs/middleware` takes the same option and
+serves the document.
+
+```ts
+// doc-check: skip - shell commands, not TypeScript.
+// Write the document at build time, then hand it to any OpenAPI 3.2 generator.
+bun -e 'import { spec } from "./control.ts"; await Bun.write("openapi.json", JSON.stringify(spec, null, 2))'
+```
+
+OpenAPI 3.1 has no field for the items of a stream. Without `openapiVersion` the
+document stays 3.1, declares the stream as a string, and carries the same item schema as
+`x-itemSchema`; the named event component is there either way. A generator that
+reads only 3.1 still produces the event type, and your code decodes each
+`data` line with it.
+
 ## Nifra - Custom server (createWebApp)
 
 > Run a page app from your own server entry with createWebApp: static and hashed files, a strict CSP on nifra's nonce, middleware order, loader error logging, graceful shutdown, and nifra check settings.
@@ -9308,6 +9514,12 @@ in `nifra.check.json` next to `package.json`:
   "externalMounts": ["/api/auth"]
 }
 ```
+
+-
+**One call nifra cannot type.** For a single call rather than a whole prefix, such as a
+static file, put `// nifra-expect NF-C002: ` on the line or in the
+comment block above it. The finding stays in the report as info, with your reason. A comment
+with no reason silences nothing.
 
 -
 **Two repositories, one runtime.** When a linked sibling repository brings its own install
@@ -12104,6 +12316,62 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
 [`../../llms-full.txt`](../../llms-full.txt).
 
+## @nifrajs/acp
+
+An `AgentBackend` for agents that speak the [Agent Client Protocol](https://agentclientprotocol.com)
+(version 1) over stdio: Claude Code through `claude-code-acp`, Codex through `codex-acp`, Gemini CLI
+with `--experimental-acp`, or any other ACP agent. A Nifra host, RPC server, or app drives it like any
+other backend.
+
+```ts
+import { AcpBackend } from "@nifrajs/acp"
+import { CodingAgentHost } from "@nifrajs/coding-agent"
+
+const backend = new AcpBackend({
+  command: "claude-code-acp",
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY },
+})
+const host = new CodingAgentHost({ backend })
+```
+
+Each session is one agent process: `initialize` (protocol version 1, refused otherwise), an optional
+`authenticate` with `authMethod`, then `session/new` in the session's absolute `cwd`. A message is a
+`session/prompt`; its updates become protocol events:
+
+| ACP update | Event |
+| --- | --- |
+| `agent_message_chunk` | `assistant.delta`, and the whole reply as `assistant.message` before a tool call and at the end |
+| `agent_thought_chunk` | `reasoning.delta` |
+| `tool_call`, `tool_call_update` | `tool.started`, then `tool.completed` once the status is `completed` or `failed` |
+| `plan` | `plan.updated` |
+| `usage_update` | `context.usage` (`used`, `size`) |
+| anything else | `x-acp.<sessionUpdate>` with a bounded copy of the update |
+
+The stop reason ends the turn: `end_turn`, `max_tokens`, and `max_turn_requests` complete it (any but
+`end_turn` also reported as `x-acp.stop_reason`), `refusal` fails it, and `cancelled` stops it.
+
+`session/request_permission` surfaces as `approval.required` (`capability` is `acp.<tool kind>`).
+`resolveApproval` answers with the agent's `allow_once` or `reject_once` option and never an "always"
+one, so the host's approval policy stays in charge; with no such option it answers `cancelled`. An
+approval the agent withdraws with `$/cancel_request` is answered and reported as `approval.resolved`
+with `approved: false`.
+
+The client offers no filesystem or terminal methods: the agent uses its own tools, and those
+requests get JSON-RPC `-32601`. `cancel` answers open approvals `cancelled` and sends
+`session/cancel`; an agent that has not ended the turn after `cancelGraceMs` (default 2 seconds) is
+stopped, which ends its session.
+
+The agent runs with `PATH`, `HOME`, locale, terminal, user, shell, and temp variables plus what `env`
+adds; nothing else from the parent environment passes, so give it its model credentials explicitly.
+Error text from the agent (a refused request, or the last error-looking stderr line when it exits)
+is cut to a bounded length with those values and common key shapes masked. stdout carries only
+JSON-RPC, one message per line, each at most `maxRecordBytes` (default 1 MiB).
+
+The package passes `@nifrajs/agent-protocol/conformance` against a scripted ACP agent.
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).
+
 ## @nifrajs/ag-ui
 
 Mount a nifra agent as an [AG-UI](https://docs.ag-ui.com) (Agent-User Interaction protocol) endpoint: one POST accepting `RunAgentInput`, a stream of AG-UI events out over SSE - run lifecycle, step and tool-call events projected from the runner's step evidence, text message events for the output, and a typed continuation for human-in-the-loop resume.
@@ -12359,6 +12627,11 @@ counts.
 - **Ordered, deduplicated streaming.** A turn arrives as an ordered stream of `AgentEventView`s.
   Out-of-order and redelivered frames are reordered and de-duplicated by sequence; a bounded buffer
   skips an unfilled gap rather than stalling.
+- **Turns that survive a dropped connection.** When a turn's stream breaks mid-turn, `send` follows
+  the turn again with `turn.attach` from the last seq it received (`resumeAttempts`, default 3;
+  `resumeDelayMs`, default 250), so the views continue without a gap or a repeat. The host must keep
+  turns (`resumableTurns` on `CodingAgentRpcServer`); one that cannot resume refuses, and `send`
+  throws the original break.
 - **Cursor resume.** A persisted log can be replayed from a cursor. A cursor whose next record was
   evicted from the retained window asks the caller to resync.
 - **Approvals and handoffs.** Pending approvals list as identifiers; decisions and handoff outcomes go
@@ -12431,7 +12704,13 @@ events inside them with `splitAgentText` (a long reply as consecutive events tha
 input or output; the tool itself still gets the whole value). `agentEventProblem` says why an event
 was refused, naming the field and the limit but never its content.
 
-A backend's own frames (a vendor's plan, reasoning, or context usage) travel as extension events:
+Three events carry what most coding agents report besides their reply: `reasoning.delta` (a piece
+of the model's reasoning, grouped by an optional `itemId`), `plan.updated` (the whole current plan,
+entries of `content`, `status`, and optional `priority`, each event replacing the last), and
+`context.usage` (`usedTokens` of the latest request, the model's `windowTokens` when known, and
+optional input, output, cached, and reasoning counts).
+
+Any other frame a backend has of its own travels as an extension event:
 `type` is `x-<vendor>.<name>` (lowercase, at most 64 characters), with an optional `turnId` and a
 `data` value inside the same payload bounds. Hosts that do not know the type pass it through; a host
 that does can register a check for it.
@@ -12443,6 +12722,31 @@ yield { version: 1, sessionId, seq, at: Date.now(), type: "x-codex.plan", turnId
 Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
 runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI
 clients can share it without pulling in the Nifra application framework.
+
+## Conformance kit
+
+`@nifrajs/agent-protocol/conformance` drives an `AgentBackend` through what a host relies on and
+returns a report, so an adapter for another agent can prove itself in any test runner:
+
+```ts
+import { checkAgentBackend } from "@nifrajs/agent-protocol/conformance"
+
+const report = await checkAgentBackend({
+  backend: () => new MyBackend(),
+  cwd: process.cwd(),
+  prompt: "say hi",
+  slowPrompt: "wait until cancelled", // enables turn.busy and turn.cancel
+  approvalPrompt: "write a file", // enables the approval checks
+})
+expect(report.checks.filter((check) => check.status === "failed")).toEqual([])
+```
+
+Each scenario gets a fresh backend and session. The checks: a valid session snapshot; a turn whose
+events are valid, ordered, of one turn, and end with exactly one terminal event; `session.completed`
+for a plain turn and an idle snapshot after it; a second message refused while a turn runs, without
+ending it; a cancel that ends with `session.stopped` and leaves the session usable; approvals allowed
+and denied; `undefined` from `resolveApproval` for an approval it never asked for or whose turn was
+cancelled; and no turn for a closed session.
 
 ## Version 1 compatibility
 
@@ -14662,9 +14966,10 @@ The mock server matches reflected routes and synthesizes values from supported J
 Unsupported or unsatisfiable schemas fail explicitly instead of returning known-invalid data. Use a
 fixed seed when responses must be replayable across local development and CI.
 
-Routes whose response validator exposes no JSON Schema (zod, valibot, arktype) mock as `{}` by default.
-Pass `reflectJsonSchema` to derive a schema from such a validator so those routes mock real data; for zod,
-use the bridge shipped as `@nifrajs/testing/zod`:
+A validator that implements Standard JSON Schema (`~standard.jsonSchema`, zod 4.2+ among them) mocks
+real data with no wiring, and an older zod 4 is converted with `z.toJSONSchema`. Routes whose response
+validator exposes neither mock as `{}` by default. Pass `reflectJsonSchema` to derive a schema from such
+a validator; for zod, the bridge ships as `@nifrajs/testing/zod`:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"
@@ -15466,12 +15771,13 @@ laboratory at production.
 ### Opaque validators (zod / valibot / arktype)
 
 A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
-automatically. A Standard Schema validator that carries no JSON Schema (valibot, arktype) validates
-requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
-type-confusion mutations. A zod schema is converted automatically with the project's own zod 4
-(resolved from the project directory first, then from this package); when it cannot be, the gap says
-why: zod is not resolvable, it is older than 4, or its converter threw. Pass `reflectJsonSchema` to
-convert any other validator, or to choose the zod bridge explicitly:
+automatically. So does any validator that implements Standard JSON Schema (`~standard.jsonSchema`,
+zod 4.2+ among them): the laboratory calls the schema's own converter, so nothing is resolved from disk
+and a monorepo run from its root reads an app's zod schemas too. An older zod 4 is converted with
+`z.toJSONSchema`, resolved from the project directory first, then from this package. A validator with
+neither validates requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS`
+and get only type-confusion mutations, and the gap says why when a conversion was tried and failed.
+Pass `reflectJsonSchema` to convert any other validator, or to choose the zod bridge explicitly:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"
@@ -16159,6 +16465,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `A2AAgentCard`, `A2AAgentSkill`, `A2ACardInfo`, `A2AMountableApp`, `A2ARouteContext`, `A2ATaskState`, `A2A_ERROR_CODES`, `A2A_PROTOCOL_VERSION`, `AGENT_CARD_WELL_KNOWN_PATH`, `MountA2AOptions`, `agentCard`, `mountA2A`
 
+## @nifrajs/acp
+
+`AcpBackend`, `AcpBackendOptions`, `AcpClientInfo`
+
 ## @nifrajs/ag-ui
 
 `AgUIMountableApp`, `AgUIRouteContext`, `AgUIRunContext`, `AgUIRunUsage`, `MountAgUIOptions`, `mountAgUI`
@@ -16169,11 +16479,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-app
 
-`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `BoundaryDecisionResult`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionEventView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `PendingApprovalView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `TurnStartedView`, `VerificationCompletedView`, `boundaryCommands`, `boundaryIsStale`, `parseEventStream`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `virtualizeEvidenceRows`
+`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `BoundaryDecisionResult`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `ContextUsageView`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionEventView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `PendingApprovalView`, `PlanUpdatedView`, `ReasoningDeltaView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `TurnStartedView`, `VerificationCompletedView`, `boundaryCommands`, `boundaryIsStale`, `parseEventStream`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `virtualizeEvidenceRows`
 
 ## @nifrajs/agent-protocol
 
-`AGENT_MAX_EVENT_TEXT`, `AGENT_MAX_PAYLOAD_STRING`, `AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionEvent`, `AgentExtensionEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `ReloadResult`, `SendMessageInput`, `agentError`, `agentEventProblem`, `boundAgentText`, `boundAgentValue`, `createAgentEventStream`, `isAgentEvent`, `isAgentExtensionEventType`, `splitAgentText`
+`AGENT_MAX_EVENT_TEXT`, `AGENT_MAX_PAYLOAD_STRING`, `AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `AgentContextUsageEvent`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionEvent`, `AgentExtensionEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentPlanEntry`, `AgentPlanEntryStatus`, `AgentPlanUpdatedEvent`, `AgentReasoningDeltaEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `ReloadResult`, `SendMessageInput`, `agentError`, `agentEventProblem`, `boundAgentText`, `boundAgentValue`, `createAgentEventStream`, `isAgentEvent`, `isAgentExtensionEventType`, `splitAgentText`
 
 ## @nifrajs/agent-review
 
@@ -16309,7 +16619,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
-`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `JsonValue`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
+`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `JsonValue`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenAPIVersion`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
 
 ## @nifrajs/storage
 
@@ -16329,7 +16639,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

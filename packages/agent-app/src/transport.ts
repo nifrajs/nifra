@@ -51,11 +51,15 @@ export interface HttpAgentTransportOptions {
   readonly maxResponseBytes?: number
 }
 
-/** Thrown only for transport-level faults (network, malformed body). Carries no credential. */
+/**
+ * Thrown only for transport-level faults (network, malformed body) and for a stream the host refused,
+ * which carries the response `status`. Carries no credential.
+ */
 export class AgentTransportError extends Error {
   constructor(
     readonly method: string,
     reason: string,
+    readonly status?: number,
   ) {
     super(`agent transport: ${method}: ${reason}`)
     this.name = "AgentTransportError"
@@ -126,7 +130,11 @@ export class HttpAgentTransport implements AgentTransport {
     }
     if (!response.ok) {
       const text = await readResponseText(response, request.method, this.maxResponseBytes)
-      throw new AgentTransportError(request.method, text || `status ${response.status}`)
+      throw new AgentTransportError(
+        request.method,
+        text || `status ${response.status}`,
+        response.status,
+      )
     }
     if (response.body === null) return
     yield* parseEventStream(response.body, request.method, this.maxResponseBytes)

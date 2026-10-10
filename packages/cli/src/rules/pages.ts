@@ -15,11 +15,15 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { shadowedPages } from "@nifrajs/web/route-manifest"
+import type * as TSApi from "typescript"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { hasWebConfig } from "../internal/nifra-project.ts"
+import { scriptKindOf } from "../internal/script-kind.ts"
 import type { CheckRule } from "./index.ts"
+import { loadRuleTypeScript } from "./typescript.ts"
 
 /** What a static read of a framework config says about `apiPrefix`. */
 export type StaticApiPrefix =
@@ -197,4 +201,134 @@ export function withDefaultApiPrefix(source: string | undefined): string | undef
   return `${source}${source.endsWith("\n") ? "" : "\n"}${line}`
 }
 
-export const pageRules = Object.freeze([shadowedPageRule, statusLayoutRule, implicitApiMountRule])
+const LOADER_EXPORT =
+  /\bexport\s+(?:async\s+)?(?:const|let|var|function\*?)\s+loader\b|\bexport\s*\{[^}]*\bloader\b[^}]*\}/
+const SCRIPT_LAYOUT = /\.[cm]?[jt]sx?$/
+
+const hasModifier = (ts: typeof TSApi, node: TSApi.Node, kind: TSApi.SyntaxKind): boolean =>
+  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind)
+
+/** The function an exported `meta` names: a declaration, or a const initialized with one. */
+function exportedMetaFunction(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+): TSApi.FunctionDeclaration | TSApi.ArrowFunction | TSApi.FunctionExpression | undefined {
+  for (const statement of tree.statements) {
+    if (!hasModifier(ts, statement, ts.SyntaxKind.ExportKeyword)) continue
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === "meta") return statement
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "meta") continue
+      let init = declaration.initializer
+      while (
+        init !== undefined &&
+        (ts.isParenthesizedExpression(init) ||
+          ts.isAsExpression(init) ||
+          ts.isSatisfiesExpression(init))
+      ) {
+        init = init.expression
+      }
+      if (init !== undefined && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)))
+        return init
+    }
+  }
+  return undefined
+}
+
+/** Where an exported function `meta` reads its args' `data`: a destructured `data`, or `args.data`. */
+export function metaDataReads(ts: typeof TSApi, tree: TSApi.SourceFile): number[] {
+  const meta = exportedMetaFunction(ts, tree)
+  const param = meta?.parameters[0]
+  if (param === undefined) return []
+  const lineOf = (node: TSApi.Node) =>
+    tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+  if (ts.isObjectBindingPattern(param.name)) {
+    return param.name.elements
+      .filter((element) => (element.propertyName ?? element.name).getText(tree) === "data")
+      .map(lineOf)
+  }
+  if (!ts.isIdentifier(param.name) || meta?.body === undefined) return []
+  const args = param.name.text
+  const reads: number[] = []
+  const visit = (node: TSApi.Node): void => {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === args &&
+      node.name.text === "data"
+    ) {
+      reads.push(lineOf(node))
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(meta.body)
+  return reads
+}
+
+/**
+ * NF-C040: a layout whose function `meta` reads `data` and which has no loader. A layout's `meta`
+ * receives its own loader data, `null` without a loader, so `data` there is always `null`; the page's
+ * data is `pageData`. Until 5.0 a layout's `meta` received the page's data as `data`, which is what such
+ * a `meta` was written against. A layout with a loader reading `data` reads its own, so it is not reported.
+ */
+export const layoutMetaDataRule: CheckRule = {
+  code: "NF-C040",
+  title: "Layout meta reads data its layout never loads",
+  async scan(ctx) {
+    const routesDir = join(ctx.root, "routes")
+    if (!existsSync(routesDir)) return []
+    let manifest: ReturnType<typeof discoverRoutes>
+    try {
+      manifest = discoverRoutes(routesDir)
+    } catch {
+      return []
+    }
+    const layouts = Object.values(manifest.layouts)
+      .filter((layout) => SCRIPT_LAYOUT.test(layout.file))
+      .sort((a, b) => codeUnitOrder(a.file, b.file))
+    if (layouts.length === 0) return []
+    const loaded = await loadRuleTypeScript(ctx)
+    const ts = loaded.compiler
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const layout of layouts) {
+      const halves = [layout.file, ...(layout.backend === undefined ? [] : [layout.backend])]
+      const loads = halves.some((file) =>
+        LOADER_EXPORT.test(stripComments(readFileSync(join(routesDir, file), "utf8"))),
+      )
+      if (loads) continue
+      const text = readFileSync(join(routesDir, layout.file), "utf8")
+      const tree = ts.createSourceFile(
+        layout.file,
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKindOf(ts, layout.file),
+      )
+      for (const line of metaDataReads(ts, tree)) {
+        findings.push(
+          diagnostic({
+            code: "NF-C040",
+            severity: "warn",
+            file: `routes/${layout.file}`,
+            line,
+            message: `routes/${layout.file}'s meta reads \`data\`, which is this layout's own loader data, and the layout has no loader, so it is always null. Read the page's data from \`pageData\` instead.`,
+            evidence: [
+              "data: the layout's loader data (null without a loader)",
+              "pageData: the page's loader data",
+            ],
+            verify: "nifra check",
+          }),
+        )
+      }
+    }
+    return findings
+  },
+}
+
+export const pageRules = Object.freeze([
+  shadowedPageRule,
+  statusLayoutRule,
+  implicitApiMountRule,
+  layoutMetaDataRule,
+])

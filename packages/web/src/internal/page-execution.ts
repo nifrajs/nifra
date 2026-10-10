@@ -40,7 +40,7 @@ import {
   STATUS_HEADER,
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
-import { mergeHeads, resolveMeta } from "./head-merge.ts"
+import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -247,6 +247,12 @@ type LayoutRun = {
   readonly pending: Promise<unknown> | undefined
 }
 
+/** A route's layouts after only their gates ran: `gates[i]` is gate `i`'s value. */
+type GatedLayouts = {
+  readonly modules: LoadedLayoutModules
+  readonly gates: readonly unknown[]
+}
+
 /** Layouts whose loaders settled for this request: what a status or error page renders in. */
 type LayoutChain = {
   readonly modules: LoadedLayoutModules
@@ -409,15 +415,19 @@ export function createPageRequestExecutor<Env = unknown>(
     return value
   }
 
-  /** Run layout loaders, awaiting gates before starting the page loader and retaining only safe data. */
+  /**
+   * Run layout loaders, awaiting gates before starting the page loader and retaining only safe data.
+   * `gated` carries gates that already ran for this request, so none runs twice.
+   */
   const runLayoutChain = async (
     route: RouteEntry,
     ctx: LoaderContext,
     controls: PageResponseControls,
     retain?: RetainContext,
+    gated?: GatedLayouts,
   ): Promise<LayoutRun> => {
     if (route.layoutIds.length === 0) return emptyLayoutRun
-    const modules = await loadLayoutModules(route)
+    const modules = gated?.modules ?? (await loadLayoutModules(route))
     if (!modules.some((m) => m.loader !== undefined)) {
       return { modules, layoutData: undefined, retained: [], pending: undefined }
     }
@@ -447,7 +457,7 @@ export function createPageRequestExecutor<Env = unknown>(
         set: controls.scope(i),
       }
       if (modules[i]?.gate === true) {
-        results[i] = await runGate(route, i, loader, scoped)
+        results[i] = gated === undefined ? await runGate(route, i, loader, scoped) : gated.gates[i]
         continue
       }
       const layoutId = route.layoutIds[i] as string
@@ -486,18 +496,19 @@ export function createPageRequestExecutor<Env = unknown>(
     route: RouteEntry,
     ctx: LoaderContext,
     controls: PageResponseControls,
-  ): Promise<LoadedLayoutModules> => {
+  ): Promise<GatedLayouts> => {
     const modules = await loadLayoutModules(route)
+    const gates: unknown[] = []
     for (let i = 0; i < modules.length; i++) {
       const mod = modules[i]
       if (mod?.gate !== true || mod.loader === undefined) continue
-      await runGate(route, i, mod.loader, {
+      gates[i] = await runGate(route, i, mod.loader, {
         ...ctx,
         params: scopeParams(ctx.params, route.layoutParams?.[i]),
         set: controls.scope(i),
       })
     }
-    return modules
+    return { modules, gates }
   }
 
   /** Outermost first; a failure carries its directory so the nearest `_error` above it renders. */
@@ -635,16 +646,14 @@ export function createPageRequestExecutor<Env = unknown>(
 
   const resolveChainAndHead = (
     layoutModules: LoadedLayoutModules,
+    layoutData: readonly unknown[] | undefined,
     page: RouteModule,
     metaArgs: MetaArgs,
     leaf: unknown = page.default,
   ): { chain: unknown[]; head: Meta } => {
     const chain = [...layoutModules.map((m) => m.default), leaf]
-    const heads = [
-      ...layoutModules.map((m) => resolveMeta(m.meta, metaArgs)),
-      resolveMeta(page.meta, metaArgs),
-    ]
-    return { chain, head: mergeHeads(heads) }
+    const metas = [...layoutModules.map((m) => m.meta), page.meta]
+    return { chain, head: mergeHeads(resolveChainMeta(metas, layoutData, metaArgs)) }
   }
 
   /** What `useMatches` reports for a chain: the layouts' ids and `handle`s, then the page's. */
@@ -693,8 +702,8 @@ export function createPageRequestExecutor<Env = unknown>(
   /** What a status or error page's `meta` receives: no route params, and its own data. */
   const statusMetaArgs = (req: Request, data: unknown, nonce: string | undefined): MetaArgs =>
     nonce === undefined
-      ? { data, params: {}, origin: originOf(req) }
-      : { data, params: {}, origin: originOf(req), nonce }
+      ? { data, pageData: data, params: {}, origin: originOf(req) }
+      : { data, pageData: data, params: {}, origin: originOf(req), nonce }
 
   const renderError = async (
     req: Request,
@@ -745,6 +754,7 @@ export function createPageRequestExecutor<Env = unknown>(
     if (chain !== undefined) {
       const resolved = resolveChainAndHead(
         chain.modules,
+        chain.layoutData,
         errorModule,
         statusMetaArgs(req, data, nonce),
       )
@@ -857,12 +867,13 @@ export function createPageRequestExecutor<Env = unknown>(
       wraps && layouts !== undefined ? await layouts(loaded, rootLayoutIds.length) : undefined
     const modules = chain?.modules ?? []
     const layoutIds = chain === undefined ? [] : rootLayoutIds
+    const layoutData = chain?.layoutData
     const { chain: components, head } = resolveChainAndHead(
       modules,
+      layoutData,
       loaded,
       statusMetaArgs(req, null, nonce),
     )
-    const layoutData = chain?.layoutData
     let headers = extraHeaders
     if (layoutData !== undefined) {
       // The page now shows what a layout loaded for this visitor.
@@ -1009,9 +1020,11 @@ export function createPageRequestExecutor<Env = unknown>(
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
     const { chain, head } = resolveChainAndHead(
       layoutModules,
+      layoutData,
       mod,
       {
         data,
+        pageData: data,
         params,
         origin: originOf(req),
         ...(nonce === undefined ? {} : { nonce }),
@@ -1138,8 +1151,9 @@ export function createPageRequestExecutor<Env = unknown>(
     }
     const mod = await page.load()
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
-    const { chain, head } = resolveChainAndHead(layoutModules, mod, {
+    const { chain, head } = resolveChainAndHead(layoutModules, layoutData, mod, {
       data: null,
+      pageData: null,
       params,
       origin: originOf(req),
       ...(nonce === undefined ? {} : { nonce }),
@@ -1491,11 +1505,11 @@ export function createPageRequestExecutor<Env = unknown>(
           set: controls.scope(ACTION_SCOPE),
         }
         const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
-        let layoutModules: LoadedLayoutModules
+        let gated: GatedLayouts
         let result: unknown
         try {
           if (route.middlewareIds !== undefined) await runMiddleware(route, actionContext, controls)
-          layoutModules = await runLayoutGates(route, actionContext, controls)
+          gated = await runLayoutGates(route, actionContext, controls)
           result = await mod.action(actionContext)
         } catch (err) {
           if (isControlFlow(err)) return err
@@ -1579,30 +1593,85 @@ export function createPageRequestExecutor<Env = unknown>(
             progressiveActionData.delete(request)
           }
         }
+        const layoutModules = gated.modules
         const search = searchChainOf(layoutModules, mod, c.req)
-        const data = mod.loader
-          ? await mod.loader({
-              params: c.params,
-              request: c.req,
-              req: c.req,
-              api: requestApi,
-              env: c.env,
-              draft,
-              search,
-              set: controls.scope(PAGE_SCOPE),
-            })
-          : null
+        let run: LayoutRun | undefined
+        let data: unknown
+        let responseHeaders: Record<string, string> | undefined
+        // The ordinary layout loaders run now, after the mutation, as a GET of this page would.
+        try {
+          run = await runLayoutChain(route, actionContext, controls, undefined, gated)
+          const pageResult = mod.loader
+            ? mod.loader({
+                params: c.params,
+                request: c.req,
+                req: c.req,
+                api: requestApi,
+                env: c.env,
+                draft,
+                search,
+                set: controls.scope(PAGE_SCOPE),
+              })
+            : null
+          const [pageData] =
+            run.pending === undefined
+              ? ([await pageResult] as const)
+              : await Promise.all([pageResult, run.pending])
+          data = pageData
+          responseHeaders = controls.documentHeaders()
+        } catch (err) {
+          if (isStatusSignal(err)) {
+            return (
+              (await renderRouteNotFound(
+                c.req,
+                c.env,
+                route,
+                c.params,
+                err,
+                run,
+                controls.personalized,
+              )) ??
+              renderStatusSignal(c.req, c.env, err, controls.personalized, leadingLayouts(run, err))
+            )
+          }
+          return renderLoaderFailure(
+            route,
+            c.req,
+            c.env,
+            c.params,
+            err,
+            controls.personalized,
+            leadingLayouts(run, err),
+          )
+        }
         // The re-render answers a returned redirect or status the way the page's GET does.
         if (isStatusSignal(data))
-          return renderStatusSignal(c.req, c.env, data, controls.personalized)
+          return (
+            (await renderRouteNotFound(
+              c.req,
+              c.env,
+              route,
+              c.params,
+              data,
+              run,
+              controls.personalized,
+            )) ??
+            renderStatusSignal(c.req, c.env, data, controls.personalized, leadingLayouts(run, data))
+          )
         if (isControlFlow(data)) return data
-        const responseHeaders = controls.documentHeaders()
+        const layoutData = run.layoutData
+        if (layoutData !== undefined) {
+          // The page now shows what a layout loaded for this visitor.
+          responseHeaders = { ...responseHeaders, ...PRIVATE_PAGE_HEADERS }
+        }
         const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
         const { chain, head } = resolveChainAndHead(
           layoutModules,
+          layoutData,
           mod,
           {
             data,
+            pageData: data,
             params: c.params,
             origin: originOf(c.req),
             ...(nonce === undefined ? {} : { nonce }),
@@ -1622,6 +1691,7 @@ export function createPageRequestExecutor<Env = unknown>(
           search,
           matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
           hydrate: mod.hydrate !== false,
+          ...(layoutData === undefined ? {} : { layoutData }),
           ...preloadOf(route.id),
           ...stylesOf(route.id),
           ...prerenderedHandover,

@@ -78,7 +78,7 @@ exports[`verification golden output: nifra check dirty project: human report wit
 
 ⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✗ hand-rolled fetch()/EventSource/WebSocket to your own API: 1
-    routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift
+    routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment
       fix: Replace own-API fetch with the typed nifra client
       - Call \`nifra_routes\` or read \`nifra://routes\` for the exact typed-client call form.
       - Create \`const api = client<typeof app>(baseUrl)\` from \`@nifrajs/client\`.
@@ -119,8 +119,8 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 3,
-      "message": "const res = await fetch(\\"/notes\\") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
-      "fix": "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
+      "message": "const res = await fetch(\\"/notes\\") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment",
+      "fix": "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment",
       "suggestion": {
         "kind": "manual",
         "title": "Replace own-API fetch with the typed nifra client",

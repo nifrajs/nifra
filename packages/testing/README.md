@@ -81,12 +81,13 @@ laboratory at production.
 ### Opaque validators (zod / valibot / arktype)
 
 A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
-automatically. A Standard Schema validator that carries no JSON Schema (valibot, arktype) validates
-requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
-type-confusion mutations. A zod schema is converted automatically with the project's own zod 4
-(resolved from the project directory first, then from this package); when it cannot be, the gap says
-why: zod is not resolvable, it is older than 4, or its converter threw. Pass `reflectJsonSchema` to
-convert any other validator, or to choose the zod bridge explicitly:
+automatically. So does any validator that implements Standard JSON Schema (`~standard.jsonSchema`,
+zod 4.2+ among them): the laboratory calls the schema's own converter, so nothing is resolved from disk
+and a monorepo run from its root reads an app's zod schemas too. An older zod 4 is converted with
+`z.toJSONSchema`, resolved from the project directory first, then from this package. A validator with
+neither validates requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS`
+and get only type-confusion mutations, and the gap says why when a conversion was tried and failed.
+Pass `reflectJsonSchema` to convert any other validator, or to choose the zod bridge explicitly:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"

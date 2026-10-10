@@ -45,11 +45,16 @@ describe("HttpAgentTransport", () => {
     expect(JSON.stringify(transport)).not.toContain("token-")
   })
 
-  test("returns a bounded outcome for a non-ok command instead of throwing", async () => {
+  test("returns a bounded outcome for a non-ok command, and a refused stream carries its status", async () => {
     const fetchImpl = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch
     const transport = new HttpAgentTransport({ endpoint: "http://127.0.0.1:9", fetch: fetchImpl })
     const outcome = await transport.command({ method: "x" })
     expect(outcome).toEqual({ ok: false, status: 403, error: "nope" })
+    const refused = await Array.fromAsync(transport.stream({ method: "turn.attach" })).catch(
+      (error: unknown) => error,
+    )
+    expect(refused).toBeInstanceOf(AgentTransportError)
+    expect(refused instanceof AgentTransportError ? refused.status : undefined).toBe(403)
   })
 
   test("parses an SSE body into protocol events and skips non-event frames", async () => {

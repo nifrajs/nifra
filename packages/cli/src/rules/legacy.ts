@@ -5,7 +5,7 @@ import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { SINGLE_COPY_REGISTER_SPECIFIER } from "@nifrajs/core/single-copy"
 import type { CapabilityProjectReport } from "../capabilities-tool.ts"
-import type { SourceFinding, StaticRouteFinding } from "../check-scan.ts"
+import type { SourceFinding, StaticRouteFinding, TypedClientFinding } from "../check-scan.ts"
 import {
   IDENT,
   movedExportSites,
@@ -26,6 +26,7 @@ import { createWebAppProbe, withApiKindHint } from "../internal/nifra-project.ts
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import { zoneFolderOf } from "../typecheck-coverage.ts"
 import { versionDriftMessage } from "../version-drift.ts"
+import { MISSING_EXPECTATION_REASON } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /** Legacy rule name → stable NF- code. Exported so `nifra.check.json` rule overrides can be keyed
@@ -92,9 +93,9 @@ export const LEGACY_RULE_ORDER: readonly string[] = Object.freeze([
 ])
 
 const FETCH_HINT =
-  "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift"
+  "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a `// nifra-expect NF-C002: <reason>` comment"
 const STREAM_HINT =
-  "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift"
+  "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift; for a stream no typed client covers, add a `// nifra-expect NF-C002: <reason>` comment"
 const SERVER_IMPORT_HINT =
   "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too"
 const RESPONSE_ROUTE_HINT =
@@ -419,31 +420,57 @@ function outsideProgramFindings(files: readonly string[]): Diagnostic[] {
   })
 }
 
+/**
+ * One NF-C002 finding. A `// nifra-expect NF-C002: <reason>` comment keeps it in the report as `info`,
+ * carrying the comment as evidence; the same comment without a reason silences nothing.
+ */
+function typedClientDiagnostic(
+  finding: TypedClientFinding,
+  hint: string,
+  kind: string,
+  suggestion: DiagnosticSuggestion,
+): Diagnostic {
+  const reason = finding.expected?.reason
+  if (reason !== undefined) {
+    return legacyDiagnostic("typed-client", {
+      severity: "info",
+      file: finding.file,
+      line: finding.line,
+      message: `${finding.snippet} - ${kind} is expected here`,
+      evidence: [`nifra-expect NF-C002: ${reason}`],
+    })
+  }
+  const unreasoned = finding.expected === undefined ? "" : `; ${MISSING_EXPECTATION_REASON}`
+  return legacyDiagnostic("typed-client", {
+    severity: "error",
+    file: finding.file,
+    line: finding.line,
+    message: `${finding.snippet} - ${hint}${unreasoned}`,
+    fix: hint,
+    suggestion,
+  })
+}
+
 const typedClientRule: CheckRule = {
   code: LEGACY_RULE_CODES["typed-client"]!,
   title: TITLES["typed-client"]!,
   async scan(ctx) {
     const routes = staticRouteMap(ctx.project.routes)
-    const fetchFindings = [...ctx.project.sourceFindings.fetches].sort(bySite).map((finding) =>
-      legacyDiagnostic("typed-client", {
-        severity: "error",
-        file: finding.file,
-        line: finding.line,
-        message: `${finding.snippet} - ${FETCH_HINT}`,
-        fix: FETCH_HINT,
-        suggestion: ownFetchSuggestion(finding, routes),
-      }),
-    )
-    const streamFindings = [...ctx.project.sourceFindings.streams].sort(bySite).map((finding) =>
-      legacyDiagnostic("typed-client", {
-        severity: "error",
-        file: finding.file,
-        line: finding.line,
-        message: `${finding.snippet} - ${STREAM_HINT}`,
-        fix: STREAM_HINT,
-        suggestion: ownStreamSuggestion(),
-      }),
-    )
+    const fetchFindings = [...ctx.project.sourceFindings.fetches]
+      .sort(bySite)
+      .map((finding) =>
+        typedClientDiagnostic(
+          finding,
+          FETCH_HINT,
+          "own-API fetch",
+          ownFetchSuggestion(finding, routes),
+        ),
+      )
+    const streamFindings = [...ctx.project.sourceFindings.streams]
+      .sort(bySite)
+      .map((finding) =>
+        typedClientDiagnostic(finding, STREAM_HINT, "own-API stream", ownStreamSuggestion()),
+      )
     return [...fetchFindings, ...streamFindings].sort(
       (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
