@@ -16,7 +16,8 @@
  * anything fails. Pure scanners (`scanFetchText`, `scanServerOnlyImports`) are unit-tested.
  */
 
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { specifierPackage } from "@nifrajs/web/zones"
 import { BACKEND_APP_FILE } from "./app-files.ts"
@@ -152,47 +153,53 @@ async function runTsc(
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
   const args = [process.execPath, tscBin, "--noEmit", "-p", tsconfig]
   if (listFiles) args.push("--listFiles")
-  const proc = Bun.spawn(args, {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    // Its own group, so a cancel also stops a compiler process the `tsc` entry started; one left
-    // holding the pipes would keep the cancelled check waiting for the whole typecheck.
-    detached: OWN_PROCESS_GROUP,
-  })
-  let cancelled = false
-  const stop = (): void => signalProcessGroup(proc, "SIGTERM")
-  const abort = (): void => {
-    cancelled = true
-    stop()
-  }
-  signal?.addEventListener("abort", abort, { once: true })
-  const releaseSignals = forwardTerminalSignals(stop)
-  let out = ""
-  let err = ""
-  let code: number | null = null
+  // tsc calls process.exit after printing. Bun can discard buffered pipe writes at that point,
+  // especially while the parent's other scans occupy the event loop. Files keep the full program.
+  const outputDirectory = mkdtempSync(join(tmpdir(), "nifra-tsc-"))
+  const stdout = Bun.file(join(outputDirectory, "stdout"))
+  const stderr = Bun.file(join(outputDirectory, "stderr"))
   try {
-    const result = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    out = result[0]
-    err = result[1]
-    code = result[2]
+    const proc = Bun.spawn(args, {
+      cwd,
+      stdout,
+      stderr,
+      // Its own group lets cancellation also stop a compiler process the tsc entry started.
+      detached: OWN_PROCESS_GROUP,
+    })
+    let cancelled = false
+    const stop = (): void => signalProcessGroup(proc, "SIGTERM")
+    const abort = (): void => {
+      cancelled = true
+      stop()
+    }
+    signal?.addEventListener("abort", abort, { once: true })
+    const releaseSignals = forwardTerminalSignals(stop)
+    let out = ""
+    let err = ""
+    let code: number | null = null
+    try {
+      code = await proc.exited
+      const result = await Promise.all([stdout.text(), stderr.text()])
+      out = result[0]
+      err = result[1]
+    } finally {
+      signal?.removeEventListener("abort", abort)
+      releaseSignals()
+    }
+    if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
+    const listed = listFiles ? splitListedFiles(out) : undefined
+    return {
+      ran: true,
+      ok: code === 0,
+      output: `${listed?.output ?? out}${err}`.trim(),
+      ...(listed !== undefined && listed.programFiles.length > 0
+        ? { programFiles: listed.programFiles }
+        : {}),
+    }
   } finally {
-    signal?.removeEventListener("abort", abort)
-    releaseSignals()
-  }
-  if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
-  const listed = listFiles ? splitListedFiles(out) : undefined
-  return {
-    ran: true,
-    ok: code === 0,
-    output: `${listed?.output ?? out}${err}`.trim(),
-    ...(listed !== undefined && listed.programFiles.length > 0
-      ? { programFiles: listed.programFiles }
-      : {}),
+    rmSync(join(outputDirectory, "stdout"), { force: true })
+    rmSync(join(outputDirectory, "stderr"), { force: true })
+    rmdirSync(outputDirectory)
   }
 }
 

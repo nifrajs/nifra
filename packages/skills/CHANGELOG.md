@@ -1,5 +1,11 @@
 # @nifrajs/skills
 
+## 5.0.0
+
+### Patch Changes
+
+- 6b61e1a: The API skill's middleware list names `trimTrailingSlash` and `appendTrailingSlash`, the exports that exist, instead of a `trailingSlash` that does not.
+
 ## 4.0.2
 
 ## 4.0.1

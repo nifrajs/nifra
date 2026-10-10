@@ -550,7 +550,9 @@ describe("query execution lanes", () => {
     for (const db of [fileDb, memoryDb]) {
       db.run("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
       const insert = db.prepare("INSERT INTO notes (body) VALUES (?)")
-      for (let i = 0; i < 50; i++) insert.run("x".repeat(1000))
+      db.transaction(() => {
+        for (let i = 0; i < 50; i++) insert.run("x".repeat(1000))
+      })()
     }
     const deadline = Date.now() + 60_000
     try {

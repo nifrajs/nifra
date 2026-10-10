@@ -456,18 +456,26 @@ describe("conformance - optional capabilities", () => {
 })
 
 describe("FileStorage writes", () => {
-  test("a put replaces the object whole: a reader holding the old one still reads it intact", async () => {
+  test("a put replaces the object whole, or preserves it when Windows locks replacement", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-storage-"))
     tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
     const storage = new FileStorage(dir)
     await storage.put("doc.txt", "first version")
     const reader = await open(join(dir, "doc.txt"), "r")
     try {
-      await storage.put("doc.txt", "second")
+      if (process.platform === "win32") {
+        // Bun's Windows file handles do not share delete access: replacing an open object must fail
+        // without truncating it. Once the reader closes, the same put succeeds.
+        await expect(storage.put("doc.txt", "second")).rejects.toMatchObject({ code: "EPERM" })
+        expect(decode(present(await storage.get("doc.txt")).body)).toBe("first version")
+      } else {
+        await storage.put("doc.txt", "second")
+      }
       expect(await reader.readFile({ encoding: "utf8" })).toBe("first version")
     } finally {
       await reader.close()
     }
+    if (process.platform === "win32") await storage.put("doc.txt", "second")
     expect(decode(present(await storage.get("doc.txt")).body)).toBe("second")
     expect(await storage.list()).toEqual(["doc.txt"])
   })

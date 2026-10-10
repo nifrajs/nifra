@@ -1,5 +1,73 @@
 # @nifrajs/ag-ui
 
+## 5.0.0
+
+### Patch Changes
+
+- 6340cd8: A replay connection that closes detaches its live view from the turn: `mountAgent` and `mountAgUI` return the view when the client cancels, and the memory evidence log stops sending evidence to a returned view. The logged run keeps recording for the next reconnect. `createMemoryAgentEvidenceLog({ maxSubscribers })` caps live views per running turn (default 64); one more ends the oldest. `createAgentEvidenceStream({ onReturn })` reports when a consumer returns its stream.
+- 34b3014: New `resumeApproval: "port"` agent port option keeps the configured approval port authoritative when a run resumes. By default a step that suspended for approval takes the decision the resuming caller sends in `resume.approval`. Over A2A, or on a public AG-UI or `mountAgent` route, that caller can be the party asking for the tool. With `resumeApproval: "port"` the approval port is asked again and receives the caller's decision as `callerDecision`, and its verdict stands. Without a port, such a resume suspends again.
+- 7775c2b: Detach AG-UI viewers on initial or later output overflow, cancel unlogged work, and preserve logged run results for replay. Parse fragmented agent SSE frames with linear scanning and UTF-8 accounting. Bound each DevTools connection's pending bytes and close stalled readers, replaying only the recent history that fits.
+- Updated dependencies [2198640]
+- Updated dependencies [6b96131]
+- Updated dependencies [d6a7fa0]
+- Updated dependencies [6340cd8]
+- Updated dependencies [34b3014]
+- Updated dependencies [848ce97]
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [1af7543]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/agent@5.0.0
+  - @nifrajs/core@5.0.0
+
 ## 4.0.2
 
 ## 4.0.1

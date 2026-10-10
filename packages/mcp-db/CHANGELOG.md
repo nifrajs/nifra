@@ -1,5 +1,17 @@
 # @nifrajs/mcp-db
 
+## 5.0.0
+
+### Patch Changes
+
+- 5b17850: `run_query` no longer materializes oversized results before applying `maxResultBytes`. A text or blob cell longer than the budget arrives as `"<n bytes>"` instead of being copied out of SQLite, and rows stop being read once their cells pass the budget. Before, `SELECT zeroblob(2000000) FROM t` over 100 rows held about 2 GB and ran for over a minute before the byte cap applied. A result cut by the byte budget reports `total: null` unless `exactTotal` is on.
+- e58690c: `explainPostgres` refuses a query that uses a masked column, as `queryPostgres` does, with `NIFRA_DB_COLUMN_REFUSED`, with or without `analyze`. Before, a plan's row counts and estimates for a filter such as `WHERE password_hash LIKE 'h%'` answered questions about the column. A plain `SELECT password_hash FROM users` is refused as well.
+- 5377b66: `run_query` checks the tables the compiled statement opens, not only the names the SQL and the query plan use. A query is refused when it reads an unexposed table through a schema-qualified name beside a CTE of the same name, through any alias (non-ASCII ones included), through `x IN table`, or as a same-named table in a temp or attached schema of the connection.
+- 437d3cd: `postgresRoleSql` and `nifra db-role` grant the role `SELECT` on each allowed schema only. On Postgres 14 and later, with nothing excluded, the role used to get `pg_read_all_data`, which reads every schema in the database whatever `schemas` named.
+- cd07938: `run_query` refuses every query that opens a virtual table or a table-valued function, as documented, however the query names it. A `pragma_*` function or `dbstat` listed after a comma under an allowlisted alias used to pass the checks and return schema metadata of tables outside the allowlist.
+- Updated dependencies [1af7543]
+  - @nifrajs/mcp@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

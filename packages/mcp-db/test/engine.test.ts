@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import {
   copyFileSync,
   existsSync,
@@ -256,6 +256,35 @@ describe("resolveSqliteFile", () => {
 })
 
 describe("openReadOnlySqlite", () => {
+  test("a driver refusing the first WAL read uses the guarded fallback on every host", async () => {
+    const file = seededFile({ wal: true })
+    const prepare = Database.prototype.prepare
+    let first = true
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: this driver forwards the original generic prepare arguments and return value unchanged, except for one simulated SQLite failure.
+    const failFirstRead = function (this: Database, ...args: Parameters<Database["prepare"]>) {
+      if (first && args[0] === "SELECT count(*) FROM sqlite_master") {
+        first = false
+        throw Object.assign(new Error("WAL sidecar needs a writable open"), {
+          code: "SQLITE_CANTOPEN",
+        })
+      }
+      return prepare.apply(this, args)
+    } as Database["prepare"]
+    const driver = spyOn(Database.prototype, "prepare").mockImplementation(failFirstRead)
+    try {
+      const db = await openReadOnlySqlite(file)
+      try {
+        expect(first).toBe(false)
+        expect(() => db.run("DELETE FROM orders")).toThrow(/readonly/)
+        expect(db.prepare("SELECT count(*) AS n FROM orders").get()).toEqual({ n: 2n })
+      } finally {
+        db.close()
+      }
+    } finally {
+      driver.mockRestore()
+    }
+  })
+
   test("closing the connection lets go of the file", async () => {
     const file = seededFile()
     const db = await openReadOnlySqlite(file)
@@ -298,6 +327,7 @@ describe("openReadOnlySqlite", () => {
         `const { Database } = require("bun:sqlite")
          const db = new Database(${JSON.stringify(file)})
          db.run("PRAGMA busy_timeout = 2000")
+         db.run("INSERT INTO orders (status) VALUES ('w')")
          console.log("ready")
          const until = Date.now() + 1500
          while (Date.now() < until) db.run("INSERT INTO orders (status) VALUES ('w')")

@@ -340,12 +340,15 @@ export function createSpecifierResolver(): ProjectResolver {
         ? undefined
         : { key: undefined, keys, base: config.baseUrl, templates: [STAR], written, found }
     }
-    const targets = config.paths.find(([pattern]) => pattern === match.pattern)?.[1] ?? []
+    // TypeScript permits at most one wildcard in each substitution, as in the alias key.
+    const targets = (config.paths.find(([pattern]) => pattern === match.pattern)?.[1] ?? []).filter(
+      (target) => target.indexOf("*") === target.lastIndexOf("*"),
+    )
     for (const target of targets) {
-      const written = join(config.pathsBase, target.replace("*", match.star ?? ""))
+      const written = join(config.pathsBase, target.replaceAll("*", match.star ?? ""))
       const found = probe(written)
       if (found === undefined) continue
-      const templates = targets.map((t) => t.replace("*", STAR))
+      const templates = targets.map((t) => t.replaceAll("*", STAR))
       return { key: match.pattern, keys, base: config.pathsBase, templates, written, found }
     }
     return undefined

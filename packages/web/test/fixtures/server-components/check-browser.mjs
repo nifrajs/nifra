@@ -36,10 +36,12 @@ for (const [name, engine] of Object.entries(engines)) {
     page.on("requestfailed", (request) => {
       const reason = request.failure()?.errorText
       // The race and invalidation cases deliberately abort in-flight reads.
+      // WebKit on Linux reports those aborts as "Load request cancelled".
       if (
         reason !== "net::ERR_ABORTED" &&
         reason !== "NS_BINDING_ABORTED" &&
-        reason !== "cancelled"
+        reason !== "cancelled" &&
+        reason !== "Load request cancelled"
       )
         errors.push(`${request.url()} ${reason}`)
     })

@@ -139,6 +139,25 @@ describe("nifra check - zoned files outside the tsc program", () => {
     expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
   }, 30_000)
 
+  test("a compiler that exits after more than a pipe buffer preserves its final listed files", async () => {
+    const cwd = project(["routes", "backend"])
+    writeAppFile(
+      cwd,
+      "node_modules/typescript/bin/tsc",
+      String.raw`
+const cwd = process.cwd().replaceAll("\\", "/")
+const padding = cwd + "/node_modules/padding.d.ts\n"
+process.stdout.write(padding.repeat(20_000))
+for (const file of ["routes/index.ts", "backend/app.ts", "backend/jobs/cleanup.ts"])
+  process.stdout.write(cwd + "/" + file + "\n")
+process.exit(0)
+`,
+    )
+    const result = await collectCheckResult(cwd)
+    expect(result.typecheck).toBe("pass")
+    expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
+  }, 30_000)
+
   test("typecheck ignore globs keep deliberately excluded files out of the finding", async () => {
     const cwd = project(["routes"])
     writeAppFile(

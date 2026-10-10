@@ -1,5 +1,11 @@
 # @nifrajs/island-trigger
 
+## 5.0.0
+
+### Patch Changes
+
+- 46b269a: `scheduleTrigger` ships smaller. Every strategy returns the same one-shot disposer, which stays safe to call after the trigger fired.
+
 ## 4.0.2
 
 ## 4.0.1

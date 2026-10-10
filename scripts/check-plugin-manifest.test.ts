@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -33,6 +33,15 @@ function edit(root: string, path: string, change: (text: string) => string): voi
 
 test("control: an untouched copy passes", async () => {
   expect((await gate(fixture())).code).toBe(0)
+}, 30_000)
+
+test("CRLF skill frontmatter passes", async () => {
+  const root = fixture()
+  const skills = join(root, "packages/skills/skills")
+  for (const dir of readdirSync(skills)) {
+    edit(root, `packages/skills/skills/${dir}/SKILL.md`, (text) => text.replace(/\r?\n/g, "\r\n"))
+  }
+  expect((await gate(root)).code).toBe(0)
 }, 30_000)
 
 test("a plugin version that drifts from the package fails", async () => {

@@ -294,7 +294,7 @@ describe("SDK generation", () => {
       ])
       expect(errors).toBe("")
       expect(exitCode).toBe(0)
-      expect(output.trim().split("\n")).toEqual([
+      expect(output.trim().split(/\r?\n/)).toEqual([
         "[UsersItem(id='u1')]",
         "GetUsersError404(reason='gone')",
       ])

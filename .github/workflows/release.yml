@@ -59,6 +59,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       # The release plan runs the Deno and Node gates; the same pins as the ci.yml jobs that run them.
       - name: Set up Deno
@@ -76,6 +77,8 @@ jobs:
 
       - name: Install required browser engines
         run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
       - name: Validate release branch and generated versions
         run: bun run release:check
@@ -87,6 +90,7 @@ jobs:
         env:
           RELEASE_MODE: "1"
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
   prove-release:
     name: prove-release
@@ -205,6 +209,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       - name: Install
         run: |
@@ -247,6 +252,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       # `changeset publish` runs the npm on PATH, so this decides which npm publishes.
       - name: Set up Node
@@ -311,6 +317,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       - name: Publish the version's GitHub release
         env:
@@ -347,6 +354,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       - name: Install
         run: bun install --frozen-lockfile

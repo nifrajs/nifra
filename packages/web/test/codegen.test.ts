@@ -20,6 +20,19 @@ import {
 
 const importer = (file: string) => async (): Promise<RouteModule> => ({ default: file })
 
+test("generated route IDs are inert string literals, including status-page loading", () => {
+  const name = `quote'"${String.fromCharCode(0x2028)}.tsx`
+  const manifest = buildManifest(["_layout.tsx", "_404.tsx", name], importer)
+  const code = generateClientEntry(manifest, {
+    clientModule: "@nifrajs/web-react/client",
+    resolve: (file) => `/routes/${file}`,
+  })
+  expect(code).toContain("\\u2028")
+  expect(code).not.toContain(String.fromCharCode(0x2028))
+  expect(code).toContain('withRootLayout("_404", page)')
+  expect(ts.transpileModule(code, { reportDiagnostics: true }).diagnostics ?? []).toEqual([])
+})
+
 test("generateClientEntry emits lazy code-split loaders + router wiring + patterns", () => {
   const m = buildManifest(
     ["_layout.tsx", "index.tsx", "users/[id].tsx", "_404.tsx", "_410.tsx"],

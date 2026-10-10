@@ -47,7 +47,7 @@ assert.equal(refreshed.headers.get("content-type"), "application/vnd.nifra.compo
 const frames = await readComponentFrames(refreshed.body, AbortSignal.timeout(15000))
 assert.equal(frames.value.build, state.build)
 assert.equal(frames.value.records.length, 2)
-assert.match(frames.value.records[0].html.replace(/<!--[\s\S]*?-->/g, ""), /Revision 2/)
+assert.match(frames.value.records[0].html, /Revision(?:\s|<!--[\s\S]*?-->)*2/)
 const userB = await fetch(origin, { headers: { cookie: "fixture-subject=B" } })
 assert.equal(userB.headers.get("cache-control"), "private, no-store")
 const htmlB = await userB.text()
@@ -101,7 +101,7 @@ const progressive = await fetch(origin, {
   body: new URLSearchParams({ fail: "no" }),
 })
 assert.equal(progressive.status, 200)
-assert.match((await progressive.text()).replace(/<!--[\s\S]*?-->/g, ""), /Revision 3/)
+assert.match(await progressive.text(), /Revision(?:\s|<!--[\s\S]*?-->)*3/)
 console.log(
   JSON.stringify({
     adapter: state.adapter,

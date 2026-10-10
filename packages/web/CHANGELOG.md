@@ -1,5 +1,196 @@
 # @nifrajs/web
 
+## 5.0.0
+
+### Major Changes
+
+- a5963cb: An order-scoped hook (`derive`, `decorate`, `beforeHandle`, `afterHandle`, `around`, `aroundCapability`, `onError`) added to a `createWebApp` app after it returns now throws a `FrameworkError` with code `HOOK_AFTER_PAGES` outside production, naming the call site. Every page copies its hook chain when it is declared, so such a hook never ran on a page. 4.x accepted it without a word. Apply it in `createWebApp({ use })`, or inside `app.group(prefix, ...)` to scope it to the routes declared there. Global hooks (`onRequest`, `onResponse`), routes, groups and re-applying a named plugin that `use` already applied stay allowed.
+- 3db36b3: `createWebApp` serves `api` over HTTP only at the `apiPrefix` it is given; without one the backend is loader-only (`ctx.api`) and a request under `/api` reaches page routing. 4.x mounted it at `/api` by default. `nifra dev`, `nifra build`, `nifra routes` and the page-under-mount check (NF-C027) follow the same rule for `backend/framework.ts`.
+
+  `nifra check` reports a `backend/framework.ts` that sets no `apiPrefix` while `backend/app.ts` exports a backend (NF-C035, info), and `nifra fix --code NF-C035` adds `export const apiPrefix = "/api"` to keep the 4.x mount. Set `apiPrefix = ""` to state that the backend is loader-only.
+
+- d3e79c4: A layout's `meta` receives its own loader data as `data`, the value its component renders, or `null` when the layout has no loader, and the page's data as `pageData`. A layout that loads the locale sets `<html lang>` from its data, and a client navigation keeps it, since the soft-navigation head resolves each layout's `meta` with the same data the server used. A page's `meta` is unchanged and also receives `pageData`. `resolveChainMeta` from `@nifrajs/web/client` resolves a route's `meta` chain this way. Generated route types add `Route.MetaArgs`, typed with the module's own loader data.
+
+  Upgrading: a layout `meta` that read the page's data as `data` reads `pageData` now. `nifra check` reports a layout with no loader whose `meta` reads `data` (NF-C040), and the 5.0.0 upgrade notes name the change.
+
+- 15a3a66: Root status pages (`_404.tsx`, `_<status>.tsx`) and `_error.tsx` render inside the layouts above them with their loader data, and the server puts a status page's `meta` in the head. For an unmatched URL the root middleware and layout loaders run first; otherwise the page reuses the layout data the request already loaded. When those layouts cannot render it (a loader throws, a gate or the middleware refuses) a root status page renders alone and is not hydrated, and an `_error` renders inside its layouts without their data, with the same status. A page rendered with layout data is `private, no-store`, and a client navigation that lands on one loads the URL as a document. `export const inLayouts = false` renders a page the 4.x way and runs no layout loader for it.
+
+  `createClientRouter` takes `layoutStatusRoutes`: status route ids whose page renders inside layouts, which a soft navigation loads as a document.
+
+  `nifra check` reports a root status page that imports the root layout to wrap itself, since it now renders that layout twice (NF-C034, warning). The site templates' `_404` pages no longer wrap the layout.
+
+### Minor Changes
+
+- 22e3df7: feat(web): the app's package.json can set zones with `"nifra": { "zones": { ... } }`. `packages` gives a side to packages that do not declare one, by exact name or a trailing-`*` prefix (`"@shop/*": "library"`); a package's own declaration still wins. `backend`, `frontend` and `shared` list extra app folders that count as that zone folder (`"backend": ["migrations"]`). Every build, dev server, `nifra check` and the TypeScript plugin read the setting; an invalid one fails with the exact key. An undeclared package is now reported once for the whole package, in the build and in `nifra check`, instead of once per file.
+- 2173644: `cache.wrap` loads through a store outage: a store `get` that throws or rejects is a miss, so the loader answers, a failed `set` still returns the loaded value, and a `fence` that fails loads without caching. Failures go to the new `onStoreError(error, { op })`, which by default logs one line per operation per minute without the key. The explicit `get`, `set`, `delete`, `invalidateTag` and `clear` still reject. `revalidateEndpoint` takes `dataCaches`, caches such as a `@nifrajs/cache` holding loader data: a tag purge invalidates each of them before the page store and the CDN, and a failure answers `500` before the page store is touched. `createInvalidator` from `@nifrajs/web/cdn` takes the same `dataCaches`.
+- 4d894b0: `nifra check`'s server-only import rule (NF-C004) names server code the way the browser build does. It knew eight drivers; it now takes the build's list of server packages and driver entries (`stripe`, `@prisma/client`, `jsonwebtoken`, `bcrypt`, `nodemailer` and the rest), bare Node builtins with no browser counterpart (`fs`, `child_process`, `crypto`, ...), `require("x")` and `import x = require("x")`, and an installed workspace package that declares `"nifra": { "environment": "backend" }`. Bare `events`, `buffer`, `path` and `util` still pass, since each also names a browser polyfill. `@nifrajs/web/zones` exports the check as `isServerPackageSpecifier`.
+- 412a9ee: The Bun dev server answers only loopback host names (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`) and refuses any other `Host` with 403. It already listened on 127.0.0.1 only, but answered any `Host`, so a page on another site whose name a DNS rebind pointed at 127.0.0.1 could read SSR pages, loader data and the error overlay. A name the server should answer under (a hosts-file entry, a tunnel) goes in the new `allowedHosts` option of `createDevServer`, or in `export const dev = { allowedHosts: [...] }` in `nifra.config.ts`.
+- de2cc1d: The Bun and Node servers that `buildTarget` generates cache only the client build's content-hashed outputs as immutable. A file copied from `public/` into `/assets/` now gets the one-day asset policy, so the browser revalidates it after a deploy. `servePublicDir` takes a `hashedFiles` set, and `serve`'s `static` mount takes `hashedFiles`, so a build manifest's `assets` list can decide which files are immutable. Without the list, both keep their prefix behavior.
+- f8e0ed5: Under the default key, `withISR` no longer serves a stored page to a request carrying `Authorization` or a cookie: such a request renders fresh, because a signed-in visitor's page can differ from the anonymous one, and its private render no longer marks the URL uncacheable for everyone. The new `anonymousCookies` option lists cookie names that never change the page, such as consent or analytics cookies; a request whose cookies are all listed is served and stored like one with none. A custom `key` keeps deciding for itself.
+- 1cdcfe5: An ISR purge that lands while a page renders now holds. The render stored the page it had built from data read before the purge, and that stale page was served as fresh until it expired. `withISR` now takes a fence from the store before each render, and the store refuses an entry whose key or tags were purged after its fence. `CacheStore` gains an optional `fence()`, and `ISRStoreOp` gains `"fence"`, so an exhaustive `switch` over it needs that case. `MemoryCacheStore` orders purges exactly. `KVCacheStore` orders them by time, as far as KV's eventual consistency has carried the purge, and its `delete` now leaves a marker that reads as a miss instead of removing the key.
+- e195fe8: `withISR` serves through a cache-store outage. A `get` that throws, rejects, or outlives the new `storeTimeoutMs` is a miss and the page renders; a failed `set` still returns the rendered page and shares it with concurrent misses; a failed background regeneration keeps the stale entry. Failures go to the new `onStoreError(error, { op })`, which by default logs one line per operation per minute without the cache key. A store failure never changes the response status.
+- fc0284a: Add opt-in server components across React, Vue, Svelte, Solid and Preact. Closed schemas project public props, owner GET admission and read capabilities govern every refresh, and private responses bypass shared caches. React uses native Flight; Vue, Svelte, Solid and Preact preserve native island state and owned ranges.
+
+  Add coordinated Vite builds and development generations, guarded component references, generated Bun/Node/Deno/Workers/Pages/Vercel outputs, typed outlets, router and server-function refresh integration, and release certification for browsers, packaged consumers, resource limits and performance. Existing applications retain their default rendering pipeline.
+
+  Reuse registered Web middleware continuations across requests while retaining request-local state.
+
+- 9f58295: An opaque mount can declare the routes it serves: `opaque: { reason, routes: [{ method, path, capabilities }] }` on `mount()`, `mountFetch()` and a `createWebApp` `mounts` entry. Capability assurance reports those routes with `analysis: "declared"` beside the known gap, checks their capabilities against the policy (an unknown id, or a domain write on a safe method, fails), and records them in the lockfile. `reflectMounts` returns them, project evidence carries them, the `nifra context` index lists them, and an adversarial contract run notes them as having no contract to test. A malformed declaration or a path outside the mount stops the analysis with an error that names it. A mount without a reason fails as before.
+- c613e7d: Infinite queries now take part in the query cache like plain ones. `invalidateQueries` marks a matching infinite query stale, refetches its loaded pages when it is mounted, and keeps a fetch begun before the invalidation from publishing. `dehydrate` includes infinite queries in a new `infiniteQueries` field, and `hydrate` seeds them, including for a key not yet queried. Unmounted infinite queries are evicted after `gcTime` and past `max`, where before they were kept forever.
+
+  `createMutation`: an `onMutate` that throws now fails the mutation (state `error`, `onError` and `onSettled` run) instead of leaving it `pending`. An `onSuccess` that throws after the write still rejects the call, but the state stays `success` and `onError` is not called, so an optimistic rollback no longer undoes a write the server kept.
+
+- b70b18a: The generated `./+types/<name>` module declares `Route.Loader` and `Route.Action`. Annotate a
+  route's loader, `export const loader: Route.Loader = async ({ params, api }) => ...`, and what it
+  returns is checked against `loaderOutput` at compile time. A field of the wrong type, a `defer(...)`
+  whose value does not match its `t.deferred(...)` field, or any data from a loader with no
+  `loaderOutput` is a type error. A redirect, a `Response` and returning nothing stay allowed.
+  `Route.Action` does the same against `actionOutput`, `revalidate(paths, data)` included. A field the
+  schema does not declare is not a type error, because the output guard drops it.
+
+  `@nifrajs/client` exports the types behind them: `InputOf<Module, Name>` (what a route module's
+  output schema accepts), `RouteLoaderReturn<Module>` and `RouteActionReturn<Module>`.
+
+  `nifra scaffold` and the `create-nifra` starters write the annotation. `nifra schemas` reports a
+  generated schema over an annotated loader or action as unchecked (NF-C033 warns), because the
+  annotation, not the body, is then the function's return type.
+
+- 2fbb4f0: `t.date()` and `t.json()` for page data. A `loaderOutput` or `actionOutput` field declared `t.date()` reaches the page as a `Date` in the server render, on hydration, on client navigations, in streamed `t.deferred` values and in server function results; a `Date` or an ISO date string is accepted, anything else fails the route by path. `t.json()` declares a field that is any JSON value and passes it through whole. `JsonValue` is exported from `@nifrajs/schema`.
+- 9b1acc9: The Vite dev server, `buildClientVite` and `buildServerVite` apply the `package.json` single-copy declaration (`"nifra": { "singleCopy": [...] }`): each declared package, and each package installed under a declared `@scope/*`, joins `resolve.dedupe`, so a linked package with its own copy loads the app's copy, as the Bun build does. `singleCopyPackageNames(cwd)` from `@nifrajs/core/single-copy` returns that list.
+
+### Patch Changes
+
+- Authorize native React client references consistently across Windows and Vite path spellings. Escape route IDs and other values embedded in generated client and server source, including script terminators and Unicode line separators.
+
+- 7169820: A form submitted without JavaScript re-renders the page with its layouts' loader data. After the action, the layout loaders run as they do for a GET of the page, so each layout renders its own data, its `meta` resolves from that data (a layout that loads the locale sets `<html lang>`), and the document's hydration data carries it. A gate still runs once, before the action. A layout or page loader that throws or calls `notFound()` after the action renders the same error boundary or status page a GET would, and an answer that shows layout data is `private, no-store`.
+- 0aed425: Required `basicAuth`, `bearer`, `apiKey` and `jwt` refuse in the `authenticate()` stage: before the body is read or validated and before any `derive` or `beforeHandle`. An unauthenticated request gets the 401 and its challenge, never a 413 or a 422, on every route shape, lane and WebSocket handshake. With valid credentials an invalid body is still a 422. `optional: true` never refuses and keeps validation first. A `verify` that throws in required mode is a 503. A rate limiter written as a `beforeHandle` behind these guards no longer sees refused requests; `rateLimit()` runs in `onRequest` and still counts them.
+
+  The `authenticate()` input adds `params`, the raw `search`, the parsed and frozen `query` (the parser `c.query` uses; a repeated key is an array) and the `request` (its body must not be read). The query is for short-lived, single-use tickets, such as one for a WebSocket handshake.
+
+  Project evidence and reflection keep a route's chosen `validationOrder`.
+
+  `nifra check` reports a route that claims runtime authentication, declares an input schema and authenticates in a hook that runs after validation (NF-S008, warning). It reads the backend the contract-lock check loads, so it runs when `contracts.lock.json` exists. Fix it with `authenticate()`, or with `validationOrder: "auth-before-validation"` on the route.
+
+  The dev feed (`nifra_logs`, `nifra_errors`, request traces and the persisted log) records a query's keys and never its values.
+
+- 7de0397: A loader, action or render failure that an `_error` page answers is written to the server's `logger` as `unhandled request error`, with the request line and the detail `errorLogDetail` allows, the same entry an error with no boundary gets. A soft-navigation data request that a boundary answers with a 500 is logged the same way. Control flow such as a thrown `redirect()` is not logged. `@nifrajs/core/edge-kit` exports `emitRequestErrorLog` and `ErrorLogDetail`, the function the server itself logs through.
+- 674c658: `buildTarget`, `buildTargetVite` and `buildServerComponents` clear their output directory first, so they now refuse one that is a filesystem root or is or contains the routes directory, the public directory, an absolute entry or backend module, or the working directory, comparing paths after resolving symlinks. `nifra build --out .` fails with an error naming the path instead of clearing the project. `workDir` gets the same check.
+- de27557: A Bun client build now links a stylesheet that the `clientModule` imports on every server-rendered page. When routes owned their own CSS, each page linked only its route's stylesheet, so global styles imported by the client module were missing until the client bundle loaded. Each page now links the client module's stylesheet first, then the route's.
+- 61901cd: `buildServerComponents` and `devServerComponents` called without a `target` now compile for Bun, the target the build assembles and `nifra build` defaults to. They compiled for Node and then assembled a Bun server, so a server module that imports a `bun:` built-in was refused as "unsupported on node".
+- 5e366e2: The generated Node and Vercel server for a server-components build takes the request's origin from the Host header only. A request target that starts with `//` (`GET //evil.example/admin`) used to resolve as host `evil.example`, path `/admin`; it is now path `//evil.example/admin` on the real host. An absolute-form target is routed by its path, and a Host header with characters outside a host name answers 400.
+- 2938a0d: The server-component HTML check accepts `<!>`, the comment marker Solid's templates (and `<!$>`, `<!/>`) use, which every browser reads as a comment. Under Trusted Types the component policy checks every HTML string a page assigns, and it refused Solid's own templates, so a Solid page with components never hydrated. Other malformed markup, `<?...>` and `<![CDATA[` among it, is still refused.
+- dc8439c: The server-components HTML check (run before SSR, on decoded component state, and by the opt-in Trusted Types default policy) reads `title` and `textarea` content the way a browser does. A browser treats that content as text, so `<title><!--</title><img onerror=...>-->` showed the validator a comment while the browser built an `<img>`. Content of those two elements must now hold no raw `<` before its own end tag, which escaped framework output never does, and `noembed` and `noframes` are refused like the other text-mode elements.
+- b19cb37: A server-components build exposes only `PUBLIC_*` values (or the configured `publicEnvPrefix`) from the app's `.env` files, like every other nifra build. It set no `envPrefix`, so Vite's default inlined every `VITE_*` value from `.env.production` into client code that read `import.meta.env`, a dependency included. The secret scan of every Vite build now also knows the values Vite loads from `.env.<mode>` files, not only the process environment, so a credential that exists only in one of those files fails the build if it reaches the bundle.
+- 4330e40: Server components and `nifra check` no longer crash on a project that installs TypeScript 7. TypeScript 7's package exports only `version`, with no in-process compiler API, so loading the component pipeline used to fail with a TypeError on first use. The pipeline now raises `NIFRA_TS_UNSUPPORTED` with the fix: pin the project to TypeScript 6. `nifra check` reports the same code. It gives no component module a receipt, so each one is checked as an ordinary backend import. The pipeline reads `componentPipeline` from a config file through `staticComponentPipeline` in `@nifrajs/web/server-components/source`.
+- 65883e5: When a client disconnects mid-response, the streamed HTML document now cancels the framework renderer's stream instead of leaving it running, and neither the document nor the navigation data stream writes a deferred value that settles afterwards. Before, each such value logged a spurious "deferred value rejected" error.
+- 0e20529: The draft-mode cookie now carries its expiry inside the signed value, and `isDraftEnabled` refuses it once that time passes. Before, every editor got the same signed marker, and the server never checked its age, so a copied cookie worked until the draft secret was rotated. `maxAgeSeconds` sets both the cookie's `Max-Age` and the signed expiry, and it must be a positive whole number of seconds. Cookies issued by earlier versions carry no expiry and are refused, so an editor enables draft mode once more after upgrading.
+- f7e36ec: Enhanced forms no longer run an action twice, and they submit through the button that was pressed. A data submit answered with a non-2xx status fell back to posting the form natively, which ran the action a second time; any answer from the server now loads the page instead, and the rejection from `router.submit` names that page in `redirectTo` with the failure as its `cause`. The pressed button's `name`/`value` is now part of the body, its `formaction`, `formmethod` and `formtarget` apply, and a form or button that targets another browsing context posts natively. The native fallback, used only when nothing reached the server, goes through the same button.
+- 262e46d: A server-rendered `_error` page shows the thrown error's own message only when `NODE_ENV` is `development` or `test`. With `NODE_ENV` unset, as in an unbuilt `bun app.ts`, it now gets the generic `Internal Server Error` that production already got, instead of the raw message.
+- 944623d: A `gate` layout loader that returns a `redirect()`, a status such as `notFound()`, or a `Response` refuses the request exactly as one that throws it: the page loader and the action do not run, on document, data and form requests alike.
+- 6d9869d: `loadGoogleFont` refuses a stylesheet whose `font-weight` is not a number, a variable range or a keyword. The weight is part of the self-hosted file's name, so a tampered stylesheet could otherwise name a file outside `outDir`.
+- b9cc68c: `nifra doctor` flags a `buildManifest(...)` call whose file list, an array literal or
+  `import.meta.glob` patterns, reaches a page under `routes/` but not the `.backend.*` half beside it.
+  `buildManifest` pairs the halves only from the list it is given, so such a manifest serves that page
+  without its loader, action and guards, which a test then passes against. The advisory names the
+  missing halves and points to `discoverRoutes(dir)` from `@nifrajs/web/fs` or the generated
+  `server-manifest`. It never fails the run. The testing guide documents both as the way to give a test
+  the routes the app serves.
+- 7775c2b: `withISR` and `withCdn` treat a request an authentication stage accepted like one carrying a cookie or `Authorization`, whichever header held the credential: its page is stored, or marked storable for the CDN, only when the response is explicitly `public`.
+- 09c47c5: Concurrent cache misses for one `withISR` page share a single render: the first renders and stores it, and the others are answered from that stored page. A render that is not stored, such as a `private` page or a failure, sends each waiting request to render for itself, so no request receives a page that was not safe to share. Requests with a cookie or `Authorization` header never join.
+- 326caee: A stored ISR record that a `Response` could not replay, such as one with status 999, a non-finite timestamp or an illegal header, now reads as a cache miss and the page renders. Before, it passed the shape check and every request for that page threw.
+- a588c18: `KVCacheStore` orders purges against in-flight renders by wall-clock time, held strictly increasing per process. A purge from a process whose host had slept, or whose system clock was stepped after it started, could carry a time behind the wall clock, so a render that began before the purge but finished after it was stored as fresh and the purged page kept serving until its next purge or expiry.
+- 7775c2b: Expose the supported layout gate flag on RouteModule so typed gate layouts compile while retaining their pre-action loader behavior.
+- d922f65: With `apiStrip: true`, `/llms.txt` and `/llms-full.txt` list each backend route at the URL a visitor calls (`/api/v1/forms`), not at the backend's own unprefixed path (`/v1/forms`), which the page router answers instead.
+- a1eda0a: After a native form POST runs a page's action, a loader that returns `redirect()` or a status such as `notFound()` now answers the request with that redirect or status page, as the page's GET does. Before, the returned value was rendered as the page's data with status 200.
+- 2f7299a: A native form POST to a server-component owner route whose action sets a Secure cookie (the default) while the app sees the request as `http:`, as it does behind a TLS terminator, now answers 303 to the same path so the browser makes the owner GET with the cookie it kept. Before, the post-action render ran without the new cookie. The 303 `Location` of a progressive redirect is now relative, so the browser stays on its own scheme.
+- 29e62a0: `buildTarget` and `buildTargetVite` refuse a public file whose path matches a file the target writes next to it: `server.js` for the bun, node and deno targets, and `_worker.js` or `_routes.json` for cloudflare. Before, the build overwrote the public file and the built server answered that public path with its own server bundle.
+- 5975163: The React server-components pipeline is certified on React, React DOM and `react-server-dom-webpack` 19.2.8, which fixes GHSA-wx67-qw84-cm4g (a denial of service in server-function decoding) present in 19.2.7. The pipeline requires the three at exactly 19.2.8; upgrade them together.
+- 7a165de: A Response returned to more than one request no longer carries one request's headers to another. A Response without a body (a module-level `new Response(null, { status: 204 })`, a kept redirect) can be sent any number of times, so the cookies a handler queues with `c.set.cookie`, the app's `responseHeaders`, and the headers written by `onResponse` hooks, response observers and response middleware go on a copy made for the request; the Response the handler returned stays as it was built. A Response with a body can be sent once: returning it again answers `500` with `{"ok":false,"error":"internal_error"}` and none of the headers written for the earlier request. On `@nifrajs/node`, a response whose body cannot be written is answered with a `500` that carries none of the headers set for it.
+
+  `writableResponse(response, request?)`, exported from `@nifrajs/core/server`, returns the Response a request may write headers on: the response itself when it has a body and writable headers, otherwise a copy. Pass the request and a copy already made for it is reused by its later writers. `toResponse`, exported from `@nifrajs/core/edge-kit`, takes the same optional last argument: the copies and body-less responses it builds are then reused by that request's later writers instead of being copied again. A Response the handler returned is never treated as the request's own.
+
+  `renderResult(result)`, exported from `@nifrajs/core/edge-kit`, renders a framework `ResponseResult` exactly as `toResponse` does without taking a handler's `Response`. `@nifrajs/edge` renders its rejections with it; responses are unchanged and the bundle is smaller.
+
+- d8f11a5: The Bun client build maps each route, layout and the bootstrap to the chunk the build metafile names for that source file, so a page's `modulepreload` links and route chunk list always point at its own chunk. Position among the build's entry outputs is only the fallback for an entry the metafile does not name by path.
+- e9e02cf: A route file whose name has a space or non-ASCII characters, such as `routes/café.tsx` or `routes/a b.tsx`, now serves its page. Browsers request those paths percent-encoded (`/caf%C3%A9`), and the server and client routers compared them against the raw name, so the page always answered 404. Route patterns are now matched in their requested form, composed (NFC) first, while `route.pattern` keeps the name as written.
+- 6f42b38: Generated route types stay valid TypeScript for any route file name: import specifiers are written as escaped string literals, and a line break in a name no longer ends the header comment.
+- 870227d: `nifra types` gives a route file with a part-literal segment, such as `routes/post-[id].tsx` or `routes/[year]-[month].xml.tsx`, the params inside that segment. Its `Params` was `Record<string, never>` although the route matches `/post-:id` and its loader receives `params.id`.
+- 1d66252: Scoped style ids are now unique across a monorepo. Vue `data-v-*` scope ids, CSS-module class names and StyleX stylesheet ids hashed the file's path relative to its package, so `src/Card.vue` in two workspace packages got the same id, and each package's styles applied to the other's markup. The package's `name` now leads the hashed path. Every generated class name and scope id changes once.
+- a6a6834: fix(web): the browser-build credential scan also flags hyphenated header keys. A random-looking literal under a quoted name such as `"x-api-key"` or `'x-auth-token'` now fails the build like `apiKey: "..."` does; the name must be the whole quoted string, so a ternary branch or a label that only mentions a header is not a target. The same holds for a header given by a call or written as a pair: `headers.set("x-api-key", "...")`, `.append(...)`, `new Headers([["x-api-key", "..."]])` or any two-element `["name", "value"]` array; a value spelled as words or as a constant's name (`["password", "passwordConfirmation"]`) is not a credential. An `Authorization` (or `Proxy-Authorization`) literal fails when it carries a random-looking Bearer token, or a Basic `user:password` that is not a placeholder (`user:password`, a user name repeated as the password). Names ending in `access-key`, `signing-key`, `encryption-key`, `master-key`, `service-account-key` or `connection-string` count when spelled with hyphens or underscores too.
+- 166a6ff: The client build of a `*.fn.ts` module no longer drops a server function when a string literal before it contains `/*` or `//`. A `serverFn({ accept: "image/*" }, ...)` opened a comment that ran to the next `*/`, so the functions declared in between got no client stub and failed as "not a function".
+- 79be5af: The worker from `generateServiceWorker` answers only the build's own precached URLs, and reads them, and the offline page, only from the build's own cache. Before, every same-origin GET, an API call included, was looked up with `caches.match` across all of the origin's caches, so a response a page or another app had stored with the Cache API could be served in place of the network.
+- bf6eeb0: Static files, `public/` files and local image sources refuse a resolved path when any directory along it became a symlink between the containment check and the open. On macOS the open itself refuses such a path; on Linux the opened descriptor's path is checked; elsewhere the opened file must still be the one at the checked path. Before, only a symlink in the last component was refused. A refused `public/` file falls through like a missing one.
+- 5a3c27a: On platforms other than macOS and Linux, Windows included, the check that a static, `public/` or local image file is still the file at its resolved path now runs its steps one after another and compares file identities exactly, so a single directory swap during the open cannot pass it. A race-free check does not exist there, because no file API can open a path without following a link in a middle directory; the `@nifrajs/node` README states that a tree a concurrent local writer can change is outside the guarantee on those platforms.
+- 9b971fc: The Vite dev server crawls the generated client entry for dependencies to pre-bundle, so every route's dependencies are found up front. Opening a route for the first time no longer discovers a new dependency mid-session and reloads the page.
+- 2577fc7: With the Vite builder, a page now links every stylesheet it needs. Each route's list held only the CSS of its own chunk, so a component two routes share (Vite gives it a chunk of its own) was unstyled on both, as was a stylesheet the client module imports. Because a route's list replaces the app-wide one, those pages rendered without that CSS. The list now follows the chunk's static imports, starts with the bootstrap's stylesheets, and includes the `_loading` pages', as the Bun builder already does.
+- 391ab3c: feat(web): in development (`NODE_ENV=development`, which `nifra dev` sets), the data guard logs the paths of fields a loader, action or server function returned but its output schema does not declare, once per distinct set. Paths only, never values; array indices collapse to `*`. Production behavior and cost are unchanged.
+- 3bf7d6b: `withISR` removes a stored page when a background regeneration answers 401 or 403, or answers 2xx with `Cache-Control: private` or `no-store`. The stale public copy no longer keeps serving after the page is withdrawn. A regeneration triggered by a request carrying a cookie or `Authorization` header keeps the entry: that visitor's own refusal or private copy says nothing about the shared page. A 5xx or 429 still keeps serving the stale copy.
+- 7775c2b: Dispose island event listeners and release mounted hosts so the same DOM can safely remount.
+
+  Ignore stale session reads after sign-out, unmount, or replacement of the auth client or loader seed.
+  A new auth client object keeps the session already shown, and a completed sign-out stays signed out.
+
+  Allow concurrent web assurance evidence reads while rejecting recursive mount cycles. Read mounted
+  in-process backend evidence for generated application guidance, preserving mount prefixes and
+  keeping loader-only backends out of the published route list. Generate callable paths for reserved
+  typed-client segments and keep declared DELETE bodies in call options.
+
+- ab1935b: The generated service worker names its cache `<cacheName>:<buildId>` and, on activation, deletes only older caches in that namespace. Caches another app or the page itself created on the same origin are left in place. A cache an earlier worker named `<cacheName>-<buildId>` is outside the namespace and is not deleted.
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [46b269a]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+  - @nifrajs/island-trigger@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

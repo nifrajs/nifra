@@ -46,6 +46,20 @@ async function onPlatform<T>(platform: NodeJS.Platform, fn: () => Promise<T>): P
 
 for (const [pkg, { openResolved, opensAt, sameFileAt }] of Object.entries({ web, node, image })) {
   describe(pkg, () => {
+    test("descriptor-name lookup falls back to file identity when procfs is unavailable", async () => {
+      await withTree(async (root) => {
+        const name = join(root, "assets", "app.js")
+        const handle = await open(name, "r")
+        try {
+          const withoutProcfs = { fd: -1, stat: handle.stat.bind(handle) }
+          expect(await opensAt(withoutProcfs, name)).toBe(true)
+          await expect(opensAt(withoutProcfs, join(root, "missing.js"))).rejects.toThrow()
+        } finally {
+          await handle.close()
+        }
+      })
+    })
+
     // Other kernels give Darwin's flag no symlink meaning, so off Darwin only its reads are checked.
     for (const platform of ["darwin", "linux"] as const) {
       const refuses = platform !== "darwin" || process.platform === "darwin"
@@ -105,11 +119,19 @@ for (const [pkg, { openResolved, opensAt, sameFileAt }] of Object.entries({ web,
     test("an opened file no longer at its name behind a swapped directory is refused", async () => {
       await withTree(async (root, outside) => {
         const name = join(root, "assets", "app.js")
-        const handle = await open(name, "r")
+        let handle = await open(name, "r")
         try {
           expect(await opensAt(handle, name)).toBe(true)
           expect(await sameFileAt(handle, name)).toBe(true)
-          await rename(join(root, "assets"), join(root, "assets-moved"))
+          if (process.platform === "win32") {
+            // Windows locks the directory while this handle is open. Reopen the old file after the
+            // move to exercise the identity check against the replacement path on this platform.
+            await handle.close()
+            await rename(join(root, "assets"), join(root, "assets-moved"))
+            handle = await open(join(root, "assets-moved", "app.js"), "r")
+          } else {
+            await rename(join(root, "assets"), join(root, "assets-moved"))
+          }
           await symlink(outside, join(root, "assets"))
           expect(await opensAt(handle, name)).toBe(false)
           expect(await sameFileAt(handle, name)).toBe(false)

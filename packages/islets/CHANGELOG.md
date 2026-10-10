@@ -1,5 +1,28 @@
 # @nifrajs/islets
 
+## 5.0.0
+
+### Minor Changes
+
+- 28234dd: `computed(fn)` runs `fn` on first read instead of at creation, and stops by itself once nothing reads it: the next change to its inputs unsubscribes it instead of recomputing, so a dropped computed no longer recomputes on every write. Reading it again computes it afresh. It returns a `Computed<T>` reader whose `.dispose()` stops it at once. A malformed `data-island-state` attribute is reported with the same console message as one that is not a JSON object.
+- 46b269a: Unmounting an island through the disposer `mountIslands` returns now stops every `effect` and `computed` that island's setup and bindings created, so mounting and unmounting an island repeatedly leaves nothing subscribed to a longer-lived signal.
+
+### Patch Changes
+
+- 81575dd: An island state key or a binding name that matches an `Object.prototype` member, such as `constructor` or `__proto__`, now names its own signal or handler. Before, it resolved to the inherited value.
+- 7775c2b: Dispose island event listeners and release mounted hosts so the same DOM can safely remount.
+
+  Ignore stale session reads after sign-out, unmount, or replacement of the auth client or loader seed.
+  A new auth client object keeps the session already shown, and a completed sign-out stays signed out.
+
+  Allow concurrent web assurance evidence reads while rejecting recursive mount cycles. Read mounted
+  in-process backend evidence for generated application guidance, preserving mount prefixes and
+  keeping loader-only backends out of the published route list. Generate callable paths for reserved
+  typed-client segments and keep declared DELETE bodies in call options.
+
+- Updated dependencies [46b269a]
+  - @nifrajs/island-trigger@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

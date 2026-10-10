@@ -534,7 +534,7 @@ function scan(cwd: string, pattern: string, dot = false): string[] {
   // The write boundary: a symlinked file or directory (a linked repository) is never yielded, so the
   // upgrade can only edit files that live under `cwd`.
   for (const path of glob.scanSync({ cwd, dot, followSymlinks: false })) {
-    if (!isIgnored(path)) out.push(path)
+    if (!isIgnored(path)) out.push(path.replaceAll("\\", "/"))
   }
   return out.sort() // deterministic order
 }

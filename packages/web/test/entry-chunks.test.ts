@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { basename, join } from "node:path"
+import { basename, join, resolve } from "node:path"
 import { buildClient } from "../src/build.ts"
 import { entryChunks } from "../src/internal/entry-chunks.ts"
 
 describe("entryChunks", () => {
   test("maps each entry to the output the metafile names it for, in any output order", () => {
+    const root = resolve("/app")
     const chunks = entryChunks(
       {
         "./index-b.js": { entryPoint: "routes/index.tsx" },
@@ -15,13 +16,13 @@ describe("entryChunks", () => {
         "./_nifra-entry-c.js": { entryPoint: ".nifra/_nifra-entry.ts" },
         "./account-deletion-d.js": { entryPoint: "routes/account-deletion.tsx" },
       },
-      "/app",
+      root,
     )
     expect([...chunks]).toEqual([
-      ["/app/routes/index.tsx", "./index-b.js"],
-      ["/app/routes/login.tsx", "./login-a.js"],
-      ["/app/.nifra/_nifra-entry.ts", "./_nifra-entry-c.js"],
-      ["/app/routes/account-deletion.tsx", "./account-deletion-d.js"],
+      [join(root, "routes/index.tsx"), "./index-b.js"],
+      [join(root, "routes/login.tsx"), "./login-a.js"],
+      [join(root, ".nifra/_nifra-entry.ts"), "./_nifra-entry-c.js"],
+      [join(root, "routes/account-deletion.tsx"), "./account-deletion-d.js"],
     ])
   })
 })

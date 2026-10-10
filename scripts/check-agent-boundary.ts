@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { resolve } from "node:path"
+import { join, resolve } from "node:path"
 
 const PROTECTED = ["core", "client", "web", "schema"] as const
 const FORBIDDEN = [
@@ -56,18 +56,18 @@ function isReverseForbidden(specifier: string): boolean {
 async function findReverseEdgeFailures(root: string): Promise<readonly string[]> {
   const failures: string[] = []
   for (const packageName of REVERSE_GUARDED) {
-    const packageRoot = `${root}/packages/${packageName}`
+    const packageRoot = join(root, "packages", packageName)
     if (!existsSync(packageRoot)) continue
     for await (const relative of new Bun.Glob("src/**/*").scan({ cwd: packageRoot, dot: false })) {
       if (!/\.(?:ts|tsx|js|jsx)$/.test(relative)) continue
-      const path = `${packageRoot}/${relative}`
+      const path = join(packageRoot, relative)
       const source = await Bun.file(path).text()
       for (const match of source.matchAll(IMPORT_RE)) {
         if (isReverseForbidden(match[1]!))
           failures.push(`${path}: ${packageName} must not import host package ${match[1]}`)
       }
     }
-    const manifestPath = `${packageRoot}/package.json`
+    const manifestPath = join(packageRoot, "package.json")
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(await Bun.file(manifestPath).text()) as Record<string, unknown>
       for (const field of [
@@ -94,18 +94,18 @@ async function findReverseEdgeFailures(root: string): Promise<readonly string[]>
 
 async function findAgentAppFailures(root: string): Promise<readonly string[]> {
   const failures: string[] = []
-  const packageRoot = `${root}/packages/agent-app`
+  const packageRoot = join(root, "packages", "agent-app")
   if (!existsSync(packageRoot)) return failures
   for await (const relative of new Bun.Glob("src/**/*").scan({ cwd: packageRoot, dot: false })) {
     if (!/\.(?:ts|tsx|js|jsx)$/.test(relative)) continue
-    const path = `${packageRoot}/${relative}`
+    const path = join(packageRoot, relative)
     const source = await Bun.file(path).text()
     for (const match of source.matchAll(IMPORT_RE)) {
       if (isAgentAppForbidden(match[1]!))
         failures.push(`${path}: agent-app may only import @nifrajs/agent-protocol, saw ${match[1]}`)
     }
   }
-  const manifestPath = `${packageRoot}/package.json`
+  const manifestPath = join(packageRoot, "package.json")
   if (existsSync(manifestPath)) {
     const manifest = JSON.parse(await Bun.file(manifestPath).text()) as Record<string, unknown>
     for (const field of ["dependencies", "optionalDependencies", "peerDependencies"] as const) {
@@ -128,17 +128,17 @@ export async function findAgentBoundaryFailures(
   if (!PROTECTED.some((packageName) => existsSync(`${root}/packages/${packageName}`)))
     return [`${root}: no protected package found - nothing was checked`]
   for (const packageName of PROTECTED) {
-    const packageRoot = `${root}/packages/${packageName}`
+    const packageRoot = join(root, "packages", packageName)
     if (!existsSync(packageRoot)) continue
     for await (const relative of new Bun.Glob("src/**/*").scan({ cwd: packageRoot, dot: false })) {
       if (!/\.(?:ts|tsx|js|jsx)$/.test(relative)) continue
-      const path = `${packageRoot}/${relative}`
+      const path = join(packageRoot, relative)
       const source = await Bun.file(path).text()
       for (const match of source.matchAll(IMPORT_RE)) {
         if (isForbidden(match[1]!)) failures.push(`${path}: forbidden agent import ${match[1]}`)
       }
     }
-    const manifestPath = `${packageRoot}/package.json`
+    const manifestPath = join(packageRoot, "package.json")
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(await Bun.file(manifestPath).text()) as Record<string, unknown>
       for (const field of [

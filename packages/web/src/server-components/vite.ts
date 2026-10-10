@@ -18,7 +18,8 @@ const islandFile = /\.island\.[cm]?[jt]sx?$/
 const referencePrefix = "\0nifra-component-reference:"
 const nativeQuery = "nifra-native-client-reference"
 const reactRuntime = "\0nifra-component-react-runtime"
-const bare = (id: string): string => id.split("?")[0] ?? id
+// Vite uses forward slashes for module IDs even when the filesystem uses backslashes.
+const bare = (id: string): string => (id.split("?")[0] ?? id).replaceAll("\\", "/")
 
 export interface ServerComponentsPluginOptions {
   readonly root: string
@@ -141,7 +142,7 @@ export function serverComponentsPlugin(
       }
       if (source.includes(nativeQuery)) {
         const file = source.startsWith("/@fs/")
-          ? source.slice(4)
+          ? source.slice("/@fs".length).replace(/^\/(?=[A-Za-z]:[\\/])/, "")
           : existsSync(bare(source))
             ? source
             : resolve(options.root, `.${source}`)

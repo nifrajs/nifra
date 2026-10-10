@@ -16,6 +16,7 @@ import {
   type SendMessageInput,
   splitAgentText,
 } from "@nifrajs/agent-protocol"
+import { writeRpc } from "./rpc-write.ts"
 
 export interface PiBackendOptions {
   /** Defaults to `pi`, resolved through PATH. */
@@ -241,13 +242,14 @@ export class PiBackend implements AgentBackend {
     }
     // An already-aborted signal is settled above. Do not write a prompt after that cancellation.
     if (session.active !== stream || session.turnId !== turnId) return stream
-    try {
-      writeRpc(session, { type: "prompt", message: input.message })
-    } catch (error) {
-      stream.fail(error)
-      this.clearTurn(session, stream, turnId)
-      this.updateSnapshot(session, "failed")
-    }
+    void writeRpc(session.process.stdin, { type: "prompt", message: input.message }).catch(
+      (error) => {
+        if (session.active !== stream || session.turnId !== turnId) return
+        stream.fail(error)
+        this.clearTurn(session, stream, turnId)
+        this.updateSnapshot(session, "failed")
+      },
+    )
     return stream
   }
 
@@ -320,8 +322,9 @@ export class PiBackend implements AgentBackend {
     this.updateSnapshot(session, "running")
     this.emit(session, { type: "turn.started", turnId: session.turnId, prompt: "/reload" })
     try {
-      if (this.options.reloadCommand === "rpc") writeRpc(session, { type: "reload" })
-      else writeRpc(session, { type: "prompt", message: "/reload" })
+      if (this.options.reloadCommand === "rpc")
+        await writeRpc(session.process.stdin, { type: "reload" })
+      else await writeRpc(session.process.stdin, { type: "prompt", message: "/reload" })
     } catch (error) {
       stream.fail(error)
       session.active = undefined
@@ -373,7 +376,7 @@ export class PiBackend implements AgentBackend {
     const pending = session.approvals.get(approvalId)
     if (pending === undefined) return undefined
     session.approvals.delete(approvalId)
-    writeRpc(session, {
+    await writeRpc(session.process.stdin, {
       type: "extension_ui_response",
       id: approvalId,
       ...(pending.method === "confirm"
@@ -585,7 +588,16 @@ export class PiBackend implements AgentBackend {
       (record.method !== "confirm" || session.active === undefined) &&
       boundedPiToken(record.id)
     ) {
-      writeRpc(session, { type: "extension_ui_response", id: record.id, cancelled: true })
+      const active = session.active
+      const turnId = session.turnId
+      void writeRpc(session.process.stdin, {
+        type: "extension_ui_response",
+        id: record.id,
+        cancelled: true,
+      }).catch(() => {
+        if (session.active === active && session.turnId === turnId)
+          this.failActive(session, agentError("PI_IO", "Pi could not receive the dialog response"))
+      })
       return
     }
     const active = session.active
@@ -834,16 +846,16 @@ export class PiBackend implements AgentBackend {
     const turnId = session.turnId
     const stopReason = boundedPiText(reason, 512) || "cancelled"
     this.clearTurnSignal(session)
-    try {
-      if (!session.closed) writeRpc(session, { type: "abort" })
-    } catch {
-      // The process may have exited while a request was being cancelled. The protocol still needs
-      // to settle the caller and remove the stale signal listener.
-    }
+    const writing = session.closed
+      ? Promise.resolve()
+      : writeRpc(session.process.stdin, { type: "abort" })
     this.updateSnapshot(session, "stopped")
     this.emit(session, { type: "session.stopped", reason: stopReason })
     active?.complete()
     this.clearTurn(session, active, turnId)
+    // Settle the caller synchronously before waiting for a buffered abort: an already-aborted
+    // request must never send a prompt. An exited process may refuse the abort without undoing it.
+    await writing.catch(() => undefined)
   }
 
   private clearTurnSignal(session: PiSession): void {
@@ -871,14 +883,6 @@ function removeActiveTurn(
 ): Omit<AgentSessionSnapshot, "activeTurnId"> {
   const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = snapshot
   return withoutActiveTurn
-}
-
-function writeRpc(session: PiSession, value: Record<string, unknown>): void {
-  const stdin = session.process.stdin
-  if (stdin === undefined || stdin === null || typeof stdin === "number")
-    throw new Error("pi backend: Pi stdin is unavailable")
-  stdin.write(`${JSON.stringify(value)}\n`)
-  stdin.flush()
 }
 
 // The model-provider credentials Pi's providers read from the environment. Pi cannot reach a model

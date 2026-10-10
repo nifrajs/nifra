@@ -1,5 +1,100 @@
 # @nifrajs/client
 
+## 5.0.0
+
+### Minor Changes
+
+- 4edee67: A DELETE route that declares a body schema can be called with its body: `api.items.delete({ body: { ids } })` sends it as JSON, and the types require it there. A DELETE without a body schema keeps its bodyless options.
+- b70b18a: The generated `./+types/<name>` module declares `Route.Loader` and `Route.Action`. Annotate a
+  route's loader, `export const loader: Route.Loader = async ({ params, api }) => ...`, and what it
+  returns is checked against `loaderOutput` at compile time. A field of the wrong type, a `defer(...)`
+  whose value does not match its `t.deferred(...)` field, or any data from a loader with no
+  `loaderOutput` is a type error. A redirect, a `Response` and returning nothing stay allowed.
+  `Route.Action` does the same against `actionOutput`, `revalidate(paths, data)` included. A field the
+  schema does not declare is not a type error, because the output guard drops it.
+
+  `@nifrajs/client` exports the types behind them: `InputOf<Module, Name>` (what a route module's
+  output schema accepts), `RouteLoaderReturn<Module>` and `RouteActionReturn<Module>`.
+
+  `nifra scaffold` and the `create-nifra` starters write the annotation. `nifra schemas` reports a
+  generated schema over an annotated loader or action as unchecked (NF-C033 warns), because the
+  annotation, not the body, is then the function's return type.
+
+- 41050ed: `app.sse()` registers a POST stream when its schema declares a `body`: the body validates as on any POST, the handler reads `c.body`, and the typed client's `.subscribe(onEvent, { body })` sends it, typed from the body schema. A chat stream that posts its prompt no longer needs a hand-written `fetch`. A POST stream does not reconnect unless `reconnect: true` is passed, since a reconnect sends the body again; a GET stream keeps reconnecting by default.
+
+  `.subscribe()` now runs the client's `onRequest` hook before each connect, as every other request does, so a refreshed auth token reaches the stream.
+
+### Patch Changes
+
+- 281f5de: Header names now merge in any letter case. A client `Authorization` header and a per-call `authorization` header were both sent, joined into one value; the per-call one now replaces it, as does a header `onRequest` returns. A body the client encodes carries the codec's `content-type` alone, a caller's `Accept` is kept over a transport codec's, and `.subscribe()` sends one value for each name.
+- 6a95376: `onRequest` runs before every attempt, as documented, so a retried call sends the headers the hook returns at that moment, such as a refreshed token. Before, it ran once and each retry repeated the first attempt's headers.
+- 6426107: A body the client cannot decode is a Result, not a throw. A proxy's HTML error page labelled `application/json`, or a nifra media type with no codec registered, used to reject the call with a `TransportCodecError`; it now resolves to `{ ok: false, status: 0, data: null, error: { error: "malformed_response" } }`. A media type that only shares the JSON prefix is read like any other body: `application/json-patch+json` is parsed as JSON and `application/jsonl` comes back as its text, where both used to throw.
+- 23b3672: A path param holding an unpaired UTF-16 surrogate, which has no URL spelling, now resolves to the `invalid_path` failure Result without sending anything. Before, building the call threw a `URIError`.
+- 7775c2b: Recheck current route authentication, authorization and prerequisite hooks before idempotent replay,
+  without repeating the handler, effect ledger or stored response transformations. Preserve stored
+  status, safe headers and the replay marker after admission.
+
+  Enforce typed SSE event limits in UTF-8 bytes before dispatch for complete and fragmented frames,
+  with bounded, linear fragment accounting independent of chunk boundaries.
+
+  Bound the in-memory GraphQL pubsub subscriber queue to 1024 events by default. Overloaded subscribers
+  detach and fail with `GraphqlPubSubOverflowError`; configure `maxQueuedEvents` or explicit
+  `drop-oldest`/`drop-newest` policies when needed. Returning or throwing into an iterator clears queued
+  events and ends delivery.
+
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+
 ## 4.0.2
 
 ## 4.0.1

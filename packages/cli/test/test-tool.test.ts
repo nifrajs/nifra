@@ -144,7 +144,20 @@ describe("collectTestResult", () => {
         )
         expect(result.cancelled).toBe(true)
         const pid = Number(await readFile(join(dir, "grandchild.pid"), "utf8"))
-        expect(() => process.kill(pid, 0)).toThrow()
+        // The group has been signalled, but an orphan's PID can remain until the OS reaps it.
+        // Observe that bounded state change instead of racing the first liveness probe.
+        let exited = false
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            process.kill(pid, 0)
+          } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error
+            exited = true
+            break
+          }
+          await Bun.sleep(10)
+        }
+        expect(exited).toBe(true)
       } finally {
         watcher.close()
         await rm(dir, { recursive: true, force: true })

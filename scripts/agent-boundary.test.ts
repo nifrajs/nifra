@@ -20,8 +20,8 @@ describe("agent package boundary", () => {
         JSON.stringify({ dependencies: { "@nifrajs/coding-agent": "1.0.0" } }),
       )
       expect(await findAgentBoundaryFailures(root)).toEqual([
-        `${core}/src/leak.ts: forbidden agent import @nifrajs/agent`,
-        `${core}/package.json: forbidden agent dependency @nifrajs/coding-agent`,
+        `${join(core, "src", "leak.ts")}: forbidden agent import @nifrajs/agent`,
+        `${join(core, "package.json")}: forbidden agent dependency @nifrajs/coding-agent`,
       ])
     } finally {
       rmSync(root, { recursive: true, force: true })

@@ -70,6 +70,16 @@ describe("relative and absolute specifiers", () => {
 })
 
 describe("tsconfig paths and baseUrl", () => {
+  test("invalid multi-wildcard substitutions are refused without hiding a valid fallback", () => {
+    const root = project({
+      "tsconfig.json": tsconfig({ paths: { "~/*": ["./*/*", "./lib/*"] } }),
+      "lib/fmt.ts": "",
+      "routes/index.tsx": "",
+    })
+    const resolve = createSpecifierResolver()
+    expect(resolve(join(root, "routes/index.tsx"), "~/fmt")).toBe(join(root, "lib/fmt.ts"))
+  })
+
   test("a `*` alias maps onto the project, and a bare package stays unresolved", () => {
     const root = project({
       "tsconfig.json": tsconfig({ paths: { "~/*": ["./*"] } }),

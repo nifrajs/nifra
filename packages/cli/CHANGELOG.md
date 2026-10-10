@@ -1,5 +1,338 @@
 # @nifrajs/cli
 
+## 5.0.0
+
+### Major Changes
+
+- 3db36b3: `createWebApp` serves `api` over HTTP only at the `apiPrefix` it is given; without one the backend is loader-only (`ctx.api`) and a request under `/api` reaches page routing. 4.x mounted it at `/api` by default. `nifra dev`, `nifra build`, `nifra routes` and the page-under-mount check (NF-C027) follow the same rule for `backend/framework.ts`.
+
+  `nifra check` reports a `backend/framework.ts` that sets no `apiPrefix` while `backend/app.ts` exports a backend (NF-C035, info), and `nifra fix --code NF-C035` adds `export const apiPrefix = "/api"` to keep the 4.x mount. Set `apiPrefix = ""` to state that the backend is loader-only.
+
+- e7a275b: `nifra check` findings are silenced with one comment form: `// nifra-expect <code>: <reason>`, on the flagged line or anywhere in the comment block directly above it. It answers only the code it names. Every security finding (NF-S001 to NF-S006) and every error needs the reason; an advisory accepts the comment without one. The names `sql-dynamic` (NF-C006), `raw-response` (NF-C007), `reserved-segment` (NF-C018), `route-overlap` (NF-C024, NF-C025) and `param-modifier` (NF-C026) still work in place of the code, so `// nifra-expect route-overlap` now needs a reason too. A silenced security finding stays in the report as information, with the comment and its reason as evidence.
+
+  `@nifra-gate-reviewed` silences nothing: the finding under it fails as any other and names the comment to write instead. `nifra upgrade 5.0.0` lists every such comment with the line it covered and never writes a reason.
+
+- 58e27a5: `nifra check` fails with NF-C038 on an app still on the retired root layout: a root `backend.ts` or `framework.ts` in an app with `routes/` or a config, or, elsewhere, one that exports `backend` or `adapter`. No contract gate reads those files there, so the check no longer passes without running them. The finding names `nifra migrate layout`. A `backend.ts` module in a project that is not a routed app, and exports no `backend`, is no longer read as the retired layout by any command. NF-C035 no longer reports an API-only app, which has no page routing for `/api` to fall into.
+- eeee88b: `nifra check` reports a non-constant-time secret comparison (NF-S002) as advisory only for browser code inside a nifra web app: a directory with `nifra.config.ts` or `backend/framework.ts`, or whose nearest package.json depends on `@nifrajs/web` or a `@nifrajs/web-*` adapter. A `routes/` or `frontend/` file anywhere else, such as in an API-only project or a package without a web dependency, is server code, so the comparison fails the check. `nifra fix --code NF-S002` rewrites exactly the comparisons the check reports.
+- 15a3a66: Root status pages (`_404.tsx`, `_<status>.tsx`) and `_error.tsx` render inside the layouts above them with their loader data, and the server puts a status page's `meta` in the head. For an unmatched URL the root middleware and layout loaders run first; otherwise the page reuses the layout data the request already loaded. When those layouts cannot render it (a loader throws, a gate or the middleware refuses) a root status page renders alone and is not hydrated, and an `_error` renders inside its layouts without their data, with the same status. A page rendered with layout data is `private, no-store`, and a client navigation that lands on one loads the URL as a document. `export const inLayouts = false` renders a page the 4.x way and runs no layout loader for it.
+
+  `createClientRouter` takes `layoutStatusRoutes`: status route ids whose page renders inside layouts, which a soft navigation loads as a document.
+
+  `nifra check` reports a root status page that imports the root layout to wrap itself, since it now renders that layout twice (NF-C034, warning). The site templates' `_404` pages no longer wrap the layout.
+
+- 3976f19: `nifra check` follows the imports the bundler follows when it checks zones (NF-C028) and server-only imports (NF-C004): relative paths, tsconfig `paths` and `baseUrl` (through `extends`, from the nearest `tsconfig.json` or `jsconfig.json`), and package.json `imports`. A route that reaches backend code or a file in no zone through `~/lib/x` or `#db` is reported as it is through `../lib/x`. The app's `clientModule` counts as browser code wherever it lives: a `clientModule` in no zone or in backend code is an NF-C028 error at the config line, and what it imports is checked like a route's imports. A file in no zone is followed into what it imports, so every file the build would refuse is reported, each at its own import.
+
+### Minor Changes
+
+- 78a639a: `"nifra": { "kind": "api" }` in package.json declares a project that serves no pages. `nifra check` reads it from the nearest package.json, statically, and there skips the checks that read zones (NF-C028 to NF-C033) and the server-only import check (NF-C004), and treats every file as server code for NF-S002. A directory with web config (`nifra.config.ts` exporting `adapter`, or `backend/framework.ts`) keeps its zone checks under the setting, and NF-C037 reports the clash as an error. A value other than `"api"` or `"web"` is an NF-C028 error naming the file. An NF-C028 or NF-C004 finding outside any web app now names the setting. Builds and dev servers do not read it.
+- 503682a: A directory with `backend/app.ts` and no web config is read as an API-only app by `nifra routes`, `nifra context`, `nifra openapi` and `nifra mcp`. They load `backend/app.ts` alone, without an adapter. `nifra context` names the app API-only and lists no pages. `nifra routes --modes` says it has no page routes to read. The tools, resources and prompts the backend declares are listed by `nifra mcp`, and the `nifra://routes` and `nifra://openapi` resources answer. `nifra dev` and `nifra build` still need a web config; their error names the API-only reading when `backend/app.ts` exists.
+- 0aed425: Required `basicAuth`, `bearer`, `apiKey` and `jwt` refuse in the `authenticate()` stage: before the body is read or validated and before any `derive` or `beforeHandle`. An unauthenticated request gets the 401 and its challenge, never a 413 or a 422, on every route shape, lane and WebSocket handshake. With valid credentials an invalid body is still a 422. `optional: true` never refuses and keeps validation first. A `verify` that throws in required mode is a 503. A rate limiter written as a `beforeHandle` behind these guards no longer sees refused requests; `rateLimit()` runs in `onRequest` and still counts them.
+
+  The `authenticate()` input adds `params`, the raw `search`, the parsed and frozen `query` (the parser `c.query` uses; a repeated key is an array) and the `request` (its body must not be read). The query is for short-lived, single-use tickets, such as one for a WebSocket handshake.
+
+  Project evidence and reflection keep a route's chosen `validationOrder`.
+
+  `nifra check` reports a route that claims runtime authentication, declares an input schema and authenticates in a hook that runs after validation (NF-S008, warning). It reads the backend the contract-lock check loads, so it runs when `contracts.lock.json` exists. Fix it with `authenticate()`, or with `validationOrder: "auth-before-validation"` on the route.
+
+  The dev feed (`nifra_logs`, `nifra_errors`, request traces and the persisted log) records a query's keys and never its values.
+
+- 448817b: `nifra check` treats the mounts its assurance source declares `opaque` (a better-auth handler mounted with `mounts: [{ path, app, opaque }]`) as external mounts, so a `fetch` into one is no longer reported as a hand-rolled API call. A mount without that declaration, and a path that escapes the prefix with `..`, are still checked. The prefixes are listed with the `nifra.check.json` `externalMounts` in the report.
+- 200a590: `nifra check` accepts `// nifra-expect NF-C002: <reason>` on a hand-rolled `fetch`, `EventSource` or `WebSocket` call to the app's own API, for a call no typed client covers, such as a static file or a foreign handler's endpoint. The finding stays in the report as `info`, with the comment as evidence. A comment with no reason after the colon silences nothing, and the error says so.
+- 3b325d0: `nifra schemas` drafts `loaderOutput` and `actionOutput` from each loader's and action's TypeScript return type. A dry run reports what every route needs; `--write` puts a schema, marked `nifra:generated`, above each loader or action that has none, leaving out credential-like field names and values that are not JSON. Marked schemas are kept in step with the return type on later runs, and `nifra check` reports NF-C033 when one has drifted. Hand-written schemas are never rewritten: the report lists the returned fields each one drops, by path. Works with TypeScript 5, 6 and 7.
+- b89f48b: The static route scan reads a path given as a module-level string `const`, with or without `as const`, in the same file or exported from a project file it imports, and a template with no substitution. Capability provenance and the route lints now see those routes. A route whose path is another expression, such as an interpolated template, gets an NF-C036 finding (info) that names the expression; `// nifra-expect NF-C036: <reason>` above the registration accepts it.
+- 357c390: `nifra check` reports contract operations the source implements but `backend/app.ts` does not serve (NF-C039, a warning). It finds each `implement(contract, ...)` call from `@nifrajs/core/contract` in the checked package (a nested package with its own package.json is left to its own check) (also through a project module that re-exports it), reads the contract's `defineContract({...})` in the same file or in a module imported through a relative path or an alias, and compares each operation's method and path with the routes the backend serves, a group or mount prefix included. The served routes come from the backend the contract-lock check loads, so the comparison runs when `contracts.lock.json` exists. With no `backend/app.ts`, one finding counts the implemented operations no gate can see. An operation whose method or path is not a string literal, or a contract the scan cannot read, is reported instead of skipped.
+- c87bf7c: `nifra check` reports NF-C030 (a loader or action without its output schema) as an error when the
+  function's own body returns a data literal: an object, array, string, template, number or boolean,
+  as an expression body or a `return` of the function itself, including one inside `if`, `else`,
+  `for`, `while`, `try` or a `switch` case. The runtime refuses every request that reaches such a
+  return. A `return` inside a nested function, method, class or braced `case` block, and any
+  expression whose value the source does not show (a call, a variable, a ternary), keep the warning.
+- 412a9ee: The Bun dev server answers only loopback host names (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`) and refuses any other `Host` with 403. It already listened on 127.0.0.1 only, but answered any `Host`, so a page on another site whose name a DNS rebind pointed at 127.0.0.1 could read SSR pages, loader data and the error overlay. A name the server should answer under (a hosts-file entry, a tunnel) goes in the new `allowedHosts` option of `createDevServer`, or in `export const dev = { allowedHosts: [...] }` in `nifra.config.ts`.
+- b9cc68c: `nifra doctor` flags a `buildManifest(...)` call whose file list, an array literal or
+  `import.meta.glob` patterns, reaches a page under `routes/` but not the `.backend.*` half beside it.
+  `buildManifest` pairs the halves only from the list it is given, so such a manifest serves that page
+  without its loader, action and guards, which a test then passes against. The advisory names the
+  missing halves and points to `discoverRoutes(dir)` from `@nifrajs/web/fs` or the generated
+  `server-manifest`. It never fails the run. The testing guide documents both as the way to give a test
+  the routes the app serves.
+- 1a6616f: `reflectHooks(server)` from `@nifrajs/core/reflection` reports, for every route and for each prefix's unmatched paths, the hooks that run in order: their kind, the plugin or function name, and the site that registered them (`app`, `group <prefix>`, `merge #n`, `mount <path>`). Static `responseHeaders()` declarations appear with their header names. Origins are recorded only outside production builds; a production report sets `complete: false`.
+
+  `nifra routes --hooks [--json]` prints that report, and `--since <file>` prints only what runs differently from a saved one. `nifra upgrade --write` saves the report to `.nifra/hooks-before-upgrade.json` before it edits anything and prints the hook-scope diff (`--no-hooks` skips it). `nifra check --json` includes the report as `hooks` when `nifra.assurance.ts` names a `source`.
+
+- 846e2f6: `invariants` in `nifra.assurance.ts` accepts the L4 runner's fixture options - `witnesses`, `prepareRequest`, `isRejected`, `include` and `maxMutationsPerInput` - and `nifra levels` and the `nifra_levels` MCP tool pass them to every L4 run. `invariants.setup` provisions a throwaway target only when L4 runs: it is called once, before the first L4 request and never when the config is imported, and the `teardown` it returns runs after the run, a failing one included. A config needs an `executor`, a `setup`, or both. The contract witness and case-context types now live in `@nifrajs/core/assurance`; `@nifrajs/testing` re-exports them unchanged.
+- d3e79c4: A layout's `meta` receives its own loader data as `data`, the value its component renders, or `null` when the layout has no loader, and the page's data as `pageData`. A layout that loads the locale sets `<html lang>` from its data, and a client navigation keeps it, since the soft-navigation head resolves each layout's `meta` with the same data the server used. A page's `meta` is unchanged and also receives `pageData`. `resolveChainMeta` from `@nifrajs/web/client` resolves a route's `meta` chain this way. Generated route types add `Route.MetaArgs`, typed with the module's own loader data.
+
+  Upgrading: a layout `meta` that read the page's data as `data` reads `pageData` now. `nifra check` reports a layout with no loader whose `meta` reads `data` (NF-C040), and the 5.0.0 upgrade notes name the change.
+
+- 66554bd: `nifra migrate layout` migrates an API-only app: one that declares `"nifra": { "kind": "api" }`, or has no web config, no `routes/` and a `backend.ts` that exports `backend`. Only `backend.ts` moves, to `backend/app.ts`, with its own relative imports and the imports that name it. Nothing is split or zoned. The migration adds `backend` to tsconfig `include` and `.nifra/` to `.gitignore`, and adds `"nifra": { "kind": "api" }` to package.json when the app declares no kind: the dry run lists it, `--write` writes it. Web config without `routes/` stops the migration with the choice to make, and so does a declared API kind beside web config. The JSON result carries `mode: "web" | "api"`.
+- 47d1723: `nifra migrate layout` follows imports through tsconfig `paths` and `baseUrl` and package.json `imports`, so a module reached only through an alias is zoned and moved like any other. An alias import of a moved module is rewritten through the same alias, keeping its style (extension, index), when one of that alias's targets covers the new location; otherwise it is left as written and reported. The config's `clientModule` and `componentPipeline.entries` paths are entries too: `clientModule` and `entries.client` are browser code, `entries.ssr` and `entries.rsc` server code, and each path is rewritten when its module moves. A specifier that names no installed package, built-in or app file is reported instead of skipped.
+- fc0284a: Add opt-in server components across React, Vue, Svelte, Solid and Preact. Closed schemas project public props, owner GET admission and read capabilities govern every refresh, and private responses bypass shared caches. React uses native Flight; Vue, Svelte, Solid and Preact preserve native island state and owned ranges.
+
+  Add coordinated Vite builds and development generations, guarded component references, generated Bun/Node/Deno/Workers/Pages/Vercel outputs, typed outlets, router and server-function refresh integration, and release certification for browsers, packaged consumers, resource limits and performance. Existing applications retain their default rendering pipeline.
+
+  Reuse registered Web middleware continuations across requests while retaining request-local state.
+
+- 9f58295: An opaque mount can declare the routes it serves: `opaque: { reason, routes: [{ method, path, capabilities }] }` on `mount()`, `mountFetch()` and a `createWebApp` `mounts` entry. Capability assurance reports those routes with `analysis: "declared"` beside the known gap, checks their capabilities against the policy (an unknown id, or a domain write on a safe method, fails), and records them in the lockfile. `reflectMounts` returns them, project evidence carries them, the `nifra context` index lists them, and an adversarial contract run notes them as having no contract to test. A malformed declaration or a path outside the mount stops the analysis with an error that names it. A mount without a reason fails as before.
+- fe75b54: CLI commands that import the app only to read its declarations (`check`, `routes`, `context`, `openapi`, `contracts`, `capabilities`, `manifest`, `doctor`, `diff`, `sync-routes`, `sync-manifest`, and `assure` without its bundle flags) set `NIFRA_REFLECT` to the command name first, so app code can skip connecting to its services. A catalog command whose app keeps the process open after the command has answered (a client that reconnects, an interval) now exits 2 seconds later with its own exit code and a note, instead of running until it is killed.
+- b70b18a: The generated `./+types/<name>` module declares `Route.Loader` and `Route.Action`. Annotate a
+  route's loader, `export const loader: Route.Loader = async ({ params, api }) => ...`, and what it
+  returns is checked against `loaderOutput` at compile time. A field of the wrong type, a `defer(...)`
+  whose value does not match its `t.deferred(...)` field, or any data from a loader with no
+  `loaderOutput` is a type error. A redirect, a `Response` and returning nothing stay allowed.
+  `Route.Action` does the same against `actionOutput`, `revalidate(paths, data)` included. A field the
+  schema does not declare is not a type error, because the output guard drops it.
+
+  `@nifrajs/client` exports the types behind them: `InputOf<Module, Name>` (what a route module's
+  output schema accepts), `RouteLoaderReturn<Module>` and `RouteActionReturn<Module>`.
+
+  `nifra scaffold` and the `create-nifra` starters write the annotation. `nifra schemas` reports a
+  generated schema over an annotated loader or action as unchecked (NF-C033 warns), because the
+  annotation, not the body, is then the function's return type.
+
+- b5607a3: `nifra check` and `nifra capabilities` read a WebSocket route's path given as a module-level string `const`, in the same file or imported from a project file, as they do for HTTP routes. A socket path built at runtime gets the same NF-C036 finding, listed as `WS`.
+- 8d55d0b: The interpolated-SQL check (NF-C006) reads a function-local `const` as static text when its initializer is, so `const dir = desc ? "DESC" : "ASC"` or `const cols = "id, email"` inside a handler no longer flags. It also reads `.join(sep?)` with a literal or absent separator over an array that still holds its literal elements: an inline array, `Object.freeze([...])`, or a `const` array in the same file that is not exported and is only ever read with `.join()`, `.includes()`, `.indexOf()` or `.length`. An imported array counts only when frozen; `as const` does not count. A `let`, a parameter, an array that is pushed to, passed to a call or exported unfrozen, a shadowed name, and a template with a call inside still flag.
+- a18cef3: `nifra upgrade 5.0.0` pins the fixed group to 5.0.0 and prints each changed default with the `nifra check` finding or the one-line setting that keeps the 4.x behavior: the backend's `apiPrefix` (NF-C035), status pages inside their layouts (NF-C034, `inLayouts = false`), the WebSocket handshake's route chain, per-request Response ownership, and the optional `invariants.executor`.
+- b782d6c: `nifra doctor` and `nifra check` report mixed nifra versions in one workspace. They read the
+  versions pinned in `package.json` files, the versions installed in `node_modules` (followed to their
+  real location, so a linked repository reports its own) and the running CLI. When more than one
+  version appears, doctor prints an advisory naming each version and its source, and check reports
+  `NF-D002` (info) with the fix `nifra upgrade <highest>`, which runs each release's migration steps
+  before re-pinning. Neither fails the run, and both only read files.
+
+  The `nifra upgrade` plan now lists group packages linked from outside the workspace root under
+  "Left alone" (`UpgradePlan.linkedOutside`). The upgrade edits only files under the root and never
+  follows a symlinked package directory or `package.json`.
+
+- e0a25fe: `app.ws(path, { capabilities })` declares the capability ids a socket's code may reach, as an HTTP route's `capabilities` does. Reflection lists them on the `"WS"` route, and `nifra capabilities check` covers sockets: it finds each `.ws("/path", ...)` registration, compares the declaration with the effects reachable from that module, and reports an undeclared reach. A write whose definition needs request idempotency fails on a socket, which has no request idempotency. The handshake context carries the guard, so a runtime capability beacon in `upgrade()` fails closed on an undeclared capability.
+- 3630b6e: `reflectRoutes()` lists each WebSocket route under the pseudo-method `"WS"`, after the HTTP routes, with the evidence its handshake enforces: `nifra.authenticated` from the auth guards registered before it and `nifra.rate-limited` from the app's request hooks. A socket never claims evidence whose enforcement its message handlers bypass. Route assurance therefore classifies every socket, and an assurance rule selects sockets with `methods: ["WS"]`; a policy whose rules name only HTTP methods reports each socket as `unclassified-route`.
+
+### Patch Changes
+
+- Preserve the complete compiler file list when Bun exits with buffered output, so fresh scaffolds and large projects receive accurate TypeScript program coverage checks.
+- Normalize upgrade and version-drift report paths across Windows and Unix, and reject invalid TypeScript path substitutions with multiple wildcards.
+
+- 22e3df7: feat(web): the app's package.json can set zones with `"nifra": { "zones": { ... } }`. `packages` gives a side to packages that do not declare one, by exact name or a trailing-`*` prefix (`"@shop/*": "library"`); a package's own declaration still wins. `backend`, `frontend` and `shared` list extra app folders that count as that zone folder (`"backend": ["migrations"]`). Every build, dev server, `nifra check` and the TypeScript plugin read the setting; an invalid one fails with the exact key. An undeclared package is now reported once for the whole package, in the build and in `nifra check`, instead of once per file.
+- 4ce36d6: `nifra check` treats a module as backend-only only when it imports `@nifrajs/web/backend-only` in code. A mention of that import in a comment or a string, such as a note on how to opt in, no longer makes every route that imports the module fail with a server-only import error.
+- 8325581: Capability provenance follows an installed package hoisted above the app (a monorepo's root `node_modules`) the way it already followed one in the app's own `node_modules`. A route reaching a forbidden import through a hoisted package reported clean.
+- ad489d5: Capability provenance now follows imports into a workspace package that lives beside the app, as in an `apps/web` + `packages/*` monorepo. Before, a route reaching a forbidden import through such a package reported clean, because the walk stopped at any module outside the app directory. Installed packages under `node_modules` outside the app are still not entered.
+- b2fe060: `nifra check`'s server-only import walk (NF-C004) no longer stops at 8 hops or 200 modules. A sink past either limit, such as one module in a barrel of 250, was dropped without a word and the check passed. The walk now reads, parses and resolves each module once per check and searches each module's chain once, however many routes share it: 400 routes over 250 shared modules went from about 101,000 module reads and 1.3 s to 251 reads and 49 ms. `createServerOnlyChains` is the per-check entry point; `resolveServerOnlyChains` still answers for one module.
+- f2f037e: The `nifra check` help and the CLI README now say that with a `contracts.lock.json`, `nifra check` imports `backend/app.ts`, running its top-level code, in `--lints-only` mode too, to compare the routes it serves against the lock. They described the gate as static only.
+- d8315d2: `nifra check` keeps an interpolated-SQL site that a `// nifra-expect NF-C006: <reason>` comment silences in the report, as information carrying the comment's reason, as it already did for silenced security findings. A silenced finding from a rule outside the named sections is now reported with severity `info` instead of `warning`, and a report section that holds only information is marked `•` and `(info)` instead of the warning sign.
+- eb37e45: The `nifra check` report counts info findings as info, not as advisory: a section reads `⚠ <rule>: 1 (advisory) (+1 info)` or `✗ <rule>: 1 (+1 info)`, and the closing line reads `✓ check passed (1 advisory, 2 info)`. Before, a silenced finding (info) was counted as advisory.
+- 21adacc: `nifra check` reads an output schema given by name. `export const loaderOutput = userOutput` (or `output: userOutput` on a server function) passed NF-C031 even when `userOutput` named a credential field, because only the text after the `=` was read. The check now follows a bare name to its top-level declaration in the same file, through aliases, and reports each sensitive field once.
+- 83dccf3: NF-C031 reads the schemas an output schema names inside it (`t.object({ user: userSchema })`, `t.array(member)`) and schemas imported from another project file, each where it is declared. A sensitive field in such a schema passed `nifra check` and failed only when the route loaded. A schema under `t.declassified(...)` is not followed, and a schema shared by several routes is reported once, at its declaration.
+- 0d5c101: `nifra check` reads every file a build loads, not only TypeScript. `.jsx`, `.svelte` and `.vue` files, and `.js`/`.mjs`/`.cjs` files under `routes/`, `frontend/`, `shared/` or `backend/` (or with a zone suffix), now get the source rules: a `.jsx` or `.svelte` route importing `pg`, reading `process.env.DATABASE_URL` or carrying a secret key passed before. Svelte and Vue files are scanned as their `<script>` blocks, with the whole file read where markup can hold code, and this works on a TypeScript 7 install too. JavaScript files outside a zone (bundler configs, scripts) stay out of the scan.
+- 9e041e6: `nifra check` no longer compares every pair of routes in a file for overlaps (NF-C024): only routes whose leading literal segments agree are compared, so a file with 2,000 routes under distinct prefixes is checked in milliseconds instead of seconds. The verification work graph de-duplicates edges and walks impact through an edge index, so building and querying it grow linearly with the number of routes.
+- 4d894b0: `nifra check`'s server-only import rule (NF-C004) names server code the way the browser build does. It knew eight drivers; it now takes the build's list of server packages and driver entries (`stripe`, `@prisma/client`, `jsonwebtoken`, `bcrypt`, `nodemailer` and the rest), bare Node builtins with no browser counterpart (`fs`, `child_process`, `crypto`, ...), `require("x")` and `import x = require("x")`, and an installed workspace package that declares `"nifra": { "environment": "backend" }`. Bare `events`, `buffer`, `path` and `util` still pass, since each also names a browser polyfill. `@nifrajs/web/zones` exports the check as `isServerPackageSpecifier`.
+- a9a7317: `nifra check`'s interpolated-SQL rule (NF-C006) now reads the ways a statement reaches a driver that it used to miss:
+
+  - A statement held in a `var` or a reassigned `let`, or built up in steps (`let q = "SELECT …"; q += \` AND name = '${name}'\``). The rule checks every value assigned to the variable.
+  - A pg or mysql2 config object (`{ text }` or `{ sql }`).
+  - node-sqlite3's `all`/`get`/`each` and pg-promise's `any`/`one`/`none`/`many` and related calls. These names are common outside SQL, so these calls, and bare calls such as a destructured `query(…)`, only flag text that starts like a statement.
+  - A statement passed through `String(…)`, `.trim()`, `.toString()`, `.concat(…)` or `[…].join(…)`.
+  - A template that only joins values (`` `${where}` ``).
+  - A template-literal method key (`` db[`query`](…) ``).
+  - A same-file function that passes one of its parameters to a query. Its callers are now checked.
+
+  A `sql` tag that the same file defines as a function is no longer trusted as a driver's binding tag. A `nifra-expect NF-C006` marker now has to sit in a comment; inside a string the call passes, it no longer silences the finding.
+
+- b2e1ad2: A cancelled `nifra check` (an MCP cancel, or Ctrl+C) now stops every process its typecheck started, not only the `tsc` entry, so it ends at once instead of waiting for a compiler process still holding its output. Ctrl+C in a terminal still stops the check.
+- 19eb11d: feat(check): `nifra check` fails the typecheck when TypeScript files under `routes/`, `frontend/`, `backend/` or `shared/` sit outside the tsc program, so a stale tsconfig `include` can no longer pass a typecheck that never read them. One finding per folder lists the files. A file the tsconfig's `exclude` names (inherited through `extends`) is out on purpose and not reported; others kept out on purpose go under `"typecheck": { "ignore": [...] }` in `nifra.check.json`.
+- 1bf6625: `nifra check`'s zone rules (NF-C028, NF-C029, NF-C032 and the data guards) see every file the build zones. A file outside `routes/`, `frontend/`, `backend/` and `shared/` was skipped, so a folder declared in `"nifra": { "zones": { "frontend": [...] } }` and a `lib/x.frontend.ts` file could read private environment variables or carry a secret key without a finding. Such a file now belongs to the nearest app around it. A relative project root passed to `collectCheckResult` is resolved first; before, it left every file unzoned.
+- ea2e861: `nifra check` and `nifra doctor` read a regex literal that contains a quote or backtick as a regex, so the code after it is no longer misread as a string or a template.
+- 0feb6f4: Flags typed before the command (`nifra --json check`, `nifra --env-file .env dev`) now reach the command instead of being silently ignored.
+- de63922: `nifra mcp` exits when its client closes stdin, also after a `warm: true` call to `nifra_run` or `nifra_render`. The warm worker those calls start used to keep the server process alive after the session ended. The server now stops every warm worker and starts no new ones once stdin closes.
+- e57f36c: `nifra migrate layout` keeps the import a page's classic JSX compiles to. A route written with a `/** @jsx h */` pragma lost `import { h } from "preact"` when its loader moved to the backend half, because no identifier in the page names `h`. JSX now counts as a use of the `@jsx` and `@jsxFrag` pragma bindings, or of `React` when the file sets neither and no `@jsxImportSource`.
+- 817492d: fix(cli): `@nifrajs/cli` no longer depends on `create-nifra`. It ships its own copy of the agent-file generators, so installing the CLI pulls in only `@nifrajs/*` packages and a scoped release-age exclusion covers the whole tree.
+- fcbbfa8: `nifra scaffold` and the `nifra_scaffold` tool write a vanilla page as `routes/<name>.tsx`. They wrote `routes/<name>.ts`, which route discovery does not read as a page, so the app failed to load with `"<name>.backend.ts" has no frontend half`. The page needs no JSX to use the `.tsx` extension.
+- 232df6f: `nifra sdk --language python` writes a model's required fields before its optional ones. A model that listed an optional property before a required one produced a dataclass that Python refused to import (`non-default argument follows default argument`). Each group keeps the schema's order.
+- 917f942: The MCP tools that run project code in a subprocess (`nifra_test`, `nifra_run`, `nifra_render`, `nifra_ws`, the database tools and the app's own tools) end on time when their timeout or a cancel fires. A process the project started could hold the output pipes open after its parent was killed, so a 2 second `nifra_test` timeout took as long as that process lived. On macOS and Linux these subprocesses now lead their own process group, and stopping one stops everything it started. `nifra_test` follows a SIGTERM with SIGKILL after two seconds.
+- 4330e40: Server components and `nifra check` no longer crash on a project that installs TypeScript 7. TypeScript 7's package exports only `version`, with no in-process compiler API, so loading the component pipeline used to fail with a TypeError on first use. The pipeline now raises `NIFRA_TS_UNSUPPORTED` with the fix: pin the project to TypeScript 6. `nifra check` reports the same code. It gives no component module a receipt, so each one is checked as an ordinary backend import. The pipeline reads `componentPipeline` from a config file through `staticComponentPipeline` in `@nifrajs/web/server-components/source`.
+- 82b511f: NF-C039 counts a contract's operations as served only where one mount prefix serves them together. Each operation was matched on its own by path suffix, so a `/` operation matched any route of its method and `/:id` matched any route ending in `/:id`: an implementation `backend/app.ts` never mounted could pass when unrelated routes happened to end the same way.
+- 8c2c76a: feat(contracts): `contracts.lock.json` records the digest format it was hashed with. A lock from another format fails `nifra contracts check` (NF-K001) with one "re-snapshot" diagnostic instead of reporting every route as changed, and a lock without a format notes that it may predate the 4.0.1 rehash when it reports drift.
+- 77621c5: `nifra dev --bun` now carries a bunfig string holding a newline, tab or other control character into the dev server's config intact; such a value used to make the generated config unparseable.
+- 4db7481: `nifra dev` on Bun applies the `package.json` single-copy declaration (`"nifra": { "singleCopy": [...] }`) to the browser bundle, as `buildClient` does, so a linked package with its own copy of a declared package loads the app's copy without a `clientPlugins` entry. An app that also lists `singleCopyPlugin()` gets that instance in the resolver's place, once.
+- 39e2346: `nifra diff` with a missing baseline says where it looked and to create it with `nifra snapshot`, instead of a raw file error. Its text output lists each change with its severity, breaking first, and a summary line; the `--json` shape is unchanged. `nifra snapshot` and `nifra diff` on an app still on the retired root layout name `nifra migrate layout`. The contract proof reports a baseline outside the project as `the baseline <path> is outside the project directory`, a symlink that leaves it included.
+- 26c584e: `nifra doctor` (and the undeclared-dependency rule in `nifra check`) now read `tsconfig.json` the way TypeScript does. It used strict `JSON.parse` and ignored `extends`. A tsconfig with a comment or a trailing comma, or one that takes its `paths` from a shared base, made every alias import look like an undeclared package and failed the check. Doctor now uses the nearest tsconfig at or above each package, follows its `extends` chain, and accepts comments and trailing commas.
+- 714ba4b: `nifra check` reports packages duplicated with the same cause and install topology as one `duplicate-install` finding: the message names every package, and the fix and suggested config carry one `singleCopy` list covering all of them. `identityPreflight` in `--json` output still lists each package.
+- 96f440d: `nifra check` reads a `nifra-expect` marker on a finding's own line only from that line's comment. A marker inside a string literal on the flagged line, such as `token === expected ? "nifra-expect NF-S002: ..." : ""`, no longer silences or downgrades the finding.
+- cc81d85: `nifra check`'s fail-open gate rule (NF-S001) now reads a gate's catch block as code. Before, the words "throw" or "return false" anywhere in the block counted as failing closed, even inside a comment, a string, or a callback the catch never runs. The rule also recognises more gate names:
+
+  - `authenticate…`, `authorise…` and names ending in `Guard`.
+  - `ensure`, `verify`, `check` or `validate` followed by what a gate decides on, such as `verifyToken`, `ensureLoggedIn` or `checkPermission`. `ensureDir` and `checkHealth` are still not treated as gates.
+
+- 7c32c99: A `nifra:generated` output schema that was edited by hand is no longer reported as current. Before, `nifra schemas` and `nifra check` (NF-C033) compared only the hash in the marker line with a fresh render. The marker still matched after an edit, so a schema widened to `t.json()` passed. Both now also compare the schema's text with what `nifra schemas --write` would write. Reformatting, comments, quote style, quoted keys, trailing commas and semicolons do not count as edits. An edited schema is reported as stale with `edited: true`, and `--write` restores the generated version.
+- 077657f: `server({ gracefulSignals: { drainMs } })`, and `serve(app, { signals: { drainMs } })` on Node and Deno, set how long in-flight requests get to finish when SIGTERM or SIGINT stops the server before the stop forces them closed. `true` keeps the 10 second default. `nifra doctor` counts the object form as a graceful lifecycle.
+- 9a71e97: A hydration run (`nifra assure --hydration`, `nifra replay`) that times out or is cancelled now stops every process the project's code started, not only its own child, so it ends at its timeout instead of waiting on a process still holding its output. Ctrl+C in a terminal still stops the run.
+- 6d92f92: `nifra init-agents` now reports a symlinked agent file (a `CLAUDE.md` aliased to `AGENTS.md`, say) as left alone and writes the rest, instead of stopping the whole run. It still never writes through a symlink.
+- 437d3cd: `postgresRoleSql` and `nifra db-role` grant the role `SELECT` on each allowed schema only. On Postgres 14 and later, with nothing excluded, the role used to get `pg_read_all_data`, which reads every schema in the database whatever `schemas` named.
+- 3caaa91: On Windows, the `nifra_explain` MCP tool no longer shows a source codeframe for a file on another drive than the project; only files inside the project are shown.
+- 4877175: The `nifra_routes` MCP tool now holds `since` to the project directory, like every other path argument, instead of reading a hook report from any path.
+- 177915f: fix(mcp): `nifra mcp` re-reads the nifra version the project installs on every tool call, not only at startup. After an upgrade during a session, the version-sensitive tools (`nifra_check`, `nifra_types`, `nifra_docs`, `nifra_example`, `nifra_assure`, `nifra_contracts`) refuse with the restart fix instead of answering for the release the server started with.
+- ca54a23: `nifra mcp` started at a workspace root no longer walks every `node_modules` below a `**` workspace pattern to find the nifra app. The probe reads only the directories a pattern can match, within a fixed budget, and an unreadable `node_modules` no longer makes it fail.
+- 4893381: The `nifra_ws` MCP tool starts the project's backend on 127.0.0.1 for its WebSocket check. It listened on every interface, so the app, with its environment loaded, was reachable from the network while the check ran.
+- 347d7f4: `nifra migrate layout` keeps the `;` a file was written with on every import and export it rebuilds. A module that imports a moved export (`loader`, `action`, ...) from a route, a test included, now imports it from the route's backend half, and a statement that also names what stayed is split in two; a namespace or dynamic import that reads a moved name, and `export *`, are reported. When the app is one folder down in a package (`--dir src`), imports in the code beside it that the migration moves or splits out from under them are reported with the new path, and run from the package folder it names the `--dir` to use. A loader or action without an output schema is reported with `nifra schemas --write` as the way to draft one.
+- 20016a1: `nifra migrate layout --write` runs on a machine without git, falling back to the app's own `.gitignore` to decide whether `.nifra/` is ignored. It now removes only the folders its moves emptied, leaving folders that were already empty in place.
+- d96c958: feat(cli): `nifra migrate layout` updates the tooling around moved code. It rewrites `mock.module()`, `vi.mock()` and `jest.mock()` paths with the imports, adds the zone folders moved TypeScript lands in to tsconfig `include` (editing only that array, comments kept), adds `.nifra/` to `.gitignore` when nothing ignores it, and reports Tailwind `content` globs that no longer match moved files. Data files (JSON, YAML, CSV and similar) are reported instead of moved, since other tools may read them by path, and folders listed under `"nifra": { "zones" }` in package.json stay where they are.
+- 838187b: `nifra port` now scans a source file whose name only starts with "build" (such as `buildings.ts`). It still skips build scripts: `build.ts`, `build-<target>.ts` and `build.<name>.ts`.
+- 3fc5246: The generated Python SDK imports when a named array or union schema refers to a model declared after it: model aliases are now lazy `type` statements. Responses and error bodies typed by an alias now decode into their models instead of staying plain dicts.
+- e6cfcd7: `nifra verify --release` runs the sitemap gate (`check:sitemap`), which the default plan already ran. The full release plan skipped it, so a docs page added or removed without regenerating the sitemap passed release verification.
+- 7396253: `nifra replay` and the `nifra_replay` MCP tool now work in a project reached through a symlinked directory, and refuse a replay file that is itself a link out of the project.
+- 0d439a5: `nifra review` files every built-in check code under its own check. Codes added after NF-C023 fell through to `configuration`, so a private environment read or a credential in browser code (NF-C029, NF-C032) and the output-schema data guard (NF-C030, NF-C031, NF-C033) were reported as configuration rather than security. Route-table codes now report under `route-boundary`, zone imports under `server-boundary`, and contract visibility (NF-C039) under `contract-witness`.
+- aed07a2: `nifra review --diff` no longer drops a server-only import finding (NF-C004) whose route did not change. When a changed module adds the import that pulls server code into the browser bundle, the finding is reported on the route's import line. Review now keeps the finding in scope when any project file on the chain changed. Each NF-C004 finding records the files its chain runs through, and the diagnostic's compatibility view carries them as `modules`.
+- 7f12784: `nifra check` no longer reports these as non-constant-time secret comparisons (NF-S002): a comparison against `true` or `false`; a name whose last word states a fact about the secret rather than holding it (`type`, `kind`, `name`, `id`, `ids`, `length`, `len`, `count`, `size`, `mode`, `policy`, `version`, `sqlstate`, `status`, `enabled`, `required`, `ttl`, `expiry`, `expires`), such as `tokenType` or `SECRET_CAP_SQLSTATE`; and a comparison of two configuration reads (`process.env.X`, `Bun.env.X`, `import.meta.env.X`, `Deno.env.get("X")`, and `env.X` or `c.env.UPPER_SNAKE` where `env` or `c` is a parameter of the enclosing function). The secret word anywhere else in a name still matches, so `tokenValue`, `passwordHash`, `secretCode` and `tokenPrefix` are still reported, as is a configuration read compared with anything else.
+- cda6392: `nifra check`'s interpolated SQL rule (NF-C006) reads a `$${...}` span as a Postgres placeholder number when the expression provably evaluates to a number: arithmetic other than `+` (which always yields one), a `+` of two numbers, the index parameter of an array callback (`map`, `forEach`, `Array.from` and the like) that is never reassigned, a `const` or `for` counter that only ever holds numbers, `params.push(...)`, `Number`/`parseInt`/`parseFloat`/`Math.*`, and the `.length` of an array a local binding builds from a literal. `xs.map(fn).join(...)` and `Array.from(n, fn).join(...)` resolve when the callback's text does, so batch `VALUES ($1, $2), ...` and `IN ($1, $2, ...)` lists no longer need a `nifra-expect` comment, and a local array built with `.push(...)` of such text (a `WHERE` builder) resolves as well. A type annotation proves nothing, so a parameter typed `number` still flags.
+- 25d3d2b: `nifra migrate --from tailwind --to stylex` now rewrites only real JSX `className` attributes. A `className=` inside a template literal, string, comment, regex or JSX text is left as written, and a `.ts` module (which cannot hold JSX) is not rewritten.
+- f4e6ce5: `nifra upgrade --write --json` now prints one JSON document: the post-upgrade check result is included as `check` instead of being printed as a text report after the JSON.
+- 2b8aa01: `nifra upgrade` moves the fixed group's pins in `overrides` (npm and Bun, nested ones included), `resolutions` (Yarn and Bun) and `pnpm.overrides` along with the dependency fields, refusing a rollback there the same way, and rewrites each pin only inside the field it was read from. An override also counts toward the installed version that picks the recipes to run and toward the mixed-versions report in `nifra doctor` and `nifra check`. Another version pinned outside package.json is listed with its line and never edited: MCP configs such as `.mcp.json`, Dockerfiles and compose files, CI workflows, and lockfiles other than the workspace's own, with a note to regenerate them. The JSON plan carries them as `strayPins`.
+- 47ed9a9: `nifra check` runs the checks that read zones (NF-C028 to NF-C033) and the server-only import check (NF-C004) only on nifra code. The directory the check runs in always counts. Below it, a package whose package.json names neither `nifra` nor a `@nifrajs/` package and has no `nifra` setting, with no `nifra.config.ts` or `backend/framework.ts` on the way up, is another project, such as another framework's app kept in the same repository, so its `routes/` folder is not read as nifra routes.
+- Updated dependencies [7169820]
+- Updated dependencies [42153fb]
+- Updated dependencies [22e3df7]
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [1af7543]
+- Updated dependencies [674c658]
+- Updated dependencies [de27557]
+- Updated dependencies [dd0e530]
+- Updated dependencies [2173644]
+- Updated dependencies [c333ca7]
+- Updated dependencies [4d894b0]
+- Updated dependencies [4edee67]
+- Updated dependencies [281f5de]
+- Updated dependencies [6a95376]
+- Updated dependencies [6426107]
+- Updated dependencies [23b3672]
+- Updated dependencies [61901cd]
+- Updated dependencies [5e366e2]
+- Updated dependencies [2938a0d]
+- Updated dependencies [dc8439c]
+- Updated dependencies [b19cb37]
+- Updated dependencies [4330e40]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [8860117]
+- Updated dependencies [412a9ee]
+- Updated dependencies [65883e5]
+- Updated dependencies [0e20529]
+- Updated dependencies [d91fd44]
+- Updated dependencies [f7e36ec]
+- Updated dependencies [262e46d]
+- Updated dependencies [b13e071]
+- Updated dependencies [944623d]
+- Updated dependencies [6d9869d]
+- Updated dependencies [077657f]
+- Updated dependencies [b9cc68c]
+- Updated dependencies [de2cc1d]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [ecd738e]
+- Updated dependencies [7775c2b]
+- Updated dependencies [3db36b3]
+- Updated dependencies [7544cc0]
+- Updated dependencies [dab880c]
+- Updated dependencies [7775c2b]
+- Updated dependencies [09c47c5]
+- Updated dependencies [326caee]
+- Updated dependencies [f8e0ed5]
+- Updated dependencies [a588c18]
+- Updated dependencies [1cdcfe5]
+- Updated dependencies [e195fe8]
+- Updated dependencies [846e2f6]
+- Updated dependencies [55f4fdb]
+- Updated dependencies [7775c2b]
+- Updated dependencies [d3e79c4]
+- Updated dependencies [d922f65]
+- Updated dependencies [5b17850]
+- Updated dependencies [e58690c]
+- Updated dependencies [5377b66]
+- Updated dependencies [437d3cd]
+- Updated dependencies [cd07938]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [a1eda0a]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [62d73a7]
+- Updated dependencies [2f7299a]
+- Updated dependencies [29e62a0]
+- Updated dependencies [c613e7d]
+- Updated dependencies [5975163]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [d8f11a5]
+- Updated dependencies [e9e02cf]
+- Updated dependencies [b70b18a]
+- Updated dependencies [6f42b38]
+- Updated dependencies [870227d]
+- Updated dependencies [b77ae4c]
+- Updated dependencies [6ad9582]
+- Updated dependencies [48aad8c]
+- Updated dependencies [c669308]
+- Updated dependencies [2fbb4f0]
+- Updated dependencies [1d66252]
+- Updated dependencies [a6a6834]
+- Updated dependencies [166a6ff]
+- Updated dependencies [79be5af]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [c92f85f]
+- Updated dependencies [bf6eeb0]
+- Updated dependencies [5a3c27a]
+- Updated dependencies [15a3a66]
+- Updated dependencies [b7eff12]
+- Updated dependencies [c669c6a]
+- Updated dependencies [b40e83e]
+- Updated dependencies [067ea67]
+- Updated dependencies [b80ce77]
+- Updated dependencies [6e88552]
+- Updated dependencies [9b971fc]
+- Updated dependencies [2577fc7]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [391ab3c]
+- Updated dependencies [3bf7d6b]
+- Updated dependencies [7775c2b]
+- Updated dependencies [ab1935b]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/web@5.0.0
+  - @nifrajs/agent-review@5.0.0
+  - @nifrajs/core@5.0.0
+  - @nifrajs/mcp@5.0.0
+  - @nifrajs/testing@5.0.0
+  - @nifrajs/client@5.0.0
+  - @nifrajs/i18n@5.0.0
+  - @nifrajs/mcp-db@5.0.0
+  - @nifrajs/schema@5.0.0
+  - @nifrajs/runner@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

@@ -1,5 +1,0 @@
----
-"@nifrajs/coding-agent": minor
----
-
-fix(coding-agent): a native tool call whose input holds a string past 64 KiB (a `write_file` of a large file) runs, instead of failing the turn with `NATIVE_TURN_FAILED` before the tool is called. The `tool.started` event carries a bounded display copy of the input; approval and the tool get all of it. A reply longer than one event's text arrives whole as consecutive `assistant.message` events, and the model's history keeps it whole, instead of being cut at `maxMessageChars`. The new `maxReplyChars` option (default 1 MiB, at least 256) caps the reply and its stream; `maxMessageChars` now caps only the message `send` accepts, and a message past one event's text runs with a bounded `turn.started` prompt. NUL in a prompt, reply, tool input, or tool output, a tool call without input, a model asking for a tool name the protocol refuses, and an empty error message no longer produce an event `isAgentEvent` refuses; a prompt with NUL used to leave the turn's stream open forever. A failing tool's message is kept to 64 KiB, like its output.

@@ -45,30 +45,32 @@ describe("runNifraVerification", () => {
         const parentTerm = join(dir, "parent.term")
         const grandchildTerm = join(dir, "grandchild.term")
         const script = join(dir, "stubborn.ts")
+        const grandchildFile = join(dir, "grandchild.ts")
         const grandchildScript = [
           `import { writeFileSync } from "node:fs"`,
-          `process.on("SIGTERM", () => writeFileSync(${JSON.stringify(grandchildTerm)}, "ignored"))`,
+          `process.on("SIGTERM", () => writeFileSync(process.argv[2], "ignored"))`,
           `console.log("ready")`,
           `setInterval(() => {}, 1000)`,
         ].join("\n")
+        await writeFile(grandchildFile, grandchildScript)
         await writeFile(
           script,
           [
             `import { writeFileSync } from "node:fs"`,
-            `process.on("SIGTERM", () => writeFileSync(${JSON.stringify(parentTerm)}, "ignored"))`,
-            `const grandchild = Bun.spawn([process.execPath, "-e", ${JSON.stringify(grandchildScript)}], { stdout: "pipe", stderr: "inherit" })`,
+            `process.on("SIGTERM", () => writeFileSync(process.argv[2], "ignored"))`,
+            `const grandchild = Bun.spawn([process.execPath, process.argv[4], process.argv[5]], { stdout: "pipe", stderr: "inherit" })`,
             `const reader = grandchild.stdout.getReader()`,
             `const ready = await reader.read()`,
             `if (new TextDecoder().decode(ready.value).trim() !== "ready") throw new Error("grandchild did not become ready")`,
             `reader.releaseLock()`,
-            `writeFileSync(${JSON.stringify(pidFile)}, [process.pid, grandchild.pid].join("\\n"))`,
+            `writeFileSync(process.argv[3], [process.pid, grandchild.pid].join("\\n"))`,
             `setInterval(() => {}, 1000)`,
           ].join("\n"),
         )
         running = runNifraVerification("check", {
           cwd: dir,
           command: process.execPath,
-          commandArgs: [script],
+          commandArgs: [script, parentTerm, pidFile, grandchildFile, grandchildTerm],
           timeoutMs: 500,
         })
         for (let attempt = 0; !(await Bun.file(pidFile).exists()) && attempt < 50; attempt++)

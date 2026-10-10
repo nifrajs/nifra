@@ -36,7 +36,10 @@ export async function openResolved(realFile: string): Promise<FileHandle> {
 }
 
 /** Whether `handle` is the file at `realFile` with no symlink in its path. */
-export async function opensAt(handle: FileHandle, realFile: string): Promise<boolean> {
+export async function opensAt(
+  handle: Pick<FileHandle, "fd" | "stat">,
+  realFile: string,
+): Promise<boolean> {
   try {
     return (await readlink(`/proc/self/fd/${handle.fd}`)) === realFile
   } catch {
@@ -48,7 +51,10 @@ export async function opensAt(handle: FileHandle, realFile: string): Promise<boo
  * {@link opensAt} where no descriptor's path can be read. Exported for its test, which runs it on
  * every host.
  */
-export async function sameFileAt(handle: FileHandle, realFile: string): Promise<boolean> {
+export async function sameFileAt(
+  handle: Pick<FileHandle, "stat">,
+  realFile: string,
+): Promise<boolean> {
   // One step after another, so passing takes a swap back and a swap again between steps: the name
   // resolves to itself, then to the opened file, then to itself again. Identities are compared as
   // bigints because a Windows file index can exceed 2^53.

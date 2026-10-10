@@ -108,7 +108,8 @@ describe("generated route types", () => {
   })
 
   test("a quote or line break in a route file name still generates valid TypeScript", () => {
-    const name = `it's" x`
+    // A double quote is not a Windows filename character; apostrophes and U+2028 are portable.
+    const name = `it's x`
     write(`routes/${name}.tsx`, "export default () => null\n")
     write(`routes/${name}.backend.ts`, "export const loader = () => ({})\n")
     const [source] = [...routeTypeFiles({ appRoot: root }).values()]
@@ -118,7 +119,7 @@ describe("generated route types", () => {
       reportDiagnostics: true,
     })
     expect(diagnostics.diagnostics ?? []).toEqual([])
-    expect(source).toContain(`it's\\"\\u2028x.backend`)
+    expect(source).toContain(`it's\\u2028x.backend`)
     expect(source.split("\n")[0]).toContain("\\u2028")
   })
 
