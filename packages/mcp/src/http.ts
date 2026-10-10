@@ -153,6 +153,7 @@ const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const MAX_BODY_BYTES = MAX_TRANSPORT_BYTES
 const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000
 const MAX_RESPONSE_BYTES = MAX_TRANSPORT_BYTES
+const DEFAULT_MAX_PENDING_BYTES = 4 * 1024 * 1024
 const TEXT_DECODER = new TextDecoder()
 const TEXT_ENCODER = new TextEncoder()
 const SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
@@ -172,11 +173,24 @@ function assertResponseLimit(value: number): void {
   })
 }
 
+function assertPendingLimit(value: number): void {
+  assertTransportByteLimit(value, {
+    minimum: 1_024,
+    maximum: MAX_TRANSPORT_BYTES,
+    label: "MCP maxPendingBytes",
+  })
+}
+
 export interface McpHttpOptions {
   /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */
   readonly maxBodyBytes?: number
   /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */
   readonly maxResponseBytes?: number
+  /**
+   * Maximum bytes an SSE stream queues for a client that is not reading. Past it the stream is
+   * dropped and the tool call it carries is cancelled. Default 4 MiB.
+   */
+  readonly maxPendingBytes?: number | undefined
   /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */
   readonly features?: McpServerFeatures
   /** Shown on the GET health page so each host can describe itself. */
@@ -237,6 +251,7 @@ function eventStreamResponse(
   run: (stream: EventStreamControl) => void | Promise<void>,
   keepAliveMs = 0,
   maxFrameBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  maxPendingBytes = DEFAULT_MAX_PENDING_BYTES,
 ): Response {
   const abortController = new AbortController()
   let closed = false
@@ -272,6 +287,16 @@ function eventStreamResponse(
 
   const write = (frame: string): void => {
     if (closed) return
+    // The queue only shrinks as the runtime writes to the socket, so a backlog past the cap is a
+    // client that stopped reading. Erroring the body releases the queue; finishing cancels the call.
+    if ((controller?.desiredSize ?? 0) < 0) {
+      try {
+        controller?.error(new Error("mcp_sse_client_too_slow"))
+      } finally {
+        finish(false)
+      }
+      return
+    }
     try {
       controller?.enqueue(TEXT_ENCODER.encode(frame))
     } catch {
@@ -301,35 +326,38 @@ function eventStreamResponse(
     },
   }
 
-  const body = new ReadableStream<Uint8Array>({
-    start(nextController) {
-      controller = nextController
-      if (request.signal.aborted) {
-        finish(true)
-        return
-      }
-      onRequestAbort = () => finish(true)
-      request.signal.addEventListener("abort", onRequestAbort, { once: true })
-      if (keepAliveMs > 0) {
-        heartbeat = setInterval(() => stream.comment(), keepAliveMs)
-        ;(heartbeat as { unref?: () => void }).unref?.()
-      }
-      void (async () => run(stream))().then(
-        () => stream.close(),
-        (error: unknown) => {
-          if (closed) return
-          try {
-            controller?.error(error instanceof Error ? error : new Error("mcp_sse_failed"))
-          } finally {
-            finish(false)
-          }
-        },
-      )
+  const body = new ReadableStream<Uint8Array>(
+    {
+      start(nextController) {
+        controller = nextController
+        if (request.signal.aborted) {
+          finish(true)
+          return
+        }
+        onRequestAbort = () => finish(true)
+        request.signal.addEventListener("abort", onRequestAbort, { once: true })
+        if (keepAliveMs > 0) {
+          heartbeat = setInterval(() => stream.comment(), keepAliveMs)
+          ;(heartbeat as { unref?: () => void }).unref?.()
+        }
+        void (async () => run(stream))().then(
+          () => stream.close(),
+          (error: unknown) => {
+            if (closed) return
+            try {
+              controller?.error(error instanceof Error ? error : new Error("mcp_sse_failed"))
+            } finally {
+              finish(false)
+            }
+          },
+        )
+      },
+      cancel() {
+        finish(false)
+      },
     },
-    cancel() {
-      finish(false)
-    },
-  })
+    new ByteLengthQueuingStrategy({ highWaterMark: maxPendingBytes }),
+  )
 
   return new Response(body, {
     status: 200,
@@ -469,6 +497,8 @@ export async function respondMcpHttp(
   assertByteLimit(maxBodyBytes)
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
   assertResponseLimit(maxResponseBytes)
+  const maxPendingBytes = options.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES
+  assertPendingLimit(maxPendingBytes)
   if (!hostAllowed(request, options.allowedHosts)) {
     return Response.json(rpcError(null, -32600, "host not allowed"), { status: 403 })
   }
@@ -493,6 +523,7 @@ export async function respondMcpHttp(
         },
         SSE_KEEP_ALIVE_MS,
         maxResponseBytes,
+        maxPendingBytes,
       )
     }
     return new Response(
@@ -570,6 +601,7 @@ export async function respondMcpHttp(
       },
       0,
       maxResponseBytes,
+      maxPendingBytes,
     )
   }
   const response = await dispatch()

@@ -184,6 +184,55 @@ describe("mountAgent resumable streams", () => {
     expect(replayText).toContain("kept")
   })
 
+  test("an SSE response past maxOutputBytes ends with an output_limit error frame", async () => {
+    const { app, call } = captureApp()
+    const answer = "x".repeat(4096)
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(outputModel({ answer })),
+      maxOutputBytes: 1024,
+    })
+
+    const res = await call(post({ input: { prompt: "hey" } }, { accept: "text/event-stream" }))
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    const text = new TextDecoder().decode(bytes)
+    expect(bytes.byteLength).toBeLessThanOrEqual(1024)
+    expect(text).toContain("event: error")
+    expect(text).toContain('"output_limit"')
+    expect(text).not.toContain(answer)
+  })
+
+  test("a replay is held to maxOutputBytes too", async () => {
+    const { app, call } = captureApp()
+    const answer = "x".repeat(4096)
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(outputModel({ answer })),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      maxOutputBytes: 1024,
+    })
+    const turn = (headers: Record<string, string>) =>
+      call(post({ input: { prompt: "hey" }, turnId: "run-capped" }, headers))
+
+    expect(await (await turn({ accept: "text/event-stream" })).text()).toContain('"output_limit"')
+    const replay = new Uint8Array(
+      await (await turn({ accept: "text/event-stream", "last-event-id": "0" })).arrayBuffer(),
+    )
+    expect(replay.byteLength).toBeLessThanOrEqual(1024)
+    expect(new TextDecoder().decode(replay)).toContain('"output_limit"')
+  })
+
+  test("refuses an output cap it cannot enforce", () => {
+    for (const maxOutputBytes of [0, 1023, Number.NaN, 64 * 1024 * 1024 + 1])
+      expect(() =>
+        mountAgent(captureApp().app, {
+          agent: definition,
+          ports: ports(outputModel({ answer: "x" })),
+          maxOutputBytes,
+        }),
+      ).toThrow(RangeError)
+  })
+
   test("a reconnect rejoins a still-running turn without starting a second run", async () => {
     const { app, call } = captureApp()
     let release!: () => void

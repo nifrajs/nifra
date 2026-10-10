@@ -73,6 +73,11 @@ dropped stream, so the disconnect aborts `ports.signal` and the turn suspends as
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.
+
+One SSE response emits at most `maxOutputBytes` (default 4 MiB), so a client that stops reading
+cannot make the server queue a whole run. Past the cap the response ends with an `error` frame
+(`output_limit`): with an `evidenceLog` the run keeps recording and a `Last-Event-ID` reconnect reads
+on from where the response stopped; without one the run is cancelled.
 When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
 tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
 reused `turnId` finds none of them. Without it a turn id works as a bearer capability. The owner

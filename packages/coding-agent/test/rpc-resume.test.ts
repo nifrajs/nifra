@@ -15,11 +15,16 @@ class GatedBackend implements AgentBackend {
   readonly info = { name: "gated", capabilities: [] }
   readonly cancels: string[] = []
   readonly cancelled = Promise.withResolvers<void>()
+  /** How many deltas the backend has produced so far. */
+  produced = 0
   private readonly gates: Array<PromiseWithResolvers<void>> = []
   private current: AgentSessionSnapshot | undefined
   private seq = 0
 
-  constructor(private readonly steps: number) {
+  constructor(
+    private readonly steps: number,
+    private readonly delta: (step: number) => string = (step) => `step-${step}`,
+  ) {
     for (let index = 0; index < steps; index++) this.gates.push(Promise.withResolvers<void>())
   }
 
@@ -53,7 +58,8 @@ class GatedBackend implements AgentBackend {
           yield backend.event({ type: "session.stopped", reason: "cancelled" })
           return
         }
-        yield backend.event({ type: "assistant.delta", turnId: "t1", text: `step-${step}` })
+        backend.produced++
+        yield backend.event({ type: "assistant.delta", turnId: "t1", text: backend.delta(step) })
       }
       yield backend.event({ type: "assistant.message", turnId: "t1", text: "done" })
     })()
@@ -250,6 +256,43 @@ describe("resumable RPC turns", () => {
     }
   })
 
+  test("a client that stops reading holds the turn still instead of the server queueing it", async () => {
+    const steps = 256
+    const backend = new GatedBackend(steps, () => "x".repeat(64 * 1024))
+    for (let step = 0; step < steps; step++) backend.release(step)
+    const server = await serve(backend)
+    try {
+      const unread = await server.call("turn.send", { message: "go" })
+      // Let the socket fill: production stops once nothing more is pulled.
+      let last = -1
+      for (let quiet = 0; quiet < 50; ) {
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        quiet = backend.produced === last ? quiet + 1 : 0
+        last = backend.produced
+      }
+      expect(backend.produced).toBeLessThan(steps)
+      await unread.body?.cancel()
+      await backend.cancelled.promise
+      expect(backend.cancels).toEqual(["client disconnected"])
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test("control: a client that reads receives the whole turn", async () => {
+    const steps = 256
+    const backend = new GatedBackend(steps, () => "x".repeat(64 * 1024))
+    for (let step = 0; step < steps; step++) backend.release(step)
+    const server = await serve(backend)
+    try {
+      const read = await frames(await server.call("turn.send", { message: "go" })).rest()
+      expect(read.filter((frame) => text(frame)?.length === 64 * 1024)).toHaveLength(steps)
+      expect(backend.produced).toBe(steps)
+    } finally {
+      await server.stop()
+    }
+  })
+
   test("without resumableTurns a disconnect still cancels and attach is unsupported", async () => {
     const backend = new GatedBackend(1)
     const server = await serve(backend)
@@ -291,6 +334,21 @@ describe("ReplayableTurn", () => {
     turn.end()
     expect(await read(turn.attach(0))).toBe("bbbbbbbb")
     expect(turn.attach(-1)).toBeUndefined()
+  })
+
+  test("a follower that stops reading is dropped past the budget and can attach again", async () => {
+    const counts: number[] = []
+    const turn = new ReplayableTurn(-1, { maxEvents: 1024, maxBytes: 1024 }, (count) =>
+      counts.push(count),
+    )
+    const unread = turn.follow()
+    for (let seq = 0; seq < 100; seq++) turn.push(seq, bytes("x".repeat(100)))
+    expect(turn.following).toBe(0)
+    expect(counts).toEqual([1, 0])
+    await expect(unread.getReader().read()).rejects.toThrow("turn follower fell behind")
+    const again = turn.attach(95)
+    turn.end()
+    expect(await read(again)).toBe("x".repeat(400))
   })
 
   test("reports how many clients follow while it runs", async () => {

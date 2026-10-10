@@ -41,7 +41,8 @@ export interface CodingAgentRpcServerOptions {
    * Keep a `turn.send` running when its client disconnects, and let a client that comes back read
    * what it missed with `turn.attach` (an `afterSeq` cursor, or `Last-Event-ID`). The newest
    * `replayEvents` frames, up to `replayBytes`, are held (defaults 1024 and 8 MiB); a turn no client
-   * has followed for `detachedTimeoutMs` (default 2 minutes) is cancelled.
+   * has followed for `detachedTimeoutMs` (default 2 minutes) is cancelled. A client that stops reading
+   * is dropped once it falls `replayBytes` behind what is held, and can attach again from its cursor.
    */
   readonly resumableTurns?:
     | boolean
@@ -376,21 +377,25 @@ export class CodingAgentRpcServer {
         const encoder = new TextEncoder()
         const includeErrorStacks = this.options.exposeErrorStacks === true
         const maxResponseBytes = this.maxResponseBytes
+        // Pulled, not pushed: the turn advances only as the client reads, so one that stops reading
+        // holds the backend still instead of the server queueing the rest of the turn for it.
+        const events = stream[Symbol.asyncIterator]()
         let finished = false
         const body = new ReadableStream<Uint8Array>({
-          async start(controller) {
+          async pull(controller) {
+            if (finished) return
             try {
-              for await (const event of stream) {
-                if (finished) return
-                const frame = eventFrame(event, includeErrorStacks)
-                if (serializedByteLength(frame) > maxResponseBytes)
-                  throw new Error("turn event exceeded the configured response limit")
-                controller.enqueue(encoder.encode(frame))
-              }
-              if (!finished) {
+              const next = await events.next()
+              if (finished) return
+              if (next.done === true) {
                 finished = true
                 controller.close()
+                return
               }
+              const frame = eventFrame(next.value, includeErrorStacks)
+              if (serializedByteLength(frame) > maxResponseBytes)
+                throw new Error("turn event exceeded the configured response limit")
+              controller.enqueue(encoder.encode(frame))
             } catch (error) {
               if (finished) return
               finished = true
@@ -408,6 +413,7 @@ export class CodingAgentRpcServer {
           cancel: async () => {
             if (finished) return
             finished = true
+            void events.return?.().catch(() => {})
             if (sessionId !== undefined)
               await this.host.backend.cancel(sessionId, "client disconnected").catch(() => {})
           },

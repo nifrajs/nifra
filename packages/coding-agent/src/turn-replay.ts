@@ -107,28 +107,41 @@ export class ReplayableTurn {
 
   private open(cursor: number): ReadableStream<Uint8Array> {
     let listener: TurnListener | undefined
-    return new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        for (const frame of this.held) if (frame.seq > cursor) controller.enqueue(frame.bytes)
-        if (this.ended) {
-          if (this.terminal !== undefined) controller.enqueue(this.terminal)
-          controller.close()
-          return
-        }
-        listener = {
-          frame: (bytes) => controller.enqueue(bytes),
-          end: (terminal) => {
-            if (terminal !== undefined) controller.enqueue(terminal)
+    // The queue counts bytes, so it can tell a follower that stopped reading: one more than the held
+    // budget behind the held frames is dropped, and can attach again from the last seq it read.
+    const behind = -this.limits.maxBytes
+    return new ReadableStream<Uint8Array>(
+      {
+        start: (controller) => {
+          for (const frame of this.held) if (frame.seq > cursor) controller.enqueue(frame.bytes)
+          if (this.ended) {
+            if (this.terminal !== undefined) controller.enqueue(this.terminal)
             controller.close()
-          },
-        }
-        this.listeners.add(listener)
-        this.onListeners(this.listeners.size)
+            return
+          }
+          listener = {
+            frame: (bytes) => {
+              if ((controller.desiredSize ?? 0) < behind) {
+                const reason = new Error("turn follower fell behind")
+                controller.error(reason)
+                throw reason
+              }
+              controller.enqueue(bytes)
+            },
+            end: (terminal) => {
+              if (terminal !== undefined) controller.enqueue(terminal)
+              controller.close()
+            },
+          }
+          this.listeners.add(listener)
+          this.onListeners(this.listeners.size)
+        },
+        cancel: () => {
+          if (listener !== undefined) this.detach(listener)
+        },
       },
-      cancel: () => {
-        if (listener !== undefined) this.detach(listener)
-      },
-    })
+      new ByteLengthQueuingStrategy({ highWaterMark: this.limits.maxBytes }),
+    )
   }
 
   private detach(listener: TurnListener): void {
