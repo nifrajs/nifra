@@ -66,7 +66,7 @@ export class MemoryResponseCache implements ResponseCacheStore {
 
 export interface CacheOptions {
   readonly store: ResponseCacheStore
-  /** Time to live in milliseconds. */
+  /** Maximum time to live in milliseconds; response freshness can shorten it. */
   readonly ttlMs: number
   /** Methods cached. Default `["GET", "HEAD"]`. */
   readonly methods?: readonly string[]
@@ -80,7 +80,8 @@ export interface CacheOptions {
   readonly maxBytes?: number
   /** Respect request `Cache-Control: no-cache/no-store`. Default `true`. */
   readonly respectRequestCacheControl?: boolean
-  /** Respect response `Cache-Control: private/no-store`. Default `true`. */
+  /** Respect response private/no-store/no-cache and max-age/s-maxage freshness. Default `true`.
+   * Responses requiring validation bypass this cache, which has no revalidation transport. */
   readonly respectResponseCacheControl?: boolean
   /** Cache responses with `Set-Cookie`. Default `false`. */
   readonly cacheSetCookie?: boolean
@@ -109,8 +110,28 @@ function cacheControlHas(headers: Headers, names: readonly string[]): boolean {
   const parts = value
     .toLowerCase()
     .split(",")
-    .map((part) => part.trim().split("=", 1)[0])
+    .map((part) => part.trim().split("=", 1)[0]?.trim())
   return names.some((name) => parts.includes(name))
+}
+
+function responseLifetimeMs(headers: Headers, ttlMs: number): number {
+  if (cacheControlHas(headers, ["private", "no-store", "no-cache"])) return 0
+  const directives = headers.get("cache-control")?.split(",") ?? []
+  // This is a shared cache: s-maxage takes precedence over max-age. Ambiguous freshness is stale.
+  for (const name of ["s-maxage", "max-age"]) {
+    const matches = directives.filter(
+      (part) => part.trim().split("=", 1)[0]?.trim().toLowerCase() === name,
+    )
+    if (matches.length === 0) continue
+    if (matches.length !== 1) return 0
+    const raw = matches[0]?.slice(matches[0].indexOf("=") + 1).trim() ?? ""
+    const value = raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw
+    const seconds = parseLength(value)
+    if (seconds === undefined || !Number.isFinite(seconds)) return 0
+    const age = parseLength(headers.get("age")) ?? 0
+    return Math.min(ttlMs, Math.max(0, seconds - age) * 1000)
+  }
+  return ttlMs
 }
 
 function appendVary(headers: Headers, vary: readonly string[]): void {
@@ -311,25 +332,33 @@ export function cache(options: CacheOptions): Middleware {
       requestKeys.set(req, key)
       const entry = await store.get(key)
       if (entry === undefined) return undefined
+      const cachedHeaders = new Headers([...entry.headers])
       // Never replay a personalized entry before route-scoped authentication runs. Public entries
       // remain eligible (and are explicitly marked by their response Cache-Control metadata).
       if (
         !cacheAuthenticated &&
         hasAuthentication(req) &&
-        !cacheControlHas(new Headers(entry.headers as Array<[string, string]>), [
-          "public",
-          "s-maxage",
-        ])
+        !cacheControlHas(cachedHeaders, ["public", "s-maxage"])
       ) {
         return undefined
       }
-      if (Date.now() >= entry.expiresAt) {
+      const lifetimeMs = respectResponseCacheControl
+        ? responseLifetimeMs(cachedHeaders, ttlMs)
+        : ttlMs
+      if (
+        lifetimeMs === 0 ||
+        Date.now() >= Math.min(entry.expiresAt, entry.storedAt + lifetimeMs)
+      ) {
         await store.delete?.(key)
         return undefined
       }
       hits.add(req)
-      const headers = new Headers([...entry.headers])
-      headers.set("age", String(Math.max(0, Math.floor((Date.now() - entry.storedAt) / 1000))))
+      const headers = cachedHeaders
+      const age = parseLength(headers.get("age")) ?? 0
+      headers.set(
+        "age",
+        String(age + Math.max(0, Math.floor((Date.now() - entry.storedAt) / 1000))),
+      )
       if (cacheStatusHeader !== false) headers.set(cacheStatusHeader, "HIT")
       return new Response(req.method === "HEAD" ? null : entry.body.slice(), {
         status: entry.status,
@@ -348,7 +377,10 @@ export function cache(options: CacheOptions): Middleware {
       if (respectRequestCacheControl && cacheControlHas(req.headers, ["no-store"])) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
-      if (respectResponseCacheControl && cacheControlHas(res.headers, ["private", "no-store"])) {
+      const lifetimeMs = respectResponseCacheControl
+        ? responseLifetimeMs(res.headers, ttlMs)
+        : ttlMs
+      if (lifetimeMs === 0) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       if (!cacheSetCookie && res.headers.has("set-cookie")) {
@@ -376,18 +408,21 @@ export function cache(options: CacheOptions): Middleware {
       if (declared !== undefined && declared > maxBytes) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
+      const storedAt = Date.now()
       const captured = await readBytesCapped(res, maxBytes)
       if (!("bytes" in captured)) {
         return withStatusHeader(captured.response, cacheStatusHeader, "BYPASS", req)
       }
       const body = captured.bytes
       const capturedResponse = captured.response
+      const expiresAt = storedAt + lifetimeMs
+      if (Date.now() >= expiresAt) {
+        return withStatusHeader(capturedResponse, cacheStatusHeader, "BYPASS", req)
+      }
 
       const headers = new Headers(capturedResponse.headers)
-      headers.delete("age")
       if (cacheStatusHeader !== false) headers.delete(cacheStatusHeader)
       appendVary(headers, vary)
-      const now = Date.now()
       const key = requestKeys.get(req) ?? keyOf(req)
       requestKeys.delete(req)
       await store.set(key, {
@@ -395,8 +430,8 @@ export function cache(options: CacheOptions): Middleware {
         statusText: res.statusText,
         headers: [...headers.entries()],
         body,
-        expiresAt: now + ttlMs,
-        storedAt: now,
+        expiresAt,
+        storedAt,
       })
       const outgoing = new Headers(capturedResponse.headers)
       appendVary(outgoing, vary)

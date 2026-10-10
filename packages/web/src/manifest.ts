@@ -334,6 +334,8 @@ export type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>
 export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
+  /** Layout loader that must run before actions and is not retained across the action's render. */
+  readonly gate?: boolean
   readonly action?: Action
   /**
    * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the

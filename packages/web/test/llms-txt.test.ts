@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { RESERVED_EXACT_KEYS, RESERVED_VERB_KEYS } from "../../client/src/reserved.ts"
 import { generateLlmsTxt } from "../src/llms-txt.ts"
 
 /** A schema node the way a `t`/Standard Schema exposes it: the raw JSON Schema hangs off `.jsonSchema`. */
@@ -105,6 +106,42 @@ describe("generateLlmsTxt", () => {
     // errors contract → per-status error schemas
     expect(out).toContain("Error 404 Schema")
     expect(out).toContain("message: string")
+  })
+
+  test("reserved path segments use calls on the parent node", async () => {
+    const segments = [
+      ...RESERVED_VERB_KEYS,
+      ...RESERVED_VERB_KEYS.map((key) => key.toUpperCase()),
+      ...RESERVED_EXACT_KEYS,
+    ]
+    const out = await generateLlmsTxt(true, [], {
+      routes: () =>
+        segments.map((segment) => ({
+          method: "POST",
+          path: `/api/${segment}`,
+          schema: { body: schema({ type: "object" }) },
+        })),
+    })
+    for (const segment of segments) {
+      expect(out).toContain(`await api.api(${JSON.stringify(segment)}).post(body)`)
+    }
+  })
+
+  test("DELETE calls keep a declared body in the options alongside query", async () => {
+    const body = schema({ type: "object" })
+    const query = schema({ type: "object" })
+    const out = await generateLlmsTxt(true, [], {
+      routes: () => [
+        { method: "DELETE", path: "/items", schema: { body } },
+        { method: "DELETE", path: "/filtered", schema: { body, query } },
+        { method: "DELETE", path: "/queried", schema: { query } },
+        { method: "DELETE", path: "/empty" },
+      ],
+    })
+    expect(out).toContain("await api.items.delete({ body })")
+    expect(out).toContain("await api.filtered.delete({ body, query })")
+    expect(out).toContain("await api.queried.delete({ query })")
+    expect(out).toContain("await api.empty.delete()")
   })
 
   test("reports when no API routes are registered", async () => {

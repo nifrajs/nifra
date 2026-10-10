@@ -20,11 +20,11 @@ let currentEffect: EffectNode | undefined
 let owner: Array<() => void> | undefined
 
 /** Run `fn` with the disposer of every effect and computed it creates pushed onto `kids`. */
-export function owned(kids: Array<() => void>, fn: () => void): void {
+export function owned<T>(kids: Array<() => void>, fn: () => T): T {
   const prev = owner
   owner = kids
   try {
-    fn()
+    return fn()
   } finally {
     owner = prev
   }
@@ -37,14 +37,6 @@ const pendingEffects = new Set<EffectNode>()
 export type Signal<T> = {
   (): T
   set(next: T | ((prev: T) => T)): void
-}
-
-const scheduleEffect = (e: EffectNode): void => {
-  if (batchDepth > 0) {
-    pendingEffects.add(e)
-  } else {
-    e.run()
-  }
 }
 
 /**
@@ -89,7 +81,10 @@ function readable<T>(initial: T, subs: Set<EffectNode>): Signal<T> {
     if (Object.is(resolved, value)) return
     value = resolved
     // Snapshot: an effect re-run may resubscribe; iterating the live set would loop.
-    for (const e of [...subs]) scheduleEffect(e)
+    for (const e of [...subs]) {
+      if (batchDepth > 0) pendingEffects.add(e)
+      else e.run()
+    }
   }
   return read
 }

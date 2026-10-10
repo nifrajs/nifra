@@ -128,6 +128,34 @@ describe("islands", () => {
     expect(stranger.getAttribute("data-island-mounted")).toBeNull()
   })
 
+  test("disposing releases handlers and the host for remount, once per mount", () => {
+    const name = uniqueName()
+    const button = new FakeElement({ "data-bind-on": "click:save" })
+    const host = new FakeHost({ "data-island": name }, [button])
+    const root = new FakeRoot([host])
+    let mounts = 0
+    let saves = 0
+    island(name, () => {
+      mounts++
+      return { save: () => saves++ }
+    })
+    const first = mountIslands(root)
+    button.dispatch("click")
+    first()
+    button.dispatch("click")
+    expect(saves).toBe(1)
+    expect(host.getAttribute("data-island-mounted")).toBeNull()
+    const second = mountIslands(root)
+    first()
+    expect(host.getAttribute("data-island-mounted")).toBe("")
+    button.dispatch("click")
+    expect(mounts).toBe(2)
+    expect(saves).toBe(2)
+    second()
+    button.dispatch("click")
+    expect(saves).toBe(2)
+  })
+
   test("malformed state JSON mounts with fallbacks (static markup stays usable)", () => {
     const name = uniqueName()
     const text = new FakeElement({ "data-bind-text": "count" })

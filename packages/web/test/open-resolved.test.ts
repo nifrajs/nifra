@@ -145,3 +145,16 @@ test("the node and image copies match this one", async () => {
     expect({ pkg, body: copy.split("\n").slice(2).join("\n") }).toEqual({ pkg, body: source })
   }
 })
+
+// The race between realpath and open cannot be staged deterministically through a server, so the
+// call sites are held to the helper by source: a bare open() there checks only the last component.
+test("every static-file server opens through openResolved", async () => {
+  for (const file of ["web/src/public-dir.ts", "image/src/server.ts", "node/src/index.ts"]) {
+    const source = await readFile(new URL(`../../${file}`, import.meta.url), "utf8")
+    expect({ file, helper: /\bawait openResolved\(/.test(source) }).toEqual({ file, helper: true })
+    expect({ file, bareOpen: /\b(?:open|fs\.open|promises\.open)\(/.test(source) }).toEqual({
+      file,
+      bareOpen: false,
+    })
+  }
+})

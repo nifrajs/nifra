@@ -16,6 +16,13 @@ The plugin is enabled by default only when `NODE_ENV=development`. It records a 
 and serves the overlay stream at `/_nifra/devtools`; remote hosts and cross-origin access stay denied
 unless explicitly allowed. Leave it unregistered in production for zero request-path overhead.
 
+Each SSE connection also has a finite pending-byte budget (`maxPendingBytes`, default 64 KiB),
+including keep-alive frames. A slow reader that fills that budget is closed and releases its
+connection slot. Already queued frames drain before EOF; the overflow frame is dropped. Browser
+`EventSource` reconnects automatically. Initial delivery includes only the newest history suffix
+that fits the byte budget. This is a recent trace view, so reconnects can have event-id gaps when
+older events no longer fit the history or connection budget; it does not guarantee lossless replay.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

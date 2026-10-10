@@ -44,6 +44,12 @@ export class FakeElement {
     list.push(listener)
     this.listeners.set(type, list)
   }
+  removeEventListener(type: string, listener: (event: Event) => void): void {
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) ?? []).filter((item) => item !== listener),
+    )
+  }
   dispatch(type: string, event: Partial<Event> = {}): void {
     for (const l of this.listeners.get(type) ?? []) l(event as Event)
   }

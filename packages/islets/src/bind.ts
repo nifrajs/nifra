@@ -67,12 +67,6 @@ const URL_ATTRIBUTE =
   /^(?:href|src|action|formaction|xlink:href|poster|data|background|cite|ping)$/i
 const SAFE_URL = /^(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
 
-function bindableAttribute(attr: string): boolean {
-  if (!CODE_ATTRIBUTE.test(attr)) return true
-  warnOnce("attribute", attr)
-  return false
-}
-
 /** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
 export interface BindableElement {
   getAttribute(name: string): string | null
@@ -83,24 +77,27 @@ export interface BindableElement {
   value?: string
   readonly classList: { toggle(name: string, force?: boolean): unknown }
   addEventListener(type: string, listener: (event: Event) => void): void
+  removeEventListener(type: string, listener: (event: Event) => void): void
 }
 
 export interface BindableRoot {
   querySelectorAll(selector: string): Iterable<BindableElement>
 }
 
-/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of
- * the created effects (an island unmount can stop them; page-lifetime islands just drop them). */
+/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for
+ * both reactive effects and event listeners. */
 export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void> {
   const stops: Array<() => void> = []
   // Each element carrying `data-bind-<kind>` outside any ignored subtree and any nested island, with
   // that attribute's value.
-  const each = (kind: string): Array<[BindableElement, string]> =>
-    [
+  const each = (kind: string): Array<[BindableElement, string]> => {
+    const attribute = `data-bind-${kind}`
+    return [
       ...root.querySelectorAll(
-        `[data-bind-${kind}]:not([data-island-ignore],[data-island-ignore] *,:scope [data-island] *)`,
+        `[${attribute}]:not([data-island-ignore],[data-island-ignore] *,:scope [data-island] *)`,
       ),
-    ].map((el) => [el, el.getAttribute(`data-bind-${kind}`) ?? ""])
+    ].map((el) => [el, el.getAttribute(attribute) ?? ""])
+  }
 
   for (const [el, name] of each("text")) {
     const s = named("signal", scope.signals, name)
@@ -139,7 +136,10 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
 
   for (const [el, spec] of each("attr")) {
     for (const [attr, name] of pairs(spec)) {
-      if (!bindableAttribute(attr)) continue
+      if (CODE_ATTRIBUTE.test(attr)) {
+        warnOnce("attribute", attr)
+        continue
+      }
       const s = named("signal", scope.signals, name)
       if (s) {
         const isUrl = URL_ATTRIBUTE.test(attr)
@@ -165,7 +165,9 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
           if (el.value !== next) el.value = next
         }),
       )
-      el.addEventListener("input", () => s.set(el.value ?? ""))
+      const input = (): void => s.set(el.value ?? "")
+      el.addEventListener("input", input)
+      stops.push(() => el.removeEventListener("input", input))
     }
   }
 
@@ -174,6 +176,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       const handler = named("handler", scope.handlers, name)
       if (handler === undefined) continue
       el.addEventListener(event, handler)
+      stops.push(() => el.removeEventListener(event, handler))
     }
   }
 

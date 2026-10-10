@@ -125,6 +125,49 @@ describe("local execution policy adapter", () => {
   )
 
   test.skipIf(process.platform === "win32")(
+    "a cancelled run stops waiting on a process that left the group but holds the pipes",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-exec-cancel-"))
+      const pidFile = join(dir, "pid")
+      const script = [
+        'const { spawn } = require("node:child_process")',
+        'const { writeFileSync } = require("node:fs")',
+        'const options = { detached: true, stdio: ["ignore", "inherit", "inherit"] }',
+        'const escaped = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], options)',
+        `writeFileSync(${JSON.stringify(pidFile)}, String(escaped.pid))`,
+        "setTimeout(() => {}, 30000)",
+      ].join("\n")
+      const controller = new AbortController()
+      let escaped = 0
+      try {
+        const running = createLocalProcessAdapter().run({
+          command: process.execPath,
+          args: ["-e", script],
+          signal: controller.signal,
+          policy: policy(30_000),
+        })
+        // Cancel only once the escaped process holds the pipes, so the run cannot end on its own close.
+        while (escaped === 0) {
+          const text = (await Bun.file(pidFile).exists()) ? await Bun.file(pidFile).text() : ""
+          escaped = Number(text.trim())
+          if (escaped === 0) await Bun.sleep(10)
+        }
+        controller.abort()
+        const result = await running
+        expect({ ok: result.ok, cancelled: result.cancelled, timedOut: result.timedOut }).toEqual({
+          ok: false,
+          cancelled: true,
+          timedOut: false,
+        })
+      } finally {
+        if (escaped > 0) process.kill(escaped, "SIGKILL")
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    10_000,
+  )
+
+  test.skipIf(process.platform === "win32")(
     "a host that exits mid-run takes the run's process group with it",
     async () => {
       const dir = await mkdtemp(join(tmpdir(), "nifra-exec-exit-"))
@@ -170,7 +213,8 @@ describe("local execution policy adapter", () => {
     const calls: unknown[] = []
     windowsTreeKill(4242, (command, args, options) => {
       calls.push([command, args, options])
-      return { on: () => undefined }
+      // A taskkill that fails to start reports through "error"; the tree kill must swallow it.
+      return { on: (_event: "error", listener: () => void) => listener() }
     })
     expect(calls).toEqual([
       ["taskkill", ["/pid", "4242", "/T", "/F"], { stdio: "ignore", windowsHide: true }],

@@ -301,13 +301,20 @@ describe("effect-aware idempotency fallback", () => {
         config,
         post({ amount: 1 }, "ambiguous"),
         undefined,
-        {},
+        { around: [], program: {} },
         {},
         undefined,
         (r) => r,
         {
           maxBodyBytes: 1024,
-          async runLanes(request) {
+          async runLanes(request, _platform, entry) {
+            if (
+              typeof entry === "object" &&
+              entry !== null &&
+              "handler" in entry &&
+              typeof entry.handler === "function"
+            )
+              return entry.handler()
             runs++
             markBeaconEffectBegan({ req: request })
             throw new Error("connection dropped after send")
@@ -319,6 +326,26 @@ describe("effect-aware idempotency fallback", () => {
     expect(replay.status).toBe(500)
     expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(runs).toBe(1)
+  })
+
+  test("buffered Request construction failure cannot reserve a key", async () => {
+    const store = new MemoryIdempotencyStore()
+    const { runtime, config } = configFor(store)
+    const request = post({ amount: 1 }, "invalid-signal")
+    // Model an exceptional request source without replacing the global Request constructor.
+    Object.defineProperty(request, "signal", { value: {} })
+    let runs = 0
+    await expect(
+      runtime.run(config, request, undefined, {}, {}, undefined, (response) => response, {
+        maxBodyBytes: 1024,
+        async runLanes() {
+          runs++
+          return new Response()
+        },
+      }),
+    ).rejects.toThrow("signal")
+    expect(store.size).toBe(0)
+    expect(runs).toBe(0)
   })
 
   test("request-local evidence distinguishes executing, committed, and ambiguous states", () => {

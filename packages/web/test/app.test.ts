@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { inProcessClient } from "@nifrajs/client"
-import { server } from "@nifrajs/core"
+import { rejected, server } from "@nifrajs/core"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { NIFRA_BACKEND_EVIDENCE, NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
 import {
@@ -1338,6 +1338,29 @@ test("webProjectEvidence composes page and stripped API routes", async () => {
   expect(routes).toContain("GET /*")
 })
 
+test("independent concurrent webProjectEvidence traversals do not become a cycle", async () => {
+  const backend = server().get("/health", () => ({ ok: true }))
+  const child = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    apiPrefix: "/api",
+    apiStrip: true,
+    api: inProcessClient(backend),
+    mounts: [{ path: "/child", app: child, stripPrefix: true }],
+  })
+  const snapshots = await Promise.all([webProjectEvidence(app), webProjectEvidence(app)])
+  for (const snapshot of snapshots) {
+    expect(snapshot.routes).toContainEqual(
+      expect.objectContaining({ method: "GET", path: "/api/health" }),
+    )
+    expect(snapshot.routes).toContainEqual(
+      expect.objectContaining({ method: "GET", path: "/child" }),
+    )
+  }
+})
+
 test("webProjectEvidence uses the same frozen mount configuration as dispatch", async () => {
   const child = server().get("/health", () => ({ ok: true }))
   const mounted = {
@@ -1452,6 +1475,26 @@ test("webProjectEvidence detects cyclic mounted evidence and validates its input
   await expect(webProjectEvidence({})).rejects.toThrow(/expected an app created by createWebApp/)
 })
 
+test("webProjectEvidence detects cycles after a mounted provider awaits", async () => {
+  let parent: unknown
+  const child = {
+    fetch: () => Response.json({ ok: true }),
+    [NIFRA_BACKEND_EVIDENCE]: async () => {
+      await Promise.resolve()
+      return webProjectEvidence(parent)
+    },
+  }
+  parent = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [{ path: "/child", app: child }],
+  })
+  await expect(webProjectEvidence(parent)).rejects.toThrow(
+    /cyclic composed assurance evidence mount/,
+  )
+})
+
 test("serves both generated machine-readable guidance routes", async () => {
   const app = createWebApp({
     adapter: stub,
@@ -1512,6 +1555,39 @@ test("llms.txt lists a stripped backend's routes at the URL a visitor calls", as
   // The typed client is built on the backend's own route tree, so its call keeps the backend path.
   expect(text).toContain("await api.v1.forms.post()")
   expect(text).not.toContain("`/v1/forms`")
+})
+
+test("llms.txt reads inProcessClient evidence and publishes only the HTTP-mounted backend", async () => {
+  const backend = server()
+    .authenticate({ id: "test-auth", run: () => rejected() })
+    .get("/", () => ({ ok: true }))
+    .post("/v1/forms", () => ({ ok: true }))
+  const api = inProcessClient(backend)
+  const app = createWebApp({
+    apiPrefix: "/api/",
+    apiStrip: true,
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  expect((await app.fetch(new Request("http://x/api/v1/forms", { method: "POST" }))).status).toBe(
+    401,
+  )
+  const text = await (await app.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(text).toContain("- **POST** `/api/v1/forms`")
+  expect(text).toContain("- **GET** `/api`")
+  expect(text).toContain("await api.v1.forms.post()")
+  expect(text).not.toContain("No API routes registered.")
+  const loaderOnly = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  const privateText = await (await loaderOnly.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(privateText).toContain("No API routes registered.")
+  expect(privateText).not.toContain("/v1/forms")
 })
 
 test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt page wins", async () => {

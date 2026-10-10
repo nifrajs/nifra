@@ -38,30 +38,60 @@ describe("runNifraVerification", () => {
     "a timeout ends a child that ignores SIGTERM and the process it started",
     async () => {
       const dir = await mkdtemp(join(tmpdir(), "nifra-verify-timeout-"))
+      let pids: number[] = []
+      let running: ReturnType<typeof runNifraVerification> | undefined
       try {
         const pidFile = join(dir, "grandchild.pid")
+        const parentTerm = join(dir, "parent.term")
+        const grandchildTerm = join(dir, "grandchild.term")
         const script = join(dir, "stubborn.ts")
+        const grandchildScript = [
+          `import { writeFileSync } from "node:fs"`,
+          `process.on("SIGTERM", () => writeFileSync(${JSON.stringify(grandchildTerm)}, "ignored"))`,
+          `console.log("ready")`,
+          `setInterval(() => {}, 1000)`,
+        ].join("\n")
         await writeFile(
           script,
           [
-            `const grandchild = Bun.spawn([process.execPath, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdout: "inherit", stderr: "inherit" })`,
-            `await Bun.write(${JSON.stringify(pidFile)}, String(grandchild.pid))`,
-            `process.on("SIGTERM", () => {})`,
+            `import { writeFileSync } from "node:fs"`,
+            `process.on("SIGTERM", () => writeFileSync(${JSON.stringify(parentTerm)}, "ignored"))`,
+            `const grandchild = Bun.spawn([process.execPath, "-e", ${JSON.stringify(grandchildScript)}], { stdout: "pipe", stderr: "inherit" })`,
+            `const reader = grandchild.stdout.getReader()`,
+            `const ready = await reader.read()`,
+            `if (new TextDecoder().decode(ready.value).trim() !== "ready") throw new Error("grandchild did not become ready")`,
+            `reader.releaseLock()`,
+            `writeFileSync(${JSON.stringify(pidFile)}, [process.pid, grandchild.pid].join("\\n"))`,
             `setInterval(() => {}, 1000)`,
           ].join("\n"),
         )
-        const result = await runNifraVerification("check", {
+        running = runNifraVerification("check", {
           cwd: dir,
           command: process.execPath,
           commandArgs: [script],
           timeoutMs: 500,
         })
+        for (let attempt = 0; !(await Bun.file(pidFile).exists()) && attempt < 50; attempt++)
+          await Bun.sleep(10)
+        pids = (await Bun.file(pidFile).text()).split("\n").map(Number)
+        expect(pids).toHaveLength(2)
+        expect(pids.every((pid) => Number.isSafeInteger(pid) && pid > 0)).toBe(true)
+        const result = await running
+        const exits = await Promise.all(pids.map(waitForProcessExit))
         expect(result.ok).toBe(false)
         expect(result.error).toContain("timed out")
-        const grandchild = Number(await Bun.file(pidFile).text())
-        expect(() => process.kill(grandchild, 0)).toThrow()
+        // SIGKILL reaches both processes, but the OS can remove the descendant PID after the direct
+        // child's exit has settled. Observe that state with a bound rather than racing one probe.
+        expect(exits).toEqual([true, true])
+        expect(await Bun.file(parentTerm).text()).toBe("ignored")
+        expect(await Bun.file(grandchildTerm).text()).toBe("ignored")
       } finally {
-        await rm(dir, { recursive: true, force: true })
+        try {
+          pids.forEach(terminateProcess)
+        } finally {
+          await running
+          await rm(dir, { recursive: true, force: true })
+        }
       }
     },
   )
@@ -117,3 +147,33 @@ describe("runNifraVerification", () => {
     }
   })
 })
+
+function processExited(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH")
+      return true
+    throw error
+  }
+}
+
+async function waitForProcessExit(pid: number): Promise<boolean> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (processExited(pid)) return true
+    await Bun.sleep(10)
+  }
+  return processExited(pid)
+}
+
+function terminateProcess(pid: number): void {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || processExited(pid)) return
+  // A failed assertion must not leave the intentionally stubborn fixture running.
+  try {
+    process.kill(pid, "SIGKILL")
+  } catch (error) {
+    // The PID can disappear between the liveness check and the cleanup signal.
+    if (!processExited(pid)) throw error
+  }
+}

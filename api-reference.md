@@ -2438,7 +2438,7 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/core/idempotency-plugin`
 
 - **IdempotencyPluginOptions** _(interface)_ - `interface IdempotencyPluginOptions`
-  Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat `Idempotency-Key` replays the stored response instead of re-running the handler. Without this plugin, declaring `schema.idempotency` is a registration error (the safety gate can never be silently drop…
+  Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat `Idempotency-Key` rechecks the current route prerequisites (authentication, validation and policy hooks) before replaying the stored response. The handler, effect ledger and stored response transforma…
 - **idempotency** _(function)_ - `idempotency: (options?: IdempotencyPluginOptions) => IdentityPlugin`
 - **markIdempotencySafeToRetry** _(function)_ - `markIdempotencySafeToRetry: (context: object) => void`
   Opt a concrete 5xx response into releasing its idempotency reservation, but only while the request-local effect scope still proves that no owned effect began.
@@ -3363,14 +3363,16 @@ _No named exports (side-effect entrypoint)._
 - **GraphqlHttpOptions** _(interface)_ - `interface GraphqlHttpOptions<Context = unknown, Env = unknown>`
 - **GraphqlPubSub** _(interface)_ - `interface GraphqlPubSub<Event = unknown>`
   The subscription source shape a resolver's `subscribe` consumes. Swap the impl for a durable bus.
+- **GraphqlPubSubOptions** _(interface)_ - `interface GraphqlPubSubOptions`
+- **GraphqlPubSubOverflowError** _(class)_ - `class GraphqlPubSubOverflowError`
 - **GraphqlWsOptions** _(interface)_ - `interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>>`
 - **MountGraphqlOptions** _(interface)_ - `interface MountGraphqlOptions<Context = unknown, Env = unknown>`
 - **NifraContextLike** _(interface)_ - `interface NifraContextLike<Env = unknown>`
   The subset of a nifra route context this package surfaces to a resolver-context builder. Structural, so the real `c` satisfies it without a nominal import. Kept to the non-body accessors a resolver legitimately needs; the raw body belongs to the GraphQL executor, not the builder.
 - **buildContext** _(function)_ - `buildContext: <Context, Env>(builder: GraphqlContextBuilder<Context, Env> | undefined, input: GraphqlContextInput<Env>) => Promise<Context>`
   Resolve a context builder to a concrete value, defaulting to an empty object.
-- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>() => GraphqlPubSub<Event>`
-  Create an in-memory {@link GraphqlPubSub}.
+- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>(options?: GraphqlPubSubOptions) => GraphqlPubSub<Event>`
+  Create an in-memory {@link GraphqlPubSub} with finite subscriber queues.
 - **graphqlWebSocket** _(function)_ - `graphqlWebSocket: <Context extends Record<string, unknown> = Record<string, unknown>>(options: GraphqlWsOptions<Context>) => WebSocketHandler<GraphqlWsConnection>`
   Build a nifra {@link WebSocketHandler} that terminates the `graphql-transport-ws` protocol. Register it on a route enabled with `.use(websocket())`:
 - **mountGraphql** _(function)_ - `mountGraphql: <Context = unknown, Env = unknown>(app: MountableApp<Env>, options: MountGraphqlOptions<Context, Env>) => void`
@@ -3651,7 +3653,7 @@ _No named exports (side-effect entrypoint)._
 - **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
   Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
 - **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
-  Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of the created effects (an island unmount can stop them; page-lifetime islands just drop them).
+  Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for both reactive effects and event listeners.
 - **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
   Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
@@ -5313,7 +5315,7 @@ _No named exports (side-effect entrypoint)._
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
-  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization, an explicit `public`. The one rule b…
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`

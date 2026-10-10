@@ -443,6 +443,103 @@ describe("subscribe() reconnect and framing", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("the UTF-8 event cap is checked before dispatch for whole and fragmented frames", async () => {
+    const encoder = new TextEncoder()
+    for (const payload of ["x".repeat(200), "💥".repeat(20)]) {
+      const bytes = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+      for (const chunkSize of [bytes.length, bytes.length - 2, 1]) {
+        const events: unknown[] = []
+        const errors: unknown[] = []
+        let offset = 0
+        let cancelled = false
+        await new Promise<void>((resolve) => {
+          eventsOver(
+            async () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  pull(controller) {
+                    if (offset === bytes.length) return
+                    controller.enqueue(bytes.slice(offset, offset + chunkSize))
+                    offset = Math.min(bytes.length, offset + chunkSize)
+                  },
+                  cancel() {
+                    cancelled = true
+                  },
+                }),
+                { headers: { "content-type": "text/event-stream" } },
+              ),
+            { maxDecodedBytes: 64 },
+          )((event) => events.push(event), {
+            reconnect: false,
+            onError: (error) => errors.push(error),
+            onClose: resolve,
+          })
+        })
+        expect(events).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(String(errors[0])).toContain("sse_event_too_large")
+        expect(cancelled).toBe(true)
+      }
+    }
+  })
+
+  test("UTF-8 boundaries, mixed line endings and multiple frames use independent byte budgets", async () => {
+    const encoder = new TextEncoder()
+    for (const lineEnd of ["\n", "\r", "\r\n"]) {
+      const text = `data: "💥"${lineEnd}${lineEnd}data: 1${lineEnd}${lineEnd}`
+      const bytes = encoder.encode(text)
+      for (const chunkSize of [bytes.length, 1]) {
+        for (const maxDecodedBytes of [12, 13]) {
+          const events: unknown[] = []
+          const errors: unknown[] = []
+          await new Promise<void>((resolve) => {
+            eventsOver(
+              async () =>
+                new Response(
+                  new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+                        controller.enqueue(bytes.slice(offset, offset + chunkSize))
+                      }
+                      controller.close()
+                    },
+                  }),
+                  { headers: { "content-type": "text/event-stream" } },
+                ),
+              { maxDecodedBytes },
+            )((event) => events.push(event), {
+              reconnect: false,
+              onError: (error) => errors.push(error),
+              onClose: resolve,
+            })
+          })
+          expect(events).toEqual(maxDecodedBytes === 13 ? ["💥", 1] : [])
+          expect(errors).toHaveLength(maxDecodedBytes === 13 ? 0 : 1)
+        }
+      }
+    }
+  })
+
+  test("fragmented multiline data and metadata remain bounded as one event", async () => {
+    const chunks = ['id: synthetic\ndata: {"a":', "\ndata: 1}\n\n"]
+    for (const maxDecodedBytes of [34, 35]) {
+      const events: unknown[] = []
+      const errors: unknown[] = []
+      await new Promise<void>((resolve) => {
+        eventsOver(async () => eventStream(...chunks), { maxDecodedBytes })(
+          (event) => events.push(event),
+          {
+            reconnect: false,
+            onError: (error) => errors.push(error),
+            onClose: resolve,
+          },
+        )
+      })
+      expect(events).toEqual(maxDecodedBytes === 35 ? [{ a: 1 }] : [])
+      expect(errors).toHaveLength(maxDecodedBytes === 35 ? 0 : 1)
+    }
+  })
+
   test("an id beyond Latin-1 resumes as its UTF-8 bytes, and an id with a NUL is ignored", async () => {
     const seen: (string | null)[] = []
     let connects = 0

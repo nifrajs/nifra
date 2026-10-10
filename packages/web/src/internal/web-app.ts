@@ -19,6 +19,7 @@ import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
+import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
 import { requestPattern } from "./route-path.ts"
@@ -266,10 +267,14 @@ function backendMountOf<Env>(api: unknown): MountableApp<Env> | undefined {
   return mount
 }
 
-function evidenceProviderOf(value: unknown): BackendEvidenceProvider | undefined {
+/** A provider a web app composes: it also takes the chain of web providers above it, which a
+ * provider that composes nothing ignores. */
+type ComposedEvidenceProvider = (ancestry?: EvidenceAncestry) => ReturnType<BackendEvidenceProvider>
+
+function evidenceProviderOf(value: unknown): ComposedEvidenceProvider | undefined {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
   const provider = (value as { [NIFRA_BACKEND_EVIDENCE]?: unknown })[NIFRA_BACKEND_EVIDENCE]
-  return typeof provider === "function" ? (provider as BackendEvidenceProvider) : undefined
+  return typeof provider === "function" ? (provider as ComposedEvidenceProvider) : undefined
 }
 
 function mountPathPrefix(path: string): string {
@@ -516,13 +521,9 @@ export function createWebApp<Env = unknown>(
   // absent.
   app.register("GET", "/*", undefined, pageExecutor.fallback)
 
-  let evidenceComposing = false
-  const evidenceProvider: BackendEvidenceProvider = async () => {
-    if (evidenceComposing) {
-      throw new Error("[nifra/web] cyclic composed assurance evidence mount")
-    }
-    evidenceComposing = true
-    try {
+  const evidenceProvider: ComposedEvidenceProvider = async (passed) => {
+    const { traverseEvidence } = await import("./evidence-traversal.ts")
+    return traverseEvidence(evidenceProvider, passed, async (ancestry) => {
       const { composeProjectEvidence, snapshotProjectEvidence } = await import(
         "@nifrajs/core/evidence"
       )
@@ -541,7 +542,7 @@ export function createWebApp<Env = unknown>(
           )
         }
         parts.push({
-          evidence: await provider.call(mount.app),
+          evidence: await provider.call(mount.app, ancestry),
           ...(mount.stripPrefix === true ? { pathPrefix: mountPathPrefix(mount.path) } : {}),
         })
       }
@@ -553,15 +554,13 @@ export function createWebApp<Env = unknown>(
           )
         }
         parts.push({
-          evidence: await provider.call(api),
+          evidence: await provider.call(api, ancestry),
           // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: Evidence paths acquire a prefix only when the mounted backend strips it.
           ...(apiStrip ? { pathPrefix: mountPathPrefix(apiPrefix) } : {}),
         })
       }
       return composeProjectEvidence(parts)
-    } finally {
-      evidenceComposing = false
-    }
+    })
   }
   Object.defineProperty(app, NIFRA_BACKEND_EVIDENCE, {
     configurable: false,

@@ -65,6 +65,15 @@ Resolvers read it as their third argument.
 
 Subscriptions run over the same route via `graphql-transport-ws`. Bring a subscription source - the bundled in-memory `createPubSub` is the reference implementation; swap in a durable bus (Redis, a Durable Object, NATS) that exposes the same `{ publish, subscribe }` shape for multi-instance deploys.
 
+Each reference subscriber queues at most 1024 events by default. If publication outruns consumption,
+the overloaded iterator detaches, clears its queued values, and its next pull rejects with
+`GraphqlPubSubOverflowError` (`code: "graphql_pubsub_overflow"`). Configure
+`createPubSub({ maxQueuedEvents: 256, overflow: "error" })` to change the finite limit. Explicit
+`"drop-oldest"` and `"drop-newest"` policies support consumers that accept missing events. Returning or
+throwing into an iterator clears its queue and terminates delivery. This is an event-count bound;
+publishers remain responsible for payload sizes. Synchronous `publish` does not provide producer
+backpressure or cross-instance delivery.
+
 ```ts
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"

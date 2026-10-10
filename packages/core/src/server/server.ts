@@ -2454,30 +2454,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** The idempotency lane's bridge back into the normal matched lanes, resolved to a concrete Response
-   * (the lane buffers the body, then replays it through the route's real validation + handler). */
-  private idempotencyRunLanes(
-    buffered: RequestSource,
-    platform: Platform | undefined,
-    entry: RouteEntry,
-    params: Record<string, string>,
-    search: string | undefined,
-  ): Promise<Response> {
-    return Promise.resolve(
-      this.runMatchedLanes(
-        buffered,
-        platform,
-        entry,
-        params,
-        search,
-        this.finalizeResponse,
-        this.wrapWebResponse,
-        this.webResponseTimeout,
-        false,
-      ),
-    )
-  }
-
   /** @internal Symbol-keyed install seam for the `responseContract()` plugin. Off the public typed surface. */
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void {
     this.assertConfigurable("responseContract()")
@@ -4164,7 +4140,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         {
           maxBodyBytes: entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           runLanes: (buffered, plat, ent, prm, srch) =>
-            this.idempotencyRunLanes(buffered, plat, ent as RouteEntry, prm, srch),
+            this.runMatchedLanes(
+              buffered,
+              plat,
+              ent as RouteEntry,
+              prm,
+              srch,
+              this.finalizeResponse,
+              this.wrapWebResponse,
+              this.webResponseTimeout,
+              false,
+            ),
         },
       )
     }

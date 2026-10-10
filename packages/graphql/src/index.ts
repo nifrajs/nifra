@@ -22,7 +22,12 @@ export type {
 } from "./context.ts"
 export { buildContext } from "./context.ts"
 export { type GraphqlHttpOptions, respondGraphql } from "./http.ts"
-export { createPubSub, type GraphqlPubSub } from "./pubsub.ts"
+export {
+  createPubSub,
+  type GraphqlPubSub,
+  type GraphqlPubSubOptions,
+  GraphqlPubSubOverflowError,
+} from "./pubsub.ts"
 export { type GraphqlWsOptions, graphqlWebSocket } from "./ws.ts"
 
 /** The structural slice of a nifra server `mountGraphql` needs. Kept loose so core stays a peer dep. */

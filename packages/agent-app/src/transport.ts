@@ -151,49 +151,56 @@ export async function* parseEventStream(
   const reader = body.getReader()
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
+  const frameParts: string[] = []
+  const appendFramePart = (text: string): void => {
+    if (text.length === 0) return
+    const lastIndex = frameParts.length - 1
+    const previous = frameParts[lastIndex]
+    // Tiny network reads must not allocate one retained array entry per byte of a large frame.
+    if (previous !== undefined && previous.length + text.length <= 4096)
+      frameParts[lastIndex] = previous + text
+    else frameParts.push(text)
+  }
+  let frameBytes = 0
   let buffer = ""
   let reachedEof = false
   try {
     for (;;) {
       const chunk = await reader.read()
-      if (chunk.done) {
-        reachedEof = true
-        buffer += decoder.decode()
-        let boundary = sseBoundary(buffer)
-        while (boundary !== undefined) {
-          const frame = buffer.slice(0, boundary.index)
-          buffer = buffer.slice(boundary.end)
-          if (encoder.encode(frame).byteLength > maxFrameBytes)
-            throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
-          const event = frameToEvent(frame)
-          if (event !== undefined) yield event
-          boundary = sseBoundary(buffer)
-        }
-        if (encoder.encode(buffer).byteLength > maxFrameBytes)
-          throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
-        const event = frameToEvent(buffer)
-        if (event !== undefined) yield event
-        break
-      }
-      buffer += decoder.decode(chunk.value, { stream: true })
+      reachedEof = chunk.done
+      const decoded = chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true })
+      frameBytes += encoder.encode(decoded).byteLength
+      buffer += decoded
       let boundary = sseBoundary(buffer)
       while (boundary !== undefined) {
-        const frame = buffer.slice(0, boundary.index)
+        appendFramePart(buffer.slice(0, boundary.index))
+        const frame = frameParts.join("")
+        frameParts.length = 0
+        const completedBytes = encoder.encode(frame).byteLength
+        // Delimiters contain only CR/LF, so their code-unit and UTF-8 byte lengths are equal.
+        frameBytes -= completedBytes + boundary.end - boundary.index
         buffer = buffer.slice(boundary.end)
-        if (encoder.encode(frame).byteLength > maxFrameBytes)
+        if (completedBytes > maxFrameBytes)
           throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
         const event = frameToEvent(frame)
         if (event !== undefined) yield event
         boundary = sseBoundary(buffer)
       }
-      if (encoder.encode(buffer).byteLength > maxFrameBytes) {
-        try {
-          await reader.cancel()
-        } catch {
-          // Preserve the bounded transport error if the source has already closed.
-        }
+      if (frameBytes > maxFrameBytes)
         throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
+      if (chunk.done) {
+        appendFramePart(buffer)
+        const event = frameToEvent(frameParts.join(""))
+        if (event !== undefined) yield event
+        break
       }
+      // Scan only new text plus the possible split delimiter. Joining an incomplete frame on
+      // every read would flatten and re-scan it quadratically, even with incremental byte counts.
+      let scannedUntil = Math.max(0, buffer.length - 3)
+      const tailStart = buffer.charCodeAt(scannedUntil)
+      if (tailStart >= 0xdc00 && tailStart <= 0xdfff) scannedUntil -= 1
+      if (scannedUntil > 0) appendFramePart(buffer.slice(0, scannedUntil))
+      buffer = buffer.slice(scannedUntil)
     }
   } catch (error) {
     if (error instanceof AgentTransportError) throw error

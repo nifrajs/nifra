@@ -75,6 +75,7 @@ export function mountIslands(
     const setup = registry.get(name)
     if (setup === undefined) continue
     host.setAttribute("data-island-mounted", "")
+    disposers.push(() => host.removeAttribute("data-island-mounted"))
 
     const strategyAttr = host.getAttribute("data-island-strategy")
     const media = host.getAttribute("data-island-media")
@@ -111,19 +112,13 @@ export function mountIslands(
       const ctx: IslandContext = {
         root: host,
         state<T>(key: string, fallback: T): Signal<T> {
-          const existing = signals[key]
-          if (existing !== undefined) return existing as Signal<T>
-          const initial = Object.hasOwn(seeded, key) ? (seeded[key] as T) : fallback
-          const s = signal<T>(initial)
-          signals[key] = s as Signal<unknown>
-          return s
+          // Each key keeps the signal first created for that state value.
+          signals[key] ??= signal(Object.hasOwn(seeded, key) ? seeded[key] : fallback)
+          return signals[key] as Signal<T>
         },
       }
-      // Every effect and computed setup and the bindings create joins this mount's disposers.
-      owned(disposers, () => {
-        const scope: IslandScope = { signals, handlers: setup(ctx) ?? {} }
-        bindScope(host, scope)
-      })
+      const scope: IslandScope = { signals, handlers: owned(disposers, () => setup(ctx) ?? {}) }
+      disposers.push(...bindScope(host, scope))
     }
     disposers.push(
       scheduleTrigger(strategy, run, {
@@ -132,7 +127,7 @@ export function mountIslands(
     )
   }
   return () => {
-    for (const dispose of disposers) dispose()
+    for (let dispose = disposers.pop(); dispose !== undefined; dispose = disposers.pop()) dispose()
   }
 }
 

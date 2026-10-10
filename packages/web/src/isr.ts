@@ -6,7 +6,7 @@
  *
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
-import { writableResponse } from "@nifrajs/core/server"
+import { isAuthenticatedRequest, writableResponse } from "@nifrajs/core/server"
 import { isDraftEnabled } from "./draft.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
@@ -702,8 +702,10 @@ const cookieNamesWithin = (header: string, names: ReadonlySet<string>): boolean 
   return true
 }
 
+// An authentication stage may read any header, so a request it accepted is private whatever carried
+// the credential. The mark is set on the request the app was handed, which is why this runs after it.
 const requestCarriesPrivateState = (req: Request): boolean =>
-  req.headers.has("authorization") || req.headers.has("cookie")
+  req.headers.has("authorization") || req.headers.has("cookie") || isAuthenticatedRequest(req)
 
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
@@ -723,7 +725,8 @@ const responseDeclaresVary = (res: Response): boolean => {
 /**
  * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
  * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
- * the data header, and, for a request carrying a cookie or Authorization, an explicit `public`.
+ * the data header, and, for a request carrying a cookie or Authorization or accepted by an
+ * authentication stage, an explicit `public`.
  * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
  */
 export const isCacheablePage = (req: Request, res: Response): boolean => {
@@ -894,7 +897,12 @@ export function withISR(
   const anonymousCookies = new Set(options.anonymousCookies ?? [])
   // A request whose cookies are all anonymous is judged for storage as if it carried none.
   const judged = (req: Request): Request => {
-    if (anonymousCookies.size === 0 || req.headers.has("authorization")) return req
+    if (
+      anonymousCookies.size === 0 ||
+      req.headers.has("authorization") ||
+      isAuthenticatedRequest(req)
+    )
+      return req
     const cookie = req.headers.get("cookie")
     if (cookie === null || !cookieNamesWithin(cookie, anonymousCookies)) return req
     const headers = new Headers(req.headers)

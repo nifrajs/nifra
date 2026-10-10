@@ -135,6 +135,28 @@ describe("bindScope - the closed attribute set", () => {
     expect(el.textContent).toBe("1")
   })
 
+  test("disposers remove value and handler listeners", () => {
+    const value = signal<unknown>("initial")
+    const input = new FakeElement({ "data-bind-value": "value" })
+    const button = new FakeElement({ "data-bind-on": "click:save" })
+    let saves = 0
+    const stops = bindScope(
+      new FakeRoot([input, button]),
+      scopeOf({ value }, { save: () => saves++ }),
+    )
+    input.value = "live"
+    input.dispatch("input")
+    button.dispatch("click")
+    expect(value()).toBe("live")
+    expect(saves).toBe(1)
+    for (const stop of stops) stop()
+    input.value = "disposed"
+    input.dispatch("input")
+    button.dispatch("click")
+    expect(value()).toBe("live")
+    expect(saves).toBe(1)
+  })
+
   test("malformed pair entries are skipped, valid ones still bind", () => {
     const ok = signal(true)
     const el = new FakeElement({ "data-bind-class": ":broken,noColon,is-ok:ok" })

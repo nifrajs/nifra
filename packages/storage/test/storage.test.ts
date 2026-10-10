@@ -540,4 +540,26 @@ describe("FileStorage list()", () => {
     expect(await storage.list({ prefix: "a//b" })).toEqual([])
     expect(await storage.list({ limit: 0 })).toEqual([])
   })
+
+  // A directory with read but no search permission lists its names but fails every lstat inside it,
+  // so a walk that strays into it throws. Root ignores the permission, hence the uid skip.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a walk never enters a directory outside the prefix or past the limit",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "nifra-storage-"))
+      tmpDirs.push(root, `${root}.nifra-metadata`, `${root}.nifra-state`)
+      const storage = new FileStorage(root)
+      for (const key of ["a/1", "a/2", "z/1"]) await storage.put(key, "x")
+      const dir = join(root, "z")
+      await chmod(dir, 0o444)
+      try {
+        expect(await storage.list({ prefix: "a/" })).toEqual(["a/1", "a/2"])
+        expect(await storage.list({ limit: 2 })).toEqual(["a/1", "a/2"])
+        // The premise: a full walk does reach the directory and fails there.
+        await expect(storage.list()).rejects.toThrow()
+      } finally {
+        await chmod(dir, 0o755)
+      }
+    },
+  )
 })

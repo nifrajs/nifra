@@ -1,7 +1,123 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { authenticated, rejected } from "@nifrajs/core/server"
-import { apiKey, cache, MemoryResponseCache } from "../src/index.ts"
+import {
+  apiKey,
+  type CachedResponse,
+  cache,
+  MemoryResponseCache,
+  type ResponseCacheStore,
+} from "../src/index.ts"
+
+describe("cache() response freshness", () => {
+  for (const directive of [
+    "no-cache",
+    'no-cache="etag"',
+    "max-age=0, must-revalidate",
+    "s-maxage=0, max-age=60",
+  ]) {
+    test(`does not reuse ${directive} without validation`, async () => {
+      let calls = 0
+      const app = server()
+        .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+        .get(
+          "/value",
+          () => new Response(String(++calls), { headers: { "cache-control": directive } }),
+        )
+      for (const expected of ["1", "2"]) {
+        const response = await app.fetch(new Request("http://x/value"))
+        expect(response.headers.get("x-nifra-cache")).toBe("BYPASS")
+        expect(await response.text()).toBe(expected)
+      }
+    })
+  }
+
+  test("rejects a pre-existing stored response that requires validation", async () => {
+    const store: ResponseCacheStore = {
+      get: () => ({
+        status: 200,
+        statusText: "",
+        headers: [["cache-control", "no-cache"]],
+        body: new TextEncoder().encode("old"),
+        storedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+      set: () => {},
+    }
+    const app = server()
+      .use(cache({ store, ttlMs: 60_000 }))
+      .get("/value", () => "fresh")
+    const response = await app.fetch(new Request("http://x/value"))
+    expect(response.headers.get("x-nifra-cache")).toBe("MISS")
+    expect(await response.json()).toBe("fresh")
+  })
+
+  for (const [directive, age, lifetime] of [
+    ["max-age=2, must-revalidate", "0", 2_000],
+    ["s-maxage=1, max-age=60", "0", 1_000],
+    ['max-age="3"', "0", 3_000],
+    ["max-age=60", "0", 10_000],
+    ["max-age=10", "9", 1_000],
+  ] as const) {
+    test(`caps ${directive} by freshness, Age and application TTL`, async () => {
+      const clock = spyOn(Date, "now").mockReturnValue(10_000)
+      try {
+        let calls = 0
+        const entries = new Map<string, CachedResponse>()
+        const store: ResponseCacheStore = {
+          get: (key) => entries.get(key),
+          set: (key, entry) => {
+            entries.set(key, entry)
+          },
+          delete: (key) => {
+            entries.delete(key)
+          },
+        }
+        const app = server()
+          .use(cache({ store, ttlMs: 10_000 }))
+          .get(
+            "/value",
+            () => new Response(String(++calls), { headers: { "cache-control": directive, age } }),
+          )
+        await (await app.fetch(new Request("http://x/value"))).text()
+        expect([...entries.values()][0]?.expiresAt).toBe(10_000 + lifetime)
+        clock.mockReturnValue(10_000 + lifetime - 1)
+        const hit = await app.fetch(new Request("http://x/value"))
+        expect(hit.headers.get("x-nifra-cache")).toBe("HIT")
+        expect(await hit.text()).toBe("1")
+        clock.mockReturnValue(10_000 + lifetime)
+        const expired = await app.fetch(new Request("http://x/value"))
+        expect(expired.headers.get("x-nifra-cache")).toBe("MISS")
+        expect(await expired.text()).toBe("2")
+      } finally {
+        clock.mockRestore()
+      }
+    })
+  }
+
+  test("an explicit response cache-control override keeps the application TTL", async () => {
+    let calls = 0
+    const app = server()
+      .use(
+        cache({
+          store: new MemoryResponseCache(),
+          ttlMs: 60_000,
+          respectResponseCacheControl: false,
+        }),
+      )
+      .get(
+        "/value",
+        () =>
+          new Response(String(++calls), {
+            headers: { "cache-control": "no-cache, max-age=0, must-revalidate" },
+          }),
+      )
+    await (await app.fetch(new Request("http://x/value"))).text()
+    const response = await app.fetch(new Request("http://x/value"))
+    expect(response.headers.get("x-nifra-cache")).toBe("HIT")
+    expect(await response.text()).toBe("1")
+  })
+})
 
 describe("cache()", () => {
   test("stores and serves cacheable GET responses", async () => {

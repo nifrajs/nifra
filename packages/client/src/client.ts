@@ -762,21 +762,23 @@ const MAX_RETRY_MS = 2_147_483_647
  * Incrementally parse a `text/event-stream` body, invoking `onFrame` per dispatched event.
  * Implements the SSE wire format: CRLF, CR, and LF all end a line, `data:` accumulates multi-line,
  * `id:`/`retry:` update stream state, `:` lines are comments, a blank line dispatches. An event
- * still being assembled may hold at most `maxEventLength` characters.
+ * still being assembled may hold at most `maxEventBytes` UTF-8 bytes (fields and normalized
+ * line separators included, the empty dispatch line excluded).
  */
 async function readSseStream(
   body: ReadableStream<Uint8Array>,
   onFrame: (frame: SseFrame) => void,
-  maxEventLength: number,
+  maxEventBytes: number,
 ): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
   const lineEnd = /\r\n?|\n/g
   // Only newly decoded text is scanned; the unfinished line is carried here, so a line that arrives
   // over many small reads costs its length once rather than once per read.
-  let partial = ""
+  let partial: string[] = []
   let afterCr = false
-  let held = 0
+  let eventBytes = 0
   let dataLines: string[] = []
   let frame: SseFrame = {}
 
@@ -786,7 +788,7 @@ async function readSseStream(
       onFrame(frame)
     }
     dataLines = []
-    held = 0
+    eventBytes = 0
     frame = {}
   }
 
@@ -802,7 +804,6 @@ async function readSseStream(
     if (value.startsWith(" ")) value = value.slice(1)
     if (field === "data") {
       dataLines.push(value)
-      held += value.length + 1
     } else if (field === "id") {
       // The grammar ignores an id with a NUL; it could never be sent back as `Last-Event-ID`.
       if (!value.includes("\0")) frame.id = value
@@ -818,13 +819,21 @@ async function readSseStream(
     let start = afterCr && text.charCodeAt(0) === 10 ? 1 : 0
     lineEnd.lastIndex = start
     for (let end = lineEnd.exec(text); end !== null; end = lineEnd.exec(text)) {
-      handleLine(partial + text.slice(start, end.index))
-      partial = ""
+      const piece = text.slice(start, end.index)
+      eventBytes += encoder.encode(piece).byteLength
+      // Check before dispatch or JSON parsing, including frames completed in this read.
+      if (piece !== "" || partial.length > 0) eventBytes += 1
+      if (eventBytes > maxEventBytes) throw new Error("sse_event_too_large")
+      partial.push(piece)
+      handleLine(partial.join(""))
+      partial = []
       start = lineEnd.lastIndex
     }
     afterCr = text.charCodeAt(text.length - 1) === 13
-    partial += text.slice(start)
-    if (partial.length + held > maxEventLength) throw new Error("sse_event_too_large")
+    const tail = text.slice(start)
+    eventBytes += encoder.encode(tail).byteLength
+    if (eventBytes > maxEventBytes) throw new Error("sse_event_too_large")
+    if (tail !== "") partial.push(tail)
   }
 
   try {
@@ -834,7 +843,7 @@ async function readSseStream(
       feed(decoder.decode(value, { stream: true }))
     }
     feed(decoder.decode())
-    if (partial !== "") handleLine(partial)
+    if (partial.length > 0) handleLine(partial.join(""))
     dispatch() // an unterminated final frame still dispatches
   } catch (error) {
     // Stopping early must not leave the response open behind a released lock.

@@ -1660,7 +1660,9 @@ export function createPageRequestExecutor<Env = unknown>(
           )
         if (isControlFlow(data)) return data
         const layoutData = run.layoutData
+        const layoutProps: { layoutData?: Exclude<typeof layoutData, undefined> } = {}
         if (layoutData !== undefined) {
+          layoutProps.layoutData = layoutData
           // The page now shows what a layout loaded for this visitor.
           responseHeaders = { ...responseHeaders, ...PRIVATE_PAGE_HEADERS }
         }
@@ -1691,7 +1693,7 @@ export function createPageRequestExecutor<Env = unknown>(
           search,
           matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
           hydrate: mod.hydrate !== false,
-          ...(layoutData === undefined ? {} : { layoutData }),
+          ...layoutProps,
           ...preloadOf(route.id),
           ...stylesOf(route.id),
           ...prerenderedHandover,

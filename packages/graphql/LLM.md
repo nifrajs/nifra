@@ -15,13 +15,15 @@ Mount a GraphQL endpoint on a nifra app - a spec-compliant GraphQL-over-HTTP han
 ## Key exports
 
 - **buildContext** _(function)_ - `buildContext: <Context, Env>(builder: GraphqlContextBuilder<Context, Env> | undefined, input: GraphqlContextInput<Env>) => Promise<Context>` · from `@nifrajs/graphql`
-- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>() => GraphqlPubSub<Event>` · from `@nifrajs/graphql`
+- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>(options?: GraphqlPubSubOptions) => GraphqlPubSub<Event>` · from `@nifrajs/graphql`
 - **graphqlWebSocket** _(function)_ - `graphqlWebSocket: <Context extends Record<string, unknown> = Record<string, unknown>>(options: GraphqlWsOptions<Context>) => WebSocketHandl…` · from `@nifrajs/graphql`
 - **mountGraphql** _(function)_ - `mountGraphql: <Context = unknown, Env = unknown>(app: MountableApp<Env>, options: MountGraphqlOptions<Context, Env>) => void` · from `@nifrajs/graphql`
 - **respondGraphql** _(function)_ - `respondGraphql: <Context = unknown, Env = unknown>(request: Request, options: GraphqlHttpOptions<Context, Env>) => Promise<Response>` · from `@nifrajs/graphql`
+- **GraphqlPubSubOverflowError** _(class)_ - `class GraphqlPubSubOverflowError` · from `@nifrajs/graphql`
 - **GraphqlContextInput** _(interface)_ - `interface GraphqlContextInput<Env = unknown>` · from `@nifrajs/graphql`
 - **GraphqlHttpOptions** _(interface)_ - `interface GraphqlHttpOptions<Context = unknown, Env = unknown>` · from `@nifrajs/graphql`
 - **GraphqlPubSub** _(interface)_ - `interface GraphqlPubSub<Event = unknown>` · from `@nifrajs/graphql`
+- **GraphqlPubSubOptions** _(interface)_ - `interface GraphqlPubSubOptions` · from `@nifrajs/graphql`
 - **GraphqlWsOptions** _(interface)_ - `interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>>` · from `@nifrajs/graphql`
 - **MountGraphqlOptions** _(interface)_ - `interface MountGraphqlOptions<Context = unknown, Env = unknown>` · from `@nifrajs/graphql`
 - **NifraContextLike** _(interface)_ - `interface NifraContextLike<Env = unknown>` · from `@nifrajs/graphql`

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { AgentEvent } from "@nifrajs/agent-protocol"
 import { AgentTransportError, HttpAgentTransport, parseEventStream } from "../src/transport.ts"
 
-const event = (seq: number): AgentEvent => ({
+const event = (seq: number): Extract<AgentEvent, { type: "assistant.delta" }> => ({
   version: 1,
   sessionId: "s",
   seq,
@@ -165,5 +165,74 @@ describe("HttpAgentTransport", () => {
         return undefined
       })(),
     ).rejects.toThrow(/SSE frame exceeds/)
+  })
+
+  test("does linear encoding work for a valid frame fragmented into small chunks", async () => {
+    const value: AgentEvent = { ...event(9), text: "x".repeat(200_000) }
+    const payload = new TextEncoder().encode(`data: ${JSON.stringify(value)}\r\n\r\n`)
+    const measure = async (chunkSize: number): Promise<number> => {
+      let offset = 0
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (offset === payload.length) {
+            controller.close()
+            return
+          }
+          const end = Math.min(payload.length, offset + chunkSize)
+          controller.enqueue(payload.slice(offset, end))
+          offset = end
+        },
+      })
+      const originalEncode = TextEncoder.prototype.encode
+      let encodedBytes = 0
+      TextEncoder.prototype.encode = function (input) {
+        const encoded = originalEncode.call(this, input)
+        encodedBytes += encoded.byteLength
+        return encoded
+      }
+      try {
+        expect(await Array.fromAsync(parseEventStream(body, "test.stream"))).toEqual([value])
+      } finally {
+        TextEncoder.prototype.encode = originalEncode
+      }
+      return encodedBytes
+    }
+
+    const completeWork = await measure(payload.length)
+    const fragmentedWork = await measure(17)
+    expect(fragmentedWork).toBe(completeWork)
+    expect(fragmentedWork).toBeLessThanOrEqual(payload.byteLength * 2)
+  })
+
+  test("retains byte-exact UTF-8 caps when emoji and mixed delimiters split at every byte", async () => {
+    const encoder = new TextEncoder()
+    const value: AgentEvent = { ...event(10), text: "🙂".repeat(300) }
+    const frame = `data: ${JSON.stringify(value)}`
+    const frameBytes = encoder.encode(frame).byteLength
+    const source = (text: string): ReadableStream<Uint8Array> => {
+      const bytes = encoder.encode(text)
+      let offset = 0
+      return new ReadableStream({
+        pull(controller) {
+          if (offset === bytes.length) controller.close()
+          else controller.enqueue(bytes.slice(offset, ++offset))
+        },
+      })
+    }
+
+    // The cap excludes completed delimiters, but includes a trailing, unfinished line ending.
+    expect(
+      await Array.fromAsync(parseEventStream(source(`${frame}\n\n`), "test", frameBytes + 1)),
+    ).toEqual([value])
+    await expect(
+      Array.fromAsync(parseEventStream(source(`${frame}\n\n`), "test", frameBytes - 1)),
+    ).rejects.toThrow(/SSE frame exceeds/)
+
+    for (const delimiter of ["\n\n", "\r\n\r\n", "\r\r", "\r\n\n", "\n\r\n", "\r\n\r", "\r\r\n"])
+      expect(
+        await Array.fromAsync(
+          parseEventStream(source(`${frame}${delimiter}${frame}${delimiter}`), "test"),
+        ),
+      ).toEqual([value, value])
   })
 })

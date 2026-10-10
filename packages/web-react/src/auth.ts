@@ -18,6 +18,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react"
 
@@ -55,7 +56,18 @@ export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode 
   const [seed, setSeed] = useState(props.initialSession)
   const [status, setStatus] = useState<AuthStatus>(seededStatus(props.initialSession))
   const [session, setSession] = useState<Session | null>(props.initialSession ?? null)
+  // A read applies only while it holds the latest generation; a newer read, a sign-out, a new client
+  // or seed, and unmount each take one. The record is never replaced, so a sign-out that settles
+  // after a client or seed change still clears the session the server ended.
+  const reads = useRef({ generation: 0, signingOut: 0, live: true, client })
+  if (reads.current.client !== client) {
+    // A new client keeps what is shown (a parent may build one per render); only answers to the
+    // previous client's reads are dropped.
+    reads.current.client = client
+    reads.current.generation++
+  }
   if (seed !== props.initialSession) {
+    reads.current.generation++
     // A render-phase update: React re-runs this component before any child sees the old session.
     setSeed(props.initialSession)
     setStatus(seededStatus(props.initialSession))
@@ -63,40 +75,35 @@ export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode 
   }
   const refresh = useMemo(() => {
     return async (): Promise<void> => {
+      const state = reads.current
+      // A read made while signing out could answer with the session being ended.
+      if (state.signingOut > 0 || state.client !== client) return
+      const generation = ++state.generation
       try {
         const next = await client.getSession()
+        if (!state.live || state.generation !== generation) return
         setSession(next)
         setStatus(next === null ? "unauthenticated" : "authenticated")
       } catch {
         // A failed session read must fail closed as anonymous; leaving "loading" can strand the
         // subtree in an auth-pending state and make protected UI appear available by omission.
+        if (!state.live || state.generation !== generation) return
         setSession(null)
         setStatus("unauthenticated")
       }
     }
   }, [client])
   useEffect(() => {
-    let live = true
+    const state = reads.current
+    state.live = true
     if (props.initialSession === undefined) {
-      void client.getSession().then(
-        (next) => {
-          if (!live) return
-          setSession(next)
-          setStatus(next === null ? "unauthenticated" : "authenticated")
-        },
-        () => {
-          // Treat an unavailable session endpoint as anonymous rather than keeping auth state
-          // pending indefinitely or exposing stale authenticated UI.
-          if (!live) return
-          setSession(null)
-          setStatus("unauthenticated")
-        },
-      )
+      void refresh()
     }
     return () => {
-      live = false
+      state.live = false
+      state.generation++
     }
-  }, [client, props.initialSession])
+  }, [refresh, props.initialSession])
   const value = useMemo<AuthSession>(
     () => ({
       status,
@@ -104,7 +111,16 @@ export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode 
       refresh,
       signIn: (providerId, options) => client.signIn(providerId, options),
       signOut: async (options) => {
-        await client.signOut(options)
+        const state = reads.current
+        state.signingOut++
+        state.generation++
+        try {
+          await client.signOut(options)
+        } finally {
+          state.signingOut--
+          state.generation++
+        }
+        if (!state.live) return
         // The server ended the session: the subtree must not go on showing it, whether a redirect is
         // pending or `redirect: false` keeps the page.
         setSession(null)
