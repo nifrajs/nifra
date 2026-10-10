@@ -381,8 +381,15 @@ function kvEpochTime(epoch: string): number {
   return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY
 }
 
-/** Wall-clock milliseconds with a fraction, so a purge a moment after a render began orders after it. */
-const kvClock = (): number => performance.timeOrigin + performance.now()
+let lastKvTime = 0
+/** Wall-clock ms, strictly increasing per process so a purge orders after a render it follows. Not
+ * `timeOrigin + performance.now()`: that clock stops while the host sleeps, so a purge from a process
+ * that slept would order before renders other instances began earlier. */
+const kvClock = (): number => {
+  const now = Date.now()
+  lastKvTime = now > lastKvTime ? now : lastKvTime + 0.001
+  return lastKvTime
+}
 
 type StoredTaggedResponse = CachedResponse & {
   readonly __nifraTagEpochs?: Readonly<Record<string, string>>

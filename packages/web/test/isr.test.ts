@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, setSystemTime, spyOn, test } from "bun:test"
 import { type CachedResponse, type CacheStore, MemoryCacheStore } from "../src/isr.ts"
 
 const entry = (body: string): CachedResponse => ({
@@ -1050,6 +1050,53 @@ describe("KVCacheStore", () => {
     expect((await store.get("/p"))?.body).toBe("fresh")
     // The fence is the store's business, not the page's.
     expect(kv.store.get("/p")).not.toContain("fence")
+  })
+
+  describe("purge order across clocks", () => {
+    const TEN_MINUTES = 600_000
+    afterEach(() => setSystemTime())
+
+    test("a purge from a host whose monotonic clock stalled in sleep still refuses an earlier render", async () => {
+      const kv = new FakeKV()
+      const renderer = new KVCacheStore(kv)
+      const purger = new KVCacheStore(kv)
+      await renderer.set("/p", { ...entry("v1"), tags: ["post"] })
+      const pageFence = renderer.fence()
+      const tagFence = renderer.fence()
+      const realNow = performance.now.bind(performance)
+      const stalled = spyOn(performance, "now").mockImplementation(() => realNow() - TEN_MINUTES)
+      try {
+        await purger.delete("/p")
+        await purger.invalidateTag("post")
+      } finally {
+        stalled.mockRestore()
+      }
+      await renderer.set("/p", { ...entry("v1"), fence: pageFence })
+      expect(await renderer.get("/p")).toBeUndefined()
+      await renderer.set("/q", { ...entry("v1"), tags: ["post"], fence: tagFence })
+      expect(await renderer.get("/q")).toBeUndefined()
+    })
+
+    test("a wall clock stepped back after a render began cannot order a purge before it", async () => {
+      const store = new KVCacheStore(new FakeKV())
+      const fence = store.fence()
+      setSystemTime(new Date(Date.now() - TEN_MINUTES))
+      await store.invalidateTag("post")
+      await store.set("/p", { ...entry("v1"), tags: ["post"], fence })
+      expect(await store.get("/p")).toBeUndefined()
+    })
+
+    test("within one frozen millisecond, a purge orders after the render before it and before the one after", async () => {
+      setSystemTime(new Date(Date.now() + TEN_MINUTES))
+      const store = new KVCacheStore(new FakeKV())
+      const before = store.fence()
+      await store.delete("/p")
+      const after = store.fence()
+      await store.set("/p", { ...entry("stale"), fence: before })
+      expect(await store.get("/p")).toBeUndefined()
+      await store.set("/p", { ...entry("fresh"), fence: after })
+      expect((await store.get("/p"))?.body).toBe("fresh")
+    })
   })
 
   test("a tag epoch written before epochs carried a time fences nothing", async () => {
