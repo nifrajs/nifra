@@ -199,8 +199,11 @@ for (const [name, engine] of Object.entries(engines)) {
     assert.equal(await page.locator("#counter").count(), 0)
     assert.deepEqual(await page.evaluate(() => window.lifecycle), { mounted: 4, disposed: 4 })
     await page.evaluate(() => window.fixture.switchScope())
+    // The router settles before nested hydration; SSR text alone does not prove both roots mounted.
     await page.waitForFunction(
-      () => document.querySelector("#revision")?.textContent === "Revision 3",
+      () =>
+        document.querySelector("#revision")?.textContent === "Revision 3" &&
+        window.lifecycle.mounted >= 6,
     )
     assert.equal(await page.locator("#counter").textContent(), "Count 0")
     assert.equal(await page.locator("#child-counter").textContent(), "Count 0")
