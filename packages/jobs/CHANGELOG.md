@@ -1,5 +1,18 @@
 # @nifrajs/jobs
 
+## 5.0.0
+
+### Minor Changes
+
+- 4d5208c: A worker no longer leaves free slots idle behind its slowest job. Each poll now leases due jobs into the slots free at that moment, and a slot frees as soon as its own job settles. Before, a poll waited until every job it had leased was done, so one long job held all `concurrency` slots. `process()` and `drain()` share those slots, and `process()` still waits for in-flight jobs when it has nothing new to start.
+
+  A job definition takes `timeoutMs`. An attempt still running after that time fails with the new `JobTimeoutError`, is retried or dead-lettered like a throw, and frees its slot. The handler's new `ctx.signal` aborts with that error.
+
+### Patch Changes
+
+- 8118abd: A store that fails to record a finished job no longer sends that job back through the retry path. The handler had already succeeded, but the failure counted as the handler's: it was retried (running it again) or, on its last attempt, dead-lettered. The store error now surfaces as a store failure, and the lease decides any redelivery.
+- 22581a1: A poll round settles only after every job it leased has settled, so a store failure in one job no longer frees the round's concurrency or lets `worker.stop()` return while a sibling handler is still running. `queue.drain()` runs its rounds through `queue.process()`, so concurrent drains and the worker's polls never run more than `concurrency` jobs at once.
+
 ## 4.0.2
 
 ## 4.0.1

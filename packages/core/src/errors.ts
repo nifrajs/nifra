@@ -31,6 +31,7 @@ export type RouteConfigErrorCode =
   | "INVALID_VALIDATION_ORDER"
   | "INVALID_BODY_LIMIT"
   | "PLUGIN_RECONFIGURED"
+  | "MOUNT_CYCLE"
 
 /**
  * Thrown at route registration when a route is misconfigured. This is the

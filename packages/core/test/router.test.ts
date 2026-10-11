@@ -92,6 +92,33 @@ describe("Router.find - matching", () => {
   })
 })
 
+describe("Router.find - text a request percent-encodes", () => {
+  test("a route written with non-ASCII or a space matches the path a request sends", () => {
+    const r = router()
+    r.add("GET", "/café/menu", "static")
+    r.add("GET", "/a b/:id", "param")
+    r.add("GET", "/files/:name.pdf-ü", "mixed")
+    // Composed (NFC) and decomposed spellings of the same text register as one route.
+    r.add("GET", "/re\u0301sume\u0301", "decomposed")
+    const path = (raw: string): string => new URL(raw, "http://x").pathname
+    expect(r.find("GET", path("/café/menu"))).toMatchObject({ found: true, payload: "static" })
+    expect(r.find("GET", path("/a b/7"))).toMatchObject({
+      found: true,
+      payload: "param",
+      params: { id: "7" },
+    })
+    expect(r.find("GET", path("/files/x.pdf-ü"))).toMatchObject({ found: true, payload: "mixed" })
+    expect(r.find("GET", path("/r\u00e9sum\u00e9"))).toMatchObject({ payload: "decomposed" })
+  })
+
+  test("a constrained param after non-ASCII text still matches", () => {
+    const r = router()
+    r.add("GET", "/tag-é/:slug{[a-z]+}", "tag")
+    expect(r.find("GET", "/tag-%C3%A9/abc")).toMatchObject({ found: true, params: { slug: "abc" } })
+    expect(r.find("GET", "/tag-%C3%A9/ABC").found).toBe(false)
+  })
+})
+
 describe("Router.find - precedence and backtracking", () => {
   test("static beats param at the same position", () => {
     const r = router()

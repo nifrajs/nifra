@@ -1,7 +1,9 @@
 /**
  * Draft / preview mode - let an editor see unpublished content by flipping a signed cookie that
  * loaders read (`ctx.draft`) and ISR bypasses (fresh render, never cached). The cookie is **HMAC-signed**
- * (so a visitor can't forge it) and **HttpOnly** (JS can't read it). You gate `enableDraft` yourself -
+ * (so a visitor can't forge it), **HttpOnly** (JS can't read it) and carries its own expiry, which the
+ * server checks (a copied cookie stops working when the browser would have dropped it). You gate
+ * `enableDraft` yourself -
  * behind an editor login or a `?token=` check - exactly like Next's `draftMode().enable()`.
  *
  *   // a route you've protected (e.g. checked ?token= against a secret):
@@ -26,9 +28,23 @@ import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal
 /** The cookie name nifra uses for draft/preview mode. */
 export const DRAFT_COOKIE = "__nifra_draft"
 
-// The signed cookie's payload is a fixed marker - a *valid signature* (not the value) is the signal
-// that the server issued this via enableDraft(). Nothing secret is stored in it.
-const DRAFT_MARKER = "1"
+// The signed payload is `1:<expiry in Unix seconds>`. A valid signature says the server issued it; the
+// expiry bounds a replayed copy, which Max-Age alone cannot, since a client can resend any cookie it holds.
+const DRAFT_PREFIX = "1:"
+
+function draftPayload(options: EnableDraftOptions): string {
+  return `${DRAFT_PREFIX}${Math.floor(Date.now() / 1000) + draftMaxAge(options)}`
+}
+
+function draftMaxAge(options: EnableDraftOptions): number {
+  const seconds = options.maxAgeSeconds ?? 3600
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) {
+    throw new RangeError(
+      `[nifra] draft maxAgeSeconds must be a positive whole number of seconds, got ${seconds}`,
+    )
+  }
+  return seconds
+}
 
 /** The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any
  * nifra handler context satisfies it without importing the full `Context`. */
@@ -38,7 +54,8 @@ export interface DraftCookieControls {
 }
 
 export interface EnableDraftOptions {
-  /** Cookie lifetime in **seconds** (default `3600` = 1h). Keep it short - draft is an editor session. */
+  /** Draft session lifetime in **seconds** (default `3600` = 1h): the cookie's `Max-Age`, and the expiry
+   * signed into the cookie that the server enforces. Keep it short - draft is an editor session. */
   readonly maxAgeSeconds?: number
   /** Cookie `Path` (default `"/"`). */
   readonly path?: string
@@ -57,8 +74,8 @@ export async function enableDraft(
   secret: string,
   options: EnableDraftOptions = {},
 ): Promise<void> {
-  const signed = await signValue(DRAFT_MARKER, secret)
-  c.set.cookie(DRAFT_COOKIE, signed, draftCookieOptions(options))
+  const cookieOptions = draftCookieOptions(options)
+  c.set.cookie(DRAFT_COOKIE, await signValue(draftPayload(options), secret), cookieOptions)
 }
 
 /**
@@ -77,7 +94,7 @@ function draftCookieOptions(options: EnableDraftOptions): CookieOptions {
     httpOnly: true,
     sameSite: "lax",
     path: options.path ?? "/",
-    maxAge: options.maxAgeSeconds ?? 3600,
+    maxAge: draftMaxAge(options),
     secure: options.secure ?? true,
   }
 }
@@ -91,14 +108,17 @@ export function disableDraft(
 }
 
 /**
- * Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`).
- * `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A
- * missing, forged, or tampered cookie returns `false`.
+ * Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via
+ * `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for
+ * editors. A missing, forged, tampered, or expired cookie returns `false`.
  */
 export async function isDraftEnabled(request: Request, secret: string): Promise<boolean> {
   const cookie = parseCookies(request.headers.get("cookie"))[DRAFT_COOKIE]
   if (cookie === undefined) return false
-  return (await unsignValue(cookie, secret)) !== null
+  const payload = await unsignValue(cookie, secret)
+  if (payload === null || !payload.startsWith(DRAFT_PREFIX)) return false
+  const expires = Number(payload.slice(DRAFT_PREFIX.length))
+  return Number.isSafeInteger(expires) && Date.now() / 1000 < expires
 }
 
 /**
@@ -173,7 +193,8 @@ export function previewEndpoint(
       `[nifra] previewEndpoint fallbackPath must be a site-relative path, got ${JSON.stringify(fallbackPath)}`,
     )
   }
-  const cookieOptions = draftCookieOptions(options.cookie ?? {})
+  const draftOptions = options.cookie ?? {}
+  const cookieOptions = draftCookieOptions(draftOptions)
   return async (request) => {
     const url = new URL(request.url)
     if (!timingSafeEqual(url.searchParams.get(tokenParam) ?? "", options.secret)) {
@@ -184,7 +205,7 @@ export function previewEndpoint(
     if (destination === null) {
       return Response.json({ ok: false, error: "invalid_redirect" }, { status: 400 })
     }
-    const signed = await signValue(DRAFT_MARKER, options.draftSecret)
+    const signed = await signValue(draftPayload(draftOptions), options.draftSecret)
     return new Response(null, {
       status: 302,
       headers: {

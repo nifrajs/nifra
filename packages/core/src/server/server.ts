@@ -18,6 +18,15 @@ import {
   type RegisteredCapabilityInterceptor,
 } from "../internal/capability-runtime.ts"
 import {
+  adoptStaticTags,
+  enterPlugin,
+  leavePlugin,
+  tagAdoption,
+  tagHook,
+  tagScoped,
+  tagStatic,
+} from "../internal/hook-origins.ts"
+import {
   type AssuranceDeclaration,
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
@@ -107,6 +116,7 @@ import {
   fusedRespond,
   fusedRespondNoSet,
   toResponse,
+  writableResponse,
 } from "./respond.ts"
 // Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
 // install the plugin. The value side arrives through the symbol-keyed install seam.
@@ -116,6 +126,7 @@ import type {
   ResponseObserverRuntime,
 } from "./response-observer-runtime.ts"
 import {
+  CONTEXT_REQUEST,
   CONTEXT_SEARCH,
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
@@ -160,6 +171,7 @@ import {
   INSTALL_SSE,
   INSTALL_WS,
   NODE_NATIVE_MOUNT,
+  REPORT_ERROR,
   RESOLVE_NODE_MOUNT,
 } from "./install.ts"
 import type { EffectLedgerRuntime } from "./ledger-lane.ts"
@@ -186,6 +198,7 @@ import type {
 import type {
   AdmissionController,
   AdmissionDecision,
+  DeclaredMountRoute,
   FetchHandler,
   ListenTlsOptions,
   McpPromptDescriptor,
@@ -194,6 +207,7 @@ import type {
   MountableApp,
   MountFetchOptions,
   MountOptions,
+  OpaqueMountDeclaration,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
@@ -205,12 +219,7 @@ import type {
 } from "./server-types.ts"
 import type { SSEInit, TypedSSEStream } from "./sse.ts"
 import type { SseRuntime } from "./sse-hook.ts"
-import type {
-  TopicRegistry,
-  WebSocketContext,
-  WebSocketHandler,
-  WebSocketUpgradeOutcome,
-} from "./websocket.ts"
+import type { TopicRegistry, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
 import type { BunWsData } from "./ws-bun.ts"
 import type { WsRuntime } from "./ws-hook.ts"
 
@@ -285,6 +294,7 @@ export interface RawContext {
   readonly jsonReply?: Response | undefined
   readonly jsonBody?: unknown
   readonly [CONTEXT_SEARCH]: string
+  readonly [CONTEXT_REQUEST]: Request
   readonly signal: AbortSignal
   readonly budget: RequestBudget
   readonly env: unknown
@@ -297,14 +307,18 @@ export interface RawContext {
 /** Broad shape so the implementation signature is compatible with both typed overloads. */
 type ErasedHandler = (ctx: never) => MaybePromise<HandlerResult>
 
-export type OnRequestResult = Response | Request | undefined
+/** What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes
+ * the normal response path), a replacement `Request`, or `undefined` to continue. */
+export type OnRequestResult = Response | ResponseResult | Request | undefined
 type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
 
-/** A registered WebSocket route - just its handler; matching reuses {@link Router} under the GET verb. */
+/** A registered WebSocket route and the route chain its handshake runs; matching reuses
+ * {@link Router} under the GET verb. */
 interface WsEntry {
   readonly handler: WebSocketHandler
+  readonly chain: RouteEntry
 }
 
 /** Structural view of the socket-peer lookup on the Bun `Server`, so any Bun `Server` (WS or not)
@@ -353,10 +367,14 @@ interface FetchMount<Env = unknown> {
   readonly fallbackOn404: boolean
   readonly beforeRoutes: boolean
   readonly order: number
-  /** The declared reason this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
-  readonly opaque: string | undefined
+  /** Why this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
+  readonly opaque: string | OpaqueMountDeclaration | undefined
   /** The mounted app (`mount()` only), for reflection to tell a composed child from an opaque one. */
   readonly app?: object
+  /** Parent request → the stripped copy a handshake check handed this child. On a pass the HTTP
+   * dispatch hands over that same copy, which the child's own pass record knows, so its onRequest
+   * hooks do not run a second time. */
+  wsPassed?: WeakMap<Request, Request>
 }
 
 /** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
@@ -410,6 +428,7 @@ function outranks(
 }
 
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
+
 const DEFAULT_WS_UPGRADE_TIMEOUT_MS = 10_000
 /** Counts `ws()` routes and `mount()`s across every app in this copy of core: the only
  * changes that can make a mounted app take WebSocket upgrades. An app's answer to that question
@@ -426,6 +445,9 @@ function requireWsRuntime(runtime: WsRuntime | undefined): WsRuntime {
   }
   return runtime
 }
+
+/** The method `app.sse()` registers: POST when the schema declares a body, which a GET cannot carry. */
+type SseMethodOf<S> = S extends { readonly body: StandardSchemaV1 } ? "POST" : "GET"
 
 function requireSseRuntime(runtime: SseRuntime | undefined): SseRuntime {
   if (runtime === undefined) {
@@ -495,6 +517,7 @@ export type Handler<
 export type {
   AdmissionController,
   AdmissionDecision,
+  DeclaredMountRoute,
   FetchHandler,
   ListenTlsOptions,
   McpPromptDescriptor,
@@ -503,6 +526,7 @@ export type {
   MountableApp,
   MountFetchOptions,
   MountOptions,
+  OpaqueMountDeclaration,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
@@ -675,11 +699,16 @@ const underPrefix = (prefix: string): HookScope => {
 }
 
 /** A merged server's hook scope: exactly the routes MERGED, snapshotted into a dedicated matcher so
- * the guard never reflects whatever the source's own catalog grows into afterwards. */
+ * the guard never reflects whatever the source's own catalog grows into afterwards. An `OPTIONS`
+ * request to a path they serve is in scope too: a CORS preflight names the path, not a route, and
+ * the group's `cors()` is the only hook that can answer it. */
 const servedBy = (routes: readonly CatalogRoute[]): HookScope => {
   const scope = new RouteCatalog()
   scope.addBatch(routes)
-  return (req) => scope.find(req.method, pathnameOf(req.url)).found
+  return (req) => {
+    const match = scope.find(req.method, pathnameOf(req.url))
+    return match.found || (req.method === "OPTIONS" && match.reason === "method-not-allowed")
+  }
 }
 
 type AdoptedHook = ((first: never, second: never) => unknown) | undefined
@@ -800,6 +829,30 @@ interface HookAuditState {
 }
 const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
 
+/** Whether `from` reaches `target` through mounts that keep the path and take a request under `path`.
+ * Module-level, not a `Server` method, so a production bundle drops it with its dev-only caller. */
+function mountLeadsBack(
+  from: unknown,
+  target: unknown,
+  path: string,
+  mountsOf: (server: Server) => readonly FetchMount[],
+  seen: Set<unknown>,
+): boolean {
+  if (from === target) return true
+  if (!(from instanceof Server) || seen.has(from)) return false
+  seen.add(from)
+  const under = (prefix: string): string => (prefix === "/" ? "/" : `${prefix}/`)
+  return mountsOf(from).some(
+    (mount) =>
+      !mount.stripPrefix &&
+      (under(path).startsWith(under(mount.path)) || under(mount.path).startsWith(under(path))) &&
+      mountLeadsBack(mount.app, target, path, mountsOf, seen),
+  )
+}
+
+/** Set by `@nifrajs/web`'s `createWebApp` on its app once the page routes are declared. */
+const PAGES_DECLARED = /* @__PURE__ */ Symbol.for("nifra.web.pagesDeclared")
+
 /** Start tracking one server's order-scoped hook pushes (once, from the constructor). */
 const beginHookAudit = (
   key: object,
@@ -810,11 +863,40 @@ const beginHookAudit = (
 }
 
 /** Record one order-scoped hook push: the route count at that moment (so `routesAtPush === total` at
- * seal means no route was declared after it) and the caller's frame. */
+ * seal means no route was declared after it) and the caller's frame. Hooks a WebSocket handshake runs
+ * count sockets as routes; `around` and `afterHandle` wrap a response, so they count HTTP routes only. */
 const recordScopedHook = (key: object, routesAtPush: number, kind: string): void => {
+  // Not a dead hook when routes follow it, but every page already copied its chain without it.
+  if (PAGES_DECLARED in key) {
+    const site = captureCallerSite()
+    throw new FrameworkError(
+      "HOOK_AFTER_PAGES",
+      `${kind}()${site === undefined ? "" : ` at ${site}`} was added after createWebApp declared the page routes, so no page runs it: each route keeps the order-scoped hooks that existed when it was declared. Apply it in createWebApp({ use: (app) => ... }) to cover the pages, or inside app.group(prefix, ...) to scope it to the routes declared there.`,
+    )
+  }
   const state = hookAudit.get(key)
   if (state === undefined || state.policy === "off") return
   state.sites.push({ kind, routesAtPush, site: captureCallerSite() })
+}
+
+/** Hook provenance for an adoption (dev only, see `internal/hook-origins.ts`): which scope each
+ * wrapper just appended to a hook list gates its hook by. `pairs` holds each source list with the target list it
+ * was appended to, read right after the append so the wrappers are the target list's tail. */
+const tagAdopted = (
+  target: object,
+  source: object,
+  prefix: string | undefined,
+  routes: readonly CatalogRoute[],
+  pairs: readonly (readonly [readonly unknown[], readonly unknown[]])[],
+): void => {
+  tagAdoption(target, source, prefix)
+  const scope =
+    prefix !== undefined
+      ? { prefix }
+      : { routes: routes.map((route) => ({ method: route.method, path: route.path })) }
+  for (const [originals, appended] of pairs) {
+    if (originals.length > 0) tagScoped(originals, appended.slice(-originals.length), scope)
+  }
 }
 
 /** Run the deadness check exactly once. A hook whose recorded route count equals the final route count
@@ -824,13 +906,20 @@ const recordScopedHook = (key: object, routesAtPush: number, kind: string): void
 const sealHookAudit = (
   key: object,
   total: number,
+  sockets: number,
   logger: { warn(message: string): void },
 ): void => {
   const state = hookAudit.get(key)
   if (state === undefined || state.checked) return
   state.checked = true
-  if (state.policy === "off" || total === 0) return
-  const dead = state.sites.filter((hook) => hook.routesAtPush === total)
+  if (state.policy === "off" || total + sockets === 0) return
+  const dead = state.sites.filter(
+    (hook) =>
+      hook.routesAtPush ===
+      (hook.kind === "around" || hook.kind === "aroundCapability" || hook.kind === "afterHandle"
+        ? total
+        : total + sockets),
+  )
   if (dead.length === 0) return
   const detail = dead.map((hook) => `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}`).join("\n")
   const message =
@@ -865,7 +954,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
-  private wsRouteCount: number
+  /** Each socket path, its declared capabilities, the evidence declarations its handshake captured
+   * and the chain it runs; reflection reads it. */
+  private readonly wsRoutes: {
+    readonly path: string
+    readonly capabilities: readonly string[] | undefined
+    readonly assurance: readonly AssuranceDeclaration[]
+    readonly chain: RouteEntry
+  }[]
   /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
   private wsMountsCheckedAt = -1
   /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
@@ -899,7 +995,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly acceptInboundDeadlines: boolean
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
-  private readonly gracefulSignals: boolean
+  private readonly gracefulSignals: { readonly drainMs?: number } | undefined
   private readonly stopHooks: StopHook[]
   private readonly fetchMounts: FetchMount<EnvOf<Ctx>>[]
   private mountOrder: number
@@ -980,9 +1076,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
   private readonly responseBodyOwners: Set<object>
-  private readonly finalizeResponse = (result: unknown, set: CtxSet): Response =>
-    toResponse(result as HandlerResult, set, this.responseBodyTag, this.staticResponseHeaders)
+  private readonly finalizeResponse = (result: unknown, set: CtxSet, ctx?: RawContext): Response =>
+    toResponse(
+      result as HandlerResult,
+      set,
+      this.responseBodyTag,
+      this.staticResponseHeaders,
+      // Response hooks write next, and they run for this same request object.
+      ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
+    )
   private readonly responseRequests: WeakMap<Request, Request>
+  /** A request the WebSocket handshake check ran the onRequest hooks on and then passed to HTTP →
+   * what the hooks returned, so `fetch` routes that instead of running the hooks a second time. */
+  private wsHookedPasses: WeakMap<object, Request> | undefined
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
   /** Memoized NodeRequestContext per plain-`Request` source - see {@link nodeRequestContextOf}. */
@@ -1006,7 +1112,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.routePrefix = ""
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
-    this.wsRouteCount = 0
+    this.wsRoutes = []
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
@@ -1018,7 +1124,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.wsMaxPayloadBytes = wsMaxPayloadBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
     this.wsUpgradeTimeoutMs = options.wsUpgradeTimeoutMs ?? DEFAULT_WS_UPGRADE_TIMEOUT_MS
-    this.clientIpTrust = options.clientIp
+    const trust = options.clientIp
+    if (
+      trust !== undefined &&
+      !("header" in trust) &&
+      !(Number.isSafeInteger(trust.trustedHops) && trust.trustedHops >= 0)
+    ) {
+      throw new RangeError("clientIp trustedHops must be a non-negative integer")
+    }
+    this.clientIpTrust = trust
     this.acceptInboundDeadlines = options.acceptInboundDeadlines ?? false
     this.maxInboundDeadlineMs = options.maxInboundDeadlineMs ?? 30_000
     this.deadlineAdmissionOptions = Object.freeze({
@@ -1034,7 +1148,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!Number.isFinite(this.maxInboundDeadlineMs) || this.maxInboundDeadlineMs <= 0) {
       throw new RangeError("maxInboundDeadlineMs must be a finite positive number")
     }
-    this.gracefulSignals = options.gracefulSignals ?? false
+    this.gracefulSignals =
+      options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
     this.stopHooks = []
     this.fetchMounts = []
     this.mountOrder = 0
@@ -1083,6 +1198,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.responseBodyTag = undefined
     this.responseBodyOwners = new Set()
     this.responseRequests = new WeakMap()
+    this.wsHookedPasses = undefined
     this.responseSources = new WeakMap()
     this.nodeContexts = new WeakMap()
     this.appliedPlugins = new Map()
@@ -1187,6 +1303,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       opaque: options.opaque,
       app,
     }
+    // Mounts run before routes: a request under this prefix that no mount on the way strips comes back
+    // here unchanged until the stack overflows, which takes the process down. Dev-time only, like the
+    // hook audit: a production define folds this away, and the first dev request would hit it anyway.
+    if (
+      hookAuditRuntime &&
+      process.env.NODE_ENV !== "production" &&
+      !mount.stripPrefix &&
+      mountLeadsBack(app, this, mount.path, (server) => server.fetchMounts, new Set())
+    ) {
+      throw new RouteConfigError(
+        "MOUNT_CYCLE",
+        `mount ${mount.path}: the app leads back to this one without stripPrefix`,
+      )
+    }
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
     this.preRouteMountCount += 1
@@ -1214,8 +1344,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   > {
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size, "derive")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "derive")
+      tagHook(fn, "derive", this)
+    }
     return this as unknown as Server<
       R,
       Ctx & ContextExtensionOf<ReturnType<H>>,
@@ -1252,6 +1384,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError('authenticate() stage mode must be "sync" or "async"')
     }
     this.authStages.push(stage as unknown as RawAuthStage)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      tagHook(stage, "authenticate", this)
     return this as unknown as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
   }
 
@@ -1259,19 +1393,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size, "decorate")
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "decorate")
     return this as unknown as Server<R, Ctx & Record<K, V>, HookOutput>
   }
 
   /**
-   * Run before routing on the raw request. Return a `Response` to short-circuit, or a replacement
-   * `Request` to continue routing with a rewritten method/URL/headers. Global.
+   * Run before routing on the raw request. Return a `Response` or a `status()` result to
+   * short-circuit, or a replacement `Request` to continue routing with a rewritten method/URL/headers.
+   * Global.
    */
   onRequest(
     fn: (req: Request, platform?: Platform<EnvOf<Ctx>>) => MaybePromise<OnRequestResult>,
   ): this {
     this.assertConfigurable("onRequest()")
     this.onRequestHooks.push(fn as RawOnRequest)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") tagHook(fn, "onRequest", this)
     this.onNodeRequestHooks.push(undefined)
     this.nodeRequestHooksComplete = false
     this.bunNativeRequestHooksSafe = false
@@ -1288,8 +1424,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size, "beforeHandle")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "beforeHandle")
+      tagHook(fn, "beforeHandle", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1306,8 +1444,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   >(fn: H): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "around")
+      tagHook(fn, "around", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1355,8 +1495,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("afterHandle()")
     this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "afterHandle")
+      tagHook(fn, "afterHandle", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1368,8 +1510,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      recordScopedHook(this, this.catalog.size, "onError")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "onError")
+      tagHook(fn, "onError", this)
+    }
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
@@ -1377,6 +1521,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
     this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") tagHook(fn, "onResponse", this)
     this.onNodeResponseHooks.push(undefined)
     this.nodeResponseHooksComplete = false
     this.bunNativeResponseHeadersOnly = false
@@ -1409,6 +1554,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   responseHeaders(record: Readonly<Record<string, string>>): this {
     this.assertConfigurable("responseHeaders()")
+    if (
+      hookAuditRuntime &&
+      process.env.NODE_ENV !== "production" &&
+      this.onResponseHooks.length === 0
+    )
+      tagStatic(this, Object.keys(record), record)
     return this.addStaticResponseHeaders(normalizeStaticResponseHeaders(record))
   }
 
@@ -1427,13 +1578,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         })
         return this
       }
-      // Route the hook through the same seam the static tier uses. On a framework response (headers
-      // stamped mutable) it applies the defaults in place and returns the SAME object, so the
-      // serialized-body marker survives for later `onResponseBody`/`onResponseRaw` observers and the
-      // Node writer; reconstructing a `Response` here would strip that marker and reclassify the Node
-      // outcome from `json` to a generic `response`. A guarded foreign response takes its clone path.
+      // Route the hook through the same seam the static tier uses. On a framework response with a
+      // body it applies the defaults in place and returns the SAME object, so the serialized-body
+      // marker survives for later `onResponseBody`/`onResponseRaw` observers and the Node writer;
+      // reconstructing a `Response` here would strip that marker and reclassify the Node outcome from
+      // `json` to a generic `response`. A body-less or guarded response is copied, marker included.
       const statics = buildStaticResponseHeaders(record, this.inheritedStatics)
-      this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
+      this.onResponseHooks.push((response, req) =>
+        applyStaticResponseHeaders(response, statics, req),
+      )
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+        tagHook(this.onResponseHooks.at(-1), "responseHeaders", this)
       this.onNodeResponseHooks.push(undefined)
       this.nodeResponseHooksComplete = false
       return this
@@ -1478,6 +1633,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): this {
     this.assertConfigurable("onResponseFinalized()")
     this.onResponseFinalizedHooks.push(fn)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      tagHook(fn, "onResponseFinalized", this)
     return this
   }
 
@@ -1570,9 +1727,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.activeAssurance.push(...pluginOnly)
       const inherited = this.inheritedPlugins
       this.inheritedPlugins = undefined
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production") enterPlugin(name)
       try {
         return arg(this)
       } finally {
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production") leavePlugin()
         this.inheritedPlugins = inherited
         // Remove only this plugin's temporary evidence. Nested assured plugins may deliberately leave
         // subsequent evidence active, so truncating the whole array would lose real ordering semantics.
@@ -1602,6 +1761,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (arg.onRequest !== undefined) {
       this.assertConfigurable("onRequest()")
       this.onRequestHooks.push(arg.onRequest as RawOnRequest)
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+        tagHook(arg.onRequest, "onRequest", this)
       this.onNodeRequestHooks.push(arg.onNodeRequest)
       if (arg.onNodeRequest === undefined) this.nodeRequestHooksComplete = false
       if (!(arg as unknown as Record<symbol, unknown>)[BUN_NATIVE_REQUEST_SAFE]) {
@@ -1616,6 +1777,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (arg.onResponse !== undefined) {
       this.assertConfigurable("onResponse()")
       this.onResponseHooks.push(arg.onResponse)
+      if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+        tagHook(arg.onResponse, "onResponse", this)
       this.onNodeResponseHooks.push(arg.onNodeResponse)
       if (arg.onNodeResponse === undefined) this.nodeResponseHooksComplete = false
       else this.hasRawNodeResponseHook = true
@@ -1672,8 +1835,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /**
-   * Register a **typed SSE route** - a GET endpoint streaming `text/event-stream` whose event
-   * payloads are contracted by `schema.sse`. The handler receives the validated context plus a
+   * Register a **typed SSE route** - an endpoint streaming `text/event-stream` whose event
+   * payloads are contracted by `schema.sse`. It is a GET route, or a POST route when the schema
+   * declares a `body` (a GET carries none): the body validates as on any POST, and the client sends
+   * it with `.subscribe(onEvent, { body })` - the shape of a chat stream that posts its prompt. The handler receives the validated context plus a
    * {@link TypedSSEStream}: `stream.send(event)` is compile-time-checked against the schema and
    * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a
    * `.subscribe(onEvent)` for the route with the same payload type - end-to-end typed streaming.
@@ -1688,9 +1853,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *
    *   // client: const off = api.feed.subscribe((post) => console.log(post.title))
    *
-   * `init` passes through to the underlying {@link sse} helper (`keepAlive`, extra headers). The
-   * connection closes when the handler resolves, `stream.close()` runs, or the client disconnects
-   * (`stream.signal`). Query/body schemas validate exactly as on any other route.
+   * `init` passes through to the underlying {@link sse} helper (`keepAlive`, `maxBufferedBytes`,
+   * extra headers). The connection closes when the handler resolves, `stream.close()` runs, or the
+   * client disconnects (`stream.signal`). Query/body schemas validate exactly as on any other route.
    */
   sse<Path extends string, S extends RouteSchema & { sse: StandardSchemaV1 }>(
     path: Path,
@@ -1701,14 +1866,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ) => void | Promise<void>,
     init?: SSEInit,
   ): Server<
-    AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response, HookOutput>>,
+    AddRoute<R, SseMethodOf<S>, Path, RouteInfoFor<Path, S, Response, HookOutput>>,
     Ctx,
     HookOutput
   > {
     const handler = (context: Context<Path, S> & Ctx): Response =>
       requireSseRuntime(this.sseRuntime).response(context, (stream) => run(context, stream), init)
-    return this.route("GET", path, schema, handler as unknown as ErasedHandler) as Server<
-      AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response, HookOutput>>,
+    return this.route(
+      schema.body ? "POST" : "GET",
+      path,
+      schema,
+      handler as unknown as ErasedHandler,
+    ) as Server<
+      AddRoute<R, SseMethodOf<S>, Path, RouteInfoFor<Path, S, Response, HookOutput>>,
       Ctx,
       HookOutput
     >
@@ -1927,8 +2097,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /**
    * Register a **WebSocket** route. The connection upgrades on a `GET` to `path` carrying
-   * `Upgrade: websocket`; the optional `handler.upgrade(c)` runs in the request context first and may
-   * reject (return a `Response`) or seed per-connection `ws.data`. WebSockets are served by the
+   * `Upgrade: websocket`. The handshake runs the chain an HTTP `GET` registered here would: the
+   * `authenticate()` stages, `derive`s and `beforeHandle`s added before this call, then the optional
+   * `handler.upgrade(c)`. Any of them may reject (a `Response`, a `status(...)`, a failed auth stage);
+   * `upgrade()` may seed per-connection `ws.data`. To keep a socket public, register it before the
+   * guard. WebSockets are served by the
    * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) - not by bare `app.fetch`, which
    * has no socket (a WS path through `app.fetch` is a normal HTTP response).
    *
@@ -1947,7 +2120,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     Path extends string = string,
   >(
     path: Path,
-    handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema, Send>,
+    handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema, Send, Ctx>,
   ): string extends Path
     ? Server<R, Ctx, HookOutput>
     : Server<AddRoute<R, "WS", Path, WsRouteInfoFor<Path, Schema, Send>>, Ctx, HookOutput> {
@@ -1967,9 +2140,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
-    const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning) }
-    for (const form of expandOptionalParams(path)) this.wsRouter.add("GET", form, entry)
-    this.wsRouteCount += 1
+    const wrapped = runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning)
+    const upgrade = runtime.upgradeStep(wrapped)
+    for (const form of expandOptionalParams(path)) {
+      // The chain an HTTP `GET` to `form` would capture now, ending in `upgrade()` instead of a
+      // handler. `afterHandle` and `around` are left out: they wrap a response, and an accepted
+      // handshake has none.
+      const { entry, assurance, descriptor } = this.prepareRoute(
+        "WS",
+        form,
+        wrapped.capabilities === undefined ? undefined : { capabilities: wrapped.capabilities },
+        upgrade,
+      )
+      const chain = { ...entry, afterHandle: [] }
+      this.wsRouter.add("GET", form, {
+        handler: wrapped,
+        chain: { ...chain, program: compileRouteProgram({ ...chain, bodySchema: undefined }) },
+      })
+      this.wsRoutes.push({ path: form, capabilities: descriptor.capabilities, assurance, chain })
+    }
     wsChanges += 1
     return this as never
   }
@@ -2265,30 +2454,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** The idempotency lane's bridge back into the normal matched lanes, resolved to a concrete Response
-   * (the lane buffers the body, then replays it through the route's real validation + handler). */
-  private idempotencyRunLanes(
-    buffered: RequestSource,
-    platform: Platform | undefined,
-    entry: RouteEntry,
-    params: Record<string, string>,
-    search: string | undefined,
-  ): Promise<Response> {
-    return Promise.resolve(
-      this.runMatchedLanes(
-        buffered,
-        platform,
-        entry,
-        params,
-        search,
-        this.finalizeResponse,
-        this.wrapWebResponse,
-        this.webResponseTimeout,
-        false,
-      ),
-    )
-  }
-
   /** @internal Symbol-keyed install seam for the `responseContract()` plugin. Off the public typed surface. */
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void {
     this.assertConfigurable("responseContract()")
@@ -2302,6 +2467,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       assertConfigurable: (operation) => this.assertConfigurable(operation),
       addResponseHook: (web, node, headerOnly = false) => {
         this.onResponseHooks.push(web)
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+          tagHook(web, headerOnly ? "responseHeaders" : "onResponse", this)
         this.onNodeResponseHooks.push(node)
         if (node === undefined) this.nodeResponseHooksComplete = false
         if (!headerOnly) this.bunNativeResponseHeadersOnly = false
@@ -2343,6 +2510,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.nodeOutcomeRuntime = runtime
   }
 
+  /** @internal An adapter reports a failure no response hook saw (a hook that threw past `fetch`, a
+   * response the runtime refused to write), logged as Bun's `listen()` logs one. */
+  [REPORT_ERROR](error: unknown): void {
+    emitRequestErrorLog(this.logger, this.errorLogDetail, error, undefined)
+  }
+
   /** @internal Symbol-keyed install seam for the `streaming()` plugin. Off the public typed surface. */
   [INSTALL_SSE](runtime: SseRuntime): void {
     this.assertConfigurable("streaming()")
@@ -2363,7 +2536,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * counts. `seen` ends a mount cycle (an app mounted under itself to alias a prefix).
    */
   [GET_WS_RUNTIME](seen?: Set<unknown>): WsRuntime | null | undefined {
-    return this.wsRouteCount > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
+    return this.wsRoutes.length > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
   }
 
   /** The `[GET_WS_RUNTIME]` answer for the apps mounted here alone, whatever this app's own routes. */
@@ -2404,15 +2577,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes
    * exactly as they did standalone, so a group wires its own plugins. The same locality rule
    * covers the group's `onRequest` hooks: they run only for requests that route to the GROUP's
-   * routes (a `bodyLimit()` mounted on an uploads group must not start gating the whole app
+   * routes, and for an `OPTIONS` preflight to a path they serve (a `bodyLimit()` mounted on an uploads group must not start gating the whole app
    * because the app composed it in), and the group's global assurance follows its hooks onto
    * exactly those routes. A group with hooks but NO routes is a middleware bundle - its hooks
    * can only mean app-wide intent, so they are appended globally, unchanged. Response-side hooks
    * (`onResponse`/`onResponseFinalized`) are appended to this server's. This server's
    * route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like routes
    * registered before a `derive`). Fail closed: a path+method collision throws
-   * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register
-   * those on the parent).
+   * `RouteConfigError` at merge time, and a group with WebSocket routes or mounts is refused
+   * (register those on the parent).
    */
   merge<R2 extends Registry, Ctx2, HookOutput2>(
     other: Server<R2, Ctx2, HookOutput2>,
@@ -2432,10 +2605,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     const source = other as unknown as Server<Registry, EmptyContext>
-    if (source.wsRouteCount > 0) {
+    if (source.wsRoutes.length > 0 || source.fetchMounts.length > 0) {
       throw new RouteConfigError(
         "INVALID_PATH",
-        "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
+        "merge() does not carry WebSocket routes or mounts - register them on the parent server",
       )
     }
     this.adopt(source, undefined, 0)
@@ -2521,7 +2694,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError(`${label} builder must return its group synchronously`)
     }
     if (
-      scope.wsRouteCount > 0 ||
+      scope.wsRoutes.length > 0 ||
       scope.fetchMounts.length > 0 ||
       scope.catalog.entries().some((route) => route.descriptor.tool !== undefined)
     ) {
@@ -2531,7 +2704,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(scope, scope.catalog.size, this.logger)
+      sealHookAudit(scope, scope.catalog.size, scope.wsRoutes.length, this.logger)
     this.adopt(scope, fullPrefix, this.globalAssurance.length)
     return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
   }
@@ -2593,12 +2766,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         // The group's static declarations came before its own response hooks, so they are folded in
         // first - and fold themselves into a hook here if this server already has one (same ordering
         // rule as a direct `responseHeaders()` call).
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+          adoptStaticTags(this, source, this.onResponseHooks.length > 0)
         this.addStaticResponseHeaders({ ...statics.record })
       } else {
         // The static tier is folded into EVERY response this server builds, so a group's static
         // headers cannot join it. A hook ahead of the group's own (the sealed scope is discarded
         // after adoption) keeps their meaning - defaults a value already on the response wins over.
-        source.onResponseHooks.unshift((response) => applyStaticResponseHeaders(response, statics))
+        source.onResponseHooks.unshift((response, req) =>
+          applyStaticResponseHeaders(response, statics, req),
+        )
+        if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+          tagHook(source.onResponseHooks[0], "responseHeaders", source, true)
         source.onNodeResponseHooks.unshift(undefined)
         source.nodeResponseHooksComplete = false
       }
@@ -2608,6 +2787,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.onResponseFinalizedHooks.push(
       ...scopeHooks(source.onResponseFinalizedHooks, responseScope, 1),
     )
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      // Read before anything else is appended: the wrappers are still each list's tail.
+      const pairs: (readonly [readonly unknown[], readonly unknown[]])[] = []
+      if (inScope !== undefined) pairs.push([source.onRequestHooks, this.onRequestHooks])
+      if (responseScope !== undefined) {
+        pairs.push([source.onResponseHooks, this.onResponseHooks])
+        pairs.push([source.onResponseFinalizedHooks, this.onResponseFinalizedHooks])
+      }
+      tagAdopted(this, source, prefix, sourceRoutes, pairs)
+    }
     this.nodeResponseHooksComplete &&= source.nodeResponseHooksComplete
     this.bunNativeResponseHeadersOnly &&= source.bunNativeResponseHeadersOnly
     this.hasRawNodeResponseHook ||= source.hasRawNodeResponseHook
@@ -2799,7 +2988,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Seal once on the first request so test servers (no `listen()`) still get the dead-hook check.
     // After that it is a single boolean read - the per-request cost the option promises to keep at zero.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
     return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
@@ -2983,7 +3172,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<NodeServeOutcome> {
     // Seal once on the Node-direct lane too - it can bypass `fetchSource` entirely (hookless outcome).
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
     // be materialized with a direct-write marker and return to the socket path when the hook mutates
@@ -3242,7 +3431,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         current = outcome
         continue
       }
-      if (outcome !== undefined) return outcome
+      if (outcome !== undefined) return webResponseOf(outcome)
     }
     return current
   }
@@ -3257,7 +3446,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     let outcome = first
     for (let i = start; ; i++) {
       if (outcome instanceof Request) next = outcome
-      else if (outcome !== undefined) return outcome
+      else if (outcome !== undefined) return webResponseOf(outcome)
       if (i >= this.onRequestHooks.length) return next
       const hook = this.onRequestHooks[i]
       if (hook === undefined) return next
@@ -3271,11 +3460,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<WebSocketUpgradeOutcome> {
     // Before any header is read: Deno only materializes a request's headers when asked, and that
     // costs a plain request measurably.
-    if (this.wsRouteCount === 0 && !this.mountsTakeUpgrades()) return WS_PASS
+    if (this.wsRoutes.length === 0 && !this.mountsTakeUpgrades()) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
     // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
     // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
     if (req.method !== "GET") return WS_PASS
+    // The adapter answers a pass by handing this same object to `fetch`.
+    const received = req
     // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
     if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
@@ -3290,11 +3481,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const controller = timeoutMs > 0 ? new AbortController() : undefined
     const signal = controller?.signal ?? getNeverAbortSignal()
     const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined
-    const timeoutResponse = jsonError(503, "request_timeout")
-    const onTimeout = (): WebSocketUpgradeOutcome => ({
+    // A refusal carries the static response headers an HTTP answer would; a guard's already does.
+    const refuse = (response: Response): WebSocketUpgradeOutcome => ({
       kind: "reject",
-      response: timeoutResponse,
+      response: this.wrapWebResponse(response),
     })
+    const onTimeout = (): WebSocketUpgradeOutcome => refuse(jsonError(503, "request_timeout"))
     const bounded = <T>(work: Promise<T>, onDone: () => T): Promise<T> =>
       controller === undefined
         ? work
@@ -3307,11 +3499,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
       // already did and made every plain dynamic route pay for unrelated static path bytes.
       const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
-      if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
-      const handler = match.payload.handler
-      // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
+      if (params === null) return refuse(jsonError(400, "malformed_path"))
+      const { handler, chain } = match.payload
+      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
       const pubsub = this.topics as TopicRegistry
-      const attach = (this.wsRuntime as WsRuntime).attach
+      const runtime = this.wsRuntime as WsRuntime
       // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
       // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
       // blocks cross-site authenticated sockets when the route opts in via `allowedOrigins`.
@@ -3321,23 +3513,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           typeof handler.allowedOrigins === "function"
             ? handler.allowedOrigins(origin)
             : origin !== null && handler.allowedOrigins.includes(origin)
-        if (!allowed) return { kind: "reject", response: jsonError(403, "forbidden_origin") }
+        if (!allowed) return refuse(jsonError(403, "forbidden_origin"))
       } else if (origin !== null && !wsSameOrigin(origin, request)) {
         // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake - the
         // CSWSH case, since browsers send cookies on WS handshakes and don't apply CORS. Non-browser
         // clients send no `Origin` and pass; same-origin browsers pass. Set `allowedOrigins` to permit
         // specific cross-origin clients (or `() => true` for a genuinely public socket).
-        return { kind: "reject", response: jsonError(403, "forbidden_origin") }
-      }
-      if (handler.upgrade === undefined) {
-        return {
-          kind: "upgrade",
-          handler,
-          data: undefined,
-          pubsub,
-          attach,
-          maxPayloadBytes: this.wsMaxPayloadBytes,
-        }
+        return refuse(jsonError(403, "forbidden_origin"))
       }
       const budget =
         controller === undefined
@@ -3353,28 +3535,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.maxBodyBytes,
         this.protoPoisoning,
       )
-      const settle = (value: unknown): WebSocketUpgradeOutcome =>
-        value instanceof Response
-          ? { kind: "reject", response: value }
+      // Rendered as the same chain on an HTTP `GET` renders its early results.
+      const finalize = (result: unknown, set: CtxSet): WebSocketUpgradeOutcome => {
+        const accepted = runtime.accepted(result)
+        return accepted === undefined
+          ? { kind: "reject", response: this.finalizeResponse(result, set) }
           : {
               kind: "upgrade",
               handler,
-              data: value,
+              data: accepted.data,
               pubsub,
-              attach,
+              attach: runtime.attach,
               maxPayloadBytes: this.wsMaxPayloadBytes,
             }
-      try {
-        const result = handler.upgrade(ctx as unknown as WebSocketContext<EnvOf<Ctx>>)
-        if (!(result instanceof Promise)) return settle(result)
-        const pending = result.then(settle, () => ({
-          kind: "reject" as const,
-          response: jsonError(500, "internal_error"),
-        }))
-        return bounded(pending, onTimeout)
-      } catch {
-        return { kind: "reject", response: jsonError(500, "internal_error") }
       }
+      const wrap = (response: Response | ResponseResult): WebSocketUpgradeOutcome =>
+        finalize(response, EMPTY_RESPONSE_CONTROLS)
+      let outcome: MaybePromise<WebSocketUpgradeOutcome>
+      try {
+        outcome = executeRouteProgram(this, chain, chain.program, request, ctx, finalize, wrap)
+      } catch {
+        return refuse(jsonError(500, "internal_error"))
+      }
+      if (!(outcome instanceof Promise)) return outcome
+      const pending = outcome.then(undefined, () => refuse(jsonError(500, "internal_error")))
+      return bounded(pending, onTimeout)
     }
 
     const resolveMounted = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
@@ -3397,20 +3582,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           }
         }
         if (selected === undefined) return WS_PASS
-        const childRequest = selected.stripPrefix
-          ? stripMountPrefix(request, selected.path)
-          : request
+        let childRequest = request
+        if (selected.stripPrefix) {
+          childRequest = stripMountPrefix(request, selected.path)
+          selected.wsPassed ??= new WeakMap()
+          selected.wsPassed.set(request, childRequest)
+        }
         let child: MaybePromise<WebSocketUpgradeOutcome>
         try {
           child = selected.resolveWebSocketUpgrade!(childRequest, platform)
         } catch {
-          return { kind: "reject", response: jsonError(500, "internal_error") }
+          return refuse(jsonError(500, "internal_error"))
         }
         const settle = (outcome: WebSocketUpgradeOutcome): MaybePromise<WebSocketUpgradeOutcome> =>
           outcome.kind === "pass" ||
           (outcome.kind === "reject" && outcome.response.status === 404 && selected!.fallbackOn404)
             ? dispatch(selectedIndex + 1)
-            : outcome
+            : outcome.kind === "reject"
+              ? refuse(outcome.response)
+              : outcome
         return child instanceof Promise ? child.then(settle) : settle(child)
       }
       return dispatch(0)
@@ -3432,23 +3622,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
 
     if (this.onRequestHooks.length === 0) return resolveWithDeadline(req)
+    // On a pass the adapter hands `received` to `fetch`, which then routes these results. An upgrade
+    // or a rejection never reaches `fetch`, so the entry dies with the request.
+    const resolveHooked = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      this.wsHookedPasses ??= new WeakMap()
+      this.wsHookedPasses.set(received, request)
+      return resolveWithDeadline(request)
+    }
     let hooked: MaybePromise<Request | Response>
     try {
       hooked = this.runWebSocketRequestHooks(req, platform)
     } catch {
-      return { kind: "reject", response: jsonError(500, "internal_error") }
+      return refuse(jsonError(500, "internal_error"))
     }
     if (!(hooked instanceof Promise)) {
-      return hooked instanceof Response
-        ? { kind: "reject", response: hooked }
-        : resolveWithDeadline(hooked)
+      return hooked instanceof Response ? refuse(hooked) : resolveHooked(hooked)
     }
     const pending = hooked.then(
-      (result) =>
-        result instanceof Response
-          ? { kind: "reject" as const, response: result }
-          : resolveWithDeadline(result),
-      () => ({ kind: "reject" as const, response: jsonError(500, "internal_error") }),
+      (result) => (result instanceof Response ? refuse(result) : resolveHooked(result)),
+      () => refuse(jsonError(500, "internal_error")),
     )
     return bounded(
       Promise.resolve(pending).then((result) => result),
@@ -3512,7 +3704,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private dispatch<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     // True only from the Web `fetch` path - unlocks each route's fused lane, whose output type IS
@@ -3532,6 +3724,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (this.onRequestHooks.length === 0 || !isRoutableMethod(source.method)) {
       return this.routeAndRun(source, resolved, finalize, wrapResponse, onTimeout, webFast)
     }
+    const hooked = this.wsHookedPasses?.get(source)
+    if (hooked !== undefined) {
+      const request = requestOf(source)
+      this.wsHookedPasses?.delete(request)
+      this.responseRequests.set(request, hooked)
+      return this.routeAndRun(hooked, resolved, finalize, wrapResponse, onTimeout, webFast)
+    }
     if (!webFast && this.canUseNodeRequestHooks()) {
       return this.runWithNodeRequest(source, resolved, finalize, wrapResponse, onTimeout)
     }
@@ -3543,7 +3742,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithNodeRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): MaybePromise<T> {
@@ -3577,7 +3776,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     request: NodeRequestContext,
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): Promise<T> {
@@ -3605,7 +3804,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithOnRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3654,7 +3853,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     originalRequest: Request,
     sourceAtAwait: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3751,7 +3950,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private routeAndRun<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3881,7 +4080,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         }
       }
       if (mount === undefined) return fallback ?? jsonError(404, "not_found")
-      const childRequest = mount.stripPrefix ? stripMountPrefix(request, mount.path) : request
+      const childRequest = mount.stripPrefix
+        ? (mount.wsPassed?.get(request) ?? stripMountPrefix(request, mount.path))
+        : request
       const outcome = mount.handler(childRequest, platform)
       if (!replayable || !mount.fallbackOn404) return outcome
       if (outcome instanceof Promise) {
@@ -3901,7 +4102,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -3939,7 +4140,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         {
           maxBodyBytes: entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           runLanes: (buffered, plat, ent, prm, srch) =>
-            this.idempotencyRunLanes(buffered, plat, ent as RouteEntry, prm, srch),
+            this.runMatchedLanes(
+              buffered,
+              plat,
+              ent as RouteEntry,
+              prm,
+              srch,
+              this.finalizeResponse,
+              this.wrapWebResponse,
+              this.webResponseTimeout,
+              false,
+            ),
         },
       )
     }
@@ -3963,7 +4174,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4004,32 +4215,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         : createRequestBudget({ deadline: admission!.deadline as number, signal })
     const plan = entry.execution
     const nativeContext = controller === undefined
-    const outcome: MaybePromise<T> =
-      webFast && plan.fusedWeb !== undefined
-        ? (plan.fusedWeb(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            nativeContext,
-          ) as MaybePromise<T>)
-        : !webFast && plan.fusedBody !== undefined
-          ? plan.fusedBody(
-              source,
-              params,
-              search,
-              signal,
-              budget,
-              platform,
-              false,
-              finalize,
-              wrapResponse,
-            )
-          : plan.run(
-              this,
-              entry,
+    let outcome: MaybePromise<T>
+    try {
+      outcome =
+        webFast && plan.fusedWeb !== undefined
+          ? (plan.fusedWeb(
               source,
               params,
               search,
@@ -4037,9 +4227,46 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               budget,
               platform,
               nativeContext,
-              finalize,
-              wrapResponse,
-            )
+            ) as MaybePromise<T>)
+          : !webFast && plan.fusedBody !== undefined
+            ? plan.fusedBody(
+                source,
+                params,
+                search,
+                signal,
+                budget,
+                platform,
+                false,
+                finalize,
+                wrapResponse,
+              )
+            : plan.run(
+                this,
+                entry,
+                source,
+                params,
+                search,
+                signal,
+                budget,
+                platform,
+                nativeContext,
+                finalize,
+                wrapResponse,
+              )
+    } catch (err) {
+      // A lane's synchronous render throw (a BigInt, a header value with a line break): the lanes
+      // guard only their async continuations, since a `try` around a fused render slows it.
+      return this.contextlessBareError(
+        err,
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        wrapResponse,
+      )
+    }
     // The request timeout only bounds work that is actually pending - a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
     if (controller !== undefined && outcome instanceof Promise) {
@@ -4074,7 +4301,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     signal: AbortSignal,
     budget: RequestBudget,
     platform: Platform | undefined,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4094,7 +4321,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     if (result instanceof Promise) {
       return result.then(
-        (value) => finalize(value, EMPTY_RESPONSE_CONTROLS),
+        (value) => {
+          try {
+            return finalize(value, EMPTY_RESPONSE_CONTROLS)
+          } catch (err) {
+            return this.contextlessBareError(
+              err,
+              source,
+              params,
+              search,
+              signal,
+              budget,
+              platform,
+              wrapResponse,
+            )
+          }
+        },
         (err) =>
           this.contextlessBareError(
             err,
@@ -4151,7 +4393,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4164,11 +4406,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (result instanceof Promise) {
       // Async handler on an otherwise-bare route: finish on a microtask, with the same error handling.
       return result.then(
-        (value) => finalize(value, responseSet(ctx)),
+        (value) => {
+          // A synchronous finalize throw reaches runMatchedLanes; this one would reject.
+          try {
+            return finalize(value, responseSet(ctx), ctx)
+          } catch (err) {
+            return this.bareError(err, ctx, finalize, wrapResponse)
+          }
+        },
         (err) => this.bareError(err, ctx, finalize, wrapResponse),
       )
     }
-    return finalize(result, responseSet(ctx))
+    return finalize(result, responseSet(ctx), ctx)
   }
 
   /** Bare-route error rendering - identical to the compiled route program's catch minus the (absent) onError
@@ -4200,66 +4449,62 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // `() => ...` can't observe the context - skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
       const contextlessHandler = handler as unknown as ContextlessHandler
+      const fail = (
+        err: unknown,
+        source: RequestSource,
+        params: Record<string, string>,
+        search: string | undefined,
+        signal: AbortSignal,
+        budget: RequestBudget,
+        platform: Platform | undefined,
+        nativeContext: boolean,
+      ): Response =>
+        logError(
+          err,
+          nativeContext
+            ? RequestContext.native(
+                source,
+                params,
+                search,
+                maxBodyBytes,
+                platform,
+                this.protoPoisoning,
+              )
+            : new RequestContext(
+                source,
+                params,
+                search,
+                signal,
+                budget,
+                platform,
+                maxBodyBytes,
+                this.protoPoisoning,
+              ),
+        )
       return (source, params, search, signal, budget, platform, nativeContext) => {
         let result: unknown
         try {
           result = contextlessHandler()
         } catch (err) {
-          return logError(
-            err,
-            nativeContext
-              ? RequestContext.native(
-                  source,
-                  params,
-                  search,
-                  maxBodyBytes,
-                  platform,
-                  this.protoPoisoning,
-                )
-              : new RequestContext(
-                  source,
-                  params,
-                  search,
-                  signal,
-                  budget,
-                  platform,
-                  maxBodyBytes,
-                  this.protoPoisoning,
-                ),
-          )
+          return fail(err, source, params, search, signal, budget, platform, nativeContext)
         }
         if (result instanceof Promise) {
           return result.then(
-            (value) =>
-              fusedRespondNoSet(
-                value,
-                this.responseBodyTag,
-                this.staticResponseHeaders,
-                this.onResponseHooks.length === 0,
-              ),
-            (err) =>
-              logError(
-                err,
-                nativeContext
-                  ? RequestContext.native(
-                      source,
-                      params,
-                      search,
-                      maxBodyBytes,
-                      platform,
-                      this.protoPoisoning,
-                    )
-                  : new RequestContext(
-                      source,
-                      params,
-                      search,
-                      signal,
-                      budget,
-                      platform,
-                      maxBodyBytes,
-                      this.protoPoisoning,
-                    ),
-              ),
+            (value) => {
+              // A synchronous render throw reaches runMatchedLanes; this one would reject.
+              try {
+                return fusedRespondNoSet(
+                  value,
+                  this.responseBodyTag,
+                  this.staticResponseHeaders,
+                  this.onResponseHooks.length === 0,
+                  this.onResponseHooks.length === 0 ? undefined : requestOf(source),
+                )
+              } catch (err) {
+                return fail(err, source, params, search, signal, budget, platform, nativeContext)
+              }
+            },
+            (err) => fail(err, source, params, search, signal, budget, platform, nativeContext),
           )
         }
         return fusedRespondNoSet(
@@ -4267,6 +4512,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           this.responseBodyTag,
           this.staticResponseHeaders,
           this.onResponseHooks.length === 0,
+          this.onResponseHooks.length === 0 ? undefined : requestOf(source),
         )
       }
     }
@@ -4292,14 +4538,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) =>
-            fusedRespond(
-              value,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            ),
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
           (err) => logError(err, ctx),
         )
       }
@@ -4309,6 +4548,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.responseBodyTag,
         this.staticResponseHeaders,
         this.onResponseHooks.length === 0,
+      )
+    }
+  }
+
+  /** A fused Web lane's render in an async continuation, where a result that cannot be rendered
+   * must fail like a handler throw; a synchronous render throw reaches {@link runMatchedLanes}. */
+  private respondFused(result: unknown, ctx: RawContext, unstamped?: boolean): Response {
+    try {
+      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders, unstamped)
+    } catch (err) {
+      return this.bareError(
+        err,
+        ctx,
+        (value, set) => this.wrapWebResponse(toResponse(value, set)),
+        this.wrapWebResponse,
       )
     }
   }
@@ -4496,24 +4750,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (settled) =>
-            fusedRespond(
-              settled,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            ),
+          (settled) => this.respondFused(settled, ctx, this.onResponseHooks.length === 0),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(
-        result,
-        ctx,
-        this.responseBodyTag,
-        this.staticResponseHeaders,
-        this.onResponseHooks.length === 0,
-      )
+      return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
@@ -4573,136 +4814,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     querySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
-    const logError = (err: unknown, ctx: RawContext): Response =>
-      this.bareError(
-        err,
-        ctx,
-        (result, set) => this.wrapWebResponse(toResponse(result, set)),
-        this.wrapWebResponse,
-      )
-    return (source, params, search, signal, budget, platform, nativeContext) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
-          )
-      const runHandler = (): MaybePromise<Response> => {
-        let result: unknown
-        try {
-          result = handler(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (result instanceof Promise) {
-          return result.then(
-            (value) =>
-              fusedRespond(
-                value,
-                ctx,
-                this.responseBodyTag,
-                this.staticResponseHeaders,
-                this.onResponseHooks.length === 0,
-              ),
-            (err) => logError(err, ctx),
-          )
-        }
-        return fusedRespond(
-          result,
-          ctx,
-          this.responseBodyTag,
-          this.staticResponseHeaders,
-          this.onResponseHooks.length === 0,
-        )
-      }
-      const runBefore = (): MaybePromise<Response> => {
-        let early: unknown
-        try {
-          early = before(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (early instanceof Promise) {
-          return early.then(
-            (settled) => {
-              if (settled === undefined) return runHandler()
-              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
-            },
-            (err) => logError(err, ctx),
-          )
-        }
-        if (early === undefined) return runHandler()
-        return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
-      }
-      const runDerive = (): MaybePromise<Response> => {
-        let derived: unknown
-        try {
-          derived = derive(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (derived instanceof Promise) {
-          return derived.then(
-            (settled) => {
-              if (isResponseResult(settled) || settled instanceof Response) {
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
-              }
-              Object.assign(ctx, settled as object)
-              return runBefore()
-            },
-            (err) => logError(err, ctx),
-          )
-        }
-        if (isResponseResult(derived) || derived instanceof Response) {
-          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
-        }
-        Object.assign(ctx, derived as object)
-        return runBefore()
-      }
-      if (querySchema === undefined) return runDerive()
-      let validation: MaybePromise<StandardResult<unknown>>
-      try {
-        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-      } catch (err) {
-        return logError(err, ctx)
-      }
-      if (validation instanceof Promise) {
-        return validation.then(
-          (settled) => {
-            if (settled.issues !== undefined)
-              return this.wrapWebResponse(plainValidationError(settled.issues))
-            ctx.query = settled.value
-            return runDerive()
-          },
-          (err) => logError(err, ctx),
-        )
-      }
-      if (validation.issues !== undefined)
-        return this.wrapWebResponse(plainValidationError(validation.issues))
-      ctx.query = validation.value
-      return runDerive()
-    }
+    return this.buildFusedDeriveBeforeAfter(
+      handler,
+      derive,
+      before,
+      undefined,
+      querySchema,
+      maxBodyBytes,
+    )
   }
 
-  /**
-   * Same shape as `buildFusedDeriveBefore`, plus one `afterHandle` step. The closure runs (validate) →
-   * derive → before → handler → after in one frame, the shape the realistic middleware route lands on
-   * when it also wants a response transform (e.g. attaching a request id to a successful payload's
-   * headers). `LifecycleExecutionLane` and `selectRouteLanes` guarantee `afterHandle === 1`, the
-   * throw contract is the same as the generic program, and the `after` step is the final transform +
-   * respond the generic program already does.
-   */
+  // Both hook variants share one registered chain; request contexts stay in arguments.
   private buildFusedDeriveBeforeAfter(
     handler: InternalHandler,
     derive: RawDerive,
     before: RawBeforeHandle,
-    after: RawAfterHandle,
+    after: RawAfterHandle | undefined,
     querySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
@@ -4713,6 +4840,83 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (result, set) => this.wrapWebResponse(toResponse(result, set)),
         this.wrapWebResponse,
       )
+    // Continuations capture route state once; each request supplies its own context.
+    const runAfter = (result: unknown, ctx: RawContext): MaybePromise<Response> => {
+      if (after === undefined)
+        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+      let transformed: unknown
+      try {
+        transformed = after(result, ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+          (err) => logError(err, ctx),
+        )
+      }
+      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+    }
+    const runHandler = (ctx: RawContext): MaybePromise<Response> => {
+      let result: unknown
+      try {
+        result = handler(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => runAfter(value, ctx),
+          (err) => logError(err, ctx),
+        )
+      }
+      return runAfter(result, ctx)
+    }
+    const runBefore = (ctx: RawContext): MaybePromise<Response> => {
+      let early: unknown
+      try {
+        early = before(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => {
+            if (settled === undefined) return runHandler(ctx)
+            return this.respondFused(settled, ctx)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (early === undefined) return runHandler(ctx)
+      return this.respondFused(early, ctx)
+    }
+    const runDerive = (ctx: RawContext): MaybePromise<Response> => {
+      let derived: unknown
+      try {
+        derived = derive(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (derived instanceof Promise) {
+        return derived.then(
+          (settled) => {
+            if (isResponseResult(settled) || settled instanceof Response) {
+              return this.respondFused(settled, ctx)
+            }
+            Object.assign(ctx, settled as object)
+            return runBefore(ctx)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (isResponseResult(derived) || derived instanceof Response) {
+        return this.respondFused(derived, ctx)
+      }
+      Object.assign(ctx, derived as object)
+      return runBefore(ctx)
+    }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
         ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
@@ -4726,94 +4930,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      const runAfter = (result: unknown): MaybePromise<Response> => {
-        let transformed: unknown
-        try {
-          transformed = after(result, ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (transformed instanceof Promise) {
-          return transformed.then(
-            (value) =>
-              fusedRespond(
-                value,
-                ctx,
-                this.responseBodyTag,
-                this.staticResponseHeaders,
-                this.onResponseHooks.length === 0,
-              ),
-            (err) => logError(err, ctx),
-          )
-        }
-        return fusedRespond(
-          transformed,
-          ctx,
-          this.responseBodyTag,
-          this.staticResponseHeaders,
-          this.onResponseHooks.length === 0,
-        )
-      }
-      const runHandler = (): MaybePromise<Response> => {
-        let result: unknown
-        try {
-          result = handler(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (result instanceof Promise) {
-          return result.then(
-            (value) => runAfter(value),
-            (err) => logError(err, ctx),
-          )
-        }
-        return runAfter(result)
-      }
-      const runBefore = (): MaybePromise<Response> => {
-        let early: unknown
-        try {
-          early = before(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (early instanceof Promise) {
-          return early.then(
-            (settled) => {
-              if (settled === undefined) return runHandler()
-              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
-            },
-            (err) => logError(err, ctx),
-          )
-        }
-        if (early === undefined) return runHandler()
-        return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
-      }
-      const runDerive = (): MaybePromise<Response> => {
-        let derived: unknown
-        try {
-          derived = derive(ctx)
-        } catch (err) {
-          return logError(err, ctx)
-        }
-        if (derived instanceof Promise) {
-          return derived.then(
-            (settled) => {
-              if (isResponseResult(settled) || settled instanceof Response) {
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
-              }
-              Object.assign(ctx, settled as object)
-              return runBefore()
-            },
-            (err) => logError(err, ctx),
-          )
-        }
-        if (isResponseResult(derived) || derived instanceof Response) {
-          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
-        }
-        Object.assign(ctx, derived as object)
-        return runBefore()
-      }
-      if (querySchema === undefined) return runDerive()
+      if (querySchema === undefined) return runDerive(ctx)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
@@ -4826,7 +4943,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return this.wrapWebResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive()
+            return runDerive(ctx)
           },
           (err) => logError(err, ctx),
         )
@@ -4834,7 +4951,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive()
+      return runDerive(ctx)
     }
   }
 
@@ -4881,13 +4998,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const runHandlerValidated = (): MaybePromise<Response> => {
         const runAfter = (result: unknown): MaybePromise<Response> => {
           if (after === undefined) {
-            return fusedRespond(
-              result,
-              ctx,
-              this.responseBodyTag,
-              this.staticResponseHeaders,
-              this.onResponseHooks.length === 0,
-            )
+            return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
           }
           let transformed: unknown
           try {
@@ -4897,24 +5008,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           }
           if (transformed instanceof Promise) {
             return transformed.then(
-              (value) =>
-                fusedRespond(
-                  value,
-                  ctx,
-                  this.responseBodyTag,
-                  this.staticResponseHeaders,
-                  this.onResponseHooks.length === 0,
-                ),
+              (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
               (err) => logError(err, ctx),
             )
           }
-          return fusedRespond(
-            transformed,
-            ctx,
-            this.responseBodyTag,
-            this.staticResponseHeaders,
-            this.onResponseHooks.length === 0,
-          )
+          return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
         }
         const runHandler = (): MaybePromise<Response> => {
           let result: unknown
@@ -4942,13 +5040,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             return early.then(
               (settled) => {
                 if (settled === undefined) return runHandler()
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+                return this.respondFused(settled, ctx)
               },
               (err) => logError(err, ctx),
             )
           }
           if (early === undefined) return runHandler()
-          return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+          return this.respondFused(early, ctx)
         }
         let derived: unknown
         try {
@@ -4960,7 +5058,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           return derived.then(
             (settled) => {
               if (isResponseResult(settled) || settled instanceof Response) {
-                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+                return this.respondFused(settled, ctx)
               }
               Object.assign(ctx, settled as object)
               return runBefore()
@@ -4969,7 +5067,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           )
         }
         if (isResponseResult(derived) || derived instanceof Response) {
-          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+          return this.respondFused(derived, ctx)
         }
         Object.assign(ctx, derived as object)
         return runBefore()
@@ -5472,7 +5570,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     run: () => MaybePromise<T>,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let outcome: MaybePromise<T>
@@ -5492,7 +5590,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return executeRouteProgram(this, entry, entry.program, source, ctx, finalize, wrapResponse)
@@ -5536,7 +5634,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     error: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse)
@@ -5548,7 +5646,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     result: unknown,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
@@ -5577,7 +5675,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     return readBodyFramed(
@@ -5598,7 +5696,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     parsed: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5633,14 +5731,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private executeHandler<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse?: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
     const handlerOutput = entry.handler(ctx)
     if (handlerOutput instanceof Promise) {
       return handlerOutput.then(
-        (value) => finalize(value, responseSet(ctx)),
+        (value) => finalize(value, responseSet(ctx), ctx),
         (err) => {
           if (wrapResponse) {
             return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
@@ -5649,14 +5747,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         },
       )
     }
-    return finalize(handlerOutput, responseSet(ctx))
+    return finalize(handlerOutput, responseSet(ctx), ctx)
   }
 
   private handleValidationErrorRecovery<T>(
     entry: RouteEntry,
     recovery: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     originalIssues: ReadonlyArray<StandardIssue>,
     kind: "body" | "query",
@@ -5706,7 +5804,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -5746,7 +5844,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5784,7 +5882,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -5829,13 +5927,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private applyOnResponse(response: Response, req: Request): MaybePromise<Response> {
     const hooks = this.onResponseHooks
-    let current = response
+    // Hooks write onto the response they are handed (cookies, CORS, request ids), so every response
+    // entering the chain - and any other one a hook hands back - is first made this request's own.
+    let current = writableResponse(response, req)
     for (let i = 0; i < hooks.length; i++) {
       const next = (hooks[i] as RawOnResponse)(current, req)
       if (next instanceof Promise) {
-        return next.then((settled) => this.continueOnResponse(settled, i + 1, req))
+        const handed = current
+        return next.then((settled) => this.continueOnResponse(settled, i + 1, req, handed))
       }
-      current = next
+      current = next === current ? next : writableResponse(next, req)
     }
     return current
   }
@@ -5909,11 +6010,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     response: Response,
     nextIndex: number,
     req: Request,
+    handed: Response,
   ): Promise<Response> {
-    let current = response
+    let current = response === handed ? response : writableResponse(response, req)
     for (let i = nextIndex; i < this.onResponseHooks.length; i++) {
       const next = (this.onResponseHooks[i] as RawOnResponse)(current, req)
-      current = next instanceof Promise ? await next : next
+      const settled = next instanceof Promise ? await next : next
+      current = settled === current ? settled : writableResponse(settled, req)
     }
     return current
   }
@@ -5945,13 +6048,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private finishLifecycleContract<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     result: unknown,
   ): MaybePromise<T> {
     try {
       const contract = entry.responseContract
-      if (contract === undefined) return finalize(result, responseSet(ctx))
+      if (contract === undefined) return finalize(result, responseSet(ctx), ctx)
       const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
@@ -5967,7 +6070,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private finishContractOutcome<T>(
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     outcome: {
       readonly kind: "ok" | "warn" | "violation"
@@ -5990,7 +6093,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         detail: outcome.message,
       })
     }
-    return finalize(outcome.value, responseSet(ctx))
+    return finalize(outcome.value, responseSet(ctx), ctx)
   }
 
   /** Synchronous by design, and `MaybePromise` rather than `Promise` for the same reason: control flow
@@ -6002,7 +6105,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
@@ -6010,10 +6113,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // SvelteKit semantics): as built, plus the cookies the request queued, so a session set or
     // cleared before `throw redirect(...)` / `requireSession(...)` ships. Don't run onError or log
     // it as a 500.
-    if (err instanceof Response) return finalize(err, responseSet(ctx))
-    // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
-    // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
-    if (isResponseResult(err))
+    if (err instanceof Response && err !== ctx.jsonReply)
+      return finalize(err, responseSet(ctx), ctx)
+    // Same rule for a thrown `status(...)` or `c.json(...)`, which stay held to the route's contract.
+    if (err instanceof Response || isResponseResult(err))
       return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, err)
     if (entry.onError.length === 0) {
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
@@ -6030,7 +6133,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
@@ -6038,7 +6141,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (let i = 0; i < entry.onError.length; i++) {
       const outcome = entry.onError[i]!(err, ctx)
       const handled = outcome instanceof Promise ? await outcome : outcome
-      if (handled !== undefined) return finalize(handled, responseSet(ctx))
+      if (handled === undefined) continue
+      const contract = entry.responseContract
+      if (contract === undefined || (handled !== ctx.jsonReply && !isResponseResult(handled)))
+        return finalize(handled, responseSet(ctx), ctx)
+      // Checked here, not through finishLifecycleContract: a throwing schema must not re-enter onError.
+      try {
+        const checked = await contract.runtime.check(contract.definition, handled, ctx)
+        return this.finishContractOutcome(ctx, finalize, wrapResponse, checked)
+      } catch (checkError) {
+        this.logRequestError(checkError, ctx)
+        return wrapResponse(plainError(500, "internal_error"))
+      }
     }
     this.logRequestError(err, ctx)
     return wrapResponse(plainError(500, "internal_error"))
@@ -6166,7 +6280,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       request: Request,
       params: Record<string, string>,
     ): MaybePromise<Response> => {
-      const outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
+      let outcome: MaybePromise<Response>
+      try {
+        outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
+      } catch (err) {
+        // A synchronous render throw, as in runMatchedLanes.
+        outcome = this.contextlessBareError(
+          err,
+          request,
+          params,
+          undefined,
+          signal!,
+          budget!,
+          peer,
+          this.wrapWebResponse,
+        )
+      }
       return outcome instanceof Promise
         ? outcome.then((response) => finishNative(request, response))
         : finishNative(request, outcome)
@@ -6183,7 +6312,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           markFramed(request)
           return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
             ? this.fetchMatched(request, entry, EMPTY_PARAMS, peer)
-            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, peer, true)
+            : runNative(request, EMPTY_PARAMS)
         }
       }
       return (request) => {
@@ -6211,7 +6340,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (malformed(params)) return fallback(request, server)
         return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
           ? this.fetchMatched(request, entry, params, peer)
-          : capped(request, params, undefined, signal!, budget!, peer, true)
+          : runNative(request, params)
       }
     }
     return (request, server) => {
@@ -6239,7 +6368,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
-      this.wsRouteCount > 0 ||
+      this.wsRoutes.length > 0 ||
       this.preRouteMountCount > 0 ||
       this.clientIpTrust !== undefined
     ) {
@@ -6396,7 +6525,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     // Seal before Bun.serve: in `"error"` mode this throws instead of leaving a bound port behind.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
-      sealHookAudit(this, this.catalog.size, this.logger)
+      sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Bun's `Server` is the concrete handle; we expose the stable `RunningServer`
     // subset so the public types don't depend on the ambient `Bun` global. The cast
     // bridges them - Bun's `.port` is `number | undefined` (undefined only for unix
@@ -6407,7 +6536,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // `websocket` handlers are one shared dispatcher - each connection's `ws.data.handler` is the
     // matched route's handler, set by `server.upgrade`.
     // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
-    // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
+    // because a socket route means ws() ran, and ws() requires the runtime at registration.
     // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
     // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
     // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
@@ -6424,7 +6553,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
     // the parent.
     const nativePubsub =
-      this.wsRouteCount > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
+      this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
     // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
     // an explicit undefined as a value on some option paths, and omitting is what selects its own
@@ -6492,7 +6621,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
     this.sealed = true
-    if (this.gracefulSignals) this.installSignalHandlers()
+    if (this.gracefulSignals) this.installSignalHandlers(this.gracefulSignals)
     return running
   }
 
@@ -6525,12 +6654,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ])
   }
 
-  private installSignalHandlers(): void {
+  private installSignalHandlers(drain: { readonly drainMs?: number }): void {
     // Drain, then let the process exit naturally - the stopped server no longer
     // holds the event loop open. Opt-in (`gracefulSignals`), so taking over the
     // signals is consented; we don't force `process.exit`.
     const onSignal = (): void => {
-      void this.stop()
+      void this.stop(drain)
     }
     process.once("SIGTERM", onSignal)
     process.once("SIGINT", onSignal)

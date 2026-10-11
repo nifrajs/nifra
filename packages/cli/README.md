@@ -54,6 +54,9 @@ the frontend asset `dist/manifest.json`.
 ## `nifra verify` - verification tiers
 
 `nifra check` is the fast project done-gate: TypeScript plus static contract and boundary diagnostics.
+It reads source without running it, with one exception: when the project has a `contracts.lock.json`,
+`nifra check` (with `--lints-only` too) imports `backend/app.ts`, running its top-level code, to compare
+the routes it serves against the lock.
 It is not a release claim. `nifra verify` runs the ordered local verification plan; its default mode
 is the feedback plan and reports which release gates it omits. CI and release automation should run
 `nifra verify --release` (or `bun run check:release`), which includes build, coverage, corpus,

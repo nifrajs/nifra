@@ -59,6 +59,16 @@ describe("parseCron - fields", () => {
     expect(() => parseCron("*/0 * * * *")).toThrow(/invalid step/)
     expect(() => parseCron("5-2 * * * *")).toThrow(/out-of-range/) // reversed range
   })
+
+  test("only plain decimal terms parse", () => {
+    for (const term of ["-5", "5-", "1-2-3", "0x1F", "1e1", "+3", "*/5/7", "5.0"])
+      expect(() => parseCron(`${term} * * * *`)).toThrow(/invalid term/)
+  })
+
+  test("a bare value with a step runs to the end of the field", () => {
+    expect([...parseCron("5/15 * * * *").minute]).toEqual([5, 20, 35, 50])
+    expect([...parseCron("0 20/2 * * *").hour]).toEqual([20, 22])
+  })
 })
 
 describe("nextRun", () => {

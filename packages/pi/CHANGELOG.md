@@ -1,5 +1,22 @@
 # @nifrajs/pi
 
+## 5.0.0
+
+### Patch Changes
+
+- Wait for asynchronous Pi RPC pipe flushes and handle closed pipes when sending prompts, cancelling turns, reloading, or answering extension dialogs.
+- 36bdc71: `@nifrajs/agent-protocol/conformance` exports `checkAgentBackend`, which drives an `AgentBackend` through the scenarios a host relies on (session snapshot, a valid turn that completes, a refused second message, cancel, approvals allowed, denied, unknown and cancelled, a closed session) and returns a report of passed, failed, and skipped checks. `AgentBackend.resolveApproval` now documents its result: a boolean once the backend took the answer, `undefined` when it does not know the approval. `PiBackend` forgets a turn's pending approvals when the turn ends, so an answer after a cancel returns `undefined` instead of reaching Pi.
+- 7cc6505: `PiBackend` now answers an extension's `select`, `input` or `editor` dialog, or a `confirm` that arrives outside a turn, with `cancelled: true` straight away. These were ignored before, so an extension awaiting one without its own timeout held the turn open. A `confirm` during a turn still surfaces as `approval.required`.
+- 4dcf69b: `maxRecordBytes` bounds each Pi JSONL record and the record still arriving, so a single stdout chunk that carries several records under the cap is accepted rather than failing as an oversized record.
+- 6b0db44: fix(pi): a Pi turn whose reply, tool output, tool arguments, or streamed text is past what one event may carry completes, instead of failing with `PI_PROTOCOL`. A long reply or stream arrives as consecutive events that join back to the text; `tool.started` and `tool.completed` carry bounded display copies (a tool output past 64 KiB used to fail the turn). NUL in a prompt or in Pi's text no longer fails the turn.
+- c52c8e5: fix(pi): a Pi turn whose model call failed ends in `session.failed` with code `PI_MODEL_FAILED` and Pi's error message (bounded, with any credential the provider echoed replaced by `[REDACTED]`), instead of `session.completed` with no answer. Pi reports such a failure only on the turn's last assistant message (`stopReason: "error"`) and still ends with an ordinary `agent_end`, so a sign-in, quota, or network failure used to look like an empty success. An `agent_end` Pi marks `willRetry` no longer ends the turn: the retried run's answer completes it.
+- Updated dependencies [36bdc71]
+- Updated dependencies [6b0db44]
+- Updated dependencies [a3b3c51]
+- Updated dependencies [343bae0]
+- Updated dependencies [b435f13]
+  - @nifrajs/agent-protocol@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

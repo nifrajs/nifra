@@ -86,4 +86,25 @@ describe("app.sse()", () => {
     const json = route?.schema?.sse?.jsonSchema as Record<string, unknown>
     expect(Object.keys(json.properties as object)).toEqual(["id", "title"])
   })
+
+  test("a schema with a body registers a POST stream that reads the validated body", async () => {
+    const app = server()
+      .use(streaming())
+      .sse("/chat", { body: t.object({ prompt: t.string() }), sse: post }, (c, stream) => {
+        stream.send({ id: 1, title: c.body.prompt })
+        stream.close()
+      })
+    const [route] = reflectRoutes(app)
+    expect(route?.method).toBe("POST")
+    expect(route?.schema?.body?.jsonSchema).toBeDefined()
+    const res = await app.fetch(
+      new Request("http://x/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "hi" }),
+      }),
+    )
+    expect(res.headers.get("content-type")).toContain("text/event-stream")
+    expect(await res.text()).toContain('data: {"id":1,"title":"hi"}')
+  })
 })

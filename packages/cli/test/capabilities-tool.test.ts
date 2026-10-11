@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, spyOn, test } from "bun:test"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
 import { all, method } from "@nifrajs/core/methods"
+import { websocket } from "@nifrajs/core/ws"
 import {
   collectCapabilityProjectReport,
   diffCapabilitySnapshots,
@@ -75,6 +76,39 @@ describe("effect import scanner", () => {
 })
 
 describe("project provenance firewall", () => {
+  test("a component receipt cannot hide raw providers from owner route provenance", async () => {
+    const cwd = join(FIXTURES, "component-owner")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/owner.backend.ts"), 'import "./Summary.component.server.ts"\n')
+    await writeFile(
+      join(cwd, "src/Summary.component.server.ts"),
+      'import "app-db/read"; import "postgres"\n',
+    )
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    const app = server().get("/components/:id", { capabilities: ["db.read"] }, () => [])
+    const explicit = defineCapabilityPolicy({
+      ...policy,
+      provenance: {
+        ...policy.provenance,
+        routeModules: [
+          {
+            match: { methods: ["GET"], paths: ["/components/:id"] },
+            modules: ["src/owner.backend.ts"],
+          },
+        ],
+      },
+    })
+    const project = await collectCapabilityProjectReport(cwd, app, explicit)
+    expect(project.violations).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/components/:id",
+        specifier: "postgres",
+        chain: ["src/owner.backend.ts", "./Summary.component.server.ts", "postgres"],
+      }),
+    ])
+  })
+
   test("walks local imports, attributes effects conservatively, and reports raw bypasses", async () => {
     const cwd = join(FIXTURES, "raw-bypass")
     await mkdir(join(cwd, "src"), { recursive: true })
@@ -103,6 +137,77 @@ describe("project provenance firewall", () => {
         chain: ["backend.ts", "./src/orders.ts", "postgres"],
       }),
     ])
+  })
+
+  test("follows a workspace package that lives beside the app, as a monorepo links it", async () => {
+    const root = join(FIXTURES, "workspace-package")
+    const cwd = join(root, "apps", "web")
+    await mkdir(cwd, { recursive: true })
+    await mkdir(join(root, "packages", "orders"), { recursive: true })
+    await mkdir(join(root, "node_modules", "@example"), { recursive: true })
+    await writeFile(
+      join(root, "packages", "orders", "package.json"),
+      JSON.stringify({ name: "@example/orders", version: "0.0.0", main: "index.ts" }),
+    )
+    await writeFile(
+      join(root, "packages", "orders", "index.ts"),
+      `import db from "postgres"
+       export const mutate = () => ({ ok: Boolean(db) })`,
+    )
+    await symlink(
+      join(root, "packages", "orders"),
+      join(root, "node_modules", "@example", "orders"),
+    )
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import { mutate } from "@example/orders"
+       export const backend = server().post("/orders", { capabilities: ["db.write"] }, mutate)`,
+    )
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+
+    expect(project.violations.map((violation) => violation.chain)).toEqual([
+      ["backend.ts", "@example/orders", "postgres"],
+    ])
+    expect(project.report.ok).toBe(false)
+  })
+
+  test("follows an installed package the same way in the app and hoisted above it", async () => {
+    const sdk = (dir: string) =>
+      Promise.all([
+        writeFile(
+          join(dir, "package.json"),
+          JSON.stringify({ name: "@example/sdk", version: "1.0.0", main: "index.js" }),
+        ),
+        writeFile(
+          join(dir, "index.js"),
+          'import db from "postgres"\nexport const mutate = () => ({ ok: Boolean(db) })\n',
+        ),
+      ])
+    const backend = `import { server } from "@nifrajs/core"
+       import { mutate } from "@example/sdk"
+       export const backend = server().post("/orders", { capabilities: ["db.write"] }, mutate)`
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+
+    const single = join(FIXTURES, "installed-in-app")
+    await mkdir(join(single, "node_modules", "@example", "sdk"), { recursive: true })
+    await sdk(join(single, "node_modules", "@example", "sdk"))
+    await writeFile(join(single, "backend.ts"), backend)
+    const root = join(FIXTURES, "installed-hoisted")
+    const hoisted = join(root, "apps", "web")
+    await mkdir(hoisted, { recursive: true })
+    await mkdir(join(root, "node_modules", "@example", "sdk"), { recursive: true })
+    await sdk(join(root, "node_modules", "@example", "sdk"))
+    await writeFile(join(hoisted, "backend.ts"), backend)
+
+    for (const cwd of [single, hoisted]) {
+      const project = await collectCapabilityProjectReport(cwd, app, policy)
+      expect([cwd, project.violations.map((violation) => violation.chain)]).toEqual([
+        cwd,
+        [["backend.ts", "@example/sdk", "postgres"]],
+      ])
+    }
   })
 
   test("covers every form of an optional-param route and the routes of all() and method()", async () => {
@@ -136,6 +241,109 @@ describe("project provenance firewall", () => {
       ),
     ).toMatchObject({ covered: true })
     expect(project.report).toMatchObject({ ok: true, findings: [] })
+  })
+
+  test("covers a route whose path is a constant, here or imported", async () => {
+    const cwd = join(FIXTURES, "constant-paths")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(join(cwd, "paths.ts"), 'export const ORDERS = "/orders" as const\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+import "app-db/read"
+import { ORDERS } from "./paths.ts"
+const USERS = "/users"
+export const backend = server()
+  .get(USERS, { capabilities: ["db.read"] }, handler)
+  .get(ORDERS, { capabilities: ["db.read"] }, handler)`,
+    )
+    const handler = () => ({ ok: true })
+    const app = server()
+      .get("/users", { capabilities: ["db.read"] }, handler)
+      .get("/orders", { capabilities: ["db.read"] }, handler)
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.routes.map((route) => [route.path, route.covered])).toEqual([
+      ["/users", true],
+      ["/orders", true],
+    ])
+  })
+
+  test("a socket is covered by the module that registers it and declares what it reaches", async () => {
+    const cwd = join(FIXTURES, "socket")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    const source = (declared: string) =>
+      `import { server } from "@nifrajs/core"
+       import "app-db/read"
+       export const backend = server().ws("/chat", { ${declared} })`
+    const app = (capabilities?: readonly string[]) =>
+      server()
+        .use(websocket())
+        .ws("/chat", capabilities === undefined ? {} : { capabilities })
+
+    await writeFile(join(cwd, "backend.ts"), source('capabilities: ["db.read"]'))
+    const declared = await collectCapabilityProjectReport(cwd, app(["db.read"]), policy)
+    expect(declared.report.routes).toMatchObject([
+      { method: "WS", path: "/chat", covered: true, declared: ["db.read"] },
+    ])
+    expect(declared.report).toMatchObject({ ok: true, findings: [] })
+
+    await writeFile(join(cwd, "backend.ts"), source(""))
+    const undeclared = await collectCapabilityProjectReport(cwd, app(), policy)
+    expect(undeclared.report.findings).toMatchObject([
+      {
+        code: "undeclared-capability-evidence",
+        method: "WS",
+        path: "/chat",
+        capability: "db.read",
+      },
+    ])
+  })
+
+  test("covers a socket whose path is a constant imported from a project file", async () => {
+    const cwd = join(FIXTURES, "socket-constant")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(join(cwd, "paths.ts"), 'export const CHAT = "/chat"\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+import "app-db/read"
+import { CHAT } from "./paths.ts"
+export const backend = server().ws(CHAT, { capabilities: ["db.read"] })`,
+    )
+    const app = server()
+      .use(websocket())
+      .ws("/chat", { capabilities: ["db.read"] })
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.routes.map((route) => [route.method, route.path, route.covered])).toEqual(
+      [["WS", "/chat", true]],
+    )
+  })
+
+  test("a socket write that needs request idempotency fails: a socket message carries none", async () => {
+    const cwd = join(FIXTURES, "socket-write")
+    await mkdir(cwd, { recursive: true })
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import "app-db/read"
+       import "app-db/write"
+       export const backend = server().ws("/chat", { capabilities: ["db.read", "db.write"] })`,
+    )
+    const app = server()
+      .use(websocket())
+      .ws("/chat", { capabilities: ["db.read", "db.write"] })
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.findings).toMatchObject([
+      {
+        code: "missing-request-idempotency",
+        method: "WS",
+        path: "/chat",
+        capability: "db.write",
+      },
+    ])
   })
 
   test("explicit routeModules cover contract-style registrations", async () => {
@@ -510,5 +718,39 @@ describe("opaque mounts", () => {
     expect(diagnostic?.fix).toContain("opaque")
     expect(check.ok).toBe(false)
     expect(check.knownGaps).toBeUndefined()
+  })
+
+  test("routes the mount declares are reported as declared, beside the gap", async () => {
+    const cwd = await project(
+      "opaque-declared-routes",
+      `, opaque: { reason: "a third-party auth handler", routes: [{ method: "GET", path: "/api/auth/session", capabilities: ["db.read"] }] }`,
+    )
+    const check = await collectCheckResult(cwd, { lintsOnly: true })
+    expect(check.diagnostics.filter((item) => item.rule === "capability-assurance")).toEqual([])
+    expect(check.knownGaps).toEqual([
+      { kind: "opaque-mount", path: "/api/auth/*", reason: "a third-party auth handler" },
+    ])
+
+    expect(await runCapabilitySnapshot(cwd)).toBe(true)
+    const lock = JSON.parse(await Bun.file(join(cwd, "capabilities.lock.json")).text())
+    expect(lock.routes).toContainEqual({
+      method: "GET",
+      path: "/api/auth/session",
+      declared: ["db.read"],
+      evidenced: [],
+      unproven: ["db.read"],
+      analysis: "declared",
+    })
+    const log = spyOn(console, "log").mockImplementation(() => {})
+    let printed: string[]
+    try {
+      expect(await runCapabilityCheck(cwd)).toBe(true)
+      printed = log.mock.calls.map((call) => String(call[0]))
+    } finally {
+      log.mockRestore()
+    }
+    expect(printed).toContain(
+      "• declared by an opaque mount, not analyzed: GET /api/auth/session [db.read]",
+    )
   })
 })

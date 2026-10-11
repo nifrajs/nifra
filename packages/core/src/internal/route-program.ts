@@ -8,13 +8,17 @@
  */
 
 import type { StandardSchemaV1 } from "../schema/standard.ts"
+import { markAuthenticatedRequest } from "../server/auth.ts"
 import { pathnameOf } from "../server/http.ts"
+import { queryObjectOf } from "../server/query.ts"
 import type { Registry } from "../server/registry.ts"
 import {
+  CONTEXT_SEARCH,
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
   isResponseResult,
   type ResponseResult,
+  requestOf,
   status,
 } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
@@ -136,14 +140,14 @@ interface RouteProgramRuntime {
     entry: RouteEntry,
     error: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   finishProgramResult<T>(
     entry: RouteEntry,
     ctx: RawContext,
     result: unknown,
-    finalize: (result: unknown, set: CtxSet) => T,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
 }
@@ -156,6 +160,22 @@ function isEarly(value: unknown): value is Response | ResponseResult {
   return value instanceof Response || isResponseResult(value)
 }
 
+/** A hook's early reply. A `status(...)` or `c.json(...)` one is held to the route's response
+ * contract like the handler's. */
+function finishEarly<T>(
+  host: RouteProgramRuntime,
+  entry: RouteEntry,
+  ctx: RawContext,
+  value: unknown,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
+): ProgramResult<T> {
+  return entry.responseContract !== undefined &&
+    (value === ctx.jsonReply || isResponseResult(value))
+    ? host.finishProgramResult(entry, ctx, value, finalize, wrapResponse)
+    : finalize(value, responseSet(ctx), ctx)
+}
+
 function authHeadersOf(source: RequestSource): import("../server/auth.ts").AuthHeaders {
   return Object.freeze({
     get: (name: string) => source.headers.get(name),
@@ -166,15 +186,38 @@ function authHeadersOf(source: RequestSource): import("../server/auth.ts").AuthH
   })
 }
 
+/** A fresh parse of `search`, frozen with its arrays, so a stage never holds what validation reads. */
+function frozenQueryOf(search: string): Readonly<Record<string, string | readonly string[]>> {
+  const query = queryObjectOf(search)
+  for (const key in query) {
+    const value = query[key]
+    if (Array.isArray(value)) Object.freeze(value)
+  }
+  return Object.freeze(query)
+}
+
 function authenticationInputOf(
   source: RequestSource,
   ctx: RawContext,
 ): import("../server/auth.ts").AuthenticationInput<unknown> {
+  let query: Readonly<Record<string, string | readonly string[]>> | undefined
+  // Accessors, so a stage that reads neither the query nor the request costs nothing for them; the
+  // search is the context's own, the one `c.query` and its validation parse.
   return Object.freeze({
     method: source.method,
     pathname: pathnameOf(source.url),
     headers: authHeadersOf(source),
     params: Object.freeze({ ...ctx.params }),
+    get search() {
+      return ctx[CONTEXT_SEARCH]
+    },
+    get query() {
+      query ??= frozenQueryOf(ctx[CONTEXT_SEARCH])
+      return query
+    },
+    get request() {
+      return ctx.req
+    },
     env: ctx.env,
     clientIp: ctx.clientIp,
     signal: ctx.signal,
@@ -206,7 +249,7 @@ function runAuthenticationStages<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   start = 0,
   validationComplete = false,
@@ -245,24 +288,31 @@ function runAuthenticationStages<T>(
   try {
     outcome = stage.run(input)
   } catch {
-    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx))
+    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
   }
   if (outcome instanceof Promise) {
     return outcome.then(
-      (settled) =>
-        finishAuthentication(
-          host,
-          entry,
-          program,
-          source,
-          ctx,
-          finalize,
-          wrapResponse,
-          settled,
-          start + 1,
-          validationComplete,
-        ),
-      () => finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx)),
+      (settled) => {
+        // The rest of the program runs inside this callback: a derive or handler that throws
+        // synchronously would otherwise reject the request instead of reaching onError.
+        try {
+          return finishAuthentication(
+            host,
+            entry,
+            program,
+            source,
+            ctx,
+            finalize,
+            wrapResponse,
+            settled,
+            start + 1,
+            validationComplete,
+          )
+        } catch (error) {
+          return host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
+        }
+      },
+      () => finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx),
     )
   }
   return finishAuthentication(
@@ -285,7 +335,7 @@ function finishAuthentication<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   result: import("../server/auth.ts").AuthenticationResult<unknown>,
   next: number,
@@ -296,24 +346,24 @@ function finishAuthentication<T>(
     typeof result !== "object" ||
     (result.kind !== "authenticated" && result.kind !== "rejected")
   ) {
-    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx))
+    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
   }
   if (result.kind === "rejected") {
     if (!validAuthenticationFailureReason(result.reason)) {
-      return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx))
+      return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
     }
     if (
       result.response !== undefined &&
       !(result.response instanceof Response) &&
       !isResponseResult(result.response)
     ) {
-      return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx))
+      return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
     }
     const response = result.response ?? defaultAuthenticationResponse(result.reason)
-    return finalize(response, responseSet(ctx))
+    return finalize(response, responseSet(ctx), ctx)
   }
   if (result.principal === null || result.principal === undefined) {
-    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx))
+    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
   }
   Object.defineProperty(ctx, "principal", {
     value: result.principal,
@@ -321,6 +371,7 @@ function finishAuthentication<T>(
     configurable: true,
     writable: false,
   })
+  markAuthenticatedRequest(requestOf(source))
   return runAuthenticationStages(
     host,
     entry,
@@ -341,7 +392,7 @@ function runFastAuthenticatedProgram<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   validationIndex: number,
 ): ProgramResult<T> {
@@ -375,7 +426,7 @@ async function continueFastAuthenticatedProgram<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   validationIndex: number,
   pending: Promise<unknown>,
@@ -403,7 +454,7 @@ function runFastAuthenticatedHandler<T>(
   entry: RouteEntry,
   program: RouteProgram,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
 ): ProgramResult<T> {
   let result: unknown
@@ -427,7 +478,7 @@ function runValidationBeforeAuthentication<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   validationIndex = 0,
 ): ProgramResult<T> {
@@ -461,7 +512,7 @@ async function continueValidationBeforeAuthentication<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   validationIndex: number,
   pending: Promise<unknown>,
@@ -490,7 +541,7 @@ function runValidatedProgram<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
 ): ProgramResult<T> {
   if (program.hasDecorations) Object.assign(ctx, program.decorations)
@@ -506,7 +557,7 @@ async function runAuthBeforeValidation<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
 ): Promise<T> {
   try {
@@ -515,14 +566,15 @@ async function runAuthBeforeValidation<T>(
     for (const derive of program.derives) {
       const result = derive(ctx)
       const settled = result instanceof Promise ? await result : result
-      if (isEarly(settled)) return finalize(settled, responseSet(ctx))
+      if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       Object.assign(ctx, settled)
     }
 
     for (const before of program.beforeHandle) {
       const result = before(ctx)
       const settled = result instanceof Promise ? await result : result
-      if (settled !== undefined) return finalize(settled, responseSet(ctx))
+      if (settled !== undefined)
+        return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
     }
 
     for (const stage of program.validationStages) {
@@ -559,7 +611,7 @@ export function executeRouteProgram<T, R extends Registry, Ctx>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
 ): ProgramResult<T> {
   const host = runtime as unknown as RouteProgramRuntime
@@ -594,7 +646,7 @@ function runSync<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   validationIndex: number,
   initial: unknown,
@@ -631,7 +683,7 @@ function runHooksSync<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   deriveIndex: number,
   beforeIndex: number,
@@ -654,7 +706,7 @@ function runHooksSync<T>(
         initial,
       )
     }
-    if (isEarly(outcome)) return finalize(outcome, responseSet(ctx))
+    if (isEarly(outcome)) return finishEarly(host, entry, ctx, outcome, finalize, wrapResponse)
     Object.assign(ctx, outcome)
   }
   for (let i = beforeIndex; i < program.beforeHandle.length; i++) {
@@ -673,7 +725,7 @@ function runHooksSync<T>(
         initial,
       )
     }
-    if (outcome !== undefined) return finalize(outcome, responseSet(ctx))
+    if (outcome !== undefined) return finishEarly(host, entry, ctx, outcome, finalize, wrapResponse)
   }
 
   const output = program.handler(ctx)
@@ -719,7 +771,7 @@ async function continueProgram<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   pendingPhase: PendingPhase,
   pending: Promise<unknown>,
@@ -731,10 +783,11 @@ async function continueProgram<T>(
     if (pendingPhase.kind === "validation") {
       if (settled !== undefined) return wrapResponse(settled as Response | ResponseResult)
     } else if (pendingPhase.kind === "derive") {
-      if (isEarly(settled)) return finalize(settled, responseSet(ctx))
+      if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       Object.assign(ctx, settled)
     } else if (pendingPhase.kind === "before") {
-      if (settled !== undefined) return finalize(settled, responseSet(ctx))
+      if (settled !== undefined)
+        return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
     } else if (pendingPhase.kind === "handler") {
       result = settled
     } else {
@@ -762,7 +815,7 @@ async function runAsyncStages<T>(
   program: RouteProgram,
   source: RequestSource,
   ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   pendingPhase: PendingPhase,
   result: unknown,
@@ -786,7 +839,7 @@ async function runAsyncStages<T>(
       for (let i = deriveStart; i < program.derives.length; i++) {
         const outcome = program.derives[i]!(ctx)
         const settled = outcome instanceof Promise ? await outcome : outcome
-        if (isEarly(settled)) return finalize(settled, responseSet(ctx))
+        if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
         Object.assign(ctx, settled)
       }
     }
@@ -800,7 +853,8 @@ async function runAsyncStages<T>(
       for (let i = beforeStart; i < program.beforeHandle.length; i++) {
         const outcome = program.beforeHandle[i]!(ctx)
         const settled = outcome instanceof Promise ? await outcome : outcome
-        if (settled !== undefined) return finalize(settled, responseSet(ctx))
+        if (settled !== undefined)
+          return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       }
       const output = program.handler(ctx)
       result = output instanceof Promise ? await output : output

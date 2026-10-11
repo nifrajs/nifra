@@ -29,11 +29,20 @@ export const RULE_CODES = Object.freeze({
   "NF-C030": "Route data without an output schema",
   "NF-C031": "Sensitive field in an output schema",
   "NF-C032": "Credential in browser code",
+  "NF-C033": "Generated output schema out of date",
+  "NF-C034": "Root status page wraps the root layout itself",
+  "NF-C035": "Backend mounted at the implicit /api",
+  "NF-C036": "Route path the static scan cannot read",
+  "NF-C037": "API-only declaration over a web app",
+  "NF-C038": "Retired root layout file",
+  "NF-C039": "Implemented contract operation the backend does not serve",
+  "NF-C040": "Layout meta reads data its layout never loads",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",
   "NF-C023": "nano computed deps check",
   "NF-D001": "Doctor check",
+  "NF-D002": "Mixed nifra versions",
   "NF-A001": "Assurance bundle check",
   "NF-H001": "Hydration mismatch",
   "NF-H002": "Duplicate framework runtime",
@@ -47,6 +56,7 @@ export const RULE_CODES = Object.freeze({
   "NF-S005": "External redirect opt-out",
   "NF-S006": "Security escape hatch enabled",
   "NF-S007": "Secure cookie without a __Host-/__Secure- prefix",
+  "NF-S008": "Authenticated route validates input before authentication",
 } as const)
 
 /** Codes that no longer fire but remain reserved forever. */

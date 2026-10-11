@@ -26,6 +26,12 @@ export interface OtlpExporterOptions {
     /** Periodic flush interval (ms). Must be a positive safe integer. Default 5000. */
     readonly flushIntervalMs?: number
   }
+  /**
+   * Deadline for one export POST (ms); a send past it is aborted and reported. Exports go one at a
+   * time, so this also bounds how long `flush()` and `shutdown()` wait per batch. Positive safe
+   * integer; default 30000.
+   */
+  readonly timeoutMs?: number
   /** Called when an export POST fails or spans are dropped. Fail-open: never throws into a request. */
   readonly onError?: (error: unknown) => void
   /** Override `fetch` (tests, a proxy agent). Defaults to the global. */
@@ -33,9 +39,12 @@ export interface OtlpExporterOptions {
 }
 
 export interface OtlpExporter extends ObservationAdapter {
-  /** Send everything queued now. Await it in a graceful shutdown so no span is lost. */
+  /**
+   * Send everything queued now. Resolves once each span queued before the call was sent, failed or
+   * dropped; await it in a graceful shutdown so no span is lost.
+   */
   flush(): Promise<void>
-  /** Stop the periodic timer and flush a final time. Call on server stop. */
+  /** Stop the periodic timer and flush a final time, awaiting the export in flight. Call on server stop. */
   shutdown(): Promise<void>
 }
 
@@ -106,14 +115,22 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   const maxBatch = options.batch?.maxBatch ?? 512
   const maxQueue = options.batch?.maxQueue ?? 2048
   const flushIntervalMs = options.batch?.flushIntervalMs ?? 5000
+  const timeoutMs = options.timeoutMs ?? 30_000
   assertPositiveSafeInteger(maxBatch, "batch.maxBatch")
   assertPositiveSafeInteger(maxQueue, "batch.maxQueue")
   assertPositiveSafeInteger(flushIntervalMs, "batch.flushIntervalMs")
+  assertPositiveSafeInteger(timeoutMs, "timeoutMs")
   const doFetch = options.fetch ?? (globalThis.fetch as OtlpExporterOptions["fetch"])
   const resourceAttributes = keyValues({ "service.name": options.serviceName ?? "nifra" })
 
   const queue: NifraSpan[] = []
   let timer: ReturnType<typeof setInterval> | undefined
+  // Spans ever queued, and spans since sent, failed or dropped. The queue is FIFO and drops its
+  // oldest, so every span queued before a flush is settled once `settled` reaches that flush's mark.
+  let queued = 0
+  let settled = 0
+  const waiters: Array<{ readonly mark: number; readonly resolve: () => void }> = []
+  let pumping = false
 
   const report = (error: unknown): void => {
     try {
@@ -133,39 +150,87 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
         },
       ],
     })
+    const controller = new AbortController()
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    // Raced as well as signalled: a custom fetch that ignores the signal must not hold the loop.
+    const expired = new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => {
+        const error = new Error(`otlp_export_timeout_${timeoutMs}ms`)
+        controller.abort(error)
+        reject(error)
+      }, timeoutMs)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Node and Bun timers carry unref; elsewhere the optional call is a no-op
+      ;(deadline as { unref?: () => void }).unref?.()
+    })
     try {
-      const res = await doFetch(options.url, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...options.headers },
-        body,
-      })
+      const res = await Promise.race([
+        doFetch(options.url, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...options.headers },
+          body,
+          signal: controller.signal,
+        }),
+        expired,
+      ])
       if (!res.ok) report(new Error(`otlp_export_failed_${res.status}`))
     } catch (error) {
       report(error)
+    } finally {
+      clearTimeout(deadline)
     }
   }
 
+  const settle = (count: number): void => {
+    settled += count
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const waiter = waiters[i]
+      if (waiter === undefined || waiter.mark > settled) continue
+      waiters.splice(i, 1)
+      waiter.resolve()
+    }
+  }
+
+  // One export in flight at a time; spans arriving meanwhile wait in the bounded queue.
+  const pump = async (): Promise<void> => {
+    while (queue.length > 0) {
+      const batch = queue.splice(0, maxBatch)
+      await send(batch)
+      settle(batch.length)
+    }
+  }
+
+  const kick = (): void => {
+    if (pumping) return
+    pumping = true
+    void pump().finally(() => {
+      pumping = false
+      if (queue.length > 0) kick()
+    })
+  }
+
   const flush = (): Promise<void> => {
-    if (queue.length === 0) return Promise.resolve()
-    return send(queue.splice(0, queue.length))
+    if (settled === queued) return Promise.resolve()
+    const done = new Promise<void>((resolve) => waiters.push({ mark: queued, resolve }))
+    kick()
+    return done
   }
 
   const ensureTimer = (): void => {
     if (timer !== undefined) return
-    timer = setInterval(() => {
-      void flush()
-    }, flushIntervalMs)
+    timer = setInterval(kick, flushIntervalMs)
     ;(timer as { unref?: () => void }).unref?.() // never keep the process alive for the exporter
   }
 
   return {
     onEnd(span) {
       queue.push(span)
+      queued++
       if (queue.length > maxQueue) {
         queue.shift() // drop the oldest under sustained backpressure rather than grow unbounded
+        settle(1)
         report(new Error("otlp_queue_overflow_span_dropped"))
       }
-      if (queue.length >= maxBatch) void flush()
+      if (queue.length >= maxBatch) kick()
       else ensureTimer()
     },
     flush,

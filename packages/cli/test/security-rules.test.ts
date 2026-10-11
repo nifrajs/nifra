@@ -1,14 +1,17 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import { parseCompatibleReplayFile } from "@nifrajs/core/replay"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { securityRules } from "../src/rules/security.ts"
 import { projectFacts } from "./rule-facts.ts"
 
-async function scan(file: string, content: string) {
+async function scan(file: string, content: string, root = "/tmp/project") {
   const facts = projectFacts(file, content)
   return runRuleRegistry(
     {
-      root: "/tmp/project",
+      root,
       sources: facts.source,
       project: facts,
     },
@@ -58,19 +61,68 @@ describe("built-in security rules", () => {
     expect(findings.filter((finding) => finding.code === "NF-S002")).toEqual([])
   })
 
-  test("keeps reviewed overrides visible without failing", async () => {
+  test("keeps expected findings visible, with their reason, without failing", async () => {
     const findings = await scan(
       "routes/security.ts",
       [
         "const token = input.token",
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S002: compares a public echo, not secret material",
+        "// nifra-expect NF-S003: the token is a public request id",
         "if (token === expected) console.log(token)",
       ].join("\n"),
     )
-    expect(findings.every((finding) => finding.severity === "info")).toBe(true)
-    expect(findings.every((finding) => finding.evidence?.includes("@nifra-gate-reviewed"))).toBe(
-      true,
+    expect(findings.map((finding) => [finding.code, finding.severity])).toEqual([
+      ["NF-S002", "info"],
+      ["NF-S003", "info"],
+    ])
+    expect(findings.find((f) => f.code === "NF-S002")?.evidence).toContain(
+      "nifra-expect NF-S002: compares a public echo, not secret material",
     )
+  })
+
+  test("a nifra-expect comment silences only the code it names, and only with a reason", async () => {
+    const compare = "if (token === expected) deny()"
+    const severity = async (comment: string) =>
+      (await scan("server/auth.ts", `${comment}\n${compare}`)).find((f) => f.code === "NF-S002")
+    for (const comment of [
+      "// nifra-expect NF-S003: names another finding",
+      "// nifra-expect NF-S0021: a longer code is another code",
+      "// nifra-expect NF-S002",
+      "// nifra-expect NF-S002:",
+      "// nifra-expect NF-S002:   */",
+    ]) {
+      expect((await severity(comment))?.severity).toBe("error")
+    }
+    expect((await severity("// nifra-expect NF-S002"))?.message).toContain("gives no reason")
+    expect((await severity("/* nifra-expect NF-S002: a block comment */"))?.evidence).toContain(
+      "nifra-expect NF-S002: a block comment",
+    )
+  })
+
+  test("a nifra-expect inside a string on the flagged line silences nothing; a trailing comment does", async () => {
+    const finding = async (line: string) =>
+      (await scan("server/auth.ts", line)).find((f) => f.code === "NF-S002")
+    for (const line of [
+      'const ok = token === expected ? "nifra-expect NF-S002: data, not a comment" : ""',
+      "const ok = token === expected || `// nifra-expect NF-S002: in a template`",
+      "const ok = token === expected || 'it\\'s // nifra-expect NF-S002: escaped quote'",
+    ]) {
+      expect((await finding(line))?.severity).toBe("error")
+    }
+    const trailing = await finding(
+      'const ok = token === expected && "a//b" // nifra-expect NF-S002: compares a public echo',
+    )
+    expect(trailing?.severity).toBe("info")
+  })
+
+  test("the retired @nifra-gate-reviewed marker silences nothing and names its replacement", async () => {
+    for (const marker of ["// @nifra-gate-reviewed", "// @nifra-gate-reviewed: reviewed"]) {
+      const finding = (
+        await scan("server/auth.ts", `${marker}\nif (token === expected) deny()`)
+      ).find((f) => f.code === "NF-S002")
+      expect(finding?.severity).toBe("error")
+      expect(finding?.message).toContain("// nifra-expect NF-S002: <reason>")
+    }
   })
 
   test("NF-S001 gate-name: `can` needs camelCase, so canonical/cancel are not gates", async () => {
@@ -111,6 +163,50 @@ describe("built-in security rules", () => {
     )
     // fail() delegates the denial; the plain logger.warn catch is still fail-open.
     expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S001:2"])
+  })
+
+  test("NF-S001 reads the catch's statements, not its words", async () => {
+    const findings = await scan(
+      "routes/words.server.ts",
+      [
+        "function requireAuth() { try { check() } catch { /* throw later */ return true } }",
+        'function requireRole() { try { check() } catch { log("throw away"); return true } }',
+        "function requireUser() { try { check() } catch (e) { setTimeout(() => { throw e }); return true } }",
+        'function requireOwner() { try { check() } catch { log("return false"); return true } }',
+        "function requireA() { try { check() } catch (e) { if (e) throw e; return true } }",
+        "function requireB() { try { check() } catch { return (false) } }",
+        "function requireC() { try { check() } catch { return new Response(null, { status: 403 }) } }",
+        "async function requireD() { try { check() } catch { return await denyRequest() } }",
+        "function requireE() { try { check() } catch (e) { reject(e) } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S001:1",
+      "NF-S001:2",
+      "NF-S001:3",
+      "NF-S001:4",
+    ])
+  })
+
+  test("NF-S001 knows the names gates go by", async () => {
+    const gates = [
+      "verifyToken",
+      "verifySession",
+      "ensureLoggedIn",
+      "checkPermission",
+      "validateCsrf",
+      "authenticate",
+      "authoriseUser",
+      "adminGuard",
+    ]
+    const other = ["ensureDir", "checkHealth", "verifyChecksum", "validateEmail", "Guard"]
+    const findings = await scan(
+      "backend/names.ts",
+      [...gates, ...other]
+        .map((name) => `function ${name}() { try { check() } catch { return true } }`)
+        .join("\n"),
+    )
+    expect(findings.map((finding) => finding.line)).toEqual(gates.map((_, index) => index + 1))
   })
 
   test("NF-S002 skips enum-member accesses (ts.SyntaxKind.PlusToken is a kind, not a secret)", async () => {
@@ -221,15 +317,15 @@ describe("configuration audit rules (NF-S004..007)", () => {
     expect(findings[0]?.severity).toBe("info")
   })
 
-  test("reviewed marker downgrades the audit rules", async () => {
+  test("a nifra-expect comment downgrades the audit rules", async () => {
     const findings = await scan(
       "app.ts",
       [
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S004: a public read-only API",
         "app.use(cors({ origin: () => true }))",
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S005: the target is a constant",
         "return redirect(target, { external: true })",
-        "// @nifra-gate-reviewed",
+        "// nifra-expect NF-S006: the edge proxy caps every body",
         "app.use(bodyLimit({ allowLengthless: true }))",
       ].join("\n"),
     )
@@ -279,8 +375,130 @@ test("shares source reads across built-in security rules", async () => {
   expect(reads).toBe(1)
 })
 
+const projects: string[] = []
+afterAll(() => {
+  for (const root of projects) rmSync(root, { recursive: true, force: true })
+})
+
+/** A project on disk holding only `files` (path to content), so web-app detection reads real files. */
+function project(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "nifra-s002-"))
+  projects.push(root)
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true })
+    writeFileSync(join(root, path), content)
+  }
+  return root
+}
+
+const manifest = (dependencies: Record<string, string>) => JSON.stringify({ dependencies })
+const webApp = () => project({ "nifra.config.ts": "export default {}" })
+
+describe("NF-S002 precision", () => {
+  const linesOf = async (content: string) =>
+    (await scan("server/auth.ts", content)).filter((f) => f.code === "NF-S002").map((f) => f.line)
+
+  test("a comparison against a boolean is a flag check", async () => {
+    expect(
+      await linesOf(
+        [
+          "if (persistRefreshToken === true) keep()",
+          "if (options.persistRefreshToken !== false) keep()",
+          "if (true == hasToken) keep()",
+        ].join("\n"),
+      ),
+    ).toEqual([])
+  })
+
+  test("a name whose last word states a fact about the secret is not secret material", async () => {
+    const names = [
+      "tokenType",
+      "secretKind",
+      "apiKeyName",
+      "apiKeyHeaderName",
+      "TOKEN_HEADER_NAME",
+      "tokenId",
+      "apiKeyIds",
+      "passwordLength",
+      "secretLen",
+      "tokenCount",
+      "secretSize",
+      "signatureMode",
+      "passwordPolicy",
+      "tokenVersion",
+      "SECRET_CAP_SQLSTATE",
+      "tokenStatus",
+      "hmacEnabled",
+      "passwordRequired",
+      "tokenTTL",
+      "tokenExpiry",
+      "tokenExpires",
+    ]
+    expect(await linesOf(names.map((name) => `if (${name} === input) x()`).join("\n"))).toEqual([])
+    expect(await linesOf("if (error.code === SECRET_CAP_SQLSTATE) retry()")).toEqual([])
+  })
+
+  test("the secret word anywhere but the last word still flags", async () => {
+    const names = [
+      "tokenValue",
+      "passwordHash",
+      "secretBytes",
+      "apiKeyHeader",
+      "secretCode",
+      "webhookSecretPath",
+      "tokenPrefix",
+      "signatureHex",
+      "tokenIdHash",
+    ]
+    expect(await linesOf(names.map((name) => `if (${name} === input) x()`).join("\n"))).toEqual(
+      names.map((_, index) => index + 1),
+    )
+  })
+
+  test("two configuration reads are no timing oracle", async () => {
+    expect(
+      await linesOf(
+        [
+          "if (process.env.JWT_SECRET === process.env.SESSION_SECRET) throw new Error('keys must differ')",
+          "if (Bun.env.A_TOKEN === process.env['B_TOKEN']) throw new Error('keys must differ')",
+          "if (Deno.env.get('A_SECRET') !== import.meta.env.B_SECRET) ok()",
+          "function boot(env: Env) { if (env.JWT_SECRET === env.SESSION_SECRET) throw new Error('x') }",
+          "app.get('/', (c) => c.env.A_TOKEN === c.env.B_TOKEN)",
+          "export default { fetch(req: Request, env: Env) { return env.A_SECRET == env.B_SECRET } }",
+        ].join("\n"),
+      ),
+    ).toEqual([])
+  })
+
+  test("a configuration read compared with anything else still flags", async () => {
+    expect(
+      await linesOf(
+        [
+          "if (token === header) x()",
+          "if (secret == input) x()",
+          'if (apiKey !== req.headers.get("x-api-key")) x()',
+          "if (signatureHex === expected) x()",
+          'const API_TOKEN = "hard-coded"',
+          "if (API_TOKEN === input) x()",
+          'if (process.env.API_TOKEN === req.headers.get("x-token")) x()',
+          "const env = { A_TOKEN: input, B_TOKEN: other }",
+          "if (env.A_TOKEN === env.B_TOKEN) x()",
+          "function f(env: Env, list: Env[]) { for (const env of list) if (env.A_TOKEN === env.B_TOKEN) x() }",
+          "function g(env: Env) { { const env = build(); if (env.A_TOKEN === env.B_TOKEN) x() } }",
+          "function h({ env }: Ctx) { if (env.A_TOKEN === env.B_TOKEN) x() }",
+          "if (body.env.API_TOKEN === process.env.API_TOKEN) x()",
+          "const c = parse(input); if (c.env.A_TOKEN === c.env.B_TOKEN) x()",
+          "app.get('/', (c) => c.env.apiToken === c.env.otherToken)",
+        ].join("\n"),
+      ),
+    ).toEqual([1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15])
+  })
+})
+
 describe("NF-S002 severity by file role", () => {
   const compare = "if (token === expected) deny()"
+  const severityOf = async (file: string, root: string) =>
+    (await scan(file, compare, root)).find((f) => f.code === "NF-S002")?.severity
 
   test("server-side comparisons fail the gate", async () => {
     for (const file of [
@@ -295,10 +513,56 @@ describe("NF-S002 severity by file role", () => {
     }
   })
 
-  test("browser code comparisons are advisory", async () => {
+  test("browser code in a web app is advisory", async () => {
+    const root = webApp()
     for (const file of ["routes/login.tsx", "frontend/Login.tsx", "app/Form.frontend.jsx"]) {
-      const findings = await scan(file, compare)
-      expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("warn")
+      expect(await severityOf(file, root)).toBe("warn")
+    }
+  })
+
+  test("each web app marker proves a web app", async () => {
+    for (const files of [
+      { "backend/framework.ts": "export {}" },
+      { "package.json": manifest({ "@nifrajs/web": "5.0.0" }) },
+      { "package.json": manifest({ "@nifrajs/web-react": "5.0.0" }) },
+    ]) {
+      expect(await severityOf("routes/login.tsx", project(files))).toBe("warn")
+    }
+  })
+
+  test("routes/ in an API-only project is server code", async () => {
+    const root = project({ "package.json": manifest({ "@nifrajs/core": "5.0.0" }) })
+    expect(await severityOf("src/routes/auth.ts", root)).toBe("error")
+    expect(await severityOf("routes/auth.ts", "/tmp/project")).toBe("error")
+  })
+
+  test("the nearest package.json decides, so a web dependency at the root covers no other package", async () => {
+    const root = project({
+      "package.json": manifest({ "@nifrajs/web": "5.0.0" }),
+      "apps/site/nifra.config.ts": "export default {}",
+      "packages/api/package.json": manifest({ "@nifrajs/core": "5.0.0" }),
+      "packages/shared/package.json": manifest({}),
+    })
+    expect(await severityOf("apps/site/routes/login.tsx", root)).toBe("warn")
+    expect(await severityOf("packages/api/src/routes/auth.ts", root)).toBe("error")
+    expect(await severityOf("packages/shared/x.ts", root)).toBe("error")
+    expect(await severityOf("packages/shared/frontend/x.tsx", root)).toBe("error")
+  })
+
+  test('"nifra": { "kind": "api" } makes every file server code, a web dependency notwithstanding', async () => {
+    const root = project({
+      "package.json": JSON.stringify({
+        nifra: { kind: "api" },
+        dependencies: { "@nifrajs/web": "5.0.0" },
+      }),
+    })
+    expect(await severityOf("routes/login.tsx", root)).toBe("error")
+    expect(await severityOf("frontend/Login.tsx", root)).toBe("error")
+  })
+
+  test("an unreadable or malformed package.json proves nothing", async () => {
+    for (const text of ["{", "null", JSON.stringify({ dependencies: "@nifrajs/web" })]) {
+      expect(await severityOf("routes/login.tsx", project({ "package.json": text }))).toBe("error")
     }
   })
 
@@ -308,18 +572,20 @@ describe("NF-S002 severity by file role", () => {
   })
 
   test("treats client-side password confirmation pairs as local validation", async () => {
-    const findings = await scan(
-      "frontend/ConfirmPassword.tsx",
-      [
-        "if (password !== confirm) return false",
-        "if (password !== confirmPassword) return false",
-        "if (input.password === input.passwordConfirmation) return true",
-        "if (password === expectedPassword) return false",
-      ].join("\n"),
-    )
-
+    const confirmations = [
+      "if (password !== confirm) return false",
+      "if (password !== confirmPassword) return false",
+      "if (input.password === input.passwordConfirmation) return true",
+      "if (password === expectedPassword) return false",
+    ].join("\n")
+    const findings = await scan("frontend/ConfirmPassword.tsx", confirmations, webApp())
     expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([4])
     expect(findings.find((finding) => finding.code === "NF-S002")?.severity).toBe("warn")
+
+    const outsideWebApp = await scan("frontend/ConfirmPassword.tsx", confirmations)
+    expect(
+      outsideWebApp.filter((finding) => finding.code === "NF-S002").map((f) => f.severity),
+    ).toEqual(["error", "error", "error", "error"])
   })
 
   test("does not weaken confirmation comparisons on the server", async () => {
@@ -335,11 +601,11 @@ describe("NF-S002 severity by file role", () => {
   })
 })
 
-test("reviewed marker counts anywhere in the comment block above, not only 2 lines up", async () => {
+test("a nifra-expect comment counts anywhere in the comment block above, not only 2 lines up", async () => {
   const findings = await scan(
     "server/auth.ts",
     [
-      "// @nifra-gate-reviewed: this compares a public webhook echo, not secret material.",
+      "// nifra-expect NF-S002: this compares a public webhook echo, not secret material.",
       "// The upstream signs with a per-delivery nonce; equality here is a routing hint only,",
       "// and the real verification happens in verifySignature() below.",
       "if (token === expected) deny()",
@@ -347,5 +613,7 @@ test("reviewed marker counts anywhere in the comment block above, not only 2 lin
   )
   const s002 = findings.find((f) => f.code === "NF-S002")
   expect(s002?.severity).toBe("info")
-  expect(s002?.evidence).toContain("@nifra-gate-reviewed")
+  expect(s002?.evidence).toContain(
+    "nifra-expect NF-S002: this compares a public webhook echo, not secret material.",
+  )
 })

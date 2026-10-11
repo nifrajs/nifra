@@ -79,9 +79,9 @@ for (const required of ["skills", ".claude-plugin"]) {
 let skillCount = 0
 for (const entryPath of new Bun.Glob("*/SKILL.md").scanSync(`${PACKAGE_DIR}/skills`)) {
   skillCount++
-  const dir = entryPath.split("/")[0]
+  const dir = entryPath.replaceAll("\\", "/").split("/")[0]
   const source = await Bun.file(`${PACKAGE_DIR}/skills/${entryPath}`).text()
-  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(source)?.[1]
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(source)?.[1]
   if (frontmatter === undefined) {
     failures.push(`${entryPath}: no YAML frontmatter`)
     continue

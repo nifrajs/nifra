@@ -60,7 +60,7 @@ const PAY_BACKEND = [
 const FULL_CONFIG = [
   `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
   `import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"`,
-  `import { backend } from "./backend.ts"`,
+  `import { backend } from "./backend/app.ts"`,
   `export default defineAssuranceConfig({`,
   `  source: backend,`,
   `  policy: { rules: [{ name: "all", match: {}, require: [] }] },`,
@@ -76,8 +76,8 @@ const FULL_CONFIG = [
  * in sync. Exercises every assurance-fed branch of all three commands at once. */
 async function fullProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "full-")
-  await mkdir(cwd, { recursive: true })
-  await writeFile(join(cwd, "backend.ts"), PAY_BACKEND)
+  await mkdir(join(cwd, "backend"), { recursive: true })
+  await writeFile(join(cwd, "backend/app.ts"), PAY_BACKEND)
   await writeFile(join(cwd, "nifra.assurance.ts"), FULL_CONFIG)
   const original = console.log
   console.log = () => {} // silence the emit tools' own progress logs during setup
@@ -93,8 +93,8 @@ async function fullProject(): Promise<string> {
 /** Backend only, no assurance config: the common project shape. */
 async function plainProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "plain-")
-  await mkdir(cwd, { recursive: true })
-  await writeFile(join(cwd, "backend.ts"), PAY_BACKEND)
+  await mkdir(join(cwd, "backend"), { recursive: true })
+  await writeFile(join(cwd, "backend/app.ts"), PAY_BACKEND)
   return cwd
 }
 

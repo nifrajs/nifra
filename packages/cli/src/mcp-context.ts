@@ -8,7 +8,7 @@
 import { realpathSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { basename, isAbsolute, relative, resolve } from "node:path"
-import type { LoadedApp } from "./load.ts"
+import type { AppLoader } from "./load.ts"
 import { createCachedAppLoader } from "./mcp-exec.ts"
 import { resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpPrompt, McpResource, McpServerFeatures, McpTool } from "./mcp-protocol.ts"
@@ -20,11 +20,11 @@ function openApiFormat(args: Record<string, unknown>): "json" | "yaml" {
 
 export async function openApiHandler(
   args: Record<string, unknown>,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp>,
+  loadAppCached: AppLoader,
 ): Promise<string> {
   const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
   const pathPrefix = typeof args.path === "string" ? args.path : undefined
-  return renderOpenApiWithTypes(await loadAppCached(), openApiFormat(args), pathPrefix)
+  return renderOpenApiWithTypes(await loadAppCached.backend(), openApiFormat(args), pathPrefix)
 }
 
 async function readProjectFile(
@@ -57,7 +57,7 @@ function promptText(
 
 export function projectResources(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: AppLoader = createCachedAppLoader(cwd),
 ): McpResource[] {
   return [
     {
@@ -68,7 +68,7 @@ export function projectResources(
       mimeType: "application/json",
       read: async () => {
         const { routesToJson } = await import("./introspect.ts")
-        return { text: JSON.stringify(routesToJson(await loadAppCached()), null, 2) }
+        return { text: JSON.stringify(routesToJson(await loadAppCached.backend()), null, 2) }
       },
     },
     {
@@ -165,7 +165,7 @@ export function projectPrompts(): McpPrompt[] {
 
 export function projectFeatures(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: AppLoader = createCachedAppLoader(cwd),
 ): McpServerFeatures {
   return { resources: projectResources(cwd, loadAppCached), prompts: projectPrompts() }
 }
@@ -218,7 +218,7 @@ export function dirError(dir: string | undefined): string {
 /** Build the project-scoped tools for `cwd`. */
 export interface CommandMcpToolOptions {
   readonly cwd: string
-  readonly loadAppCached?: () => Promise<LoadedApp>
+  readonly loadAppCached?: AppLoader
 }
 
 /** Adapt one executable catalog spec to its MCP descriptor and project-scoped handler. */

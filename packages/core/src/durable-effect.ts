@@ -235,7 +235,7 @@ async function scanEffectRecords(
 ): Promise<ReconciliationScanPage<DurableEffectRecord>> {
   if (store.scan !== undefined) return await store.scan(input)
   if (store.list === undefined) throw new TypeError("effect store does not support reconciliation")
-  return memoryScan(await store.list(), input)
+  return memoryScan(await store.list(), (record) => record.effectId, input)
 }
 
 export async function reconcileEffectsPage(

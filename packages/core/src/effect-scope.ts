@@ -234,10 +234,20 @@ export function createEffectScope(
         })
         return result
       } catch (error) {
-        const errorCode = codeFor(input.errorCode, error, began)
-        const failurePhase = input.failurePhase?.(error, began) ?? (began ? "ambiguous" : "failed")
-        if (failurePhase !== "failed" && failurePhase !== "ambiguous") {
-          throw new TypeError("owned effect failurePhase returned an invalid phase")
+        // A misconfigured `errorCode` or `failurePhase` is thrown only once the effect is settled
+        // with the defaults: thrown here, it left the durable record unfinished.
+        let misconfigured: { readonly error: unknown } | undefined
+        let errorCode = began ? "execution_failed" : "admission_failed"
+        let failurePhase: "failed" | "ambiguous" = began ? "ambiguous" : "failed"
+        try {
+          errorCode = codeFor(input.errorCode, error, began)
+          const phase = input.failurePhase?.(error, began) ?? failurePhase
+          if (phase !== "failed" && phase !== "ambiguous") {
+            throw new TypeError("owned effect failurePhase returned an invalid phase")
+          }
+          failurePhase = phase
+        } catch (invalid) {
+          misconfigured = { error: invalid }
         }
         try {
           await input.transitions?.failed?.(context, { began, errorCode, error })
@@ -253,7 +263,7 @@ export function createEffectScope(
           errorCode,
           ...(input.trace === undefined ? {} : { trace: input.trace }),
         })
-        throw error
+        throw misconfigured === undefined ? error : misconfigured.error
       }
     },
     evidence: () => evidenceScope.evidence(),

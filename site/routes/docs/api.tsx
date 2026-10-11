@@ -65,6 +65,26 @@ if (res.ok) {
 // Or destructure { data, error } directly:
 const { data, error } = await api.users.post({ name: "" })  // 422 if the schema rejects it`
 
+const TYPED_ERRORS = `import { client } from "@nifrajs/client"
+import { server, status } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+const conflict = t.object({ code: t.literal("conflict"), retryAfter: t.number() })
+const locked = new Set(["7"])
+
+export const app = server().post("/orders/:id/pay", { errors: { 409: conflict } }, (c) => {
+  if (locked.has(c.params.id))
+    // The body is the typed contract; the header serves proxies and plain HTTP clients.
+    return status(409, { code: "conflict", retryAfter: 5 }, { headers: { "retry-after": "5" } })
+  return { paid: true }
+})
+
+const api = client<typeof app>("https://api.example.com")
+const res = await api.orders({ id: "7" }).pay.post()
+if (!res.ok && res.status === 409) {
+  const wait: number = res.data.retryAfter // narrowed to the declared 409 body
+}`
+
 const SET = `export const app = server()
   .post("/login", { body: z.object({ email: z.string() }) }, (c) => {
     c.set.status = 201                       // override the default 200 (204 when you return undefined)
@@ -214,7 +234,7 @@ export default function Api() {
       <p className="caveat">
         Other param modifiers (<code>:id+</code>, <code>:id*</code>, <code>{":id(\\d+)"}</code>) are not
         part of the path grammar and match as literal text. Where that text is intended, put{" "}
-        <code>{"// nifra-expect param-modifier"}</code> above the registration.
+        <code>{"// nifra-expect NF-C026: <reason>"}</code> above the registration.
       </p>
 
       <h2>Param constraints</h2>
@@ -282,7 +302,7 @@ export default function Api() {
           <code>{"/users/:id{[0-9]+}"}</code> serve no request in common, so <code>nifra check</code>{" "}
           (<code>NF-C024</code>) has nothing to report. A constrained route beside a bare{" "}
           <code>:param</code> route still overlaps and is still reported; mark the pair with{" "}
-          <code>{"// nifra-expect route-overlap"}</code> where it is intended.
+          <code>{"// nifra-expect NF-C024: <reason>"}</code> where it is intended.
         </li>
         <li>
           <b>OpenAPI and the typed client use the bare name.</b> The path is{" "}
@@ -333,9 +353,11 @@ export default function Api() {
           <code>{`fetch(url, { method: "PURGE" })`}</code>.
         </li>
         <li>
-          <b>An assurance policy selects standard methods only.</b> A rule with <code>methods</code>{" "}
-          never matches a custom-method route, so classify it with a path rule. Left unmatched, it is
-          reported as <code>unclassified-route</code>.
+          <b>An assurance rule names standard methods only.</b> A rule with <code>methods</code>{" "}
+          never matches a custom-method route; one with <code>exceptMethods</code> does, unless the
+          route is under a method it lists. <code>securityBaseline()</code> holds a custom method to
+          its mutation rules, CSRF included, and <code>csrf()</code> publishes its evidence for one.
+          Left unmatched, a route is reported as <code>unclassified-route</code>.
         </li>
       </ul>
       <p className="caveat">
@@ -363,6 +385,15 @@ export default function Api() {
         plain-object return fully typed.
       </p>
       <p>
+        A <code>Response</code> a handler or hook returns or throws still gets the{" "}
+        <code>c.set.headers</code> it lacks and the queued cookies, so a guard's{" "}
+        <code>cache-control: no-store</code> reaches it. Its own headers win, <code>content-type</code>, <code>content-length</code>,{" "}
+        <code>content-encoding</code>, <code>content-range</code> and <code>transfer-encoding</code>{" "}
+        come from it alone, and <code>c.set.status</code> does not change its status. A{" "}
+        <code>Response</code> shared across requests is copied first, so one request's headers never
+        reach another.
+      </p>
+      <p>
         When you genuinely want a <code>Response</code> - an <b>error short-circuit</b> from a{" "}
         <code>derive</code> / <code>beforeHandle</code> (auth, rate limits) - <code>c.json(body, status?)</code>{" "}
         and <code>c.text(body, status?)</code> build one in a line:{" "}
@@ -376,6 +407,23 @@ export default function Api() {
         The request is on <code>c.req</code>, also available as <code>c.request</code> - the same name a
         page loader/action receives (which in turn also accepts <code>ctx.req</code>), so one name works
         in both places.
+      </p>
+
+      <h2 id="typed-errors">Typed error responses</h2>
+      <p>
+        Declare a route's error bodies in <code>errors</code>, keyed by status, and answer with{" "}
+        <code>status(code, body, {"{ headers }"})</code> from <code>@nifrajs/core/server</code>. It
+        ends the request from a handler or any hook, returned or thrown, without building a{" "}
+        <code>Response</code>: the body is serialized like a plain return, the headers ride with it,
+        and queued cookies still apply. On the typed client, checking <code>res.status === 409</code>{" "}
+        narrows <code>res.data</code> to the declared 409 body; a status the route does not declare
+        falls into one arm whose <code>data</code> is <code>unknown</code>.
+      </p>
+      <CodeBlock code={TYPED_ERRORS} lang="ts" />
+      <p>
+        The client's <code>Result</code> carries the body, not the response headers. A value the
+        caller acts on, such as how long to wait, belongs in the declared body; set the matching
+        header too when proxies or plain HTTP clients read it.
       </p>
 
       <h2>Typed request cookies (schema.cookies)</h2>
@@ -495,7 +543,7 @@ export default function Api() {
         the dot access at compile time with that guidance, and <code>nifra check</code> reports the
         collision (<code>NF-C018</code>, advisory). Prefer a verb-free segment
         (e.g. <code>/api/remove</code>) when you control the path; mark a route served only to
-        non-typed-client consumers with <code>{"// nifra-expect reserved-segment"}</code> above its
+        non-typed-client consumers with <code>{"// nifra-expect NF-C018: <reason>"}</code> above its
         registration.
       </p>
 
@@ -509,9 +557,11 @@ export default function Api() {
       </p>
       <CodeBlock code={RESULT} />
       <p>
-        A call that gets no HTTP answer has <code>status: 0</code> and one of four codes:{" "}
-        <code>network_error</code>, <code>timeout</code>, <code>response_too_large</code>, or{" "}
-        <code>invalid_path</code>. <code>invalid_path</code> means a param value was <code>.</code>{" "}
+        A call that gets no HTTP answer it can read has <code>status: 0</code> and one of five
+        codes: <code>network_error</code>, <code>timeout</code>, <code>response_too_large</code>,{" "}
+        <code>malformed_response</code>, or <code>invalid_path</code>.{" "}
+        <code>malformed_response</code> means the body did not decode as its content type says - a
+        proxy's HTML error page labelled JSON, say. <code>invalid_path</code> means a param value was <code>.</code>{" "}
         or <code>..</code>: a URL reads those as steps to another path, in every encoding, so the
         client sends nothing rather than reach a route the call does not name.{" "}
         <code>.subscribe()</code> reports it through <code>onError</code> and closes;{" "}

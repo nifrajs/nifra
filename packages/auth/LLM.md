@@ -25,7 +25,7 @@ Session primitives for nifra - signed-cookie + server-store sessions, CSRF, and 
 - **MemorySessionStoreOptions** _(interface)_ - `interface MemorySessionStoreOptions`
 - **Session** _(interface)_ - `interface Session<Data extends Record<string, unknown> = Record<string, unknown>>`
 
-_…and 7 more - see [`api-reference.md`](../../api-reference.md#nifrajsauth) for the complete list._
+_…and 8 more - see [`api-reference.md`](../../api-reference.md#nifrajsauth) for the complete list._
 
 ## Footguns
 

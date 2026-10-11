@@ -97,6 +97,52 @@ export async function loader({ request }: Route.LoaderArgs) {
   return { userId }
 }`
 
+const FRAME = `// doc-check: skip - fragment: \`app\`, \`readSession\`, \`Note\`, and \`db\` are your application's.
+import { AsyncLocalStorage } from "node:async_hooks"
+import { authenticated, rejected } from "@nifrajs/core"
+
+const frame = new AsyncLocalStorage<{ userId?: string }>()
+
+app.group("/api", (api) =>
+  api
+    // Opens before authentication and closes after the response: validation, derive and the
+    // handler all run inside it, and so does a thrown Response.
+    .around((_c, next) => frame.run({}, next))
+    // Resolves the caller once: typed as c.principal, and written into the open frame.
+    .authenticate({
+      id: "session",
+      run: async (input) => {
+        const session = await readSession(input.headers.get("cookie"))
+        if (session === null) return rejected()
+        const store = frame.getStore()
+        if (store !== undefined) store.userId = session.userId
+        return authenticated(session)
+      },
+    })
+    .post("/notes", { body: Note }, (c) => db.notes.insert({ ...c.body, owner: c.principal.userId })),
+)`
+
+const TICKET = `// doc-check: skip - fragment: \`app\` and \`tickets\` (a single-use store) are your application's.
+import { authenticated, rejected } from "@nifrajs/core"
+
+app
+  .authenticate({
+    id: "socket-ticket",
+    run: async (input) => {
+      // A browser cannot set a header on a WebSocket handshake, so the ticket rides in the URL.
+      const ticket = input.query.ticket
+      if (typeof ticket !== "string") return rejected()
+      const user = await tickets.take(ticket) // single use, expires in seconds
+      return user === null ? rejected() : authenticated(user)
+    },
+  })
+  .ws("/live", { upgrade: (c) => ({ user: c.principal.id }) })`
+
+const DENIAL = `// doc-check: skip - fragment: \`session\` is the request's session.
+requireUser(session, "userId", {
+  unauthenticated: { status: 403, body: { error: "login_required" }, headers: { "www-authenticate": "Session" } },
+})`
+
 export default function Auth() {
   return (
     <div className="prose">
@@ -181,6 +227,58 @@ export default function Auth() {
         directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
+      <p>
+        Without <code>redirectTo</code>, a guard denies with a 401 JSON{" "}
+        <code>{`{ ok: false, error: "unauthorized" }`}</code>. <code>unauthenticated</code> sets that
+        response's status (400-599), body and headers instead; the same option exists on{" "}
+        <code>@nifrajs/better-auth</code>'s <code>requireSession</code>, <code>requirePrincipal</code>{" "}
+        and <code>authed</code>, and on <code>@nifrajs/authjs</code>'s <code>requireAuthUser</code>. A
+        guard given both <code>redirectTo</code> and <code>unauthenticated</code> throws.
+      </p>
+      <CodeBlock code={DENIAL} />
+
+      <h2 id="request-frame">One request-scoped context from authentication to the handler</h2>
+      <p>
+        <code>around</code> wraps everything after routing for the routes declared after it:
+        authentication, body validation, <code>derive</code> and the handler. An{" "}
+        <code>AsyncLocalStorage</code> frame or a database session setting opened there stays open
+        until the response is decided. <code>authenticate</code> runs inside that frame before
+        validation, resolves the caller once and types it as <code>c.principal</code>, so it can write
+        what it resolved into the frame instead of a second lookup in a <code>derive</code>. Both are
+        order-scoped, so inside a <code>group</code> they cover only its routes.
+      </p>
+      <CodeBlock code={FRAME} />
+
+      <h2 id="auth-first">Authentication runs first</h2>
+      <p>
+        <code>authenticate()</code> refuses a request before anything reads it: the body is not read,
+        no schema runs, and no <code>derive</code> or <code>beforeHandle</code> sees it. An
+        unauthenticated caller gets the 401 (or the refusal <code>run</code> returns), never a 413 or a
+        422 that describes the route's input. <code>basicAuth</code>, <code>bearer</code>,{" "}
+        <code>apiKey</code> and <code>jwt</code> from <code>@nifrajs/middleware</code> run there. With{" "}
+        <code>optional: true</code> they never refuse, so validation answers as usual.
+      </p>
+      <p>
+        <code>run</code> receives the method, pathname, headers, path params, the raw{" "}
+        <code>search</code> and the parsed <code>query</code> (frozen, read by the parser{" "}
+        <code>c.query</code> uses; a repeated key is an array), the <code>request</code> (never read
+        its body), <code>env</code>, <code>clientIp</code> and an abort <code>signal</code>. Every
+        field is the caller's and unvalidated. Read the query only for a short-lived, single-use
+        ticket, such as one for a WebSocket handshake a browser cannot set a header on: a URL lands in
+        proxy and access logs. The dev feed records a query's keys, never its values.
+      </p>
+      <CodeBlock code={TICKET} />
+      <p>
+        A guard written as a <code>beforeHandle</code> runs after validation, so an unauthenticated
+        caller reaches the body parser. When <code>nifra check</code> loads{" "}
+        <code>backend/app.ts</code> (it does when a <code>contracts.lock.json</code> exists), NF-S008
+        names each route that claims authentication this way and declares an input schema. Move the
+        check into <code>authenticate()</code>, or set{" "}
+        <code>validationOrder: "auth-before-validation"</code> on the route to run its hooks first. A
+        rate limiter written as a <code>beforeHandle</code> behind <code>authenticate()</code> does not
+        see refused requests; <code>rateLimit()</code> runs in <code>onRequest</code>, before routing,
+        and counts them.
+      </p>
 
       <h2 id="server-only">Session code stays in the backend</h2>
       <p>

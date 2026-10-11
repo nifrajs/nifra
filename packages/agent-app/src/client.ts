@@ -18,7 +18,12 @@ import {
   parseHandoffSnapshot,
   parseRunSnapshot,
 } from "@nifrajs/agent-protocol"
-import type { AgentTransport, CommandOutcome } from "./transport.ts"
+import {
+  type AgentTransport,
+  AgentTransportError,
+  type AgentTransportRequest,
+  type CommandOutcome,
+} from "./transport.ts"
 import {
   type AgentEventView,
   type HandoffView,
@@ -56,6 +61,13 @@ export interface AgentAppClientOptions {
   readonly features?: readonly string[]
   /** Bound on out-of-order live events held before a gap is skipped. Forwarded to the event buffer. */
   readonly maxPending?: number
+  /**
+   * Times {@link AgentAppClient.send} re-attaches with `turn.attach` after its stream breaks mid-turn,
+   * counted since the last attach that delivered a new event. Default 3; 0 turns resuming off.
+   */
+  readonly resumeAttempts?: number
+  /** Wait before each re-attach. Default 250 ms. */
+  readonly resumeDelayMs?: number
 }
 
 export interface CreateSessionInput {
@@ -133,6 +145,8 @@ export class AgentAppClient {
   private readonly transport: AgentTransport
   private readonly requested: readonly string[]
   private readonly maxPending: number | undefined
+  private readonly resumeAttempts: number
+  private readonly resumeDelayMs: number
   private currentSession: SessionView | undefined
   private granted = new Set<string>()
 
@@ -140,6 +154,12 @@ export class AgentAppClient {
     this.transport = transport
     this.requested = options?.features ?? AGENT_APP_FEATURES
     this.maxPending = options?.maxPending
+    this.resumeAttempts = options?.resumeAttempts ?? 3
+    this.resumeDelayMs = options?.resumeDelayMs ?? 250
+    if (!Number.isSafeInteger(this.resumeAttempts) || this.resumeAttempts < 0)
+      throw new RangeError("AgentAppClient: resumeAttempts must be a non-negative integer")
+    if (!Number.isSafeInteger(this.resumeDelayMs) || this.resumeDelayMs < 0)
+      throw new RangeError("AgentAppClient: resumeDelayMs must be a non-negative integer")
   }
 
   /** The current session view, or `undefined` before {@link createSession}/{@link resume}. */
@@ -175,27 +195,67 @@ export class AgentAppClient {
   /**
    * Stream a turn as ordered, deduplicated view models. The underlying transport receives the host's
    * full event stream, but every value yielded here is content-free.
+   *
+   * The host numbers events per session, and other clients can share the session, so the turn starts
+   * at its first event: seqs between the last one this client saw and that event belong to other
+   * clients' turns. Events still held behind a gap when the stream ends are released in order.
+   *
+   * When the connection breaks mid-turn, the client follows the turn again with `turn.attach` from the
+   * last seq it received, so the views go on without a gap or a repeat. A host that cannot (it keeps
+   * no turns, or no longer holds those events) refuses, and the break is thrown as before.
    */
   async *send(message: string, options?: { signal?: AbortSignal }): AsyncIterable<AgentEventView> {
     if (this.currentSession === undefined)
       throw new AgentAppError("createSession must be called before send")
-    const buffer = new OrderedEventBuffer({
-      from: this.currentSession.lastSeq,
-      ...(this.maxPending === undefined ? {} : { maxPending: this.maxPending }),
-    })
-    const stream = this.transport.stream({
-      method: "turn.send",
-      params: { message },
-      ...(options?.signal ? { signal: options.signal } : {}),
-    })
-    for await (const event of stream) {
-      for (const view of buffer.offer(toEventView(event))) {
-        // The host numbers events per session, so the next turn's buffer starts after this one.
-        if (this.currentSession !== undefined && view.seq > this.currentSession.lastSeq)
-          this.currentSession = Object.freeze({ ...this.currentSession, lastSeq: view.seq })
-        yield view
-      }
+    const cursor = this.currentSession.lastSeq
+    const signal = options?.signal
+    let buffer: OrderedEventBuffer | undefined
+    const advance = (view: AgentEventView): AgentEventView => {
+      // The next turn's buffer starts after this one.
+      if (this.currentSession !== undefined && view.seq > this.currentSession.lastSeq)
+        this.currentSession = Object.freeze({ ...this.currentSession, lastSeq: view.seq })
+      return view
     }
+    let request = streamRequest("turn.send", { message }, signal)
+    let lastSeq: number | undefined
+    let attempts = 0
+    let broken: unknown
+    for (;;) {
+      try {
+        for await (const event of this.transport.stream(request)) {
+          if (lastSeq === undefined || event.seq > lastSeq) {
+            lastSeq = event.seq
+            attempts = 0
+          }
+          const view = toEventView(event)
+          buffer ??= new OrderedEventBuffer({
+            from: Math.max(cursor, view.seq - 1),
+            ...(this.maxPending === undefined ? {} : { maxPending: this.maxPending }),
+          })
+          for (const ready of buffer.offer(view)) yield advance(ready)
+        }
+        break
+      } catch (error) {
+        // A refusal carries a status; only a connection that broke is worth attaching again.
+        const transport = error instanceof AgentTransportError
+        if (transport && error.status !== undefined && request.method === "turn.attach")
+          throw broken
+        if (
+          !transport ||
+          error.status !== undefined ||
+          lastSeq === undefined ||
+          signal?.aborted === true ||
+          attempts >= this.resumeAttempts
+        )
+          throw error
+        broken = error
+      }
+      attempts += 1
+      if (this.resumeDelayMs > 0)
+        await new Promise((resolve) => setTimeout(resolve, this.resumeDelayMs))
+      request = streamRequest("turn.attach", { afterSeq: lastSeq }, signal)
+    }
+    for (const ready of buffer?.flush() ?? []) yield advance(ready)
   }
 
   /** Resume a persisted log by cursor. A cursor whose next record was evicted asks for a resync. */
@@ -218,7 +278,9 @@ export class AgentAppClient {
     const views: PendingApprovalView[] = []
     for (const item of pending) {
       if (!isRecord(item)) continue
-      const { approvalId, action, capability, turnId } = item
+      const { action, capability, turnId } = item
+      // A host older than the `approvalId` field names the approval `id`.
+      const approvalId = item.approvalId ?? item.id
       if (
         typeof approvalId !== "string" ||
         typeof action !== "string" ||
@@ -432,6 +494,14 @@ export class AgentAppClient {
       ...(session === undefined ? {} : { session }),
     })
   }
+}
+
+function streamRequest(
+  method: string,
+  params: unknown,
+  signal: AbortSignal | undefined,
+): AgentTransportRequest {
+  return signal === undefined ? { method, params } : { method, params, signal }
 }
 
 function commandError(method: string, outcome: { status: number; error: string }): AgentAppError {

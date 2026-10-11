@@ -476,6 +476,15 @@ describe.skipIf(SKIP)(SUITE, () => {
         sql,
         code: "NIFRA_DB_COLUMN_REFUSED",
       })
+      // A plan's row counts and estimates answer questions about the column too.
+      for (const analyze of [false, true]) {
+        const explained = await explainPostgres(reader, sql, { ...masked, analyze })
+        expect({ sql, analyze, code: code(explained) }).toEqual({
+          sql,
+          analyze,
+          code: "NIFRA_DB_COLUMN_REFUSED",
+        })
+      }
     }
     for (const sql of [
       "SELECT count(*) FROM users",
@@ -487,6 +496,10 @@ describe.skipIf(SKIP)(SUITE, () => {
         sql,
         code: undefined,
       })
+      expect({
+        sql,
+        code: code(await explainPostgres(reader, sql, { ...masked, analyze: true })),
+      }).toEqual({ sql, code: undefined })
     }
   })
 
@@ -605,10 +618,9 @@ describe.skipIf(SKIP)(SUITE, () => {
     const plain = await postgresRoleSql(su, { timeoutMs: TIMEOUT_MS })
     if (isDbRefusal(plain)) throw new Error(plain.message)
     expect(plain.statements).toContain(
-      serverVersion >= 140000
-        ? 'GRANT pg_read_all_data TO "nifra_dev_reader";'
-        : 'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "nifra_dev_reader";',
+      'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "nifra_dev_reader";',
     )
+    expect(plain.statements.some((line) => line.includes("pg_read_all_data"))).toBe(false)
   })
 })
 

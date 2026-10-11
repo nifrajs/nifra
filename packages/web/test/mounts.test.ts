@@ -45,6 +45,7 @@ const pathSeenBy = async (app: { fetch(r: Request): Response | Promise<Response>
 test("apiStrip removes the mount prefix so a standalone-shaped backend matches", async () => {
   // Default: the backend sees the FULL path, which is right when it only ever mounts here.
   const full = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",
@@ -56,6 +57,7 @@ test("apiStrip removes the mount prefix so a standalone-shaped backend matches",
   // request 404s inside it, and the workaround is a Proxy rewriting each URL - which two apps wrote
   // independently.
   const stripped = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",
@@ -70,6 +72,7 @@ test("apiStrip removes the mount prefix so a standalone-shaped backend matches",
 test("apiStrip preserves method, headers and body", async () => {
   const seen: { method?: string; auth?: string | null; body?: string } = {}
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",
@@ -97,6 +100,7 @@ test("a mount wins over the api prefix regardless of declaration order", async (
   // better-auth is not a `backend` route - the starter registers it on stack.routes. Without a mount
   // the browser's /api/auth/* hits the backend and 404s silently.
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",
@@ -165,6 +169,7 @@ test("createWebApp composes the backend WebSocket mount with the request path", 
       open: (ws) => ws.send(ws.data.path),
     })
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",
@@ -204,6 +209,7 @@ test("createWebApp composes the backend WebSocket mount with the request path", 
       upgrade: (c) => ({ path: new URL(c.req.url).pathname }),
     })
   const stripped = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",
@@ -220,6 +226,7 @@ test("createWebApp composes the backend WebSocket mount with the request path", 
 
 test("createWebApp listens on Bun with an api backend that has no WebSocket routes", async () => {
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: manifest(),
     clientEntry: "/c.js",

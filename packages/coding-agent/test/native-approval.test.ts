@@ -255,6 +255,32 @@ describe("NifraBackend native approvals", () => {
     await host.stop()
   })
 
+  test("an approval the host broker let expire is denied in the backend and never approved", async () => {
+    const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: 60_000 })
+    const forwarded: { readonly approvalId: string; readonly approved: boolean }[] = []
+    const resolve = backend.resolveApproval.bind(backend)
+    backend.resolveApproval = (sessionId, approvalId, approved, reason) => {
+      forwarded.push({ approvalId, approved })
+      return resolve(sessionId, approvalId, approved, reason)
+    }
+    const host = new CodingAgentHost({ backend, approvals: { timeoutMs: 20 } })
+    await host.start({ cwd: "/workspace", sessionId: "native" })
+    const iterator = host.prompt("write the file")[Symbol.asyncIterator]()
+    const events: AgentEvent[] = []
+    const required = await readUntil(iterator, events, isApprovalRequired)
+    const resolved = await readUntil(iterator, events, isApprovalResolved)
+
+    expect(resolved).toMatchObject({ approvalId: required.approvalId, approved: false })
+    expect(host.pendingApprovals).toHaveLength(0)
+    expect(await host.resolveApproval(required.approvalId, true)).toBeUndefined()
+    expect(await host.resolveApproval("never-offered", true)).toBeUndefined()
+    await drain(iterator, events)
+
+    expect(forwarded).toEqual([{ approvalId: required.approvalId, approved: false }])
+    expect(executed).toHaveLength(0)
+    await host.stop()
+  })
+
   test("default session evidence omits prompts, tool inputs, and model output", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-native-approval-evidence-"))
     const { backend } = makeNativeBackend({})

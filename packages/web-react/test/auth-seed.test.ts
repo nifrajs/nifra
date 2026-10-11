@@ -28,6 +28,11 @@ mock.module("react", () => ({
     }
     return [cells[index], set]
   },
+  useRef: (initial: unknown) => {
+    const index = cursor++
+    if (!(index in cells)) cells[index] = { current: initial }
+    return cells[index]
+  },
 }))
 afterAll(() => {
   mock.module("react", () => real)
@@ -133,4 +138,153 @@ test("a provider unmounted before its session read settles ignores the answer", 
     await Bun.sleep(0)
     expect(render(undefined, pending)).toMatchObject({ status: "loading", session: null })
   }
+})
+
+test("refresh responses and errors started before sign-out cannot restore or overwrite state", async () => {
+  for (const fails of [false, true]) {
+    reset()
+    let settle = (): void => {}
+    const pending = {
+      ...client,
+      getSession: () =>
+        new Promise<Session | null>((resolve, reject) => {
+          settle = () => (fails ? reject(new Error("late")) : resolve(ada))
+        }),
+    }
+    const value = render(ada, pending)
+    const reading = value.refresh()
+    await value.signOut({ redirect: false })
+    settle()
+    await reading
+    expect(render(ada, pending)).toMatchObject({ status: "unauthenticated", session: null })
+  }
+})
+
+test("a stale refresh is ignored after seed/client replacement or unmount", async () => {
+  const grace: Session = { user: { name: "Grace" }, expires: ada.expires }
+  for (const replacement of ["seed", "client", "unmount"] as const) {
+    reset()
+    let settle = (): void => {}
+    const pending = {
+      ...client,
+      getSession: () =>
+        new Promise<Session | null>((resolve) => {
+          settle = () => resolve(ada)
+        }),
+    }
+    const value = render(null, pending)
+    const cleanups = commit()
+    const reading = value.refresh()
+    if (replacement === "seed") render(grace, pending)
+    if (replacement === "client") render(null, client)
+    if (replacement === "unmount") for (const cleanup of cleanups) cleanup()
+    settle()
+    await reading
+    const next = render(
+      replacement === "seed" ? grace : null,
+      replacement === "client" ? client : pending,
+    )
+    expect(next).toMatchObject(
+      replacement === "seed"
+        ? { status: "authenticated", session: grace }
+        : { status: "unauthenticated", session: null },
+    )
+  }
+})
+
+test("only the latest refresh can set the session", async () => {
+  reset()
+  const replies: Array<(session: Session | null) => void> = []
+  const pending = {
+    ...client,
+    getSession: () => new Promise<Session | null>((resolve) => replies.push(resolve)),
+  }
+  const value = render(null, pending)
+  const first = value.refresh()
+  const second = value.refresh()
+  replies[1]?.(null)
+  await second
+  replies[0]?.(ada)
+  await first
+  expect(render(null, pending)).toMatchObject({ status: "unauthenticated", session: null })
+})
+
+test("the initial read and refreshes during sign-out cannot restore authenticated UI", async () => {
+  reset()
+  let reads = 0
+  let settleRead = (): void => {}
+  let finishSignOut = (): void => {}
+  const pending = {
+    ...client,
+    getSession: () => {
+      reads++
+      return new Promise<Session | null>((resolve) => {
+        settleRead = () => resolve(ada)
+      })
+    },
+    signOut: () =>
+      new Promise<void>((resolve) => {
+        finishSignOut = resolve
+      }),
+  }
+  const value = render(undefined, pending)
+  commit()
+  const signingOut = value.signOut({ redirect: false })
+  const refreshing = value.refresh()
+  expect(reads).toBe(1)
+  await refreshing
+  finishSignOut()
+  await signingOut
+  settleRead()
+  await Bun.sleep(0)
+  expect(render(undefined, pending)).toMatchObject({ status: "unauthenticated", session: null })
+})
+
+// A parent that builds its client inline hands the provider a new object on every render.
+test("a client rebuilt on every render keeps the shown session and a completed sign-out", async () => {
+  const grace: Session = { user: { name: "Grace" }, expires: ada.expires }
+  const rebuilt = (base: AuthClient): AuthClient => ({ ...base })
+
+  reset()
+  const reading = { ...client, getSession: async () => grace }
+  await render(ada, reading).refresh()
+  expect(render(ada, rebuilt(reading))).toMatchObject({ status: "authenticated", session: grace })
+
+  reset()
+  render(undefined, reading)
+  commit()
+  await Bun.sleep(0)
+  expect(render(undefined, rebuilt(reading))).toMatchObject({ status: "authenticated" })
+
+  reset()
+  let finishSignOut = (): void => {}
+  const slow = {
+    ...client,
+    signOut: () =>
+      new Promise<void>((resolve) => {
+        finishSignOut = resolve
+      }),
+  }
+  const signingOut = render(ada, slow).signOut({ redirect: false })
+  render(ada, rebuilt(slow))
+  finishSignOut()
+  await signingOut
+  expect(render(ada, rebuilt(slow))).toMatchObject({ status: "unauthenticated", session: null })
+
+  reset()
+  await render(ada, client).signOut({ redirect: false })
+  expect(render(ada, rebuilt(client))).toMatchObject({ status: "unauthenticated", session: null })
+})
+
+test("signIn goes through the provider's client", async () => {
+  reset()
+  const providers: string[] = []
+  const recording = {
+    ...client,
+    signIn: async (providerId?: string) => {
+      providers.push(providerId ?? "")
+    },
+  }
+  await render(null, recording).signIn("github")
+  expect(providers).toEqual(["github"])
 })

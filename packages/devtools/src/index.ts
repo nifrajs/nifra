@@ -45,6 +45,8 @@ export interface DevToolsOptions {
   readonly maxEvents?: number | undefined
   /** Maximum simultaneous SSE connections (default 5). */
   readonly maxConnections?: number | undefined
+  /** Maximum queued SSE bytes per connection (default 64 KiB). Overflow closes that connection. */
+  readonly maxPendingBytes?: number | undefined
   /** SSE path (default `/_nifra/devtools`). */
   readonly path?: string | undefined
   /** Explicit enable switch. Defaults to true only when `NODE_ENV === "development"`. */
@@ -86,7 +88,7 @@ function isLoopbackPeer(address: string): boolean {
  * DevTools plugin. Its observation adapter projects the single request span into a
  * `DevToolsEvent`; its middleware only owns the secured SSE transport.
  * When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to
- * that request owner.
+ * that request owner, and pass it `rawUrlPath: true` to list raw paths instead of route templates.
  */
 /** Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`. */
 export interface DevToolsQuery {
@@ -116,6 +118,9 @@ export function filterDevToolsEvents(
 export function devtools(options?: DevToolsOptions | undefined) {
   const maxEvents = options?.maxEvents ?? 200
   const maxConnections = Math.max(1, options?.maxConnections ?? 5)
+  const maxPendingBytes = options?.maxPendingBytes ?? 64 * 1024
+  if (!Number.isSafeInteger(maxPendingBytes) || maxPendingBytes < 1)
+    throw new RangeError("DevTools maxPendingBytes must be a positive safe integer")
   const endpoint = options?.path ?? "/_nifra/devtools"
   // A one-shot JSON snapshot of the ring buffer, alongside the live SSE stream. The SSE path is for a
   // human watching the overlay; this is for an agent that made a request and wants to READ what happened.
@@ -130,7 +135,7 @@ export function devtools(options?: DevToolsOptions | undefined) {
   const allowedOrigins = new Set(options?.allowedOrigins ?? [])
   const pingIntervalMs = Math.max(1, options?.pingIntervalMs ?? 15_000)
   const buffer: DevToolsEvent[] = []
-  const controllers = new Set<ReadableStreamDefaultController>()
+  const controllers = new Set<ReadableStreamDefaultController<Uint8Array>>()
   let eventCounter = 0
   let pingTimer: ReturnType<typeof setInterval> | undefined
 
@@ -146,11 +151,7 @@ export function devtools(options?: DevToolsOptions | undefined) {
     if (pingTimer !== undefined) return
     pingTimer = setInterval(() => {
       for (const ctrl of controllers) {
-        try {
-          ctrl.enqueue(pingFrame)
-        } catch {
-          controllers.delete(ctrl)
-        }
+        enqueue(ctrl, pingFrame)
       }
       if (controllers.size === 0) stopPing()
     }, pingIntervalMs)
@@ -158,19 +159,32 @@ export function devtools(options?: DevToolsOptions | undefined) {
     ;(pingTimer as { unref?: () => void }).unref?.()
   }
 
-  function dropController(ctrl: ReadableStreamDefaultController): void {
+  function dropController(ctrl: ReadableStreamDefaultController<Uint8Array>): void {
     controllers.delete(ctrl)
     if (controllers.size === 0) stopPing()
+  }
+
+  function enqueue(ctrl: ReadableStreamDefaultController<Uint8Array>, data: Uint8Array): void {
+    if (!controllers.has(ctrl)) return
+    try {
+      if (ctrl.desiredSize === null || data.byteLength > ctrl.desiredSize) {
+        // Accepted frames drain before EOF; the overflow frame is never retained. EventSource can
+        // reconnect to the recent history without a stalled reader keeping its connection slot.
+        ctrl.close()
+        dropController(ctrl)
+        return
+      }
+      ctrl.enqueue(data)
+    } catch {
+      // A cancelled or already closed stream no longer has a usable controller.
+      dropController(ctrl)
+    }
   }
 
   function broadcast(event: DevToolsEvent): void {
     const data = encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
     for (const ctrl of controllers) {
-      try {
-        ctrl.enqueue(data)
-      } catch {
-        dropController(ctrl)
-      }
+      enqueue(ctrl, data)
     }
   }
 
@@ -211,7 +225,8 @@ export function devtools(options?: DevToolsOptions | undefined) {
     if (!enabled) return app
     // Mounted as side effects: DevTools stays a type identity, so `c.trace` is not threaded here.
     // Apps that want the typed trace context add `.use(tracing())` themselves.
-    app.use(tracing({ adapters: [adapter] }))
+    // A local request log is only useful with the paths actually requested.
+    app.use(tracing({ adapters: [adapter], rawUrlPath: true }))
     app.use({
       name: "devtools-stream",
 
@@ -273,25 +288,31 @@ export function devtools(options?: DevToolsOptions | undefined) {
           })
         }
 
-        let activeController: ReadableStreamDefaultController | undefined
-        const stream = new ReadableStream({
-          start(controller) {
-            activeController = controller
-            controllers.add(controller)
-            startPing()
-            // Send buffered events as the initial payload.
-            for (const evt of buffer) {
-              try {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
-              } catch {
-                break
+        let activeController: ReadableStreamDefaultController<Uint8Array> | undefined
+        const stream = new ReadableStream<Uint8Array>(
+          {
+            start(controller) {
+              activeController = controller
+              controllers.add(controller)
+              startPing()
+              // A new client cannot pull during start(). Send only the newest history suffix that
+              // fits its budget, so a large snapshot does not cause an immediate reconnect loop.
+              const initial: Uint8Array[] = []
+              let initialBytes = 0
+              for (let index = buffer.length - 1; index >= 0; index--) {
+                const frame = encoder.encode(`data: ${JSON.stringify(buffer[index])}\n\n`)
+                if (frame.byteLength > maxPendingBytes - initialBytes) break
+                initial.push(frame)
+                initialBytes += frame.byteLength
               }
-            }
+              for (const frame of initial.reverse()) enqueue(controller, frame)
+            },
+            cancel() {
+              if (activeController !== undefined) dropController(activeController)
+            },
           },
-          cancel() {
-            if (activeController !== undefined) dropController(activeController)
-          },
-        })
+          new ByteLengthQueuingStrategy({ highWaterMark: maxPendingBytes }),
+        )
 
         return new Response(stream, {
           headers: {

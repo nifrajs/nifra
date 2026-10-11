@@ -33,6 +33,7 @@
     const q = snapshot.path.indexOf("?")
     return {
       data: snapshot.data,
+      ...(snapshot.serverComponents === undefined ? {} : { serverComponents: snapshot.serverComponents }),
       actionData: snapshot.actionData,
       pending: snapshot.pending,
       // The same `params`/`path` the server render received, so `useMatches` reports the same chain.

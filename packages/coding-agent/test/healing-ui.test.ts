@@ -83,6 +83,55 @@ describe("self-healing and UI extension seams", () => {
     expect(host.extensions[0]?.status?.tone).toBe("positive")
   })
 
+  test("rejects a manifest whose fields have the wrong type, as parsed JSON can", () => {
+    const valid = { id: "panel", revision: "1", slot: "main", label: "Panel" }
+    const malformed: readonly Record<string, unknown>[] = [
+      { ...valid, id: ["panel"] },
+      { ...valid, revision: ["1"] },
+      { ...valid, slot: "not-a-slot" },
+      { ...valid, label: { length: 3 } },
+      { ...valid, label: ["Panel"] },
+      { ...valid, capabilities: "network" },
+      { ...valid, capabilities: [7] },
+      { ...valid, theme: "plain" },
+      { ...valid, theme: { name: "quiet", density: "loose" } },
+      { ...valid, status: { text: ["a"] } },
+      { ...valid, status: "ok" },
+    ]
+    const host = new UiExtensionHost()
+    for (const manifest of malformed) {
+      const result = host.reload(JSON.parse(JSON.stringify([manifest])))
+      expect({ manifest, rolledBack: result.rolledBack }).toEqual({ manifest, rolledBack: true })
+    }
+    expect(host.reload(JSON.parse('"panel"')).rolledBack).toBe(true)
+    expect(host.extensions).toEqual([])
+  })
+
+  test("keeps only the known manifest fields", () => {
+    const host = new UiExtensionHost()
+    const manifest = {
+      id: "panel",
+      revision: "1",
+      slot: "main",
+      label: "Panel",
+      html: "<script>",
+      theme: { name: "quiet", css: "x" },
+      status: { text: "ok", onClick: "x" },
+    }
+    expect(host.reload(JSON.parse(JSON.stringify([manifest]))).rolledBack).toBe(false)
+    expect(host.extensions).toEqual([
+      {
+        id: "panel",
+        revision: "1",
+        slot: "main",
+        label: "Panel",
+        capabilities: [],
+        theme: { name: "quiet" },
+        status: { text: "ok" },
+      },
+    ])
+  })
+
   test("contains an extension worker and invokes a registered tool", async () => {
     const worker = new IsolatedExtensionWorker({
       modulePath: resolve(import.meta.dir, "fixtures/isolated-extension.ts"),

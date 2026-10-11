@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { NIFRA_ASSURANCE } from "../src/assurance.ts"
-import { authenticated, rejected, server, status } from "../src/index.ts"
+import {
+  authenticated,
+  isAuthenticatedRequest,
+  markAuthenticatedRequest,
+  rejected,
+  server,
+  status,
+} from "../src/index.ts"
 import { reflectRoutes } from "../src/reflection.ts"
 
 describe("dedicated authentication stage", () => {
@@ -25,7 +32,7 @@ describe("dedicated authentication stage", () => {
         run(input) {
           expect("req" in input).toBe(false)
           expect("body" in input).toBe(false)
-          expect("query" in input).toBe(false)
+          expect(Object.isFrozen(input.query)).toBe(true)
           expect("raw" in input).toBe(false)
           expect(Object.isFrozen(input)).toBe(true)
           expect(Object.isFrozen(input.headers)).toBe(true)
@@ -479,5 +486,81 @@ describe("dedicated authentication stage", () => {
     const asyncFailed = await app.fetch(new Request("http://x/async-boom"))
     expect(asyncFailed.status).toBe(500)
     expect(await asyncFailed.text()).not.toContain("private async handler detail")
+  })
+})
+
+describe("errors after an async authentication", () => {
+  test("a derive or handler that throws synchronously reaches onError", async () => {
+    const outcomes: string[] = []
+    for (const where of ["derive", "handler"] as const) {
+      let mapped = 0
+      const app = server()
+        .onError(() => {
+          mapped += 1
+          return new Response("mapped", { status: 409 })
+        })
+        .authenticate({ id: "async", mode: "async", run: async () => authenticated({ id: "u" }) })
+        .derive(() => {
+          if (where === "derive") throw new Error("derive failed")
+          return { tenant: "t" }
+        })
+        .get("/x", () => {
+          throw new Error("handler failed")
+        })
+      const response = await app.fetch(new Request("http://x/x"))
+      outcomes.push(`${where} ${response.status} ${mapped}`)
+    }
+    expect(outcomes).toEqual(["derive 409 1", "handler 409 1"])
+  })
+})
+
+describe("authenticated request record", () => {
+  const stage = {
+    id: "service",
+    run: (input: { headers: { get(name: string): string | null } }) =>
+      input.headers.get("x-service-key") === "k" ? authenticated("svc") : rejected(),
+  }
+  const seen = (app: { fetch(req: Request): Response | Promise<Response> }, headers = {}) =>
+    Promise.resolve(app.fetch(new Request("http://x/r", { headers }))).then((res) =>
+      res.headers.get("x-authenticated"),
+    )
+
+  test("response hooks see the request an authentication stage accepted, and only that one", async () => {
+    const app = server()
+      .onResponse((res, req) => {
+        res.headers.set("x-authenticated", String(isAuthenticatedRequest(req)))
+        return res
+      })
+      .authenticate(stage)
+      .get("/r", () => ({ ok: true }))
+    expect(await seen(app, { "x-service-key": "k" })).toBe("true")
+    expect(await seen(app)).toBe("false")
+  })
+
+  test("the record follows a request an onRequest hook replaced", async () => {
+    const app = server()
+      .onRequest((req) => new Request(req.url, { headers: req.headers }))
+      .onResponse((res, req) => {
+        res.headers.set("x-authenticated", String(isAuthenticatedRequest(req)))
+        return res
+      })
+      .authenticate(stage)
+      .get("/r", () => ({ ok: true }))
+    expect(await seen(app, { "x-service-key": "k" })).toBe("true")
+  })
+
+  test("an integration outside a stage marks the request itself", async () => {
+    const app = server()
+      .onResponse((res, req) => {
+        res.headers.set("x-authenticated", String(isAuthenticatedRequest(req)))
+        return res
+      })
+      .beforeHandle((c) => {
+        if (c.req.headers.get("x-optional-key") === "k") markAuthenticatedRequest(c.req)
+        return undefined
+      })
+      .get("/r", () => ({ ok: true }))
+    expect(await seen(app, { "x-optional-key": "k" })).toBe("true")
+    expect(await seen(app)).toBe("false")
   })
 })

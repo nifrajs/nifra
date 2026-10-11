@@ -17,6 +17,11 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
 #        --vite | --bun (dev/build) force the pipeline`
 
+const UPGRADE = `nifra upgrade --list          # the release targets this CLI knows
+nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
+nifra upgrade 5.0.0 --write   # apply, then nifra check verifies (--no-verify skips it)
+nifra doctor                  # afterwards: no "mixed nifra versions" advisory left`
+
 const FRAMEWORK = `// framework.ts - deploy-safe; generated server entries import this file.
 import { reactAdapter } from "@nifrajs/web-react"
 
@@ -141,6 +146,36 @@ nifra migrate --from tailwind --to stylex --dir src`}
         transforms. Nifra will use Vite when <code>vitePlugins</code> are the app&apos;s only transforms:
       </p>
       <CodeBlock code={VITE_STYLEX} />
+
+      <h2 id="upgrade">Upgrading nifra</h2>
+      <p>
+        Every <code>@nifrajs/*</code> package, <code>nifra</code> and <code>create-nifra</code> ship
+        together at one version. Move a workspace between releases with{" "}
+        <code>nifra upgrade &lt;version&gt;</code> rather than by editing pins: it runs every release
+        recipe between the oldest version your <code>package.json</code> files pin and the target,
+        oldest first. A recipe moves a removed package to its replacement, rewrites imports that
+        moved, lists comments a release stopped honoring, and pins each group dependency to the
+        target, keeping its <code>^</code> or <code>~</code> unless you pass <code>--exact</code>.
+        The pins in <code>overrides</code>, <code>resolutions</code> and{" "}
+        <code>pnpm.overrides</code> move with them, since an override decides what installs.
+      </p>
+      <CodeBlock code={UPGRADE} lang="bash" />
+      <p>
+        It is a dry-run until <code>--write</code>, and the same run twice makes no further edits. An
+        unknown version or a target below what is installed is refused (<code>--allow-downgrade</code>{" "}
+        when the rollback is intended); a target newer than the running CLI prints the command for
+        that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
+        directory or <code>package.json</code> is never followed, and a group package installed by a
+        link from outside the root is listed under &quot;Left alone&quot; for you to upgrade in its
+        own repository. So is another version pinned outside <code>package.json</code>, with its
+        line: an MCP config such as <code>.mcp.json</code>, a Dockerfile or compose file, a CI
+        workflow, and a lockfile other than the workspace&apos;s own (an image build&apos;s frozen
+        lockfile, say), which you regenerate after installing. With <code>--write</code> it also
+        prints how hook scope changed across the
+        upgrade (<code>--no-hooks</code> skips that). <code>nifra doctor</code> and{" "}
+        <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;
+        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>.
+      </p>
 
       <h2>Scope</h2>
       <p>

@@ -10,7 +10,7 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 
 ## Public entrypoints
 
-`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/fn` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/plugin` · `@nifrajs/web-solid/query` · `@nifrajs/web-solid/router` · `@nifrajs/web-solid/svg`
+`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/fn` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/plugin` · `@nifrajs/web-solid/query` · `@nifrajs/web-solid/router` · `@nifrajs/web-solid/server-components` · `@nifrajs/web-solid/server-components/client` · `@nifrajs/web-solid/server-components/outlet` · `@nifrajs/web-solid/svg`
 
 ## Key exports
 
@@ -18,6 +18,7 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **Content** _(function)_ - `Content: (props: ContentProps) => JSX.Element` · from `@nifrajs/web-solid/content`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element` · from `@nifrajs/web-solid/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: { readonly state: ComponentState; readonly component: Handle<Input, Props, View>; readonly ins…` · from `@nifrajs/web-solid/server-components/outlet`
 - **createFetcher** _(function)_ - `createFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-solid/fetcher`
 - **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
@@ -26,12 +27,12 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-solid/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-solid/fetcher`
 - **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/plugin`
-- **solidMdxBunPlugin** _(function)_ - `solidMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/mdx`
-- **solidSvgComponentBunPlugin** _(function)_ - `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/svg`
+- **solidComponentClient** _(function)_ - `solidComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compone…` · from `@nifrajs/web-solid/server-components/client`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 
+- The optional server-component pipeline uses Solid native hydratable SSR, stable render IDs and reactive props. Use solidServerComponents and solidComponentClient; native contexts are local to each owned root. Declare managed portal targets inside their owning range.
 - Solid needs its **Babel build plugin** (and `solid({ ssr: true })` + the `"solid"` resolve condition) - without it, reactivity/SSR breaks.
 - Each framework build is isolated so Solid's Babel transform never leaks onto React/Preact `.tsx`.

@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   assertFrameworkOptionsEdgeExported,
   assertNoShadowedPages,
   showsIndicator,
 } from "../src/cli.ts"
+import { getFixRecipe } from "../src/fix-recipes.ts"
 import { buildRouteTable } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
@@ -54,6 +55,14 @@ describe("loadApp validates the forwarded fields", () => {
     ["export const clientIp = 'cf-connecting-ip'", '`clientIp` must be "platform"'],
     ["export const dev = 'quiet'", "`dev` must be an object"],
     ["export const dev = { indicator: 'off' }", "`dev.indicator` must be a boolean"],
+    [
+      "export const dev = { allowedHosts: 'app.test' }",
+      "`dev.allowedHosts` must be an array of host names",
+    ],
+    [
+      "export const dev = { allowedHosts: [''] }",
+      "`dev.allowedHosts` must be an array of host names",
+    ],
   ]
   for (const [line, message] of cases) {
     test(line, async () => {
@@ -109,8 +118,9 @@ describe("forwarding helpers", () => {
 
   test("frameworkMountPaths: each mount, plus the backend at apiPrefix when a backend exists", () => {
     const mounts = [{ path: "/hooks", app: { fetch: () => new Response() } }]
-    expect(frameworkMountPaths(fw({ mounts }), true)).toEqual(["/hooks", "/api"])
-    expect(frameworkMountPaths(fw({ mounts }), false)).toEqual(["/hooks"])
+    expect(frameworkMountPaths(fw({ mounts, apiPrefix: "/api" }), true)).toEqual(["/hooks", "/api"])
+    expect(frameworkMountPaths(fw({ mounts, apiPrefix: "/api" }), false)).toEqual(["/hooks"])
+    expect(frameworkMountPaths(fw({ mounts }), true)).toEqual(["/hooks"])
     expect(frameworkMountPaths(fw({ apiPrefix: "" }), true)).toEqual([])
     expect(frameworkMountPaths(fw({ apiPrefix: "/rpc" }), true)).toEqual(["/rpc"])
   })
@@ -184,16 +194,17 @@ describe("nifra build refuses a page under a mount", () => {
       backend,
     }) as LoadedApp
 
-  test("a page under the backend's default prefix blocks the build", () => {
+  test("a page under the backend's apiPrefix blocks the build", () => {
     const dir = project({ "routes/api/report.tsx": "export default () => null\n" })
-    expect(() => assertNoShadowedPages(loaded(dir, {}, {}))).toThrow(
+    expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "/api" }, {}))).toThrow(
       "build blocked: 1 page route can never render",
     )
   })
 
-  test("no backend, an empty prefix, or a page outside the prefix builds", () => {
+  test("no backend, no or an empty prefix, or a page outside the prefix builds", () => {
     const dir = project({ "routes/api/report.tsx": "export default () => null\n" })
-    expect(() => assertNoShadowedPages(loaded(dir, {}, undefined))).not.toThrow()
+    expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "/api" }, undefined))).not.toThrow()
+    expect(() => assertNoShadowedPages(loaded(dir, {}, {}))).not.toThrow()
     expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "" }, {}))).not.toThrow()
     expect(() => assertNoShadowedPages(loaded(dir, { apiPrefix: "/rpc" }, {}))).not.toThrow()
   })
@@ -242,18 +253,29 @@ describe("readStaticApiPrefix", () => {
 })
 
 describe("NF-C027", () => {
-  const scan = (dir: string) => {
+  const scan = async (dir: string) => {
     const facts = projectFacts("backend/app.ts", "", [])
-    return runRuleRegistry({ root: dir, sources: facts.source, project: facts }, pageRules)
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C027")
   }
   const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
 
-  test("a page under the default backend prefix is an error naming the file", async () => {
-    const dir = project({
+  test("a page under the backend's apiPrefix is an error naming the file", async () => {
+    const files = {
       "backend/app.ts": backendSource,
-      "backend/framework.ts": adapterSource.join("\n"),
       "routes/index.tsx": "export default () => null\n",
       "routes/api/report.tsx": "export default () => null\n",
+    }
+    // Without an apiPrefix the backend is not mounted, so nothing is shadowed.
+    expect(
+      await scan(project({ ...files, "backend/framework.ts": adapterSource.join("\n") })),
+    ).toEqual([])
+    const dir = project({
+      ...files,
+      "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/api"'].join("\n"),
     })
     const findings = await scan(dir)
     expect(findings).toHaveLength(1)
@@ -344,5 +366,173 @@ describe("nifra routes reads the configured prefix", () => {
       apiPrefix: "/",
     })
     expect(rows).toEqual([{ kind: "api", path: "/x", methods: ["GET"], autoMounted: true }])
+  })
+})
+
+describe("NF-C034", () => {
+  const scan = (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    return runRuleRegistry({ root: dir, sources: facts.source, project: facts }, pageRules)
+  }
+
+  test("a root status page that wraps the root layout itself is reported", async () => {
+    const wraps = 'import Layout from "./_layout"\nexport default () => Layout\n'
+    const findings = await scan(
+      project({
+        "routes/_layout.tsx": "export default () => null\n",
+        "routes/_404.tsx": wraps,
+        "routes/_503.tsx": 'import Layout from "./_layout.tsx"\nexport default () => Layout\n',
+        "routes/_451.tsx": `export const inLayouts = false\n${wraps}`,
+        "routes/_410.tsx": "export default () => null\n",
+        "routes/_429.tsx": '// import Layout from "./_layout"\nexport default () => null\n',
+        "routes/_error.tsx": wraps,
+        "routes/admin/_404.tsx": 'import Layout from "../_layout"\nexport default () => Layout\n',
+        "routes/index.tsx": "export default () => null\n",
+      }),
+    )
+    expect(findings.map((finding) => [finding.code, finding.severity, finding.file])).toEqual([
+      ["NF-C034", "warn", "routes/_404.tsx"],
+      ["NF-C034", "warn", "routes/_503.tsx"],
+    ])
+    expect(findings[0]?.message).toContain("renders routes/_layout.tsx twice")
+    expect(findings[0]?.message).toContain("export const inLayouts = false")
+  })
+
+  test("without a root layout there is nothing to render inside", async () => {
+    expect(
+      await scan(
+        project({
+          "routes/admin/_layout.tsx": "export default () => null\n",
+          "routes/_404.tsx": "export default () => null\n",
+          "routes/index.tsx": "export default () => null\n",
+        }),
+      ),
+    ).toEqual([])
+  })
+})
+
+describe("NF-C035", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("backend/app.ts", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C035")
+  }
+  const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
+
+  test("a backend with no apiPrefix is reported as not served over HTTP, with a fix", async () => {
+    const dir = project({
+      "backend/app.ts": backendSource,
+      "backend/framework.ts": adapterSource.join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const findings = await scan(dir)
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.fix])).toEqual([
+      [
+        "info",
+        "backend/framework.ts",
+        { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
+      ],
+    ])
+    expect(findings[0]?.message).toContain("not served over HTTP")
+    expect(findings[0]?.message).toContain('export const apiPrefix = "/api"')
+    expect(findings[0]?.message).toContain('export const apiPrefix = ""')
+    const recipe = getFixRecipe("framework.api-prefix")
+    const finding = findings[0]
+    if (recipe === undefined || finding === undefined) throw new Error("no fix recipe")
+    expect(await recipe.apply(dir, finding)).toEqual(["backend/framework.ts"])
+    expect(readStaticApiPrefix(readFileSync(join(dir, "backend/framework.ts"), "utf8"))).toEqual({
+      kind: "literal",
+      value: "/api",
+    })
+    expect(await scan(dir)).toEqual([])
+    expect(await recipe.apply(dir, finding)).toEqual([])
+  })
+
+  test("an explicit apiPrefix, or no backend, is not reported", async () => {
+    for (const prefix of ['"/api"', '""', '"/rpc"']) {
+      expect(
+        await scan(
+          project({
+            "backend/app.ts": backendSource,
+            "backend/framework.ts": [...adapterSource, `export const apiPrefix = ${prefix}`].join(
+              "\n",
+            ),
+          }),
+        ),
+      ).toEqual([])
+    }
+    expect(await scan(project({ "backend/framework.ts": adapterSource.join("\n") }))).toEqual([])
+  })
+
+  test("an API-only app, with no web config or a nifra.config.ts with no adapter, is not reported", async () => {
+    expect(await scan(project({ "backend/app.ts": backendSource }))).toEqual([])
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "nifra.config.ts": "export const target = 'bun'\n",
+        }),
+      ),
+    ).toEqual([])
+  })
+})
+
+describe("NF-C040", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C040")
+  }
+
+  test("a layout with no loader whose meta reads data is reported at the read", async () => {
+    const findings = await scan(
+      project({
+        "routes/_layout.tsx": [
+          'import type { MetaArgs } from "@nifrajs/web"',
+          "export const meta = ({ data }: MetaArgs) => ({",
+          "  title: `${(data as { title: string }).title} | Site`,",
+          "})",
+          "export default () => null",
+          "",
+        ].join("\n"),
+        "routes/docs/_layout.tsx":
+          "export function meta(args) {\n  return { title: args.data.title }\n}\nexport default () => null\n",
+        "routes/blog/_layout.tsx":
+          "export const meta = ({ data: page }) => ({ title: page.title })\nexport default () => null\n",
+        "routes/index.tsx": "export default () => null\n",
+      }),
+    )
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.line])).toEqual([
+      ["warn", "routes/_layout.tsx", 2],
+      ["warn", "routes/blog/_layout.tsx", 1],
+      ["warn", "routes/docs/_layout.tsx", 2],
+    ])
+    expect(findings[0]?.message).toContain("Read the page's data from `pageData`")
+  })
+
+  test("a layout that loads, reads pageData, or has static meta is not reported", async () => {
+    expect(
+      await scan(
+        project({
+          "routes/_layout.tsx":
+            "export const meta = ({ data }) => ({ lang: data.locale })\nexport default () => null\n",
+          "routes/_layout.backend.ts": "export const loader = () => ({ locale: 'hi' })\n",
+          "routes/a/_layout.tsx":
+            "export const meta = ({ pageData }) => ({ title: pageData.title })\nexport default () => null\n",
+          "routes/b/_layout.tsx": 'export const meta = { title: "B" }\nexport default () => null\n',
+          "routes/c/_layout.tsx":
+            "// export const meta = ({ data }) => data\nexport default () => null\n",
+          "routes/d/_layout.tsx":
+            "export const loader = () => ({})\nexport const meta = ({ data }) => data\nexport default () => null\n",
+          "routes/index.tsx": "export default () => null\n",
+        }),
+      ),
+    ).toEqual([])
   })
 })

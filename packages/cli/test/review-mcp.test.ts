@@ -25,9 +25,10 @@ describe("nifra_review MCP projection", () => {
   test("is generated from the same command catalog and has no parallel handler", () => {
     const spec = findCommandSpec("review")
     expect(spec).toBeDefined()
-    const tools = catalogProjectTools("/fake", async () => {
+    const refuse = async (): Promise<never> => {
       throw new Error("review must not load the web app")
-    })
+    }
+    const tools = catalogProjectTools("/fake", Object.assign(refuse, { backend: refuse }))
     const review = tools.find((tool) => tool.name === "nifra_review")
     expect(review).toBeDefined()
     expect(review?.description).toBe(spec?.summary)

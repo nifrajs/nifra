@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { watch } from "node:fs"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { collectTestResult } from "../src/test-tool.ts"
@@ -108,4 +109,60 @@ describe("collectTestResult", () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  // A process outliving its parent can only be reached through a POSIX process group.
+  test.skipIf(process.platform === "win32")(
+    "stopping a run also stops a process it started that holds the output pipes",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-test-tool-"))
+      const controller = new AbortController()
+      const watcher = watch(dir, (_event, name) => {
+        if (name === "grandchild.pid") controller.abort("stop tests")
+      })
+      try {
+        await mkdir(join(dir, "test"))
+        await writeFile(
+          join(dir, "test/spawns.test.ts"),
+          [
+            'import { writeFileSync } from "node:fs"',
+            'import { test } from "bun:test"',
+            'test("spawns", async () => {',
+            '  const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {',
+            '    stdout: "inherit",',
+            '    stderr: "inherit",',
+            "  })",
+            '  writeFileSync(new URL("../grandchild.pid", import.meta.url), String(child.pid))',
+            "  await new Promise(() => {})",
+            "}, 600_000)",
+            "",
+          ].join("\n"),
+        )
+        const result = await collectTestResult(
+          dir,
+          { pattern: "test/spawns.test.ts", timeoutMs: 120_000 },
+          { signal: controller.signal },
+        )
+        expect(result.cancelled).toBe(true)
+        const pid = Number(await readFile(join(dir, "grandchild.pid"), "utf8"))
+        // The group has been signalled, but an orphan's PID can remain until the OS reaps it.
+        // Observe that bounded state change instead of racing the first liveness probe.
+        let exited = false
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            process.kill(pid, 0)
+          } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error
+            exited = true
+            break
+          }
+          await Bun.sleep(10)
+        }
+        expect(exited).toBe(true)
+      } finally {
+        watcher.close()
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
 })

@@ -171,6 +171,47 @@ describe("pinSweepText", () => {
     expect(downgrades).toHaveLength(0)
     expect(changes[0]?.to).toBe("^2.3.0")
   })
+
+  test("overrides, resolutions and pnpm.overrides are swept in their own objects", () => {
+    const pkg = JSON.stringify(
+      {
+        config: { overrides: { "@nifrajs/core": "1.7.0" } },
+        dependencies: { "@nifrajs/core": "1.7.0" },
+        overrides: {
+          "@nifrajs/core": "1.7.0",
+          "@nifrajs/web": "$@nifrajs/web",
+          "some-lib": { ".": "2.0.0", "@nifrajs/client": "~1.7.0" },
+        },
+        resolutions: { "**/@nifrajs/web": "1.7.0", "nifra-lookalike": "1.7.0" },
+        pnpm: { overrides: { "parent>@nifrajs/schema": "1.7.0", "@nifrajs/cli@<1.8": "1.7.0" } },
+      },
+      null,
+      2,
+    )
+    const { text, changes } = pinSweepText(pkg, RECIPE.pins)
+    expect(changes).toEqual([
+      { field: "dependencies", name: "@nifrajs/core", from: "1.7.0", to: "1.8.0" },
+      { field: "overrides", name: "@nifrajs/core", from: "1.7.0", to: "1.8.0" },
+      { field: "overrides", name: "@nifrajs/client", from: "~1.7.0", to: "~1.8.0" },
+      { field: "resolutions", name: "**/@nifrajs/web", from: "1.7.0", to: "1.8.0" },
+      { field: "pnpm.overrides", name: "parent>@nifrajs/schema", from: "1.7.0", to: "1.8.0" },
+      { field: "pnpm.overrides", name: "@nifrajs/cli@<1.8", from: "1.7.0", to: "1.8.0" },
+    ])
+    const parsed = JSON.parse(text)
+    // A same-named key deeper in the document is not the package manager's field.
+    expect(parsed.config.overrides["@nifrajs/core"]).toBe("1.7.0")
+    expect(parsed.overrides["@nifrajs/web"]).toBe("$@nifrajs/web")
+    expect(parsed.overrides["some-lib"]["."]).toBe("2.0.0")
+    expect(parsed.resolutions["nifra-lookalike"]).toBe("1.7.0")
+  })
+
+  test("an override above the target is a rollback like any pin", () => {
+    const pkg = JSON.stringify({ overrides: { "@nifrajs/core": "2.3.0" } }, null, 2)
+    const { downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }])
+    expect(downgrades).toEqual([
+      { field: "overrides", name: "@nifrajs/core", from: "2.3.0", to: "2.0.0" },
+    ])
+  })
 })
 
 describe("moveDependenciesText", () => {
@@ -304,6 +345,50 @@ describe("computeUpgrade / runUpgrade", () => {
     expect(second.importMoves).toHaveLength(0)
   })
 
+  test("versions pinned outside package.json are listed with their line and never edited", async () => {
+    const root = await scaffold()
+    const files: Record<string, string> = {
+      ".mcp.json":
+        '{\n  "mcpServers": {\n    "nifra": { "command": "bunx", "args": ["@nifrajs/cli@1.7.0", "mcp"] }\n  }\n}\n',
+      "infra/Dockerfile": "FROM oven/bun:1\nRUN bun add -g nifra@1.7.0 create-nifra@1.8.0\n",
+      "infra/build.bun.lock":
+        '{\n  "packages": {\n    "@nifrajs/core": ["@nifrajs/core@1.7.0"],\n    "@nifrajs/web": ["@nifrajs/web@1.7.0"]\n  }\n}\n',
+      "bun.lock": '{ "packages": { "@nifrajs/core": ["@nifrajs/core@1.7.0"] } }\n',
+      ".github/workflows/ci.yml": "steps:\n  - run: bunx @scope/nifra@1.7.0 check\n",
+    }
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(join(root, path, ".."), { recursive: true })
+      await writeFile(join(root, path), text)
+    }
+    const plan = computeUpgrade(root, RECIPE, true)
+    expect(plan.strayPins).toEqual([
+      { file: ".mcp.json", line: 3, pin: "@nifrajs/cli@1.7.0", lockfile: false, more: 0 },
+      { file: "infra/Dockerfile", line: 2, pin: "nifra@1.7.0", lockfile: false, more: 0 },
+      {
+        file: "infra/build.bun.lock",
+        line: 3,
+        pin: "@nifrajs/core@1.7.0",
+        lockfile: true,
+        more: 1,
+      },
+    ])
+    for (const [path, text] of Object.entries(files))
+      expect(await readFile(join(root, path), "utf8")).toBe(text)
+  })
+
+  test("an override counts as an installed version", async () => {
+    const root = join(FIXTURES, "overridden")
+    await mkdir(root, { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        dependencies: { "@nifrajs/core": "1.8.0" },
+        overrides: { "@nifrajs/core": "1.7.0" },
+      }),
+    )
+    expect(installedGroupVersion(root)).toBe("1.7.0")
+  })
+
   test("build output and coverage at the workspace root are left alone", async () => {
     const root = await scaffold()
     for (const dir of ["dist", "build", "coverage"]) {
@@ -416,6 +501,20 @@ describe("chained upgrades", () => {
     expect(chainRecipes("4.0.0", "4.0.0").steps).toEqual([])
   })
 
+  test("5.0.0 pins the group and names each changed default and how to keep the old one", () => {
+    const chain = chainRecipes("5.0.0", "4.0.2")
+    expect(chain.steps).toEqual(["5.0.0"])
+    expect(chain.pins).toContainEqual({ match: "@nifrajs/", to: "5.0.0" })
+    const notes = chain.notes?.join("\n") ?? ""
+    expect(notes).toContain("export const inLayouts = false")
+    expect(notes).toContain("NF-C034")
+    expect(notes).toContain("nifra fix --code NF-C035")
+    expect(notes).toContain("NF-C040")
+    expect(notes).toContain("app.ws()")
+    expect(notes).toContain("500")
+    expect(chainRecipes("5.0.0", "3.5.0").steps).toEqual(["4.0.0", "5.0.0"])
+  })
+
   test("4.0.0 moves the retired backend-only marker import and leads with the layout move", () => {
     const chain = chainRecipes("4.0.0", "3.5.0")
     expect(chain.steps).toEqual(["4.0.0"])
@@ -457,6 +556,30 @@ describe("chained upgrades", () => {
       '"@nifrajs/core/budget"',
     )
   })
+
+  test("--write --json verifies inside the one JSON document", async () => {
+    const root = await scaffoldV1("chain-json-verify")
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    const error = spyOn(console, "error").mockImplementation(() => {})
+    let result: boolean
+    try {
+      result = await runUpgrade(root, {
+        version: "4.0.0",
+        cliVersion: "4.0.0",
+        write: true,
+        json: true,
+        hooks: false,
+      })
+    } finally {
+      log.mockRestore()
+      error.mockRestore()
+    }
+    const report = JSON.parse(lines.join("\n"))
+    expect(report.write).toBe(true)
+    expect(typeof report.check.ok).toBe("boolean")
+    expect(result).toBe(report.check.ok)
+  }, 120_000)
 
   test("--exact pins the exact version", async () => {
     const root = await scaffoldV1("chain-exact")
@@ -505,5 +628,48 @@ describe("chained upgrades", () => {
   test("the targets are the recipes up to the CLI's version, and that version", () => {
     expect(upgradeTargets("3.5.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "3.5.0"])
     expect(upgradeTargets("4.0.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "4.0.0"])
+    expect(upgradeTargets("5.0.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "4.0.0", "5.0.0"])
+  })
+
+  test("5.0.0 lists each retired review comment with the line it covered and never rewrites one", async () => {
+    const root = join(FIXTURES, "retired-review")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { "@nifrajs/core": "^4.0.2" } }),
+    )
+    const source = [
+      "// @nifra-gate-reviewed: compares our own token",
+      "// with the one we wrote.",
+      "if (token === expected) ok()",
+      "const flag = 1 // @nifra-gate-reviewed",
+      "// @nifra-gate-reviewed",
+      "",
+      "const later = 2",
+    ].join("\n")
+    await writeFile(join(root, "src", "auth.ts"), source)
+
+    const { result, out } = await captureConsole(() =>
+      runUpgrade(root, { version: "5.0.0", cliVersion: "5.0.0", write: true, verify: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain("3 retired comment(s)")
+    expect(out).toContain(
+      "src/auth.ts:1  @nifra-gate-reviewed  covers line 3: if (token === expected) ok()",
+    )
+    expect(out).toContain("src/auth.ts:4  @nifra-gate-reviewed  covers line 4: const flag = 1")
+    expect(out).toContain("src/auth.ts:5  @nifra-gate-reviewed  covers no line")
+    expect(out).toContain("write instead: // nifra-expect <code>: <reason>")
+    expect(await readFile(join(root, "src", "auth.ts"), "utf8")).toBe(source)
+    expect(JSON.parse(await readFile(join(root, "package.json"), "utf8")).dependencies).toEqual({
+      "@nifrajs/core": "^5.0.0",
+    })
+
+    const plan = computeUpgrade(root, chainRecipes("5.0.0", "4.0.2"), false)
+    expect(plan.retiredMarkers.map((site) => [site.line, site.covers?.line])).toEqual([
+      [1, 3],
+      [4, 4],
+      [5, undefined],
+    ])
   })
 })

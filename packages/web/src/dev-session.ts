@@ -8,6 +8,7 @@
  * either. `/__nifra/last-error` keeps its older, token-free contract behind the same Host check.
  */
 import { performance } from "node:perf_hooks"
+import { writableResponse } from "@nifrajs/core/server"
 import {
   type BrowserError,
   CLIENT_BATCH_MAX_BYTES,
@@ -649,19 +650,9 @@ export function createDevSession(options: DevSessionOptions): DevSession {
       },
       performance.now() - started,
     )
-    try {
-      response.headers.set(DEV_REQUEST_ID_HEADER, requestId)
-      return response
-    } catch {
-      // `Response.redirect()` and fetched responses carry immutable headers on some runtimes.
-      const headers = new Headers(response.headers)
-      headers.set(DEV_REQUEST_ID_HEADER, requestId)
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      })
-    }
+    const target = writableResponse(response)
+    target.headers.set(DEV_REQUEST_ID_HEADER, requestId)
+    return target
   }
 
   return {

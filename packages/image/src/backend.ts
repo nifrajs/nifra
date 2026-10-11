@@ -233,17 +233,31 @@ const ORIENTATION_MAP: Readonly<Record<number, readonly number[]>> = {
 
 /**
  * `image` turned upright by the EXIF orientation of the JPEG it was decoded from. The encoders write no
- * EXIF, so pixels left as stored would display turned. A codec that already turned a quarter-turn image
- * (it decoded to the displayed size) is left as it is.
+ * EXIF, so pixels left as stored would display turned. A codec that declares it orients JPEGs is left
+ * alone; otherwise a quarter-turn image that decoded to its displayed size counts as already turned,
+ * except a square one, whose size cannot tell.
  */
-function upright(image: DecodedImage, source: Uint8Array): DecodedImage {
+function upright(
+  image: DecodedImage,
+  source: Uint8Array,
+  orientsJpeg: boolean | undefined,
+): DecodedImage {
+  if (orientsJpeg === true) return image
   const map = ORIENTATION_MAP[jpegOrientation(source)]
   if (map === undefined) return image
   const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = map
   const { width: w, height: h, data } = image
   const quarter = a === 0
   const shown = imageDimensions(source)
-  if (quarter && shown !== null && shown.width === w && shown.height === h) return image
+  if (
+    orientsJpeg === undefined &&
+    quarter &&
+    w !== h &&
+    shown !== null &&
+    shown.width === w &&
+    shown.height === h
+  )
+    return image
   const outWidth = quarter ? h : w
   const outHeight = quarter ? w : h
   const out = new Uint8Array(data.length)
@@ -275,6 +289,12 @@ export interface DecodedImage {
 export interface WasmImageCodecs {
   /** Decode any supported encoded image → RGBA. Throw on undecodable input. */
   decode(bytes: Uint8Array): Promise<DecodedImage> | DecodedImage
+  /**
+   * Whether `decode` already applies a JPEG's EXIF orientation. Left unset, the backend turns the
+   * pixels itself unless a quarter-turn image visibly decoded to its displayed size; a square image
+   * cannot show that, so it is always turned. jSquash's JPEG decoder does not orient.
+   */
+  readonly orientsJpeg?: boolean
   /** Resize RGBA to the target dimensions (the handler keeps the aspect ratio). */
   resize(image: DecodedImage, width: number, height: number): Promise<DecodedImage> | DecodedImage
   /** Encode RGBA → the target format's bytes. */
@@ -308,7 +328,7 @@ export function wasmImageBackend(codecs: WasmImageCodecs): ImageBackend {
     },
     async transform({ bytes, width, quality, format }) {
       try {
-        const decoded = upright(await codecs.decode(bytes), bytes)
+        const decoded = upright(await codecs.decode(bytes), bytes, codecs.orientsJpeg)
         // Aspect-preserving: the handler hands a width already clamped to the intrinsic width.
         const height = Math.max(1, Math.round((decoded.height * width) / decoded.width))
         const resized =

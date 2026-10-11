@@ -29,7 +29,7 @@ Composable middleware for nifra - auth, CSRF, JWT/JWKS, IP restriction, CORS, bo
 - **contextStorage** _(function)_ - `contextStorage: () => Middleware` · from `@nifrajs/middleware/context-storage`
 - **cors** _(function)_ - `cors: (options?: CorsOptions) => Middleware` · from `@nifrajs/middleware`
 
-_…and 120 more - see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
+_…and 123 more - see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
 
 ## Footguns
 

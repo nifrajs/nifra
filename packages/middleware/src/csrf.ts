@@ -1,5 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { isSameOriginRequest, METHODS, type Middleware } from "@nifrajs/core/server"
+import { isRegistrableMethod } from "@nifrajs/core/methods"
+import { isSameOriginRequest, type Middleware } from "@nifrajs/core/server"
 import {
   base64UrlEncode,
   guardName,
@@ -78,6 +79,10 @@ function originAllowed(req: Request, origins: Set<string> | undefined): boolean 
   const allows = (candidate: string): boolean =>
     origins !== undefined ? origins.has(candidate) : isSameOriginRequest(candidate, req)
   const origin = req.headers.get("origin")
+  // Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`;
+  // its own `Sec-Fetch-Site` still says same-origin, and page script can set neither header.
+  if (origin === "null" && origins === undefined)
+    return req.headers.get("sec-fetch-site") === "same-origin"
   if (origin !== null) return allows(origin)
 
   const referer = req.headers.get("referer")
@@ -170,7 +175,7 @@ export async function createCsrfToken(secret: CsrfSecret, nonce?: string): Promi
 export async function verifyCsrfToken(token: string, secret: CsrfSecret): Promise<boolean> {
   const keys = csrfKeys(secret)
   const parts = token.split(".")
-  // @nifra-gate-reviewed: TOKEN_PREFIX is a public, non-secret format tag; this equality is a shape
+  // nifra-expect NF-S002: TOKEN_PREFIX is a public, non-secret format tag; this equality is a shape
   // check that short-circuits malformed input. The secret comparison is the constant-time
   // verifyHmacSha256 over the signature below.
   if (parts.length !== 3 || parts[0] !== TOKEN_PREFIX || parts[1] === "" || parts[2] === "") {
@@ -230,9 +235,8 @@ export function csrf(options: CsrfOptions): Middleware {
     scope: "global",
     // Middleware may intentionally mention methods the Nifra router does not expose (for example
     // TRACE). Keep runtime behavior unchanged, but publish evidence only for registerable routes.
-    methods:
-      options.methods === undefined
-        ? ["POST", "PUT", "PATCH", "DELETE"]
-        : METHODS.filter((method) => methods?.has(method)),
+    ...(methods === undefined
+      ? { exceptMethods: [...SAFE_METHODS].filter(isRegistrableMethod) }
+      : { methods: [...methods].filter(isRegistrableMethod) }),
   })
 }

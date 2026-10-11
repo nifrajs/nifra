@@ -18,16 +18,23 @@ export interface CapturedRequestInput {
   readonly method?: string
   readonly path: string
   readonly query?: Record<string, string>
+  readonly queryPairs?: readonly (readonly [string, string])[]
   readonly headers?: Record<string, string>
   readonly body?: unknown
+  readonly bodyEncoding?: "text"
 }
 
 export interface CapturedRequest {
   readonly method: string
   readonly path: string
+  /** The query by name; a repeated name keeps its last value. */
   readonly query?: Record<string, string>
+  /** Every query pair in order, present when `query` cannot rebuild it. Replay prefers it. */
+  readonly queryPairs?: readonly (readonly [string, string])[]
   readonly headers?: Record<string, string>
   readonly body?: unknown
+  /** `"text"`: `body` is the request text as sent, and replay sends it verbatim. Absent: JSON. */
+  readonly bodyEncoding?: "text"
 }
 
 export interface IncidentCapsule {
@@ -95,6 +102,29 @@ async function readBody(source: Request | Response): Promise<unknown> {
   return text
 }
 
+/** The request body as captured: parsed JSON when the request said so, its text otherwise. */
+async function readRequestBody(
+  request: Request,
+): Promise<{ readonly body: unknown; readonly text: boolean } | undefined> {
+  const text = await request.clone().text()
+  if (text === "") return undefined
+  if ((request.headers.get("content-type") ?? "").includes("application/json")) {
+    try {
+      return { body: JSON.parse(text), text: false }
+    } catch {}
+  }
+  return { body: text, text: true }
+}
+
+function samePairs(
+  a: readonly (readonly [string, string])[],
+  b: readonly (readonly [string, string])[],
+): boolean {
+  return (
+    a.length === b.length && a.every(([key, value], i) => b[i]?.[0] === key && b[i]?.[1] === value)
+  )
+}
+
 function pickHeaders(
   headers: Headers,
   allow: readonly string[],
@@ -118,25 +148,35 @@ export async function captureIncident(
     method: string
     path: string
     query?: Record<string, string>
+    queryPairs?: readonly (readonly [string, string])[]
     headers?: Record<string, string>
     body?: unknown
+    bodyEncoding?: "text"
   } = { method: "GET", path: "/" }
   if (request instanceof Request) {
     const url = new URL(request.url)
-    const query = Object.fromEntries(url.searchParams.entries())
+    const pairs = [...url.searchParams.entries()]
+    const query = Object.fromEntries(pairs)
     const headers = pickHeaders(request.headers, allow)
-    const body = await readBody(request)
+    const body = await readRequestBody(request)
     req.method = request.method
     req.path = url.pathname
-    if (Object.keys(query).length > 0) req.query = query
+    if (pairs.length > 0) req.query = query
+    // A repeated name, or an order an object cannot hold, is only kept by the pairs.
+    if (!samePairs(pairs, Object.entries(query))) req.queryPairs = pairs
     if (headers !== undefined) req.headers = headers
-    if (body !== undefined) req.body = body
+    if (body !== undefined) {
+      req.body = body.body
+      if (body.text) req.bodyEncoding = "text"
+    }
   } else {
     req.method = request.method ?? "GET"
     req.path = request.path
     if (request.query !== undefined) req.query = request.query
+    if (request.queryPairs !== undefined) req.queryPairs = request.queryPairs
     if (request.headers !== undefined) req.headers = request.headers
     if (request.body !== undefined) req.body = request.body
+    if (request.bodyEncoding !== undefined) req.bodyEncoding = request.bodyEncoding
   }
 
   let status: number
@@ -163,14 +203,22 @@ export async function captureIncident(
 
 function buildRequest(capsule: IncidentCapsule, origin: string): Request {
   const url = new URL(capsule.request.path, origin)
-  for (const [key, value] of Object.entries(capsule.request.query ?? {})) {
-    url.searchParams.set(key, value)
+  if (capsule.request.queryPairs !== undefined) {
+    for (const [key, value] of capsule.request.queryPairs) url.searchParams.append(key, value)
+  } else {
+    for (const [key, value] of Object.entries(capsule.request.query ?? {})) {
+      url.searchParams.set(key, value)
+    }
   }
   const headers = new Headers(capsule.request.headers)
-  const hasBody = capsule.request.body !== undefined
-  if (hasBody && !headers.has("content-type")) headers.set("content-type", "application/json")
+  const body = capsule.request.body
   const init: RequestInit = { method: capsule.request.method, headers }
-  if (hasBody) init.body = JSON.stringify(capsule.request.body)
+  if (capsule.request.bodyEncoding === "text" && typeof body === "string") {
+    init.body = body
+  } else if (body !== undefined) {
+    if (!headers.has("content-type")) headers.set("content-type", "application/json")
+    init.body = JSON.stringify(body)
+  }
   return new Request(url.toString(), init)
 }
 
@@ -233,9 +281,9 @@ export async function assertIncidentReplays(
 const REDACTED = "<redacted>"
 
 /**
- * Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are
- * kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This
- * is intentionally aggressive: a committed fixture must not leak PII/secrets.
+ * Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings and
+ * object keys are kept - they carry the structure that makes the fixture reproduce - and the emitted
+ * file says so in a review banner. A committed fixture must not leak PII/secrets.
  */
 export function redactForEmission(value: unknown, allow: ReadonlySet<string>, path = ""): unknown {
   if (typeof value === "string") return allow.has(path) ? value : REDACTED
@@ -251,6 +299,14 @@ export function redactForEmission(value: unknown, allow: ReadonlySet<string>, pa
   return value
 }
 
+/** Whether a redacted body still holds request data verbatim: a number, a boolean or an object key. */
+function keepsVerbatim(value: unknown): boolean {
+  if (typeof value === "number" || typeof value === "boolean") return true
+  if (Array.isArray(value)) return value.some(keepsVerbatim)
+  if (value !== null && typeof value === "object") return Object.keys(value).length > 0
+  return false
+}
+
 export interface GenerateRegressionTestOptions {
   /** Import specifier for the app under test. Default `"../src/app"`. */
   readonly importPath?: string
@@ -260,12 +316,33 @@ export interface GenerateRegressionTestOptions {
   readonly assertShape?: boolean
   /** Dotted key paths in the request body whose string values are safe to embed verbatim. */
   readonly allow?: readonly string[]
+  /** Query parameter names whose values are safe to embed verbatim. Default none. */
+  readonly allowQuery?: readonly string[]
+  /** Header names (any case) whose values are safe to embed verbatim. Default `["content-type"]`. */
+  readonly allowHeaders?: readonly string[]
+  /** Embed the capsule's `note` verbatim. Default false: a note is free text and is redacted. */
+  readonly keepNote?: boolean
+}
+
+function redactRecord(
+  record: Readonly<Record<string, string>> | undefined,
+  allowed: ReadonlySet<string>,
+  normalize: (name: string) => string,
+): Record<string, string> | undefined {
+  if (record === undefined) return undefined
+  const out: Record<string, string> = {}
+  for (const [name, value] of Object.entries(record)) {
+    out[name] = allowed.has(normalize(name)) ? value : REDACTED
+  }
+  return out
 }
 
 /**
- * Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with
- * a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you
- * commit. The test asserts the response contract via {@link assertIncidentReplays}.
+ * Emit a committable regression test from a capsule. Body strings, query values, header values (bar
+ * `content-type`) and the note are redacted BY DEFAULT with a sanitize banner - replace the
+ * `<redacted>` placeholders with safe, reproducing values before you commit. The path is kept
+ * verbatim because it selects the route, so the file always asks for it to be reviewed. The test
+ * asserts the response contract via {@link assertIncidentReplays}.
  */
 export function generateRegressionTest(
   capsule: IncidentCapsule,
@@ -273,26 +350,50 @@ export function generateRegressionTest(
 ): string {
   const importPath = options.importPath ?? "../src/app"
   const appExport = options.appExport ?? "app"
+  if (!/^[A-Za-z_$][\w$]*$/.test(appExport))
+    throw new TypeError(
+      `generateRegressionTest: appExport must be an identifier, got ${JSON.stringify(appExport)}`,
+    )
   const allow = new Set(options.allow ?? [])
+  const allowQuery = new Set(options.allowQuery ?? [])
+  const query = redactRecord(capsule.request.query, allowQuery, (n) => n)
+  const queryPairs = capsule.request.queryPairs?.map(([name, value]): readonly [string, string] => [
+    name,
+    allowQuery.has(name) ? value : REDACTED,
+  ])
+  const headers = redactRecord(
+    capsule.request.headers,
+    new Set((options.allowHeaders ?? ["content-type"]).map((name) => name.toLowerCase())),
+    (name) => name.toLowerCase(),
+  )
   const safeRequest: CapturedRequest = {
     ...capsule.request,
+    ...(query !== undefined ? { query } : {}),
+    ...(queryPairs !== undefined ? { queryPairs } : {}),
+    ...(headers !== undefined ? { headers } : {}),
     ...(capsule.request.body !== undefined
       ? { body: redactForEmission(capsule.request.body, allow) }
       : {}),
   }
-  const emitted: IncidentCapsule = { ...capsule, request: safeRequest }
+  const emitted: IncidentCapsule = {
+    ...capsule,
+    request: safeRequest,
+    ...(capsule.note !== undefined && options.keepNote !== true ? { note: REDACTED } : {}),
+  }
   const redacted = JSON.stringify(emitted, null, 2).includes(REDACTED)
+  const verbatim = keepsVerbatim(safeRequest.body)
 
   return `// GENERATED by nifra incident → regression.
-${redacted ? '// ⚠️  SANITIZE BEFORE COMMITTING: replace every "<redacted>" with a safe, non-PII value that\n//     still reproduces the response. A committed fixture must not carry PII or secrets.\n' : ""}// Asserts the response CONTRACT (status${options.assertShape ? " + shape" : ""}) still reproduces.
+${redacted ? '// ⚠️  SANITIZE BEFORE COMMITTING: replace every "<redacted>" with a safe, non-PII value that\n//     still reproduces the response. A committed fixture must not carry PII or secrets.\n' : ""}${verbatim ? "// ⚠️  REVIEW BEFORE COMMITTING: numbers, booleans and object keys in the request body are kept\n//     verbatim, since they shape the request. Replace any that carry PII or secrets.\n" : ""}// Review the request path before committing: it is kept verbatim because it selects the route.
+// Asserts the response CONTRACT (status${options.assertShape ? " + shape" : ""}) still reproduces.
 import { describe, it } from "bun:test"
 import { assertIncidentReplays, type IncidentCapsule } from "@nifrajs/testing"
-import { ${appExport} } from "${importPath}"
+import { ${appExport} } from ${JSON.stringify(importPath)}
 
 const capsule: IncidentCapsule = ${JSON.stringify(emitted, null, 2)}
 
-describe("regression: ${capsule.request.method} ${capsule.request.path}", () => {
-  it("reproduces status ${capsule.response.status}", async () => {
+describe(${JSON.stringify(`regression: ${capsule.request.method} ${capsule.request.path}`)}, () => {
+  it(${JSON.stringify(`reproduces status ${capsule.response.status}`)}, async () => {
     await assertIncidentReplays(${appExport}, capsule, { assertShape: ${options.assertShape === true} })
   })
 })

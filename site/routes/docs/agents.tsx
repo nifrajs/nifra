@@ -653,8 +653,10 @@ export default function Agents() {
         <code>@nifrajs/agent-protocol</code> is the small versioned session and event contract.{" "}
         <code>@nifrajs/coding-agent</code> provides the standalone <code>nifra-agent</code> host with
         bounded sessions, checkpoints, workflows, extensions, verification, and authenticated local
-        RPC. <code>@nifrajs/pi</code> is an optional Pi backend; other backends implement the same
-        protocol port.
+        RPC. <code>@nifrajs/pi</code> is an optional Pi backend, and <code>@nifrajs/acp</code> drives
+        any Agent Client Protocol agent (Claude Code, Codex, Gemini CLI) over stdio; other backends
+        implement the same protocol port and can prove it with <code>checkAgentBackend</code> from{" "}
+        <code>@nifrajs/agent-protocol/conformance</code>.
       </p>
       <CodeBlock code={HOST} lang="bash" />
       <p>
@@ -733,6 +735,15 @@ export default function Agents() {
         resume. <code>@nifrajs/agent-telemetry</code> converts the same constrained evidence into
         fail-open OpenTelemetry run and step spans. Providers, credentials, durable storage, retention,
         and tenant policy remain application-owned ports.
+      </p>
+      <p>
+        A step that suspends for approval resumes with the decision the caller sends in{" "}
+        <code>resume.approval</code>. Over A2A, or on an AG-UI or <code>mountAgent</code> route that
+        anyone can reach, that caller may be the party asking for the tool. Return{" "}
+        <code>resumeApproval: "port"</code> from <code>ports</code> to keep the configured approval
+        port authoritative: it is asked again on resume, receives the caller's decision as{" "}
+        <code>callerDecision</code>, and its verdict stands. Without a port, such a resume suspends
+        again.
       </p>
 
       <h2 id="project-code">Where your code and secrets run</h2>

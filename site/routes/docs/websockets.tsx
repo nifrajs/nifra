@@ -22,9 +22,10 @@ app.listen(3000) // Bun`
 
 const LIFECYCLE = `// doc-check: skip - illustrative lifecycle (empty close/error bodies, cookie shape).
 app.ws<{ user: string }>("/chat", {
-  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens -
-  // authenticate, check origin, rate-limit. Return the per-connection data (→ ws.data,
-  // typed), or a Response to REJECT the upgrade. A thrown error rejects with 500.
+  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens, after the
+  // guards registered before this route. Return the per-connection data (→ ws.data, typed),
+  // or a Response or status(...) to REJECT the upgrade. A thrown Response rejects with it;
+  // any other throw goes to onError, then a 500.
   upgrade(c) {
     const user = c.cookies.session
     if (user === undefined) return new Response("unauthorized", { status: 401 })
@@ -35,6 +36,16 @@ app.ws<{ user: string }>("/chat", {
   close: (ws, code, reason) => {},
   error: (ws, err) => {}, // a throw in any callback routes here, never crashing the connection
 })`
+
+const GUARDED = `// doc-check: skip - illustrative: an existing auth guard and session lookup.
+app
+  .ws("/status", {})                       // registered before the guard: public
+  .authenticate(sessionAuth)               // or .use(basicAuth(...)), .derive(...), .beforeHandle(...)
+  .get("/me", (c) => c.principal)
+  .ws("/chat", {
+    // Reached only when sessionAuth accepted the handshake, exactly as GET /me is.
+    upgrade: (c) => ({ user: c.principal.id }),
+  })`
 
 const SCHEMA = `// doc-check: skip - illustrative: validated inbound frames on an existing app.
 import { t } from "@nifrajs/schema"
@@ -75,6 +86,30 @@ export default toFetchHandler(app, { webSocketHub: (env) => env.NIFRA_WS_HUB })`
 
 const NODE_WS = `npm i ws`
 
+const COMPOSED = `// server.ts - one listener; the chat child and a non-nifra child both take upgrades.
+import { server } from "@nifrajs/core/server"
+import { attachWebSocket, TopicRegistry, websocket, type WebSocketUpgradeOutcome } from "@nifrajs/core/ws"
+
+const chat = server()
+  .use(websocket())
+  .ws("/room", { message: (ws, data) => ws.send(data) })
+
+// Not a nifra server: it answers HTTP through fetch and builds its own upgrade outcome.
+const topics = new TopicRegistry()
+const legacy = {
+  fetch: () => new Response("legacy"),
+  resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome =>
+    new URL(request.url).pathname === "/feed"
+      ? { kind: "upgrade", handler: { open: (ws) => ws.send("hello") }, data: undefined, pubsub: topics, attach: attachWebSocket }
+      : { kind: "pass" },
+}
+
+server()
+  .use(websocket()) // Bun: the parent holds the socket table every mounted upgrade runs through
+  .mount({ path: "/chat", app: chat, stripPrefix: true })
+  .mount({ path: "/legacy", app: legacy, stripPrefix: true })
+  .listen(3000)`
+
 export default function WebSockets() {
   return (
     <div className="prose">
@@ -97,10 +132,32 @@ export default function WebSockets() {
       <h2>Lifecycle</h2>
       <p>
         Every callback is optional - <code>{"{ message }"}</code> alone is a valid echo server.{" "}
-        <code>upgrade</code> is the only one that runs before the socket opens, so it’s the one place
-        to reject a connection.
+        <code>upgrade</code> is the only callback that runs before the socket opens, so it’s where a
+        route rejects a connection or seeds its data.
       </p>
       <CodeBlock code={LIFECYCLE} />
+
+      <h2>Guards</h2>
+      <p>
+        A handshake is a <code>GET</code>, and it runs the chain an HTTP <code>GET</code> registered
+        at the same point runs: the <code>authenticate()</code> stages, <code>derive</code>s and{" "}
+        <code>beforeHandle</code>s added before <code>app.ws()</code>, then <code>upgrade</code>. So
+        auth middleware such as <code>basicAuth</code> or <code>jwt</code> guards the sockets
+        registered after it, any guard can refuse the handshake with the response it would send an
+        HTTP request, and <code>upgrade</code> reads what the guards derived. The origin check runs
+        first. A socket registered before a guard stays public, like an HTTP route there. A browser
+        cannot set a header on the handshake, so <code>authenticate()</code> can read a short-lived,
+        single-use ticket from <code>input.query</code> - see{" "}
+        <a href="/docs/auth#auth-first">Authentication runs first</a>.
+      </p>
+      <CodeBlock code={GUARDED} />
+      <p>
+        A socket declares the effects its code may reach with <code>capabilities</code>, as an HTTP
+        route does. <code>nifra capabilities check</code> compares them with what the registering
+        module can reach, and the handshake context carries the runtime guard for{" "}
+        <code>upgrade()</code>. Reflection lists every socket under the pseudo-method{" "}
+        <code>"WS"</code>, so <code>nifra assure</code> classifies sockets too.
+      </p>
 
       <h2>NifraWebSocket</h2>
       <p>
@@ -258,6 +315,24 @@ export default function WebSockets() {
         <code>501</code> and the HTTP routes are unaffected.
       </p>
       <CodeBlock code={NODE_WS} />
+
+      <h2 id="composed">In a composed app</h2>
+      <p>
+        <code>mount({"{ path, app }"})</code> carries WebSocket upgrades as well as HTTP: when the
+        serving adapter sees an upgrade under the mount's path, it asks the child's{" "}
+        <code>resolveWebSocketUpgrade</code> and upgrades its own socket with the outcome. Any nifra
+        server with <code>websocket()</code> installed has one. A child that is not a nifra server can
+        implement it too, building the outcome from <code>@nifrajs/core/ws</code>:{" "}
+        <code>attachWebSocket</code> wires the socket to a handler and a <code>TopicRegistry</code>{" "}
+        owns its pub/sub. On Bun, install <code>websocket()</code> on the parent or on a mounted nifra
+        child, or <code>listen()</code> refuses to start with <code>INVALID_WS_RUNTIME</code>.
+      </p>
+      <p>
+        <code>mountFetch(path, handler)</code> and a plain fetch handler carry HTTP only. An upgrade
+        request under such a path reaches the handler as an ordinary request and never becomes a
+        socket. Serve that path's WebSockets from a mounted child, or keep that server beside nifra.
+      </p>
+      <CodeBlock code={COMPOSED} lang="ts" />
     </div>
   )
 }

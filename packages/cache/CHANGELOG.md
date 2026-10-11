@@ -1,5 +1,22 @@
 # @nifrajs/cache
 
+## 5.0.0
+
+### Minor Changes
+
+- dd0e530: `CacheStore` gains two optional methods for a store that several caches or processes share: `fence(key, tags)` and `setIfFence(key, entry, tags, token)`. A `wrap` load takes a fence before its loader runs and stores its result through `setIfFence`, which refuses the write when a `set` or `delete` of the key, an `invalidateTag` of one of its tags, or a `clear` ran in the meantime from any cache sharing the store. `MemoryCache` implements both, so two caches over one `MemoryCache` no longer write back a value the other invalidated.
+
+  A `delete`, `invalidateTag` or `clear` now runs after the cache's own async store writes it covers, so a store that applies requests out of order cannot land an earlier write after the invalidation.
+
+  `cacheStoreCertificationProfile({ fencing: true })` adds the `fenced-write` capability, which checks a store's `fence` and `setIfFence`.
+
+- 2173644: `cache.wrap` loads through a store outage: a store `get` that throws or rejects is a miss, so the loader answers, a failed `set` still returns the loaded value, and a `fence` that fails loads without caching. Failures go to the new `onStoreError(error, { op })`, which by default logs one line per operation per minute without the key. The explicit `get`, `set`, `delete`, `invalidateTag` and `clear` still reject. `revalidateEndpoint` takes `dataCaches`, caches such as a `@nifrajs/cache` holding loader data: a tag purge invalidates each of them before the page store and the CDN, and a failure answers `500` before the page store is touched. `createInvalidator` from `@nifrajs/web/cdn` takes the same `dataCaches`.
+
+### Patch Changes
+
+- 3d406b5: `MemoryCache` fences now compare only the changes that matter to a load: the key itself, its tags and `clear()`. The fence used to look back over the last 1024 changes of any kind, so under steady write traffic a slow load of a hot key was refused its write every time and the key never cached. Up to 65,536 distinct keys and tags are remembered; a fence older than a forgotten change is still refused.
+- 602f55d: A `delete`, `invalidateTag`, `clear` or `set` now stops a `wrap` load or stale-while-revalidate refresh already running for that key or tag from storing its result. Before, a refresh that started before `invalidateTag` wrote the old value back for a new TTL. The next `wrap` after the invalidation runs its own load instead of joining the withdrawn one.
+
 ## 4.0.2
 
 ## 4.0.1

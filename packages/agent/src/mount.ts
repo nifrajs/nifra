@@ -14,10 +14,13 @@
  *   - otherwise -> a single JSON body: the projected run result.
  * - `resume` is `{ continuation, approval? }` (see {@link AgentTurnInput}); the runtime keeps state
  *   token-only, so a suspended tool's input must be replayed by the caller in `continuation.input`.
+ *   Return `resumeApproval: "port"` from `ports` when the caller must not approve its own tool calls.
  * - With an `evidenceLog` configured, `step` frames carry `id: <seq>` and a dropped SSE connection
  *   is resumable: re-POST the same `turnId` with a `Last-Event-ID` header to replay the missed
  *   evidence and rejoin the still-running turn (or receive the stored terminal frame) - the run is
  *   never re-executed. Without the log the header is ignored and every POST starts a run.
+ * - One SSE response emits at most `maxOutputBytes` (default 4 MiB), so a client that stops reading
+ *   cannot make the server queue a whole run; past it the response ends with `event: error`.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards, and
  *   scope the store/model returned by `ports` to the caller (RLS born in at the data layer). With an
  *   `evidenceLog`, set `evidenceOwner` too: without it a turn id is a bearer capability, and any
@@ -53,6 +56,8 @@ import {
 
 const DEFAULT_PATH = "/agent"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
+const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const LAST_EVENT_ID_PATTERN = /^\d{1,15}$/
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
@@ -81,6 +86,12 @@ export interface MountAgentOptions<
   /** Prototype-poisoning policy for the framing lane. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
   /**
+   * Maximum total UTF-8 bytes one SSE response emits. Default 4 MiB. Past it the response ends with an
+   * `error` frame (`output_limit`); with an `evidenceLog` the run keeps recording and a reconnect with
+   * `Last-Event-ID` reads on from where this response stopped, otherwise the run is cancelled.
+   */
+  readonly maxOutputBytes?: number
+  /**
    * Build the ports for one request - the model, durable state store, approval transport, capabilities,
    * and budgets. Receives the route context so the caller can scope every port to the request subject.
    */
@@ -107,13 +118,20 @@ export function mountAgent<
   const maxBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   const proto = options.protoPoisoning ?? "reject"
   const runOptions = options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
+  if (
+    !Number.isSafeInteger(maxOutputBytes) ||
+    maxOutputBytes < 1024 ||
+    maxOutputBytes > MAX_OUTPUT_BYTES
+  )
+    throw new RangeError(`mountAgent maxOutputBytes must be between 1024 and ${MAX_OUTPUT_BYTES}`)
 
   app.post(path, (c) =>
     readBodyFramed<Response>(
       c.req,
       maxBytes,
       proto,
-      (parsed) => execute(c, parsed, options, runOptions),
+      (parsed) => execute(c, parsed, options, runOptions, maxOutputBytes),
       (rejection) => render(rejection),
       () => render(plainError(400, "bad_request")),
     ).catch(() => render(plainError(400, "bad_request"))),
@@ -125,6 +143,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   parsed: unknown,
   options: MountAgentOptions<InputSchema, OutputSchema>,
   runOptions: { readonly maxTurns?: number },
+  maxOutputBytes: number,
 ): Promise<Response> {
   const body = asRecord(parsed)
   if (body === undefined) return jsonResponse(400, { error: "body_must_be_object" })
@@ -148,7 +167,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
       return jsonResponse(400, { error: "invalid_last_event_id" })
     const replay = await log.replay(turnId, Number(lastEventId))
     if (replay === undefined) return jsonResponse(409, { error: "replay_unavailable" })
-    return sseReplayResponse(turnId, replay)
+    return sseReplayResponse(turnId, replay, maxOutputBytes)
   }
 
   const basePorts = await options.ports(c)
@@ -190,7 +209,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
       return jsonResponse(409, { error: "resume_unavailable" })
     }
   }
-  return sseResponse(turnId, start, log)
+  return sseResponse(turnId, start, log, maxOutputBytes)
 }
 
 function sseResponse<Output>(
@@ -200,6 +219,7 @@ function sseResponse<Output>(
     disconnect: AbortSignal | undefined,
   ) => Promise<AgentRunResult<Output>>,
   log: AgentEvidenceLog | undefined,
+  maxOutputBytes: number,
 ): Response {
   const stream = createAgentEvidenceStream()
   // `id:` frames are only meaningful when a log can serve the reconnect they invite.
@@ -210,9 +230,18 @@ function sseResponse<Output>(
   let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const deliver = sseSender(controller)
+      const deliver = sseSender(controller, maxOutputBytes)
       const send: typeof deliver = (event, data, id) => {
-        if (!detached) deliver(event, data, id)
+        if (detached) return
+        try {
+          deliver(event, data, id)
+        } catch (error) {
+          if (!(error instanceof SseOutputLimitError)) throw error
+          // The budget belongs to this response, not to the logged run's authoritative result.
+          detached = true
+          disconnect?.abort()
+          endOverBudget(deliver, controller, turnId)
+        }
       }
       const run = start(stream, disconnect?.signal)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
@@ -254,10 +283,26 @@ function withDisconnect(
   return AbortSignal.any([signal, disconnect])
 }
 
-function sseReplayResponse(turnId: string, replay: AgentEvidenceReplay): Response {
+function sseReplayResponse(
+  turnId: string,
+  replay: AgentEvidenceReplay,
+  maxOutputBytes: number,
+): Response {
+  let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller)
+      const deliver = sseSender(controller, maxOutputBytes)
+      const send: typeof deliver = (event, data, id) => {
+        if (detached) return
+        try {
+          deliver(event, data, id)
+        } catch (error) {
+          if (!(error instanceof SseOutputLimitError)) throw error
+          detached = true
+          void replay.live?.return?.()
+          endOverBudget(deliver, controller, turnId)
+        }
+      }
       try {
         for (const evidence of replay.evidence) send("step", evidence, evidence.seq)
         if (replay.live !== undefined)
@@ -268,21 +313,49 @@ function sseReplayResponse(turnId: string, replay: AgentEvidenceReplay): Respons
       } catch {
         send("error", { turnId, error: "run_failed" })
       } finally {
-        controller.close()
+        if (!detached) controller.close()
       }
+    },
+    cancel() {
+      detached = true
+      // Only this view detaches; the logged run keeps recording for the next reconnect.
+      void replay.live?.return?.()
     },
   })
   return sseHeaders(body)
 }
 
+type SseSend = (event: string, data: unknown, id?: number) => void
+
+class SseOutputLimitError extends Error {}
+
 function sseSender(
   controller: ReadableStreamDefaultController<Uint8Array>,
-): (event: string, data: unknown, id?: number) => void {
+  maxOutputBytes: number,
+): SseSend {
   const encoder = new TextEncoder()
+  let emittedBytes = 0
   return (event, data, id) => {
     const head = id === undefined ? "" : `id: ${id}\n`
-    controller.enqueue(encoder.encode(`${head}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+    const frame = encoder.encode(`${head}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
+      throw new SseOutputLimitError("mountAgent SSE output limit exceeded")
+    emittedBytes += frame.byteLength
+    controller.enqueue(frame)
   }
+}
+
+function endOverBudget(
+  deliver: SseSend,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  turnId: string,
+): void {
+  try {
+    deliver("error", { turnId, error: "output_limit" })
+  } catch {
+    // A fully spent budget cannot carry the error frame; closing still ends this response.
+  }
+  controller.close()
 }
 
 function sseHeaders(body: ReadableStream<Uint8Array>): Response {

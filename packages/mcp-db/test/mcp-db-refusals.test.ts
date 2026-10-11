@@ -104,3 +104,76 @@ test("a query beyond maxConcurrentQueries is refused while another runs", async 
     db.close()
   }
 })
+
+test("a statement that fails while running is reported as a query error", async () => {
+  const server = serveDatabaseAsMcp(seeded(), {
+    tables: ["habits"],
+    runQuery: { authorize: () => true },
+  })
+  const { isError, text } = await call(server, "SELECT abs(-9223372036854775808) AS n FROM habits")
+  expect(isError).toBe(true)
+  expect(text).toStartWith("query failed: ")
+  expect(text).toContain("integer overflow")
+})
+
+// A driver shape with column names, whose result read and row count the test controls.
+function scripted(options: {
+  readonly onRead?: () => void
+  readonly count?: () => unknown
+}): Parameters<typeof serveDatabaseAsMcp>[0] {
+  return {
+    run: () => undefined,
+    prepare: (sql: string) => ({
+      columnNames: ["n"],
+      all: () => {
+        if (sql.startsWith("EXPLAIN") || sql.includes("sqlite_master")) return []
+        if (sql.includes("__nifra_total")) return [{ __nifra_total: options.count?.() }]
+        options.onRead?.()
+        return [1, 2, 3].map((n) => ({ n, __nifra_row_bytes: 1 }))
+      },
+    }),
+  }
+}
+
+test("an in-process read that overruns the deadline is reported once it returns", async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const server = serveDatabaseAsMcp(
+      scripted({
+        onRead: () => {
+          now += 60_000
+        },
+      }),
+      { tables: ["habits"], runQuery: { authorize: () => true } },
+    )
+    expect(await call(server, "SELECT n FROM habits")).toEqual({
+      isError: true,
+      text: "query exceeded the time limit",
+    })
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test("exactTotal refuses a count below the rows already read, and reports a failed count", async () => {
+  const runQuery = { authorize: () => true, maxRows: 2, exactTotal: true }
+  const low = serveDatabaseAsMcp(scripted({ count: () => 1 }), { tables: ["habits"], runQuery })
+  expect(await call(low, "SELECT n FROM habits")).toEqual({
+    isError: true,
+    text: "query failed: invalid row count",
+  })
+  const failing = serveDatabaseAsMcp(
+    scripted({
+      count: () => {
+        throw new Error("disk I/O error")
+      },
+    }),
+    { tables: ["habits"], runQuery },
+  )
+  expect(await call(failing, "SELECT n FROM habits")).toEqual({
+    isError: true,
+    text: "query failed to count results: Error: disk I/O error",
+  })
+})

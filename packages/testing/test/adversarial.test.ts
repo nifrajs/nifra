@@ -411,3 +411,20 @@ describe("contract laboratory", () => {
     expect(report.failures.some((failure) => (failure.shrinkSteps ?? 0) > 0)).toBe(true)
   })
 })
+
+test("routes an opaque mount declares are listed as not contract-tested", async () => {
+  const app = server()
+    .post("/notes", { body: t.object({ text: t.string() }) }, () => ({ ok: true }))
+    .mount({
+      path: "/auth",
+      app: { fetch: () => new Response("third party") },
+      opaque: {
+        reason: "a third-party auth handler",
+        routes: [{ method: "POST", path: "/auth/sign-in" }],
+      },
+    })
+  const report = await runAdversarialContract(app)
+  expect(report.advisories).toContain(
+    "POST /auth/sign-in is declared by the opaque mount /auth/* (a third-party auth handler) and has no contract to test",
+  )
+})

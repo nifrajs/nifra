@@ -16,7 +16,7 @@
  * _nifra-app.ts for the measured source-vs-dist difference).
  */
 import { responseObserver } from "../../packages/core/dist/response-observer.js"
-import { server } from "../../packages/core/dist/server.js"
+import { type Middleware, server } from "../../packages/core/dist/server.js"
 import { securityHeaders } from "../../packages/middleware/dist/index.js"
 
 export type Variant = "static" | "hook"
@@ -37,7 +37,8 @@ const OPTIONS = {
 export function makeStaticHeadersApp(variant: Variant) {
   const app = server()
   if (variant === "static") {
-    app.use(securityHeaders(OPTIONS))
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the middleware's declarations resolve core through the root `paths` to src while this server is dist; ResponseResult's brand is one Symbol.for at runtime but two declared symbols to tsc.
+    app.use(securityHeaders(OPTIONS) as Middleware)
   } else {
     app.use(responseObserver()).onResponseHeaders((headers) => {
       for (const [name, value] of HEADERS) headers.set(name, value)

@@ -111,6 +111,20 @@ describe("createProxy()", () => {
     expect(seen?.headers["x-app"]).toBe("stays")
   })
 
+  test("Expect is not forwarded: the front server already answered 100-continue", async () => {
+    const proxy = createProxy({ upstream: ORIGIN })
+    respond = () => new Response("ok")
+    await proxy(
+      new Request("http://edge.test/x", {
+        method: "POST",
+        headers: { expect: "100-continue", "x-app": "stays" },
+        body: "payload",
+      }),
+    )
+    expect(seen?.headers.expect).toBeUndefined()
+    expect(seen?.headers["x-app"]).toBe("stays")
+  })
+
   test("strips hop-by-hop and Connection-nominated response headers", async () => {
     const proxy = createProxy({ upstream: ORIGIN })
     respond = () =>
@@ -130,17 +144,77 @@ describe("createProxy()", () => {
     expect(res.headers.get("x-public")).toBe("stays")
   })
 
+  test("a Connection-nominated Set-Cookie is dropped with every cookie it names", async () => {
+    const proxy = createProxy({ upstream: ORIGIN })
+    respond = () => {
+      const headers = new Headers({ connection: "Set-Cookie", "x-public": "stays" })
+      headers.append("set-cookie", "hop_only=1; Path=/")
+      headers.append("set-cookie", "hop_too=2; Path=/")
+      return new Response("ok", { headers })
+    }
+    const nominated = await proxy(new Request("http://edge.test/x"))
+    expect(nominated.headers.getSetCookie()).toEqual([])
+    expect(nominated.headers.get("x-public")).toBe("stays")
+
+    respond = () => {
+      const headers = new Headers()
+      headers.append("set-cookie", "a=1; Path=/")
+      headers.append("set-cookie", "b=2; Path=/")
+      return new Response("ok", { headers })
+    }
+    const kept = await proxy(new Request("http://edge.test/x"))
+    expect(kept.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"])
+  })
+
+  test("client-IP aliases a caller sends never reach the upstream", async () => {
+    respond = () => new Response("ok")
+    const aliases = {
+      "x-real-ip": "10.0.0.1",
+      "true-client-ip": "10.0.0.2",
+      "CF-Connecting-IP": "10.0.0.3",
+      "x-client-ip": "10.0.0.4",
+      "x-cluster-client-ip": "10.0.0.5",
+      "fastly-client-ip": "10.0.0.6",
+      "client-ip": "10.0.0.7",
+    }
+    for (const options of [{}, { forwardClientIp: true, trustForwardedFor: true }]) {
+      await createProxy({ upstream: ORIGIN, ...options })({
+        req: new Request("http://edge.test/x", { headers: aliases }),
+        clientIp: "203.0.113.9",
+      })
+      for (const name of Object.keys(aliases))
+        expect(seen?.headers[name.toLowerCase()]).toBeUndefined()
+    }
+    // A fixed static header is still the explicit way to emit one.
+    await createProxy({ upstream: ORIGIN, headers: { "x-real-ip": "198.51.100.1" } })(
+      new Request("http://edge.test/x", { headers: aliases }),
+    )
+    expect(seen?.headers["x-real-ip"]).toBe("198.51.100.1")
+  })
+
   test("forwarding metadata is stripped by default, replaced safely on opt-in", async () => {
     respond = () => new Response("ok")
     const forged = {
       "x-forwarded-for": "1.2.3.4",
       "x-forwarded-host": "admin.internal",
+      "x-forwarded-port": "12345",
+      "X-Forwarded-Prefix": "/fake",
+      "x-forwarded-ssl": "on",
       forwarded: "for=1.2.3.4",
     }
     await createProxy({ upstream: ORIGIN })(new Request("http://edge.test/x", { headers: forged }))
     expect(seen?.headers["x-forwarded-for"]).toBeUndefined()
     expect(seen?.headers["x-forwarded-host"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-port"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-prefix"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-ssl"]).toBeUndefined()
     expect(seen?.headers.forwarded).toBeUndefined()
+
+    // A fixed static header is the explicit way to emit the rest of the namespace.
+    await createProxy({ upstream: ORIGIN, headers: { "x-forwarded-prefix": "/api" } })(
+      new Request("http://edge.test/x", { headers: forged }),
+    )
+    expect(seen?.headers["x-forwarded-prefix"]).toBe("/api")
 
     await createProxy({ upstream: ORIGIN, forwardClientIp: true })({
       req: new Request("http://edge.test/x", {

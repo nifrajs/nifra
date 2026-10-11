@@ -9,6 +9,7 @@
  */
 
 import {
+  type DispatchBoundary,
   type DispatchResultCode,
   type InjectedClock,
   type RunDispatchStore,
@@ -45,7 +46,11 @@ export interface CommittedEffect {
 export interface RunEffectContext {
   readonly lease: RunLease
   readonly signal: AbortSignal
-  /** Persist a content-free safe boundary; a failed write prevents the next unsafe step. */
+  /**
+   * Persist a content-free safe boundary; a failed write prevents the next unsafe step. Recovery
+   * marks the effect started before invoking it, so a worker lost mid-effect is dead-lettered
+   * unless proven; `before-effect` declares nothing has acted yet, so a redelivery may rerun it.
+   */
   readonly checkpoint: (boundary: "before-effect" | "after-effect") => Promise<boolean>
 }
 
@@ -168,7 +173,11 @@ export class RunRecoveryMachine {
     const inspection = await this.store.inspect(lease.dispatch.dispatchId)
     const checkpoint = inspection?.checkpoint
     const proof = await this.proofs.has(lease.idempotencyKey)
-    if (proof || checkpoint?.boundary === "after-effect") {
+    if (
+      proof ||
+      checkpoint?.boundary === "after-effect" ||
+      checkpoint?.boundary === "effect-started"
+    ) {
       if (!proof) {
         await this.store.deadLetter(lease, "idempotency_required")
         return "dead-lettered"
@@ -177,8 +186,8 @@ export class RunRecoveryMachine {
       return completed.ok ? "completed" : "waiting"
     }
 
-    const before = await this.storeCheckpoint(lease, "before-effect")
-    if (!before) return "waiting"
+    const started = await this.storeCheckpoint(lease, "effect-started")
+    if (!started) return "waiting"
     if (signal.aborted) {
       await this.store.cancel(lease.dispatch.runId, "cancelled")
       return "cancelled"
@@ -229,10 +238,7 @@ export class RunRecoveryMachine {
     }
   }
 
-  private async storeCheckpoint(
-    lease: RunLease,
-    boundary: "before-effect" | "after-effect",
-  ): Promise<boolean> {
+  private async storeCheckpoint(lease: RunLease, boundary: DispatchBoundary): Promise<boolean> {
     const outcome = await this.store.checkpoint(lease, {
       version: 1,
       dispatchId: lease.dispatch.dispatchId,

@@ -52,7 +52,7 @@ import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { LoadedApp } from "./load.ts"
+import type { AppLoader } from "./load.ts"
 import { loadMonorepoApps } from "./load.ts"
 import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
@@ -108,7 +108,7 @@ export {
 } from "./mcp-io.ts"
 export { clientSupportsRoots, guardTools } from "./mcp-root.ts"
 
-import { projectTools } from "./mcp-exec.ts"
+import { closeWarmWorkers, projectTools } from "./mcp-exec.ts"
 import {
   createAppSurface,
   detectMonorepoIsolated,
@@ -147,10 +147,11 @@ export {
  * The loader the server builds its tool and resource lists with. It never loads: every handler that
  * reaches the app runs in a project subprocess (`./mcp-isolate.ts`), so one that tried here fails.
  */
-const noAppInServer = (): Promise<LoadedApp> =>
+const refuseApp = (): Promise<never> =>
   Promise.reject(
     new Error("[nifra] the MCP server does not load the app; project code runs in a subprocess"),
   )
+const noAppInServer: AppLoader = Object.assign(refuseApp, { backend: refuseApp })
 
 const isolatedToolsByDir = new Map<string, McpTool[]>()
 
@@ -308,6 +309,9 @@ export async function runMcpServer(
     if (message.method === "initialize") {
       rootsSupported = clientSupportsRoots(message.params)
     }
+    // An install during the session changes the nifra the project builds with, and this process keeps
+    // the code it started with: re-read the installed version per call so no answer is for a stale one.
+    if (message.method === "tools/call") drift = await detectToolingDrift(rootState.root, version)
 
     let activeTools: McpTool[]
     if (ctx.apps) {
@@ -418,6 +422,7 @@ export async function runMcpServer(
       send(rpcError(null, -32600, "MCP message exceeded the size limit"))
     }
   }
+  closeWarmWorkers()
 }
 
 function responseIdOf(message: JsonRpcResponse | JsonRpcNotification): string | number | null {

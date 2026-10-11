@@ -283,3 +283,35 @@ describe("csrf()", () => {
     expect(() => csrf({ secret: [NEW, "weak"] })).toThrow(/secret/) // floor holds per entry
   })
 })
+
+describe("csrf() and a same-origin form under Referrer-Policy: no-referrer", () => {
+  const post = async (headers: Record<string, string>, origins?: readonly string[]) => {
+    const token = await createCsrfToken(SECRET)
+    const app = server()
+      .use(csrf(origins === undefined ? { secret: SECRET } : { secret: SECRET, origins }))
+      .post("/mutate", () => ({ ok: true }))
+    const res = await app.fetch(
+      new Request("http://app.test/mutate", {
+        method: "POST",
+        headers: {
+          cookie: `csrf-token=${encodeURIComponent(token)}`,
+          "x-csrf-token": token,
+          ...headers,
+        },
+      }),
+    )
+    return res.status
+  }
+
+  test("Origin: null passes only when the browser marks the request same-origin", async () => {
+    expect(await post({ origin: "null", "sec-fetch-site": "same-origin" })).toBe(200)
+    expect(await post({ origin: "null", "sec-fetch-site": "cross-site" })).toBe(403)
+    expect(await post({ origin: "null" })).toBe(403)
+  })
+
+  test("an explicit origin allowlist never accepts Origin: null", async () => {
+    expect(
+      await post({ origin: "null", "sec-fetch-site": "same-origin" }, ["http://app.test"]),
+    ).toBe(403)
+  })
+})

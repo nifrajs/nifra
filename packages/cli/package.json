@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/cli",
-  "version": "4.0.2",
+  "version": "5.0.0",
   "description": "The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).",
   "keywords": [
     "bun",
@@ -78,8 +78,7 @@
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/testing": "workspace:*",
-    "@nifrajs/web": "workspace:*",
-    "create-nifra": "workspace:*"
+    "@nifrajs/web": "workspace:*"
   },
   "repository": {
     "type": "git",

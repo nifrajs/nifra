@@ -37,7 +37,9 @@ function parseMediaType(value: string, qDefault = 1): ParsedMediaType | undefine
   if (slash <= 0 || slash === media.length - 1) return undefined
   const type = media.slice(0, slash)
   const subtype = media.slice(slash + 1)
-  if (!/^[\w!#$&^_.+-]+$/.test(type) || !/^[\w!#$&^_.+*-]+$/.test(subtype)) return undefined
+  // `*/*` is the one legal type wildcard; `*/json` names no media range.
+  const typeOk = type === "*" ? subtype === "*" : /^[\w!#$&^_.+-]+$/.test(type)
+  if (!typeOk || !/^[\w!#$&^_.+*-]+$/.test(subtype)) return undefined
 
   let q = qDefault
   const parameters = new Map<string, string>()

@@ -34,7 +34,8 @@ const registration = await registerWebMcpTools([addItem])
 
 The returned WebMCP `execute` function runs Nifra's existing input validation, capability, approval,
 idempotency, budget, cancellation, output validation, and evidence path. By default it returns a bounded
-receipt envelope so an agent can verify whether the operation committed. The normal human UI remains the
+receipt envelope so an agent can verify whether the operation committed. A `signal` the host passes as
+`execute`'s second argument reaches the executor as `ctx.signal`. The normal human UI remains the
 source of page rendering and works when WebMCP is absent.
 
 Receipt output is retained only while its JSON encoding stays within the bounded `maxReceiptBytes`

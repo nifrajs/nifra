@@ -32,6 +32,90 @@ describe("signals core", () => {
     expect(seen).toEqual([5, 13])
   })
 
+  test("a computed is not computed until something reads it", () => {
+    const a = signal(1)
+    let runs = 0
+    const double = computed(() => {
+      runs++
+      return a() * 2
+    })
+    a.set(2)
+    expect(runs).toBe(0)
+    expect(double()).toBe(4)
+    expect(runs).toBe(1)
+  })
+
+  test("a dropped computed stops at its input's next change instead of recomputing", () => {
+    const input = signal(0)
+    let runs = 0
+    for (let round = 0; round < 3; round++) {
+      for (let index = 0; index < 100; index++) {
+        computed(() => {
+          runs++
+          return input()
+        })()
+      }
+    }
+    expect(runs).toBe(300)
+    input.set(1)
+    input.set(2)
+    expect(runs).toBe(300)
+  })
+
+  test("a disposed computed stops recomputing", () => {
+    const input = signal(0)
+    let runs = 0
+    const handles = Array.from({ length: 100 }, () =>
+      computed(() => {
+        runs++
+        return input()
+      }),
+    )
+    for (const handle of handles) {
+      effect(() => handle())
+      handle.dispose()
+    }
+    input.set(1)
+    expect(runs).toBe(100)
+  })
+
+  test("reading a stopped or disposed computed computes it afresh", () => {
+    const a = signal(1)
+    const double = computed(() => a() * 2)
+    expect(double()).toBe(2)
+    a.set(2)
+    expect(double()).toBe(4)
+    double.dispose()
+    a.set(3)
+    expect(double()).toBe(6)
+  })
+
+  test("a computed stops once the effect reading it stops, and its own inputs one change later", () => {
+    const a = signal(1)
+    let innerRuns = 0
+    let outerRuns = 0
+    const inner = computed(() => {
+      innerRuns++
+      return a() + 1
+    })
+    const outer = computed(() => {
+      outerRuns++
+      return inner() * 10
+    })
+    const seen: number[] = []
+    const stop = effect(() => seen.push(outer()))
+    a.set(2)
+    expect(seen).toEqual([20, 30])
+    stop()
+    // The first change reaches `inner` while `outer` still reads it, so `inner` recomputes once and
+    // `outer` stops; the next change finds `inner` unread and stops it too.
+    a.set(3)
+    a.set(4)
+    a.set(5)
+    expect({ innerRuns, outerRuns }).toEqual({ innerRuns: 3, outerRuns: 2 })
+    expect(outer()).toBe(60)
+  })
+
   test("re-tracking: branch switches drop stale deps", () => {
     const flag = signal(true)
     const left = signal("L")

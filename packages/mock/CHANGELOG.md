@@ -1,5 +1,74 @@
 # @nifrajs/mock
 
+## 5.0.0
+
+### Minor Changes
+
+- 4199ff3: The adversarial contract laboratory witnesses and mutates declared `params` and `headers`. A `t` schema synthesizes them, the witness's `params` and `headers` override, and each is validated before any case runs, so a body or query case is rejected by the input it mutates rather than by a placeholder param or a missing header. An opaque params or headers schema without a witness is a `NO_WITNESS` gap; placeholders no longer stand in for it.
+
+  The laboratory never invents credentials: `authorization`, `proxy-authorization`, `cookie`, `x-api-key`, and names ending in `-key` or containing `token`, `secret` or `signature` come from the witness and `prepareRequest` only and are never mutated, and runtime-owned headers are never set. A schema that requires a credential the witness lacks is a `NO_WITNESS` gap naming it. Cookies are never synthesized: a route with a `cookies` schema needs `headers.cookie` in its witness, else a `cookies` gap. A params or header field typed as bare text is not a `NO_REJECTED_MUTATION` gap. `ContractTarget` adds `"headers"`, `"cookies"` and `"params"`.
+
+  `autoReflectJsonSchema` resolves zod from the project directory first, then from `@nifrajs/mock`. `explainAutoReflectJsonSchema` says why a zod schema stayed opaque (zod not resolvable, older than 4, or its converter threw), and a laboratory gap for such a schema carries the reason.
+
+- c92f85f: The default `reflectJsonSchema` hook reads a schema's own Standard JSON Schema converter (`~standard.jsonSchema.input`, implemented by zod 4.2+ and other libraries) before it looks for zod on disk. The adversarial laboratory and the mock server now inspect such a schema wherever the test runs from, including a monorepo root whose zod is installed only in one app, and a validator other than zod that implements the converter gets witnesses and mock data too. An older zod 4 is still converted with `z.toJSONSchema`. When a converter throws, the gap names it.
+
+### Patch Changes
+
+- 1bd2352: `generateMockValue` now builds an `allOf` value from one merged schema: bounds tighten, `required` and `properties` combine (a property in several branches gets all of their constraints), and `type` and `enum` intersect. It used to generate each branch separately and merge the objects, so a property constrained in two branches kept only one branch's constraint (`minimum: 18` plus `maximum: 30` could yield `-60`). Branches that disagree on any other keyword now fail with `UnsupportedMockSchemaError`.
+- f0c88c1: An `integer` schema with a fractional `multipleOf` generates integer multiples of it, so `multipleOf: 1.5` yields 3, 6 and so on. A `multipleOf` that is not a plain decimal, such as `1e-7`, on an integer schema throws `UnsupportedMockSchemaError`.
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

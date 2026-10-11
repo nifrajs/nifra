@@ -10,6 +10,7 @@
  * injects its HMR client + the framework's refresh preamble. Node `http` (not `Bun.serve`) because
  * Vite's `middlewares` are Connect-style - it runs fine under Bun.
  */
+
 import { type Dirent, readdirSync, writeFileSync } from "node:fs"
 import {
   createServer as createHttpServer,
@@ -17,6 +18,7 @@ import {
   type ServerResponse,
 } from "node:http"
 import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
+import { singleCopyPackageNames } from "@nifrajs/core/single-copy"
 import { CLIENT_BATCH_MAX_BYTES } from "./dev-client.ts"
 import { DEV_REQUEST_ID_HEADER, DEV_SERVER_FILES } from "./dev-feed.ts"
 import { listenOrExplain } from "./dev-port.ts"
@@ -632,6 +634,10 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     // Ahead of the user's plugins: the zone guard refuses backend code before anything serves or
     // transforms it, and a `*.fn` module must be replaced before anything else reads it.
     plugins: [zoneGuard, viteServerFnStub(), ...plugins],
+    // Vite pre-bundles what it finds by crawling `index.html`, and this app has none: every dependency
+    // would be found mid-session instead, each one re-optimizing and reloading the page. The client
+    // entry imports every route's frontend module, so crawling it covers the whole route graph.
+    optimizeDeps: { entries: [DEV_ENTRY] },
     resolve: {
       conditions: resolveConditions,
       // Dedupe each framework runtime to ONE copy. In a multi-root workspace a shared package can pull
@@ -640,7 +646,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // on any hook-using route (the error points at the component, not the resolution - brutal to
       // diagnose). Same policy table the production builds read, so dev matches prod. No-op per
       // framework the app does not use (the package simply isn't present to dedupe).
-      dedupe: [...viteDedupePackages()],
+      // The app's single-copy declaration pins its packages the same way.
+      dedupe: [...viteDedupePackages(), ...singleCopyPackageNames(root)],
     },
     ssr: {
       // Explicit listing forces external even for workspace-LINKED packages (Vite's default keeps

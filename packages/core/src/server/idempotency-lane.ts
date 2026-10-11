@@ -4,8 +4,9 @@
  * `server()` tree-shakes the whole dedupe machinery out.
  *
  * The kernel resolves a route's declared idempotency at registration (via {@link IdempotencyRuntime.resolve})
- * and, on the request path, hands a matched idempotent route to {@link IdempotencyRuntime.run}. Everything
- * server-specific is supplied through {@link IdempotencyHost} so this module depends on no server internals.
+ * and, on the request path, hands a matched idempotent route to {@link IdempotencyRuntime.run}. Server
+ * execution is supplied through {@link IdempotencyHost}; the opt-in module adapts the matched
+ * route's program for replay without adding replay preparation to the shared server kernel.
  */
 import { RouteConfigError } from "../errors.ts"
 import {
@@ -28,6 +29,11 @@ import {
   requestEffectEvidence,
   requestIsSafeToRetry,
 } from "../internal/effect-execution.ts"
+import {
+  compileRouteExecutionPlan,
+  type InternalHandler,
+  type RouteEntry,
+} from "../internal/route-execution.ts"
 import { readBoundedBytes } from "./body.ts"
 import type { Platform, RouteSchema } from "./context.ts"
 import { jsonError, urlPartsOf } from "./http.ts"
@@ -42,6 +48,17 @@ const HANDLER_ENTERED = new WeakSet<Request>()
  * owned effect begun, releases its key, so a refused caller cannot hold a store entry for the TTL. */
 const REFUSALS = new Set([401, 403, 408, 409, 425, 429])
 
+// Compile once in the opt-in plugin. The around runner also handles an empty hook list.
+const REPLAY_EXECUTION = compileRouteExecutionPlan({
+  lane: "lifecycle",
+  contextless: false,
+  hasAround: true,
+  hasLedger: false,
+  fusedWeb: undefined,
+  fusedBody: undefined,
+  fusedLane: undefined,
+})
+
 /** Registration-resolved idempotency for a route: the config with its store + defaults pinned. */
 export interface ResolvedIdempotency {
   readonly store: IdempotencyStore
@@ -55,7 +72,8 @@ export interface ResolvedIdempotency {
 
 /**
  * What the dedupe lane needs from the server to run a fresh key: the app-wide body cap and a way to
- * run the buffered request through the route's normal lanes to a concrete `Response`.
+ * run the buffered request through the route's normal lanes to a concrete `Response`. The replay
+ * path supplies an entry with the stored response replacing the handler and stored transformations.
  */
 export interface IdempotencyHost {
   readonly maxBodyBytes: number
@@ -65,7 +83,7 @@ export interface IdempotencyHost {
     entry: unknown,
     params: Record<string, string>,
     search: string | undefined,
-  ): Promise<Response>
+  ): Response | Promise<Response>
 }
 
 /** The injected idempotency implementation the kernel calls through when the plugin is installed. */
@@ -101,7 +119,9 @@ interface IdempotencyInstallable {
 
 /**
  * Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat
- * `Idempotency-Key` replays the stored response instead of re-running the handler. Without this plugin,
+ * `Idempotency-Key` rechecks the current route prerequisites (authentication, validation and policy
+ * hooks) before replaying the stored response. The handler, effect ledger and stored response
+ * transformations run only for the fresh request. Without this plugin,
  * declaring `schema.idempotency` is a registration error (the safety gate can never be silently
  * dropped). `store` is the app-wide default backing routes that do not pin their own; omit it for a
  * shared in-process store (development/tests only - inject a durable store in production).
@@ -231,7 +251,10 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       }
       const namespace =
         typeof config.namespace === "function"
-          ? await config.namespace(req.clone(), platform)
+          ? await config.namespace(
+              { method: req.method, url: req.url, headers: req.headers },
+              platform,
+            )
           : config.namespace
       if (!validIdempotencyNamespace(namespace)) {
         return wrapResponse(jsonError(500, "idempotency_namespace_invalid"))
@@ -250,6 +273,13 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         canonicalBody,
         req.headers.get("content-type") ?? "",
       )
+      const buffered = new Request(req.url, {
+        method: req.method,
+        headers: req.headers,
+        signal: req.signal,
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: readBoundedBytes owns this byte view; Request accepts the same bytes on every supported runtime.
+        body: read.bytes.byteLength ? (read.bytes as NonNullable<RequestInit["body"]>) : null,
+      })
 
       const pendingTtlMs = config.pendingTtlMs
       const begin = await config.store.begin({
@@ -259,17 +289,27 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         ttlMs: config.ttlMs,
         pendingTtlMs,
       })
-      if (begin.state === "replay") {
-        return wrapResponse(
-          responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }),
-        )
-      }
       if (begin.state === "mismatch") return wrapResponse(jsonError(409, "idempotency_key_reused"))
       if (begin.state === "in-flight") {
         return wrapResponse(jsonError(409, "idempotency_in_progress", { "Retry-After": "1" }))
       }
       if (begin.state === "capacity") {
         return wrapResponse(jsonError(503, "idempotency_store_capacity", { "Retry-After": "1" }))
+      }
+      beginRequestEffectTracking(buffered)
+      if (begin.state === "replay") {
+        return wrapResponse(
+          await host.runLanes(
+            buffered,
+            platform,
+            replayEntry(
+              entry,
+              responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }),
+            ),
+            params,
+            search,
+          ),
+        )
       }
       const reservation = begin.reservation
       let heartbeat: ReturnType<typeof setInterval> | undefined
@@ -286,17 +326,6 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         ;(heartbeat as { unref?: () => void }).unref?.()
       }
       try {
-        // Fresh key: re-expose the buffered body as a Request so the normal lanes can read + validate it,
-        // then run those lanes to a concrete Response.
-        const bufferedInit: RequestInit = {
-          method: req.method,
-          headers: req.headers,
-          signal: req.signal,
-        }
-        if (read.bytes.byteLength > 0)
-          bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
-        const buffered = new Request(req.url, bufferedInit)
-        beginRequestEffectTracking(buffered)
         // The handler threw, or its response body failed while being captured: no response to store.
         const settleThrown = async (err: unknown): Promise<ReturnType<typeof wrapResponse>> => {
           if (!requestEffectEvidence(buffered).began) {
@@ -392,5 +421,18 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         clearInterval(heartbeat)
       }
     },
+  }
+}
+
+function replayEntry(entry: unknown, response: Response): RouteEntry {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the kernel supplies its matched RouteEntry through this internal opaque install seam.
+  const route = entry as RouteEntry
+  const handler: InternalHandler = () => response
+  return {
+    ...route,
+    handler,
+    responseContract: undefined,
+    program: { ...route.program, handler, afterHandle: [] },
+    execution: REPLAY_EXECUTION,
   }
 }

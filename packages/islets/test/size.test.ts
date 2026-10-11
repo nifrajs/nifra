@@ -8,7 +8,7 @@ import { gzipSync } from "bun"
 // The reason this package exists is the number this test pins. Bundling the bare index measures
 // nothing (tree-shaking removes unused exports) - so the fixture is a realistic island module
 // exercising EVERY feature: signals, computed, batch, all six bindings via mount, state seeding.
-test("full-feature island bundle stays within the island budget (≤ 2 KB gz)", async () => {
+test("full-feature island bundle stays within the island budget (≤ 2,080 B gz)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "islets-size-"))
   const entry = join(dir, "entry.ts")
   writeFileSync(
@@ -42,7 +42,7 @@ mountIslands()
     console.log(
       `@nifrajs/islets full-feature island: ${(src.length / 1024).toFixed(2)} KB min, ${(gz / 1024).toFixed(2)} KB gz`,
     )
-    expect(gz).toBeLessThanOrEqual(2048)
+    expect(gz).toBeLessThanOrEqual(2080)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

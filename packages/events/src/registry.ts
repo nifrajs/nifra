@@ -18,7 +18,10 @@ export interface EventRegistry {
   readonly contracts: readonly EventContract[]
   /** Look up a contract by type + version (defaults to version 0). */
   get(type: string, version?: number): EventContract | undefined
-  /** Dispatch untrusted input to its contract by `type`/`version` and parse. Never throws. */
+  /**
+   * Dispatch untrusted input to its contract by `type`/`version` and parse. Bad input never throws;
+   * a contract with an async payload schema does.
+   */
   parse(input: unknown): RegistryParseResult
 }
 

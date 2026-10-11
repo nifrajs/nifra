@@ -5,6 +5,7 @@ import {
   type AnyServer,
   type LogFields,
   type Logger,
+  type StandardSchemaV1,
   server,
   silentLogger,
   status,
@@ -218,6 +219,122 @@ describe('responseContract: "enforce"', () => {
     const res = await app.fetch(new Request("http://t/missing"))
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+})
+
+describe("a reply that does not come from the handler's return", () => {
+  test("a thrown c.json reply is held to the contract", async () => {
+    const app = server({ logger: silentLogger })
+      .use(responseContract("enforce"))
+      .get("/me", { response: STRIPPING }, (c) => {
+        throw c.json(LEAK, { status: 201, headers: { "x-request": "r1" } })
+      })
+      .get("/missing", { errors: { 404: STRIPPING } }, (c) => {
+        throw c.json(LEAK, 404)
+      })
+      .get("/strict", { response: STRICT }, (c) => {
+        throw c.json(LEAK)
+      })
+    const res = await app.fetch(new Request("http://t/me"))
+    expect(res.status).toBe(201)
+    expect(res.headers.get("x-request")).toBe("r1")
+    expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+    const missing = await app.fetch(new Request("http://t/missing"))
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({ id: "u1", name: "Ada" })
+    const strict = await app.fetch(new Request("http://t/strict"))
+    expect(strict.status).toBe(500)
+    expect(await strict.text()).not.toContain("SECRET")
+  })
+
+  test("a thrown raw Response still passes as control flow", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/go", { response: STRICT }, () => {
+        throw new Response(null, { status: 302, headers: { location: "/" } })
+      })
+    const res = await app.fetch(new Request("http://t/go"))
+    expect(res.status).toBe(302)
+    expect(res.headers.get("location")).toBe("/")
+  })
+
+  test("a c.json or status() reply from onError is held to the contract", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .onError((_err, c) => c.json(LEAK, 404))
+      .get("/json", { errors: { 404: STRIPPING } }, () => {
+        throw new Error("boom")
+      })
+    const viaStatus = server()
+      .use(responseContract("enforce"))
+      .onError(() => status(409, LEAK))
+      .get("/status", { errors: { 409: STRIPPING } }, () => {
+        throw new Error("boom")
+      })
+    const res = await app.fetch(new Request("http://t/json"))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+    const conflict = await viaStatus.fetch(new Request("http://t/status"))
+    expect(conflict.status).toBe(409)
+    expect(await conflict.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("a schema that throws on an onError reply answers 500 without re-entering onError", async () => {
+    const throwing: StandardSchemaV1<unknown, unknown> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: () => {
+          throw new Error("schema exploded")
+        },
+      },
+    }
+    let calls = 0
+    const app = server({ logger: silentLogger })
+      .use(responseContract("enforce"))
+      .onError((_err, c) => {
+        calls++
+        return c.json(LEAK, 404)
+      })
+      .get("/x", { errors: { 404: throwing } }, () => {
+        throw new Error("boom")
+      })
+    const res = await app.fetch(new Request("http://t/x"))
+    expect(res.status).toBe(500)
+    expect(await res.text()).not.toContain("SECRET")
+    expect(calls).toBe(1)
+  })
+
+  test("a hook's c.json or status() reply is held to the contract", async () => {
+    const before = server()
+      .use(responseContract("enforce"))
+      .beforeHandle((c) => c.json(LEAK))
+      .get("/b", { response: STRIPPING }, () => ({ id: "x", name: "y" }))
+    const derived = server()
+      .use(responseContract("enforce"))
+      .derive(async () => status(403, LEAK))
+      .get("/d", { response: STRIPPING, errors: { 403: STRIPPING } }, () => ({
+        id: "x",
+        name: "y",
+      }))
+    const b = await before.fetch(new Request("http://t/b"))
+    expect(b.status).toBe(200)
+    expect(await b.json()).toEqual({ id: "u1", name: "Ada" })
+    const d = await derived.fetch(new Request("http://t/d"))
+    expect(d.status).toBe(403)
+    expect(await d.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("warn mode serves a thrown c.json unchanged and names the undeclared fields", async () => {
+    const { logger, records } = recorder()
+    const app = server({ logger })
+      .use(responseContract("warn"))
+      .get("/me", { response: STRIPPING }, (c) => {
+        throw c.json(LEAK)
+      })
+    const res = await app.fetch(new Request("http://t/me"))
+    expect(await res.json()).toEqual(LEAK)
+    expect(records.some((r) => String(r.detail).includes("passwordHash"))).toBe(true)
   })
 })
 

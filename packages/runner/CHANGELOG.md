@@ -1,5 +1,12 @@
 # @nifrajs/runner
 
+## 5.0.0
+
+### Patch Changes
+
+- b77ae4c: `runRequest` sends a `URLSearchParams` body form-encoded with the content type Fetch gives it, instead of encoding it as JSON. A response body whose multi-byte character is split across two chunks now decodes as that character rather than as replacement characters.
+- 6ad9582: `runRequest` results keep every `Set-Cookie` value: a new `setCookie` array lists them in order, and `headers["set-cookie"]` joins them as `Headers.get` does instead of keeping only the last one.
+
 ## 4.0.2
 
 ## 4.0.1

@@ -30,6 +30,7 @@ test("the stable catalog is the public command allowlist", () => {
     "migrate",
     "target",
     "types",
+    "schemas",
     "snapshot",
     "diff",
     "contracts",
@@ -53,9 +54,10 @@ test("the stable catalog is the public command allowlist", () => {
 
 test("CLI help/card projection and MCP descriptors read the same catalog", () => {
   const lines = renderCommandCatalogLines()
-  const tools = catalogProjectTools("/fake", async () => {
+  const refuse = async (): Promise<never> => {
     throw new Error("not called while describing tools")
-  })
+  }
+  const tools = catalogProjectTools("/fake", Object.assign(refuse, { backend: refuse }))
   for (const entry of commandCatalog) {
     const spec = findCommandSpec(entry.name)
     expect(spec).toBeDefined()
@@ -67,9 +69,7 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
       expect(tool?.inputSchema).toEqual(commandMcpInputSchema(entry))
       const adapted = toMcpTool(entry, {
         cwd: "/fake",
-        loadAppCached: async () => {
-          throw new Error("not called while describing tools")
-        },
+        loadAppCached: Object.assign(refuse, { backend: refuse }),
       })
       expect(adapted.name).toBe(tool!.name)
       expect(adapted.inputSchema).toEqual(commandMcpInputSchema(entry))
@@ -77,6 +77,25 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
       expect(tool).toBeUndefined()
     }
   }
+})
+
+test("an MCP routes call cannot compare against a hook report outside the project", async () => {
+  const refuse = async (): Promise<never> => {
+    throw new Error("the app is not loaded for a refused path")
+  }
+  const entry = commandCatalog.find((candidate) => candidate.name === "routes")
+  if (entry === undefined) throw new Error("no routes entry")
+  const tool = toMcpTool(entry, {
+    cwd: process.cwd(),
+    loadAppCached: Object.assign(refuse, { backend: refuse }),
+  })
+  const signal = new AbortController().signal
+  const context = { signal, requestId: null, reportProgress() {} }
+  const reply = await tool.handler({ hooks: true, since: "../../etc/hosts" }, context)
+  expect(JSON.parse(String(reply))).toEqual({
+    ok: false,
+    error: "since must be a relative path inside the selected project directory: ../../etc/hosts",
+  })
 })
 
 test("argv binding produces the same typed input shape MCP receives", () => {

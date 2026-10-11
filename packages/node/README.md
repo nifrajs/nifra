@@ -53,10 +53,12 @@ The optional `static` root is served before `app.fetch` for GET and HEAD request
 public asset directory and must contain nothing private: no secrets, source maps, build
 metadata, or user uploads. The directory and its ancestor path must be read-only and owned by
 the service (or otherwise protected from untrusted local writers). Nifra resolves and confines
-the file before opening it and refuses symlinked final files, but Node does not expose a native
-per-component `openat` primitive; a process that can mutate the tree concurrently can still
-create a local TOCTOU race. Mutable or attacker-writable static trees are therefore outside the
-adapter's guarantee. Store user-controlled files outside the static root and serve them through
+the file before opening it, and refuses it when its final file or any directory on its path became
+a symlink in the meantime: on macOS the open itself refuses such a path, and on Linux the opened
+descriptor's path is checked. On Windows and other platforms no file API can open without following a
+middle link, so a process that swaps a directory concurrently can still win a local TOCTOU race;
+the check there only makes it need repeated swaps. Mutable or attacker-writable static trees are
+therefore outside the adapter's guarantee on those platforms. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
 Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
@@ -74,12 +76,23 @@ process signals should be a deliberate choice):
 await serve(app, { port: 3000, signals: true })
 ```
 
+In-flight requests get 10 s to finish before the stop forces them closed. Set the window to fit
+the platform's kill grace period:
+
+```ts
+await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+```
+
 ## What you get for free
 
 The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) and body-size
 cap live **inside `app.fetch`**, not Bun's `listen()` - so they apply through this adapter
 with no extra wiring. Slow-client / slow-loris protection is Node's built-in
 `requestTimeout` (300s) and `headersTimeout` (60s) defaults.
+
+A hook that throws past `app.fetch`, or a response Node refuses to write (a header value carrying
+CR/LF, say), answers `500` and is logged through the app's own `logger`, as Bun's `listen()` logs it. The `req` a hook sees is a lazy stand-in for Node's request: copy it
+with `req.clone()`, not `new Request(req)`, which Node's `Request` constructor refuses.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM-only. MIT.
 

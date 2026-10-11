@@ -155,3 +155,64 @@ test("the event projection rejects malformed payloads instead of dereferencing t
     } as never),
   ).toThrow("agent event is invalid")
 })
+
+test("an extension event projects to its type and turn, never its data", () => {
+  const base = { version: 1, sessionId: "s", seq: 4, at: 9 } as const
+  const view = toEventView({ ...base, type: "x-codex.plan", turnId: "t", data: { secret: "plan" } })
+  expect(view).toEqual({ seq: 4, at: 9, kind: "x-codex.plan", turnId: "t", hasData: true })
+  expect(toEventView({ ...base, type: "x-acme.ping" })).toEqual({
+    seq: 4,
+    at: 9,
+    kind: "x-acme.ping",
+    hasData: false,
+  })
+})
+
+test("reasoning, plan, and usage events project to counts", () => {
+  const base = { version: 1, sessionId: "s", seq: 1, at: 2 } as const
+  expect(toEventView({ ...base, type: "reasoning.delta", turnId: "t", text: "abc" })).toEqual({
+    seq: 1,
+    at: 2,
+    kind: "reasoning.delta",
+    turnId: "t",
+    chars: 3,
+  })
+  expect(
+    toEventView({
+      ...base,
+      type: "plan.updated",
+      turnId: "t",
+      entries: [
+        { content: "secret step", status: "completed" },
+        { content: "b", status: "in_progress" },
+        { content: "c", status: "pending" },
+      ],
+    }),
+  ).toEqual({
+    seq: 1,
+    at: 2,
+    kind: "plan.updated",
+    turnId: "t",
+    entries: 3,
+    inProgress: 1,
+    completed: 1,
+  })
+  expect(
+    toEventView({ ...base, type: "context.usage", usedTokens: 300, windowTokens: 200 }),
+  ).toEqual({
+    seq: 1,
+    at: 2,
+    kind: "context.usage",
+    usedTokens: 300,
+    windowTokens: 200,
+    fill: 1,
+    estimated: false,
+  })
+  expect(toEventView({ ...base, type: "context.usage", usedTokens: 5, estimated: true })).toEqual({
+    seq: 1,
+    at: 2,
+    kind: "context.usage",
+    usedTokens: 5,
+    estimated: true,
+  })
+})

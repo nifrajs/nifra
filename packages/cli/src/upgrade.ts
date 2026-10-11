@@ -5,6 +5,8 @@
  *
  *   1. **pin sweep** - set every matching dependency to the target version across the workspace's
  *      package.json files, preserving the caret/tilde/exact style and skipping `workspace:`/`link:` specs.
+ *      `overrides`, `resolutions` and `pnpm.overrides` are swept too, since they decide what installs;
+ *      a version pinned anywhere else (an MCP config, a Dockerfile, another lockfile) is listed only.
  *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
@@ -22,10 +24,29 @@
  * transforms are a future addition - a recipe that needs one is the signal to add the engine, not before.
  */
 
-import { readFileSync, writeFileSync } from "node:fs"
-import { join, relative } from "node:path"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
+import { dirname, join, relative, sep } from "node:path"
+import { fileURLToPath } from "node:url"
+import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
+import {
+  collectHookReport,
+  diffHookReports,
+  HOOKS_BEFORE_UPGRADE_FILE,
+  type HookReportChange,
+  parseHookReport,
+  renderHookDiff,
+} from "./hooks-report.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
+import { markerTarget } from "./rules/comment-markers.ts"
 
 export interface UpgradeOptions {
   /** Target version, e.g. "1.8.0". Required unless `list` is set. */
@@ -44,6 +65,11 @@ export interface UpgradeOptions {
   readonly exact?: boolean
   /** The running CLI's version: the newest target it applies. Default: its newest recipe. */
   readonly cliVersion?: string
+  /**
+   * With `--write`, capture `nifra routes --hooks` before and after the edits and print the diff, so a
+   * change in which hooks run where is visible. Loads the backend. Default true; `--no-hooks` skips it.
+   */
+  readonly hooks?: boolean
 }
 
 export interface PinChange {
@@ -71,6 +97,16 @@ export interface DependencyMoveChange {
   readonly action: "renamed" | "removed"
 }
 
+/** A retired comment in the project, and the line it applied to before the release retired it. */
+export interface RetiredMarkerSite {
+  readonly file: string
+  readonly line: number
+  readonly marker: string
+  /** The line the comment covered; `undefined` when a blank line follows its comment block. */
+  readonly covers: { readonly line: number; readonly text: string } | undefined
+  readonly instead: string
+}
+
 export interface UpgradePlan {
   readonly version: string
   readonly pins: readonly PinChange[]
@@ -78,6 +114,12 @@ export interface UpgradePlan {
   readonly importMoves: readonly ImportChange[]
   /** Pins refused because the target is BELOW the installed version (a rollback). Empty when allowed. */
   readonly downgrades: readonly PinChange[]
+  /** Comments a release in the chain stopped honoring. Listed only, never rewritten. */
+  readonly retiredMarkers: readonly RetiredMarkerSite[]
+  /** Installed group packages linked from outside the workspace root, at another version. Never edited. */
+  readonly linkedOutside: readonly LinkedGroupInstall[]
+  /** Other versions pinned outside package.json. Never edited. */
+  readonly strayPins: readonly StrayPin[]
   readonly notes: readonly string[]
 }
 
@@ -203,63 +245,153 @@ export function pinSweepText(
   let out = text
   const changes: Array<Omit<PinChange, "file">> = []
   const downgrades: Array<Omit<PinChange, "file">> = []
-  for (const field of DEP_FIELDS) {
-    const deps = parsed[field]
-    if (typeof deps !== "object" || deps === null) continue
-    for (const [name, rawSpec] of Object.entries(deps as Record<string, unknown>)) {
-      if (typeof rawSpec !== "string") continue
-      const rule = rules.find(
-        (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
-      )
-      if (!rule) continue
-      const next = rewriteVersionSpec(rawSpec, rule.to, exact)
-      if (next === null) continue
-      // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
-      // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
-      const current = specVersionTuple(rawSpec)
-      const target = specVersionTuple(rule.to)
-      if (
-        !allowDowngrade &&
-        current !== null &&
-        target !== null &&
-        compareSemverSpec(rawSpec, rule.to) > 0
-      ) {
-        downgrades.push({ field, name, from: rawSpec, to: next })
-        continue
-      }
-      // Replace exactly `"name"<ws>:<ws>"spec"`, preserving the surrounding whitespace.
-      const pattern = new RegExp(`("${escapeRegExp(name)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`)
-      const replaced = out.replace(pattern, `$1${next}$2`)
-      if (replaced !== out) {
-        out = replaced
-        changes.push({ field, name, from: rawSpec, to: next })
-      }
+  for (const { path, key, target: name, spec: rawSpec } of pinEntries(parsed)) {
+    const field = path.join(".")
+    const rule = rules.find(
+      (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
+    )
+    if (!rule) continue
+    const next = rewriteVersionSpec(rawSpec, rule.to, exact)
+    if (next === null) continue
+    // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
+    // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
+    const current = specVersionTuple(rawSpec)
+    const target = specVersionTuple(rule.to)
+    if (
+      !allowDowngrade &&
+      current !== null &&
+      target !== null &&
+      compareSemverSpec(rawSpec, rule.to) > 0
+    ) {
+      downgrades.push({ field, name: key, from: rawSpec, to: next })
+      continue
+    }
+    // Replace exactly `"key"<ws>:<ws>"spec"` inside this field's object, preserving the whitespace. A
+    // nested `overrides` entry repeated with the same spec maps the same way, so every one is replaced.
+    const range = objectRangeAt(out, path)
+    if (range === undefined) continue
+    const pattern = new RegExp(`("${escapeRegExp(key)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`, "g")
+    const body = out.slice(range.start, range.end)
+    const replaced = body.replace(pattern, `$1${next}$2`)
+    if (replaced !== body) {
+      out = out.slice(0, range.start) + replaced + out.slice(range.end)
+      changes.push({ field, name: key, from: rawSpec, to: next })
     }
   }
   return { text: out, changes, downgrades }
 }
 
-function dependencyObjectRange(
+/** Where a package manager forces one version over every range: npm and Bun `overrides` (nested by
+ * parent), Yarn and Bun `resolutions`, pnpm `pnpm.overrides`. */
+const OVERRIDE_FIELDS: readonly (readonly string[])[] = [
+  ["overrides"],
+  ["resolutions"],
+  ["pnpm", "overrides"],
+]
+
+/**
+ * The package an override key pins: `@nifrajs/core`, `parent/@nifrajs/core` and the same behind a `**`
+ * glob (resolutions), `parent>@nifrajs/core` and `@nifrajs/core@<4` (pnpm).
+ */
+function overrideTarget(key: string): string {
+  const last = key.slice(key.lastIndexOf(">") + 1)
+  return /(?:^|\/)((?:@[^/@]+\/)?[^/@]+)(?:@[^/]*)?$/.exec(last)?.[1] ?? last
+}
+
+/** Every string version spec a package.json declares for a package, with the field path it sits in. */
+function pinEntries(
+  parsed: Record<string, unknown>,
+): Array<{ path: readonly string[]; key: string; target: string; spec: string }> {
+  const entries: Array<{ path: readonly string[]; key: string; target: string; spec: string }> = []
+  for (const field of DEP_FIELDS) {
+    const deps = parsed[field]
+    if (typeof deps !== "object" || deps === null) continue
+    for (const [name, spec] of Object.entries(deps))
+      if (typeof spec === "string") entries.push({ path: [field], key: name, target: name, spec })
+  }
+  for (const path of OVERRIDE_FIELDS) {
+    let value: unknown = parsed
+    for (const key of path)
+      value = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
+    // npm nests an override under the package whose dependency it pins; `.` pins that package itself.
+    const walk = (object: object, parent: string | undefined): void => {
+      for (const [key, spec] of Object.entries(object)) {
+        const target = key === "." ? parent : overrideTarget(key)
+        if (typeof spec === "string" && target !== undefined)
+          entries.push({ path, key, target, spec })
+        else if (typeof spec === "object" && spec !== null && !Array.isArray(spec))
+          walk(spec, target)
+      }
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) walk(value, undefined)
+  }
+  return entries
+}
+
+/** The body (between the braces) of the object at `path` in a JSON text: top-level key first, then
+ * each nested one, never a same-named key deeper in the document. */
+function objectRangeAt(
   text: string,
-  field: (typeof DEP_FIELDS)[number],
+  path: readonly string[],
 ): { start: number; end: number } | undefined {
-  const match = new RegExp(`"${field}"\\s*:\\s*\\{`).exec(text)
-  if (match === null) return undefined
-  const open = text.indexOf("{", match.index)
+  const rootOpen = text.indexOf("{")
+  if (rootOpen === -1) return undefined
+  let range: { start: number; end: number } | undefined = {
+    start: rootOpen + 1,
+    end: closingBrace(text, rootOpen),
+  }
+  for (const key of path) {
+    if (range === undefined) return undefined
+    range = memberObjectRange(text, range, key)
+  }
+  return range
+}
+
+/** The index of the `"` that closes the string opening at `open`. */
+function stringEnd(text: string, open: number): number {
+  for (let index = open + 1; index < text.length; index++) {
+    if (text[index] === "\\") index++
+    else if (text[index] === '"') return index
+  }
+  return text.length
+}
+
+/** The index of the brace that closes the one at `open`. */
+function closingBrace(text: string, open: number): number {
   let depth = 0
-  let quoted = false
-  let escaped = false
   for (let index = open; index < text.length; index++) {
     const char = text[index]
-    if (quoted) {
-      if (escaped) escaped = false
-      else if (char === "\\") escaped = true
-      else if (char === '"') quoted = false
-      continue
+    if (char === '"') index = stringEnd(text, index)
+    else if (char === "{" || char === "[") depth++
+    else if ((char === "}" || char === "]") && --depth === 0) return index
+  }
+  return text.length
+}
+
+/** The body of `key`'s object value among the direct members of the object body `within`. */
+function memberObjectRange(
+  text: string,
+  within: { start: number; end: number },
+  key: string,
+): { start: number; end: number } | undefined {
+  let depth = 0
+  for (let index = within.start; index < within.end; index++) {
+    const char = text[index]
+    if (char === "{" || char === "[") depth++
+    else if (char === "}" || char === "]") depth--
+    else if (char === '"') {
+      const close = stringEnd(text, index)
+      let after = close + 1
+      while (/\s/.test(text[after] ?? "")) after++
+      if (depth === 0 && text[after] === ":" && text.slice(index + 1, close) === key) {
+        after++
+        while (/\s/.test(text[after] ?? "")) after++
+        return text[after] === "{"
+          ? { start: after + 1, end: closingBrace(text, after) }
+          : undefined
+      }
+      index = close
     }
-    if (char === '"') quoted = true
-    else if (char === "{") depth++
-    else if (char === "}" && --depth === 0) return { start: open + 1, end: index }
   }
   return undefined
 }
@@ -272,7 +404,7 @@ function rewriteDependencyEntry(
   to: string | undefined,
   toVersion: string | undefined,
 ): string {
-  const range = dependencyObjectRange(text, field)
+  const range = objectRangeAt(text, [field])
   if (range === undefined) return text
   const body = text.slice(range.start, range.end)
   const key = escapeRegExp(from)
@@ -396,11 +528,13 @@ const isIgnored = (path: string): boolean =>
     .slice(0, -1)
     .some((segment) => IGNORED_DIRECTORIES.has(segment))
 
-function scan(cwd: string, pattern: string): string[] {
+function scan(cwd: string, pattern: string, dot = false): string[] {
   const glob = new Glob(pattern)
   const out: string[] = []
-  for (const path of glob.scanSync({ cwd, dot: false })) {
-    if (!isIgnored(path)) out.push(path)
+  // The write boundary: a symlinked file or directory (a linked repository) is never yielded, so the
+  // upgrade can only edit files that live under `cwd`.
+  for (const path of glob.scanSync({ cwd, dot, followSymlinks: false })) {
+    if (!isIgnored(path)) out.push(path.replaceAll("\\", "/"))
   }
   return out.sort() // deterministic order
 }
@@ -416,11 +550,12 @@ const groupPins = (version: string): UpgradeRecipe["pins"] => [
 ]
 
 /**
- * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
- * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
+ * with the files that declare it. An override counts: it decides what installs. `workspace:`, `link:`
+ * and other non-semver specs are not versions.
  */
-export function installedGroupVersion(cwd: string): string | null {
-  let lowest: string | null = null
+export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly string[]> {
+  const versions = new Map<string, string[]>()
   for (const rel of scan(cwd, "**/package.json")) {
     let parsed: Record<string, unknown>
     try {
@@ -428,17 +563,143 @@ export function installedGroupVersion(cwd: string): string | null {
     } catch {
       continue
     }
-    for (const field of DEP_FIELDS) {
-      const deps = parsed[field]
-      if (typeof deps !== "object" || deps === null) continue
-      for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
-        if (!isFixedGroup(name) || typeof spec !== "string") continue
-        const version = specVersion(spec)
-        if (version !== null && (lowest === null || compareSemverSpec(version, lowest) < 0)) {
-          lowest = version
-        }
-      }
+    for (const { target, spec } of pinEntries(parsed)) {
+      if (!isFixedGroup(target)) continue
+      const version = specVersion(spec)
+      if (version === null) continue
+      const files = versions.get(version) ?? []
+      if (!files.includes(rel)) files.push(rel)
+      versions.set(version, files)
     }
+  }
+  return versions
+}
+
+/** A fixed-group version spelled outside package.json, which the upgrade lists and never edits. */
+export interface StrayPin {
+  readonly file: string
+  readonly line: number
+  /** As written: `@nifrajs/cli@3.1.0`. */
+  readonly pin: string
+  /** A lockfile other than the workspace's own: regenerate it. Listed once, with its other stale pins
+   * counted in `more`. */
+  readonly lockfile: boolean
+  readonly more: number
+}
+
+const STRAY_PIN_FILES = [
+  "**/{.mcp.json,mcp.json}",
+  "**/{Dockerfile,Dockerfile.*,*.Dockerfile,*.dockerfile,Containerfile}",
+  "**/{docker-compose,compose}*.{yml,yaml}",
+  ".github/workflows/*.{yml,yaml}",
+  ".gitlab-ci.yml",
+  "**/*.lock",
+  "**/{package-lock.json,pnpm-lock.yaml}",
+]
+const LOCKFILE = /(?:\.lock|package-lock\.json|pnpm-lock\.yaml)$/
+const GROUP_PIN =
+  /(?<![\w.@/-])(@nifrajs\/[a-z0-9._-]+|create-nifra|nifra)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g
+
+/**
+ * Fixed-group versions other than `version` pinned where `nifra upgrade` does not edit: MCP configs,
+ * container files, CI workflows, and lockfiles besides the workspace's own (which install rewrites).
+ */
+export function strayPins(cwd: string, version: string): StrayPin[] {
+  const found: StrayPin[] = []
+  const files = new Set(STRAY_PIN_FILES.flatMap((pattern) => scan(cwd, pattern, true)))
+  for (const rel of [...files].sort()) {
+    const lockfile = LOCKFILE.test(rel)
+    if (lockfile && !/[\\/]/.test(rel)) continue
+    let text: string
+    try {
+      if (statSync(join(cwd, rel)).size > 8_000_000) continue
+      text = readFileSync(join(cwd, rel), "utf8")
+    } catch {
+      continue
+    }
+    const stale = [...text.matchAll(GROUP_PIN)].filter(
+      (match) => compareSemverSpec(match[2] ?? "", version) !== 0,
+    )
+    const site = (match: RegExpMatchArray, more: number): StrayPin => ({
+      file: rel,
+      line: text.slice(0, match.index ?? 0).split("\n").length,
+      pin: match[0],
+      lockfile,
+      more,
+    })
+    const first = stale[0]
+    if (first === undefined) continue
+    if (lockfile) found.push(site(first, stale.length - 1))
+    else for (const match of stale) found.push(site(match, 0))
+  }
+  return found
+}
+
+/** An installed fixed-group package, followed to its real location. */
+export interface LinkedGroupInstall {
+  readonly package: string
+  readonly path: string
+  readonly version: string
+}
+
+const packageVersionAt = (dir: string): string | undefined => {
+  try {
+    const meta: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))
+    const version = Reflect.get(Object(meta), "version")
+    return typeof version === "string" && version.length > 0 ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Every fixed-group package installed in `cwd/node_modules`, realpath-resolved so a linked repository
+ * reports its own version. `inside` is false for one that resolves outside the workspace root.
+ */
+export function installedGroupPackages(
+  cwd: string,
+): readonly (LinkedGroupInstall & { readonly inside: boolean })[] {
+  const modules = join(cwd, "node_modules")
+  const names = ["nifra", "create-nifra"].filter((name) => existsSync(join(modules, name)))
+  try {
+    for (const name of readdirSync(join(modules, "@nifrajs"))) names.push(`@nifrajs/${name}`)
+  } catch {
+    // No scoped installs.
+  }
+  let root: string
+  try {
+    root = realpathSync(cwd)
+  } catch {
+    root = cwd
+  }
+  const found: (LinkedGroupInstall & { inside: boolean })[] = []
+  for (const name of names) {
+    let path: string
+    try {
+      path = realpathSync(join(modules, name))
+    } catch {
+      continue
+    }
+    const version = packageVersionAt(path)
+    if (version === undefined) continue
+    found.push({
+      package: name,
+      path,
+      version,
+      inside: path === root || path.startsWith(root + sep),
+    })
+  }
+  return found
+}
+
+/**
+ * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
+ * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ */
+export function installedGroupVersion(cwd: string): string | null {
+  let lowest: string | null = null
+  for (const version of groupPinVersions(cwd).keys()) {
+    if (lowest === null || compareSemverSpec(version, lowest) < 0) lowest = version
   }
   return lowest
 }
@@ -475,6 +736,7 @@ export function chainRecipes(target: string, installed: string | null): ChainedR
     pins: [...pins].map(([match, to]) => ({ match, to })),
     dependencyMoves: recipes.flatMap((recipe) => recipe.dependencyMoves ?? []),
     importMoves: recipes.flatMap((recipe) => recipe.importMoves),
+    retiredMarkers: recipes.flatMap((recipe) => recipe.retiredMarkers ?? []),
     notes: recipes.flatMap((recipe) =>
       (recipe.notes ?? []).map((note) => `${recipe.version}: ${note}`),
     ),
@@ -493,6 +755,10 @@ export function computeUpgrade(
   const dependencyMoves: DependencyMoveChange[] = []
   const importMoves: ImportChange[] = []
   const downgrades: PinChange[] = []
+  const retiredMarkers: RetiredMarkerSite[] = []
+  const linkedOutside = installedGroupPackages(cwd)
+    .filter((entry) => !entry.inside && entry.version !== recipe.version)
+    .map(({ package: name, path, version }) => ({ package: name, path, version }))
 
   if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
@@ -518,12 +784,36 @@ export function computeUpgrade(
     }
   }
 
+  // Read after the import moves, so a listed line number is the one the file has after `--write`.
+  const retired = recipe.retiredMarkers ?? []
+  if (retired.length > 0) {
+    for (const rel of scan(cwd, SOURCE_GLOB)) {
+      const text = readFileSync(join(cwd, rel), "utf8")
+      if (!retired.some(({ marker }) => text.includes(marker))) continue
+      const lines = text.split("\n")
+      for (let line = 1; line <= lines.length; line++) {
+        for (const { marker, instead } of retired) {
+          if (!(lines[line - 1] ?? "").includes(marker)) continue
+          const target = markerTarget(lines, line)
+          const covers =
+            target === undefined
+              ? undefined
+              : { line: target, text: (lines[target - 1] ?? "").trim() }
+          retiredMarkers.push({ file: rel, line, marker, covers, instead })
+        }
+      }
+    }
+  }
+
   return {
     version: recipe.version,
     pins,
     dependencyMoves,
     importMoves,
     downgrades,
+    retiredMarkers,
+    linkedOutside,
+    strayPins: strayPins(cwd, recipe.version),
     notes: recipe.notes ?? [],
   }
 }
@@ -548,7 +838,10 @@ function renderPlan(
   if (
     plan.pins.length === 0 &&
     plan.dependencyMoves.length === 0 &&
-    plan.importMoves.length === 0
+    plan.importMoves.length === 0 &&
+    plan.retiredMarkers.length === 0 &&
+    plan.linkedOutside.length === 0 &&
+    plan.strayPins.length === 0
   ) {
     lines.push("Already up to date - no changes.")
     return lines.join("\n")
@@ -575,6 +868,45 @@ function renderPlan(
     for (const m of plan.importMoves) lines.push(`  ${m.file}  ${m.from} → ${m.to}  (${m.count})`)
     lines.push("")
   }
+  if (plan.retiredMarkers.length > 0) {
+    lines.push(
+      `${plan.retiredMarkers.length} retired comment(s) that silence nothing now; nifra check reports what each covered:`,
+    )
+    for (const site of plan.retiredMarkers) {
+      const covers =
+        site.covers === undefined
+          ? "covers no line"
+          : `covers line ${site.covers.line}: ${site.covers.text}`
+      lines.push(`  ${site.file}:${site.line}  ${site.marker}  ${covers}`)
+      lines.push(`    write instead: ${site.instead}`)
+    }
+    lines.push("")
+  }
+  if (plan.linkedOutside.length > 0) {
+    lines.push(
+      "Left alone, linked from outside the workspace root (upgrade that repository on its own):",
+    )
+    for (const entry of plan.linkedOutside)
+      lines.push(`  ${entry.package} ${entry.version} at ${entry.path}`)
+    lines.push("")
+  }
+  const pinned = plan.strayPins.filter((site) => !site.lockfile)
+  if (pinned.length > 0) {
+    lines.push(`Left alone, another version pinned outside package.json (update by hand):`)
+    for (const site of pinned) lines.push(`  ${site.file}:${site.line}  ${site.pin}`)
+    lines.push("")
+  }
+  const locks = plan.strayPins.filter((site) => site.lockfile)
+  if (locks.length > 0) {
+    lines.push(
+      `Left alone, a lockfile besides the workspace's own (regenerate it after installing):`,
+    )
+    for (const site of locks) {
+      const more = site.more === 0 ? "" : ` and ${site.more} more`
+      lines.push(`  ${site.file}:${site.line}  ${site.pin}${more}`)
+    }
+    lines.push("")
+  }
   for (const note of plan.notes) lines.push(`note: ${note}`)
   if (!write) lines.push("\nRe-run with --write to apply, then nifra check verifies.")
   return lines.join("\n").trimEnd()
@@ -590,6 +922,74 @@ function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[
     "`nifra upgrade <version>` sets each pin to exactly <version>; an older target on a newer install",
     "rolls dependencies backward and can violate a shared-package peer range. Target a version >= the",
     "installed one, or pass --allow-downgrade if the rollback is intended.",
+  ].join("\n")
+}
+
+/** The hook report around `--write`: the diff and where the pre-upgrade report was saved, or why not. */
+export type UpgradeHookScope =
+  | { readonly saved: string; readonly changes: readonly HookReportChange[] }
+  | { readonly error: string; readonly saved?: string }
+
+async function hookReportBefore(cwd: string): Promise<ReflectedHookReport | { error: string }> {
+  try {
+    const { loadBackendApp } = await import("./load.ts")
+    const { backend } = await loadBackendApp(cwd)
+    return await collectHookReport(backend)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** The report after the edits, from a fresh process: the edited sources must not come from this one's
+ * module cache. Saves the pre-upgrade report for `nifra routes --hooks --since` after an install. */
+async function hookScopeAcross(
+  cwd: string,
+  before: ReflectedHookReport | { error: string },
+): Promise<UpgradeHookScope> {
+  if ("error" in before) return { error: before.error }
+  const saved = join(cwd, HOOKS_BEFORE_UPGRADE_FILE)
+  mkdirSync(dirname(saved), { recursive: true })
+  writeFileSync(saved, `${JSON.stringify(before, null, 2)}\n`)
+  const entry = fileURLToPath(
+    new URL(import.meta.url.endsWith(".ts") ? "./cli.ts" : "./cli.js", import.meta.url),
+  )
+  const child = Bun.spawn([process.execPath, entry, "routes", "--hooks", "--json"], {
+    cwd,
+    env: process.env,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [text, , code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  const after = parseHookReport(text)
+  if (after === undefined) {
+    return {
+      error: `\`nifra routes --hooks\` exited ${code} after the edits`,
+      saved: HOOKS_BEFORE_UPGRADE_FILE,
+    }
+  }
+  return { saved: HOOKS_BEFORE_UPGRADE_FILE, changes: diffHookReports(before, after) }
+}
+
+function renderHookScope(scope: UpgradeHookScope): string {
+  const since = (saved: string): string[] => [
+    "The new release's hooks run once its packages are installed. After installing, compare against the report saved before the edits:",
+    `  nifra routes --hooks --since ${saved}`,
+  ]
+  if ("error" in scope) {
+    const head = `Hook scope: not captured (${scope.error}).`
+    return scope.saved === undefined ? head : [head, ...since(scope.saved)].join("\n")
+  }
+  return [
+    "Hook scope across the edits (nifra routes --hooks):",
+    renderHookDiff(scope.changes)
+      .split("\n")
+      .map((line) => `  ${line}`)
+      .join("\n"),
+    ...since(scope.saved),
   ].join("\n")
 }
 
@@ -609,6 +1009,7 @@ function newerCliCommand(version: string, options: UpgradeOptions): string {
     options.exact === true ? "--exact" : "",
     options.allowDowngrade === true ? "--allow-downgrade" : "",
     options.verify === false ? "--no-verify" : "",
+    options.hooks === false ? "--no-hooks" : "",
     options.json === true ? "--json" : "",
   ].filter((flag) => flag !== "")
   return ["bunx", `@nifrajs/cli@${version}`, "upgrade", version, ...flags].join(" ")
@@ -697,21 +1098,36 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     return false
   }
 
+  const captureHooks = write && options.hooks !== false
+  const before = captureHooks ? await hookReportBefore(cwd) : undefined
   const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact) : preview
-
-  if (options.json) {
-    console.log(JSON.stringify({ ...plan, from, steps: recipe.steps, write }, null, 2))
-  } else {
-    console.log(renderPlan(plan, write, from, recipe.steps))
-  }
+  const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
 
   // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.
-  if (write && options.verify !== false) {
+  const verify = write && options.verify !== false
+  if (options.json) {
+    // The check result rides inside the one JSON document; its human report would break the stream.
+    const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
+    if (hooks !== undefined) report.hooks = hooks
+    let ok = true
+    if (verify) {
+      const { collectProjectVerification } = await import("./verification.ts")
+      const verification = await collectProjectVerification(cwd, { lintsOnly: false })
+      const check = await verification.check()
+      report.check = check
+      ok = check.ok
+    }
+    console.log(JSON.stringify(report, null, 2))
+    return ok
+  }
+  console.log(renderPlan(plan, write, from, recipe.steps))
+  if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
+
+  if (verify) {
     const { runCheck } = await import("./check.ts")
     const ok = await runCheck(cwd, { json: false })
     if (!ok) {
-      if (!options.json)
-        console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
+      console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
       return false
     }
   }

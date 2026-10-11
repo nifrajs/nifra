@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-svelte",
-  "version": "4.0.2",
+  "version": "5.0.0",
   "description": "Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte compiler Bun plugin (@nifrajs/web-svelte/plugin).",
   "keywords": [
     "bun",
@@ -88,6 +88,20 @@
       "bun": "./src/fn.ts",
       "types": "./dist/fn.d.ts",
       "default": "./dist/fn.js"
+    },
+    "./server-components": {
+      "bun": "./src/server-components/server.ts",
+      "types": "./dist/server-components/server.d.ts",
+      "default": "./src/server-components/server.ts"
+    },
+    "./server-components/client": {
+      "bun": "./src/server-components/client.ts",
+      "types": "./dist/server-components/client.d.ts",
+      "default": "./src/server-components/client.ts"
+    },
+    "./server-components/outlet": {
+      "types": "./src/server-components/ServerComponent.svelte.d.ts",
+      "default": "./src/server-components/ServerComponent.svelte"
     }
   },
   "files": [
@@ -96,7 +110,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist && cp src/*.svelte dist/ && cp src/*.svelte.d.ts dist/"
+    "build": "node ../../scripts/gen-component-svelte-types.mjs && tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist && cp src/*.svelte dist/ && cp src/*.svelte.d.ts dist/"
   },
   "license": "MIT",
   "publishConfig": {
@@ -118,7 +132,8 @@
     }
   },
   "devDependencies": {
-    "svelte": "^5.3.0"
+    "svelte": "^5.3.0",
+    "svelte2tsx": "0.7.61"
   },
   "repository": {
     "type": "git",

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   buildManifest,
   createWebApp,
+  notFound,
   type RenderAdapter,
   type RouteModule,
   redirect,
@@ -155,6 +156,20 @@ describe("a redirect answering a navigation's data request", () => {
     expect(res.status).toBe(204)
     expect(res.headers.get(REDIRECT_HEADER)).toBe("/done?ok=1")
     expect(res.headers.getSetCookie()).toEqual(["s=1; Path=/"])
+  })
+
+  test("a native form POST answers the re-render's returned redirect or status as its GET does", async () => {
+    const app = appOf({
+      "login.tsx": {},
+      "save.tsx": { loader: () => redirect("/login"), action: () => ({ ok: true }) },
+      "gone.tsx": { loader: () => notFound(), action: () => ({ ok: true }) },
+    })
+    const post = (path: string) =>
+      app.fetch(new Request(`http://x${path}`, { method: "POST", body: new FormData() }))
+    const saved = await post("/save")
+    expect(saved.status).toBe(303)
+    expect(saved.headers.get("location")).toBe("/login")
+    expect((await post("/gone")).status).toBe(404)
   })
 
   test("a page that answers normally is untouched", async () => {

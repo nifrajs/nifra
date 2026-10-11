@@ -19,6 +19,7 @@ import type {
   CacheOptions,
   CacheOutcome,
   CacheStore,
+  CacheStoreOp,
   SetOptions,
   StoredEntry,
   WrapOptions,
@@ -28,6 +29,18 @@ function assertDuration(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`[nifra/cache] ${name} must be a finite non-negative number`)
   }
+}
+
+const STORE_REPORT_INTERVAL_MS = 60_000
+const STORE_REPORT_DETAIL_CHARS = 200
+
+/** The error's own words with the key cut out, since a store may name the key it failed on. */
+function storeErrorDetail(error: unknown, key: string): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  const redacted = key === "" ? text : text.split(key).join("<key>")
+  return redacted.length > STORE_REPORT_DETAIL_CHARS
+    ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
+    : redacted
 }
 
 function notify(observer: CacheObserver, event: CacheEvent): void {
@@ -73,9 +86,68 @@ export function createCache(options: CacheOptions = {}): Cache {
     ((error, key) =>
       console.error(`[nifra/cache] revalidate ${JSON.stringify(key)} failed:`, error))
 
+  const lastStoreReport = new Map<CacheStoreOp, number>()
+  const reportStoreError = (op: CacheStoreOp, key: string, error: unknown): void => {
+    try {
+      if (options.onStoreError !== undefined) {
+        options.onStoreError(error, { op })
+        return
+      }
+      const last = lastStoreReport.get(op)
+      const at = now()
+      if (last !== undefined && at - last < STORE_REPORT_INTERVAL_MS) return
+      lastStoreReport.set(op, at)
+      console.error(
+        `[nifra/cache] store ${op} failed; loading without the cache (${storeErrorDetail(error, key)})`,
+      )
+    } catch {
+      // A failing reporter must not turn a loaded value into an error.
+    }
+  }
+  /** `wrap`'s read: a store that throws or rejects is a miss, so the loader answers. */
+  const readEntry = async (key: string): Promise<StoredEntry | undefined> => {
+    try {
+      return await store.get(key)
+    } catch (error) {
+      reportStoreError("get", key, error)
+      return undefined
+    }
+  }
+
   const observer = options.observer
   // Single-flight: concurrent loads for the same key share one promise (miss stampede + SWR dedup).
-  const inflight = new Map<string, Promise<unknown>>()
+  // A delete, tag invalidation, clear or newer set withdraws a load's right to store its result, so
+  // a refresh that started before the invalidation cannot write the old value back. A store with
+  // `fence`/`setIfFence` also refuses a load's write after such a change from another cache sharing
+  // it, and a delete, invalidation or clear waits for this cache's async writes it covers, so a store
+  // that applies requests out of order cannot land one of them after it.
+  const inflight = new Map<
+    string,
+    { readonly promise: Promise<unknown>; readonly tags: readonly string[]; withdraw(): void }
+  >()
+  const withdraw = (matches: (key: string, tags: readonly string[]) => boolean): void => {
+    for (const [key, flight] of inflight) {
+      if (!matches(key, flight.tags)) continue
+      flight.withdraw()
+      inflight.delete(key)
+    }
+  }
+  const fencing = typeof store.fence === "function" && typeof store.setIfFence === "function"
+  const writing = new Set<{
+    readonly key: string
+    readonly tags: readonly string[]
+    readonly done: Promise<unknown>
+  }>()
+  // Run a delete, invalidation or clear after every async write it covers has settled.
+  const after = (
+    matches: (key: string, tags: readonly string[]) => boolean,
+    change: () => void | Promise<void>,
+  ): Promise<void> => {
+    const covered: Promise<unknown>[] = []
+    for (const write of writing) if (matches(write.key, write.tags)) covered.push(write.done)
+    if (covered.length === 0) return Promise.resolve(change())
+    return Promise.allSettled(covered).then(change)
+  }
 
   async function get<T = unknown>(key: string): Promise<T | undefined> {
     const entry = await store.get(key)
@@ -86,30 +158,104 @@ export function createCache(options: CacheOptions = {}): Cache {
     return (await store.get(key)) !== undefined
   }
 
-  async function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
+  function entryOf(value: unknown, opts: SetOptions): StoredEntry {
     const ttlMs = opts.ttlMs ?? defaultTtlMs
     const swrMs = opts.swrMs ?? 0
     assertDuration(ttlMs, "ttlMs")
     assertDuration(swrMs, "swrMs")
     const t = now()
-    await store.set(
-      key,
-      { value, staleAt: t + ttlMs, expiresAt: t + ttlMs + swrMs },
-      opts.tags ?? [],
+    return { value, staleAt: t + ttlMs, expiresAt: t + ttlMs + swrMs }
+  }
+
+  async function put(
+    key: string,
+    entry: StoredEntry,
+    tags: readonly string[],
+    fenced?: { readonly token: unknown },
+  ): Promise<void> {
+    const pending =
+      fenced !== undefined && store.setIfFence !== undefined
+        ? store.setIfFence(key, entry, tags, fenced.token)
+        : store.set(key, entry, tags)
+    if (!(pending instanceof Promise)) return
+    const record = { key, tags, done: pending }
+    writing.add(record)
+    try {
+      await pending
+    } finally {
+      writing.delete(record)
+    }
+  }
+
+  async function write<T>(key: string, value: T, opts: SetOptions): Promise<void> {
+    await put(key, entryOf(value, opts), opts.tags ?? [])
+  }
+
+  function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
+    withdraw((flightKey) => flightKey === key)
+    return write(key, value, opts)
+  }
+
+  function remove(key: string): Promise<void> {
+    const matches = (writeKey: string): boolean => writeKey === key
+    withdraw(matches)
+    return after(matches, () => store.delete(key))
+  }
+
+  function invalidateTag(tag: string): Promise<void> {
+    const matches = (_key: string, tags: readonly string[]): boolean => tags.includes(tag)
+    withdraw(matches)
+    return after(matches, () => store.invalidateTag(tag))
+  }
+
+  function clear(): Promise<void> {
+    withdraw(() => true)
+    return after(
+      () => true,
+      () => store.clear(),
     )
   }
 
   function load(key: string, loader: () => unknown, opts: WrapOptions): Promise<unknown> {
     const existing = inflight.get(key)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) return existing.promise
+    let withdrawn = false
     const p = (async () => {
+      // Taken before the loader runs, so a change from another cache during the load refuses its
+      // write. Awaited only when async: a sync store keeps the loader starting synchronously.
+      let fenced: { readonly token: unknown } | undefined
+      let storable = true
+      if (fencing) {
+        try {
+          const token = store.fence?.(key, opts.tags ?? [])
+          fenced = { token: token instanceof Promise ? await token : token }
+        } catch (error) {
+          // Without a token the write could land after another cache's invalidation: load uncached.
+          reportStoreError("fence", key, error)
+          storable = false
+        }
+      }
       const value = await loader()
-      await set(key, value, opts)
+      if (!withdrawn && storable) {
+        // Built outside the try: a bad ttlMs is the caller's error, not a store outage.
+        const entry = entryOf(value, opts)
+        try {
+          await put(key, entry, opts.tags ?? [], fenced)
+        } catch (error) {
+          reportStoreError("set", key, error)
+        }
+      }
       return value
     })().finally(() => {
-      if (inflight.get(key) === p) inflight.delete(key)
+      if (inflight.get(key)?.promise === p) inflight.delete(key)
     })
-    inflight.set(key, p)
+    inflight.set(key, {
+      promise: p,
+      tags: opts.tags ?? [],
+      withdraw: () => {
+        withdrawn = true
+      },
+    })
     return p
   }
 
@@ -143,7 +289,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     loader: () => T,
     opts: WrapOptions = {},
   ): Promise<Awaited<T>> {
-    const entry = await store.get(key)
+    const entry = await readEntry(key)
     if (entry !== undefined) {
       if (now() < entry.staleAt) return entry.value as Awaited<T> // fresh hit
       revalidate(key, loader as () => unknown, opts, undefined) // stale-but-live → serve stale, refresh in background
@@ -200,7 +346,7 @@ export function createCache(options: CacheOptions = {}): Cache {
         const started = performance.now()
         let outcome: CacheOutcome = "error"
         try {
-          const entry = await store.get(key)
+          const entry = await readEntry(key)
           if (entry !== undefined) {
             outcome = readOutcome(entry)
             if (outcome === "stale") revalidate(key, loader, opts, context)
@@ -224,19 +370,10 @@ export function createCache(options: CacheOptions = {}): Cache {
           )
         }
       },
-      delete: (key) =>
-        settle("delete", key, undefined, 0, () => Promise.resolve(store.delete(key)), "ok"),
+      delete: (key) => settle("delete", key, undefined, 0, () => remove(key), "ok"),
       invalidateTag: (tag) =>
-        settle(
-          "invalidateTag",
-          undefined,
-          tag,
-          1,
-          () => Promise.resolve(store.invalidateTag(tag)),
-          "ok",
-        ),
-      clear: () =>
-        settle("clear", undefined, undefined, 0, () => Promise.resolve(store.clear()), "ok"),
+        settle("invalidateTag", undefined, tag, 1, () => invalidateTag(tag), "ok"),
+      clear: () => settle("clear", undefined, undefined, 0, clear, "ok"),
       for: bind,
     }
   }
@@ -251,9 +388,9 @@ export function createCache(options: CacheOptions = {}): Cache {
           has,
           set,
           wrap,
-          delete: (key) => Promise.resolve(store.delete(key)),
-          invalidateTag: (tag) => Promise.resolve(store.invalidateTag(tag)),
-          clear: () => Promise.resolve(store.clear()),
+          delete: remove,
+          invalidateTag,
+          clear,
           for: bind,
         }
       : observed(observer, undefined)

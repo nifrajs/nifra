@@ -16,7 +16,7 @@
  * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and
  * `check:publish` asserts it equals `@nifrajs/core`'s package version.
  */
-export const VERSION = "4.0.2" as const
+export const VERSION = "5.0.0" as const
 
 export type Version = typeof VERSION
 
@@ -54,6 +54,8 @@ export {
   type AuthHeaders,
   type AuthMaybePromise,
   authenticated,
+  isAuthenticatedRequest,
+  markAuthenticatedRequest,
   rejected,
 } from "./server/auth.ts"
 export type {
@@ -116,6 +118,7 @@ export type {
   RouteInfoFor,
 } from "./server/registry.ts"
 export { replacedRequestOf } from "./server/request-lineage.ts"
+export { writableResponse } from "./server/respond.ts"
 export {
   type PlainRender,
   type ResponseResult,
@@ -127,6 +130,7 @@ export {
   type AdmissionDecision,
   type AnyServer,
   type ContextPlugin,
+  type DeclaredMountRoute,
   type DefinePluginResult,
   defineContextPlugin,
   defineIdentityPlugin,
@@ -150,6 +154,7 @@ export {
   type NodeResponseHook,
   type NodeServeOutcome,
   type OnRequestResult,
+  type OpaqueMountDeclaration,
   type PluginTypeCollapsed,
   type PromptArgument,
   type PromptMessage,

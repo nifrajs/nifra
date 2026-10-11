@@ -17,8 +17,10 @@
  * error the Bun build raises. A second production pipeline without those guards is exactly the hole the
  * bundler-neutral module graph was built to close.
  */
+
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve as resolvePath } from "node:path"
+import { singleCopyPackageNames } from "@nifrajs/core/single-copy"
 import {
   type BuildClientOptions,
   type BuildTargetOptions,
@@ -72,6 +74,7 @@ type ViteBuildManifest = Readonly<Record<string, ViteManifestEntry>>
 
 interface ViteModule {
   build(config: Record<string, unknown>): Promise<unknown>
+  loadEnv(mode: string, envDir: string, prefixes: string): Record<string, string>
 }
 
 /** Load the app's Vite. Resolved from `root` so it's the project's copy, not this package's. */
@@ -181,6 +184,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
       // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
       ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
+      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
+      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -220,7 +225,11 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     generatedFiles: [entryFile],
     verified,
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
-    secrets: { env: buildEnv, ...(exemptions ? { exemptions } : {}) },
+    // Vite reads `.env.<mode>` files too; a value only there is still the app's secret to keep.
+    secrets: {
+      env: { ...vite.loadEnv(mode, root, ""), ...buildEnv },
+      ...(exemptions ? { exemptions } : {}),
+    },
   }
   // nifra copies `public/` after the build; the main guard scans it with the bundle.
   const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
@@ -251,7 +260,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
           // Same framework coverage as the Bun build's dedupe plugins, from the one policy table: one
           // physical copy of react/react-dom, preact, and svelte, or a hook-using route gets a second
           // dispatcher/options global. No-op per framework the app does not use.
-          dedupe: [...viteDedupePackages()],
+          dedupe: [...viteDedupePackages(), ...singleCopyPackageNames(root)],
           ...(options.conditions ? { conditions: [...options.conditions] } : {}),
         },
         css: {
@@ -352,14 +361,22 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     routes._404 = c !== undefined ? [c] : []
   }
 
-  // CSS per route - Vite's manifest `css` is the transitive stylesheet set for that entry.
+  // CSS per route. A manifest entry's `css` lists only that chunk's own stylesheets, so a page also
+  // needs those of every chunk it imports statically (a component two routes share gets a chunk of
+  // its own) and the bootstrap's, which every page loads (a stylesheet the client module imports).
+  // The bootstrap's come first: the whole-app stylesheet before any route-scoped one.
   const stylesFor = (files: readonly string[]): readonly string[] => {
     const urls = new Set<string>()
-    for (const file of files) {
-      const key = fileKey.get(file)
-      const entry = key !== undefined ? viteManifest[key] : undefined
+    const seen = new Set<string>()
+    const visit = (key: string | undefined): void => {
+      if (key === undefined || seen.has(key)) return
+      seen.add(key)
+      const entry = viteManifest[key]
       for (const css of entry?.css ?? []) urls.add(url(css))
+      for (const imported of entry?.imports ?? []) visit(imported)
     }
+    visit(entryKey)
+    for (const file of files) visit(fileKey.get(file))
     return [...urls]
   }
   // CSS aggregate - every stylesheet the app emits, the always-safe fallback. With native Vite
@@ -376,8 +393,13 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   // A single aggregate stylesheet is deliberately the route fallback. A per-route `[]` map would
   // suppress it in `createWebApp` and produce unstyled SSR on every route.
   if (css.length > 0 && cssCodeSplit) {
-    for (const route of routeManifest.routes) routeStyles[route.id] = stylesFor(chainFiles(route))
-    if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
+    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
+    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
+    for (const route of routeManifest.routes)
+      routeStyles[route.id] = stylesFor([...chainFiles(route), ...loadingFiles])
+    if (routeManifest.notFound)
+      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
     for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
       routeStyles[id] = stylesFor([
         ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
@@ -574,7 +596,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
           "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
         },
         resolve: {
-          dedupe: ["react", "react-dom"],
+          dedupe: ["react", "react-dom", ...singleCopyPackageNames(root)],
           conditions: [...conditions],
         },
         plugins: [...(options.vitePlugins ?? [])],

@@ -161,6 +161,72 @@ describe("verifyWebhook - generic", () => {
     expect(r).toEqual({ ok: true, payload })
   })
 
+  describe("base64url", () => {
+    const toBase64Url = (buf: ArrayBuffer): string =>
+      toBase64(buf).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+    // A payload whose signature uses both characters base64url swaps in, found once (HMAC is fixed).
+    const signed = (async () => {
+      for (let i = 0; ; i++) {
+        const body = `raw-body-${i}`
+        const sig = toBase64Url(await sign(secret, body))
+        if (sig.includes("-") && sig.includes("_")) return { body, sig }
+      }
+    })()
+    const check = async (body: string, sig: string) =>
+      verifyWebhook(webhookRequest(body, { "x-sig": sig }), secret, {
+        header: "x-sig",
+        encoding: "base64url",
+      })
+
+    test("verifies an unpadded signature containing - and _", async () => {
+      const { body, sig } = await signed
+      expect(sig).toHaveLength(43)
+      expect(await check(body, sig)).toEqual({ ok: true, payload: body })
+    })
+
+    test("verifies the padded form", async () => {
+      const { body, sig } = await signed
+      expect(await check(body, `${sig}=`)).toEqual({ ok: true, payload: body })
+    })
+
+    test("refuses a signature of the wrong length", async () => {
+      const { body, sig } = await signed
+      expect(await check(body, sig.slice(0, -1))).toEqual({
+        ok: false,
+        reason: "invalid_signature",
+      })
+      expect(await check(body, `${sig}AA`)).toEqual({ ok: false, reason: "malformed_signature" })
+      expect(await check(body, `${sig}==`)).toEqual({ ok: false, reason: "malformed_signature" })
+    })
+
+    test("refuses any character outside the alphabet, without throwing", async () => {
+      const { body, sig } = await signed
+      for (const bad of [
+        sig.replace("-", "+"),
+        sig.replace("_", "/"),
+        `${sig.slice(0, 10)}*${sig.slice(11)}`,
+        // Inside the value: HTTP trims the header value's ends before anything reads it.
+        `${sig.slice(0, 5)} ${sig.slice(5)}`,
+        `${sig.slice(0, 20)}=${sig.slice(21)}`,
+        "",
+      ]) {
+        expect(await check(body, bad)).toEqual({
+          ok: false,
+          reason: bad === "" ? "missing_signature" : "malformed_signature",
+        })
+      }
+    })
+
+    test("base64 still refuses the base64url alphabet", async () => {
+      const { body, sig } = await signed
+      const r = await verifyWebhook(webhookRequest(body, { "x-sig": sig }), secret, {
+        header: "x-sig",
+        encoding: "base64",
+      })
+      expect(r).toEqual({ ok: false, reason: "malformed_signature" })
+    })
+  })
+
   test("throws when generic is used without a header (developer error)", async () => {
     const req = webhookRequest(payload, { "x-sig": "abcd" })
     await expect(verifyWebhook(req, secret)).rejects.toThrow(/header.*required/)

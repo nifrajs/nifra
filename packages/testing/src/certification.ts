@@ -252,57 +252,99 @@ export interface CertifiableCacheStore {
   delete(key: string): void | Promise<void>
   invalidateTag(tag: string): void | Promise<void>
   clear(): void | Promise<void>
+  fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>
+  setIfFence?(
+    key: string,
+    entry: CertifiableCacheEntry,
+    tags: readonly string[],
+    token: unknown,
+  ): boolean | Promise<boolean>
 }
 
-export function cacheStoreCertificationProfile(): AdapterCertificationProfile<CertifiableCacheStore> {
+/**
+ * The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence`
+ * refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its
+ * `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load
+ * running in one cache can store a value another cache just invalidated.
+ */
+export function cacheStoreCertificationProfile(
+  options: { readonly fencing?: boolean } = {},
+): AdapterCertificationProfile<CertifiableCacheStore> {
+  // Fresh on any clock until 2100: a store that honors expiry on the wall clock must still keep it.
   const entry = (value: unknown): CertifiableCacheEntry => ({
     value,
-    staleAt: 5_000_000,
-    expiresAt: 6_000_000,
+    staleAt: 4_102_444_800_000,
+    expiresAt: 4_102_448_400_000,
   })
-  return {
-    id: "cache-store",
-    version: 1,
-    capabilities: ["roundtrip", "tag-invalidation", "clear"],
-    checks: [
-      {
-        id: "set-get-delete",
-        capability: "roundtrip",
-        async run(store, context) {
-          const key = context.key("roundtrip")
-          await store.set(key, entry({ answer: 42 }), [])
-          const found = await store.get(key)
-          if (JSON.stringify(found?.value) !== '{"answer":42}') throw new Error("CacheRoundtrip")
+  const capabilities = ["roundtrip", "tag-invalidation", "clear"]
+  const checks: CertificationCheck<CertifiableCacheStore>[] = [
+    {
+      id: "set-get-delete",
+      capability: "roundtrip",
+      async run(store, context) {
+        const key = context.key("roundtrip")
+        await store.set(key, entry({ answer: 42 }), [])
+        const found = await store.get(key)
+        if (JSON.stringify(found?.value) !== '{"answer":42}') throw new Error("CacheRoundtrip")
+        await store.delete(key)
+        if ((await store.get(key)) !== undefined) throw new Error("CacheDelete")
+      },
+    },
+    {
+      id: "invalidate-tag",
+      capability: "tag-invalidation",
+      async run(store, context) {
+        const tagged = context.key("tagged")
+        const other = context.key("other")
+        const tag = context.key("tag")
+        await store.set(tagged, entry(1), [tag])
+        await store.set(other, entry(2), [context.key("other-tag")])
+        await store.invalidateTag(tag)
+        if ((await store.get(tagged)) !== undefined || (await store.get(other))?.value !== 2)
+          throw new Error("CacheTagInvalidation")
+      },
+    },
+    {
+      id: "clear",
+      capability: "clear",
+      async run(store, context) {
+        const key = context.key("clear")
+        await store.set(key, entry(1), [])
+        await store.clear()
+        if ((await store.get(key)) !== undefined) throw new Error("CacheClear")
+      },
+    },
+  ]
+  if (options.fencing === true) {
+    capabilities.push("fenced-write")
+    checks.push({
+      id: "fenced-write",
+      capability: "fenced-write",
+      async run(store, context) {
+        if (store.fence === undefined || store.setIfFence === undefined)
+          throw new Error("CacheFenceMissing")
+        const key = context.key("fenced")
+        const tag = context.key("fenced-tag")
+        const changes: readonly [() => void | Promise<void>, boolean][] = [
+          [() => store.set(context.key("unrelated"), entry(0), []), true],
+          [() => store.invalidateTag(tag), false],
+          [() => store.delete(key), false],
+          [() => store.set(key, entry("newer"), []), false],
+          [() => store.clear(), false],
+        ]
+        for (const [change, writes] of changes) {
           await store.delete(key)
-          if ((await store.get(key)) !== undefined) throw new Error("CacheDelete")
-        },
+          const token = await store.fence(key, [tag])
+          await change()
+          if ((await store.setIfFence(key, entry("loaded"), [tag], token)) !== writes)
+            throw new Error("CacheFencedWrite")
+          if (((await store.get(key))?.value === "loaded") !== writes)
+            throw new Error("CacheFencedWriteStored")
+        }
       },
-      {
-        id: "invalidate-tag",
-        capability: "tag-invalidation",
-        async run(store, context) {
-          const tagged = context.key("tagged")
-          const other = context.key("other")
-          const tag = context.key("tag")
-          await store.set(tagged, entry(1), [tag])
-          await store.set(other, entry(2), [context.key("other-tag")])
-          await store.invalidateTag(tag)
-          if ((await store.get(tagged)) !== undefined || (await store.get(other))?.value !== 2)
-            throw new Error("CacheTagInvalidation")
-        },
-      },
-      {
-        id: "clear",
-        capability: "clear",
-        async run(store, context) {
-          const key = context.key("clear")
-          await store.set(key, entry(1), [])
-          await store.clear()
-          if ((await store.get(key)) !== undefined) throw new Error("CacheClear")
-        },
-      },
-    ],
+    })
   }
+  return { id: "cache-store", version: 2, capabilities, checks }
 }
 
 export interface CertifiableStoredJob {
@@ -368,6 +410,19 @@ export function jobStoreCertificationProfile(
       },
     },
     {
+      // A lease hides the job from every other worker until it runs out, then hands it back.
+      id: "lease-exclusive",
+      capability: "lease-complete",
+      async run(store) {
+        const id = await store.enqueue({ name: "cert", payload: null, runAt: 0, maxAttempts: 3 })
+        const first = await store.lease(0, 1, 100)
+        if (first.length !== 1 || first[0]?.id !== id) throw new Error("JobLease")
+        if ((await store.lease(50, 1, 100)).length !== 0) throw new Error("JobLeaseShared")
+        const expired = await store.lease(101, 1, 100)
+        if (expired.length !== 1 || expired[0]?.id !== id) throw new Error("JobLeaseExpiry")
+      },
+    },
+    {
       id: "retry-schedule",
       capability: "retry-schedule",
       async run(store) {
@@ -422,7 +477,7 @@ export function jobStoreCertificationProfile(
       },
     })
   }
-  return { id: "job-store", version: 1, capabilities, checks }
+  return { id: "job-store", version: 2, capabilities, checks }
 }
 
 export interface CertifiableStorageObject {
@@ -463,10 +518,24 @@ export interface CertifiableStorageAdapter {
   move?(sourceKey: string, destinationKey: string): Promise<void>
 }
 
+/** Keys the storage key contract refuses: a `..` segment anywhere, an absolute path, a backslash, a
+ * NUL, and an empty, `.` or trailing segment. Refusing only `../escape` leaves the rest open. */
+const UNSAFE_STORAGE_KEYS = [
+  "../escape",
+  "cert/../../escape",
+  "/cert/absolute",
+  "cert\\..\\escape",
+  "cert/nul\0",
+  "",
+  "cert//empty-segment",
+  "cert/./dot-segment",
+  "cert/trailing/",
+]
+
 export function storageAdapterCertificationProfile(
   options: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean } = {},
 ): AdapterCertificationProfile<CertifiableStorageAdapter> {
-  const capabilities = ["object-roundtrip", "overwrite", "list-delete"]
+  const capabilities = ["object-roundtrip", "overwrite", "list-delete", "key-safety"]
   const checks: CertificationCheck<CertifiableStorageAdapter>[] = [
     {
       id: "object-roundtrip",
@@ -511,6 +580,29 @@ export function storageAdapterCertificationProfile(
         await store.delete(key)
         if ((await store.exists(key)) || (await store.get(key)) !== null)
           throw new Error("StorageDelete")
+      },
+    },
+    {
+      id: "unsafe-keys",
+      capability: "key-safety",
+      async run(store) {
+        const refuses = async (call: () => Promise<unknown>): Promise<boolean> => {
+          try {
+            await call()
+            return false
+          } catch {
+            return true
+          }
+        }
+        for (const key of UNSAFE_STORAGE_KEYS) {
+          const refused = await Promise.all([
+            refuses(() => store.put(key, "x")),
+            refuses(() => store.get(key)),
+            refuses(() => store.exists(key)),
+            refuses(() => store.delete(key)),
+          ])
+          if (refused.includes(false)) throw new Error("StorageUnsafeKey")
+        }
       },
     },
   ]
@@ -576,7 +668,7 @@ export function storageAdapterCertificationProfile(
   }
   return {
     id: "storage-adapter",
-    version: 1,
+    version: 2,
     capabilities,
     checks,
   }

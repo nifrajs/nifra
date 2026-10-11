@@ -461,6 +461,25 @@ export async function executeTool<Input, Output>(
       ...(tool.cost === undefined ? {} : { cost: tool.cost }),
     })
   }
+  // A failed abandon leaves the key reserved until its lease lapses, as a failed renewal does; the
+  // call's own outcome still stands.
+  const abandon = async (): Promise<void> => {
+    if (reservation === undefined) return
+    try {
+      await options.idempotency?.abandon(reservationInput(reservation))
+    } catch {}
+  }
+  // Once the executor has run, the reservation is never released: a retry would repeat a side effect
+  // that may have committed. A store that throws on completion counts as one that refused it.
+  let executed = false
+  const complete = async (): Promise<boolean> => {
+    if (reservation === undefined) return true
+    try {
+      return (await options.idempotency?.complete(reservationInput(reservation))) === true
+    } catch {
+      return false
+    }
+  }
   type ToolCallOutcome =
     | { readonly ok: true; readonly dryRun: boolean; readonly output?: Output }
     | { readonly ok: false; readonly dryRun: boolean; readonly error: ToolError }
@@ -625,22 +644,19 @@ export async function executeTool<Input, Output>(
     record("idempotency", tool.idempotency === undefined ? "skipped" : "passed")
 
     if (options.budget !== undefined && !options.budget.consume(tool.cost)) {
-      if (reservation !== undefined)
-        await options.idempotency?.abandon(reservationInput(reservation))
+      await abandon()
       record("budget", "denied", "budget_exceeded")
       return finish({ ok: false, dryRun, error: { code: "budget_exceeded", stage: "budget" } })
     }
     record("budget", tool.cost === undefined ? "skipped" : "passed")
 
     if (signal.aborted) {
-      if (reservation !== undefined)
-        await options.idempotency?.abandon(reservationInput(reservation))
+      await abandon()
       record("execution", "denied", "cancelled")
       return finish({ ok: false, dryRun, error: { code: "cancelled", stage: "execution" } })
     }
     if (dryRun) {
-      if (reservation !== undefined)
-        await options.idempotency?.abandon(reservationInput(reservation))
+      await abandon()
       record("execution", "dry-run")
       return finish({ ok: true, dryRun })
     }
@@ -651,21 +667,19 @@ export async function executeTool<Input, Output>(
       dryRun,
       ...(tool.policy === undefined ? {} : { policy: tool.policy }),
     })
+    executed = true
     record("execution", "committed")
     const validatedOutput = await validateStandard(tool.output, output)
     if (!validatedOutput.ok) {
       // The executor has already run. Keep the reservation completed even when its return shape is
       // invalid, so a caller cannot retry and duplicate a side effect that may have committed.
-      if (reservation !== undefined) {
-        const completed = await options.idempotency?.complete(reservationInput(reservation))
-        if (completed !== true) {
-          record("idempotency", "failed", "idempotency_capacity")
-          return finish({
-            ok: false,
-            dryRun,
-            error: { code: "idempotency_capacity", stage: "idempotency" },
-          })
-        }
+      if (!(await complete())) {
+        record("idempotency", "failed", "idempotency_capacity")
+        return finish({
+          ok: false,
+          dryRun,
+          error: { code: "idempotency_capacity", stage: "idempotency" },
+        })
       }
       record("output", "failed", "output_invalid")
       return finish({
@@ -675,20 +689,17 @@ export async function executeTool<Input, Output>(
       })
     }
     record("output", "passed")
-    if (reservation !== undefined) {
-      const completed = await options.idempotency?.complete(reservationInput(reservation))
-      if (completed !== true) {
-        record("idempotency", "failed", "idempotency_capacity")
-        return finish({
-          ok: false,
-          dryRun,
-          error: { code: "idempotency_capacity", stage: "idempotency" },
-        })
-      }
+    if (!(await complete())) {
+      record("idempotency", "failed", "idempotency_capacity")
+      return finish({
+        ok: false,
+        dryRun,
+        error: { code: "idempotency_capacity", stage: "idempotency" },
+      })
     }
     return finish({ ok: true, dryRun, output: validatedOutput.value })
   } catch (error) {
-    if (reservation !== undefined) await options.idempotency?.abandon(reservationInput(reservation))
+    if (!executed) await abandon()
     const code = signal.aborted || isAbortError(error) ? "cancelled" : "execution_failed"
     record("execution", "failed", code)
     return finish({ ok: false, dryRun, error: { code, stage: "execution" } })
@@ -788,18 +799,35 @@ export function toolHttpResult<Output>(result: ToolCallResult<Output>): Response
       ? { ok: true, output: result.output, dryRun: result.dryRun, evidence: result.evidence }
       : { ok: false, error: result.error, dryRun: result.dryRun, evidence: result.evidence },
   )
-  const status = result.ok
-    ? 200
-    : result.error.code === "input_invalid"
-      ? 422
-      : result.error.code === "approval_required" ||
-          result.error.code === "approval_denied" ||
-          result.error.code === "capability_denied"
-        ? 403
-        : result.error.code === "budget_exceeded"
-          ? 429
-          : 500
-  return new Response(body, { status, headers: { "content-type": "application/json" } })
+  const headers: Record<string, string> = { "content-type": "application/json" }
+  const status = result.ok ? 200 : toolErrorStatus(result.error.code)
+  // The idempotency refusals answer as the HTTP idempotency lane does, a retry included.
+  if (!result.ok && retryableIdempotency(result.error.code)) headers["retry-after"] = "1"
+  return new Response(body, { status, headers })
+}
+
+function retryableIdempotency(code: ToolError["code"]): boolean {
+  return code === "idempotency_in_flight" || code === "idempotency_capacity"
+}
+
+function toolErrorStatus(code: ToolError["code"]): number {
+  switch (code) {
+    case "input_invalid":
+      return 422
+    case "approval_required":
+    case "approval_denied":
+    case "capability_denied":
+      return 403
+    case "idempotency_duplicate":
+    case "idempotency_in_flight":
+      return 409
+    case "budget_exceeded":
+      return 429
+    case "idempotency_capacity":
+      return 503
+    default:
+      return 500
+  }
 }
 
 export function toolInputJsonSchema<Input, Output>(

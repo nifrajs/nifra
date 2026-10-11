@@ -171,6 +171,17 @@ test("allowedHosts rejects an untrusted Host on both fast GET and POST paths", a
   expect(post.status).toBe(400)
 })
 
+test("a Host name with an underscore is served, as a container service name often has one", async () => {
+  const app = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+  running = await serve(app, { hostname: "127.0.0.1", port: 0, allowedHosts: ["api_gateway:3000"] })
+  const base = `http://127.0.0.1:${running.port}`
+  const ok = await fetch(`${base}/host`, { headers: { host: "api_gateway:3000" } })
+  expect(ok.status).toBe(200)
+  expect(await ok.json()).toEqual({ origin: "http://api_gateway:3000" })
+  const bad = await fetch(`${base}/host`, { headers: { host: "api!gateway:3000" } })
+  expect(bad.status).toBe(400)
+})
+
 test("canonicalHost controls request URL construction and the default remains Host-derived", async () => {
   const canonicalApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
   running = await serve(canonicalApp, {
@@ -1477,10 +1488,13 @@ test("SECURITY: c.req.clone() inherits the route cap on the lazy source", async 
   expect(cloneStatus).toBe(413)
 })
 
-test("a thrown Response ships the cookies queued before it, as a returned one does", async () => {
+test("a thrown Response ships the c.set state queued before it, as a returned one does", async () => {
   // Write-guarded headers, as `Response.redirect()` has on Node (Bun leaves them writable).
   class GuardedHeaders extends Headers {
     override append(): void {
+      throw new TypeError("immutable")
+    }
+    override set(): void {
       throw new TypeError("immutable")
     }
   }
@@ -1505,6 +1519,7 @@ test("a thrown Response ships the cookies queued before it, as a returned one do
     })
     .get("/thrown-guarded", (c) => {
       c.set.cookie("sid", "abc")
+      c.set.headers["x-from-set"] = "1"
       throw redirect(true)
     })
     .get("/returned-guarded", (c) => {
@@ -1517,7 +1532,7 @@ test("a thrown Response ships the cookies queued before it, as a returned one do
     const res = await fetch(`http://127.0.0.1:${running.port}${path}`, { redirect: "manual" })
     expect(res.status).toBe(303)
     expect(res.headers.get("location")).toBe("/home")
-    expect(res.headers.get("x-from-set")).toBeNull()
+    expect(res.headers.get("x-from-set")).toBe(path.startsWith("/thrown") ? "1" : null)
     expect(res.headers.getSetCookie()).toEqual(["sid=abc; Path=/; HttpOnly; Secure; SameSite=Lax"])
   }
 })

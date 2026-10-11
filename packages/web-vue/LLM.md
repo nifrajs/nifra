@@ -10,12 +10,14 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 
 ## Public entrypoints
 
-`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/svg`
+`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/server-components` · `@nifrajs/web-vue/server-components/client` · `@nifrajs/web-vue/server-components/outlet` · `@nifrajs/web-vue/svg`
 
 ## Key exports
 
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => VNode` · from `@nifrajs/web-vue/server-components/outlet`
 - **compileVue** _(function)_ - `compileVue: (source: string, filename: string, generate: "dom" | "ssr") => string` · from `@nifrajs/web-vue/plugin`
 - **compileVueStyles** _(function)_ - `compileVueStyles: (source: string, filename: string) => string` · from `@nifrajs/web-vue/plugin`
+- **createServerComponentOutlet** _(function)_ - `createServerComponentOutlet: <Input, Props, View>(component: Handle<Input, Props, View>) => FunctionalComponent<Omit<ServerComponentProps<I…` · from `@nifrajs/web-vue/server-components/outlet`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-vue/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-vue/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
@@ -26,12 +28,11 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-vue/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>` · from `@nifrajs/web-vue/fetcher`
 - **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>` · from `@nifrajs/web-vue/router`
-- **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-vue/router`
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
 
-_…and 24 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 29 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 
+- The optional Vite component pipeline compiles SFCs without a Bun preload. Use vueServerComponents and vueComponentClient; specialize createServerComponentOutlet(handle) to preserve schema input types in h() and templates. Native contexts are local to each owned root.
 - The `.vue` SFC compiler is a **Bun plugin** (`@nifrajs/web-vue/plugin`) you must preload for server rendering - without it the SFC import fails at build/SSR.
 - `<style scoped>` is compiled and folded into the app stylesheet; no runtime, no FOUC.

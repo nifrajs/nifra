@@ -15,6 +15,7 @@ import type { ProtoPoisoning } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import { responseJsonContentType } from "./respond.ts"
 import {
+  CONTEXT_REQUEST,
   CONTEXT_SEARCH,
   CONTEXT_SET,
   fallbackWaitUntil,
@@ -254,6 +255,10 @@ export class RequestContext implements RawContext {
 
   [CONTEXT_SET](): CtxSet | undefined {
     return this.setValue
+  }
+
+  get [CONTEXT_REQUEST](): Request {
+    return requestOf(this.source)
   }
 
   get [CONTEXT_SEARCH](): string {

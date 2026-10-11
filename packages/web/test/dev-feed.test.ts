@@ -131,7 +131,7 @@ test("entries recorded inside a request carry its id and link to its trace", () 
   expect(trace).toMatchObject({
     requestId: "r7",
     method: "POST",
-    path: "/orders?x=1",
+    path: "/orders?x=[redacted]",
     status: 500,
     bytes: 21,
     isr: "MISS",
@@ -229,6 +229,29 @@ test("secrets never enter the feed: messages, stacks, codeframes, request URLs, 
   expect(entry.diagnostic.codeframe?.lines[0]?.text).toContain("[redacted:Stripe secret key]")
   feed.recordLog("log", "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123")
   expect(feed.logs().logs.at(-1)?.message).not.toContain("abcdefghijklmnopqrstuvwxyz0123")
+})
+
+test("query values never enter the feed: a ticket no pattern knows is still dropped", () => {
+  const root = tempRoot()
+  const feed = createDevFeed({ root, env: {} })
+  const ticket = "t1-opaque-single-use"
+  feed.startRequest("r1", "GET", `/ws?ticket=${ticket}&page=2`)
+  feed.recordError(fail("x"), {
+    category: "page",
+    page: `/inbox?ticket=${ticket}`,
+    request: { method: "GET", url: `http://localhost/ws?ticket=${ticket}` },
+  })
+  feed.recordLog("warn", "browser", { source: "browser", page: `/inbox?${ticket}` })
+  const text = JSON.stringify([feed.requests(), feed.errors(), feed.logs()])
+  expect(text).not.toContain(ticket)
+  expect(feed.requests().requests[0]?.path).toBe("/ws?ticket=[redacted]&page=[redacted]")
+  expect(feed.logs().logs[0]?.page).toBe("/inbox?[redacted]")
+  feed.close()
+  expect(readFileSync(join(root, DEV_SERVER_LOG_FILE), "utf8")).not.toContain(ticket)
+  feed.startRequest("r2", "GET", "/a?")
+  feed.startRequest("r3", "GET", "/a?&k=v=w&&#frag")
+  const paths = Object.fromEntries(feed.requests().requests.map((r) => [r.requestId, r.path]))
+  expect([paths.r2, paths.r3]).toEqual(["/a", "/a?k=[redacted]"])
 })
 
 test("long messages are capped, never dropped", () => {

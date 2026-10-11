@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test"
-import { scanStaticRouteText } from "../src/check.ts"
+import { describe, expect, spyOn, test } from "bun:test"
+import * as core from "@nifrajs/core"
+import { scanStaticRouteText, scanUnresolvedRoutePaths } from "../src/check.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { routeRules } from "../src/rules/routes.ts"
 import { projectFacts } from "./rule-facts.ts"
@@ -66,12 +67,12 @@ describe("NF-C018 reserved client segment", () => {
     expect(findings.filter((f) => f.code === "NF-C018")).toEqual([])
   })
 
-  test("the nifra-expect reserved-segment pragma suppresses, from anywhere in the comment block", async () => {
+  test("a nifra-expect NF-C018 comment suppresses, from anywhere in the comment block", async () => {
     const findings = await scan(
       "backend.ts",
       backend([
         "  // Served only to the external webhook consumer, never the typed client.",
-        "  // nifra-expect reserved-segment",
+        "  // nifra-expect NF-C018",
         "  // The path is part of the partner contract and cannot be renamed.",
         '  .post("/hooks/delete", () => ({}))',
         '  .post("/api/delete", () => ({}))', // no pragma - still flagged
@@ -157,7 +158,38 @@ describe("NF-C024 overlapping route registration", () => {
     expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
   })
 
-  test("supports a route-local suppression pragma", async () => {
+  test("routes whose leading literal segments differ are never compared", async () => {
+    const overlap = spyOn(core, "routePatternOverlap")
+    try {
+      const routes = Array.from({ length: 40 }, (_, i) => `  .get("/r${i}/:id/items", () => ({}))`)
+      const findings = await scan("backend.ts", backend(routes))
+      expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+      expect(overlap).not.toHaveBeenCalled()
+
+      await scan(
+        "backend.ts",
+        backend(['  .get("/users/:id", () => ({}))', '  .get("/users/me", () => ({}))']),
+      )
+      expect(overlap).toHaveBeenCalledTimes(1)
+    } finally {
+      overlap.mockRestore()
+    }
+  })
+
+  test("a nifra-expect comment with a reason silences the pair, by code or slug", async () => {
+    for (const comment of [
+      "  // nifra-expect NF-C024: /users/me answers first on purpose",
+      "  // nifra-expect route-overlap: /users/me answers first on purpose",
+    ]) {
+      const findings = await scan(
+        "backend.ts",
+        backend(['  .get("/users/:id", () => ({}))', comment, '  .get("/users/me", () => ({}))']),
+      )
+      expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+    }
+  })
+
+  test("an overlap is an error, so a comment without a reason does not silence it", async () => {
     const findings = await scan(
       "backend.ts",
       backend([
@@ -166,7 +198,9 @@ describe("NF-C024 overlapping route registration", () => {
         '  .get("/users/me", () => ({}))',
       ]),
     )
-    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+    const overlap = findings.find((f) => f.code === "NF-C024")
+    expect(overlap?.severity).toBe("error")
+    expect(overlap?.message).toContain("gives no reason")
   })
 
   test("does not crash on malformed route facts", async () => {
@@ -457,5 +491,50 @@ describe("routes registered by all() and method()", () => {
       withMethods(['  .use(all("/items/:id", handler))', '  .use(all("/items/new", handler))']),
     )
     expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
+})
+
+describe("NF-C036 route path the static scan cannot read", () => {
+  async function scanPaths(content: string) {
+    const base = projectFacts("backend.ts", content, scanStaticRouteText("backend.ts", content))
+    const facts = {
+      ...base,
+      sourceFindings: {
+        ...base.sourceFindings,
+        routePaths: scanUnresolvedRoutePaths("backend.ts", content),
+      },
+    }
+    const findings = await runRuleRegistry(
+      { root: "/tmp/project", sources: facts.source, project: facts },
+      routeRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C036")
+  }
+
+  test("names the expression, as information", async () => {
+    const findings = await scanPaths(
+      backend(['  .get("/plain", list)', "  .get(`${PREFIX}/users`, list)"]),
+    )
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatchObject({ severity: "info", file: "backend.ts", line: 4 })
+    expect(findings[0]?.message).toContain("GET `${PREFIX}/users`")
+    expect(findings[0]?.message).toContain("as const")
+  })
+
+  test("a marker above the registration accepts it", async () => {
+    const findings = await scanPaths(
+      backend([
+        "  // nifra-expect NF-C036: the prefix comes from deploy config",
+        "  .get(`${PREFIX}/users`, list)",
+      ]),
+    )
+    expect(findings).toEqual([])
+  })
+
+  test("information needs no reason after the code", async () => {
+    const findings = await scanPaths(
+      backend(["  // nifra-expect NF-C036", "  .get(`${PREFIX}/users`, list)"]),
+    )
+    expect(findings).toEqual([])
   })
 })

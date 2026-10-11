@@ -41,6 +41,36 @@ export default defineAssuranceConfig({
   },
 })`
 
+const FIXTURES = `// nifra.assurance.ts
+// doc-check: skip - the backend and its seed data are app-specific
+import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+import { createBackend } from "./backend"
+
+export default defineAssuranceConfig({
+  source: createBackend({ rows: new Map() }),
+  policy: { rules: [/* ... */] },
+  invariants: {
+    // Called once, before the first L4 request - never when this file is imported, so
+    // \`nifra check\` and \`nifra assure\` provision nothing.
+    setup: async () => {
+      const rows = new Map([["row_1", { id: "row_1", owner: "fixture" }]])
+      const target = createBackend({ rows })
+      return {
+        executor: (request) => target.fetch(request),
+        teardown: () => rows.clear(), // runs after a failing run too
+      }
+    },
+    // Known-good inputs for schemas L4 cannot synthesize (an opaque validator, a real id).
+    witnesses: { "PATCH /rows/:id": { params: { id: "row_1" }, body: { title: "ok" } } },
+    // Attach what the app needs on every case: a session, a signed token.
+    prepareRequest: (request) => {
+      const headers = new Headers(request.headers)
+      headers.set("cookie", "session=fixture")
+      return new Request(request, { headers })
+    },
+  },
+})`
+
 export default function Verification() {
   return (
     <div className="prose">
@@ -101,6 +131,17 @@ export default function Verification() {
         server by default would be a footgun, and a skipped route is reported rather than passed over
         in silence.
       </p>
+      <p>
+        An app that needs a session, real row ids or signed tokens passes them to the runner instead of
+        rewriting requests inside the executor: <code>witnesses</code>, <code>prepareRequest</code>,{" "}
+        <code>isRejected</code>, <code>include</code> and <code>maxMutationsPerInput</code> on{" "}
+        <code>invariants</code> reach every L4 run, from <code>nifra levels</code> and the{" "}
+        <code>nifra_levels</code> MCP tool alike. <code>setup</code> provisions a throwaway target only
+        when L4 runs: it is called once, before the first L4 request, and its <code>teardown</code>{" "}
+        always runs after the run, a failing one included. The example keeps its target in memory; a
+        database or container belongs in your own <code>setup</code>.
+      </p>
+      <CodeBlock code={FIXTURES} lang="ts" />
 
       <h2>For coding agents</h2>
       <p>

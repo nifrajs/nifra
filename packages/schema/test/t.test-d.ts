@@ -8,7 +8,7 @@ import type { Context, InferOutput } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 import { t as formT } from "../src/form.ts"
-import { t } from "../src/index.ts"
+import { type JsonValue, t } from "../src/index.ts"
 
 const str = t.string()
 const user = t.object({ name: t.string(), age: t.number() })
@@ -16,6 +16,8 @@ const withOptional = t.object({ name: t.string(), nick: t.optional(t.string()) }
 const list = t.array(t.string())
 const either = t.union([t.string(), t.number()])
 const lit = t.literal("active")
+const json = t.json()
+const date = t.date()
 
 export type _String = Expect<Equal<InferOutput<typeof str>, string>>
 export type _Object = Expect<Equal<InferOutput<typeof user>, { name: string; age: number }>>
@@ -25,6 +27,8 @@ export type _Optional = Expect<
 export type _Array = Expect<Equal<InferOutput<typeof list>, string[]>>
 export type _Union = Expect<Equal<InferOutput<typeof either>, string | number>>
 export type _Literal = Expect<Equal<InferOutput<typeof lit>, "active">>
+export type _Json = Expect<Equal<InferOutput<typeof json>, JsonValue>>
+export type _Date = Expect<Equal<InferOutput<typeof date>, Date>>
 
 // The payoff: a `t` schema as a route body types `c.body` end-to-end - asserted on
 // `Context` (exactly what the handler receives), and proven to compile through

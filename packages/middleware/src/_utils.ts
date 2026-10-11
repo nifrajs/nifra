@@ -1,7 +1,13 @@
 export type MaybePromise<T> = T | Promise<T>
 
-import type { NodeResponseContext } from "@nifrajs/core/server"
-import { parseCookies as parseCoreCookies } from "@nifrajs/core/server"
+import type { AnyServer, NodeResponseContext } from "@nifrajs/core/server"
+import {
+  authenticated,
+  markAuthenticatedRequest,
+  parseCookies as parseCoreCookies,
+  rejected,
+  writableResponse,
+} from "@nifrajs/core/server"
 
 export const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"])
 
@@ -28,6 +34,47 @@ let guardInstances = 0
 export function guardName(base: string): string {
   guardInstances += 1
   return `${base}#${guardInstances}`
+}
+
+/** One request header by name, or `null`: what a credential extractor reads. */
+export type HeaderGet = (name: string) => string | null
+
+/**
+ * Install a credential guard. Required, it is an `authenticate()` stage, so a request without a
+ * principal is refused before its body or query is read or validated, and before any `derive` or
+ * `beforeHandle`. Optional never refuses, so it stays a `beforeHandle` that records a principal when
+ * the request carries one.
+ */
+export function installAuthGuard<P>(
+  app: AnyServer,
+  id: string,
+  optional: boolean,
+  store: WeakMap<Request, P>,
+  verify: (header: HeaderGet) => MaybePromise<P | null | undefined>,
+  refuse: () => Response,
+): AnyServer {
+  if (optional) {
+    return app.beforeHandle(async (c: { readonly req: Request }) => {
+      const principal = await verify((name) => c.req.headers.get(name))
+      if (principal !== null && principal !== undefined) {
+        store.set(c.req, principal)
+        markAuthenticatedRequest(c.req)
+      }
+      return undefined
+    })
+  }
+  return app.authenticate({
+    id,
+    mode: "async",
+    run: async (input) => {
+      const principal = await verify((name) => input.headers.get(name))
+      if (principal === null || principal === undefined) {
+        return rejected("unauthenticated", refuse())
+      }
+      store.set(input.request, principal)
+      return authenticated(principal)
+    },
+  })
 }
 
 /** Shared with core so auth/CSRF middleware gets the allocation-light cookie scanner too. */
@@ -163,40 +210,19 @@ export async function verifyHmacSha256(
 }
 
 /**
- * Apply header mutations to a response, in place when possible. Framework-built responses
- * (`new Response`, `Response.json`) have mutable headers across every runtime - so the common path
- * mutates `res` directly and returns it, allocating nothing. Only an *immutable*-headers response
- * (`Response.redirect()`/`Response.error()`, or a proxied `fetch()` response on Node/Deno/workerd -
- * never on Bun) makes `.set`/`.append` throw; that path clones into a fresh `Headers` + `Response`,
- * exactly the old always-clone behavior. `apply` runs once either way (immutability is all-or-nothing
- * - the first mutation throws before any partial change), so a mutation chain is safe to pass.
+ * Apply header mutations to the copy of `res` this request owns (`writableResponse`): a body-bearing
+ * response with mutable headers is written in place, a body-less one (sendable any number of times,
+ * so possibly shared) or one with guarded headers is copied first. Pass the `request` being answered
+ * so a copy already made for it is reused.
  */
-export function withHeaders(res: Response, apply: (headers: Headers) => void): Response {
-  const responseHeaders = res.headers
-  const probe = "x-nifra-header-probe"
-  let previous: string | null = null
-  let mutable = true
-  try {
-    previous = responseHeaders.get(probe)
-    responseHeaders.set(probe, "1")
-    if (previous === null) responseHeaders.delete(probe)
-    else responseHeaders.set(probe, previous)
-  } catch {
-    mutable = false
-    try {
-      if (previous === null) responseHeaders.delete(probe)
-      else responseHeaders.set(probe, previous)
-    } catch {
-      // The guarded response rejected cleanup; the clone below is authoritative.
-    }
-  }
-  if (!mutable) {
-    const headers = new Headers(res.headers)
-    apply(headers)
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-  }
-  apply(responseHeaders)
-  return res
+export function withHeaders(
+  res: Response,
+  apply: (headers: Headers) => void,
+  request?: Request,
+): Response {
+  const target = writableResponse(res, request)
+  apply(target.headers)
+  return target
 }
 
 /**

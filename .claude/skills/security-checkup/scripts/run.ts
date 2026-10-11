@@ -95,7 +95,7 @@ async function main(): Promise<number> {
     semgrepRules: join(skillDir, "rules/semgrep.yml"),
   }
 
-  // Ensure the out dir exists (gitleaks also writes a scratch report there).
+  // Ensure the out dir exists.
   const { mkdirSync } = await import("node:fs")
   mkdirSync(args.out, { recursive: true })
 

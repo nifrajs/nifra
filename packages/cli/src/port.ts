@@ -310,9 +310,10 @@ export function scanFileForFeatures(file: string, content: string, state: ScanSt
 }
 
 // Mirror nifra check/doctor's ignore set: deps, build output, generated/per-runtime dist dirs, VCS.
-// PLUS *.config.* and obvious build scripts (build*.ts) - `port` scans request/app source, not tooling.
+// PLUS *.config.* and build scripts (build.ts, build-<target>.ts, build.<x>.ts) - `port` scans
+// request/app source, not tooling. A source file that merely starts with "build" is still source.
 const IGNORED =
-  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)[^/]*\.config\.[cm]?[jt]sx?$|(^|\/)build[^/]*\.[cm]?[jt]sx?$/
+  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)[^/]*\.config\.[cm]?[jt]sx?$|(^|\/)build(?:[-.][^/]*)?\.[cm]?[jt]sx?$/
 
 /** Walk the project's source (same surface as `nifra check`, minus config + build scripts). */
 async function walkPortSource(

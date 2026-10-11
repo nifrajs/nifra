@@ -1,9 +1,11 @@
 /**
- * One adapter per scanner. Each probe is `(ctx) => Promise<RawFinding[]>`, parses only the tool's
- * STRUCTURED output, and never throws for an operational reason: a missing tool returns a single
- * `tool-unavailable` finding so a silent skip can never read as "clean". Only a malformed finding
- * (a probe bug) is allowed to throw, via toFinding() in report assembly.
+ * One adapter per scanner. Each probe is `(ctx) => Promise<RawFinding[]>` and parses only the tool's
+ * STRUCTURED output. A missing tool returns a single `tool-unavailable` finding so a silent skip can
+ * never read as "clean"; a scanner that ran and failed throws, so the run exits 2 instead.
  */
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { ProbeId, RawFinding, Severity } from "./schema.ts"
 
 export interface ProbeContext {
@@ -46,6 +48,11 @@ async function run(cmd: readonly string[], cwd: string): Promise<Spawned> {
     new Response(child.stderr).text(),
   ])
   return { code, stdout, stderr }
+}
+
+/** A scanner that ran and failed. Thrown, so the run reports exit 2 rather than a clean scan. */
+function scannerFailed(tool: string, out: Spawned): Error {
+  return new Error(`${tool} exited ${out.code}: ${out.stderr.slice(0, 200)}`)
 }
 
 async function which(tool: string): Promise<boolean> {
@@ -124,16 +131,25 @@ export async function depsProbe(ctx: ProbeContext): Promise<ProbeResult> {
     }
   }
   const out = await run(["osv-scanner", "scan", "--format", "json", ...lockArgs], ctx.repoRoot)
-  // osv-scanner exits non-zero when it finds vulns; that is data, not an operational failure.
+  // osv-scanner exits 1 when it finds vulns and 128 when the lockfile lists no packages; that is data.
+  // Any other non-zero exit is the scanner failing, which must not read as a clean scan.
   const findings: RawFinding[] = drift !== undefined ? [drift] : []
+  if (out.code === 128) return { probe, findings, ...(version !== undefined ? { toolVersion: version } : {}) }
+  if (out.code !== 0 && out.code !== 1) throw scannerFailed("osv-scanner", out)
   let parsed: unknown
   try {
     parsed = JSON.parse(out.stdout)
   } catch {
-    // No JSON on an empty/clean scan is normal on some versions; treat as no findings.
-    return { probe, findings, ...(version !== undefined ? { toolVersion: version } : {}) }
+    // No JSON on an empty/clean scan is normal on some versions; a scan that reported findings
+    // (exit 1) without readable JSON lost them.
+    if (out.code === 0 && out.stdout.trim() === "")
+      return { probe, findings, ...(version !== undefined ? { toolVersion: version } : {}) }
+    throw new Error(`osv-scanner exited ${out.code} without a readable JSON report`)
   }
-  const results = (parsed as { results?: unknown[] }).results ?? []
+  const reported = (parsed as { results?: unknown }).results
+  if (reported !== undefined && !Array.isArray(reported))
+    throw new Error("osv-scanner report has no results array")
+  const results = reported ?? []
   for (const result of results as Array<{ packages?: unknown[]; source?: { path?: string } }>) {
     const source = result.source?.path
     for (const pkg of (result.packages ?? []) as Array<{
@@ -177,33 +193,44 @@ export async function secretsProbe(ctx: ProbeContext): Promise<ProbeResult> {
   if (drift !== undefined && ctx.strictTools) {
     throw new Error(`gitleaks version drift under --strict-tools: ${version}`)
   }
-  const reportPath = `${ctx.repoRoot}/.security/.gitleaks-raw.json`
-  const out = await run(
-    ["gitleaks", "detect", "--no-banner", "--report-format", "json", "--report-path", reportPath],
-    ctx.repoRoot,
-  )
-  const findings: RawFinding[] = drift !== undefined ? [{ ...drift, probe }] : []
+  // The tool's own report goes to a private directory that is removed before the probe returns, and
+  // `--redact` keeps secret values out of it even while it exists.
+  const scratch = await mkdtemp(join(tmpdir(), "security-checkup-gitleaks-"))
+  const reportPath = join(scratch, "report.json")
+  let out: Spawned
   let parsed: unknown
   try {
-    parsed = JSON.parse(await Bun.file(reportPath).text())
-  } catch {
-    // gitleaks writes `[]` and exits 0 on a clean tree; a read failure with a non-zero exit is a real
-    // operational problem only if the tool actually errored (not merely "leaks found", exit 1).
-    if (out.code > 1) {
-      return { probe, findings, degraded: `gitleaks exited ${out.code}: ${out.stderr.slice(0, 200)}` }
+    out = await run(
+      [
+        "gitleaks",
+        "detect",
+        "--no-banner",
+        "--redact",
+        "--report-format",
+        "json",
+        "--report-path",
+        reportPath,
+      ],
+      ctx.repoRoot,
+    )
+    // gitleaks exits 1 when it finds leaks; any other non-zero exit is the tool failing.
+    if (out.code > 1) throw scannerFailed("gitleaks", out)
+    try {
+      parsed = JSON.parse(await Bun.file(reportPath).text())
+    } catch {
+      throw new Error(`gitleaks exited ${out.code} without a readable JSON report`)
     }
-    return { probe, findings, ...(version !== undefined ? { toolVersion: version } : {}) }
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
   }
-  for (const leak of (parsed as Array<{
+  const findings: RawFinding[] = drift !== undefined ? [{ ...drift, probe }] : []
+  if (!Array.isArray(parsed)) throw new Error("gitleaks report is not an array")
+  for (const leak of parsed as Array<{
     RuleID?: string
     Description?: string
     File?: string
     StartLine?: number
-    Secret?: string
-    Match?: string
-  }>) ?? []) {
-    // Mask: keep only a short prefix hint, never the secret body, since this artifact hits CI logs.
-    const hint = (leak.Secret ?? leak.Match ?? "").slice(0, 4)
+  }>) {
     findings.push({
       probe,
       severity: "critical",
@@ -211,7 +238,7 @@ export async function secretsProbe(ctx: ProbeContext): Promise<ProbeResult> {
       title: `Possible committed secret: ${leak.RuleID ?? "secret"}`,
       ...(leak.File !== undefined ? { file: leak.File } : {}),
       ...(leak.StartLine !== undefined ? { startLine: leak.StartLine } : {}),
-      detail: `${leak.Description ?? "A secret-like value was found"} (masked hint ${hint}****). Rotate it if live; the raw value is deliberately not written here.`,
+      detail: `${(leak.Description ?? "A secret-like value was found").replace(/\.$/, "")}. Rotate it if live; the value is redacted and never written here.`,
       remediation: `Remove the secret, rotate the credential, and purge it from history if it was pushed.`,
     })
   }
@@ -242,11 +269,13 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
     ctx.repoRoot,
   )
   const findings: RawFinding[] = drift !== undefined ? [{ ...drift, probe }] : []
+  // semgrep exits 1 for findings under --error and 2 or more when the scan itself failed.
+  if (out.code !== 0 && out.code !== 1) throw scannerFailed("semgrep", out)
   let parsed: unknown
   try {
     parsed = JSON.parse(out.stdout)
   } catch {
-    return { probe, findings, degraded: `semgrep produced no JSON (exit ${out.code})` }
+    throw new Error(`semgrep exited ${out.code} without a readable JSON report`)
   }
   for (const hit of (parsed as { results?: unknown[] }).results ?? []) {
     const r = hit as {

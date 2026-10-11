@@ -14,6 +14,7 @@ export { registerFormat } from "./formats.ts"
 export {
   type OpenAPIDocument,
   type OpenAPIInfo,
+  type OpenAPIVersion,
   toOpenAPI,
   toOpenAPIFromEvidence,
 } from "./openapi.ts"
@@ -29,4 +30,4 @@ export {
 } from "./openapi-import.ts"
 // Cursor-pagination runtime helpers - pair with `t.paginated` / `t.pageQuery`.
 export { decodeCursor, encodeCursor, type Page, paginate } from "./pagination.ts"
-export { type DeferredValue, t } from "./t.ts"
+export { type DeferredValue, type JsonValue, t } from "./t.ts"

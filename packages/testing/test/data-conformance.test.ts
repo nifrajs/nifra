@@ -90,6 +90,42 @@ describe("data adapter conformance", () => {
     await expect(assertDataAdapterConformance(target())).resolves.toBeUndefined()
   })
 
+  test("each broken guarantee fails its own check", async () => {
+    const failing = async (
+      broken: Partial<DataAdapterConformanceTarget<Handle, Row, Snapshot>>,
+    ): Promise<string[]> => {
+      const report = await runDataAdapterConformance({ ...target(), ...broken })
+      return Object.entries(report.checks)
+        .filter(([, status]) => status === "fail")
+        .map(([check]) => check)
+    }
+    // Failing for another reason is not honoring the signal.
+    expect(
+      await failing({
+        write: async () => {
+          throw new Error("ECONNREFUSED 10.0.0.5:5432")
+        },
+      }),
+    ).toEqual(["cancellation"])
+    // Nor is reporting an abort after the row was written.
+    expect(
+      await failing({
+        write: async (adapter, scope, row) => {
+          adapter.state.set(scope.token, [...(adapter.state.get(scope.token) ?? []), row])
+          throw new DOMException("cancelled", "AbortError")
+        },
+      }),
+    ).toEqual(["cancellation"])
+    expect(await failing({ page: async () => ({ items: [] }) })).toEqual(["pagination"])
+    expect(
+      await failing({
+        restore: async (adapter) => {
+          adapter.state.clear()
+        },
+      }),
+    ).toEqual(["backup-restore"])
+  })
+
   test("fails closed when a transaction swallows a rejected callback", async () => {
     const report = await runDataAdapterConformance(target(true), {
       scopes: {

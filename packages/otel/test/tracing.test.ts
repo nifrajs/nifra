@@ -49,7 +49,7 @@ describe("tracing plugin", () => {
     expect(typeof span.durationMs).toBe("number")
   })
 
-  test("names the span by its route template, never the raw path", async () => {
+  test("names the span and its url.path by the route template, never the raw path", async () => {
     const c = collector()
     const app = server()
       .use(tracing({ exporter: c.exporter }))
@@ -58,7 +58,16 @@ describe("tracing plugin", () => {
     const span = c.spans[0]!
     expect(span.name).toBe("GET /users/:id")
     expect(span.attributes["http.route"]).toBe("/users/:id")
-    expect(span.attributes["url.path"]).toBe("/users/alice@example.com")
+    expect(span.attributes["url.path"]).toBe("/users/:id")
+  })
+
+  test("rawUrlPath reports the request's own path", async () => {
+    const c = collector()
+    const app = server()
+      .use(tracing({ exporter: c.exporter, rawUrlPath: true }))
+      .get("/users/:id", () => ({ ok: true }))
+    await app.fetch(new Request("http://t/users/alice@example.com"))
+    expect(c.spans[0]!.attributes["url.path"]).toBe("/users/alice@example.com")
   })
 
   test("continues an inbound trace (parent span id + same trace id)", async () => {

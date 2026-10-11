@@ -12,6 +12,7 @@
 
 import {
   type AgentEvent,
+  type AgentExtensionEventType,
   type AgentSessionSnapshot,
   type AgentSessionStatus,
   type ApprovalLifecycleState,
@@ -158,6 +159,39 @@ export interface SessionStoppedView extends EventViewBase {
   readonly kind: "session.stopped"
 }
 
+export interface ReasoningDeltaView extends EventViewBase {
+  readonly kind: "reasoning.delta"
+  readonly turnId: string
+  readonly itemId?: string
+  readonly chars: number
+}
+
+/** A plan as counts per status: its entries' text stays with the event. */
+export interface PlanUpdatedView extends EventViewBase {
+  readonly kind: "plan.updated"
+  readonly turnId: string
+  readonly entries: number
+  readonly inProgress: number
+  readonly completed: number
+}
+
+export interface ContextUsageView extends EventViewBase {
+  readonly kind: "context.usage"
+  readonly turnId?: string
+  readonly usedTokens: number
+  readonly windowTokens?: number
+  /** `usedTokens` over `windowTokens`, capped at 1, when the window is known. */
+  readonly fill?: number
+  readonly estimated: boolean
+}
+
+/** A backend's `x-<vendor>.<name>` event: its type and turn, never its data. */
+export interface ExtensionEventView extends EventViewBase {
+  readonly kind: AgentExtensionEventType
+  readonly turnId?: string
+  readonly hasData: boolean
+}
+
 export type AgentEventView =
   | SessionLifecycleView
   | TurnStartedView
@@ -173,6 +207,10 @@ export type AgentEventView =
   | ExtensionReloadedView
   | SessionFailedView
   | SessionStoppedView
+  | ReasoningDeltaView
+  | PlanUpdatedView
+  | ContextUsageView
+  | ExtensionEventView
 
 /** Project one protocol event to its content-free view. Total over the event union - never returns undefined. */
 export function toEventView(event: AgentEvent): AgentEventView {
@@ -195,6 +233,38 @@ export function toEventView(event: AgentEvent): AgentEventView {
         kind: event.type,
         turnId: event.turnId,
         chars: event.text.length,
+      })
+    case "reasoning.delta":
+      return Object.freeze({
+        ...base,
+        kind: event.type,
+        turnId: event.turnId,
+        ...(event.itemId === undefined ? {} : { itemId: event.itemId }),
+        chars: event.text.length,
+      })
+    case "plan.updated":
+      return Object.freeze({
+        ...base,
+        kind: event.type,
+        turnId: event.turnId,
+        entries: event.entries.length,
+        inProgress: event.entries.filter((entry) => entry.status === "in_progress").length,
+        completed: event.entries.filter((entry) => entry.status === "completed").length,
+      })
+    case "context.usage":
+      return Object.freeze({
+        ...base,
+        kind: event.type,
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        usedTokens: event.usedTokens,
+        ...(event.windowTokens === undefined
+          ? {}
+          : {
+              windowTokens: event.windowTokens,
+              // A zero window cannot hold anything, so any use fills it.
+              fill: event.windowTokens > 0 ? Math.min(1, event.usedTokens / event.windowTokens) : 1,
+            }),
+        estimated: event.estimated === true,
       })
     case "tool.started":
       return Object.freeze({
@@ -277,6 +347,13 @@ export function toEventView(event: AgentEvent): AgentEventView {
       })
     case "session.stopped":
       return Object.freeze({ ...base, kind: event.type })
+    default:
+      return Object.freeze({
+        ...base,
+        kind: event.type,
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        hasData: event.data !== undefined,
+      })
   }
 }
 
@@ -523,6 +600,20 @@ export class OrderedEventBuffer {
   /** Seq the buffer will emit next, or `undefined` before the first event is seen. */
   get expected(): number | undefined {
     return this.next
+  }
+
+  /**
+   * Release every held event in seq order, counting the seqs still missing between them on
+   * {@link dropped}. For a stream that has ended, so no gap can fill any more.
+   */
+  flush(): readonly AgentEventView[] {
+    const held = [...this.pending.values()].sort((a, b) => a.seq - b.seq)
+    this.pending.clear()
+    for (const view of held) {
+      if (this.next !== undefined) this.droppedCount += view.seq - this.next
+      this.next = view.seq + 1
+    }
+    return held
   }
 
   offer(view: AgentEventView): readonly AgentEventView[] {

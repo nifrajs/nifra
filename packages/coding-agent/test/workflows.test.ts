@@ -50,6 +50,54 @@ describe("bounded workflows", () => {
     expect(denied.error).toContain("limit")
   })
 
+  test("a timeout covers workspace acquisition, and a late lease is released unused", async () => {
+    const lease = Promise.withResolvers<{ cwd: string; cleanup: () => void }>()
+    let ran = false
+    let released = 0
+    const runner = new BoundedSubagentRunner(
+      {
+        run: () => {
+          ran = true
+          return "ran"
+        },
+      },
+      { workspace: { root: process.cwd(), isolatedWorktree: () => lease.promise } },
+    )
+    const result = await runner.run({ id: "slow", role: "worker", prompt: "x", timeoutMs: 10 })
+    expect(result).toMatchObject({ ok: false, error: "subagent timed out" })
+    const cleanedUp = Promise.withResolvers<void>()
+    lease.resolve({
+      cwd: process.cwd(),
+      cleanup: () => {
+        released++
+        cleanedUp.resolve()
+      },
+    })
+    await cleanedUp.promise
+    expect(released).toBe(1)
+    expect(ran).toBe(false)
+  })
+
+  test("a lease that fails after the timeout is dropped without an unhandled rejection", async () => {
+    const lease = Promise.withResolvers<{ cwd: string }>()
+    let ran = false
+    const runner = new BoundedSubagentRunner(
+      {
+        run: () => {
+          ran = true
+          return "ran"
+        },
+      },
+      { workspace: { root: process.cwd(), isolatedWorktree: () => lease.promise } },
+    )
+    const result = await runner.run({ id: "failing", role: "worker", prompt: "x", timeoutMs: 10 })
+    expect(result).toMatchObject({ ok: false, error: "subagent timed out" })
+    lease.reject(new Error("no worktree"))
+    await lease.promise.catch(() => {})
+    await Promise.resolve()
+    expect(ran).toBe(false)
+  })
+
   test("supports bounded conditional branches and plan phases", async () => {
     const planEvents: string[] = []
     const plan = await new PlanRunner({

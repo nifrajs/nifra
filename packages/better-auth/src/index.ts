@@ -116,17 +116,57 @@ export function getSession<A extends BetterAuthLike>(
   return result.then((session) => (session == null ? null : session))
 }
 
+/** The response a guard denies a missing session with, in place of the default `401` JSON. */
+export interface UnauthenticatedResponse {
+  /** An error status, 400-599. Default `401`. */
+  readonly status?: number
+  /** The body; present but `undefined` sends none. Default `{ ok: false, error: "unauthorized" }`. */
+  readonly body?: unknown
+  /** Response headers, such as a `www-authenticate` challenge. */
+  readonly headers?: Readonly<Record<string, string>>
+}
+
 /**
  * What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path),
- * or - when omitted - a `401` JSON (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
+ * or - when omitted - the `unauthenticated` response, by default a `401` JSON
+ * (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
  */
 export interface RequireSessionOptions {
   readonly redirectTo?: string
+  readonly unauthenticated?: UnauthenticatedResponse
+}
+
+const UNAUTHORIZED = { ok: false, error: "unauthorized" } as const
+
+/** A dev-authored denial that is not an error status, or that competes with a redirect, fails loud. */
+function assertUnauthenticated(options: {
+  readonly redirectTo?: string
+  readonly unauthenticated?: UnauthenticatedResponse
+}): void {
+  const custom = options.unauthenticated
+  if (custom === undefined) return
+  if (options.redirectTo !== undefined) {
+    throw new Error("[nifra/better-auth] a guard takes redirectTo or unauthenticated, not both")
+  }
+  const code = custom.status
+  if (code !== undefined && (!Number.isInteger(code) || code < 400 || code > 599)) {
+    throw new RangeError(
+      `[nifra/better-auth] guard unauthenticated.status must be an integer 400-599 (got ${String(code)})`,
+    )
+  }
+}
+
+const unauthenticatedResult = (custom: UnauthenticatedResponse | undefined): ResponseResult => {
+  if (custom === undefined) return status(401, UNAUTHORIZED)
+  const body = "body" in custom ? custom.body : UNAUTHORIZED
+  return custom.headers === undefined
+    ? status(custom.status ?? 401, body)
+    : status(custom.status ?? 401, body, { headers: custom.headers })
 }
 
 const rejection = (options: RequireSessionOptions): ResponseResult => {
   const to = options.redirectTo
-  if (to === undefined) return status(401, { ok: false, error: "unauthorized" })
+  if (to === undefined) return unauthenticatedResult(options.unauthenticated)
   return status(302, undefined, { headers: { location: to } })
 }
 
@@ -155,6 +195,7 @@ export async function requireSession<A extends BetterAuthLike>(
   options: RequireSessionOptions = {},
 ): Promise<SessionOf<A>> {
   assertSafeRedirectTo(options.redirectTo, "requireSession")
+  assertUnauthenticated(options)
   const session = await getSession(auth, request)
   if (session !== null) return session
   throw rejection(options)
@@ -195,6 +236,8 @@ export interface AuthedOptions<User> {
   readonly requireTenant?: boolean
   /** Browser redirect target (`302`) for a missing session, instead of the default `401` JSON. Same-origin. */
   readonly redirectTo?: string
+  /** The response for a missing session when there is no `redirectTo`. Default `401` JSON. */
+  readonly unauthenticated?: UnauthenticatedResponse
   /** Resolve the tenant id from the user. Default: `user.tenantId ?? user.orgId` (string-valued only). */
   readonly tenantOf?: (user: User) => string | undefined
 }
@@ -305,11 +348,7 @@ export async function requirePrincipal<
   options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant },
 ): Promise<PrincipalFor<SessionUserOf<A>, RequireTenant>> {
   // Reuse requireSession's throw path (302/redirect or 401) verbatim - one owner for the no-session gate.
-  const session = await requireSession(
-    auth,
-    request,
-    options?.redirectTo !== undefined ? { redirectTo: options.redirectTo } : {},
-  )
+  const session = await requireSession(auth, request, options ?? {})
   // better-auth sessions are `{ user: { id: string, ... }, session: { id: string, ... } }`; view the
   // fields we map. The concrete user type flows through `SessionUserOf<A>` for `principal.user`.
   const mapped = principalFromSession(session, options)
@@ -346,6 +385,7 @@ export function authed<A extends BetterAuthLike, const RequireTenant extends boo
   app: S,
 ) => WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>> {
   assertSafeRedirectTo(options?.redirectTo, "authed")
+  assertUnauthenticated(options ?? {})
   const plugin = <S extends AnyServer>(app: S) =>
     app.authenticate({
       id: "better-auth",
@@ -354,12 +394,7 @@ export function authed<A extends BetterAuthLike, const RequireTenant extends boo
         try {
           const session = await getSession(auth, input.headers)
           if (session === null) {
-            return rejected(
-              "unauthenticated",
-              rejection(
-                options?.redirectTo === undefined ? {} : { redirectTo: options.redirectTo },
-              ),
-            )
+            return rejected("unauthenticated", rejection(options ?? {}))
           }
           const mapped = principalFromSession(session, options)
           if (mapped.kind === "forbidden") return rejected("forbidden")

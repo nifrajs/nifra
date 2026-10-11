@@ -106,7 +106,10 @@ export type ComparisonCode =
   | "improved"
   | "tolerated"
   | "regressed"
+  /** The baseline has a verdict the current report no longer produces. */
   | "missing"
+  /** The current report has a verdict the baseline lacks. */
+  | "added"
   | "incomparable"
 
 /** Explicit tolerance for a score regression. `rubricId` omitted applies to every rubric. */
@@ -120,7 +123,10 @@ export interface ScoreTolerance {
 
 export interface BaselineOptions {
   readonly tolerances?: readonly ScoreTolerance[]
-  /** Comparison codes that fail the assertion. Default `["regressed"]`. */
+  /**
+   * Comparison codes that fail the assertion. Default `["regressed", "missing", "incomparable"]`:
+   * a verdict that disappeared or whose rubric changed shape cannot show it did not regress.
+   */
   readonly failOn?: readonly ComparisonCode[]
 }
 
@@ -207,13 +213,26 @@ function matrixSchedule(caseId: string): readonly FailureDirective[] {
   return [{ point: `agent.${caseId}`, kind: "crash" }]
 }
 
+export interface AgentFailureMatrixOptions {
+  readonly seed?: number
+  /**
+   * Drive the agent under test across one boundary, calling `checkpoint()` where that boundary's
+   * fault lands. The case passes only when the injected crash surfaces from `execute`. Without it
+   * each case runs a bare fixture, which proves the schedule and replay identity, not an agent.
+   */
+  readonly execute?: (
+    boundary: { readonly id: string; readonly kind: AgentFailureMatrixKind },
+    checkpoint: () => void,
+  ) => unknown
+}
+
 /**
- * Run the same token-only crash fixture at each agent boundary. The implementation intentionally
- * delegates scheduling and replay identity to the existing failure laboratory; this is a matrix
- * consumer, not a second fault engine.
+ * Inject a crash at each agent boundary. The implementation intentionally delegates scheduling and
+ * replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault
+ * engine.
  */
 export async function runAgentFailureMatrix(
-  options: { readonly seed?: number } = {},
+  options: AgentFailureMatrixOptions = {},
 ): Promise<AgentFailureMatrixReport> {
   const seed = Number.isFinite(options.seed) ? Math.trunc(options.seed as number) >>> 0 : 0x4e494652
   const cases: AgentFailureMatrixCase[] = []
@@ -223,7 +242,9 @@ export async function runAgentFailureMatrix(
       {
         name: `agent-${caseId}`,
         execute(lab) {
-          lab.checkpoint(`agent.${caseId}`)
+          const checkpoint = (): void => lab.checkpoint(`agent.${caseId}`)
+          if (options.execute !== undefined) return options.execute(entry, checkpoint)
+          checkpoint()
           return true
         },
         verify: ({ error }) => error instanceof FailureInjectedError,
@@ -590,7 +611,7 @@ export async function compareAgentEvalBaseline(
       }),
     )
   }
-  const failOn = new Set(options.failOn ?? ["regressed"])
+  const failOn = new Set(options.failOn ?? ["regressed", "missing", "incomparable"])
   const regressions = comparisons
     .filter((entry) => failOn.has(entry.code))
     .map((entry) => entry.regressionId)
@@ -629,7 +650,8 @@ function classify(
   rubricId: string,
   options: BaselineOptions,
 ): ComparisonCode {
-  if (base === undefined || cur === undefined) return "missing"
+  if (base === undefined) return "added"
+  if (cur === undefined) return "missing"
   if (baseShape === undefined || curShape === undefined || baseShape.digest !== curShape.digest)
     return "incomparable"
   const baseRank = curShape.outcomes.indexOf(base.outcome)

@@ -65,6 +65,15 @@ Resolvers read it as their third argument.
 
 Subscriptions run over the same route via `graphql-transport-ws`. Bring a subscription source - the bundled in-memory `createPubSub` is the reference implementation; swap in a durable bus (Redis, a Durable Object, NATS) that exposes the same `{ publish, subscribe }` shape for multi-instance deploys.
 
+Each reference subscriber queues at most 1024 events by default. If publication outruns consumption,
+the overloaded iterator detaches, clears its queued values, and its next pull rejects with
+`GraphqlPubSubOverflowError` (`code: "graphql_pubsub_overflow"`). Configure
+`createPubSub({ maxQueuedEvents: 256, overflow: "error" })` to change the finite limit. Explicit
+`"drop-oldest"` and `"drop-newest"` policies support consumers that accept missing events. Returning or
+throwing into an iterator clears its queue and terminates delivery. This is an event-count bound;
+publishers remain responsible for payload sizes. Synchronous `publish` does not provide producer
+backpressure or cross-instance delivery.
+
 ```ts
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
@@ -87,6 +96,8 @@ pubsub.publish("count", 1)
 
 The route must negotiate the `graphql-transport-ws` subprotocol at the WebSocket layer for a browser `graphql-ws` client to connect.
 
+With `subscriptions: true`, a socket is admitted only when `authorize` accepts its upgrade request, and operations over it get the same query limits as HTTP. A browser cannot set headers on a WebSocket upgrade, so cookie auth carries over and bearer-header auth does not; for a token sent in `connection_init`, pass WS options with `onConnect` instead. When `authorize` is set, WS options must have their own `authorize` or `onConnect` (`onConnect: () => true` admits every socket on purpose), or `mountGraphql` throws.
+
 ## Options
 
 | Option | Default | Purpose |
@@ -99,12 +110,12 @@ The route must negotiate the `graphql-transport-ws` subprotocol at the WebSocket
 | `allowedOrigins` | reflect `*` | CORS origin allowlist. |
 | `authorize` | - | Per-request guard; return `false` for 401. |
 | `enableGet` | `true` | Serve `GET /graphql` (queries only). |
-| `subscriptions` | `false` | `true` (reuse schema/context) or explicit WS options. |
+| `subscriptions` | `false` | `true` (reuse schema, context, `authorize` and limits) or explicit WS options. |
 | `legacyJsonResponse` | `false` | Old always-200 `application/json` shape. |
 
 ## Responses
 
-By default responses use the `application/graphql-response+json` media type with spec status codes: `200` for an executed result (including field errors in `errors`), `400` for a parse or validation failure, `401` for a rejected `authorize`, `405` for a mutation attempted over GET. Set `legacyJsonResponse: true` for the older always-`200` `application/json` behavior some clients expect.
+By default responses use the `application/graphql-response+json` media type with spec status codes: `200` for an executed result (including field errors in `errors`), `400` for a parse or validation failure, `401` for a rejected `authorize`, `405` for a mutation attempted over GET, `415` for a POST whose body is not `application/json` (or another `+json` type). The last keeps a cross-site HTML form, which can send only urlencoded, multipart or plain-text bodies, from posting a mutation with the visitor's cookies. Set `legacyJsonResponse: true` for the older always-`200` `application/json` behavior some clients expect.
 
 ## License
 

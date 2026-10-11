@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { richWireCodec } from "@nifrajs/core/transport-codec-rich"
 import {
   defer,
@@ -202,6 +202,21 @@ describe("ndjsonStream (server soft-nav transport)", () => {
     expect(byId.get(1)).toEqual({ i: 1, e: "deferred_error" })
     expect(JSON.stringify(lines)).not.toContain("upstream failed")
   })
+})
+
+test("ndjsonStream: a value settling after the client cancelled writes nothing and logs nothing", async () => {
+  const late = Promise.withResolvers<string>()
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const reader = ndjsonStream({ now: 1 }, [{ id: 0, promise: late.promise }]).getReader()
+    await reader.read()
+    await reader.cancel("client went away")
+    late.resolve("value")
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+    expect(errors).not.toHaveBeenCalled()
+  } finally {
+    errors.mockRestore()
+  }
 })
 
 describe("parseNdjsonData (client soft-nav transport)", () => {

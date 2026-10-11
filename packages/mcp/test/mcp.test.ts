@@ -900,6 +900,56 @@ describe("respondMcpHttp - transport hardening", () => {
     expect(messages[3]).toMatchObject({ id: 21, result: { content: [{ text: "complete" }] } })
   })
 
+  test("an SSE client that stops reading is dropped at maxPendingBytes and the call cancelled", async () => {
+    let signal: AbortSignal | undefined
+    const flood = defineMcpTool({
+      name: "flood",
+      description: "Reports progress until cancelled",
+      handler: async (_args, context) => {
+        signal = context.signal
+        for (let step = 0; step < 200 && !context.signal.aborted; step++)
+          context.reportProgress(step, 200)
+        return "complete"
+      },
+    })
+    const res = await respondMcpHttp(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 23,
+          method: "tools/call",
+          params: { name: "flood", _meta: { progressToken: "job-23" } },
+        }),
+      }),
+      [flood],
+      INFO,
+      { maxPendingBytes: 1024 },
+    )
+    const reader = res.body?.getReader()
+    let delivered = 0
+    let failed = false
+    try {
+      for (;;) {
+        const next = await reader?.read()
+        if (next === undefined || next.done) break
+        delivered += next.value.byteLength
+      }
+    } catch {
+      failed = true
+    }
+    expect({ failed, aborted: signal?.aborted }).toEqual({ failed: true, aborted: true })
+    expect(delivered).toBeLessThanOrEqual(1024 + 512)
+  })
+
+  test("refuses a pending cap it cannot enforce", async () => {
+    for (const maxPendingBytes of [0, 1023, Number.NaN])
+      await expect(
+        respondMcpHttp(new Request("http://x/mcp"), [progressTool], INFO, { maxPendingBytes }),
+      ).rejects.toThrow()
+  })
+
   test("an unexpected dispatch failure errors the SSE stream", async () => {
     const res = await respondMcpHttp(
       new Request("http://x/mcp", {

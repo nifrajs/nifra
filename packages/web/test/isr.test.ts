@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { type CachedResponse, MemoryCacheStore } from "../src/isr.ts"
+import { afterEach, describe, expect, setSystemTime, spyOn, test } from "bun:test"
+import { type CachedResponse, type CacheStore, MemoryCacheStore } from "../src/isr.ts"
 
 const entry = (body: string): CachedResponse => ({
   body,
@@ -90,7 +90,13 @@ describe("MemoryCacheStore", () => {
   })
 })
 
-import { type ISRApp, type ISROptions, type ISRPlatform, withISR } from "../src/isr.ts"
+import {
+  type ISRApp,
+  type ISROptions,
+  type ISRPlatform,
+  type ISRStoreOp,
+  withISR,
+} from "../src/isr.ts"
 
 const html = (body: string, headers: Record<string, string> = {}): Response =>
   new Response(body, { status: 200, headers: { "content-type": "text/html", ...headers } })
@@ -571,6 +577,175 @@ describe("withISR", () => {
     expect((await store.get(pageKey("/p")))?.body).toBe("v1")
   })
 
+  test("a cookie request is not served the anonymous page, and does not evict it", async () => {
+    const store = new MemoryCacheStore()
+    const { app, calls } = trackApp((req) =>
+      req.headers.has("cookie")
+        ? html("ACCOUNT", { "cache-control": "private, no-store" })
+        : html("LANDING"),
+    )
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0 })
+    await handler(new Request("http://x/"))
+    const signedIn = await handler(new Request("http://x/", { headers: { cookie: "sid=a" } }))
+    expect(await signedIn.text()).toBe("ACCOUNT")
+    expect(signedIn.headers.get("cache-control")).toBe("private, no-store")
+    const anonymous = await handler(new Request("http://x/"))
+    expect(await anonymous.text()).toBe("LANDING")
+    expect(anonymous.headers.get("x-nifra-isr")).toBe("hit")
+    expect(calls()).toBe(2)
+  })
+
+  test("only anonymousCookies keep a cookie request on the cache; a custom key decides for itself", async () => {
+    const store = new MemoryCacheStore()
+    const { app, calls } = trackApp(() => html("SHARED", { "cache-control": "public, max-age=0" }))
+    const handler = withISR(app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      anonymousCookies: ["consent", "_ga"],
+    })
+    await handler(new Request("http://x/"))
+    const consented = await handler(
+      new Request("http://x/", { headers: { cookie: "consent=yes; _ga=GA1" } }),
+    )
+    expect(consented.headers.get("x-nifra-isr")).toBe("hit")
+    const session = await handler(
+      new Request("http://x/", { headers: { cookie: "consent=yes; sid=a" } }),
+    )
+    expect(session.headers.get("x-nifra-isr")).toBe("miss")
+    const bearer = await handler(
+      new Request("http://x/", { headers: { authorization: "Bearer a" } }),
+    )
+    expect(bearer.headers.get("x-nifra-isr")).toBe("miss")
+    expect(calls()).toBe(3)
+
+    const keyed = trackApp(() => html("KEYED"))
+    const custom = withISR(keyed.app, {
+      store: new MemoryCacheStore(),
+      revalidate: 60,
+      now: () => 0,
+      key: (req) => new URL(req.url).pathname,
+    })
+    await custom(new Request("http://x/"))
+    const hit = await custom(new Request("http://x/", { headers: { cookie: "sid=a" } }))
+    expect(hit.headers.get("x-nifra-isr")).toBe("hit")
+    expect(keyed.calls()).toBe(1)
+  })
+
+  test("a page rendered for consent-only cookies is stored like an anonymous one", async () => {
+    const store = new MemoryCacheStore()
+    const { app } = trackApp(() => html("PAGE"))
+    const handler = withISR(app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      anonymousCookies: ["consent"],
+    })
+    await handler(new Request("http://x/", { headers: { cookie: "consent=yes" } }))
+    expect((await store.get(pageKey("/")))?.body).toBe("PAGE")
+  })
+
+  test("concurrent cold misses for one page share a single render", async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const app: ISRApp = {
+      fetch: async () => {
+        calls++
+        await gate
+        return html("PAGE")
+      },
+    }
+    const handler = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+    const pending = Array.from({ length: 8 }, () => handler(new Request("http://x/slow")))
+    release()
+    const responses = await Promise.all(pending)
+    expect(calls).toBe(1)
+    expect(await Promise.all(responses.map((res) => res.text()))).toEqual(Array(8).fill("PAGE"))
+    expect(responses.map((res) => res.headers.get("x-nifra-isr"))).toEqual(Array(8).fill("miss"))
+  })
+
+  test("a cold render that is not stored sends each waiting miss to render for itself", async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const app: ISRApp = {
+      fetch: async () => {
+        const call = ++calls
+        await gate
+        return html(`PRIVATE-${call}`, { "cache-control": "private" })
+      },
+    }
+    const handler = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+    const pending = Array.from({ length: 3 }, () => handler(new Request("http://x/me")))
+    release()
+    const bodies = await Promise.all((await Promise.all(pending)).map((res) => res.text()))
+    expect(calls).toBe(3)
+    expect(new Set(bodies).size).toBe(3)
+  })
+
+  test("a regeneration that turns private or refused removes the stale entry; a 5xx keeps it", async () => {
+    const withdrawals: readonly [string, () => Response][] = [
+      ["private", () => html("mine", { "cache-control": "private, max-age=0" })],
+      ["no-store", () => html("mine", { "cache-control": "no-store" })],
+      [
+        "401",
+        () => new Response("sign in", { status: 401, headers: { "content-type": "text/html" } }),
+      ],
+      ["403", () => new Response("no", { status: 403, headers: { "content-type": "text/html" } })],
+    ]
+    for (const [label, withdrawn] of withdrawals) {
+      const store = new MemoryCacheStore()
+      let t = 0
+      let changed = false
+      const { app } = trackApp(() => (changed ? withdrawn() : html("PREVIOUS_PUBLIC")))
+      const handler = withISR(app, { store, revalidate: 1, now: () => t })
+      await handler(new Request("http://x/p"))
+      changed = true
+      t = 2000
+      const plat = collectWaitUntil()
+      await handler(new Request("http://x/p"), plat)
+      await plat.settle()
+      expect({ label, stored: await store.get(pageKey("/p")) }).toEqual({
+        label,
+        stored: undefined,
+      })
+      expect(await (await handler(new Request("http://x/p"))).text()).not.toBe("PREVIOUS_PUBLIC")
+    }
+    // Kept: a server failure, and a signed-in visitor's own private copy or refusal.
+    const kept: readonly [string, () => Response, Record<string, string>][] = [
+      [
+        "503",
+        () => new Response("down", { status: 503, headers: { "content-type": "text/html" } }),
+        {},
+      ],
+      [
+        "signed-in private",
+        () => html("mine", { "cache-control": "private" }),
+        { cookie: "sid=a" },
+      ],
+      ["signed-in 403", () => new Response("no", { status: 403 }), { authorization: "Bearer a" }],
+    ]
+    for (const [label, answer, headers] of kept) {
+      const store = new MemoryCacheStore()
+      let t = 0
+      let changed = false
+      const { app } = trackApp(() => (changed ? answer() : html("v1")))
+      const handler = withISR(app, { store, revalidate: 1, now: () => t })
+      await handler(new Request("http://x/p"))
+      changed = true
+      t = 2000
+      const plat = collectWaitUntil()
+      await handler(new Request("http://x/p", { headers }), plat)
+      await plat.settle()
+      expect({ label, body: (await store.get(pageKey("/p")))?.body }).toEqual({ label, body: "v1" })
+    }
+  })
+
   test("a regeneration that becomes a redirect removes the stale entry", async () => {
     const store = new MemoryCacheStore()
     let cacheable = true
@@ -862,19 +1037,113 @@ describe("KVCacheStore", () => {
     expect(await new KVCacheStore(new FakeKV()).get("/nope")).toBeUndefined()
   })
 
-  test("delete drops the key", async () => {
+  test("delete leaves a marker that reads as a miss and refuses a render begun before it", async () => {
     const kv = new FakeKV()
     const store = new KVCacheStore(kv)
     await store.set("/p", entry("x"))
+    const before = store.fence()
     await store.delete("/p")
-    expect(kv.store.has("/p")).toBe(false)
     expect(await store.get("/p")).toBeUndefined()
+    await store.set("/p", { ...entry("stale"), fence: before })
+    expect(await store.get("/p")).toBeUndefined()
+    await store.set("/p", { ...entry("fresh"), fence: store.fence() })
+    expect((await store.get("/p"))?.body).toBe("fresh")
+    // The fence is the store's business, not the page's.
+    expect(kv.store.get("/p")).not.toContain("fence")
+  })
+
+  describe("purge order across clocks", () => {
+    const TEN_MINUTES = 600_000
+    afterEach(() => setSystemTime())
+
+    test("a purge from a host whose monotonic clock stalled in sleep still refuses an earlier render", async () => {
+      const kv = new FakeKV()
+      const renderer = new KVCacheStore(kv)
+      const purger = new KVCacheStore(kv)
+      await renderer.set("/p", { ...entry("v1"), tags: ["post"] })
+      const pageFence = renderer.fence()
+      const tagFence = renderer.fence()
+      const realNow = performance.now.bind(performance)
+      const stalled = spyOn(performance, "now").mockImplementation(() => realNow() - TEN_MINUTES)
+      try {
+        await purger.delete("/p")
+        await purger.invalidateTag("post")
+      } finally {
+        stalled.mockRestore()
+      }
+      await renderer.set("/p", { ...entry("v1"), fence: pageFence })
+      expect(await renderer.get("/p")).toBeUndefined()
+      await renderer.set("/q", { ...entry("v1"), tags: ["post"], fence: tagFence })
+      expect(await renderer.get("/q")).toBeUndefined()
+    })
+
+    test("a wall clock stepped back after a render began cannot order a purge before it", async () => {
+      const store = new KVCacheStore(new FakeKV())
+      const fence = store.fence()
+      setSystemTime(new Date(Date.now() - TEN_MINUTES))
+      await store.invalidateTag("post")
+      await store.set("/p", { ...entry("v1"), tags: ["post"], fence })
+      expect(await store.get("/p")).toBeUndefined()
+    })
+
+    test("within one frozen millisecond, a purge orders after the render before it and before the one after", async () => {
+      setSystemTime(new Date(Date.now() + TEN_MINUTES))
+      const store = new KVCacheStore(new FakeKV())
+      const before = store.fence()
+      await store.delete("/p")
+      const after = store.fence()
+      await store.set("/p", { ...entry("stale"), fence: before })
+      expect(await store.get("/p")).toBeUndefined()
+      await store.set("/p", { ...entry("fresh"), fence: after })
+      expect((await store.get("/p"))?.body).toBe("fresh")
+    })
+  })
+
+  test("a tag epoch written before epochs carried a time fences nothing", async () => {
+    const kv = new FakeKV()
+    const store = new KVCacheStore(kv)
+    kv.store.set("__nifra_isr_tag_v1:product", crypto.randomUUID())
+    await store.set("/p", { ...entry("x"), tags: ["product"], fence: store.fence() })
+    expect((await store.get("/p"))?.body).toBe("x")
   })
 
   test("a corrupt (non-JSON) entry reads as a miss, not a throw", async () => {
     const kv = new FakeKV()
     kv.store.set("/p", "}{ not json")
     expect(await new KVCacheStore(kv).get("/p")).toBeUndefined()
+  })
+
+  test("an entry Response could not replay reads as a miss, and withISR renders", async () => {
+    const valid = { body: "h", status: 200, storedAt: 0, revalidate: 60_000, headers: {} }
+    const corrupt: Record<string, unknown>[] = [
+      { ...valid, status: 999 },
+      { ...valid, status: 200.5 },
+      { ...valid, status: 101 },
+      { ...valid, storedAt: Number.NaN },
+      { ...valid, revalidate: -1 },
+      { ...valid, headers: ["content-type", "text/html"] },
+      { ...valid, headers: { "bad name": "x" } },
+      { ...valid, headers: { "x-a": "line\r\nbreak" } },
+    ]
+    for (const record of corrupt) {
+      const kv = new FakeKV()
+      kv.store.set("/p", JSON.stringify(record))
+      expect({ record, read: await new KVCacheStore(kv).get("/p") }).toEqual({
+        record,
+        read: undefined,
+      })
+    }
+    const kv = new FakeKV()
+    kv.store.set("http://x/p", JSON.stringify({ ...valid, status: 999 }))
+    const handler = withISR(
+      { fetch: async () => html("fresh") },
+      {
+        store: new KVCacheStore(kv),
+        revalidate: 60,
+        now: () => 0,
+      },
+    )
+    expect(await (await handler(new Request("http://x/p"))).text()).toBe("fresh")
   })
 
   test("a valid-JSON but wrong-shape entry reads as a miss", async () => {
@@ -1212,5 +1481,326 @@ describe("revalidateEndpoint batches and the CDN after it", () => {
       expect([res.status, (await res.json()).error]).toEqual([400, error])
     }
     expect((await store.get("http://x/a"))?.body).toBe("A")
+  })
+})
+
+describe("withISR store failures", () => {
+  type Op = ISRStoreOp
+  // `fail` answers for the store: a promise it returns stands in for the call, undefined passes through.
+  const failing = (
+    fail: (op: Op) => Promise<never> | undefined,
+    base = new MemoryCacheStore(),
+  ): CacheStore => ({
+    get: (key) => fail("get") ?? base.get(key),
+    set: (key, value) => fail("set") ?? base.set(key, value),
+    delete: (key) => fail("delete") ?? base.delete(key),
+  })
+  const quiet = (): {
+    seen: { op: Op; error: unknown }[]
+    onStoreError: NonNullable<ISROptions["onStoreError"]>
+  } => {
+    const seen: { op: Op; error: unknown }[] = []
+    return { seen, onStoreError: (error, { op }) => void seen.push({ op, error }) }
+  }
+
+  test("a get that throws is a miss and the page renders", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = {
+      get: () => {
+        throw new Error("offline")
+      },
+      set: async () => {},
+      delete: async () => {},
+    }
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["get"])
+  })
+
+  test("a get that rejects is a miss and the page renders", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => (op === "get" ? Promise.reject(new Error("offline")) : undefined))
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["get"])
+  })
+
+  test("a get that hangs past storeTimeoutMs is a miss", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => (op === "get" ? new Promise<never>(() => {}) : undefined))
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      storeTimeoutMs: 5,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["get"])
+  })
+
+  test("a set that throws still returns the rendered page", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => {
+      if (op === "set") throw new Error("read-only replica")
+      return undefined
+    })
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, res.headers.get("x-nifra-isr"), await res.text()]).toEqual([
+      200,
+      "miss",
+      "PAGE",
+    ])
+    expect(seen.map((s) => s.op)).toEqual(["set"])
+  })
+
+  test("a set that hangs past storeTimeoutMs does not hold the response", async () => {
+    const { seen, onStoreError } = quiet()
+    const store = failing((op) => (op === "set" ? new Promise<never>(() => {}) : undefined))
+    const handler = withISR(trackApp(() => html("PAGE")).app, {
+      store,
+      revalidate: 60,
+      now: () => 0,
+      storeTimeoutMs: 5,
+      onStoreError,
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text()]).toEqual([200, "PAGE"])
+    expect(seen.map((s) => s.op)).toEqual(["set"])
+  })
+
+  test("concurrent misses during a set outage still share one render", async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const app: ISRApp = {
+      fetch: async () => {
+        calls++
+        await gate
+        return html("PAGE")
+      },
+    }
+    const store = failing((op) => (op === "set" ? Promise.reject(new Error("down")) : undefined))
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0, onStoreError: () => {} })
+    const pending = Array.from({ length: 4 }, () => handler(new Request("http://x/p")))
+    release()
+    const bodies = await Promise.all((await Promise.all(pending)).map((res) => res.text()))
+    expect([calls, bodies]).toEqual([1, Array(4).fill("PAGE")])
+  })
+
+  test("a failed regeneration write keeps the stale entry and is reported", async () => {
+    const base = new MemoryCacheStore()
+    let broken = false
+    const store = failing(
+      (op) => (broken && op === "set" ? Promise.reject(new Error("down")) : undefined),
+      base,
+    )
+    const { seen, onStoreError } = quiet()
+    let t = 0
+    let version = 1
+    const handler = withISR(trackApp(() => html(`v${version}`)).app, {
+      store,
+      revalidate: 1,
+      now: () => t,
+      onStoreError,
+    })
+    await handler(new Request("http://x/p"))
+    broken = true
+    version = 2
+    t = 2000
+    const plat = collectWaitUntil()
+    const res = await handler(new Request("http://x/p"), plat)
+    expect(await res.text()).toBe("v1")
+    await plat.settle()
+    expect((await base.get(pageKey("/p")))?.body).toBe("v1")
+    expect(seen.map((s) => s.op)).toEqual(["set"])
+  })
+
+  test("the default report is rate-limited and never prints the key", async () => {
+    const lines: string[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void lines.push(args.map(String).join(" "))
+    try {
+      let t = 0
+      const store = failing(() => Promise.reject(new Error("GET http://x/secret-path failed")))
+      const handler = withISR(trackApp(() => html("PAGE")).app, {
+        store,
+        revalidate: 60,
+        now: () => t,
+      })
+      for (let i = 0; i < 5; i++) await handler(new Request("http://x/secret-path"))
+      expect(lines.length).toBe(2) // one get + one set report inside the window
+      t = 120_000
+      await handler(new Request("http://x/secret-path"))
+      expect(lines.length).toBe(4)
+      expect(lines.join("\n")).not.toContain("secret-path")
+    } finally {
+      console.error = original
+    }
+  })
+
+  test("storeTimeoutMs must be a positive finite number", () => {
+    const store = new MemoryCacheStore()
+    for (const storeTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        withISR(trackApp(() => html("x")).app, {
+          store,
+          revalidate: 60,
+          now: () => 0,
+          storeTimeoutMs,
+        }),
+      ).toThrow(/storeTimeoutMs/)
+    }
+  })
+})
+
+describe("revalidateEndpoint and the data caches under the pages", () => {
+  const post = (handler: (req: Request) => Promise<Response>, body: unknown) =>
+    handler(
+      new Request("http://x/__nifra/revalidate", {
+        method: "POST",
+        headers: { "x-nifra-revalidate-token": "s3cret", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    )
+  const logged = (log: string[], name: string, fail = false) => ({
+    invalidateTag(tag: string) {
+      log.push(`${name} ${tag}`)
+      if (fail) throw new Error(`${name} down`)
+    },
+  })
+
+  test("a tag purge reaches each data cache first, then the page store, then the CDN", async () => {
+    const log: string[] = []
+    const store = new MemoryCacheStore()
+    await store.set("http://x/b", { ...entry("B"), tags: ["catalog"] })
+    const originInvalidate = store.invalidateTag.bind(store)
+    store.invalidateTag = async (tag: string) => {
+      log.push(`pages ${tag}`)
+      return originInvalidate(tag)
+    }
+    const handler = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      dataCaches: [logged(log, "loaders"), logged(log, "search")],
+      cdn: {
+        async purge(target) {
+          log.push(`cdn ${JSON.stringify(target.tags)}`)
+          return { cdn: "accepted", retryable: false }
+        },
+      },
+    })
+    const res = await post(handler, { tags: ["catalog"] })
+    expect(res.status).toBe(200)
+    expect(log).toEqual(["loaders catalog", "search catalog", "pages catalog", 'cdn ["catalog"]'])
+    expect(await store.get("http://x/b")).toBeUndefined()
+  })
+
+  test("a path-only purge leaves the data caches alone", async () => {
+    const log: string[] = []
+    const handler = revalidateEndpoint({
+      store: new MemoryCacheStore(),
+      secret: "s3cret",
+      dataCaches: [logged(log, "loaders")],
+    })
+    expect((await post(handler, { path: "/a" })).status).toBe(200)
+    expect(log).toEqual([])
+  })
+
+  test("a data cache that fails stops the purge before the pages, so a retry finds them intact", async () => {
+    const log: string[] = []
+    const store = new MemoryCacheStore()
+    await store.set("http://x/b", { ...entry("B"), tags: ["catalog"] })
+    const handler = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      dataCaches: [logged(log, "loaders", true)],
+    })
+    const res = await post(handler, { tags: ["catalog"] })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ ok: false, error: "data_cache_invalidation_failed" })
+    expect(await store.get("http://x/b")).toBeDefined()
+  })
+})
+
+describe("a purge that lands while a page renders", () => {
+  const stores: ReadonlyArray<readonly [string, () => CacheStore]> = [
+    ["MemoryCacheStore", () => new MemoryCacheStore()],
+    ["KVCacheStore", () => new KVCacheStore(new FakeKV())],
+  ]
+  for (const [name, makeStore] of stores)
+    for (const purge of ["path", "tag"] as const)
+      test(`${name}: a ${purge} purge is not undone by the render it overtook`, async () => {
+        const store = makeStore()
+        let data = "v1"
+        const started = Promise.withResolvers<void>()
+        const release = Promise.withResolvers<void>()
+        const app: ISRApp = {
+          async fetch() {
+            const read = data
+            started.resolve()
+            await release.promise
+            return new Response(`<p>${read}</p>`, {
+              headers: { "content-type": "text/html", "x-nifra-isr-tags": "product" },
+            })
+          },
+        }
+        const isr = withISR(app, { store, revalidate: 3600, now: () => 0 })
+        const first = isr(new Request("http://x/p"))
+        await started.promise
+        data = "v2"
+        if (purge === "path") await store.delete("http://x/p")
+        else await store.invalidateTag?.("product")
+        release.resolve()
+        expect(await (await first).text()).toBe("<p>v1</p>")
+
+        const next = await isr(new Request("http://x/p"))
+        expect([next.headers.get("x-nifra-isr"), await next.text()]).toEqual(["miss", "<p>v2</p>"])
+        const again = await isr(new Request("http://x/p"))
+        expect([again.headers.get("x-nifra-isr"), await again.text()]).toEqual(["hit", "<p>v2</p>"])
+      })
+
+  test("a store whose fence fails stores the render unfenced and reports it", async () => {
+    const inner = new MemoryCacheStore()
+    const reports: string[] = []
+    const store: CacheStore = {
+      get: (key) => inner.get(key),
+      set: (key, value) => inner.set(key, value),
+      delete: (key) => inner.delete(key),
+      fence: () => Promise.reject(new Error("down")),
+    }
+    const app: ISRApp = {
+      fetch: () => new Response("<p>x</p>", { headers: { "content-type": "text/html" } }),
+    }
+    const isr = withISR(app, {
+      store,
+      revalidate: 3600,
+      now: () => 0,
+      onStoreError: (_error, { op }) => reports.push(op),
+    })
+    await (await isr(new Request("http://x/p"))).text()
+    expect((await isr(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
+    expect(reports).toEqual(["fence"])
   })
 })

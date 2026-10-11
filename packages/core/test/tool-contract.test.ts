@@ -8,7 +8,9 @@ import {
   executeTool,
   MemoryToolIdempotencyStore,
   runToolContractConformance,
+  type ToolIdempotencyBeginResult,
   type ToolIdempotencyStore,
+  toolHttpResult,
 } from "../src/tool-contract.ts"
 
 const input = t.object({ name: t.string({ minLength: 1 }) })
@@ -142,6 +144,120 @@ describe("typed tool contracts", () => {
       { capabilities: ["orders.charge"], idempotency: store },
     )
     expect(duplicate).toMatchObject({ ok: false, error: { code: "idempotency_duplicate" } })
+  })
+
+  test("an idempotency refusal answers as the HTTP idempotency lane does", async () => {
+    const tool = defineTool({
+      name: "orders.refund",
+      description: "Refund an order.",
+      input,
+      output,
+      capability: "orders.refund",
+      idempotency: { scope: "request", key: (value) => value.name },
+      execute: () => ({ ok: true }),
+    })
+    const answering = (began: ToolIdempotencyBeginResult): ToolIdempotencyStore => ({
+      begin: () => began,
+      complete: () => true,
+      abandon: () => true,
+    })
+    const cases = [
+      [{ state: "duplicate" }, "idempotency_duplicate", 409, null],
+      [{ state: "in-flight" }, "idempotency_in_flight", 409, "1"],
+      [{ state: "capacity" }, "idempotency_capacity", 503, "1"],
+    ] satisfies [ToolIdempotencyBeginResult, string, number, string | null][]
+    for (const [began, code, status, retryAfter] of cases) {
+      const result = await executeTool(
+        tool,
+        { name: "a" },
+        { capabilities: ["orders.refund"], idempotency: answering(began) },
+      )
+      expect(result).toMatchObject({ ok: false, error: { code } })
+      const response = toolHttpResult(result)
+      expect(response.status).toBe(status)
+      expect(response.headers.get("retry-after")).toBe(retryAfter)
+    }
+  })
+
+  test("after the executor ran, a failing completion never frees the key for a retry", async () => {
+    let abandoned = 0
+    let runs = 0
+    const store = (complete: () => boolean): ToolIdempotencyStore => ({
+      begin: () => ({ state: "new", reservation: "r1" }),
+      complete,
+      abandon: () => {
+        abandoned++
+        return true
+      },
+    })
+    const tool = (outputSchema: typeof output) =>
+      defineTool({
+        name: "orders.ship",
+        description: "Ship an order.",
+        input,
+        output: outputSchema,
+        capability: "orders.ship",
+        idempotency: { scope: "request", key: (value) => value.name },
+        execute: () => {
+          runs++
+          return { ok: true }
+        },
+      })
+    const throwing = store(() => {
+      throw new Error("store offline")
+    })
+    const options = { capabilities: ["orders.ship"], idempotency: throwing }
+    const result = await executeTool(tool(output), { name: "a" }, options)
+    expect(result).toMatchObject({ ok: false, error: { code: "idempotency_capacity" } })
+    // An output validator that throws, after the executor ran.
+    const exploding: typeof output = {
+      ...output,
+      "~standard": {
+        ...output["~standard"],
+        validate: () => {
+          throw new Error("validator bug")
+        },
+      },
+    }
+    const failed = await executeTool(tool(exploding), { name: "a" }, options)
+    expect(failed).toMatchObject({ ok: false, error: { code: "execution_failed" } })
+    expect([runs, abandoned]).toEqual([2, 0])
+  })
+
+  test("a store whose abandon() throws leaves the call's own outcome standing", async () => {
+    const refusing: ToolIdempotencyStore = {
+      begin: () => ({ state: "new", reservation: "r1" }),
+      complete: () => true,
+      abandon: () => {
+        throw new Error("store offline")
+      },
+    }
+    const define = (execute: () => { ok: boolean }) =>
+      defineTool({
+        name: "orders.void",
+        description: "Void an order.",
+        input,
+        output,
+        capability: "orders.void",
+        idempotency: { scope: "request", key: (value) => value.name },
+        cost: { calls: 1 },
+        execute,
+      })
+    const options = { capabilities: ["orders.void"], idempotency: refusing }
+    const overBudget = await executeTool(
+      define(() => ({ ok: true })),
+      { name: "a" },
+      { ...options, budget: createToolBudget({ limits: { calls: 0 } }) },
+    )
+    expect(overBudget).toMatchObject({ ok: false, error: { code: "budget_exceeded" } })
+    const failed = await executeTool(
+      define(() => {
+        throw new Error("gateway down")
+      }),
+      { name: "a" },
+      options,
+    )
+    expect(failed).toMatchObject({ ok: false, error: { code: "execution_failed" } })
   })
 
   test("budget exhaustion fails before the executor", async () => {

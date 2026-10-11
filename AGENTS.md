@@ -89,13 +89,15 @@ const app = createWebApp({
   adapter,
   manifest,
   clientEntry,
-  api: inProcessClient(backend), // feeds ctx.api to loaders AND serves the backend over HTTP
+  api: inProcessClient(backend), // feeds ctx.api to loaders
+  apiPrefix: "/api", // AND serves the backend over HTTP at /api/*
 })
 ```
 
-The backend's routes are auto-mounted under `apiPrefix` (default `"/api"`), so `POST /api/*` hits the
-backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` / `_worker.ts`. Set
-`apiPrefix: ""` to opt out and dispatch yourself.
+With `apiPrefix` set, the backend's routes are mounted under it, so `POST /api/*` hits the backend in
+`nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` / `_worker.ts`. Without it the
+backend is loader-only; `nifra check` reports that as NF-C035, and `nifra fix --code NF-C035` exports
+`apiPrefix = "/api"` from `backend/framework.ts`.
 
 ## Gotchas (the documented time-sinks)
 

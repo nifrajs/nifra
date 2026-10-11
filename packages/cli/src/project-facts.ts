@@ -7,8 +7,11 @@ import type {
 import type {
   ManifestDriftFinding,
   SourceFinding,
+  SqlFinding,
   StaticRouteFinding,
   TransitiveServerImportFinding,
+  TypedClientFinding,
+  UnresolvedRoutePathFinding,
 } from "./check-scan.ts"
 import type { DoctorResult } from "./doctor.ts"
 import type { TypeScriptSession } from "./internal/typescript-import.ts"
@@ -16,13 +19,15 @@ import type { PipelineReport } from "./pipeline-report.ts"
 import type { RulePack, SourceIndex } from "./rules/index.ts"
 
 export interface ProjectSourceFindings {
-  readonly fetches: readonly SourceFinding[]
+  readonly fetches: readonly TypedClientFinding[]
   /** Hand-rolled `new EventSource("/…")` / `new WebSocket("/…")` to the app's own streaming surface. */
-  readonly streams: readonly SourceFinding[]
+  readonly streams: readonly TypedClientFinding[]
   readonly untypedClients: readonly SourceFinding[]
   readonly removedImports: readonly SourceFinding[]
   readonly responseRoutes: readonly SourceFinding[]
-  readonly interpolatedSql: readonly SourceFinding[]
+  readonly interpolatedSql: readonly SqlFinding[]
+  /** Route registrations whose path is neither a literal nor a constant the scan resolves. */
+  readonly routePaths: readonly UnresolvedRoutePathFinding[]
 }
 
 export interface ProjectPackageFacts {
@@ -41,6 +46,10 @@ export interface ContractCheckFacts {
   readonly present: boolean
   readonly vacuous: boolean
   readonly diagnostics: readonly { readonly route?: string; readonly message: string }[]
+  /** `METHOD /path` of every route `backend/app.ts` serves; set only when the lock check loaded it. */
+  readonly served?: readonly string[]
+  /** `METHOD /path` of each authenticated route that validates its input before its auth hook runs. */
+  readonly inputBeforeAuth?: readonly string[]
   readonly error?: string
 }
 
@@ -50,6 +59,10 @@ export interface ProjectCheckFacts {
   readonly sqlCompilerAvailable: boolean
   /** Set when a project TypeScript install is present but outside the scanner adapter range. */
   readonly unsupportedTypeScriptVersion?: string
+  /** Why component modules could not be checked: the project's TypeScript has no compiler API. */
+  readonly componentCheckUnsupported?:
+    | { readonly version: string; readonly message: string }
+    | undefined
   /** Shared syntax/checker session for built-in rules; omitted from serialized check output. */
   readonly typescriptSession?: TypeScriptSession
   readonly checkConfigError?: string
@@ -87,6 +100,7 @@ export function freezeProjectFacts(seed: ProjectFactsSeed): ProjectFacts {
     removedImports: freezeFindings(seed.sourceFindings.removedImports),
     responseRoutes: freezeFindings(seed.sourceFindings.responseRoutes),
     interpolatedSql: freezeFindings(seed.sourceFindings.interpolatedSql),
+    routePaths: freezeFindings(seed.sourceFindings.routePaths),
   })
   const policies = Object.freeze({
     ...seed.policies,

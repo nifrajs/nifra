@@ -15,7 +15,7 @@ import {
 import { type JsonSchema, reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
 import { autoReflectJsonSchema } from "./reflect-auto.ts"
 
-export { autoReflectJsonSchema } from "./reflect-auto.ts"
+export { autoReflectJsonSchema, explainAutoReflectJsonSchema } from "./reflect-auto.ts"
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG (deterministic mocks)
@@ -97,6 +97,23 @@ function multipleInBounds(b: NumericBounds, step: number, rand: () => number): n
   return first + randomIndex(rand, Math.floor((last - first) / step) + 1) * step
 }
 
+/** The smallest positive integer that is a multiple of a decimal `multipleOf`: 3 for 1.5, 1 for 0.5. */
+function integerMultiple(step: number): number {
+  if (!(step > 0)) throw new UnsupportedMockSchemaError("multipleOf", "multipleOf must be positive")
+  if (Number.isInteger(step)) return step
+  const text = String(step)
+  const dot = text.indexOf(".")
+  const digits = text.length - dot - 1
+  if (dot === -1 || text.includes("e") || digits > 15)
+    throw new UnsupportedMockSchemaError("multipleOf", "Integer multipleOf must be a plain decimal")
+  const scale = 10 ** digits
+  const numerator = Math.round(step * scale)
+  let a = numerator
+  let b = scale
+  while (b !== 0) [a, b] = [b, a % b]
+  return numerator / a
+}
+
 /** A random number inside the bounds, rounded to cents when the rounding stays inside them. */
 function numberInBounds(b: NumericBounds, rand: () => number): number {
   // At least one ulp of `x`, so an exclusive bound moves even where `x + Number.EPSILON === x`.
@@ -147,6 +164,99 @@ function constrainedString(
 // ---------------------------------------------------------------------------
 // Schema introspection → mock value generation
 // ---------------------------------------------------------------------------
+
+const LOWER_BOUNDS = new Set([
+  "minimum",
+  "exclusiveMinimum",
+  "minLength",
+  "minItems",
+  "minProperties",
+])
+const UPPER_BOUNDS = new Set([
+  "maximum",
+  "exclusiveMaximum",
+  "maxLength",
+  "maxItems",
+  "maxProperties",
+])
+const ANNOTATIONS = new Set([
+  "title",
+  "description",
+  "$comment",
+  "examples",
+  "default",
+  "deprecated",
+])
+
+const isSchemaObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+
+/** Each branch with its own nested `allOf` spread out beside it. */
+function flattenIntersection(parts: readonly unknown[]): Readonly<Record<string, unknown>>[] {
+  return parts.flatMap((part) => {
+    const schema = reflectSchema(part).jsonSchema
+    if (schema === true || schema === undefined) return []
+    if (!isSchemaObject(schema))
+      throw new UnsupportedMockSchemaError("allOf", "An intersection branch has no valid value")
+    const { allOf: nested, ...rest } = schema
+    return Array.isArray(nested) ? [rest, ...flattenIntersection(nested)] : [rest]
+  })
+}
+
+/**
+ * One schema that every branch of an `allOf` accepts: bounds tighten, `required` and `properties`
+ * combine (a property in several branches becomes their own intersection), `type` and `enum`
+ * intersect. Any other keyword the branches disagree on is refused rather than guessed.
+ */
+function mergeIntersection(parts: readonly unknown[]): Record<string, unknown> {
+  const merged = new Map<string, unknown>()
+  for (const branch of flattenIntersection(parts)) {
+    for (const [key, value] of Object.entries(branch)) {
+      const current = merged.get(key)
+      if (current === undefined || ANNOTATIONS.has(key)) {
+        if (current === undefined) merged.set(key, value)
+        continue
+      }
+      if (sameJson(current, value)) continue
+      if (typeof current === "number" && typeof value === "number" && LOWER_BOUNDS.has(key))
+        merged.set(key, Math.max(current, value))
+      else if (typeof current === "number" && typeof value === "number" && UPPER_BOUNDS.has(key))
+        merged.set(key, Math.min(current, value))
+      else if (key === "required" && Array.isArray(current) && Array.isArray(value))
+        merged.set(key, [...new Set([...current, ...value])])
+      else if (key === "properties" && isSchemaObject(current) && isSchemaObject(value))
+        merged.set(key, mergeProperties(current, value))
+      else if (key === "type" || key === "enum")
+        merged.set(key, intersectChoices(key, current, value))
+      else
+        throw new UnsupportedMockSchemaError("allOf", `Intersection branches disagree on "${key}"`)
+    }
+  }
+  return Object.fromEntries(merged)
+}
+
+function mergeProperties(
+  current: Readonly<Record<string, unknown>>,
+  next: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged = new Map(Object.entries(current))
+  for (const [name, schema] of Object.entries(next)) {
+    const existing = merged.get(name)
+    merged.set(name, existing === undefined ? schema : { allOf: [existing, schema] })
+  }
+  return Object.fromEntries(merged)
+}
+
+function intersectChoices(key: "type" | "enum", current: unknown, next: unknown): unknown {
+  const listOf = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : [value])
+  const right = listOf(next)
+  const shared = listOf(current).filter((choice) => right.some((other) => sameJson(choice, other)))
+  if (shared.length === 0)
+    throw new UnsupportedMockSchemaError("allOf", `Intersection branches share no "${key}"`)
+  return key === "type" && shared.length === 1 ? shared[0] : shared
+}
 
 /**
  * Generate a mock value from a schema object. Inspects JSON Schema properties
@@ -203,18 +313,10 @@ export function generateMockValue(
   }
   const intersections = raw.allOf as readonly unknown[] | undefined
   if (Array.isArray(intersections) && intersections.length > 0) {
-    const values = intersections.map((part) => generateMockValue(part, fieldName, rand))
-    if (
-      values.every((value) => value !== null && typeof value === "object" && !Array.isArray(value))
-    ) {
-      return Object.assign({}, ...values)
-    }
-    const first = values[0]
-    if (values.every((value) => Object.is(value, first))) return first
-    throw new UnsupportedMockSchemaError(
-      "allOf",
-      "Could not prove that a scalar satisfies every intersection branch",
-    )
+    // Generated from one merged schema: values generated per branch and then combined satisfy only
+    // the branch that happened to win each key.
+    const { allOf: _intersections, ...siblings } = raw
+    return generateMockValue(mergeIntersection([siblings, ...intersections]), fieldName, rand)
   }
 
   // Enum - pick the first value (deterministic) or random
@@ -258,7 +360,7 @@ export function generateMockValue(
     }
 
     case "integer": {
-      const step = typeof raw.multipleOf === "number" ? raw.multipleOf : 1
+      const step = typeof raw.multipleOf === "number" ? integerMultiple(raw.multipleOf) : 1
       const value = multipleInBounds(numericBounds(raw), step, rand)
       if (value === undefined)
         throw new UnsupportedMockSchemaError("integer", "No integer exists in range")
@@ -339,9 +441,10 @@ export interface MockServerOptions {
    * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or
    * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.
    *
-   * Defaults to {@link autoReflectJsonSchema}, which recognizes zod by its Standard Schema vendor tag and
-   * converts via `z.toJSONSchema` when zod is installed - so zod routes mock real data with no wiring.
-   * Pass a hook to override, or `() => undefined` to force every opaque schema back to `{}`.
+   * Defaults to {@link autoReflectJsonSchema}, which reads the schema's own Standard JSON Schema converter
+   * (`~standard.jsonSchema`, zod 4.2+ and other libraries) and, for an older zod, converts via
+   * `z.toJSONSchema` - so these routes mock real data with no wiring. Pass a hook to override, or
+   * `() => undefined` to force every opaque schema back to `{}`.
    */
   readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }

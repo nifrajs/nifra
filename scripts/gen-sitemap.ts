@@ -22,9 +22,6 @@ import { POSTS } from "../site/shared/data/posts"
 
 const SITE = "https://nifra.dev"
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "")
-const ROUTES = `${ROOT}/site/routes`
-const SITEMAP = `${ROOT}/site/public/sitemap.xml`
-const RSS = `${ROOT}/site/public/rss.xml`
 
 /** Route files that render a page for a crawler. Excluded: `_`-prefixed framework files (layouts,
  * `_404`), dynamic segments (no fixed URL to list), and anything that is not a route module. */
@@ -43,20 +40,20 @@ interface Route {
   readonly file: string
 }
 
-function collect(dir: string, prefix: string, out: Route[]): void {
+function collect(dir: string, prefix: string, out: Route[], root: string): void {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name < b.name ? -1 : 1,
   )) {
     if (entry.isDirectory()) {
       if (entry.name.startsWith("_") || entry.name.startsWith("[") || entry.name === ".well-known")
         continue
-      collect(`${dir}/${entry.name}`, `${prefix}/${entry.name}`, out)
+      collect(`${dir}/${entry.name}`, `${prefix}/${entry.name}`, out, root)
       continue
     }
     if (!isPageFile(entry.name)) continue
     const base = entry.name.replace(/\.(tsx|mdx)$/, "")
     const url = base === "index" ? (prefix === "" ? "/" : prefix) : `${prefix}/${base}`
-    out.push({ url, file: `${dir}/${entry.name}`.slice(ROOT.length + 1) })
+    out.push({ url, file: `${dir}/${entry.name}`.slice(root.length + 1) })
   }
 }
 
@@ -165,34 +162,51 @@ function urlsOf(xml: string): string[] {
   return [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1] ?? "").sort()
 }
 
-const routes: Route[] = []
-collect(ROUTES, "", routes)
-routes.sort((a, b) => (a.url < b.url ? -1 : 1))
+function routesUnder(root: string): Route[] {
+  const routes: Route[] = []
+  collect(`${root}/site/routes`, "", routes, root)
+  return routes.sort((a, b) => (a.url < b.url ? -1 : 1))
+}
 
-const check = process.argv.includes("--check")
+/**
+ * Every way the committed sitemap and feed under `root` disagree with its routes and `posts`. Only the
+ * URL set is compared, never the dates (see the header).
+ */
+export function sitemapProblems(
+  root: string = ROOT,
+  posts: readonly { readonly slug: string }[] = POSTS,
+): string[] {
+  const expected = routesUnder(root).map((route) => `${SITE}${route.url}`)
+  // A routes tree with no page would agree with an empty sitemap, so it is a problem in itself.
+  if (expected.length === 0) return [`${root}/site/routes has no page - nothing was checked`]
+  const current = urlsOf(readFileSync(`${root}/site/public/sitemap.xml`, "utf8"))
+  const feed = readFileSync(`${root}/site/public/rss.xml`, "utf8")
+  return [
+    ...expected
+      .filter((url) => !current.includes(url))
+      .map((url) => `missing from sitemap.xml: ${url}`),
+    ...current
+      .filter((url) => !expected.includes(url))
+      .map((url) => `sitemap.xml lists a route that no longer exists: ${url}`),
+    ...posts
+      .filter((post) => !feed.includes(`${SITE}/blog/${post.slug}`))
+      .map((post) => `missing from rss.xml: ${post.slug}`),
+  ]
+}
 
-if (check) {
-  const current = urlsOf(readFileSync(SITEMAP, "utf8"))
-  const expected = routes.map((route) => `${SITE}${route.url}`).sort()
-  const missing = expected.filter((url) => !current.includes(url))
-  const extra = current.filter((url) => !expected.includes(url))
-  if (missing.length > 0 || extra.length > 0) {
-    for (const url of missing) console.error(`missing from sitemap.xml: ${url}`)
-    for (const url of extra)
-      console.error(`sitemap.xml lists a route that no longer exists: ${url}`)
-    console.error("\nRegenerate: bun run gen:sitemap")
-    process.exit(1)
+if (import.meta.main) {
+  const routes = routesUnder(ROOT)
+  if (process.argv.includes("--check")) {
+    const problems = sitemapProblems()
+    if (problems.length > 0) {
+      for (const problem of problems) console.error(problem)
+      console.error("\nRegenerate: bun run gen:sitemap")
+      process.exit(1)
+    }
+    console.log(`sitemap.xml: ${routes.length} URLs, in sync with site/routes`)
+  } else {
+    writeFileSync(`${ROOT}/site/public/sitemap.xml`, buildSitemap(routes, repoTipDate()))
+    writeFileSync(`${ROOT}/site/public/rss.xml`, buildRss())
+    console.log(`sitemap.xml: ${routes.length} URLs · rss.xml: ${POSTS.length} posts`)
   }
-  const feed = readFileSync(RSS, "utf8")
-  const stale = POSTS.filter((post) => !feed.includes(`${SITE}/blog/${post.slug}`))
-  if (stale.length > 0) {
-    for (const post of stale) console.error(`missing from rss.xml: ${post.slug}`)
-    console.error("\nRegenerate: bun run gen:sitemap")
-    process.exit(1)
-  }
-  console.log(`sitemap.xml: ${current.length} URLs, in sync with site/routes`)
-} else {
-  writeFileSync(SITEMAP, buildSitemap(routes, repoTipDate()))
-  writeFileSync(RSS, buildRss())
-  console.log(`sitemap.xml: ${routes.length} URLs · rss.xml: ${POSTS.length} posts`)
 }

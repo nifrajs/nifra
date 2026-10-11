@@ -14,8 +14,19 @@ import {
 } from "./classification.ts"
 import { normalizeRouteCapabilities } from "./internal/capability-runtime.ts"
 import {
+  adoptionsOf,
+  type HookKind,
+  type HookOrigin,
+  hookOriginOf,
+  hookScopeOf,
+  hookSourceOf,
+  staticHeadersOf,
+} from "./internal/hook-origins.ts"
+import {
   type AssuranceEvidence,
+  assuranceEvidenceFor,
   evidenceProvenance,
+  NIFRA_ASSURANCE_IDS,
   validEvidence,
 } from "./internal/route-assurance.ts"
 import { NIFRA_BACKEND_EVIDENCE } from "./mount.ts"
@@ -263,9 +274,50 @@ const reflectedAssurance = (value: unknown): readonly AssuranceEvidence[] | unde
   return evidence.length > 0 ? Object.freeze(evidence) : undefined
 }
 
+/** The evidence a WebSocket handshake enforces: its route chain runs the auth guards, and the app's
+ * request hooks run the rate limiter. Anything else a `GET` at the same path carries comes from code
+ * a socket's message handlers never pass through, so a socket does not claim it. */
+const HANDSHAKE_EVIDENCE: ReadonlySet<string> = new Set([
+  NIFRA_ASSURANCE_IDS.AUTHENTICATED,
+  NIFRA_ASSURANCE_IDS.RATE_LIMITED,
+])
+
+/** A server's WebSocket routes as `"WS"` routes, read off its own table the way `reflectMounts` reads
+ * `fetchMounts`, so serving pays nothing for them. */
+const reflectedSockets = (source: unknown): ReflectedRoute[] => {
+  const record = recordOf(source)
+  const sockets = record?.wsRoutes
+  if (!Array.isArray(sockets)) return []
+  const global = Array.isArray(record?.globalAssurance) ? record.globalAssurance : []
+  const reflected: ReflectedRoute[] = []
+  for (const candidate of sockets) {
+    const socket = recordOf(candidate)
+    if (typeof socket?.path !== "string" || !Array.isArray(socket.assurance)) continue
+    // The server stored them normalized at registration.
+    const capabilities = Array.isArray(socket.capabilities)
+      ? socket.capabilities.filter((id): id is string => typeof id === "string")
+      : []
+    // Declarations scoped by method match the `GET` a handshake is.
+    const evidence = reflectedAssurance(
+      assuranceEvidenceFor([...socket.assurance, ...global], "GET", socket.path).filter((item) =>
+        HANDSHAKE_EVIDENCE.has(item.id),
+      ),
+    )
+    const route: { -readonly [K in keyof ReflectedRoute]: ReflectedRoute[K] } = {
+      method: "WS",
+      path: socket.path,
+    }
+    if (evidence !== undefined) route.assurance = evidence
+    if (capabilities.length > 0) route.capabilities = capabilities
+    reflected.push(route)
+  }
+  return reflected
+}
+
 /**
- * Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries
- * are ignored; a missing/throwing `routes()` method yields an empty array.
+ * Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's
+ * WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing
+ * `routes()` method yields only the sockets.
  */
 export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
   const reflected: ReflectedRoute[] = []
@@ -296,6 +348,7 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
       ...(tool !== undefined ? { tool } : {}),
     })
   }
+  reflected.push(...reflectedSockets(source))
   return reflected
 }
 
@@ -305,6 +358,66 @@ export interface ReflectedMount {
   readonly path: string
   /** Why the child is not analyzed, as declared by `opaque` on the mount. */
   readonly opaque?: string
+  /** The routes the mount declares it serves. Declared, not analyzed. */
+  readonly routes?: readonly ReflectedMountRoute[]
+}
+
+/** A route an opaque mount declares, normalized: method upper-cased, capabilities deduplicated. */
+export interface ReflectedMountRoute {
+  readonly method: string
+  readonly path: string
+  readonly capabilities: readonly string[]
+}
+
+const METHOD_TOKEN = /^[A-Za-z]+$/
+
+/** The declared routes of the mount at `prefix`, or a TypeError naming the first bad entry: a
+ * declaration assurance reads must say exactly what it claims. */
+function declaredMountRoutes(
+  prefix: string,
+  shown: string,
+  value: unknown,
+): readonly ReflectedMountRoute[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new TypeError(`mount ${shown}: opaque routes must be an array`)
+  const routes: ReflectedMountRoute[] = []
+  const seen = new Set<string>()
+  value.forEach((candidate: unknown, index) => {
+    const at = `mount ${shown}: declared route ${index + 1}`
+    const entry = recordOf(candidate)
+    if (entry === undefined) throw new TypeError(`${at} is not an object`)
+    const { method, path, capabilities = [] } = entry
+    if (typeof method !== "string" || !METHOD_TOKEN.test(method)) {
+      throw new TypeError(`${at} has no valid method`)
+    }
+    if (typeof path !== "string" || !path.startsWith("/") || /[?#]/.test(path)) {
+      throw new TypeError(`${at} needs a path starting with "/", without a query or fragment`)
+    }
+    if (prefix !== "/" && path !== prefix && !path.startsWith(`${prefix}/`)) {
+      throw new TypeError(`${at} path ${path} is outside the mount`)
+    }
+    if (
+      !Array.isArray(capabilities) ||
+      !capabilities.every((id: unknown) => typeof id === "string")
+    ) {
+      throw new TypeError(`${at} capabilities must be an array of capability ids`)
+    }
+    const key = `${method.toUpperCase()} ${path}`
+    if (seen.has(key)) throw new TypeError(`mount ${shown} declares ${key} twice`)
+    seen.add(key)
+    routes.push(
+      Object.freeze({
+        method: method.toUpperCase(),
+        path,
+        capabilities: Object.freeze([...new Set<string>(capabilities)]),
+      }),
+    )
+  })
+  return Object.freeze(
+    routes.sort((a, b) =>
+      a.path < b.path ? -1 : a.path > b.path ? 1 : a.method < b.method ? -1 : 1,
+    ),
+  )
 }
 
 /**
@@ -324,13 +437,351 @@ export function reflectMounts(source: unknown): readonly ReflectedMount[] {
     const app = mount.app as { readonly [NIFRA_BACKEND_EVIDENCE]?: unknown } | undefined
     if (typeof app?.[NIFRA_BACKEND_EVIDENCE] === "function") continue
     // Checked here, at analysis time, so serving pays nothing: a blank reason is no reason.
-    const opaque = typeof mount.opaque === "string" ? mount.opaque.trim() || undefined : undefined
+    const declaration = recordOf(mount.opaque)
+    const reason = typeof mount.opaque === "string" ? mount.opaque : declaration?.reason
+    const opaque = typeof reason === "string" ? reason.trim() || undefined : undefined
+    const shown = mount.path === "/" ? "/*" : `${mount.path}/*`
+    // Routes count only beside a reason: without one the mount stays undeclared and fails as before.
+    const routes =
+      opaque === undefined ? undefined : declaredMountRoutes(mount.path, shown, declaration?.routes)
     reflected.push(
       Object.freeze({
-        path: mount.path === "/" ? "/*" : `${mount.path}/*`,
+        path: shown,
         ...(opaque !== undefined ? { opaque } : {}),
+        ...(routes !== undefined ? { routes } : {}),
       }),
     )
   }
   return reflected.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+}
+
+/** One hook that runs for a route or an unmatched path: what it is, who added it, and where. */
+export interface ReflectedHook {
+  readonly kind: HookKind
+  /** The plugin that registered it, else the function's own name, else `(anonymous)`. */
+  readonly name: string
+  /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`. */
+  readonly site: string
+  /** The header names a static `responseHeaders()` declaration sets. */
+  readonly headers?: readonly string[]
+}
+
+export interface ReflectedRouteHooks {
+  readonly method: string
+  readonly path: string
+  /** In the order they run: request hooks, the route chain, then response hooks innermost first. */
+  readonly hooks: readonly ReflectedHook[]
+}
+
+/** The hooks a path under `prefix` that no route matches still runs - its 404s and 405s. */
+export interface ReflectedUnmatchedHooks {
+  readonly prefix: string
+  readonly hooks: readonly ReflectedHook[]
+}
+
+export interface ReflectedHookReport {
+  /**
+   * False when a hook has no recorded origin and is listed with site `unknown`. Origins are recorded
+   * only outside production builds, so reflect a development load of the app.
+   */
+  readonly complete: boolean
+  readonly routes: readonly ReflectedRouteHooks[]
+  readonly unmatched: readonly ReflectedUnmatchedHooks[]
+}
+
+export type { HookKind }
+
+/** One server in the chain a request passes through: the app, then each mounted child it reaches. */
+interface HookFrame {
+  readonly server: Readonly<Record<string, unknown>>
+  /** What this server's own paths are prefixed with in the report (a stripped mount's path). */
+  readonly base: string
+}
+
+interface HookStep {
+  readonly server: Readonly<Record<string, unknown>>
+  readonly probe: HookProbe
+}
+
+interface HookProbe {
+  readonly method: string
+  /** A route's pattern path, or an unmatched path, in the frame's own coordinates. */
+  readonly path: string
+  readonly matched: boolean
+}
+
+// A middleware method's own name says nothing about who registered it.
+const HOOK_FIELD_NAMES = new Set([
+  "onRequest",
+  "onResponse",
+  "onResponseHeaders",
+  "onResponseFinalized",
+  "around",
+  "derive",
+  "beforeHandle",
+  "afterHandle",
+  "onError",
+  "run",
+  "web",
+])
+const UNMATCHED_PROBE = "__nifra_unmatched__"
+
+const listOf = (server: Readonly<Record<string, unknown>>, field: string): readonly unknown[] => {
+  const value = server[field]
+  return Array.isArray(value) ? value : []
+}
+
+const isServerRecord = (value: unknown): value is Readonly<Record<string, unknown>> => {
+  const record = recordOf(value)
+  return (
+    record !== undefined &&
+    Array.isArray(record.onRequestHooks) &&
+    typeof recordOf(record.catalog)?.entries === "function"
+  )
+}
+
+const catalogOf = (
+  server: Readonly<Record<string, unknown>>,
+): readonly { readonly method: string; readonly path: string; readonly entry: unknown }[] => {
+  const entries = recordOf(server.catalog)?.entries
+  const list: unknown =
+    typeof entries === "function" ? Reflect.apply(entries, server.catalog, []) : []
+  const routes: { method: string; path: string; entry: unknown }[] = []
+  for (const candidate of Array.isArray(list) ? list : []) {
+    const route = recordOf(candidate)
+    if (typeof route?.method === "string" && typeof route.path === "string") {
+      routes.push({ method: route.method, path: route.path, entry: route.entry })
+    }
+  }
+  return routes
+}
+
+const joinPath = (base: string, path: string): string =>
+  base === "" ? path : path === "/" ? base : `${base}${path}`
+
+/**
+ * Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin
+ * that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It
+ * follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server's
+ * request hooks cover only its own routes, a mount runs its child's whole lifecycle inside the app's
+ * global hooks - and reads the provenance a development load records, so reflect the app outside
+ * production. A mount of a server already on the path (a self-mount) is reported once, as that
+ * prefix's unmatched entry. Anything that is not a nifra server yields an empty report.
+ */
+export function reflectHooks(source: unknown): ReflectedHookReport {
+  if (!isServerRecord(source)) return { complete: true, routes: [], unmatched: [] }
+  const labels = new Map<object, string>()
+  let merges = 0
+  const label = (server: object, context: string): void => {
+    for (const adoption of adoptionsOf(server)) {
+      if (labels.has(adoption.source)) continue
+      if (adoption.prefix === undefined) merges += 1
+      const own = adoption.prefix !== undefined ? `group ${adoption.prefix}` : `merge #${merges}`
+      const full = context === "" ? own : `${context} > ${own}`
+      labels.set(adoption.source, full)
+      label(adoption.source, adoption.prefix !== undefined ? context : full)
+    }
+  }
+  labels.set(source, "app")
+  label(source, "")
+
+  let complete = true
+  const siteOf = (owner: object): string => {
+    const site = labels.get(owner)
+    if (site === undefined) complete = false
+    return site ?? "unknown"
+  }
+  const pluginsOf = (owner: object): readonly (readonly [string, unknown])[] => {
+    const plugins = recordOf(owner)?.appliedPlugins
+    return plugins instanceof Map ? [...plugins.entries()] : []
+  }
+  const nameOf = (hook: unknown, origin: HookOrigin): string => {
+    if (origin.plugin !== undefined) return origin.plugin
+    const candidates: unknown[] = [hook]
+    for (let next = hookSourceOf(hook); next !== undefined; next = hookSourceOf(next)) {
+      candidates.push(next)
+    }
+    for (const [name, plugin] of pluginsOf(origin.owner)) {
+      const bundle = recordOf(plugin)
+      if (bundle === undefined) continue
+      const fields = Object.values(bundle)
+      if (candidates.some((candidate) => fields.includes(candidate))) return name
+    }
+    for (const candidate of candidates) {
+      const name = typeof candidate === "function" ? candidate.name : ""
+      if (name !== "" && !HOOK_FIELD_NAMES.has(name)) return name
+    }
+    const id = recordOf(hook)?.id
+    return typeof id === "string" && id !== "" ? id : "(anonymous)"
+  }
+  const staticEntries = (server: object): ReflectedHook[] =>
+    staticHeadersOf(server).map((tag) => {
+      let name = tag.plugin
+      if (name === undefined) {
+        for (const [pluginName, plugin] of pluginsOf(tag.owner)) {
+          if (recordOf(plugin)?.responseHeaders === tag.source) name = pluginName
+        }
+      }
+      return {
+        kind: "responseHeaders",
+        name: name ?? "(static)",
+        site: siteOf(tag.owner),
+        headers: tag.names,
+      }
+    })
+  const entriesOf = (hook: unknown, kind: HookKind): ReflectedHook[] => {
+    const origin = hookOriginOf(hook)
+    if (origin === undefined) {
+      complete = false
+      const name = typeof hook === "function" && hook.name !== "" ? hook.name : "(anonymous)"
+      return [{ kind, name, site: "unknown" }]
+    }
+    if (origin.statics === true) return staticEntries(origin.owner)
+    return [{ kind: origin.kind, name: nameOf(hook, origin), site: siteOf(origin.owner) }]
+  }
+  // The hook a scoped wrapper gates, or undefined when the probe falls outside its scope.
+  const inScope = (hook: unknown, probe: HookProbe): unknown => {
+    let current = hook
+    for (let scope = hookScopeOf(current); scope !== undefined; scope = hookScopeOf(current)) {
+      const covered =
+        "prefix" in scope
+          ? probe.path === scope.prefix || probe.path.startsWith(`${scope.prefix}/`)
+          : probe.matched &&
+            scope.routes.some((route) => route.method === probe.method && route.path === probe.path)
+      if (!covered) return undefined
+      current = scope.inner
+    }
+    return current
+  }
+  const scoped = (hooks: readonly unknown[], kind: HookKind, probe: HookProbe): ReflectedHook[] =>
+    hooks.flatMap((hook) => {
+      const inner = inScope(hook, probe)
+      return inner === undefined ? [] : entriesOf(inner, kind)
+    })
+  const probesOf = (
+    frames: readonly HookFrame[],
+    path: string,
+    method: string,
+    matched: boolean,
+  ): readonly HookStep[] =>
+    frames.map((frame, index) => {
+      // Each frame sees the path its own mount stripped; the innermost frame's path is `path`.
+      const inner = frames
+        .slice(index + 1)
+        .reduceRight((acc, next) => joinPath(next.base, acc), path)
+      return {
+        server: frame.server,
+        probe: { method, path: inner, matched: matched && index === frames.length - 1 },
+      }
+    })
+  const requestPhase = (steps: readonly HookStep[]) =>
+    steps.flatMap(({ server, probe }) =>
+      scoped(listOf(server, "onRequestHooks"), "onRequest", probe),
+    )
+  const responsePhase = (steps: readonly HookStep[]) =>
+    steps
+      .map(({ server, probe }) => [
+        ...staticEntries(server),
+        ...scoped(listOf(server, "onResponseHooks"), "onResponse", probe),
+        ...scoped(listOf(server, "onResponseFinalizedHooks"), "onResponseFinalized", probe),
+      ])
+      .reverse()
+      .flat()
+
+  const routes: ReflectedRouteHooks[] = []
+  const unmatched: ReflectedUnmatchedHooks[] = []
+  const visit = (frames: readonly HookFrame[], frame: HookFrame): void => {
+    const reportPath = (path: string) =>
+      frames.reduceRight((acc, current) => joinPath(current.base, acc), path)
+    for (const route of catalogOf(frame.server)) {
+      const probes = probesOf(frames, route.path, route.method, true)
+      const entry = recordOf(route.entry)
+      const chain = (field: string, kind: HookKind) =>
+        entry === undefined ? [] : listOf(entry, field).flatMap((hook) => entriesOf(hook, kind))
+      routes.push({
+        method: route.method,
+        path: reportPath(route.path),
+        hooks: [
+          ...requestPhase(probes),
+          ...chain("around", "around"),
+          ...chain("authStages", "authenticate"),
+          ...chain("derives", "derive"),
+          ...chain("beforeHandle", "beforeHandle"),
+          ...chain("afterHandle", "afterHandle"),
+          ...chain("onError", "onError"),
+          ...responsePhase(probes),
+        ],
+      })
+    }
+    // A handshake runs the request hooks and the route chain up to `upgrade()`: no `around`, no
+    // `afterHandle`, and no response phase, since an accepted handshake sends no response through it.
+    for (const candidate of listOf(frame.server, "wsRoutes")) {
+      const socket = recordOf(candidate)
+      const chain = recordOf(socket?.chain)
+      if (typeof socket?.path !== "string" || chain === undefined) continue
+      const entries = (field: string, kind: HookKind) =>
+        listOf(chain, field).flatMap((hook) => entriesOf(hook, kind))
+      routes.push({
+        method: "WS",
+        path: reportPath(socket.path),
+        hooks: [
+          ...requestPhase(probesOf(frames, socket.path, "WS", true)),
+          ...entries("authStages", "authenticate"),
+          ...entries("derives", "derive"),
+          ...entries("beforeHandle", "beforeHandle"),
+          ...entries("onError", "onError"),
+        ],
+      })
+    }
+    const prefixes = new Set<string>(["/"])
+    const collect = (server: object): void => {
+      for (const adoption of adoptionsOf(server)) {
+        if (adoption.prefix !== undefined) prefixes.add(adoption.prefix)
+        collect(adoption.source)
+      }
+    }
+    collect(frame.server)
+    const mounts = listOf(frame.server, "fetchMounts").flatMap((candidate) => {
+      const mount = recordOf(candidate)
+      return typeof mount?.path === "string"
+        ? [{ path: mount.path, app: mount.app, stripPrefix: mount.stripPrefix === true }]
+        : []
+    })
+    for (const prefix of prefixes) {
+      const probePath = `${prefix === "/" ? "" : prefix}/${UNMATCHED_PROBE}`
+      const probes = probesOf(frames, probePath, "GET", false)
+      unmatched.push({
+        prefix: reportPath(prefix),
+        hooks: [...requestPhase(probes), ...responsePhase(probes)],
+      })
+    }
+    for (const { path, ...mount } of mounts) {
+      // A server already on this request's path (a self-mount, or two servers mounting each other)
+      // is listed like a plain fetch mount: followed, the walk would never end.
+      const cyclic = frames.some((outer) => outer.server === mount.app)
+      if (isServerRecord(mount.app) && !cyclic) {
+        const child = mount.app
+        if (!labels.has(child)) {
+          const context = `mount ${reportPath(path)}`
+          labels.set(child, context)
+          label(child, context)
+        }
+        const next = { server: child, base: mount.stripPrefix ? path : "" }
+        visit([...frames, next], next)
+      } else {
+        const probes = probesOf(frames, `${path}/${UNMATCHED_PROBE}`, "GET", false)
+        unmatched.push({
+          prefix: reportPath(path),
+          hooks: [...requestPhase(probes), ...responsePhase(probes)],
+        })
+      }
+    }
+  }
+  const root = { server: source, base: "" }
+  visit([root], root)
+  const byPath = (a: { readonly path: string }, b: { readonly path: string }) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+  routes.sort((a, b) => byPath(a, b) || (a.method < b.method ? -1 : a.method > b.method ? 1 : 0))
+  unmatched.sort((a, b) => byPath({ path: a.prefix }, { path: b.prefix }))
+  return { complete, routes, unmatched }
 }

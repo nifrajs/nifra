@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { fixedBackoff } from "../src/backoff.ts"
-import { createQueue, JobError, JobValidationError } from "../src/index.ts"
+import { fixedBackoff, noBackoff } from "../src/backoff.ts"
+import { createQueue, JobError, JobTimeoutError, JobValidationError } from "../src/index.ts"
 import { MemoryJobStore } from "../src/memory-store.ts"
 import type { JobStore, StandardSchemaV1, StoredJob } from "../src/types.ts"
 
@@ -157,6 +157,30 @@ describe("createQueue - scheduling", () => {
   })
 })
 
+describe("a store that fails to record a success", () => {
+  for (const retries of [3, 1])
+    test(`never reruns or dead-letters the finished handler (retries: ${retries})`, async () => {
+      class LossyStore extends MemoryJobStore {
+        override async complete(): Promise<void> {
+          throw new Error("store down")
+        }
+      }
+      const store = new LossyStore()
+      const q = createQueue({ store, backoff: noBackoff, onError: () => {} })
+      let runs = 0
+      q.define("send", {
+        retries,
+        handler() {
+          runs++
+        },
+      })
+      await q.enqueue("send", {})
+      await expect(q.drain()).rejects.toThrow("store down")
+      expect(runs).toBe(1)
+      expect(await q.counts()).toEqual({ pending: 0, active: 1, dead: 0 })
+    })
+})
+
 describe("createQueue - worker lifecycle (real timers)", () => {
   test("start() processes enqueued jobs; stop() drains the in-flight round", async () => {
     const q = createQueue() // real clock
@@ -181,6 +205,214 @@ describe("createQueue - worker lifecycle (real timers)", () => {
     expect(finished).toBe(true)
     expect(worker.running).toBe(false)
     expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+})
+
+describe("a job holds its slot until it settles", () => {
+  const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  test("a store failure in one job does not end the round while a sibling still runs", async () => {
+    const failed = deferred()
+    class DeadLetterOutage extends MemoryJobStore {
+      override deadLetter(): void {
+        failed.resolve()
+        throw new Error("dead-letter store unavailable")
+      }
+    }
+    const q = createQueue({ store: new DeadLetterOutage(), onError: () => {} })
+    const started = deferred()
+    const gate = deferred()
+    const job = q.define<{ fail: boolean }>("audit", {
+      retries: 1,
+      async handler({ fail }) {
+        if (fail) throw new Error("boom")
+        started.resolve()
+        await gate.promise
+      },
+    })
+    await job.enqueue({ fail: true })
+    await job.enqueue({ fail: false })
+    const worker = q.start({ concurrency: 2, pollIntervalMs: 60_000 })
+    const round = q.process()
+    const outcome = round.then(
+      () => "resolved",
+      (error: unknown) => String(error),
+    )
+    await Promise.all([failed.promise, started.promise])
+    await turn()
+    let waited = false
+    const second = q.process().then((n) => {
+      waited = true
+      return n
+    })
+    let stopped = false
+    const stopping = worker.stop().then(() => {
+      stopped = true
+    })
+    await turn()
+    expect(stopped).toBe(false)
+    expect(waited).toBe(false)
+    gate.resolve()
+    expect(await outcome).toContain("dead-letter store unavailable")
+    expect(await second).toBe(1)
+    await stopping
+  })
+
+  test("concurrent drains run no more than the configured concurrency", async () => {
+    const q = createQueue()
+    const gate = deferred()
+    let live = 0
+    let peak = 0
+    const job = q.define("audit", {
+      async handler() {
+        live++
+        peak = Math.max(peak, live)
+        await gate.promise
+        live--
+      },
+    })
+    for (let i = 0; i < 3; i++) await job.enqueue({})
+    const drains = Promise.all([q.drain(), q.drain(), q.drain()])
+    await turn()
+    expect(live).toBe(1)
+    gate.resolve()
+    await drains
+    expect(peak).toBe(1)
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+})
+
+describe("a slow job holds only its own slot", () => {
+  const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  test("process() runs the next due job in a free slot instead of waiting on the slow one", async () => {
+    const q = createQueue()
+    const slowStarted = deferred()
+    const gate = deferred()
+    const ran: string[] = []
+    const slow = q.define("slow", {
+      async handler() {
+        slowStarted.resolve()
+        await gate.promise
+        ran.push("slow")
+      },
+    })
+    const fast = q.define<number>("fast", {
+      handler(n) {
+        ran.push(`fast${n}`)
+      },
+    })
+    await slow.enqueue({})
+    const worker = q.start({ concurrency: 2, pollIntervalMs: 60_000 })
+    const first = q.process()
+    await slowStarted.promise
+    await fast.enqueue(1)
+    await fast.enqueue(2)
+    const blocked = turn().then(() => "blocked")
+    expect(await Promise.race([q.process(), blocked])).toBe(1)
+    expect(await Promise.race([q.process(), blocked])).toBe(1)
+    expect(ran).toEqual(["fast1", "fast2"])
+    gate.resolve()
+    expect(await first).toBe(1)
+    await worker.stop()
+    expect(ran).toEqual(["fast1", "fast2", "slow"])
+  })
+
+  test("the worker fills a free slot while a slow job runs, and stop() waits for both", async () => {
+    const q = createQueue()
+    const slowStarted = deferred()
+    const fastRan = deferred()
+    const gate = deferred()
+    let slowDone = false
+    const slow = q.define("slow", {
+      async handler() {
+        slowStarted.resolve()
+        await gate.promise
+        slowDone = true
+      },
+    })
+    const fast = q.define("fast", {
+      handler() {
+        fastRan.resolve()
+      },
+    })
+    await slow.enqueue({})
+    const worker = q.start({ concurrency: 2, pollIntervalMs: 1 })
+    await slowStarted.promise
+    await fast.enqueue({})
+    await fastRan.promise
+    expect(slowDone).toBe(false)
+    const stopping = worker.stop()
+    gate.resolve()
+    await stopping
+    expect(slowDone).toBe(true)
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+})
+
+describe("timeoutMs", () => {
+  test("an attempt that outruns it fails with JobTimeoutError and aborts ctx.signal", async () => {
+    const errors: unknown[] = []
+    const q = createQueue({ backoff: noBackoff, onError: (error) => errors.push(error) })
+    let signal: AbortSignal | undefined
+    const hung = q.define("hung", {
+      retries: 1,
+      timeoutMs: 1,
+      handler(_payload, ctx) {
+        signal = ctx.signal
+        return new Promise<void>(() => {})
+      },
+    })
+    await hung.enqueue({})
+    expect(await q.drain()).toBe(1)
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 1 })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toBeInstanceOf(JobTimeoutError)
+    expect(signal?.aborted).toBe(true)
+    expect(signal?.reason).toBe(errors[0])
+  })
+
+  test("a timed-out attempt is retried, and a handler that rejects on abort is not unhandled", async () => {
+    const errors: unknown[] = []
+    const q = createQueue({ backoff: noBackoff, onError: (error) => errors.push(error) })
+    let attempts = 0
+    const job = q.define("flaky", {
+      retries: 2,
+      timeoutMs: 1,
+      handler(_payload, ctx) {
+        attempts++
+        if (ctx.attempt === 2) return
+        return new Promise<void>((_resolve, reject) => {
+          ctx.signal?.addEventListener("abort", () => reject(new Error("aborted late")))
+        })
+      },
+    })
+    await job.enqueue({})
+    await q.drain()
+    expect(attempts).toBe(2)
+    expect(errors.map(String)).toEqual(['JobTimeoutError: job "flaky" did not finish within 1ms'])
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
+  test("a job without one gets no signal", async () => {
+    const q = createQueue()
+    let keys: string[] = []
+    const job = q.define("plain", {
+      handler(_payload, ctx) {
+        keys = Object.keys(ctx)
+      },
+    })
+    await job.enqueue({})
+    await q.drain()
+    expect(keys).toEqual(["id", "name", "attempt"])
+  })
+
+  test("define rejects a timeoutMs setTimeout cannot honour", () => {
+    const q = createQueue()
+    const handler = (): void => {}
+    for (const timeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31])
+      expect(() => q.define(`t${timeoutMs}`, { timeoutMs, handler })).toThrow(RangeError)
+    expect(() => q.define("ok", { timeoutMs: 2 ** 31 - 1, handler })).not.toThrow()
   })
 })
 

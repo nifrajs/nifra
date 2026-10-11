@@ -128,9 +128,10 @@ describe("shadowedPages", () => {
 })
 
 describe("createWebApp refuses a page under a mount", () => {
-  test("the auto-mounted backend at the default prefix", () => {
+  test("the backend mounted at apiPrefix", () => {
     expect(() =>
       createWebApp({
+        apiPrefix: "/api",
         adapter: stub,
         manifest: manifestOf([
           ["/", "index.tsx"],
@@ -176,7 +177,13 @@ describe("createWebApp refuses a page under a mount", () => {
       }),
     ).not.toThrow()
     expect(() =>
-      createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", api: { fetch: () => 1 } }),
+      createWebApp({
+        apiPrefix: "/api",
+        adapter: stub,
+        manifest,
+        clientEntry: "/c.js",
+        api: { fetch: () => 1 },
+      }),
     ).not.toThrow()
   })
 
@@ -215,6 +222,7 @@ describe("createWebApp refuses a page under a mount", () => {
 
   test("pages outside every mount still serve, and the backend still answers its path", async () => {
     const app = createWebApp({
+      apiPrefix: "/api",
       adapter: stub,
       manifest: manifestOf([
         ["/", "index.tsx"],

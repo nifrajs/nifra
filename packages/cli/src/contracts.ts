@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
+import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import {
   type ProjectEvidenceSnapshot,
   reflectedRoutesFromEvidence,
@@ -16,8 +17,17 @@ export interface ContractDigest {
 
 export interface ContractsLock {
   readonly version: 1
+  /** The {@link CONTRACT_DIGEST_FORMAT} that produced `routes`. Absent in a lock written before it was recorded. */
+  readonly digest?: number
   readonly routes: Readonly<Record<string, ContractDigest>>
 }
+
+/**
+ * Bumped whenever {@link digestRoute} hashes the same schema differently. The lock records it, so a
+ * format change reads as "re-snapshot" instead of as drift on every route. 2: properties named like
+ * annotation keywords are hashed (4.0.1).
+ */
+export const CONTRACT_DIGEST_FORMAT = 2
 
 export const DEFAULT_CONTRACTS_LOCK = "contracts.lock.json"
 const DIGEST = /^[a-f0-9]{64}$/
@@ -146,6 +156,7 @@ export async function buildContractsLock(
   )
   return {
     version: 1,
+    digest: CONTRACT_DIGEST_FORMAT,
     routes: Object.fromEntries(Object.entries(routes).sort(([a], [b]) => codeUnitOrder(a, b))),
   }
 }
@@ -158,6 +169,27 @@ async function loadBackend(cwd: string): Promise<unknown> {
   if (loaded?.backend === undefined)
     throw new Error(`[nifra] ${backendPath} does not export backend`)
   return loaded.backend
+}
+
+const INPUT_PARTS = ["body", "query", "headers", "cookies", "params"] as const
+
+/**
+ * A route that in-process auth guards, but through a hook that runs after its declared input is
+ * validated: an unauthenticated caller reaches the body parser and reads the validation issues.
+ * Gateway auth (declared provenance) never lets that caller in, and an explicit `validationOrder`
+ * is the author's choice.
+ */
+export function validatesBeforeAuthentication(route: ReflectedRoute): boolean {
+  const schema = route.schema
+  if (schema === undefined || schema.validationOrder !== undefined) return false
+  if (!INPUT_PARTS.some((part) => schema[part] !== undefined)) return false
+  const auth = (route.assurance ?? []).filter(
+    (evidence) =>
+      evidence.id === NIFRA_ASSURANCE.AUTHENTICATED &&
+      (evidence.provenance ?? (evidence.source === "declared" ? "declared" : "runtime")) ===
+        "runtime",
+  )
+  return auth.length > 0 && auth.every((evidence) => evidence.source !== "nifra.authenticate")
 }
 
 export async function snapshotContracts(
@@ -176,6 +208,9 @@ export function parseContractsLock(value: unknown): ContractsLock {
   const routesRecord = recordOf(routesValue)
   if (record.version !== 1 || routesRecord === undefined)
     throw new TypeError("contracts lock must have version 1 and routes")
+  const digest = record.digest
+  if (digest !== undefined && !(Number.isSafeInteger(digest) && Number(digest) > 0))
+    throw new TypeError("contracts lock digest must be a positive integer")
   const routes: Record<string, ContractDigest> = {}
   for (const [key, raw] of Object.entries(routesRecord)) {
     const item = recordOf(raw)
@@ -192,7 +227,7 @@ export function parseContractsLock(value: unknown): ContractsLock {
       throw new TypeError(`invalid contract ${key}`)
     routes[key] = { request, response }
   }
-  return { version: 1, routes }
+  return typeof digest === "number" ? { version: 1, digest, routes } : { version: 1, routes }
 }
 
 export async function checkContractsLock(
@@ -202,13 +237,30 @@ export async function checkContractsLock(
   present: boolean
   vacuous: boolean
   diagnostics: Array<{ route?: string; message: string }>
+  /** `METHOD /path` of every route the backend serves, read when the lock made the check load it. */
+  served?: readonly string[]
+  /** `METHOD /path` of each route {@link validatesBeforeAuthentication} names, read alongside `served`. */
+  inputBeforeAuth?: readonly string[]
 }> {
   const path = resolve(cwd, file)
   if (!existsSync(path)) return { present: false, vacuous: false, diagnostics: [] }
   const parsed = parseContractsLock(JSON.parse(await Bun.file(path).text()))
-  const current = await buildContractsLock(await loadBackend(cwd))
+  const evidence = snapshotProjectEvidence(await loadBackend(cwd))
+  const current = await buildContractsLock(undefined, evidence)
   const vacuous = await isVacuousLock(current)
+  const served = Object.keys(current.routes)
+  const inputBeforeAuth = reflectedRoutesFromEvidence(evidence)
+    .filter(validatesBeforeAuthentication)
+    .map((route) => `${route.method} ${route.path}`)
   const diagnostics: Array<{ route?: string; message: string }> = []
+  // Digests of two formats never compare, so this still fails; it just names the real cause.
+  if (parsed.digest !== undefined && parsed.digest !== CONTRACT_DIGEST_FORMAT) {
+    const newer = parsed.digest > CONTRACT_DIGEST_FORMAT
+    diagnostics.push({
+      message: `${file} was written with contract digest format ${parsed.digest}, but this nifra computes format ${CONTRACT_DIGEST_FORMAT}${newer ? " (a newer @nifrajs/cli wrote it; upgrade this one)" : ""}, so no route could be compared. Review the route schema changes since the lock was written, then run \`nifra contracts snapshot\` and commit the lock.`,
+    })
+    return { present: true, vacuous, diagnostics, served, inputBeforeAuth }
+  }
   const keys = new Set([...Object.keys(parsed.routes), ...Object.keys(current.routes)])
   for (const key of [...keys].sort()) {
     const before = parsed.routes[key]
@@ -225,5 +277,10 @@ export async function checkContractsLock(
       })
     }
   }
-  return { present: true, vacuous, diagnostics }
+  if (diagnostics.length > 0 && parsed.digest === undefined) {
+    diagnostics.push({
+      message: `${file} records no contract digest format. A lock written before nifra 4.0.1 hashed schemas differently, so a route reported above may not have changed. Review them, then run \`nifra contracts snapshot\` to record the format.`,
+    })
+  }
+  return { present: true, vacuous, diagnostics, served, inputBeforeAuth }
 }

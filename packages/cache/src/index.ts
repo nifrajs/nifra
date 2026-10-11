@@ -19,6 +19,7 @@ export type {
   CacheOptions,
   CacheOutcome,
   CacheStore,
+  CacheStoreOp,
   CapabilityBeacon,
   SetOptions,
   StoredEntry,

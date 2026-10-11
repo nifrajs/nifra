@@ -61,6 +61,35 @@ app.get("/notifications", (c) =>
   }, { keepAlive: 15_000 }),
 )`
 
+const TYPED_SSE = `import { client } from "@nifrajs/client"
+import { server } from "@nifrajs/core/server"
+import { streaming } from "@nifrajs/core/sse"
+import { t } from "@nifrajs/schema"
+
+declare function generate(prompt: string): AsyncIterable<string>
+
+export const app = server()
+  .use(streaming())
+  // A GET stream: the event payload is contracted by \`sse\`.
+  .sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) }, (_c, stream) => {
+    stream.send({ id: 1, title: "hello" })
+    stream.close()
+  })
+  // A body makes it a POST stream, validated like any POST: a chat that posts its prompt.
+  .sse(
+    "/chat",
+    { body: t.object({ prompt: t.string() }), sse: t.object({ token: t.string() }) },
+    async (c, stream) => {
+      for await (const token of generate(c.body.prompt)) stream.send({ token })
+      stream.close()
+    },
+  )
+
+const api = client<typeof app>("https://example.com")
+const feed = api.feed.subscribe((post) => console.log(post.title))
+api.chat.subscribe((event) => console.log(event.token), { body: { prompt: "Hi" } })
+feed.close()`
+
 export default function Streaming() {
   return (
     <div className="prose">
@@ -101,6 +130,26 @@ export default function Streaming() {
         <code>data</code> is split into multiple <code>data:</code> lines per the spec; and{" "}
         <code>keepAlive</code> emits comment pings so idle proxies don't drop the connection.
       </p>
+      <p>
+        A client that stops reading is dropped once it has <code>maxBufferedBytes</code> (default 1
+        MiB) of events unread: <code>stream.signal</code> aborts with <code>sse_client_too_slow</code>,
+        the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
+        server memory without limit. Raise it for a burst larger than that sent before the client can
+        read, or pass <code>Infinity</code> to turn the limit off.
+      </p>
+
+      <h2 id="typed-sse">Typed SSE routes</h2>
+      <p>
+        <code>app.sse(path, schema, run)</code> declares the event payload with <code>sse</code>, so{" "}
+        <code>stream.send()</code> is type-checked and the typed client grows{" "}
+        <code>.subscribe(onEvent)</code> with the same event type. A route whose schema declares a{" "}
+        <code>body</code> is a POST stream: the body validates as on any POST, and{" "}
+        <code>.subscribe(onEvent, &#123; body &#125;)</code> sends it. A GET stream reconnects after a
+        drop and resumes with <code>Last-Event-ID</code>; a POST stream does not reconnect unless you
+        pass <code>reconnect: true</code>, since a reconnect sends the body again. The client&apos;s{" "}
+        <code>onRequest</code> hook runs before each connect, so a refreshed token reaches the stream.
+      </p>
+      <CodeBlock code={TYPED_SSE} />
     </div>
   )
 }

@@ -22,9 +22,10 @@ import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./di
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
-import type { LoadedApp } from "./load.ts"
+import type { AppLoader, IntrospectedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import type { LayoutMigrationResult } from "./migrate-layout.ts"
+import type { OutputSchemaStatus, OutputSchemasReport } from "./output-schemas.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
@@ -80,8 +81,8 @@ export interface CommandCtx {
   readonly signal?: AbortSignal
   readonly progress?: (message: string) => void
   readonly cliVersion?: string
-  /** Adapter-provided cache for commands that need the loaded web app. */
-  readonly loadApp?: () => Promise<LoadedApp>
+  /** Adapter-provided cache for commands that need the loaded app. */
+  readonly loadApp?: AppLoader
 }
 
 export interface CommandSpec<Input, Output> {
@@ -328,6 +329,8 @@ interface RoutesInput {
   readonly json?: boolean | undefined
   readonly graph?: boolean | undefined
   readonly modes?: boolean | undefined
+  readonly hooks?: boolean | undefined
+  readonly since?: string | undefined
   readonly target?: string | undefined
   readonly dir?: string | undefined
 }
@@ -386,6 +389,12 @@ interface TargetOutput {
 
 interface TypesInput {
   readonly check?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface SchemasInput {
+  readonly write?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -458,7 +467,7 @@ interface AssureCommandOutput {
 interface LevelsCommandOutput extends VerificationLevelsResult {}
 interface RoutesCommandOutput {
   readonly ok: boolean
-  readonly mode: "default" | "graph" | "modes"
+  readonly mode: "default" | "graph" | "modes" | "hooks"
   readonly data: unknown
   readonly text: string
 }
@@ -492,6 +501,9 @@ interface DiffCommandOutput {
   readonly ok: boolean
   readonly hasBreaking: boolean
   readonly changes: readonly unknown[]
+}
+interface RouteDiffCommandOutput extends DiffCommandOutput {
+  readonly text: string
 }
 interface ContractsCommandOutput {
   readonly ok: boolean
@@ -647,15 +659,20 @@ const ROUTES_SCHEMA = input<RoutesInput>(
     json: { type: "boolean" },
     graph: { type: "boolean" },
     modes: { type: "boolean" },
+    hooks: { type: "boolean" },
+    since: { type: "string" },
     target: { type: "string" },
     dir: { type: "string" },
   }),
   (value) => {
     const raw = withDir(record(value))
-    if (raw.graph === true && raw.modes === true)
-      throw new TypeError("graph and modes cannot be combined")
+    if ([raw.graph, raw.modes, raw.hooks].filter((flag) => flag === true).length > 1)
+      throw new TypeError("graph, modes and hooks cannot be combined")
+    if (raw.since !== undefined && raw.hooks !== true)
+      throw new TypeError("since compares hook reports and needs hooks")
     return {
-      ...parseBooleanFlags(raw, ["json", "graph", "modes"]),
+      ...parseBooleanFlags(raw, ["json", "graph", "modes", "hooks"]),
+      since: optionalString(raw.since, "since"),
       target: optionalString(raw.target, "target"),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
@@ -776,6 +793,17 @@ const TYPES_SCHEMA = input<TypesInput>(
     const raw = withDir(record(value))
     return {
       ...parseBooleanFlags(raw, ["check", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const SCHEMAS_SCHEMA = input<SchemasInput>(
+  objectSchema({ write: { type: "boolean" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  (value) => {
+    const raw = withDir(record(value))
+    return {
+      ...parseBooleanFlags(raw, ["write", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -944,9 +972,10 @@ const I18N_SCHEMA = input<I18nInput>(
   },
 )
 
-function loadAppFor(ctx: CommandCtx): Promise<LoadedApp> {
-  if (ctx.loadApp !== undefined) return ctx.loadApp()
-  return import("./load.ts").then(({ loadApp }) => loadApp(ctx.cwd))
+/** The app as the backend readers see it: an API-only app is its `backend/app.ts` alone. */
+function backendAppFor(ctx: CommandCtx): Promise<IntrospectedApp> {
+  if (ctx.loadApp !== undefined) return ctx.loadApp.backend()
+  return import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
 }
 
 function structuredDiagnostics(out: CheckCommandOutput): readonly Diagnostic[] {
@@ -1195,7 +1224,8 @@ const manifestSpec: CommandSpec<ManifestInput, ManifestEmitCommandResult | DiffC
 
 const routesSpec: CommandSpec<RoutesInput, RoutesCommandOutput> = {
   name: "routes",
-  summary: "List, graph, or target-check every page and API route the app serves.",
+  summary:
+    "List, graph, or target-check every page and API route the app serves, or the hooks each runs.",
   input: ROUTES_SCHEMA,
   output: output({
     type: "object",
@@ -1209,12 +1239,47 @@ const routesSpec: CommandSpec<RoutesInput, RoutesCommandOutput> = {
       { name: "json", field: "json", type: "boolean" },
       { name: "graph", field: "graph", type: "boolean" },
       { name: "modes", field: "modes", type: "boolean" },
+      { name: "hooks", field: "hooks", type: "boolean" },
+      { name: "since", field: "since", type: "string" },
       { name: "target", field: "target", type: "string" },
     ],
   },
   async run(value, ctx) {
-    const app = await loadAppFor(ctx)
+    if (value.hooks === true) {
+      const app = await backendAppFor(ctx)
+      const hooks = await import("./hooks-report.ts")
+      const report = await hooks.collectHookReport(app.backend)
+      if (value.since === undefined) {
+        return { ok: true, mode: "hooks", data: report, text: hooks.renderHookReport(report) }
+      }
+      const saved = hooks.parseHookReport(
+        await Bun.file(resolve(ctx.cwd, value.since))
+          .text()
+          .catch(() => ""),
+      )
+      if (saved === undefined) {
+        return {
+          ok: false,
+          mode: "hooks",
+          data: { report, error: `${value.since} is not a saved hook report` },
+          text: `[nifra] ${value.since} is not a saved hook report (write one with \`nifra routes --hooks --json\`)`,
+        }
+      }
+      const changes = hooks.diffHookReports(saved, report)
+      return {
+        ok: true,
+        mode: "hooks",
+        data: { report, changes },
+        text: hooks.renderHookDiff(changes),
+      }
+    }
+    const app = await backendAppFor(ctx)
     if (value.modes === true) {
+      if (app.framework === undefined) {
+        throw new Error(
+          `[nifra] routes --modes reads page routes, and ${ctx.cwd} is an API-only app (backend/app.ts, no web config)`,
+        )
+      }
       const { buildRouteManifest, renderRouteManifest } = await import(
         "@nifrajs/web/route-manifest"
       )
@@ -1264,7 +1329,7 @@ const contextSpec: CommandSpec<ContextInput, ContextCommandOutput> = {
   async run(value, ctx) {
     return {
       ok: true,
-      text: (await import("./introspect.ts")).describeProject(await loadAppFor(ctx), {
+      text: (await import("./introspect.ts")).describeProject(await backendAppFor(ctx), {
         ...(value.path === undefined ? {} : { path: value.path }),
         ...(value.kind === undefined ? {} : { kind: value.kind }),
       }),
@@ -1292,10 +1357,7 @@ const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
     ],
   },
   async run(value, ctx) {
-    const app =
-      ctx.loadApp !== undefined
-        ? await ctx.loadApp()
-        : await import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
+    const app = await backendAppFor(ctx)
     const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
     const format = value.format ?? "json"
     return {
@@ -1430,6 +1492,8 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       splits: { type: "array" },
       moves: { type: "array" },
       rewritten: { type: "array" },
+      tooling: { type: "array" },
+      mode: { type: "string" },
     },
     required: ["ok", "write", "issues"],
   }),
@@ -1459,13 +1523,14 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
     if (out.kind === "layout") {
       return [
         out.ok
-          ? `✓ ${out.splits.length} route file${out.splits.length === 1 ? "" : "s"} split, ${out.moves.length} file${out.moves.length === 1 ? "" : "s"} moved`
+          ? `✓ ${out.mode === "api" ? "API-only app" : `${out.splits.length} route file${out.splits.length === 1 ? "" : "s"} split`}, ${out.moves.length} file${out.moves.length === 1 ? "" : "s"} moved`
           : `⚠ ${out.issues.length} issue${out.issues.length === 1 ? "" : "s"} need a decision; everything else is planned`,
         ...out.splits.map(
           (split) => `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})`,
         ),
         ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
         ...out.rewritten.map((file) => `  edit  ${file} (imports)`),
+        ...out.tooling.map((edit) => `  edit  ${edit.file} (${edit.change})`),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]
@@ -1586,6 +1651,75 @@ const typesSpec: CommandSpec<TypesInput, RouteTypesReport> = {
   success: (out) => out.ok,
 }
 
+const SCHEMA_STATUS_LINE: Readonly<Record<OutputSchemaStatus, string>> = {
+  missing: "+ would write",
+  generated: "+ wrote",
+  stale: "↻ stale",
+  regenerated: "↻ rewrote",
+  current: "✓ current",
+  declared: "· hand-written",
+  "no-data": "· no data",
+  unreadable: "⚠ unreadable",
+}
+
+const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
+  name: "schemas",
+  summary:
+    "Write a reviewable `loaderOutput`/`actionOutput` from the loader's or action's return type where a route has none (`--write`), keep generated ones current, and list returned fields a hand-written schema drops.",
+  input: SCHEMAS_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      write: { type: "boolean" },
+      entries: { type: "array" },
+      written: { type: "array" },
+      warnings: { type: "array" },
+    },
+    required: ["ok", "write", "entries", "written", "warnings"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "write", field: "write", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const { outputSchemas } = await import("./output-schemas.ts")
+    return outputSchemas(resolve(ctx.cwd, value.dir ?? "."), { write: value.write === true })
+  },
+  render: (out) => {
+    const shown = out.entries.filter(
+      (entry) =>
+        entry.status !== "current" &&
+        entry.status !== "no-data" &&
+        (entry.status !== "declared" || entry.dropped.length > 0),
+    )
+    const current = out.entries.filter((entry) => entry.status === "current").length
+    return [
+      ...out.warnings.map((warning) => `⚠ ${warning}`),
+      `${out.ok ? "✓" : "✖"} ${out.entries.length} output schema${out.entries.length === 1 ? "" : "s"} read, ${current} generated and current`,
+      ...shown.map((entry) => {
+        const detail =
+          entry.reason ??
+          (entry.edited === true
+            ? "edited by hand under its nifra:generated line"
+            : entry.dropped.length > 0
+              ? `drops ${entry.dropped.join(", ")}`
+              : undefined)
+        return `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`
+      }),
+      ...(out.write || !out.entries.some((e) => e.status === "missing" || e.status === "stale")
+        ? []
+        : ["  dry run: pass --write to apply"]),
+    ]
+  },
+  success: (out) => out.ok,
+}
+
 const snapshotSpec: CommandSpec<SnapshotInput, SnapshotCommandOutput> = {
   name: "snapshot",
   summary: "Write the backend API contract as a versioned JSON baseline.",
@@ -1610,18 +1744,16 @@ const snapshotSpec: CommandSpec<SnapshotInput, SnapshotCommandOutput> = {
   },
   async run(value, ctx) {
     const mod = await import("./diff-tool.ts")
-    const routes = await mod.snapshotBackend(ctx.cwd)
     const file = value.out ?? mod.DEFAULT_SNAPSHOT_FILE
-    const snapshot = { nifraSnapshot: 1 as const, routes }
-    await Bun.write(resolve(ctx.cwd, file), `${JSON.stringify(snapshot, null, 2)}\n`)
-    return { ok: true, file, routes: routes.length, snapshot }
+    const snapshot = await mod.writeSnapshot(ctx.cwd, file)
+    return { ok: true, file, routes: snapshot.routes.length, snapshot }
   },
   render: (out) => [
     `[nifra] wrote ${out.routes} route${out.routes === 1 ? "" : "s"} to ${out.file}`,
   ],
 }
 
-const diffSpec: CommandSpec<DiffInput, DiffCommandOutput> = {
+const diffSpec: CommandSpec<DiffInput, RouteDiffCommandOutput> = {
   name: "diff",
   summary: "Compare the current backend contract with a baseline and fail on breaking changes.",
   input: DIFF_SCHEMA,
@@ -1638,21 +1770,17 @@ const diffSpec: CommandSpec<DiffInput, DiffCommandOutput> = {
   stability: "stable",
   argv: { positionals: ["baseline"], flags: [{ name: "json", field: "json", type: "boolean" }] },
   async run(value, ctx) {
-    const mod = await import("./diff-tool.ts")
-    const baseline = value.baseline ?? mod.DEFAULT_SNAPSHOT_FILE
-    const file = await Bun.file(resolve(ctx.cwd, baseline)).text()
-    const before = mod.parseSnapshotFile(file, baseline)
-    const current = await mod.snapshotBackend(ctx.cwd)
-    const { diffRouteSnapshots } = await import("@nifrajs/core/diff")
-    const diff = diffRouteSnapshots(before.routes, current)
-    return { ok: !diff.hasBreaking, hasBreaking: diff.hasBreaking, changes: diff.changes }
+    const { diffAgainstBaseline, formatDiff } = await import("./diff-tool.ts")
+    const diff = await diffAgainstBaseline(ctx.cwd, value.baseline)
+    return {
+      ok: !diff.hasBreaking,
+      hasBreaking: diff.hasBreaking,
+      changes: diff.changes,
+      text: formatDiff(diff),
+    }
   },
-  render: (out) => [
-    out.ok ? "✓ no breaking changes" : "✖ breaking changes",
-    ...(out.changes as readonly { method: string; path: string; message: string }[]).map(
-      (c) => `${c.method} ${c.path}: ${c.message}`,
-    ),
-  ],
+  render: (out) => [out.text],
+  json: ({ ok, hasBreaking, changes }) => ({ ok, hasBreaking, changes }),
   success: (out) => out.ok,
 }
 
@@ -1880,6 +2008,7 @@ export const commandSpecs = Object.freeze([
   migrateSpec,
   targetSpec,
   typesSpec,
+  schemasSpec,
   snapshotSpec,
   diffSpec,
   contractsSpec,

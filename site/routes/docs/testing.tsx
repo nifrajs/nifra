@@ -77,6 +77,24 @@ await assertAdversarialContract(app, {
   only: failure.replay.caseId,
 })`
 
+const WEB_ROUTES = `// test/routes.test.ts - render the real routes in-process, each page with its backend half.
+import { expect, test } from "bun:test"
+import { createWebApp } from "@nifrajs/web"
+import { discoverRoutes } from "@nifrajs/web/fs"
+import { reactAdapter } from "@nifrajs/web-react"
+
+const app = createWebApp({
+  adapter: reactAdapter,
+  // Scans routes/ the way the build does: a page and its .backend.ts half always arrive together.
+  manifest: discoverRoutes(\`\${import.meta.dir}/../routes\`),
+  clientEntry: "/client.js",
+})
+
+test("the users page runs its loader", async () => {
+  const res = await app.fetch(new Request("http://localhost/users/7"))
+  expect(res.status).toBe(200)
+})`
+
 const E2E = `import { chromium } from "@playwright/test"
 // doc-check: skip - Playwright is an optional peer dependency; run with @playwright/test installed.
 import { e2eUrl, serveTestApp } from "@nifrajs/testing/e2e"
@@ -153,6 +171,15 @@ export default function ContractTesting() {
         Missing, invalid, or unsynthesizable witnesses become explicit coverage gaps. The default is
         fail-closed; <code>requireCoverage: false</code> makes gaps advisory.
       </p>
+      <p>
+        Declared <code>params</code> and <code>headers</code> get witnesses too, validated before any
+        case runs, so a body or query case is rejected by the input it mutates. The harness never
+        invents credentials: <code>authorization</code>, <code>cookie</code>, <code>x-api-key</code>{" "}
+        and names that look like a key, token, secret or signature come from the witness and{" "}
+        <code>prepareRequest</code> only, and are never mutated. A route with a <code>cookies</code>{" "}
+        schema needs <code>headers.cookie</code> in its witness, and a missing credential is a gap that
+        names it.
+      </p>
 
       <h2>Auth and tenant context</h2>
       <p>
@@ -190,6 +217,24 @@ export default function ContractTesting() {
         are enough to replay deterministically.
       </p>
       <CodeBlock code={REPLAY} lang="ts" />
+
+      <h2 id="web-routes">A web app's routes in a test</h2>
+      <p>
+        Give the test the same route manifest the app serves. <code>discoverRoutes(dir)</code> from{" "}
+        <code>@nifrajs/web/fs</code> scans a routes directory the way the build does, so every page
+        arrives with its <code>.backend.ts</code> half: its loader, action, output schemas and
+        middleware. A built app can import the generated <code>server-manifest</code> instead, which
+        bakes the same pairs into static imports.
+      </p>
+      <CodeBlock code={WEB_ROUTES} lang="ts" />
+      <p>
+        <code>buildManifest(files, load)</code> pairs a page with its backend half only when both are
+        in <code>files</code>. It is pure, so it cannot know a half is missing, and a hand-written list
+        that names the page alone serves it without its loader and guards: the test passes against a
+        route production never runs. <code>nifra doctor</code> flags a <code>buildManifest(...)</code>{" "}
+        call whose array literal or <code>import.meta.glob</code> patterns reach a page but not the
+        backend half beside it.
+      </p>
 
       <h2>Browser end-to-end</h2>
       <p>

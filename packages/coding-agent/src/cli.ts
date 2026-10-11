@@ -179,6 +179,35 @@ function parseVerificationNames(value: string): readonly ("check" | "assure" | "
   return Object.freeze([...new Set(names)] as ("check" | "assure" | "test")[])
 }
 
+export interface LineHandlers {
+  /** Answers an approval command and returns true; returns false for any other line. */
+  readonly answerApproval: (message: string) => Promise<boolean>
+  readonly run: (message: string) => Promise<void>
+  readonly stopReading: () => void
+}
+
+/**
+ * Route interactive input. A running turn can be waiting on an approval, so approval commands answer
+ * at once; every other line runs in order behind the turn in flight. Reading ends at `/quit`, `/exit`
+ * or end of input, and settles once the queued lines have run. The first failure stops reading and
+ * is rethrown.
+ */
+export async function dispatchLines(
+  lines: AsyncIterable<string>,
+  handlers: LineHandlers,
+): Promise<void> {
+  let queue: Promise<void> = Promise.resolve()
+  for await (const line of lines) {
+    const message = line.trim()
+    if (message.length === 0) continue
+    if (message === "/quit" || message === "/exit") break
+    if (await handlers.answerApproval(message)) continue
+    queue = queue.then(() => handlers.run(message))
+    queue.catch(handlers.stopReading)
+  }
+  await queue
+}
+
 function printEvent(event: AgentEvent, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(event))
@@ -304,102 +333,105 @@ async function main(): Promise<void> {
     input: process.stdin,
     output: options.json ? undefined : process.stdout,
   })
-  try {
-    for await (const line of readline) {
-      const message = line.trim()
-      if (message.length === 0) continue
-      if (message === "/quit" || message === "/exit") break
-      if (message === "/reload") {
-        const result = await host.reload()
-        if (options.json) console.log(JSON.stringify({ type: "extension.reloaded", ...result }))
-        else console.error(`[reload] ${result.rolledBack ? "rolled back" : result.revision}`)
-        continue
-      }
-      if (message === "/compact") {
-        const result = await host.compact("manual")
-        if (options.json) console.log(JSON.stringify({ type: "memory.compacted", ...result }))
-        else console.error(`[memory] compacted ${result.before} -> ${result.after}`)
-        continue
-      }
-      if (message === "/checkpoint") {
-        await host.checkpoint()
-        if (options.json) console.log(JSON.stringify({ type: "session.checkpoint", ok: true }))
-        else console.error("[session] checkpoint saved")
-        continue
-      }
-      const forkCommand = /^\/fork(?:\s+([^\s]+))?$/.exec(message)
-      if (forkCommand !== null) {
-        const result = await host.fork(forkCommand[1])
-        if (options.json) console.log(JSON.stringify({ type: "session.forked", ...result }))
-        else console.log(`[session] forked ${result.sessionId}`)
-        continue
-      }
-      const historyCommand = /^\/history(?:\s+(\d+))?$/.exec(message)
-      if (historyCommand !== null) {
-        const result = await host.history(
-          historyCommand[1] === undefined ? 20 : Number(historyCommand[1]),
-        )
-        if (options.json) console.log(JSON.stringify({ type: "session.history", entries: result }))
-        else for (const entry of result) console.log(`${entry.seq} · ${entry.type}`)
-        continue
-      }
-      if (message === "/check") {
-        const result = await runNifraVerification("check", { cwd: options.cwd })
-        if (options.json) console.log(JSON.stringify({ type: "verification.completed", ...result }))
-        else
-          console.error(
-            `[check] ${result.ok ? "passed" : "failed"}${result.status === null ? "" : ` (exit ${result.status})`}`,
-          )
-        continue
-      }
-      if (message === "/assure") {
-        const result = await runNifraVerification("assure", { cwd: options.cwd })
-        if (options.json) console.log(JSON.stringify({ type: "verification.completed", ...result }))
-        else
-          console.error(
-            `[assure] ${result.ok ? "passed" : "failed"}${result.status === null ? "" : ` (exit ${result.status})`}`,
-          )
-        continue
-      }
-      if (message === "/context") {
-        const result = await runNifraContext({ cwd: options.cwd })
-        if (options.json) console.log(JSON.stringify({ type: "context.completed", ...result }))
-        else console.log(result.output ?? JSON.stringify(result.report ?? result))
-        continue
-      }
-      if (message === "/approvals") {
-        const result = host.pendingApprovals
-        if (options.json) console.log(JSON.stringify({ type: "approval.list", pending: result }))
-        else if (result.length === 0) console.log("No pending approvals")
-        else
-          for (const approval of result)
-            console.log(`${approval.id} · ${approval.capability} · ${approval.action}`)
-        continue
-      }
-      const approvalCommand = /^(\/approve|\/deny)\s+([^\s]+)$/.exec(message)
-      if (approvalCommand !== null) {
-        const result = await host.resolveApproval(
-          approvalCommand[2]!,
-          approvalCommand[1] === "/approve",
-          "CLI decision",
-        )
-        if (options.json)
-          console.log(
-            JSON.stringify({
-              type: "approval.resolved",
-              ...(result ?? { error: "approval not found" }),
-            }),
-          )
-        else
-          console.log(
-            result === undefined
-              ? "Approval not found"
-              : `${result.approved ? "Approved" : "Denied"} ${result.approvalId}`,
-          )
-        continue
-      }
-      await send(message)
+  const run = async (message: string): Promise<void> => {
+    if (message === "/reload") {
+      const result = await host.reload()
+      if (options.json) console.log(JSON.stringify({ type: "extension.reloaded", ...result }))
+      else console.error(`[reload] ${result.rolledBack ? "rolled back" : result.revision}`)
+      return
     }
+    if (message === "/compact") {
+      const result = await host.compact("manual")
+      if (options.json) console.log(JSON.stringify({ type: "memory.compacted", ...result }))
+      else console.error(`[memory] compacted ${result.before} -> ${result.after}`)
+      return
+    }
+    if (message === "/checkpoint") {
+      await host.checkpoint()
+      if (options.json) console.log(JSON.stringify({ type: "session.checkpoint", ok: true }))
+      else console.error("[session] checkpoint saved")
+      return
+    }
+    const forkCommand = /^\/fork(?:\s+([^\s]+))?$/.exec(message)
+    if (forkCommand !== null) {
+      const result = await host.fork(forkCommand[1])
+      if (options.json) console.log(JSON.stringify({ type: "session.forked", ...result }))
+      else console.log(`[session] forked ${result.sessionId}`)
+      return
+    }
+    const historyCommand = /^\/history(?:\s+(\d+))?$/.exec(message)
+    if (historyCommand !== null) {
+      const result = await host.history(
+        historyCommand[1] === undefined ? 20 : Number(historyCommand[1]),
+      )
+      if (options.json) console.log(JSON.stringify({ type: "session.history", entries: result }))
+      else for (const entry of result) console.log(`${entry.seq} · ${entry.type}`)
+      return
+    }
+    if (message === "/check") {
+      const result = await runNifraVerification("check", { cwd: options.cwd })
+      if (options.json) console.log(JSON.stringify({ type: "verification.completed", ...result }))
+      else
+        console.error(
+          `[check] ${result.ok ? "passed" : "failed"}${result.status === null ? "" : ` (exit ${result.status})`}`,
+        )
+      return
+    }
+    if (message === "/assure") {
+      const result = await runNifraVerification("assure", { cwd: options.cwd })
+      if (options.json) console.log(JSON.stringify({ type: "verification.completed", ...result }))
+      else
+        console.error(
+          `[assure] ${result.ok ? "passed" : "failed"}${result.status === null ? "" : ` (exit ${result.status})`}`,
+        )
+      return
+    }
+    if (message === "/context") {
+      const result = await runNifraContext({ cwd: options.cwd })
+      if (options.json) console.log(JSON.stringify({ type: "context.completed", ...result }))
+      else console.log(result.output ?? JSON.stringify(result.report ?? result))
+      return
+    }
+    await send(message)
+  }
+
+  const answerApproval = async (message: string): Promise<boolean> => {
+    if (message === "/approvals") {
+      const result = host.pendingApprovals
+      if (options.json) console.log(JSON.stringify({ type: "approval.list", pending: result }))
+      else if (result.length === 0) console.log("No pending approvals")
+      else
+        for (const approval of result)
+          console.log(`${approval.id} · ${approval.capability} · ${approval.action}`)
+      return true
+    }
+    const approvalCommand = /^(\/approve|\/deny)\s+([^\s]+)$/.exec(message)
+    if (approvalCommand !== null) {
+      const result = await host.resolveApproval(
+        approvalCommand[2]!,
+        approvalCommand[1] === "/approve",
+        "CLI decision",
+      )
+      if (options.json)
+        console.log(
+          JSON.stringify({
+            type: "approval.resolved",
+            ...(result ?? { error: "approval not found" }),
+          }),
+        )
+      else
+        console.log(
+          result === undefined
+            ? "Approval not found"
+            : `${result.approved ? "Approved" : "Denied"} ${result.approvalId}`,
+        )
+      return true
+    }
+    return false
+  }
+
+  try {
+    await dispatchLines(readline, { answerApproval, run, stopReading: () => readline.close() })
   } finally {
     readline.close()
     await stop()

@@ -29,7 +29,7 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 - **FileOptions** _(interface)_ - `interface FileOptions` · from `@nifrajs/schema/form`
 - **FormOptions** _(interface)_ - `interface FormOptions` · from `@nifrajs/schema/form`
 
-_…and 13 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
+_…and 15 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
 
 ## Footguns
 

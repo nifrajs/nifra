@@ -408,6 +408,18 @@ export default function Dev() {
         the feed.
       </p>
 
+      <h2>Host check</h2>
+      <p>
+        The Bun dev server listens on 127.0.0.1 and answers only loopback host names:{" "}
+        <code>localhost</code>, any <code>*.localhost</code>, <code>127.0.0.1</code> and{" "}
+        <code>[::1]</code>. Any other <code>Host</code> gets a 403, so a page on another site whose
+        name a DNS rebind points at your machine cannot read your pages, loader data or error overlay.
+        To reach the server under another name (a hosts-file entry, a tunnel), list it with{" "}
+        <code>export const dev = {"{"} allowedHosts: ["app.test"] {"}"}</code> in{" "}
+        <code>nifra.config.ts</code> or <code>allowedHosts</code> on <code>createDevServer</code>.
+        The Vite pipeline applies Vite's own <code>server.allowedHosts</code>.
+      </p>
+
       <h2>Containers & sandboxes</h2>
       <p>
         In Docker, networked volumes, and some sandboxes, pass{" "}

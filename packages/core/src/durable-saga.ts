@@ -118,6 +118,12 @@ export interface SagaEngineOptions {
   readonly observer?: EffectLifecycleObserver
   /** Tests/local development only. Production sagas require a durable store. */
   readonly allowMemoryStore?: boolean
+  /**
+   * How long one `resume` or `compensate` call owns a saga. A second call while the lease is live
+   * throws `SagaConcurrencyError` and changes nothing; every transition renews the lease, and a call
+   * that died is taken over once it lapses. Default 5 minutes: longer than any one step should run.
+   */
+  readonly leaseMs?: number
 }
 
 export type SagaAmbiguityResolution =
@@ -191,6 +197,8 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
   const clock = options.now ?? Date.now
   const now = (): number => readClock(clock, "saga clock")
   const observer = options.observer
+  const leaseMs = options.leaseMs ?? 300_000
+  assertPositiveMs(leaseMs, "saga leaseMs")
 
   const load = async (sagaId: string): Promise<SagaRecord> => {
     const record = await options.store.get(sagaId)
@@ -207,6 +215,12 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
       throw new TypeError(`saga ${sagaId}: store returned an invalid record`)
     }
     assertToken(record.definition, "stored saga definition", 128)
+    if (record.owner !== undefined) {
+      assertToken(record.owner, "stored saga owner", 64)
+      if (record.leaseUntil === undefined)
+        throw new TypeError(`saga ${sagaId}: store returned an owner without a lease`)
+      assertTimestamp(record.leaseUntil, "stored saga leaseUntil")
+    }
     assertTimestamp(record.createdAt, "stored saga createdAt")
     assertTimestamp(record.updatedAt, "stored saga updatedAt")
     if (record.createdAt > record.updatedAt)
@@ -252,7 +266,14 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     const next = durableSagaProtocol.transition(current, {
       sagaId: current.sagaId,
       version: current.version,
-      record: Object.freeze({ ...update, version: current.version + 1 }),
+      record: Object.freeze({
+        ...update,
+        // Every transition the owner writes renews its lease.
+        ...(update.owner === undefined
+          ? {}
+          : { leaseUntil: addDuration(now(), leaseMs, "saga leaseUntil") }),
+        version: current.version + 1,
+      }),
     })
     if (next === undefined) throw new SagaConcurrencyError(current.sagaId)
     if (
@@ -275,10 +296,51 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     ...(observer === undefined ? {} : { observers: [observer] }),
   })
 
+  /** Take the saga for `owner`, or throw `SagaConcurrencyError` while another call's lease is live. */
+  const claim = async (record: SagaRecord, owner: string): Promise<SagaRecord> => {
+    if (record.owner === owner) return record
+    if (record.owner !== undefined && record.leaseUntil !== undefined && record.leaseUntil > now())
+      throw new SagaConcurrencyError(record.sagaId)
+    return await save(record, { ...record, owner, updatedAt: now() })
+  }
+
+  /** Give the saga up so the next call need not wait out the lease. */
+  const release = async (sagaId: string, owner: string): Promise<void> => {
+    try {
+      const record = await load(sagaId)
+      if (record.owner !== owner) return
+      const { owner: _owner, leaseUntil: _leaseUntil, ...released } = record
+      await save(record, { ...released, updatedAt: now() })
+    } catch {
+      // A release that fails leaves the lease to lapse; the next call then takes the saga over.
+    }
+  }
+
+  /** The saga as `owner` holds it; once another call took it over, `owner` must stop writing. */
+  const loadOwned = async (sagaId: string, owner: string): Promise<SagaRecord> => {
+    const record = await load(sagaId)
+    if (record.owner !== owner) throw new SagaConcurrencyError(sagaId)
+    return record
+  }
+
   const compensate = async <I, C extends Record<string, unknown>>(
     definition: SagaDefinition<I, C>,
     sagaId: string,
     runOptions: { readonly signal?: AbortSignal } = {},
+  ): Promise<SagaRecord> => {
+    const owner = crypto.randomUUID()
+    try {
+      return await compensateOwned(definition, sagaId, runOptions, owner)
+    } finally {
+      await release(sagaId, owner)
+    }
+  }
+
+  const compensateOwned = async <I, C extends Record<string, unknown>>(
+    definition: SagaDefinition<I, C>,
+    sagaId: string,
+    runOptions: { readonly signal?: AbortSignal },
+    owner: string,
   ): Promise<SagaRecord> => {
     assertSagaDefinition(definition)
     assertToken(sagaId, "saga id", 128)
@@ -287,6 +349,7 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     let record = await load(sagaId)
     if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
     if (record.state === "completed" || record.state === "compensated") return record
+    record = await claim(record, owner)
     if (
       record.steps.some(
         (step) =>
@@ -403,6 +466,20 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     sagaId: string,
     runOptions: { readonly signal?: AbortSignal } = {},
   ): Promise<SagaRecord> => {
+    const owner = crypto.randomUUID()
+    try {
+      return await resumeOwned(definition, sagaId, runOptions, owner)
+    } finally {
+      await release(sagaId, owner)
+    }
+  }
+
+  const resumeOwned = async <I, C extends Record<string, unknown>>(
+    definition: SagaDefinition<I, C>,
+    sagaId: string,
+    runOptions: { readonly signal?: AbortSignal },
+    owner: string,
+  ): Promise<SagaRecord> => {
     assertSagaDefinition(definition)
     assertToken(sagaId, "saga id", 128)
     const signal = signalOrNever(runOptions.signal)
@@ -410,6 +487,7 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     let record = await load(sagaId)
     if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
     if (record.state !== "running") return record
+    record = await claim(record, owner)
     const context: SagaRunContext<C> = {
       async step(name, compensationArgs, execute) {
         throwIfAborted(signal)
@@ -418,15 +496,15 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
           throw new TypeError("saga step execute must be a function")
         if (typeof definition.compensators[name] !== "function")
           throw new TypeError(`saga step ${name} has no compensator`)
-        record = await load(sagaId)
+        record = await loadOwned(sagaId, owner)
+        if (record.state !== "running") throw new SagaConcurrencyError(sagaId)
         const existingIndex = record.steps.findIndex((step) => step.name === name)
         if (existingIndex >= 0) {
           const existing = record.steps[existingIndex] as SagaStepRecord
           if (existing.state === "committed")
             return cloneValue(existing.result) as Awaited<ReturnType<typeof execute>>
           if (existing.state === "executing" || existing.state === "ambiguous") {
-            if (record.state !== "manual-review")
-              record = await save(record, { ...record, state: "manual-review", updatedAt: now() })
+            record = await save(record, { ...record, state: "manual-review", updatedAt: now() })
             throw new SagaAmbiguousStepError(sagaId, name, existing.effectId)
           }
           throw new Error(`saga ${sagaId}: step ${name} cannot resume from ${existing.state}`)
@@ -463,8 +541,9 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
                 })
               },
               async committed(_owned, result) {
-                record = await load(sagaId)
+                record = await loadOwned(sagaId, owner)
                 const index = record.steps.findIndex((candidate) => candidate.effectId === effectId)
+                if (index < 0) throw new SagaConcurrencyError(sagaId)
                 const committed = {
                   ...(record.steps[index] as SagaStepRecord),
                   state: "committed" as const,
@@ -473,8 +552,10 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
                 record = await save(record, withStep(record, index, committed))
               },
               async failed(_owned, failure) {
-                record = await load(sagaId)
+                record = await loadOwned(sagaId, owner)
                 const index = record.steps.findIndex((candidate) => candidate.effectId === effectId)
+                // The step was never recorded: its intent write lost a race, so it never ran.
+                if (index < 0) throw new SagaConcurrencyError(sagaId)
                 const known = failure.error instanceof SagaStepNotCommittedError || !failure.began
                 const failed = {
                   ...(record.steps[index] as SagaStepRecord),
@@ -500,14 +581,17 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     try {
       throwIfAborted(signal)
       await definition.run(context, cloneValue(record.input) as I)
-      record = await load(sagaId)
+      record = await loadOwned(sagaId, owner)
       if (record.state === "running")
         record = await save(record, { ...record, state: "completed", updatedAt: now() })
       return record
     } catch (error) {
+      // Another call holds the saga, or won a write this one lost: what ran is that call's to
+      // finish or roll back, and compensating here would undo it.
+      if (error instanceof SagaConcurrencyError) throw error
       record = await load(sagaId)
-      if (record.state === "manual-review") throw error
-      await compensate(definition, sagaId, runOptions)
+      if (record.state === "manual-review" || record.owner !== owner) throw error
+      await compensateOwned(definition, sagaId, runOptions, owner)
       throw error
     }
   }
@@ -676,7 +760,7 @@ async function scanSagaRecords(
 ): Promise<ReconciliationScanPage<SagaRecord>> {
   if (store.scan !== undefined) return await store.scan(input)
   if (store.list === undefined) throw new TypeError("saga store does not support reconciliation")
-  return memoryScan(await store.list(), input)
+  return memoryScan(await store.list(), (record) => record.sagaId, input)
 }
 
 export async function reconcileSagasPage(

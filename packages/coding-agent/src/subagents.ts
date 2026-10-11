@@ -214,8 +214,17 @@ export class BoundedSubagentRunner {
             error: "subagent workspace is not in an allowed root",
           }
       }
-      if (this.options.workspace?.isolatedWorktree !== undefined) {
-        workspace = await this.options.workspace.isolatedWorktree(spec, controller.signal)
+      const isolatedWorktree = this.options.workspace?.isolatedWorktree
+      if (isolatedWorktree !== undefined) {
+        // The deadline covers acquiring the workspace too. A lease that lands after it is released
+        // without any work starting in it.
+        const acquiring = Promise.resolve().then(() => isolatedWorktree(spec, controller.signal))
+        try {
+          workspace = await untilAborted(acquiring, controller.signal, stopped)
+        } catch (error) {
+          if (controller.signal.aborted) acquiring.then((late) => late.cleanup?.()).catch(() => {})
+          throw error
+        }
       } else if (requestedCwd !== undefined) {
         workspace = { cwd: requestedCwd }
       }

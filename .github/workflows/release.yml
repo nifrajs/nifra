@@ -46,7 +46,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     permissions:
       contents: read
     steps:
@@ -59,6 +59,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       # The release plan runs the Deno and Node gates; the same pins as the ci.yml jobs that run them.
       - name: Set up Deno
@@ -74,6 +75,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      - name: Install required browser engines
+        run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
+
       - name: Validate release branch and generated versions
         run: bun run release:check
 
@@ -84,6 +90,7 @@ jobs:
         env:
           RELEASE_MODE: "1"
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
   prove-release:
     name: prove-release
@@ -181,9 +188,52 @@ jobs:
           echo "release_base_sha=$release_base_sha" >> "$GITHUB_OUTPUT"
           echo "merge_sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
 
+  # The build runs third-party compilers and bundlers, so it runs here, without the identity npm
+  # trusts, and hands the publish job only its output.
+  build-release:
+    name: build-release
+    needs: prove-release
+    if: needs.prove-release.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the validated merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prove-release.outputs.merge_sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+          no-cache: true
+
+      - name: Install
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run scripts/link-for-node.ts
+
+      - name: Build the packages
+        run: bun run release:build
+
+      # Only gitignored build output and the corpus gen:llms regenerates from it; everything else the
+      # tarballs hold comes from the publish job's own checkout of the same merge.
+      - name: Upload the built packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-packages
+          path: |
+            packages/*/dist/
+            packages/cli/docs/
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: publish-release
-    needs: prove-release
+    needs: [prove-release, build-release]
     if: needs.prove-release.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -202,6 +252,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       # `changeset publish` runs the npm on PATH, so this decides which npm publishes.
       - name: Set up Node
@@ -233,10 +284,18 @@ jobs:
           RELEASE_HEAD_SHA: ${{ needs.prove-release.outputs.merge_sha }}
         run: bun run release:check --merge
 
+      - name: Download the built packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-packages
+          path: packages
+
+      # Ignoring scripts keeps a package's prepack build out of this job too.
       - name: Publish versioned packages
         run: bun run changeset:publish
         env:
           NPM_CONFIG_PROVENANCE: "true"
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
 
   # One GitHub release per version, tagged at the merge npm published. The only job that may write to
   # the repository: it installs nothing and runs only the notes script, and a rerun finds the release.
@@ -258,6 +317,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       - name: Publish the version's GitHub release
         env:
@@ -294,6 +354,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
+          no-cache: true
 
       - name: Install
         run: bun install --frozen-lockfile

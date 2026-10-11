@@ -4,6 +4,7 @@ import { server } from "@nifrajs/core"
 import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import { defineContract, implement } from "@nifrajs/core/contract"
 import { reflectRoutes } from "@nifrajs/core/reflection"
+import { websocket } from "@nifrajs/core/ws"
 import { t } from "@nifrajs/schema"
 import { isResponseResult } from "../../core/src/server/runtime-core.ts"
 
@@ -85,6 +86,20 @@ describe("authed() plugin - fail closed", () => {
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ ok: false, error: "unauthorized" })
     expect(ran).toBe(false)
+  })
+
+  test("no session with unauthenticated -> that status and body", async () => {
+    const app = server()
+      .use(
+        authed(plainAuth, { unauthenticated: { status: 403, body: { error: "login_required" } } }),
+      )
+      .get("/me", (c) => ({ id: c.principal.userId }))
+    const res = await app.fetch(anon("/me"))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: "login_required" })
+    expect(() => authed(plainAuth, { redirectTo: "/login", unauthenticated: {} })).toThrow(
+      /not both/,
+    )
   })
 
   test("valid session -> handler runs with a populated c.principal", async () => {
@@ -412,3 +427,27 @@ server()
     void _t
     return { id: c.principal.userId }
   })
+
+describe("authed() guards a socket registered after it", () => {
+  test("a handshake without a session is refused; with one, upgrade() reads the principal", async () => {
+    const app = server()
+      .use(websocket())
+      .use(authed(plainAuth))
+      .get("/me", () => "ok")
+      .ws("/socket", { upgrade: (c) => ({ user: c.principal.user.id }) })
+    const handshake = (headers: Record<string, string>) =>
+      app.resolveWebSocketUpgrade(
+        new Request("http://x/socket", { headers: { upgrade: "websocket", ...headers } }),
+      )
+    const refused = await handshake({})
+    if (refused.kind !== "reject") throw new Error(`expected a rejection, got ${refused.kind}`)
+    expect(refused.response.status).toBe(401)
+    const opened = await handshake({ cookie: "session=valid" })
+    if (opened.kind !== "upgrade") throw new Error(`expected an upgrade, got ${opened.kind}`)
+    expect(opened.data).toEqual({ user: "u1" })
+    const [http, socket] = reflectRoutes(app)
+    expect(socket?.method).toBe("WS")
+    expect(socket?.assurance).toEqual(http?.assurance)
+    expect(socket?.assurance?.map((item) => item.id)).toContain(NIFRA_ASSURANCE.AUTHENTICATED)
+  })
+})

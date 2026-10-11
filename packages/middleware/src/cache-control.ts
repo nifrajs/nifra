@@ -11,6 +11,9 @@ export interface CacheControlOptions {
   readonly respectExisting?: boolean
 }
 
+// Named per call, so a second, differently configured instance applies instead of being deduped.
+let instances = 0
+
 /**
  * Set a `Cache-Control` header on matching responses. `value` is either a fixed directive string or a
  * function of the request (return `undefined` to leave a response untouched - e.g. cache by path).
@@ -31,7 +34,7 @@ export function cacheControl(
   const methods = new Set((options.methods ?? ["GET", "HEAD"]).map((m) => m.toUpperCase()))
   const statusOk = options.status ?? ((status: number) => status >= 200 && status < 300)
   const respectExisting = options.respectExisting !== false
-  return defineRouterPlugin("cacheControl", (app) => {
+  return defineRouterPlugin(`cacheControl#${++instances}`, (app) => {
     // A fixed directive needs nothing from the request beyond the method, so it ships as one
     // portable header hook. A dynamic directive's resolver takes a real `Request`, which only the
     // Web response walk carries - it keeps the full `onResponse` contract (and its cost).
@@ -51,7 +54,7 @@ export function cacheControl(
               if (respectExisting && res.headers.has("cache-control")) return res
               const directive = value(req)
               if (directive === undefined) return res
-              return withHeaders(res, (headers) => headers.set("cache-control", directive))
+              return withHeaders(res, (headers) => headers.set("cache-control", directive), req)
             },
           }
     return app.use(middleware)

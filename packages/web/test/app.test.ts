@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { inProcessClient } from "@nifrajs/client"
-import { server } from "@nifrajs/core"
+import { rejected, server } from "@nifrajs/core"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { NIFRA_BACKEND_EVIDENCE, NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
 import {
@@ -76,6 +76,34 @@ test("createWebApp SSRs a route (no layout, no loader → chain 1, data null)", 
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("text/html")
   expect(await res.text()).toContain("chain=1:null")
+})
+
+test("a page route named with spaces or non-ASCII serves the path a browser requests", async () => {
+  const page = (id: string, pattern: string): RouteEntry => ({
+    id,
+    pattern,
+    layoutIds: [],
+    file: `${id}.tsx`,
+    load: async () => ({ default: id, loader: (ctx) => ({ page: id, ...ctx.params }) }),
+  })
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [page("cafe", "/café"), page("space", "/a b"), page("uber", "/über/:id")],
+      layouts: {},
+    },
+    clientEntry: "/c.js",
+  })
+  const cases: Array<[string, string]> = [
+    ["/café", '{"page":"cafe"}'],
+    ["/a b", '{"page":"space"}'],
+    ["/über/7", '{"page":"uber","id":"7"}'],
+  ]
+  for (const [path, data] of cases) {
+    const res = await app.fetch(new Request(`http://x${path}`))
+    expect({ path, status: res.status }).toEqual({ path, status: 200 })
+    expect(await res.text()).toContain(data)
+  }
 })
 
 test("createWebApp resolves a fresh CSP nonce for documents, including 404 pages", async () => {
@@ -579,7 +607,7 @@ test("createWebApp renders _404 (status 404) for unmatched paths", async () => {
   const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
   const res = await app.fetch(new Request("http://x/nope/whatever"))
   expect(res.status).toBe(404)
-  expect(await res.text()).toContain("chain=1:null") // the [_404] chain
+  expect(await res.text()).toContain("chain=2:null") // the [_layout, _404] chain
 })
 
 test("createWebApp falls back to a plain 404 when no _404 exists", async () => {
@@ -610,7 +638,13 @@ test("createWebApp injects the api into the loader context", async () => {
     ],
     layouts: {},
   }
-  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", api: { tag: "API!" } })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest,
+    clientEntry: "/c.js",
+    api: { tag: "API!" },
+  })
   const html = await (await app.fetch(new Request("http://x/"))).text()
   expect(html).toContain('chain=1:{"tag":"API!"}') // the injected api reached the loader
 })
@@ -813,7 +847,13 @@ test("an action receives the route params + the injected api", async () => {
     ],
     layouts: {},
   }
-  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", api: { tag: "API!" } })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest,
+    clientEntry: "/c.js",
+    api: { tag: "API!" },
+  })
   const html = await (await app.fetch(new Request("http://x/users/7", { method: "POST" }))).text()
   expect(html).toContain(':action={"id":"7","tag":"API!"}')
 })
@@ -1071,7 +1111,13 @@ const apiBackend = (): { fetch(request: Request): Response | Promise<Response> }
 
 test("createWebApp auto-mounts the api backend: POST /api/echo reaches the backend", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(
     new Request("http://x/api/echo", {
       method: "POST",
@@ -1099,6 +1145,7 @@ test("createWebApp auto-mount forwards platform env and waitUntil to the backend
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api: inProcessClient(backend),
+    apiPrefix: "/api",
   })
 
   const res = await app.fetch(new Request("http://x/api/platform"), {
@@ -1124,7 +1171,13 @@ const inProcessBridgeFn = (app: { fetch(request: Request): Response | Promise<Re
 test("createWebApp auto-mount: a FUNCTION-typed api (real inProcessClient proxy shape) still mounts", async () => {
   const api = inProcessBridgeFn(apiBackend())
   expect(typeof api).toBe("function") // the regression: an object-only guard skips this
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api/x"))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ x: 1 }) // reached the backend, not the page router
@@ -1132,7 +1185,13 @@ test("createWebApp auto-mount: a FUNCTION-typed api (real inProcessClient proxy 
 
 test("createWebApp auto-mount: GET /api/x reaches the backend (not the page router)", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api/x"))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ x: 1 })
@@ -1155,7 +1214,13 @@ test("createWebApp explicit mounts forward the outer platform", async () => {
 
 test("createWebApp auto-mount: a normal page path still SSRs (mount only claims the prefix)", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/"))
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("text/html")
@@ -1164,7 +1229,13 @@ test("createWebApp auto-mount: a normal page path still SSRs (mount only claims 
 
 test("createWebApp auto-mount: an unknown /api path returns the BACKEND 404, not the page 404", async () => {
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api/none"))
   expect(res.status).toBe(404)
   // The page 404 (`_404` route) renders the not-found *component* as HTML; the backend 404 is the
@@ -1210,7 +1281,13 @@ test("createWebApp auto-mount: a sibling path sharing the prefix string is NOT c
   // `/apidocs` shares "/api" as a string head but is NOT under the `/api/` boundary - it must reach
   // the page router (here: the `_404` page), not the backend. Guards the off-by-one prefix bug.
   const api = inProcessBridge(apiBackend())
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/apidocs"))
   expect(res.status).toBe(404)
   expect(await res.text()).toContain("chain=") // the SSR'd `_404` page, i.e. the page router handled it
@@ -1218,7 +1295,13 @@ test("createWebApp auto-mount: a sibling path sharing the prefix string is NOT c
 
 test("createWebApp auto-mount: exactly the prefix path (no trailing slash) dispatches to the backend", async () => {
   const api = inProcessBridge(server().get("/api", () => ({ root: true })))
-  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const app = createWebApp({
+    apiPrefix: "/api",
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
   const res = await app.fetch(new Request("http://x/api"))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ root: true })
@@ -1228,6 +1311,7 @@ test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (n
   // A plain object passed as `ctx.api` (not an in-process bridge) must NOT be mounted - the app serves
   // pages, and `/api/*` falls through to the page router exactly as before the auto-mount existed.
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1241,6 +1325,7 @@ test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (n
 test("webProjectEvidence composes page and stripped API routes", async () => {
   const backend = server().get("/health", () => ({ ok: true }))
   const app = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1251,6 +1336,29 @@ test("webProjectEvidence composes page and stripped API routes", async () => {
   const routes = evidence.routes.map((route) => `${route.method} ${route.path}`)
   expect(routes).toContain("GET /api/health")
   expect(routes).toContain("GET /*")
+})
+
+test("independent concurrent webProjectEvidence traversals do not become a cycle", async () => {
+  const backend = server().get("/health", () => ({ ok: true }))
+  const child = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    apiPrefix: "/api",
+    apiStrip: true,
+    api: inProcessClient(backend),
+    mounts: [{ path: "/child", app: child, stripPrefix: true }],
+  })
+  const snapshots = await Promise.all([webProjectEvidence(app), webProjectEvidence(app)])
+  for (const snapshot of snapshots) {
+    expect(snapshot.routes).toContainEqual(
+      expect.objectContaining({ method: "GET", path: "/api/health" }),
+    )
+    expect(snapshot.routes).toContainEqual(
+      expect.objectContaining({ method: "GET", path: "/child" }),
+    )
+  }
 })
 
 test("webProjectEvidence uses the same frozen mount configuration as dispatch", async () => {
@@ -1339,6 +1447,7 @@ test("webProjectEvidence composes wildcard mounts and rejects an API without evi
       Response.json({ path: new URL(request.url).pathname }),
   }
   const apiApp = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1366,6 +1475,26 @@ test("webProjectEvidence detects cyclic mounted evidence and validates its input
   await expect(webProjectEvidence({})).rejects.toThrow(/expected an app created by createWebApp/)
 })
 
+test("webProjectEvidence detects cycles after a mounted provider awaits", async () => {
+  let parent: unknown
+  const child = {
+    fetch: () => Response.json({ ok: true }),
+    [NIFRA_BACKEND_EVIDENCE]: async () => {
+      await Promise.resolve()
+      return webProjectEvidence(parent)
+    },
+  }
+  parent = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [{ path: "/child", app: child }],
+  })
+  await expect(webProjectEvidence(parent)).rejects.toThrow(
+    /cyclic composed assurance evidence mount/,
+  )
+})
+
 test("serves both generated machine-readable guidance routes", async () => {
   const app = createWebApp({
     adapter: stub,
@@ -1386,6 +1515,7 @@ test("llms.txt lists backend routes only when the backend is served over HTTP", 
   // The same backend both ways: its routes are reflected, and the bridge makes it HTTP-mountable.
   const api = Object.assign(backend, inProcessBridge(backend))
   const mounted = createWebApp({
+    apiPrefix: "/api",
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
@@ -1404,6 +1534,60 @@ test("llms.txt lists backend routes only when the backend is served over HTTP", 
   const text = await (await inProcess.fetch(new Request("http://x/llms-full.txt"))).text()
   expect(text).not.toContain("impersonate")
   expect(text).toContain("No API routes registered.")
+})
+
+test("llms.txt lists a stripped backend's routes at the URL a visitor calls", async () => {
+  const backend = server()
+    .get("/", () => ({ ok: true }))
+    .post("/v1/forms", () => ({ ok: true }))
+  const api = Object.assign(backend, inProcessBridge(backend))
+  const app = createWebApp({
+    apiPrefix: "/api/",
+    apiStrip: true,
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  const text = await (await app.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(text).toContain("- **POST** `/api/v1/forms`")
+  expect(text).toContain("- **GET** `/api`")
+  // The typed client is built on the backend's own route tree, so its call keeps the backend path.
+  expect(text).toContain("await api.v1.forms.post()")
+  expect(text).not.toContain("`/v1/forms`")
+})
+
+test("llms.txt reads inProcessClient evidence and publishes only the HTTP-mounted backend", async () => {
+  const backend = server()
+    .authenticate({ id: "test-auth", run: () => rejected() })
+    .get("/", () => ({ ok: true }))
+    .post("/v1/forms", () => ({ ok: true }))
+  const api = inProcessClient(backend)
+  const app = createWebApp({
+    apiPrefix: "/api/",
+    apiStrip: true,
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  expect((await app.fetch(new Request("http://x/api/v1/forms", { method: "POST" }))).status).toBe(
+    401,
+  )
+  const text = await (await app.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(text).toContain("- **POST** `/api/v1/forms`")
+  expect(text).toContain("- **GET** `/api`")
+  expect(text).toContain("await api.v1.forms.post()")
+  expect(text).not.toContain("No API routes registered.")
+  const loaderOnly = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  const privateText = await (await loaderOnly.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(privateText).toContain("No API routes registered.")
+  expect(privateText).not.toContain("/v1/forms")
 })
 
 test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt page wins", async () => {

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": { "noEmitOnError": false, "emitDeclarationOnly": true },
+  "include": ["src/server-components/*.svelte"]
+}

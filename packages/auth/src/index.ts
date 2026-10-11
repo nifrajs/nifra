@@ -11,7 +11,12 @@ export {
   requireAuthorization,
 } from "./authorization.ts"
 export { type CsrfOptions, csrf } from "./csrf.ts"
-export { type GuardOptions, requireSession, requireUser } from "./guards.ts"
+export {
+  type GuardOptions,
+  requireSession,
+  requireUser,
+  type UnauthenticatedResponse,
+} from "./guards.ts"
 export {
   createSessions,
   type Session,

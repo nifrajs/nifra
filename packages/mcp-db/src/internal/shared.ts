@@ -6,8 +6,13 @@
 
 /** The structural slice of `bun:sqlite`'s `Database` this package needs. */
 export interface SqliteDatabaseLike {
-  /** Prepare a statement; `all` runs it and returns row objects. */
-  prepare(sql: string): { all(...params: unknown[]): unknown[] }
+  /** Prepare a statement; `all` runs it and returns row objects. `columnNames` and `iterate`, which
+   * bun:sqlite has, let `run_query` bound cell bytes and stop reading rows once the budget is spent. */
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[]
+    readonly columnNames?: readonly string[]
+    iterate?(): Iterable<unknown>
+  }
   /** Execute a statement for its side effect (used only for `PRAGMA query_only`). */
   run(sql: string): unknown
   /** Optional path this database was opened from; a file-backed one can be reopened read-only in a
@@ -210,7 +215,7 @@ const isKeyword = (token: SqlToken | undefined, word: string): boolean =>
   token?.bare === true && token.value.toLowerCase() === word
 
 /**
- * Every relation the statement names after `FROM`/`JOIN`, lowercased, with CTE names excluded.
+ * Every relation the statement names after `FROM`/`JOIN`/`IN`, lowercased, with CTE names excluded.
  * A schema qualifier resolves to its table (`main.habits` -> `habits`); a subquery contributes
  * nothing of its own because its inner `FROM` is tokenized alongside everything else.
  */
@@ -228,18 +233,21 @@ function relationNames(sql: string): string[] {
   const names: string[] = []
   const relationAt = (
     index: number,
-  ): { readonly name: string; readonly next: number } | undefined => {
+  ): { readonly name: string; readonly qualified: boolean; readonly next: number } | undefined => {
     const first = tokens[index]
     if (first === undefined || first.kind !== "word") return undefined // `FROM (subquery)` - nothing to name here
     // A qualified reference names the table second; an unqualified one names it first.
     const qualified = tokens[index + 1]?.value === "." && tokens[index + 2]?.kind === "word"
     const table = qualified ? (tokens[index + 2] as SqlToken).value : first.value
-    return { name: table.toLowerCase(), next: qualified ? index + 3 : index + 1 }
+    return { name: table.toLowerCase(), qualified, next: qualified ? index + 3 : index + 1 }
   }
   const addRelation = (index: number): number | undefined => {
     const relation = relationAt(index)
     if (relation === undefined) return undefined
-    if (relation.name !== "" && !ctes.has(relation.name)) names.push(relation.name)
+    // A CTE is never schema-qualified: `main.users` is the table even beside a CTE named `users`.
+    if (relation.name !== "" && (relation.qualified || !ctes.has(relation.name))) {
+      names.push(relation.name)
+    }
     return relation.next
   }
   // Comma joins are part of the FROM table-source grammar but do not have a JOIN keyword. Walk the
@@ -260,6 +268,11 @@ function relationNames(sql: string): string[] {
     "returning",
   ])
   for (let i = 0; i < tokens.length; i++) {
+    // `x IN users` and `x IN json_each(...)` read a relation without a FROM.
+    if (isKeyword(tokens[i], "in")) {
+      addRelation(i + 1)
+      continue
+    }
     const from = isKeyword(tokens[i], "from")
     const join = isKeyword(tokens[i], "join")
     if (!from && !join) continue
@@ -437,7 +450,7 @@ export type SqliteGate =
 
 /**
  * Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every
- * relation it names after `FROM`/`JOIN` exposed. Returns the statement without its terminator, ready
+ * relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready
  * to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an
  * alias as the scan target (`users AS habits` plans as `SCAN habits`).
  */
@@ -504,10 +517,77 @@ export function unexposedPlanRelation(
   return undefined
 }
 
+// The opcodes that open a b-tree cursor.
+const BTREE_OPEN_OPCODES = new Set(["OpenRead", "OpenWrite", "ReopenIdx"])
+
+const field = (row: unknown, key: string): unknown =>
+  typeof row === "object" && row !== null ? Reflect.get(row, key) : undefined
+
+/**
+ * The first table a compiled statement opens that `exposed` rejects, or `undefined` when every b-tree
+ * it opens belongs to an exposed table (an index counts as its table). `program` is the statement's
+ * `EXPLAIN` rows and `catalog` is `SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage > 0`.
+ * The program names what SQLite will read by root page, so no alias, CTE name or quoting changes it.
+ * A virtual table or table-valued function (`VOpen`) names no table at all and is never exposed.
+ */
+export function unexposedProgramRelation(
+  program: readonly unknown[],
+  catalog: readonly unknown[],
+  exposed: (relation: string) => boolean,
+): string | undefined {
+  const tables = new Map<number, string>([[1, "sqlite_master"]])
+  for (const entry of catalog) {
+    const table = field(entry, "tbl_name")
+    if (typeof table === "string") tables.set(Number(field(entry, "rootpage")), table)
+  }
+  for (const step of program) {
+    const opcode = field(step, "opcode")
+    if (opcode === "VOpen") return "<virtual table>"
+    if (typeof opcode !== "string" || !BTREE_OPEN_OPCODES.has(opcode)) continue
+    // P3 is the schema: 0 is main; temp (1) and attached databases (2+) are not in this catalog.
+    const schema = Number(field(step, "p3"))
+    if (schema !== 0) return `<schema ${schema}>`
+    const page = Number(field(step, "p2"))
+    const table = tables.get(page)
+    if (table === undefined) return `<root page ${page}>`
+    if (!exposed(table.toLowerCase())) return table
+  }
+  return undefined
+}
+
 /** Wrap a gated query so SQLite materializes at most one row beyond `maxRows`. */
 export function boundedSqliteQuery(query: string, maxRows: number): string {
   // nifra-expect sql-dynamic: wraps a query already through gateSqliteStatement in a bounding subselect; it runs on a query-only connection
   return `SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`
+}
+
+/** The column {@link cellBoundedSqliteQuery} adds to carry each row's cell bytes. */
+export const ROW_BYTES_COLUMN = "__nifra_row_bytes"
+
+/**
+ * {@link boundedSqliteQuery}, plus two bounds the driver cannot apply itself: a text or blob cell
+ * longer than `maxCellBytes` arrives as `"<n bytes>"` instead of being copied out, and each row
+ * carries its cells' byte total in {@link ROW_BYTES_COLUMN} so a reader can stop once the result
+ * budget is spent. `columns` are the result column names of the bounded query.
+ */
+export function cellBoundedSqliteQuery(
+  query: string,
+  columns: readonly string[],
+  maxRows: number,
+  maxCellBytes: number,
+): string {
+  const selected: string[] = []
+  const sizes: string[] = []
+  for (const name of columns) {
+    const column = `"${name.replaceAll('"', '""')}"`
+    const bytes = `length(CAST(${column} AS BLOB))`
+    selected.push(
+      `CASE WHEN typeof(${column}) IN ('text', 'blob') AND ${bytes} > ${maxCellBytes} THEN '<' || ${bytes} || ' bytes>' ELSE ${column} END AS ${column}`,
+    )
+    sizes.push(`min(coalesce(${bytes}, 0), ${maxCellBytes})`)
+  }
+  // nifra-expect sql-dynamic: wraps a query already through gateSqliteStatement; column names are quoted identifiers and the bounds are validated integers
+  return `SELECT ${selected.join(", ")}, ${sizes.join(" + ")} AS "${ROW_BYTES_COLUMN}" FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`
 }
 
 /** Wrap a gated query to count its rows (re-executes it). */

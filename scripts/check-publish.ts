@@ -64,7 +64,7 @@ await $`bun run build`
 // Note: the `nifra mcp` corpus (`packages/cli/docs/{types,examples}.json`) is NOT byte-gated here - it's
 // generated from the built `.d.ts`, which differs subtly across build environments (bun/OS), so a
 // committed-vs-CI-regen diff yields false failures. Freshness is guaranteed at the source instead:
-// `changeset:publish` runs `gen:llms` after the build, so every published tarball carries a corpus
+// `release:build` runs `gen:llms` after the build, so every published tarball carries a corpus
 // regenerated from that exact build (see 1.3.0, which shipped a stale corpus before that step existed).
 
 for (const pkg of publicPackages.filter(

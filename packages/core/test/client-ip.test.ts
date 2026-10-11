@@ -113,3 +113,19 @@ describe("c.clientIp (integration through fetch)", () => {
     }
   })
 })
+
+describe("clientIp declaration checks", () => {
+  test("a hop count that could never resolve is refused at construction", () => {
+    const declare = (clientIp: unknown) => () =>
+      server({ clientIp: JSON.parse(JSON.stringify(clientIp)) })
+    for (const trustedHops of [-1, 1.5, "1", null]) {
+      expect(declare({ trustedHops })).toThrow(
+        "clientIp trustedHops must be a non-negative integer",
+      )
+    }
+    expect(declare({})).toThrow("clientIp trustedHops must be a non-negative integer")
+    expect(declare({ trustedHops: 0 })).not.toThrow()
+    expect(declare({ trustedHops: 2 })).not.toThrow()
+    expect(declare({ header: "x-real-ip" })).not.toThrow()
+  })
+})

@@ -105,6 +105,14 @@ test("the user's ENTIRE bunfig round-trips - not just the two fields the merge t
   expect(reparsed.preload).toEqual([resolve("/app/setup.ts")])
 })
 
+test("strings with control characters round-trip through the rendered bunfig", () => {
+  // TOML escapes in the input, so the parsed value holds a raw newline, tab, CR, U+0001 and DEL.
+  const user = parseUserBunfig('[define]\nBANNER = "\\"a\\nb\\tc\\r\\u0001\\u007f\\\\d\\""\n')
+  expect(user).toEqual({ define: { BANNER: '"a\nb\tc\r\u0001\u007f\\d"' } })
+  const toml = renderDevBunfig("/app/.nifra/dev-bun/boundary-plugin.ts", user, "/app")
+  expect(parseUserBunfig(toml).define).toEqual(user.define)
+})
+
 test("serializeBunfig refuses a shape it cannot round-trip instead of dropping it", () => {
   expect(() => serializeBunfig({ weird: [{ nested: true }] })).toThrow(/cannot re-serialize/)
 })
@@ -464,3 +472,100 @@ test("writeBunDevConfig merges the app's own bunfig", async () => {
     removeFixtureRoot(root)
   }
 })
+
+/**
+ * An app whose linked package (a sibling directory, as a workspace link is) ships its own copy of a
+ * package the app declares single-copy: each copy exports a marker, so the client chunk shows which
+ * copies it bundled. Returns the app's root.
+ */
+function linkedCopyFixture(parent: string, config?: string): string {
+  const root = join(parent, "app")
+  mkdirSync(join(root, "node_modules", "@nifrajs"), { recursive: true })
+  for (const name of ["web", "core"]) {
+    symlinkSync(
+      resolve(import.meta.dir, "../..", name),
+      join(root, "node_modules", "@nifrajs", name),
+    )
+  }
+  const copy = (dir: string, marker: string) => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "ui-runtime", version: "1.0.0", type: "module", main: "index.js" }),
+    )
+    writeFileSync(join(dir, "index.js"), `export const copy = "${marker}"\n`)
+  }
+  copy(join(root, "node_modules", "ui-runtime"), "APP_COPY")
+  const linked = join(parent, "widgets")
+  copy(join(linked, "node_modules", "ui-runtime"), "LINKED_COPY")
+  writeFileSync(
+    join(linked, "package.json"),
+    JSON.stringify({
+      name: "widgets",
+      version: "1.0.0",
+      type: "module",
+      main: "index.js",
+      nifra: { environment: "library" },
+    }),
+  )
+  writeFileSync(
+    join(linked, "index.js"),
+    'import { copy } from "ui-runtime"\nexport const widgetCopy = copy\n',
+  )
+  symlinkSync(linked, join(root, "node_modules", "widgets"))
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "app",
+      private: true,
+      dependencies: { "ui-runtime": "1.0.0", widgets: "1.0.0" },
+      nifra: { singleCopy: ["ui-runtime"] },
+    }),
+  )
+  mkdirSync(join(root, "frontend"))
+  writeFileSync(
+    join(root, "frontend/client.ts"),
+    'import { copy } from "ui-runtime"\nimport { widgetCopy } from "widgets"\nconsole.log(copy, widgetCopy)\n',
+  )
+  writeFileSync(join(root, "index.html"), htmlPage("./frontend/client.ts"))
+  writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
+  if (config !== undefined) writeFileSync(join(root, "nifra.config.ts"), config)
+  return root
+}
+
+for (const [label, config] of [
+  ["with no clientPlugins entry", undefined],
+  [
+    "when the app also lists singleCopyPlugin()",
+    'import { singleCopyPlugin } from "@nifrajs/core/single-copy"\nexport const clientPlugins = [singleCopyPlugin()]\n',
+  ],
+] as const) {
+  test(
+    `the dev client bundles one copy of a declared single-copy package ${label}`,
+    async () => {
+      const parent = createFixtureRoot("tmp-nifra-devbun-single-copy-")
+      let proc: ReturnType<typeof Bun.spawn> | undefined
+      try {
+        const root = linkedCopyFixture(parent, config)
+        const { bunfigPath } = await writeBunDevConfig(
+          root,
+          config === undefined ? undefined : join(root, "nifra.config.ts"),
+        )
+        proc = Bun.spawn([process.execPath, `--config=${bunfigPath}`, join(root, "serve.ts")], {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const port = await readPort(proc)
+        const page = await served(port, "/")
+        expect(buildError(page.text)).toBe("")
+        expect(page.text).toContain("APP_COPY")
+        expect(page.text).not.toContain("LINKED_COPY")
+      } finally {
+        proc?.kill()
+        removeFixtureRoot(parent)
+      }
+    },
+    { timeout: 30_000 },
+  )
+}

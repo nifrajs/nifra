@@ -381,7 +381,10 @@ function pythonModelFields(
   if (properties === undefined) return "    pass"
   const required = schemaRequired(schema)
   const used = new Set<string>()
+  // A dataclass rejects a field without a default after one with a default, so required fields
+  // lead and each group keeps the schema's order.
   const fields: string[] = []
+  const optionalFields: string[] = []
   for (const [jsonName, property] of Object.entries(properties)) {
     let fieldName = pythonIdentifier(jsonName, "field")
     while (used.has(fieldName)) fieldName += "_"
@@ -396,11 +399,12 @@ function pythonModelFields(
     )
     const optional = !required.has(jsonName)
     if (optional && !type.includes("None")) type += " | None"
+    const group = optional ? optionalFields : fields
     if (fieldName === jsonName) {
-      fields.push(`    ${fieldName}: ${type}${optional ? " = None" : ""}`)
+      group.push(`    ${fieldName}: ${type}${optional ? " = None" : ""}`)
     } else {
       const metadata = `{"json_name": ${JSON.stringify(jsonName)}}`
-      fields.push(
+      group.push(
         "    " +
           fieldName +
           ": " +
@@ -413,6 +417,7 @@ function pythonModelFields(
       )
     }
   }
+  fields.push(...optionalFields)
   return fields.length === 0 ? "    pass" : fields.join("\n")
 }
 
@@ -430,9 +435,11 @@ function renderPythonModels(catalog: SchemaCatalog, tracker: OpaqueTracker): str
           pythonModelFields(schema, name, catalog, tracker),
       )
     } else {
+      // A `type` statement evaluates lazily, so an alias may name a model declared below it.
       rendered.push(
-        name +
-          ": TypeAlias = " +
+        "type " +
+          name +
+          " = " +
           pythonType(schema, name, catalog, tracker, "schema", `model ${name}`),
       )
     }
@@ -628,7 +635,7 @@ function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string
     "import urllib.parse",
     "import urllib.request",
     "from dataclasses import dataclass, field, fields, is_dataclass",
-    "from typing import Any, Generic, Literal, Mapping, Never, TypeAlias, TypeVar, get_args, get_origin, get_type_hints",
+    "from typing import Any, Generic, Literal, Mapping, Never, TypeAliasType, TypeVar, get_args, get_origin, get_type_hints",
     "",
     'T = TypeVar("T")',
     "",
@@ -639,6 +646,8 @@ function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string
     "        self.body = body",
     "",
     "def _decode(value: Any, target: Any) -> Any:",
+    "    if isinstance(target, TypeAliasType):",
+    "        return _decode(value, target.__value__)",
     "    if target is None or target is Any or target is object:",
     "        return value",
     "    origin = get_origin(target)",

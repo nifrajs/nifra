@@ -107,7 +107,7 @@ for (const [lane, send] of LANES) {
       expect(await thrown.text()).toBe("gone")
     })
 
-    test("c.set.headers and c.set.status are not applied to it", async () => {
+    test("c.set.headers it lacks are applied to it; c.set.status is not", async () => {
       const app = base().get("/x", (c) => {
         c.set.status = 201
         c.set.headers["x-from-set"] = "1"
@@ -116,7 +116,7 @@ for (const [lane, send] of LANES) {
       })
       const res = await send(app, get("/x"))
       expect(res.status).toBe(303)
-      expect(res.headers.get("x-from-set")).toBeNull()
+      expect(res.headers.get("x-from-set")).toBe("1")
       expect(res.headers.getSetCookie()).toEqual([SID])
     })
 

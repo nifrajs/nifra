@@ -30,11 +30,12 @@ test("the Redis cache adapter satisfies the cache contract", async () => {
 const REPORT = `{
   "schemaVersion": 1,
   "ok": true,
-  "profile": { "id": "cache-store", "version": 1 },
+  "profile": { "id": "cache-store", "version": 2 },
   "adapterId": "redis-cache",
   "capabilities": [
-    { "capability": "read-write", "status": "passed", "checks": ["set-get", "delete"] },
-    { "capability": "tag-invalidation", "status": "passed", "checks": ["invalidate-tag"] }
+    { "capability": "roundtrip", "status": "passed", "checks": ["set-get-delete"] },
+    { "capability": "tag-invalidation", "status": "passed", "checks": ["invalidate-tag"] },
+    { "capability": "clear", "status": "passed", "checks": ["clear"] }
   ],
   "evidenceHash": "9f2c..."
 }`

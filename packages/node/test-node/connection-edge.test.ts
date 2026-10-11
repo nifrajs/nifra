@@ -111,6 +111,55 @@ test("a websocket upgrade to a path with no WS route is answered by its HTTP rou
   }
 })
 
+test("onRequest hooks run once for a websocket upgrade its HTTP route answers", async () => {
+  let hits = 0
+  const app = server()
+    .use(websocket())
+    .onRequest(() => {
+      hits += 1
+      return undefined
+    })
+    .ws("/ws", { message: (ws, data) => ws.send(data) })
+    .get("/plain", () => ({ plain: true }))
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const got = await rawRequest(
+      running.port,
+      "GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade, close\r\nUpgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    )
+    assert.match(got, /^HTTP\/1\.1 200 /)
+    assert.equal(hits, 1)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("a mounted child's onRequest hooks run once for a websocket upgrade its HTTP route answers", async () => {
+  let hits = 0
+  const child = server()
+    .use(websocket())
+    .onRequest(() => {
+      hits += 1
+      return undefined
+    })
+    .ws("/ws", { message: (ws, data) => ws.send(data) })
+    .get("/plain", () => ({ plain: true }))
+  const app = server().mount({ path: "/m", app: child, stripPrefix: true })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const got = await rawRequest(
+      running.port,
+      "GET /m/plain HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade, close\r\nUpgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    )
+    assert.match(got, /^HTTP\/1\.1 200 /)
+    assert.equal(hits, 1)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("a client that disconnects aborts the request signal and stops an SSE producer", async () => {
   let requestAborted!: () => void
   const requestSignalFired = new Promise<void>((resolve) => {
@@ -232,5 +281,38 @@ test("stop() closes a streaming route answered on an unmatched upgrade", async (
   } finally {
     client?.destroy()
     await stream.running.stop({ drainMs: 50 })
+  }
+})
+
+test("signals: { drainMs } is the drain window a signal's stop() gives in-flight requests", async () => {
+  let entered!: () => void
+  const inHandler = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const app = server().get("/held", async () => {
+    entered()
+    await gate
+    return "late"
+  })
+  const before = process.listenerCount("SIGTERM")
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", signals: { drainMs: 0 } })
+  try {
+    assert.equal(process.listenerCount("SIGTERM"), before + 1)
+    const held = fetch(`http://127.0.0.1:${running.port}/held`).then(
+      () => "answered",
+      () => "closed",
+    )
+    await inHandler
+    // A zero window closes the held request at once; the default would hold it for 10 s.
+    for (const handler of process.listeners("SIGTERM").slice(before)) handler("SIGTERM")
+    assert.equal(await held, "closed")
+    assert.equal(process.listenerCount("SIGTERM"), before)
+  } finally {
+    release()
+    await running.stop({ drainMs: 0 })
   }
 })

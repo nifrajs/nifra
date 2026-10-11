@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import {
   copyFileSync,
   existsSync,
@@ -30,6 +30,7 @@ import {
   toJsonCell,
   unexposedPlanRelation,
 } from "../src/engine.ts"
+import { unexposedProgramRelation } from "../src/internal/shared.ts"
 import { HOSTILE_CORPUS } from "./fixtures/hostile-corpus.ts"
 
 const scratch = mkdtempSync(join(tmpdir(), "nifra-mcp-db-engine-"))
@@ -130,6 +131,41 @@ describe("statement gates", () => {
     expect(unexposedPlanRelation([{ detail: "SEARCH users USING INDEX x" }], exposed)).toBe("users")
     expect(unexposedPlanRelation([{ detail: 7 }], exposed)).toBeUndefined()
   })
+
+  test("the statement gate reads a qualified name beside a same-named CTE, and IN a table", () => {
+    const gate = (sql: string) => gateSqliteStatement(sql, exposed)
+    expect(gate("WITH users AS (SELECT 1) SELECT * FROM main.users AS orders")).toMatchObject({
+      ok: false,
+      relation: "users",
+    })
+    expect(gate("WITH users AS (SELECT 1) SELECT * FROM users")).toMatchObject({ ok: true })
+    expect(gate("SELECT 1 FROM orders WHERE 'x' IN users")).toMatchObject({
+      ok: false,
+      relation: "users",
+    })
+    expect(gate("SELECT 1 FROM orders WHERE id IN (1, 2)")).toMatchObject({ ok: true })
+  })
+
+  test("the program check names the table SQLite opens, whatever the SQL calls it", () => {
+    const db = new Database(":memory:")
+    db.run("CREATE TABLE orders (id INTEGER PRIMARY KEY)")
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)")
+    db.run("CREATE INDEX users_email ON users (email)")
+    db.run("ATTACH ':memory:' AS aux")
+    db.run("CREATE TABLE aux.orders (secret TEXT)")
+    const catalog = db
+      .query("SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage > 0")
+      .all()
+    const opened = (sql: string): string | undefined =>
+      unexposedProgramRelation(db.query(`EXPLAIN ${sql}`).all(), catalog, exposed)
+    expect(opened("SELECT * FROM orders AS o")).toBeUndefined()
+    expect(opened('WITH users AS (SELECT 1) SELECT * FROM main.users AS "☃"')).toBe("users")
+    expect(opened("SELECT email FROM users INDEXED BY users_email WHERE email > ''")).toBe("users")
+    expect(opened("SELECT * FROM aux.orders")).toBe("<schema 2>")
+    expect(unexposedProgramRelation([{ opcode: "OpenRead", p2: 999, p3: 0 }], [], exposed)).toBe(
+      "<root page 999>",
+    )
+  })
 })
 
 describe("caps and cells", () => {
@@ -220,6 +256,35 @@ describe("resolveSqliteFile", () => {
 })
 
 describe("openReadOnlySqlite", () => {
+  test("a driver refusing the first WAL read uses the guarded fallback on every host", async () => {
+    const file = seededFile({ wal: true })
+    const prepare = Database.prototype.prepare
+    let first = true
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: this driver forwards the original generic prepare arguments and return value unchanged, except for one simulated SQLite failure.
+    const failFirstRead = function (this: Database, ...args: Parameters<Database["prepare"]>) {
+      if (first && args[0] === "SELECT count(*) FROM sqlite_master") {
+        first = false
+        throw Object.assign(new Error("WAL sidecar needs a writable open"), {
+          code: "SQLITE_CANTOPEN",
+        })
+      }
+      return prepare.apply(this, args)
+    } as Database["prepare"]
+    const driver = spyOn(Database.prototype, "prepare").mockImplementation(failFirstRead)
+    try {
+      const db = await openReadOnlySqlite(file)
+      try {
+        expect(first).toBe(false)
+        expect(() => db.run("DELETE FROM orders")).toThrow(/readonly/)
+        expect(db.prepare("SELECT count(*) AS n FROM orders").get()).toEqual({ n: 2n })
+      } finally {
+        db.close()
+      }
+    } finally {
+      driver.mockRestore()
+    }
+  })
+
   test("closing the connection lets go of the file", async () => {
     const file = seededFile()
     const db = await openReadOnlySqlite(file)
@@ -262,6 +327,7 @@ describe("openReadOnlySqlite", () => {
         `const { Database } = require("bun:sqlite")
          const db = new Database(${JSON.stringify(file)})
          db.run("PRAGMA busy_timeout = 2000")
+         db.run("INSERT INTO orders (status) VALUES ('w')")
          console.log("ready")
          const until = Date.now() + 1500
          while (Date.now() < until) db.run("INSERT INTO orders (status) VALUES ('w')")

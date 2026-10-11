@@ -29,11 +29,20 @@ import {
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
+import {
+  type HandBuiltManifest,
+  handBuiltManifestMessage,
+  handBuiltManifests,
+  type ManifestList,
+  manifestListsIn,
+} from "./hand-built-manifest.ts"
 import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
+import { collectVersionDrift, type VersionDrift, versionDriftMessage } from "./version-drift.ts"
 import { buildScriptName } from "./workspace-link.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
@@ -178,6 +187,17 @@ export interface DoctorResult {
    * supplied and the feature versions disagree. Computed by {@link detectToolingDrift}.
    */
   readonly toolingDrift?: ToolingDrift
+  /**
+   * More than one version of the fixed release group across pins, installs and the running CLI.
+   * Advisory (never folded into `ok`); its fix is `nifra upgrade <highest>`. Computed by
+   * {@link collectVersionDrift}.
+   */
+  readonly versionDrift?: VersionDrift
+  /**
+   * `buildManifest(...)` calls whose spelled-out file list reaches a page but not its backend half, so
+   * that page runs without its loader, action and guards. Advisory (never folded into `ok`).
+   */
+  readonly handBuiltManifests?: readonly HandBuiltManifest[]
   /**
    * Agent files whose MCP launch pins an `@nifrajs/cli` other than the one the project installs, so
    * the agent's server answers for a release the code no longer builds with. Advisory (never folded
@@ -347,16 +367,6 @@ const declaredPackages = (pkg: Record<string, unknown>): ReadonlySet<string> => 
   return declared
 }
 
-const tsconfigPaths = async (
-  root: string,
-): Promise<Readonly<Record<string, unknown>> | undefined> => {
-  const tsconfig = await readJson(join(root, "tsconfig.json"))
-  const compilerOptions = tsconfig?.compilerOptions as
-    | { paths?: Record<string, unknown> }
-    | undefined
-  return compilerOptions?.paths
-}
-
 /** Build per-package declaration scopes for a workspace. Longest roots are first so nested packages
  * own their source; files outside a workspace package remain owned by the root manifest. */
 async function doctorPackageScopes(
@@ -365,16 +375,16 @@ async function doctorPackageScopes(
 ): Promise<readonly DoctorPackageScope[]> {
   const importers = await workspaceImporters(cwd, rootPackage, true)
   const packages = importers.length > 0 ? importers : [{ root: cwd, package: rootPackage }]
-  const rootPaths = await tsconfigPaths(cwd)
-  const scopes = await Promise.all(
-    packages.map(async (entry): Promise<DoctorPackageScope> => {
-      const paths = (await tsconfigPaths(entry.root)) ?? rootPaths
-      return {
-        root: entry.root,
-        relativeRoot: relative(cwd, entry.root).split("\\").join("/"),
-        declared: declaredPackages(entry.package),
-        isAlias: aliasMatcher(paths),
-      }
+  // The nearest tsconfig, read as TypeScript does: comments, trailing commas and `extends` included.
+  const resolver = createSpecifierResolver()
+  const scopes = packages.map(
+    (entry): DoctorPackageScope => ({
+      root: entry.root,
+      relativeRoot: relative(cwd, entry.root).split("\\").join("/"),
+      declared: declaredPackages(entry.package),
+      isAlias: aliasMatcher(
+        Object.fromEntries(resolver.pathPatterns(entry.root).map((pattern) => [pattern, []])),
+      ),
     }),
   )
   return scopes.sort((a, b) => b.relativeRoot.length - a.relativeRoot.length)
@@ -690,7 +700,7 @@ async function collectDoctorReadiness(
       : configured(
           "graceful-lifecycle",
           "graceful lifecycle",
-          /\bgracefulSignals\s*:\s*true\b|\bonStop\s*\(/,
+          /\bgracefulSignals\s*:\s*(?:true\b|\{)|\bonStop\s*\(/,
         ),
   ]
   return {
@@ -783,6 +793,7 @@ export async function collectDoctorResult(
   const scopes = await doctorPackageScopes(cwd, pkg)
 
   const findings: DoctorFinding[] = []
+  const manifestLists: ManifestList[] = []
   // A standalone app owns its tests, so they remain in the declaration check. A workspace root owns
   // the published package source while its root devDependencies intentionally own shared tests,
   // benchmarks, and scaffold copy-surfaces. Keep that boundary explicit instead of reporting a
@@ -813,6 +824,7 @@ export async function collectDoctorResult(
       for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
         findings.push({ file: f.file, line: f.line, package: f.snippet })
       }
+      manifestLists.push(...manifestListsIn(rel, content))
     },
     { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
@@ -829,6 +841,8 @@ export async function collectDoctorResult(
   const toolingDrift =
     opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
   const staleMcpPins = await collectStaleMcpPins(cwd).catch(() => undefined)
+  const versionDrift = collectVersionDrift(cwd, opts.cliVersion)
+  const handBuilt = handBuiltManifests(cwd, manifestLists)
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
@@ -846,6 +860,8 @@ export async function collectDoctorResult(
     readiness,
     scanScope,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
+    ...(versionDrift !== undefined ? { versionDrift } : {}),
+    ...(handBuilt.length > 0 ? { handBuiltManifests: handBuilt } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
@@ -1030,6 +1046,12 @@ export async function runDoctor(
         "for the CLI itself, run the project's own (`bunx --bun nifra doctor` from the project directory, " +
         "or ./node_modules/.bin/nifra)\n",
     )
+  }
+  if (result.versionDrift !== undefined) {
+    console.log(`⚠ ${versionDriftMessage(result.versionDrift)}\n`)
+  }
+  for (const finding of result.handBuiltManifests ?? []) {
+    console.log(`⚠ ${handBuiltManifestMessage(finding)}\n`)
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
   // release even when the CLI running doctor matches the project.

@@ -1,5 +1,14 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
 import { buildClientVite } from "../src/build-vite.ts"
 
@@ -64,6 +73,43 @@ test("emits entry + per-route chunks + CSS, all under the /assets/ public path",
   expect(manifest.routeStyles?.about ?? []).toEqual([])
   expect(manifest.cssCodeSplit).toBe(true)
   expect(manifest.cssLoading).toBe("blocking")
+}, 60_000)
+
+test("a package declared single-copy resolves to the app's copy from a linked package", async () => {
+  const pkg = (name: string) =>
+    JSON.stringify({ name, version: "1.0.0", type: "module", main: "index.js" })
+  const { root, routesDir } = scaffold({
+    "package.json": JSON.stringify({ name: "app", nifra: { singleCopy: ["@fixture/*"] } }),
+    "node_modules/@fixture/counter/package.json": pkg("@fixture/counter"),
+    "node_modules/@fixture/counter/index.js": 'export const id = "counter-copy-app"\n',
+    "routes/index.tsx":
+      'import { id } from "@fixture/counter"\nimport { linkedId } from "linked"\nexport default function Index() { return [id, linkedId] }\n',
+  })
+  // A workspace link: the package lives outside the app and carries its own copy.
+  const linked = mkdtempSync(`${TMP_BASE}linked-`)
+  dirs.push(linked)
+  for (const [rel, content] of Object.entries({
+    "package.json": JSON.stringify({
+      ...JSON.parse(pkg("linked")),
+      nifra: { environment: "library" },
+    }),
+    "index.js": 'import { id } from "@fixture/counter"\nexport const linkedId = id\n',
+    "node_modules/@fixture/counter/package.json": pkg("@fixture/counter"),
+    "node_modules/@fixture/counter/index.js": 'export const id = "counter-copy-linked"\n',
+  })) {
+    mkdirSync(join(linked, rel, ".."), { recursive: true })
+    writeFileSync(join(linked, rel), content)
+  }
+  symlinkSync(linked, join(root, "node_modules/linked"), "dir")
+  await build(root, routesDir)
+  const out = join(root, "dist", "assets")
+  const code = readdirSync(out, { recursive: true })
+    .map(String)
+    .filter((file) => file.endsWith(".js"))
+    .map((file) => readFileSync(join(out, file), "utf8"))
+    .join("\n")
+  expect(code).toContain("counter-copy-app")
+  expect(code).not.toContain("counter-copy-linked")
 }, 60_000)
 
 test("cssCodeSplit false records one standalone aggregate CSS asset and falls back from route styles", async () => {
@@ -156,6 +202,41 @@ test("a _loading page is built as a lazy chunk, and its stylesheet ships with th
   expect(chunk).toBeDefined()
   expect(chunk).not.toBe(manifest.entry)
   expect((manifest.css ?? []).some((url) => read(url).includes(".skeleton"))).toBe(true)
+}, 60_000)
+
+test("a route links the stylesheets of the chunks it imports, the client module's, and the loading pages'", async () => {
+  const { root, routesDir } = scaffold({
+    "frontend/client.ts": 'import "./global.css"\nexport function mountRouter() {}\n',
+    "frontend/global.css": ".global { color: green }\n",
+    // Imported by two routes, so it lands in a chunk of its own.
+    "frontend/Button.ts": 'import "./button.css"\nexport const Button = () => "btn"\n',
+    "frontend/button.css": ".button { color: red }\n",
+    "frontend/skeleton.css": ".skeleton { color: gray }\n",
+    "routes/index.tsx":
+      'import { Button } from "../frontend/Button"\nexport default function Index() { return Button() }\n',
+    "routes/about.tsx":
+      'import { Button } from "../frontend/Button"\nexport default function About() { return Button() }\n',
+    "routes/_loading.tsx":
+      'import "../frontend/skeleton.css"\nexport default function Skeleton() { return null }\n',
+  })
+  const manifest = await buildClientVite({
+    root,
+    routesDir,
+    outDir: join(root, "dist", "assets"),
+    clientModule: join(root, "frontend/client.ts"),
+    minify: false,
+  })
+  const read = (url: string): string =>
+    readFileSync(join(root, "dist", "assets", url.slice(url.lastIndexOf("/") + 1)), "utf8")
+  for (const id of ["index", "about"]) {
+    const linked = (manifest.routeStyles?.[id] ?? []).map(read).join("")
+    expect({ id, global: linked.includes(".global"), button: linked.includes(".button") }).toEqual({
+      id,
+      global: true,
+      button: true,
+    })
+    expect(linked.includes(".skeleton")).toBe(true)
+  }
 }, 60_000)
 
 test("rejects deferred loading when Vite CSS remains split", async () => {

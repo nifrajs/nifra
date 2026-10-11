@@ -927,17 +927,144 @@ const lineOf = (source: string, offset: number): number => {
   return line
 }
 
-const isLikelyJsxAttribute = (source: string, offset: number): boolean => {
-  const tagStart = source.lastIndexOf("<", offset)
-  const tagEnd = source.lastIndexOf(">", offset)
-  return tagStart > tagEnd && !source.slice(tagStart, offset).includes("<!--")
+/** Words after which an expression - so a regex literal or a JSX element - may start. */
+const EXPRESSION_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+])
+
+const WORD_CHAR = /[\w$]/
+
+/** `<` at `offset` opens an element unless it starts a type parameter list (`<T,>`, `<T extends U>`). */
+const opensElement = (source: string, offset: number): boolean => {
+  const name = /^<([A-Za-z_$][\w$.:-]*)?(\s*)/.exec(source.slice(offset, offset + 256))
+  if (name === null) return false
+  if (name[1] === undefined) return source[offset + 1] === ">"
+  const after = source.slice(offset + name[0].length, offset + name[0].length + 8)
+  return !after.startsWith(",") && !(name[2] !== "" && /^extends\b/.test(after))
 }
 
-const classAttributes = (source: string): readonly ClassAttribute[] => {
+/**
+ * Which offsets of `source` sit inside a JSX tag, where an attribute can be. A small lexer, not a
+ * parser: it steps over strings, template literals, comments and regex literals, and follows JSX by
+ * the usual rule that `<` where an expression may start opens an element. A `className=` anywhere
+ * else - HTML in a template literal, a comment, a string, JSX text - is not an attribute.
+ */
+function jsxTagMask(source: string, jsx: boolean): Uint8Array {
+  const mask = new Uint8Array(source.length)
+  const stack: ("code" | "template" | "tag" | "children")[] = ["code"]
+  const length = source.length
+  let expression = true
+  let index = 0
+  const skipQuoted = (quote: string, multiline: boolean): void => {
+    index += 1
+    while (index < length && source[index] !== quote && (multiline || source[index] !== "\n"))
+      index += source[index] === "\\" && !multiline ? 2 : 1
+    index += 1
+  }
+  while (index < length) {
+    const frame = stack[stack.length - 1]
+    const char = source[index] ?? ""
+    const next = source[index + 1]
+    if (frame === "template") {
+      if (char === "\\") index += 2
+      else if (char === "`") {
+        stack.pop()
+        index += 1
+        expression = false
+      } else if (char === "$" && next === "{") {
+        stack.push("code")
+        index += 2
+        expression = true
+      } else index += 1
+    } else if (frame === "children") {
+      if (char === "{") {
+        stack.push("code")
+        expression = true
+      } else if (char === "<" && next === "/") {
+        const close = source.indexOf(">", index)
+        index = close === -1 ? length : close
+        stack.pop()
+        expression = false
+      } else if (char === "<") stack.push("tag")
+      index += 1
+    } else if (frame === "tag") {
+      mask[index] = 1
+      if (char === '"' || char === "'") skipQuoted(char, true)
+      else if (char === "{") {
+        stack.push("code")
+        expression = true
+        index += 1
+      } else if (char === "/" && next === ">") {
+        stack.pop()
+        expression = false
+        index += 2
+      } else {
+        if (char === ">") stack[stack.length - 1] = "children"
+        index += 1
+      }
+    } else if (char === "/" && next === "/") {
+      const end = source.indexOf("\n", index)
+      index = end === -1 ? length : end
+    } else if (char === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2)
+      index = end === -1 ? length : end + 2
+    } else if (char === '"' || char === "'") {
+      skipQuoted(char, false)
+      expression = false
+    } else if (char === "`") {
+      stack.push("template")
+      index += 1
+    } else if (char === "/" && expression) {
+      let inClass = false
+      index += 1
+      while (index < length && source[index] !== "\n") {
+        const current = source[index]
+        if (current === "\\") index += 1
+        else if (current === "[") inClass = true
+        else if (current === "]") inClass = false
+        else if (current === "/" && !inClass) break
+        index += 1
+      }
+      index += 1
+      while (index < length && WORD_CHAR.test(source[index] ?? "")) index += 1
+      expression = false
+    } else if (char === "<" && expression && jsx && opensElement(source, index)) {
+      stack.push("tag")
+      index += 1
+    } else if (WORD_CHAR.test(char)) {
+      const start = index
+      while (index < length && WORD_CHAR.test(source[index] ?? "")) index += 1
+      expression = EXPRESSION_KEYWORDS.has(source.slice(start, index))
+    } else {
+      if (char === "{") stack.push("code")
+      else if (char === "}" && stack.length > 1) stack.pop()
+      if (char.trim() !== "") expression = char !== ")" && char !== "]"
+      index += 1
+    }
+  }
+  return mask
+}
+
+const classAttributes = (source: string, file: string): readonly ClassAttribute[] => {
   const attributes: ClassAttribute[] = []
+  // A TypeScript module that is not `.tsx` cannot hold JSX, and its `<T>` would read as an element.
+  const inTag = jsxTagMask(source, !/\.[cm]?ts$/.test(file))
   for (const match of source.matchAll(CLASS_ATTRIBUTE)) {
     const start = match.index ?? 0
-    if (!isLikelyJsxAttribute(source, start)) continue
+    if (inTag[start] !== 1) continue
     const end = start + match[0].length
     const value = match[1] ?? match[2] ?? match[3] ?? match[4]
     attributes.push(
@@ -997,7 +1124,7 @@ const insertionOffset = (source: string): number => {
 
 /** Transform one source file. The returned source is unchanged when every match is unsupported. */
 export function migrateTailwindSource(source: string, file: string): SourceMigration {
-  const attributes = classAttributes(source)
+  const attributes = classAttributes(source, file)
   if (attributes.length === 0) return { source, changed: false, replacements: 0, issues: [] }
 
   const replacements: { start: number; end: number; text: string }[] = []

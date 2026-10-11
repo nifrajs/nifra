@@ -220,7 +220,8 @@ export default function Routing() {
         </li>
         <li>
           <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
-          <code>notFound()</code>. At the routes root it renders on its own. In a directory below (
+          <code>notFound()</code>. At the routes root it renders inside the root layout, as below. In
+          a directory below (
           <code>admin/_404.tsx</code>) it answers for that part of the app: the unmatched URLs under{" "}
           <code>/admin</code> and <code>notFound()</code> from the routes beneath it, the nearest one
           winning, rendered inside the layouts at or above it with their loader data. Those layouts run
@@ -231,6 +232,21 @@ export default function Routing() {
           with a <code>_404</code> at one URL prefix are a boot error unless a directory containing
           both has one too. <code>gone()</code>, <code>statusPage()</code> and the{" "}
           <code>_410.tsx</code>-style pages stay at the root, as does the 404 of a static export.
+        </li>
+        <li>
+          A root status page (<code>_404.tsx</code>, <code>_503.tsx</code>, ...) or an{" "}
+          <code>_error.tsx</code> renders inside the layouts above it with their loader data, and the
+          server puts its <code>meta</code> in the head. For a request no route ran (an unmatched
+          URL) the root middleware and layout loaders run first; otherwise the page reuses the data
+          the request already loaded. When those layouts cannot render it - a loader throws, a{" "}
+          <code>gate</code> or the middleware refuses - a root status page renders alone and an{" "}
+          <code>_error</code> inside its layouts without their data, with the same status, so a
+          status page never fails into a second error. The response is{" "}
+          <code>private, no-store</code> once a layout loaded data, and a navigation that lands on
+          one loads the URL as a document. <code>export const inLayouts = false</code> always renders
+          the page that way and runs no layout loader for it. A root status page that wraps the root
+          layout itself would render it twice; <code>nifra check</code> reports one as{" "}
+          <code>NF-C034</code>.
         </li>
         <li>
           <code>_loading.tsx</code> is what the page slot shows while a client navigation loads. A
@@ -253,8 +269,9 @@ export default function Routing() {
           non-hydrated). On the <b>client</b> - a render error during navigation/interaction is caught by
           the nearest boundary, which renders <code>_error</code> in place (all five adapters). It
           receives the serialized error as <code>{`{ data: { name, message } }`}</code> (never the
-          stack; on the server in production, a generic <code>Internal Server Error</code> rather
-          than the error's own text); a thrown control-flow value (e.g. a guard{" "}
+          stack; on the server, a generic <code>Internal Server Error</code> rather than the error's
+          own text unless <code>NODE_ENV</code> is <code>development</code> or <code>test</code>); a
+          thrown control-flow value (e.g. a guard{" "}
           <code>redirect</code>) passes through.
         </li>
         <li>
@@ -273,6 +290,14 @@ export default function Routing() {
         <code>&lt;head&gt;</code> (applied on SSR and on client navigation). Its data comes from a{" "}
         <code>loader</code> in its <code>.backend.ts</code> half - see{" "}
         <a href="/docs/data">Loaders &amp; actions</a>.
+      </p>
+      <p>
+        A layout's <code>meta</code> receives its own loader's data as <code>data</code>, the value its
+        component renders, or <code>null</code> when the layout has no loader. The page's data is{" "}
+        <code>pageData</code>, for a layout title template. A layout that loads the locale can set{" "}
+        <code>lang</code> from its data, and a client navigation keeps it. <code>nifra check</code>{" "}
+        reports a layout with no loader whose <code>meta</code> reads <code>data</code> as{" "}
+        <code>NF-C040</code>.
       </p>
       <CodeBlock code={ROUTE} />
       <CodeBlock code={ROUTE_BACKEND} lang="ts" />

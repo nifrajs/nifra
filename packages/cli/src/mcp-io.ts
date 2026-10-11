@@ -16,6 +16,47 @@ export const CHILD_INPUT_MAX_BYTES = 4 * 1024 * 1024
 export const LOCAL_TOOL_FETCH_TIMEOUT_MS = 2_000
 export const LOCAL_TOOL_MAX_RESPONSE_BYTES = 1_048_576
 
+/**
+ * On POSIX a bounded child is spawned `detached`, leading its own process group, so stopping it
+ * reaches every process it started. Otherwise a grandchild still holding the pipes keeps the read,
+ * and the tool call, open past its timeout.
+ */
+export const OWN_PROCESS_GROUP = process.platform !== "win32"
+
+/** Signal a child spawned with `detached: OWN_PROCESS_GROUP`: its whole group on POSIX. */
+export function signalProcessGroup(
+  proc: { readonly pid: number; kill(signal?: NodeJS.Signals): void },
+  signal: NodeJS.Signals,
+): void {
+  try {
+    if (OWN_PROCESS_GROUP) process.kill(-proc.pid, signal)
+    else proc.kill(signal)
+  } catch {
+    // The group has already exited.
+  }
+}
+
+const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+
+/**
+ * A child in its own group no longer gets the Ctrl+C the terminal sends its parent: on SIGINT,
+ * SIGTERM or SIGHUP run `stop`, then let this process take the signal as it would have. Returns the
+ * function that removes the listeners.
+ */
+export function forwardTerminalSignals(stop: () => void): () => void {
+  if (!OWN_PROCESS_GROUP) return () => {}
+  const remove = (): void => {
+    for (const name of FORWARDED_SIGNALS) process.off(name, forward)
+  }
+  const forward = (signal: NodeJS.Signals): void => {
+    stop()
+    remove()
+    process.kill(process.pid, signal)
+  }
+  for (const name of FORWARDED_SIGNALS) process.on(name, forward)
+  return remove
+}
+
 /** Accept only a concrete TCP port. Port 0 (bind-any-free-port) is not a valid read target. */
 export function validateLocalPort(port: unknown): number | undefined {
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65_535

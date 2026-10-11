@@ -1,5 +1,72 @@
 # @nifrajs/agent
 
+## 5.0.0
+
+### Minor Changes
+
+- 6340cd8: A replay connection that closes detaches its live view from the turn: `mountAgent` and `mountAgUI` return the view when the client cancels, and the memory evidence log stops sending evidence to a returned view. The logged run keeps recording for the next reconnect. `createMemoryAgentEvidenceLog({ maxSubscribers })` caps live views per running turn (default 64); one more ends the oldest. `createAgentEvidenceStream({ onReturn })` reports when a consumer returns its stream.
+- 34b3014: New `resumeApproval: "port"` agent port option keeps the configured approval port authoritative when a run resumes. By default a step that suspended for approval takes the decision the resuming caller sends in `resume.approval`. Over A2A, or on a public AG-UI or `mountAgent` route, that caller can be the party asking for the tool. With `resumeApproval: "port"` the approval port is asked again and receives the caller's decision as `callerDecision`, and its verdict stands. Without a port, such a resume suspends again.
+- 1af7543: Event streams stay bounded for a client that stops reading. `mountAgent` takes `maxOutputBytes` (default 4 MiB): past it an SSE response ends with an `output_limit` error frame, and with an `evidenceLog` a `Last-Event-ID` reconnect reads on. `respondMcpHttp` and `createMcpServer` take `maxPendingBytes` (default 4 MiB): an SSE stream with more than that waiting for its client is dropped and its tool call cancelled. The coding agent's `turn.send` stream advances the backend only as the client reads, and a resumable follower that falls `replayBytes` behind is dropped and can attach again from its cursor.
+
+### Patch Changes
+
+- 2198640: `assembleContext` counts each candidate set in the source order it returns, so a custom `tokenCounter` that scores the same items differently by order can no longer return text over the budget. The returned text is counted once more, and a count over the budget throws `ContextBudgetError`.
+- 6b96131: `runModelGateway` gives each attempt its own abort signal and aborts it when the deadline passes or the caller cancels, so an adapter that honours `request.signal` stops working on a request whose result would be discarded. The deadline also covers the structured-output parser: a parse that finishes after it returns `timeout` instead of success.
+- d6a7fa0: `runModelGateway` honours a `deadlineAt` more than about 24.8 days out instead of timing the attempt out at once, and a policy with any `maxAttempts` up to the 512 cap now runs every attempt. Retrying past roughly 128 to 255 attempts used to fail with `policy_denied` once the evidence log filled.
+- 848ce97: `resumeAgent` accepts the continuation of a model, budget or cancelled suspension: echoing it back retries the model step, as omitting `resume` does, so an A2A client can resume such a task with the continuation the task reported. A continuation that names a tool or a different effect is still refused with `AgentResumeMismatchError`.
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

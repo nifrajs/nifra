@@ -1,5 +1,101 @@
 # @nifrajs/middleware
 
+## 5.0.0
+
+### Major Changes
+
+- 0aed425: Required `basicAuth`, `bearer`, `apiKey` and `jwt` refuse in the `authenticate()` stage: before the body is read or validated and before any `derive` or `beforeHandle`. An unauthenticated request gets the 401 and its challenge, never a 413 or a 422, on every route shape, lane and WebSocket handshake. With valid credentials an invalid body is still a 422. `optional: true` never refuses and keeps validation first. A `verify` that throws in required mode is a 503. A rate limiter written as a `beforeHandle` behind these guards no longer sees refused requests; `rateLimit()` runs in `onRequest` and still counts them.
+
+  The `authenticate()` input adds `params`, the raw `search`, the parsed and frozen `query` (the parser `c.query` uses; a repeated key is an array) and the `request` (its body must not be read). The query is for short-lived, single-use tickets, such as one for a WebSocket handshake.
+
+  Project evidence and reflection keep a route's chosen `validationOrder`.
+
+  `nifra check` reports a route that claims runtime authentication, declares an input schema and authenticates in a hook that runs after validation (NF-S008, warning). It reads the backend the contract-lock check loads, so it runs when `contracts.lock.json` exists. Fix it with `authenticate()`, or with `validationOrder: "auth-before-validation"` on the route.
+
+  The dev feed (`nifra_logs`, `nifra_errors`, request traces and the persisted log) records a query's keys and never its values.
+
+### Minor Changes
+
+- f5cd30f: `jwks()` no longer holds requests on a slow identity provider, and it picks up a rotated key before the cache expires. Inside the `staleMs` window, a request is answered from the last good key set at once while one refresh runs behind it. Before, every refresh wave waited up to `timeoutMs` while the provider hung. A token whose `kid` is missing from the cached set now refetches the set, at most once per the new `cooldownMs` option (default 30 s), so made-up `kid`s cannot turn every request into a fetch. With `staleMs: 0` every refresh is still awaited and fails closed.
+- 62d73a7: A typed SSE route (`app.sse()`) is now in the OpenAPI document. Before, it was a bare `200` with no content, so a client generator for another language had nothing to build the event type from. Its `200` answers `text/event-stream`, and its event schema becomes a named component (`<operationId>Event`, or one named after the path, deduplicated) so a generator emits a type for it. `toOpenAPI(app, { openapiVersion: "3.2.0" })` (and `openapi({ openapiVersion })`) declares OpenAPI 3.2 and describes each event with the standard `itemSchema`: a `data` string whose `contentSchema` is the event schema, plus `event`, `id`, and `retry`. The default stays 3.1, which has no field for stream items, so the same schema rides as `x-itemSchema` beside `schema: { type: "string" }`. A new docs page, /docs/control-api, shows a control API built this way: methods as routes, a resumable typed event stream, the typed client, and the document for other languages.
+- c6a4477: `rateLimitTiers({ store, floor, tiers })` charges each request to exactly one bucket: the tier with the longest static prefix that holds the request path, else the floor. Tiers never stack on the floor, so a tier may allow more than it. It runs before routing, so 404s, 405s and bodies that fail validation are charged; prefixes are validated when the limiter is built; each tier counts in its own store keys; and every instance has its own name, so `use()` and `merge()` never drop one. `rateLimit()` gains `skip(req, platform)`, which leaves a request uncharged and without `RateLimit-*` headers.
+
+### Patch Changes
+
+- eaf030b: The server records each request an authentication stage accepts, and `isAuthenticatedRequest(req)` from `@nifrajs/core/server` answers for the request response hooks receive, on every runtime and after an `onRequest` hook replaces the request. `markAuthenticatedRequest(req)` records a request an integration verified outside a stage; the optional `bearer`, `apiKey`, `jwt` and `basicAuth` guards call it. `cache()` treats a response to such a request as private, so it is stored only when the response is explicitly `public` or carries `s-maxage`, whatever header carried the credential, including an `apiKey({ header })` outside `authenticatedHeaders`.
+- 7775c2b: Respect response revalidation directives and freshness when caching responses. Bypass no-cache and stale responses, cap the application TTL by max-age or s-maxage and Age, and reject old stored entries that require validation.
+- d08b918: `compression()` now flushes each chunk of a streamed body as it is compressed on runtimes with `node:zlib` (Bun, Node, Deno), so a streamed page shell reaches the client before the rest of the page instead of after the whole stream closes. Runtimes without `node:zlib` keep using `CompressionStream`.
+- 8606fa4: `csrf()` (middleware and auth) accepts a same-origin HTML form POST sent under `Referrer-Policy: no-referrer`, which `securityHeaders()` sets by default. Such a form arrives with `Origin: null`, and every one was refused with 403. A request with `Origin: null` now passes only when the browser's own `Sec-Fetch-Site` header says `same-origin`, and only in the default same-origin mode; an explicit `origins` allowlist still refuses it.
+- 127194f: `idempotency()` no longer stores a response under the anonymous key when the request was authenticated by a credential outside `principalHeaders` (an `apiKey()` guard or an `authenticate` stage reading `x-service-key`, say). Replay runs before authentication, so an anonymous caller who presented the same `Idempotency-Key` was replayed the owner's stored response. Such requests now run each time; add the credential header to `principalHeaders` to dedupe them.
+- 478daa4: `idempotency()` no longer stores request rejections (400, 404, 405, 413, 414, 415, 422, 431) for replay, alongside the statuses it already skipped. Storing them let anyone fill a `MemoryIdempotencyStore` with fresh keys sent to a route that does not exist, after which every legitimate write got 503 until the entries expired a day later. A handler that answers 400 or 422 after a side effect can keep the old behavior with its own `shouldCache`.
+- 55f4fdb: `localeDetector()` and `language()` add `Vary: Accept-Language` to every response, and `localeDetector()` adds `Cookie` too when it reads a locale cookie, so a shared cache no longer serves one visitor's language to another. An existing `Vary` is extended, never replaced, and `Vary: *` is left alone.
+- e370381: `basicAuth()` accepts the `Authorization` scheme in any letter case, as HTTP defines it. A client that sent `basic` or `BASIC` with valid credentials was answered 401; it is now let in, like `Basic`.
+- 90d9ee6: `csrf()` publishes its route evidence for every method it guards. It guards every method but GET, HEAD and OPTIONS, custom ones included, but published evidence only for POST, PUT, PATCH and DELETE, and dropped custom methods from an explicit `methods` list. An assurance policy can now see that a custom-method route is protected.
+- 0abe593: A second `healthcheck()`, `cacheControl()` or `openapi()` with its own configuration now applies alongside the first instead of being skipped as a duplicate. Applying the same instance twice still wires it once.
+- 7535dfe: `negotiateContentType()` and `parseAcceptHeader()` accept the `*/*` media range that browsers, `fetch` and `curl` send, so such a request no longer matches nothing. `*/*` still ranks below a named type or `type/*`, and an invalid `*/json` is ignored.
+- 7a165de: A Response returned to more than one request no longer carries one request's headers to another. A Response without a body (a module-level `new Response(null, { status: 204 })`, a kept redirect) can be sent any number of times, so the cookies a handler queues with `c.set.cookie`, the app's `responseHeaders`, and the headers written by `onResponse` hooks, response observers and response middleware go on a copy made for the request; the Response the handler returned stays as it was built. A Response with a body can be sent once: returning it again answers `500` with `{"ok":false,"error":"internal_error"}` and none of the headers written for the earlier request. On `@nifrajs/node`, a response whose body cannot be written is answered with a `500` that carries none of the headers set for it.
+
+  `writableResponse(response, request?)`, exported from `@nifrajs/core/server`, returns the Response a request may write headers on: the response itself when it has a body and writable headers, otherwise a copy. Pass the request and a copy already made for it is reused by its later writers. `toResponse`, exported from `@nifrajs/core/edge-kit`, takes the same optional last argument: the copies and body-less responses it builds are then reused by that request's later writers instead of being copied again. A Response the handler returned is never treated as the request's own.
+
+  `renderResult(result)`, exported from `@nifrajs/core/edge-kit`, renders a framework `ResponseResult` exactly as `toResponse` does without taking a handler's `Response`. `@nifrajs/edge` renders its rejections with it; responses are unchanged and the bundle is smaller.
+
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [62d73a7]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [c669308]
+- Updated dependencies [2fbb4f0]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+  - @nifrajs/schema@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

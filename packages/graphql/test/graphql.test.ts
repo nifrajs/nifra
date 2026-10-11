@@ -31,6 +31,44 @@ function post(body: unknown, headers: Record<string, string> = {}): Request {
 }
 
 describe("respondGraphql HTTP", () => {
+  test("a POST that is not JSON is refused before the body is read, so a form cannot mutate", async () => {
+    let writes = 0
+    const writable = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: "Query",
+        fields: { ok: { type: GraphQLString, resolve: () => "ok" } },
+      }),
+      mutation: new GraphQLObjectType({
+        name: "Mutation",
+        fields: { write: { type: GraphQLString, resolve: () => String(++writes) } },
+      }),
+    })
+    const form = (type: string, body: string) =>
+      new Request("http://x/graphql", {
+        method: "POST",
+        headers: { "content-type": type, origin: "https://hostile.example" },
+        body,
+      })
+    for (const [type, body] of [
+      ["application/x-www-form-urlencoded", "query=mutation%20%7B%20write%20%7D"],
+      ["text/plain", JSON.stringify({ query: "mutation { write }" })],
+      [
+        "multipart/form-data; boundary=b",
+        '--b\r\nContent-Disposition: form-data; name="query"\r\n\r\nmutation { write }\r\n--b--',
+      ],
+    ] as const) {
+      const res = await respondGraphql(form(type, body), { schema: writable })
+      expect({ type, status: res.status }).toEqual({ type, status: 415 })
+    }
+    expect(writes).toBe(0)
+    const json = await respondGraphql(
+      form("application/json; charset=utf-8", JSON.stringify({ query: "mutation { write }" })),
+      { schema: writable },
+    )
+    expect(json.status).toBe(200)
+    expect(writes).toBe(1)
+  })
+
   test("executes a query", async () => {
     const res = await respondGraphql(post({ query: "{ hello }" }), { schema, rootValue })
     expect(res.status).toBe(200)
@@ -218,4 +256,58 @@ describe("privacy guardrail", () => {
       expect(src).not.toMatch(/console\.(log|info|warn|error|debug)/)
     }
   })
+})
+
+describe("respondGraphql execution deadline", () => {
+  const waiting = () => {
+    const seen: { signal?: AbortSignal | undefined } = {}
+    const resolving = Promise.withResolvers<void>()
+    const slowSchema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: "Query",
+        fields: {
+          slow: {
+            type: GraphQLString,
+            resolve: (_source, _args, _context, info) => {
+              const signal = info.getAbortSignal()
+              seen.signal = signal
+              resolving.resolve()
+              return new Promise((_resolve, reject) =>
+                signal?.addEventListener("abort", () => reject(signal.reason)),
+              )
+            },
+          },
+        },
+      }),
+    })
+    return { seen, slowSchema, resolving: resolving.promise }
+  }
+
+  test("a timeout answers 504 and aborts the signal the resolver holds", async () => {
+    const { seen, slowSchema } = waiting()
+    const res = await respondGraphql(post({ query: "{ slow }" }), {
+      schema: slowSchema,
+      executionTimeoutMs: 20,
+    })
+    expect(res.status).toBe(504)
+    expect(seen.signal?.aborted).toBe(true)
+  })
+
+  test("an aborted request aborts the resolver's signal", async () => {
+    const { seen, slowSchema, resolving } = waiting()
+    const client = new AbortController()
+    const request = new Request(post({ query: "{ slow }" }), { signal: client.signal })
+    const responding = respondGraphql(request, { schema: slowSchema })
+    await resolving
+    client.abort()
+    expect(seen.signal?.aborted).toBe(true)
+    await responding
+  })
+})
+
+test("authorize refuses a request before its body is read", async () => {
+  const request = post("{not json")
+  const res = await respondGraphql(request, { schema, rootValue, authorize: () => false })
+  expect(res.status).toBe(401)
+  expect(request.bodyUsed).toBe(false)
 })

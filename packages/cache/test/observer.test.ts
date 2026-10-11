@@ -49,7 +49,9 @@ describe("cache observer", () => {
     for (const event of events) {
       expect(event.context).toBeUndefined()
       expect(event.durationMs).toBeGreaterThanOrEqual(0)
-      expect(Math.abs(event.startedAt - Date.now())).toBeLessThan(60_000)
+      // startedAt is on OTel's clock (timeOrigin + now), which falls behind Date.now() while the host sleeps.
+      const now = performance.timeOrigin + performance.now()
+      expect(Math.abs(event.startedAt - now)).toBeLessThan(60_000)
     }
   })
 

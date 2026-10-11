@@ -112,7 +112,7 @@ describe("otelBridge plugin", () => {
     const { exporter, tracer } = sdk()
     const nifra = collect()
     const app = server()
-      .use(tracing({ exporter: nifra.exporter }))
+      .use(tracing({ exporter: nifra.exporter, rawUrlPath: true }))
       .use(otelBridge({ api, tracer }).plugin)
       .get("/q/:n", async (c) => {
         await new Promise((resolve) => setTimeout(resolve, 5 - Number(c.params.n)))

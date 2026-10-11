@@ -12,7 +12,7 @@ Fine-grained signals + declarative DOM bindings for nifra islands - interactivit
 
 - **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
 - **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
-- **computed** _(function)_ - `computed: <T>(fn: () => T) => () => T`
+- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
 - **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`
 - **islandState** _(function)_ - `islandState: (state: Record<string, unknown>) => string`
@@ -23,9 +23,9 @@ Fine-grained signals + declarative DOM bindings for nifra islands - interactivit
 - **IslandContext** _(interface)_ - `interface IslandContext`
 - **IslandHost** _(interface)_ - `interface IslandHost`
 - **MountIslandOptions** _(interface)_ - `interface MountIslandOptions`
-- **IslandScope** _(type)_ - `type IslandScope = { readonly signals: Readonly<Record<string, Signal<unknown>>> readonly handlers: Readonly<Record<string, (event: Event) …`
+- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
 
-_…and 3 more - see [`api-reference.md`](../../api-reference.md#nifrajsislets) for the complete list._
+_…and 4 more - see [`api-reference.md`](../../api-reference.md#nifrajsislets) for the complete list._
 
 ## Footguns
 

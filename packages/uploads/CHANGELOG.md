@@ -1,5 +1,11 @@
 # @nifrajs/uploads
 
+## 5.0.0
+
+### Patch Changes
+
+- 8bf8bc7: `verifyDownloadUrl` now accepts `vexp` only in the plain decimal form `signDownloadUrl` writes. An expiry with leading zeros used to verify too, giving one signed grant several distinct URLs (cache keys, log lines, dedupe keys).
+
 ## 4.0.2
 
 ## 4.0.1

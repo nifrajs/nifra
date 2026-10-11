@@ -34,6 +34,30 @@ async function withBackend<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
 }
 
 describe("runWebSocket (nifra_ws engine)", () => {
+  test("binds the project's backend to loopback only", async () => {
+    await withBackend(async (cwd) => {
+      writeAppFile(
+        cwd,
+        "backend/app.ts",
+        `${BACKEND}
+import { writeFileSync } from "node:fs"
+const listen = backend.listen.bind(backend)
+Object.assign(backend, {
+  listen: (port: number, options?: { hostname?: string }) => {
+    writeFileSync(${JSON.stringify(join(cwd, "listen.json"))}, JSON.stringify(options ?? null))
+    return listen(port, options)
+  },
+})
+`,
+      )
+      const res = await runWebSocket(cwd, { path: "/echo", expectMessages: 1 })
+      expect(res.ok).toBe(true)
+      expect(JSON.parse(await Bun.file(join(cwd, "listen.json")).text())).toEqual({
+        hostname: "127.0.0.1",
+      })
+    })
+  })
+
   test("verifies a live WebSocket open + message round-trip", async () => {
     await withBackend(async (cwd) => {
       const res = await runWebSocket(cwd, {

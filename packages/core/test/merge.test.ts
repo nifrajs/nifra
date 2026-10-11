@@ -153,6 +153,30 @@ describe("merge - domain-group composition", () => {
     ).toBe(200)
   })
 
+  test("a scoped group hook sees an OPTIONS request to a path the group serves, and only there", async () => {
+    const seen: string[] = []
+    const group = server()
+      .use({
+        name: "group-preflight",
+        onRequest: (req) => {
+          seen.push(`${req.method} ${new URL(req.url).pathname}`)
+          return req.method === "OPTIONS" ? new Response(null, { status: 204 }) : undefined
+        },
+      })
+      .post("/items", () => ({ ok: true }))
+    const app = server()
+      .get("/own", () => ({ ok: true }))
+      .merge(group)
+
+    const options = (path: string) =>
+      app.fetch(new Request(`http://x${path}`, { method: "OPTIONS" }))
+    expect((await options("/items")).status).toBe(204)
+    expect((await options("/own")).status).toBe(405)
+    expect((await options("/missing")).status).toBe(404)
+    expect((await app.fetch(new Request("http://x/items"))).status).toBe(405)
+    expect(seen).toEqual(["OPTIONS /items"])
+  })
+
   test("a route-less group is a middleware bundle - its hooks apply app-wide, unchanged", async () => {
     const seen: string[] = []
     const bundle = server().use({
@@ -203,6 +227,16 @@ describe("merge - domain-group composition", () => {
       .use(websocket())
       .ws("/live", { message: () => {} })
     expect(() => server().merge(wsGroup)).toThrow(/WebSocket/)
+  })
+
+  test("a server holding mounts is refused, not merged without them", () => {
+    const external = { fetch: () => new Response("external") }
+    const withMount = server()
+      .get("/own", () => ({}))
+      .mount({ path: "/docs", app: external })
+    const parent = server()
+    expect(() => parent.merge(withMount)).toThrow(/mount/)
+    expect(parent.routes()).toEqual([])
   })
 
   test("a failed multi-route merge leaves the parent unchanged", async () => {

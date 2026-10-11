@@ -43,7 +43,7 @@ async function webProject(name: string): Promise<string> {
       `import { createWebApp } from "@nifrajs/web"`,
       `const backend = server().get("/health", () => ({ ok: true }))`,
       `const adapter = { renderToStream: () => new ReadableStream<Uint8Array>() }`,
-      `export const app = createWebApp({ adapter, manifest: { routes: [], layouts: {}, errors: {} }, clientEntry: "/c.js", api: inProcessClient(backend), apiStrip: true })`,
+      `export const app = createWebApp({ adapter, manifest: { routes: [], layouts: {}, errors: {} }, clientEntry: "/c.js", api: inProcessClient(backend), apiPrefix: "/api", apiStrip: true })`,
       "",
     ].join("\n"),
   )

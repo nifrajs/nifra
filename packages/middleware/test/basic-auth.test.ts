@@ -18,6 +18,23 @@ describe("basicAuth()", () => {
     expect(await res.json()).toEqual({ id: "root" })
   })
 
+  test("reads the auth-scheme in any letter case", async () => {
+    const app = server()
+      .use(basicAuth({ username: "admin", password: "s3cret" }))
+      .get("/private", () => ({ ok: true }))
+    for (const scheme of ["Basic", "basic", "BASIC"]) {
+      const authorization = `${scheme} ${btoa("admin:s3cret")}`
+      const res = await app.fetch(new Request("http://x/private", { headers: { authorization } }))
+      expect(res.status).toBe(200)
+    }
+    const other = await app.fetch(
+      new Request("http://x/private", {
+        headers: { authorization: `Basics ${btoa("admin:s3cret")}` },
+      }),
+    )
+    expect(other.status).toBe(401)
+  })
+
   test("rejects missing, malformed, and wrong credentials with a Basic challenge", async () => {
     const app = server()
       .use(basicAuth({ username: "admin", password: "s3cret", realm: "staging" }))

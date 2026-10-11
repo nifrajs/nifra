@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { server } from "@nifrajs/core"
 import {
   apiRoutesSection,
   buildRouteGraph,
@@ -343,13 +344,14 @@ describe("buildRouteTable", () => {
         { method: "post", path: "/api/count" },
         { method: "get", path: "/api/count" },
       ],
+      apiPrefix: "/api",
     })
     expect(rows).toEqual([
       { kind: "api", path: "/api/count", methods: ["GET", "POST"], autoMounted: true },
     ])
   })
 
-  test("autoMounted reflects the apiPrefix (default /api), as a segment boundary", () => {
+  test("autoMounted reflects the apiPrefix, as a segment boundary", () => {
     const rows = buildRouteTable({
       pages: [],
       api: [
@@ -357,6 +359,7 @@ describe("buildRouteTable", () => {
         { method: "get", path: "/health" }, // not under /api
         { method: "get", path: "/apiary" }, // shares the prefix string but NOT a segment boundary
       ],
+      apiPrefix: "/api",
     })
     const byPath = Object.fromEntries(rows.map((r) => [r.path, r.autoMounted]))
     expect(byPath["/api/users"]).toBe(true)
@@ -364,13 +367,10 @@ describe("buildRouteTable", () => {
     expect(byPath["/apiary"]).toBe(false)
   })
 
-  test('apiPrefix "" disables auto-mount marking', () => {
-    const rows = buildRouteTable({
-      pages: [],
-      api: [{ method: "get", path: "/api/users" }],
-      apiPrefix: "",
-    })
-    expect(rows[0]?.autoMounted).toBe(false)
+  test('no apiPrefix, or "", marks nothing auto-mounted', () => {
+    const api = [{ method: "get", path: "/api/users" }]
+    expect(buildRouteTable({ pages: [], api })[0]?.autoMounted).toBe(false)
+    expect(buildRouteTable({ pages: [], api, apiPrefix: "" })[0]?.autoMounted).toBe(false)
   })
 })
 
@@ -378,6 +378,7 @@ describe("renderRouteTable + routeTableToJson", () => {
   const rows = buildRouteTable({
     pages: [{ pattern: "/", file: "index.tsx", hasAction: false }],
     api: [{ method: "get", path: "/api/explain" }],
+    apiPrefix: "/api",
   })
 
   test("text table shows method, kind, path + an (auto-mounted) marker on API routes", () => {
@@ -462,7 +463,7 @@ describe("describeRoutes (cwd integration)", () => {
         configPath: `${dir}/nifra.config.ts`,
         routesDir,
         outDir: join(dir, "dist"),
-        framework: { adapter: {}, clientModule: "x" },
+        framework: { adapter: {}, clientModule: "x", apiPrefix: "/api" },
         resolvedPlugins: { vitePlugins: [], clientPlugins: [], serverPlugins: [] },
         backend: {
           routes: () => [
@@ -565,4 +566,23 @@ describe("describeProject - nifra_context index vs slice", () => {
     expect(out).not.toContain("## Page routes")
     expect(out).not.toContain("## Conventions (summary)")
   })
+})
+
+test("the index lists the routes an opaque mount declares, marked as not analyzed", () => {
+  const backend = server()
+    .get("/health", () => "ok")
+    .mount({
+      path: "/auth",
+      app: { fetch: () => new Response("third party") },
+      opaque: {
+        reason: "a third-party auth handler",
+        routes: [{ method: "POST", path: "/auth/sign-in", capabilities: ["session.write"] }],
+      },
+    })
+  const out = describeProject({ ...projectWith([]), backend })
+  expect(out).toContain("`GET /health`")
+  expect(out).toContain(
+    "## Declared by opaque mounts (not analyzed)\n\n- `POST /auth/sign-in` - /auth/* (a third-party auth handler)",
+  )
+  expect(describeProject(projectWith([]))).not.toContain("opaque mounts")
 })

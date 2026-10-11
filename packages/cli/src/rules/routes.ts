@@ -2,7 +2,7 @@ import { RESERVED_KEY_READOUT, reservedKeyFor } from "@nifrajs/client"
 import { RoutePatternOverlapLimitError, routePatternOverlap } from "@nifrajs/core"
 import { expandOptionalParams, paramConstraint } from "@nifrajs/core/pattern"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
-import { commentBlockHasMarker } from "./comment-markers.ts"
+import { commentBlockExpectation, MISSING_EXPECTATION_REASON } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /**
@@ -23,10 +23,13 @@ import type { CheckRule, RuleContext } from "./index.ts"
  * own copy is a lint that can disagree with the compiler it is explaining.
  */
 
-/** Opt-out pragma for a route deliberately served only to NON-typed-client consumers. */
-const RESERVED_SEGMENT_PRAGMA = "nifra-expect reserved-segment"
-const ROUTE_OVERLAP_PRAGMA = "nifra-expect route-overlap"
-const PARAM_MODIFIER_PRAGMA = "nifra-expect param-modifier"
+/** What marks a route deliberately served only to NON-typed-client consumers. */
+const RESERVED_SEGMENT_EXPECTATION = ["NF-C018", "reserved-segment"]
+// An intended overlap answers both findings about the pair: proven (NF-C024) or unprovable (NF-C025).
+const ROUTE_OVERLAP_EXPECTATION = ["NF-C024", "NF-C025", "route-overlap"]
+const PARAM_MODIFIER_EXPECTATION = ["NF-C026", "param-modifier"]
+// A deliberately computed path is accepted with or without a reason: the finding is information.
+const DYNAMIC_PATH_EXPECTATION = ["NF-C036"]
 
 interface StaticRouteFact {
   readonly file: string
@@ -92,14 +95,15 @@ export const reservedSegmentRule: CheckRule = {
           lines = (ctx.project.source.read(route.file) ?? "").split("\n")
           linesByFile.set(route.file, lines)
         }
-        if (commentBlockHasMarker(lines, route.line, RESERVED_SEGMENT_PRAGMA)) continue
+        if (commentBlockExpectation(lines, route.line, RESERVED_SEGMENT_EXPECTATION) !== undefined)
+          continue
         findings.push(
           diagnostic({
             code: "NF-C018",
             severity: "warn",
             file: route.file,
             line: route.line,
-            message: `${route.method} ${route.path} - segment '${segment}' collides with the reserved client proxy key '${collision}' (reserved: ${RESERVED_KEY_READOUT}); dot access cannot reach it - call the parent node with the segment instead (\`${routeEscapeHint(route.path, segment)}\`), rename the segment, or mark an intentionally non-typed-client route with \`// ${RESERVED_SEGMENT_PRAGMA}\` above the registration. \`nifra fix --code NF-C018\` rewrites the broken call sites for you`,
+            message: `${route.method} ${route.path} - segment '${segment}' collides with the reserved client proxy key '${collision}' (reserved: ${RESERVED_KEY_READOUT}); dot access cannot reach it - call the parent node with the segment instead (\`${routeEscapeHint(route.path, segment)}\`), rename the segment, or mark an intentionally non-typed-client route with \`// nifra-expect NF-C018: <reason>\` above the registration. \`nifra fix --code NF-C018\` rewrites the broken call sites for you`,
             evidence: [`${route.method} ${route.path}`, `segment: ${segment}`],
             // The route is fine; what needs editing is every typed-client call site the collision
             // broke, which the recipe finds from the compiler rather than from this one finding.
@@ -161,6 +165,54 @@ export const duplicateRouteRule: CheckRule = {
   },
 }
 
+/** A segment the router reads as exactly its own text. */
+const PLAIN_SEGMENT = /^[A-Za-z0-9_.~-]+$/
+
+/** Routes keyed by their leading plain segments: two routes can overlap only if one's lead prefixes the other's. */
+interface LeadNode {
+  readonly routes: number[]
+  readonly children: Map<string, LeadNode>
+}
+
+function leadOf(path: string): readonly string[] {
+  const lead: string[] = []
+  for (const segment of path.split("/").slice(1)) {
+    if (!PLAIN_SEGMENT.test(segment)) break
+    lead.push(segment)
+  }
+  return lead
+}
+
+/** The routes in `root` whose lead is compatible with `lead`, in registration order. */
+function routesSharingLead(root: LeadNode, lead: readonly string[]): number[] {
+  const found: number[] = []
+  let node: LeadNode | undefined = root
+  for (const segment of lead) {
+    for (const route of node.routes) found.push(route)
+    node = node.children.get(segment)
+    if (node === undefined) return found.sort((a, b) => a - b)
+  }
+  const below = [node]
+  for (const next of below) {
+    for (const route of next.routes) found.push(route)
+    for (const child of next.children.values()) below.push(child)
+  }
+  return found.sort((a, b) => a - b)
+}
+
+function addLead(root: LeadNode, lead: readonly string[], route: number): void {
+  let node = root
+  for (const segment of lead) {
+    let child = node.children.get(segment)
+    if (child === undefined) {
+      child = { routes: [], children: new Map() }
+      node.children.set(segment, child)
+    }
+    node = child
+  }
+  node.routes.push(route)
+}
+
 /**
  * NF-C024: two different same-method route patterns in one source file accept at least one of the
  * same paths. This is deliberately file-scoped, like NF-C019: the static scanner cannot prove
@@ -191,15 +243,34 @@ export const overlappingRouteRule: CheckRule = {
         return value
       }
 
+      const expectationByLine = new Map<number, ReturnType<typeof commentBlockExpectation>>()
+      const expectationAt = (line: number): ReturnType<typeof commentBlockExpectation> => {
+        if (!expectationByLine.has(line))
+          expectationByLine.set(
+            line,
+            commentBlockExpectation(lines(), line, ROUTE_OVERLAP_EXPECTATION),
+          )
+        return expectationByLine.get(line)
+      }
+      const leads = new Map<string, LeadNode>()
       for (let laterIndex = 0; laterIndex < routes.length; laterIndex += 1) {
         const later = routes[laterIndex]!
         const laterKey = `${later.method} ${later.path}`
-        for (let earlierIndex = 0; earlierIndex < laterIndex; earlierIndex += 1) {
+        const lead = leadOf(later.path)
+        let methodLeads = leads.get(later.method)
+        if (methodLeads === undefined) {
+          methodLeads = { routes: [], children: new Map() }
+          leads.set(later.method, methodLeads)
+        }
+        const candidates = routesSharingLead(methodLeads, lead)
+        addLead(methodLeads, lead, laterIndex)
+        for (const earlierIndex of candidates) {
           const earlier = routes[earlierIndex]!
-          if (earlier.method !== later.method || `${earlier.method} ${earlier.path}` === laterKey)
-            continue
-          if (commentBlockHasMarker(lines(), later.line, ROUTE_OVERLAP_PRAGMA)) continue
-          if (commentBlockHasMarker(lines(), earlier.line, ROUTE_OVERLAP_PRAGMA)) continue
+          if (`${earlier.method} ${earlier.path}` === laterKey) continue
+          // Both are errors, so the comment silences only with a reason.
+          const expectations = [later.line, earlier.line].map(expectationAt)
+          if (expectations.some((expected) => expected?.reason !== undefined)) continue
+          const unreasoned = expectations.some((expected) => expected !== undefined)
 
           let witness: string | undefined
           try {
@@ -212,7 +283,7 @@ export const overlappingRouteRule: CheckRule = {
                   severity: "error",
                   file: later.file,
                   line: later.line,
-                  message: `${laterKey} could not be proven disjoint from ${earlier.method} ${earlier.path}; bounded route-overlap analysis exceeded its safety budget - simplify the patterns or add the ${ROUTE_OVERLAP_PRAGMA} comment only after manual review`,
+                  message: `${laterKey} could not be proven disjoint from ${earlier.method} ${earlier.path}; bounded route-overlap analysis exceeded its safety budget - simplify the patterns or add a \`// nifra-expect NF-C025: <reason>\` comment only after manual review${unreasoned ? `; ${MISSING_EXPECTATION_REASON}` : ""}`,
                   evidence: [
                     `${earlier.method} ${earlier.path}`,
                     `${later.method} ${later.path}`,
@@ -237,7 +308,7 @@ export const overlappingRouteRule: CheckRule = {
               severity: "error",
               file: later.file,
               line: later.line,
-              message: `${laterKey} overlaps ${earlier.method} ${earlier.path} (first at line ${earlier.line}); witness path: ${witness} - make the patterns disjoint, order them intentionally with a pragma, or add the ${ROUTE_OVERLAP_PRAGMA} comment above either registration`,
+              message: `${laterKey} overlaps ${earlier.method} ${earlier.path} (first at line ${earlier.line}); witness path: ${witness} - make the patterns disjoint, or add a \`// nifra-expect NF-C024: <reason>\` comment above either registration${unreasoned ? `; ${MISSING_EXPECTATION_REASON}` : ""}`,
               evidence: [
                 `${earlier.method} ${earlier.path}`,
                 `${later.method} ${later.path}`,
@@ -296,7 +367,8 @@ export const paramModifierRule: CheckRule = {
         lines = (ctx.project.source.read(route.file) ?? "").split("\n")
         linesByFile.set(route.file, lines)
       }
-      if (commentBlockHasMarker(lines, route.line, PARAM_MODIFIER_PRAGMA)) continue
+      if (commentBlockExpectation(lines, route.line, PARAM_MODIFIER_EXPECTATION) !== undefined)
+        continue
       const character = text[text.length - 1]!
       findings.push(
         diagnostic({
@@ -304,8 +376,43 @@ export const paramModifierRule: CheckRule = {
           severity: "warn",
           file: route.file,
           line: route.line,
-          message: `${route.method} ${route.path} - '${character}' after '${text.slice(0, -1)}' is matched as literal text, not as a param modifier${character === "?" ? "; a request path never contains '?', so this route cannot be reached" : ""}. Optional params are supported as the trailing whole segments of a path (\`/users/:id?\`, \`/d/:year?/:month?\`), and a constraint as one character class with an optional count (\`:id{[0-9]+}\`, \`:code{[A-Z]{2}}\`) or a list of two or more values (\`:ext{png|jpg}\`); for anything else register each path, or mark a deliberate literal with \`// ${PARAM_MODIFIER_PRAGMA}\` above the registration`,
+          message: `${route.method} ${route.path} - '${character}' after '${text.slice(0, -1)}' is matched as literal text, not as a param modifier${character === "?" ? "; a request path never contains '?', so this route cannot be reached" : ""}. Optional params are supported as the trailing whole segments of a path (\`/users/:id?\`, \`/d/:year?/:month?\`), and a constraint as one character class with an optional count (\`:id{[0-9]+}\`, \`:code{[A-Z]{2}}\`) or a list of two or more values (\`:ext{png|jpg}\`); for anything else register each path, or mark a deliberate literal with \`// nifra-expect NF-C026: <reason>\` above the registration`,
           evidence: [`${route.method} ${route.path}`, `literal: ${text}`],
+          verify: "nifra check --lints-only",
+        }),
+      )
+    }
+    return findings
+  },
+}
+
+/**
+ * NF-C036: a registration whose path the static scan cannot read. The route still serves; what it
+ * loses is every source-level analysis keyed by path - automatic capability provenance and the route
+ * lints above - so it is reported as information, naming the expression.
+ */
+export const unresolvedRoutePathRule: CheckRule = {
+  code: "NF-C036",
+  title: "Route path the static scan cannot read",
+  async scan(ctx) {
+    const findings: Diagnostic[] = []
+    const linesByFile = new Map<string, readonly string[]>()
+    for (const route of ctx.project.sourceFindings.routePaths) {
+      let lines = linesByFile.get(route.file)
+      if (lines === undefined) {
+        lines = (ctx.project.source.read(route.file) ?? "").split("\n")
+        linesByFile.set(route.file, lines)
+      }
+      if (commentBlockExpectation(lines, route.line, DYNAMIC_PATH_EXPECTATION) !== undefined)
+        continue
+      findings.push(
+        diagnostic({
+          code: "NF-C036",
+          severity: "info",
+          file: route.file,
+          line: route.line,
+          message: `${route.method} ${route.expression} - the static scan cannot read this route path, so automatic capability provenance and the route lints do not see the route. Write the path as a string literal, or as a module-level \`const\` (optionally \`as const\`) in this file or exported from a project file it imports; mark a deliberately computed path with a \`// nifra-expect NF-C036: <reason>\` comment above the registration`,
+          evidence: [`${route.method} ${route.expression}`],
           verify: "nifra check --lints-only",
         }),
       )
@@ -319,4 +426,5 @@ export const routeRules = Object.freeze([
   duplicateRouteRule,
   overlappingRouteRule,
   paramModifierRule,
+  unresolvedRoutePathRule,
 ])

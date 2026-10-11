@@ -78,7 +78,7 @@ export interface ClientRetryOptions {
 
 export interface ClientOptions {
   /**
-   * Headers sent on every HTTP request (a per-call `headers` option is merged on top). A WebSocket
+   * Headers sent on every HTTP request (a per-call `headers` option is merged on top, names matched in any letter case). A WebSocket
    * handshake carries none of them, on any runtime: a browser cannot set them, and a socket that
    * authenticated under Bun but not in the browser would be worse than one that never did.
    */
@@ -211,6 +211,8 @@ interface CallOptions {
   readonly query?: Record<string, unknown>
   readonly headers?: Record<string, string>
   readonly signal?: AbortSignal
+  /** A DELETE's body; the body verbs take theirs positionally. */
+  readonly body?: unknown
 }
 
 /**
@@ -486,9 +488,22 @@ function createProxy(
           ? Object.values(first as Record<string, unknown>)[0]
           : first
       if (value === undefined || value === null) return createProxy(base, path, options, false)
-      return createProxy(base, `${path}/${encodeURIComponent(String(value))}`, options, false)
+      return createProxy(base, `${path}/${encodeSegment(String(value))}`, options, false)
     },
   })
+}
+
+/**
+ * A path segment, percent-encoded. A value with an unpaired surrogate has no UTF-8 spelling and
+ * `encodeURIComponent` throws on it; it becomes a `..` segment instead, which every call refuses as
+ * `invalid_path` before anything is sent, so the call still resolves to a Result.
+ */
+function encodeSegment(value: string): string {
+  try {
+    return encodeURIComponent(value)
+  } catch {
+    return ".."
+  }
 }
 
 /** Resolve one get-trap key on a proxy node - the (memoizable) body of the `get` trap above. */
@@ -567,6 +582,29 @@ function formBody(body: unknown): FormData | undefined {
   return form
 }
 
+// Header names are case-insensitive: a plain object keyed `Authorization` and `authorization` would
+// send both values joined into one header.
+function assignHeaders(
+  target: Record<string, string>,
+  source: Record<string, string> | undefined,
+): Record<string, string> {
+  if (source === undefined) return target
+  for (const [name, value] of Object.entries(source)) {
+    deleteHeader(target, name)
+    target[name] = value
+  }
+  return target
+}
+
+function deleteHeader(headers: Record<string, string>, name: string): void {
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(headers)) if (key.toLowerCase() === lower) delete headers[key]
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === name)
+}
+
 async function execute(
   base: string,
   path: string,
@@ -580,35 +618,38 @@ async function execute(
     return { ok: false, status: 0, data: null, error: { error: "invalid_path" } }
   }
   const isBodyVerb = BODY_VERBS.has(verb)
-  const body = isBodyVerb ? args[0] : undefined
   const callOptions = (isBodyVerb ? args[1] : args[0]) as CallOptions | undefined
+  const body = isBodyVerb ? args[0] : verb === "delete" ? callOptions?.body : undefined
 
   let url = base + (path === "" ? "/" : path)
   const query = callOptions?.query ? buildQuery(callOptions.query) : ""
   if (query !== "") url += `?${query}`
 
   const method = verb.toUpperCase()
-  const headers: Record<string, string> = { ...options.headers, ...callOptions?.headers }
-  if (options.onRequest !== undefined) {
-    const extra = await options.onRequest({ url, method, headers, body })
-    if (extra !== undefined) Object.assign(headers, extra)
-  }
-  const init: RequestInit = { method, headers }
-  if (body !== undefined) {
-    const form = formBody(body)
+  const baseHeaders = assignHeaders(assignHeaders({}, options.headers), callOptions?.headers)
+  const init: RequestInit = { method }
+  const form = body === undefined ? undefined : formBody(body)
+  const codec = options.transport?.codec ?? plainJsonCodec
+  if (form !== undefined) init.body = form
+  else if (body !== undefined) init.body = codec.encode(body)
+  // Built for every attempt, so a retry carries what `onRequest` returns now (a refreshed token).
+  const headersFor = async (): Promise<Record<string, string>> => {
+    const headers = { ...baseHeaders }
+    if (options.onRequest !== undefined) {
+      const extra = await options.onRequest({ url, method, headers, body })
+      assignHeaders(headers, extra)
+    }
     if (form !== undefined) {
-      init.body = form
       // The platform writes this header itself, boundary included; one set by hand would name a
       // boundary the body does not use and the server would refuse the request.
-      for (const name of Object.keys(headers)) {
-        if (name.toLowerCase() === "content-type") delete headers[name]
-      }
-    } else {
-      const codec = options.transport?.codec ?? plainJsonCodec
-      init.body = codec.encode(body)
-      headers["content-type"] = codec.mediaType
-      if (options.transport !== undefined) headers.accept ??= codec.mediaType
+      deleteHeader(headers, "content-type")
+    } else if (body !== undefined) {
+      // The codec labels the bytes it wrote; a type set by hand would name a different encoding.
+      assignHeaders(headers, { "content-type": codec.mediaType })
+      if (options.transport !== undefined && !hasHeader(headers, "accept"))
+        headers.accept = codec.mediaType
     }
+    return headers
   }
   const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)
   if (signal !== undefined) init.signal = signal
@@ -631,8 +672,9 @@ async function execute(
   let response: Response
   let attempt = 0
   for (;;) {
+    const attemptInit = { ...init, headers: await headersFor() }
     try {
-      response = await doFetch(url, init)
+      response = await doFetch(url, attemptInit)
     } catch (error) {
       // A contract violation is a test assertion (validateResponses), not a call outcome - let it
       // fail the test instead of degrading into a `Result` the test would happily branch on.
@@ -675,10 +717,13 @@ async function execute(
     if (isPayloadTooLarge(cause)) {
       return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
     }
-    // A codec refusing the payload stays a throw. Anything else is the read itself failing - the
-    // deadline or the caller's signal firing mid-body, or the connection dropping - which the fetch
-    // above already reports as a Result.
-    if (cause instanceof Error && cause.name === "TransportCodecError") throw cause
+    // A body its content type does not decode - a proxy's HTML error page labelled JSON, say - is
+    // no answer the caller can use either. Anything else is the read itself failing - the deadline
+    // or the caller's signal firing mid-body, or the connection dropping - which the fetch above
+    // already reports as a Result.
+    if (cause instanceof Error && cause.name === "TransportCodecError") {
+      return { ok: false, status: 0, data: null, error: { error: "malformed_response" } }
+    }
     const code = timeout?.aborted === true ? "timeout" : "network_error"
     return { ok: false, status: 0, data: null, error: { error: code } }
   }
@@ -694,6 +739,8 @@ async function execute(
 
 interface SubscribeCallOptions {
   readonly query?: Record<string, unknown>
+  /** The body of a POST stream (`app.sse()` with a body schema). */
+  readonly body?: unknown
   readonly headers?: Record<string, string>
   readonly signal?: AbortSignal
   readonly reconnect?: boolean | { baseDelayMs?: number; maxDelayMs?: number }
@@ -715,21 +762,23 @@ const MAX_RETRY_MS = 2_147_483_647
  * Incrementally parse a `text/event-stream` body, invoking `onFrame` per dispatched event.
  * Implements the SSE wire format: CRLF, CR, and LF all end a line, `data:` accumulates multi-line,
  * `id:`/`retry:` update stream state, `:` lines are comments, a blank line dispatches. An event
- * still being assembled may hold at most `maxEventLength` characters.
+ * still being assembled may hold at most `maxEventBytes` UTF-8 bytes (fields and normalized
+ * line separators included, the empty dispatch line excluded).
  */
 async function readSseStream(
   body: ReadableStream<Uint8Array>,
   onFrame: (frame: SseFrame) => void,
-  maxEventLength: number,
+  maxEventBytes: number,
 ): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
   const lineEnd = /\r\n?|\n/g
   // Only newly decoded text is scanned; the unfinished line is carried here, so a line that arrives
   // over many small reads costs its length once rather than once per read.
-  let partial = ""
+  let partial: string[] = []
   let afterCr = false
-  let held = 0
+  let eventBytes = 0
   let dataLines: string[] = []
   let frame: SseFrame = {}
 
@@ -739,7 +788,7 @@ async function readSseStream(
       onFrame(frame)
     }
     dataLines = []
-    held = 0
+    eventBytes = 0
     frame = {}
   }
 
@@ -755,7 +804,6 @@ async function readSseStream(
     if (value.startsWith(" ")) value = value.slice(1)
     if (field === "data") {
       dataLines.push(value)
-      held += value.length + 1
     } else if (field === "id") {
       // The grammar ignores an id with a NUL; it could never be sent back as `Last-Event-ID`.
       if (!value.includes("\0")) frame.id = value
@@ -771,13 +819,21 @@ async function readSseStream(
     let start = afterCr && text.charCodeAt(0) === 10 ? 1 : 0
     lineEnd.lastIndex = start
     for (let end = lineEnd.exec(text); end !== null; end = lineEnd.exec(text)) {
-      handleLine(partial + text.slice(start, end.index))
-      partial = ""
+      const piece = text.slice(start, end.index)
+      eventBytes += encoder.encode(piece).byteLength
+      // Check before dispatch or JSON parsing, including frames completed in this read.
+      if (piece !== "" || partial.length > 0) eventBytes += 1
+      if (eventBytes > maxEventBytes) throw new Error("sse_event_too_large")
+      partial.push(piece)
+      handleLine(partial.join(""))
+      partial = []
       start = lineEnd.lastIndex
     }
     afterCr = text.charCodeAt(text.length - 1) === 13
-    partial += text.slice(start)
-    if (partial.length + held > maxEventLength) throw new Error("sse_event_too_large")
+    const tail = text.slice(start)
+    eventBytes += encoder.encode(tail).byteLength
+    if (eventBytes > maxEventBytes) throw new Error("sse_event_too_large")
+    if (tail !== "") partial.push(tail)
   }
 
   try {
@@ -787,7 +843,7 @@ async function readSseStream(
       feed(decoder.decode(value, { stream: true }))
     }
     feed(decoder.decode())
-    if (partial !== "") handleLine(partial)
+    if (partial.length > 0) handleLine(partial.join(""))
     dispatch() // an unterminated final frame still dispatches
   } catch (error) {
     // Stopping early must not leave the response open behind a released lock.
@@ -812,7 +868,9 @@ function lastEventIdHeader(id: string): string {
  * streams over the configured fetcher - network, an in-process bridge, or a test mock - with
  * EventSource semantics where they matter: auto-reconnect with backoff + jitter (honoring the
  * server's `retry:` hint after a stream it served), `Last-Event-ID` resumption, JSON-parsed typed
- * events. Never throws: failures reach `onError`; a terminal end reaches `onClose`.
+ * events. A `body` makes it a POST stream, encoded like a POST call's body; it is sent on every
+ * connect, so such a stream reconnects only when asked to. `onRequest` runs before each connect.
+ * Never throws: failures reach `onError`; a terminal end reaches `onClose`.
  */
 function subscribeSse(
   base: string,
@@ -826,7 +884,10 @@ function subscribeSse(
   let lastEventId: string | undefined
   let serverRetryMs: number | undefined
 
-  const reconnectConfig = callOptions?.reconnect ?? true
+  const body = callOptions?.body
+  const method = body === undefined ? "GET" : "POST"
+  const codec = options.transport?.codec ?? plainJsonCodec
+  const reconnectConfig = callOptions?.reconnect ?? body === undefined
   const reconnectEnabled = reconnectConfig !== false
   const baseDelayMs =
     (typeof reconnectConfig === "object" ? reconnectConfig.baseDelayMs : undefined) ?? 1_000
@@ -862,16 +923,34 @@ function subscribeSse(
       close()
       return
     }
+    let form: FormData | undefined
+    let encoded: FormData | string | undefined
+    try {
+      form = body === undefined ? undefined : formBody(body)
+      encoded = form ?? (body === undefined ? undefined : codec.encode(body))
+    } catch (error) {
+      // A body that cannot be encoded sends nothing; reported after `subscribe()` returns.
+      await Promise.resolve()
+      if (closed) return
+      callOptions?.onError?.(error)
+      close()
+      return
+    }
     let attempt = 0
     while (!closed) {
       try {
-        const headers: Record<string, string> = {
-          ...options.headers,
-          ...callOptions?.headers,
-          accept: "text/event-stream",
-          ...(lastEventId ? { "last-event-id": lastEventIdHeader(lastEventId) } : {}),
+        const headers = assignHeaders(assignHeaders({}, options.headers), callOptions?.headers)
+        if (options.onRequest !== undefined) {
+          assignHeaders(headers, await options.onRequest({ url, method, headers, body }))
         }
-        const response = await doFetch(url, { headers, signal: controller.signal })
+        assignHeaders(headers, { accept: "text/event-stream" })
+        // The platform writes a form's content type, boundary included; the codec labels its bytes.
+        if (form !== undefined) deleteHeader(headers, "content-type")
+        else if (body !== undefined) assignHeaders(headers, { "content-type": codec.mediaType })
+        if (lastEventId) assignHeaders(headers, { "last-event-id": lastEventIdHeader(lastEventId) })
+        const init: RequestInit = { method, headers, signal: controller.signal }
+        if (encoded !== undefined) init.body = encoded
+        const response = await doFetch(url, init)
         if (!response.ok || response.body === null) {
           void response.body?.cancel().catch(() => {})
           throw new Error(`sse_http_${response.status}`)
@@ -968,7 +1047,20 @@ const TEXTUAL_TYPES = new Set([
   "application/ecmascript",
   "application/x-www-form-urlencoded",
   "application/x-ndjson",
+  "application/jsonl",
 ])
+
+const JSON_MEDIA = "application/json"
+
+/** A content type the transport codecs decode. `application/json-patch+json` and `application/jsonl`
+ * share the JSON prefix but are other formats, read like any other textual body. */
+function isTransportMedia(contentType: string): boolean {
+  if (contentType.startsWith(JSON_MEDIA)) {
+    const next = contentType[JSON_MEDIA.length]
+    return next === undefined || next === ";" || next === " " || next === "\t"
+  }
+  return contentType.startsWith("application/vnd.nifra.")
+}
 
 /**
  * True when a body can survive being decoded as UTF-8 text.
@@ -1023,10 +1115,7 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // is ~23x cheaper and the SAME cap is enforced on the result (identical error). A network
   // client is never marked and keeps the bounded-while-streaming read.
   const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
-  if (
-    contentType.startsWith("application/json") ||
-    contentType.startsWith("application/vnd.nifra.")
-  ) {
+  if (isTransportMedia(contentType)) {
     if (local) {
       return decodeTransportText(
         await response.text(),

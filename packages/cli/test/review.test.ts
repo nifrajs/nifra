@@ -8,7 +8,14 @@ import {
   findCommandSpec,
   renderCommandCatalogLines,
 } from "../src/command-catalog.ts"
-import { parseReviewInput, ReviewInputError, renderReviewReport, runReview } from "../src/review.ts"
+import {
+  CHECK_CODES,
+  parseReviewInput,
+  ReviewInputError,
+  renderReviewReport,
+  runReview,
+} from "../src/review.ts"
+import { RULE_CODES } from "../src/rules/codes.ts"
 
 async function reviewProject(source = ""): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "nifra-review-"))
@@ -110,6 +117,12 @@ describe("nifra review command contract", () => {
     }
   })
 
+  test("every built-in code reports under its own check, data and secret rules under security", () => {
+    expect(Object.keys(RULE_CODES).filter((code) => CHECK_CODES[code] === undefined)).toEqual([])
+    for (const code of ["NF-C006", "NF-C029", "NF-C030", "NF-C031", "NF-C032", "NF-C033"])
+      expect([code, CHECK_CODES[code]]).toEqual([code, "security"])
+  })
+
   test("maps a blocking diagnostic without forwarding its message", async () => {
     const root = await reviewProject('const result = await fetch("/users")\n')
     try {
@@ -163,6 +176,42 @@ describe("nifra review command contract", () => {
         expect(
           report.checks.find((check) => check.id === "typed-client")?.counts.outOfScope,
         ).toBeGreaterThan(0)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    GIT_REVIEW_TIMEOUT_MS,
+  )
+
+  test(
+    "a server-only chain is in scope when any file on it changed, though its route did not",
+    async () => {
+      const root = await reviewProject()
+      try {
+        await writeFile(
+          join(root, "package.json"),
+          JSON.stringify({ name: "review-fixture", dependencies: { "@nifrajs/web": "*" } }),
+        )
+        await writeFile(join(root, "nifra.config.ts"), "export const adapter = {}\n")
+        await mkdir(join(root, "routes"), { recursive: true })
+        await mkdir(join(root, "lib"), { recursive: true })
+        await writeFile(
+          join(root, "routes", "page.tsx"),
+          'import { label } from "../lib/helper"\nexport default () => label\n',
+        )
+        const helper =
+          'import { readFileSync } from "node:fs"\nexport const label = String(readFileSync)\n'
+        await writeFile(join(root, "lib", "helper.ts"), helper)
+        await writeFile(join(root, "lib", "other.ts"), "export const other = 1\n")
+        await commitBaseline(root)
+        const chainFinding = async (): Promise<boolean> =>
+          (await runReview({ diff: "HEAD" }, { cwd: root })).findings.some(
+            (finding) => finding.code === "NF-C004" && finding.location?.path === "routes/page.tsx",
+          )
+        await writeFile(join(root, "lib", "other.ts"), "export const other = 2\n")
+        expect(await chainFinding()).toBe(false)
+        await writeFile(join(root, "lib", "helper.ts"), `${helper}export const more = 1\n`)
+        expect(await chainFinding()).toBe(true)
       } finally {
         await rm(root, { recursive: true, force: true })
       }

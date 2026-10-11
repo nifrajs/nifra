@@ -22,6 +22,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **mountA2A** _(function)_ - `mountA2A: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: A2AMountableApp, options: MountA2AOptions<InputSchema, OutputSchema>) => void`
   Mount an agent as an A2A server: the agent card on GET, the JSON-RPC binding on POST.
 
+## @nifrajs/acp
+
+- **AcpBackend** _(class)_ - `class AcpBackend`
+  Drive an agent that speaks the Agent Client Protocol (version 1) over stdio, one agent process per session, and translate its session updates into the Nifra agent protocol.
+- **AcpBackendOptions** _(interface)_ - `interface AcpBackendOptions`
+- **AcpClientInfo** _(interface)_ - `interface AcpClientInfo`
+
 ## @nifrajs/ag-ui
 
 - **AgUIMountableApp** _(interface)_ - `interface AgUIMountableApp`
@@ -302,7 +309,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventView** _(type)_ - `type AgentEventView`
 - **AgentTransport** _(interface)_ - `interface AgentTransport`
 - **AgentTransportError** _(class)_ - `class AgentTransportError`
-  Thrown only for transport-level faults (network, malformed body). Carries no credential.
+  Thrown only for transport-level faults (network, malformed body) and for a stream the host refused, which carries the response `status`. Carries no credential.
 - **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
   One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request.
 - **ApprovalRequiredView** _(interface)_ - `interface ApprovalRequiredView`
@@ -318,9 +325,12 @@ Every public export of every package and documented subpath - name, kind, signat
   The minimal boundary facts a decision needs. A `BoundaryItemView` from the client satisfies it.
 - **CommandOutcome** _(type)_ - `type CommandOutcome<T> = | { readonly ok: true; readonly status: number; readonly value: T } | { readonly ok: false; readonly status: number; readonly error: string }`
   The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state instead of unwinding; `error` carries only the server's status text, never a credential.
+- **ContextUsageView** _(interface)_ - `interface ContextUsageView`
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
 - **EvalComparisonView** _(interface)_ - `interface EvalComparisonView`
 - **EvidenceTimelineView** _(interface)_ - `interface EvidenceTimelineView`
+- **ExtensionEventView** _(interface)_ - `interface ExtensionEventView`
+  A backend's `x-<vendor>.<name>` event: its type and turn, never its data.
 - **ExtensionReloadedView** _(interface)_ - `interface ExtensionReloadedView`
 - **FaultInjectionView** _(interface)_ - `interface FaultInjectionView`
 - **HandoffView** _(interface)_ - `interface HandoffView`
@@ -332,6 +342,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
   Orders events by their sequence number and suppresses duplicates before they reach the UI.
 - **PendingApprovalView** _(interface)_ - `interface PendingApprovalView`
+- **PlanUpdatedView** _(interface)_ - `interface PlanUpdatedView`
+  A plan as counts per status: its entries' text stays with the event.
+- **ReasoningDeltaView** _(interface)_ - `interface ReasoningDeltaView`
 - **RegistryCapabilityView** _(interface)_ - `interface RegistryCapabilityView`
   A registry capability projected to its content-free identity card.
 - **RepairRequiredView** _(interface)_ - `interface RepairRequiredView`
@@ -386,6 +399,12 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-protocol
 
+### `@nifrajs/agent-protocol`
+
+- **AGENT_MAX_EVENT_TEXT** _(const)_ - `AGENT_MAX_EVENT_TEXT: number`
+  Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units.
+- **AGENT_MAX_PAYLOAD_STRING** _(const)_ - `AGENT_MAX_PAYLOAD_STRING: number`
+  Longest string an event's `input`, `output`, or `details` value may carry.
 - **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
   Backend-neutral protocol for local coding-agent hosts.
 - **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
@@ -394,6 +413,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentAssistantMessageEvent** _(interface)_ - `interface AgentAssistantMessageEvent`
 - **AgentBackend** _(interface)_ - `interface AgentBackend`
 - **AgentBackendInfo** _(interface)_ - `interface AgentBackendInfo`
+- **AgentContextUsageEvent** _(interface)_ - `interface AgentContextUsageEvent`
+  How full the model's context is after its latest request. Token counts only.
 - **AgentError** _(interface)_ - `interface AgentError`
 - **AgentEvent** _(type)_ - `type AgentEvent`
 - **AgentEventPayload** _(type)_ - `type AgentEventPayload`
@@ -401,8 +422,18 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventSink** _(interface)_ - `interface AgentEventSink`
 - **AgentEventStream** _(interface)_ - `interface AgentEventStream`
 - **AgentEventType** _(type)_ - `type AgentEventType`
+- **AgentExtensionEvent** _(interface)_ - `interface AgentExtensionEvent`
+  A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.
+- **AgentExtensionEventType** _(type)_ - `type AgentExtensionEventType = `x-${string}``
+  The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64 characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
 - **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 - **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
+- **AgentPlanEntry** _(interface)_ - `interface AgentPlanEntry`
+- **AgentPlanEntryStatus** _(type)_ - `type AgentPlanEntryStatus = "pending" | "in_progress" | "completed"`
+- **AgentPlanUpdatedEvent** _(interface)_ - `interface AgentPlanUpdatedEvent`
+  The agent's whole current plan: each event replaces the one before.
+- **AgentReasoningDeltaEvent** _(interface)_ - `interface AgentReasoningDeltaEvent`
+  A piece of the model's reasoning. `itemId` groups the pieces of one reasoning block.
 - **AgentRepairRequiredEvent** _(interface)_ - `interface AgentRepairRequiredEvent`
 - **AgentRepairTask** _(interface)_ - `interface AgentRepairTask`
 - **AgentSessionCheckpoint** _(interface)_ - `interface AgentSessionCheckpoint`
@@ -512,19 +543,27 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SendMessageInput** _(interface)_ - `interface SendMessageInput`
 - **TransportByteLimitOptions** _(interface)_ - `interface TransportByteLimitOptions`
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
+- **agentEventProblem** _(function)_ - `agentEventProblem: (value: unknown) => string | undefined`
+  Why `value` is not a valid agent event, naming the field and the limit it broke but never its content, so the text is safe to log or show; `undefined` when it is valid.
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
+- **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string`
+  Bound text for one event field: NUL becomes U+FFFD and text past `maxChars` is cut, ending in a truncation marker, never between the halves of a surrogate pair.
+- **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown`
+  A copy of a JSON-like value that fits an event's `input`, `output`, or `details`, for display only: the tool, model, or store keeps the full value. Strings are cut with a truncation marker (and their NULs replaced); arrays keep their first items and end with a marker string; objects keep their firs…
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
   True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed.
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
   True when both coordinates address the same boundary at the same child vector.
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
-  Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to the backend/session store; this live view may drop old transient events if a consumer falls behind.
+  Small bounded event stream for RPC clients and UIs. When a consumer falls behind, the oldest delta goes first; a lifecycle event is dropped only once no delta is left to drop.
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
   The stable dedupe identity for an evidence record.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
   Validate the complete discriminated event union before a projection or UI consumer sees it.
+- **isAgentExtensionEventType** _(function)_ - `isAgentExtensionEventType: (type: unknown) => type is AgentExtensionEventType`
+  Whether `type` names an extension event: `x-<vendor>.<name>` in lowercase letters, digits, and single `-`, `.`, or `_` separators, at most 64 characters.
 - **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
   True once a boundary state accepts no further op.
 - **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
@@ -557,8 +596,19 @@ Every public export of every package and documented subpath - name, kind, signat
   Read a Web stream under one byte cap, canceling the source as soon as the cap is exceeded.
 - **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
   Resume an ordered, seq-keyed window from a cursor.
+- **splitAgentText** _(function)_ - `splitAgentText: (text: string, maxChars?: number) => string[]`
+  Split text into pieces that each fit an event's text field, so a long reply travels as consecutive events instead of failing validation. Joined, the pieces give back the text with each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last quarter, and never between the …
 - **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`
   Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any boundary has opened for the run.
+
+### `@nifrajs/agent-protocol/conformance`
+
+- **AgentBackendConformanceOptions** _(interface)_ - `interface AgentBackendConformanceOptions`
+- **AgentBackendConformanceReport** _(interface)_ - `interface AgentBackendConformanceReport`
+- **AgentConformanceCheck** _(interface)_ - `interface AgentConformanceCheck`
+- **AgentConformanceStatus** _(type)_ - `type AgentConformanceStatus = "passed" | "failed" | "skipped"`
+- **checkAgentBackend** _(function)_ - `checkAgentBackend: (options: AgentBackendConformanceOptions) => Promise<AgentBackendConformanceReport>`
+  Drive a backend through the scenarios a host depends on: a session's snapshot, a whole turn's events (valid, in order, one turn, one terminal event), a refused second message while busy, cancellation, approvals granted, denied, unknown and cancelled, and a closed session. Scenarios whose prompt is …
 
 ## @nifrajs/agent-review
 
@@ -636,7 +686,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Authorizer** _(type)_ - `type Authorizer<Subject = unknown, Resource = unknown> = ( request: AuthorizationRequest<Subject, Resource>, ) => boolean | Promise<boolean>`
 - **CsrfOptions** _(interface)_ - `interface CsrfOptions`
 - **GuardOptions** _(interface)_ - `interface GuardOptions`
-  What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a 401 JSON (`{ ok: false, error: "unauthorized" }`).
+  What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - the `unauthenticated` response, by default a 401 JSON (`{ ok: false, error: "unauthorized" }`).
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVSessionStore} uses. Structural (no `@cloudflare/workers-types` dependency) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
@@ -656,6 +706,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
   Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun.
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
 - **csrf** _(function)_ - `csrf: (options?: CsrfOptions) => Middleware`
 - **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<boolean>`
@@ -672,12 +724,14 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/authjs`
 
 - **AuthGuardOptions** _(interface)_ - `interface AuthGuardOptions`
-  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on the origin and path the mount serves it from.
+  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else the `unauthenticated` response, by default a 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on the origin and path the mount serves it from.
 - **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">`
   The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`.
 - **AuthJSOptions** _(interface)_ - `interface AuthJSOptions`
 - **Session** _(interface)_ - `interface Session`
   The active session of the logged in user.
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON.
 - **authjs** _(function)_ - `authjs: (config: AuthJSConfig, options?: AuthJSOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Mount an Auth.js instance into a nifra app: serves `${basePath}/*` (default `/api/auth/*`) for `GET` + `POST`, so sign-in, OAuth callbacks, session, sign-out, and CSRF all run on your server through `@auth/core` itself. A type-IDENTITY plugin (see `defineIdentityPlugin`): mounting never changes the…
 - **getSession** _(function)_ - `getSession: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<Session | null>`
@@ -732,11 +786,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **PrincipalFor** _(type)_ - `type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant extends true ? Principal<User> & { readonly tenantId: string } : Principal<User>`
   The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowe…
 - **RequireSessionOptions** _(interface)_ - `interface RequireSessionOptions`
-  What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path), or - when omitted - a `401` JSON (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
+  What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path), or - when omitted - the `unauthenticated` response, by default a `401` JSON (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
 - **SessionOf** _(type)_ - `type SessionOf<A extends BetterAuthLike> = NonNullable< Awaited<ReturnType<A["api"]["getSession"]>> >`
   The non-null session payload of a concrete better-auth instance `A`, inferred from its `api.getSession` return type (typically `{ user: User; session: Session }`).
 - **SessionUserOf** _(type)_ - `type SessionUserOf<A extends BetterAuthLike> = SessionOf<A> extends { user: infer U } ? U : unknown`
   The non-null user type of a concrete better-auth instance `A` (`SessionOf<A>["user"]`). Collapses to `unknown` only for the erased structural `BetterAuthLike`; a real instance recovers the concrete user.
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON.
 - **WithPrincipal** _(type)_ - `type WithPrincipal<S extends AnyServer, P> = S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never`
   Add `{ principal: P }` to a server's context while preserving its route registry `R` (no collapse to `any`). This is the type that makes `.use(authed(auth))` thread a NON-NULL `c.principal`.
 - **authed** _(function)_ - `authed: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => <S extends AnyServer>(app: S) => WithP…`
@@ -766,6 +822,8 @@ Every public export of every package and documented subpath - name, kind, signat
   How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and a completed revalidation report `ok`; `error` means the store or the loader threw.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.
+- **CacheStoreOp** _(type)_ - `type CacheStoreOp = "get" | "set" | "fence"`
+  The store call a {@link CacheOptions.onStoreError} report is about.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies - a cache should not drag the server into a bundle that only wanted a cache. Wiring it is one line where the cache is created.
 - **MemoryCache** _(class)_ - `class MemoryCache`
@@ -909,6 +967,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **InProcessClient** _(type)_ - `type InProcessClient<App> = Treaty<App> & BackendMount`
   Typed route client plus the explicit platform-aware backend mount capability.
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
+- **InputOf** _(type)_ - `type InputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S } ? S extends StandardSchemaV1 ? InferInput<S> : never : null`
+  What a route module's output schema accepts from its loader or action: the input type of its `Name` export, or `null` when the module declares none. A `t.deferred(inner)` field accepts `defer(...)`.
 - **Jsonify** _(type)_ - `type Jsonify<T>`
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
@@ -936,8 +996,12 @@ Every public export of every package and documented subpath - name, kind, signat
   A response body that broke its route's declared contract. Thrown THROUGH the "never throws" client on purpose: this is a test assertion about the server's honesty, not a call outcome the caller should branch on - swallowing it into a `Result` would let the drift pass the test.
 - **Result** _(type)_ - `type Result<Data, Errors = unknown, Responses = unknown>`
   The outcome of a client call. The client never throws - inspect `ok` to branch.
+- **RouteActionReturn** _(type)_ - `type RouteActionReturn<Module>`
+  What a route module's `action` may return: as {@link RouteLoaderReturn} against `actionOutput`, plus that data wrapped in `revalidate(paths, data)`.
 - **RouteLoaderArgs** _(type)_ - `type RouteLoaderArgs<Params, Search = undefined> = Omit< LoaderArgs<RegisteredBackend, RegisteredEnv, Search>, "params" > & { readonly params: Params }`
   A route's loader or action context: its own `params`, and `api` typed by the registered backend.
+- **RouteLoaderReturn** _(type)_ - `type RouteLoaderReturn<Module> = | InputOf<Module, "loaderOutput"> | RouteControl | Promise<InputOf<Module, "loaderOutput"> | RouteControl>`
+  What a route module's `loader` may return: data its `loaderOutput` accepts, a `Response` or a `ResponseResult` such as `redirect(...)`, or nothing. With no `loaderOutput`, returning data is a type error, as it is a refusal at runtime.
 - **SearchSchemaOf** _(type)_ - `type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S } ? S : undefined`
   The `searchSchema` a route's frontend half declares, or `undefined`.
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
@@ -994,7 +1058,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CompactionReport** _(interface)_ - `interface CompactionReport`
 - **ContextRecord** _(interface)_ - `interface ContextRecord`
 - **ContextWindow** _(class)_ - `class ContextWindow`
-  In-memory prompt window with automatic, deterministic compaction and a hard size ceiling.
+  In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. Pinned and authoritative records survive compaction, newest first, within half of `maxTokens`; older ones are folded into the summary like any other record. The session store keeps every one of them.
 - **ContextWindowOptions** _(interface)_ - `interface ContextWindowOptions`
 - **DEPLOYMENT_REFERENCE_PROFILES** _(const)_ - `DEPLOYMENT_REFERENCE_PROFILES: Readonly<{ localProcess: DeploymentCapabilityReport; ci: DeploymentCapabilityReport; replay: DeploymentCapabilityReport; }>`
 - **ExtensionCommand** _(type)_ - `type ExtensionCommand = ( args: string, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
@@ -1038,7 +1102,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
 - **NativeGatewayModelPortOptions** _(interface)_ - `interface NativeGatewayModelPortOptions`
 - **NativeMessage** _(interface)_ - `interface NativeMessage`
-- **NativeModelChunk** _(type)_ - `type NativeModelChunk = | { readonly type: "text_delta"; readonly text: string } | { readonly type: "response"; readonly response: NativeModelResponse }`
+- **NativeModelChunk** _(type)_ - `type NativeModelChunk`
 - **NativeModelPort** _(interface)_ - `interface NativeModelPort`
 - **NativeModelRequest** _(interface)_ - `interface NativeModelRequest`
 - **NativeModelResponse** _(type)_ - `type NativeModelResponse = | { readonly type: "text"; readonly text: string } | { readonly type: "tool"; readonly name: string; readonly input: unknown }`
@@ -1129,12 +1193,15 @@ Every public export of every package and documented subpath - name, kind, signat
 - **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
 - **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
   Validate the only repository selector exposed by the host review RPC.
+- **isVerificationAvailable** _(function)_ - `isVerificationAvailable: (name: "check" | "assure" | "test", options: Pick<VerificationOptions, "cwd" | "command" | "env">) => boolean`
+  Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs on the Bun this agent runs on, so it is always available unless `command` replaces it.
 - **migrateLegacySession** _(function)_ - `migrateLegacySession: (options: MigrateLegacySessionOptions) => Promise<SessionMigrationReport>`
   Read, project, validate, and atomically commit one legacy local session.
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
 - **parseSessionEvidenceRecord** _(function)_ - `parseSessionEvidenceRecord: (value: unknown) => SessionEvidenceRecord`
   Parse one evidence record strictly. Payload-bearing or unknown fields are rejected.
-- **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number) => Promise<BoundedText>`
+- **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number, signal?: AbortSignal) => Promise<BoundedText>`
+  Read at most `maxBytes` of `stream`; `signal` stops the read early with what arrived so far.
 - **readProjectDiff** _(function)_ - `readProjectDiff: (options: ProjectDiffOptions) => Promise<ProjectDiffResult>`
   Read a bounded, non-interactive git diff for review surfaces. No user-supplied git arguments are accepted.
 - **readReplayEvents** _(function)_ - `readReplayEvents: (path: string) => Promise<readonly AgentEvent[]>`
@@ -1194,7 +1261,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CompileOptions** _(interface)_ - `interface CompileOptions`
   Wiring the compiler injects into every node closure.
 - **DISPATCH_JOB_NAME** _(const)_ - `DISPATCH_JOB_NAME: "nifra.agent.run-node"`
-- **DispatchBoundary** _(type)_ - `type DispatchBoundary = "before-effect" | "after-effect"`
+- **DispatchBoundary** _(type)_ - `type DispatchBoundary = "before-effect" | "effect-started" | "after-effect"`
+  `before-effect`: no side effect has happened, so a redelivery may run the effect. `effect-started`: the effect was invoked and may have acted, so a redelivery needs a proof. `after-effect`: it acted.
 - **DispatchInspection** _(interface)_ - `interface DispatchInspection`
 - **DispatchResultCode** _(type)_ - `type DispatchResultCode = | "accepted" | "stale_lease" | "cancelled" | "terminal" | "invalid_checkpoint" | "idempotency_required"`
 - **DispatchState** _(type)_ - `type DispatchState = | "queued" | "leased" | "checkpointed" | "retrying" | "succeeded" | "failed" | "cancelled" | "dead-lettered"`
@@ -1298,6 +1366,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Resolves step names to handlers. Immutable after construction; lookup is deterministic.
 - **StepEffectContext** _(interface)_ - `interface StepEffectContext`
   Read-only view handed to a step's pure effect selector. No port, no mutation.
+- **StepFailure** _(interface)_ - `interface StepFailure`
+  Why one node failed, handed to {@link OrchestrationHostOptions.onStepFailed}.
 - **StepRunContext** _(interface)_ - `interface StepRunContext`
   Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
@@ -1386,6 +1456,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Turn a failed gate into a bounded, auditable repair task for the agent loop.
 - **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
   Validate the only repository selector exposed by the host review RPC.
+- **isVerificationAvailable** _(function)_ - `isVerificationAvailable: (name: "check" | "assure" | "test", options: Pick<VerificationOptions, "cwd" | "command" | "env">) => boolean`
+  Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs on the Bun this agent runs on, so it is always available unless `command` replaces it.
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
@@ -1482,7 +1554,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AuthenticationFailure** _(interface)_ - `interface AuthenticationFailure`
 - **AuthenticationFailureReason** _(type)_ - `type AuthenticationFailureReason = "unauthenticated" | "forbidden" | "unavailable"`
 - **AuthenticationInput** _(interface)_ - `interface AuthenticationInput<Env = unknown>`
-  The authentication trust boundary. There is intentionally no `Request`, `body`, or parsed query here. Route parameters are present only for selecting an identity policy and remain untrusted strings until the normal route validation stage completes.
+  The authentication trust boundary. A stage runs before input validation, so everything here is untrusted: route parameters and the query select an identity policy or carry a credential, and stay unvalidated strings until the route's own validation completes.
 - **AuthenticationResult** _(type)_ - `type AuthenticationResult<Principal> = | AuthenticationSuccess<Principal> | AuthenticationFailure`
 - **AuthenticationStage** _(interface)_ - `interface AuthenticationStage<Principal = unknown, Env = unknown>`
   A dedicated authentication stage. Stages are captured by route scope at registration time and execute before input validation on required protected routes.
@@ -1495,6 +1567,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **DeclaredMountRoute** _(interface)_ - `interface DeclaredMountRoute`
+  One route an opaque mount serves, as the app states it.
 - **DefinePluginResult** _(type)_ - `type DefinePluginResult<In extends AnyServer, Out extends AnyServer> = ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>`
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -1559,7 +1633,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
-- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
+- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
+  What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
+- **OpaqueMountDeclaration** _(interface)_ - `interface OpaqueMountDeclaration`
+  An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not analyzed: their capabilities are the mount's word, checked against the policy but never proven.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -1649,7 +1726,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "4.0.2"`
+- **VERSION** _(const)_ - `VERSION: "5.0.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -1658,7 +1735,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -1677,12 +1754,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+  Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
+  Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
@@ -1714,6 +1795,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.
 
 ### `@nifrajs/core/assurance`
 
@@ -1738,9 +1821,25 @@ Every public export of every package and documented subpath - name, kind, signat
   Where enforcement evidence follows Nifra's route-registration semantics.
 - **AssuranceSizeBudget** _(interface)_ - `interface AssuranceSizeBudget`
 - **AssuredRoute** _(interface)_ - `interface AssuredRoute`
+- **ContractAuthContext** _(type)_ - `type ContractAuthContext = "authenticated" | "unauthenticated"`
+- **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
+  Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
+- **ContractCaseKind** _(type)_ - `type ContractCaseKind = "input-rejection" | "response-conformance"`
+- **ContractExpectedResponse** _(interface)_ - `interface ContractExpectedResponse`
+- **ContractTarget** _(type)_ - `type ContractTarget = "headers" | "cookies" | "params" | "body" | "query" | "response"`
+- **ContractWitness** _(interface)_ - `interface ContractWitness`
+  A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **IdempotencyWorkload** _(interface)_ - `interface IdempotencyWorkload`
 - **InvariantExecutor** _(type)_ - `type InvariantExecutor = (request: Request) => Response | Promise<Response>`
   Isolated request executor used by adversarial contract verification.
+- **InvariantRunOptions** _(interface)_ - `interface InvariantRunOptions`
+  Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`).
+- **InvariantSetup** _(type)_ - `type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>`
+  Provisions a throwaway L4 target. Called once, before the first L4 request - never on import.
+- **InvariantSetupResult** _(interface)_ - `interface InvariantSetupResult`
+  What `invariants.setup` provisions for one L4 run.
+- **InvariantsConfig** _(type)_ - `type InvariantsConfig = InvariantRunOptions & ( | { readonly executor: InvariantExecutor; readonly setup?: InvariantSetup } | { readonly executor?: InvariantExecutor; readonly setup: InvariantSetup } )`
+  L4 configuration: an isolated `executor`, a `setup` that provisions one, or both.
 - **NIFRA_ASSURANCE** _(const)_ - `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
 - **SecurityBaselineLevel** _(type)_ - `type SecurityBaselineLevel = "essential" | "standard" | "strict"`
@@ -1886,6 +1985,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **executeCapability** _(function)_ - `executeCapability: <T>(context: object, capability: string, options: CapabilityExecutionOptions, executor: CapabilityExecutor<T>) => Promise<T>`
   Execute one owned effect behind a fail-closed capability boundary. The boundary assigns a stable effect id, records intent before execution, and records exactly one terminal outcome automatically. The callback result and errors never enter the token-only ledger.
+- **narrowCapabilityContext** _(function)_ - `narrowCapabilityContext: (context: object, allowed: readonly string[]) => object`
+  Preserve the request's effect/admission scope while restricting a nested execution's privileges.
 - **recordCapabilityOutcome** _(function)_ - `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
   Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **snapshotCapabilities** _(function)_ - `snapshotCapabilities: (report: CapabilityAssuranceReport) => CapabilitySnapshot`
@@ -2185,6 +2286,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string> /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
+- **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
+  How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option.
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
 - **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
   Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
@@ -2198,6 +2301,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
+- **capBodyBytes** _(function)_ - `capBodyBytes: (request: Request, maxBytes: number) => Request`
+  A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
+- **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
+  Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
@@ -2206,8 +2313,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
   The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries.
+- **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
+  Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
-- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
+- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request) => Response`
+  Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again.
 
 ### `@nifrajs/core/effect-ledger`
 
@@ -2328,7 +2438,7 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/core/idempotency-plugin`
 
 - **IdempotencyPluginOptions** _(interface)_ - `interface IdempotencyPluginOptions`
-  Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat `Idempotency-Key` replays the stored response instead of re-running the handler. Without this plugin, declaring `schema.idempotency` is a registration error (the safety gate can never be silently drop…
+  Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat `Idempotency-Key` rechecks the current route prerequisites (authentication, validation and policy hooks) before replaying the stored response. The handler, effect ledger and stored response transforma…
 - **idempotency** _(function)_ - `idempotency: (options?: IdempotencyPluginOptions) => IdentityPlugin`
 - **markIdempotencySafeToRetry** _(function)_ - `markIdempotencySafeToRetry: (context: object) => void`
   Opt a concrete 5xx response into releasing its idempotency reservation, but only while the request-local effect scope still proves that no owned effect began.
@@ -2440,6 +2550,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What `all()` and `method()` from `@nifrajs/core/methods` return: a plugin for `app.use()` that registers one handler under the methods `M` of `Path`. It is opaque - apply it with `use`, which reads the route's types from it and adds them to the app's registry.
 - **all** _(function)_ - `all: { <Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(path: Path, schema: S, handler: H): MethodRoutesPlugin<Method, Path, S, OutputOf<H>, Ctx>; <Path extends string, H extends H…`
   Register one handler under every standard method: `app.use(all(path, handler))`.
+- **isRegistrableMethod** _(function)_ - `isRegistrableMethod: (method: string) => boolean`
+  Whether a route can be registered under `method` - one of {@link METHODS}, or another uppercase token such as `PROPFIND`. `TRACE`, `CONNECT` and `TRACK` never are.
 - **method** _(function)_ - `method: { <const M extends string, Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(name: M | readonly M[], path: Path, schema: S, handler: H): MethodRoutesPlugin<M, Path, S, Output…`
   Register one handler under the method, or the methods, you name: `app.use(method("PROPFIND", path, handler))`.
 
@@ -2513,7 +2625,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Total ordering for mixed segment shapes, shared by the trie and regex-based routers.
 - **compareRoutePatternSpecificity** _(function)_ - `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
   Core precedence: static > mixed > param > wildcard at the first differing segment, independent of registration order.
-- **compileRoutePattern** _(function)_ - `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
+- **compileRoutePattern** _(function)_ - `compileRoutePattern: (path: string) => CompiledRoutePattern`
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **constrainedParts** _(function)_ - `constrainedParts: (parts: readonly MixedPart[]) => readonly MixedPart[] | undefined`
   The parts of a mixed segment when at least one of its parameters has a constraint, else `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.
@@ -2556,20 +2668,32 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/reflection`
 
+- **HookKind** _(type)_ - `type HookKind = | "onRequest" | "around" | "authenticate" | "derive" | "beforeHandle" | "afterHandle" | "onError" | "onResponse" | "responseHeaders" | "onResponseFinalized"`
+  Where each registered hook came from, for `reflectHooks` (`nifra routes --hooks`). Development-only: every write sits behind the inline `process.env.NODE_ENV !== "production"` guard at its call site in `server.ts`, so a production define folds the writes away and this module drops out of the bundle…
 - **JsonSchema** _(type)_ - `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
+- **ReflectedHook** _(interface)_ - `interface ReflectedHook`
+  One hook that runs for a route or an unmatched path: what it is, who added it, and where.
+- **ReflectedHookReport** _(interface)_ - `interface ReflectedHookReport`
 - **ReflectedMount** _(interface)_ - `interface ReflectedMount`
   A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
+- **ReflectedMountRoute** _(interface)_ - `interface ReflectedMountRoute`
+  A route an opaque mount declares, normalized: method upper-cased, capabilities deduplicated.
 - **ReflectedRoute** _(interface)_ - `interface ReflectedRoute`
+- **ReflectedRouteHooks** _(interface)_ - `interface ReflectedRouteHooks`
 - **ReflectedRouteSchema** _(interface)_ - `interface ReflectedRouteSchema`
 - **ReflectedSchemaField** _(interface)_ - `interface ReflectedSchemaField`
   One top-level property of an introspectable object schema.
+- **ReflectedUnmatchedHooks** _(interface)_ - `interface ReflectedUnmatchedHooks`
+  The hooks a path under `prefix` that no route matches still runs - its 404s and 405s.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **reflectHooks** _(function)_ - `reflectHooks: (source: unknown) => ReflectedHookReport`
+  Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server'…
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
-  Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
+  Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing `routes()` method yields only the sockets.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
 
@@ -2683,7 +2807,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AuthenticationFailure** _(interface)_ - `interface AuthenticationFailure`
 - **AuthenticationFailureReason** _(type)_ - `type AuthenticationFailureReason = "unauthenticated" | "forbidden" | "unavailable"`
 - **AuthenticationInput** _(interface)_ - `interface AuthenticationInput<Env = unknown>`
-  The authentication trust boundary. There is intentionally no `Request`, `body`, or parsed query here. Route parameters are present only for selecting an identity policy and remain untrusted strings until the normal route validation stage completes.
+  The authentication trust boundary. A stage runs before input validation, so everything here is untrusted: route parameters and the query select an identity policy or carry a credential, and stay unvalidated strings until the route's own validation completes.
 - **AuthenticationResult** _(type)_ - `type AuthenticationResult<Principal> = | AuthenticationSuccess<Principal> | AuthenticationFailure`
 - **AuthenticationStage** _(interface)_ - `interface AuthenticationStage<Principal = unknown, Env = unknown>`
   A dedicated authentication stage. Stages are captured by route scope at registration time and execute before input validation on required protected routes.
@@ -2696,6 +2820,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **DeclaredMountRoute** _(interface)_ - `interface DeclaredMountRoute`
+  One route an opaque mount serves, as the app states it.
 - **DefinePluginResult** _(type)_ - `type DefinePluginResult<In extends AnyServer, Out extends AnyServer> = ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>`
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -2758,7 +2884,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
-- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
+- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
+  What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
+- **OpaqueMountDeclaration** _(interface)_ - `interface OpaqueMountDeclaration`
+  An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not analyzed: their capabilities are the mount's word, checked against the policy but never proven.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -2854,7 +2983,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -2873,12 +3002,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+  Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
+  Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
@@ -2910,6 +3043,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.
 
 ### `@nifrajs/core/single-copy`
 
@@ -2944,6 +3079,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Whether the declaration's object form asks for strict mode (`"strict": true`).
 - **registerSingleCopy** _(function)_ - `registerSingleCopy: (options?: SingleCopyOptions) => SingleCopyPlan`
   Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a `bunfig.toml` preload rather than calling this from application code: a resolver installed from inside a module cannot affect the imports that module already resolved.
+- **singleCopyPackageNames** _(function)_ - `singleCopyPackageNames: (cwd: string) => readonly string[]`
+  The installed package names the app's declaration covers: each exact name, and each package installed under a declared `@scope/*`. Empty without a declaration. A bundler that pins packages by name, such as Vite's `resolve.dedupe`, takes this list.
 - **singleCopyPlugin** _(function)_ - `singleCopyPlugin: (options?: SingleCopyOptions) => SingleCopyPlugin`
   Pin every declared package to the app's copy.
 
@@ -3045,7 +3182,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/core/webhook`
 
-- **SignatureEncoding** _(type)_ - `type SignatureEncoding = "hex" | "base64"`
+- **SignatureEncoding** _(type)_ - `type SignatureEncoding = "hex" | "base64" | "base64url"`
 - **VerifyWebhookOptions** _(interface)_ - `interface VerifyWebhookOptions`
 - **WebhookFailureReason** _(type)_ - `type WebhookFailureReason = | "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance" | "malformed_signature" | "payload_too_large" | "invalid_content_length"`
 - **WebhookProvider** _(type)_ - `type WebhookProvider = "stripe" | "github" | "generic"`
@@ -3086,7 +3223,7 @@ _No named exports (side-effect entrypoint)._
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -3095,7 +3232,6 @@ _No named exports (side-effect entrypoint)._
 - **websocket** _(function)_ - `websocket: () => IdentityPlugin`
   Enable WebSocket routes on a server: `.use(websocket())` turns on `app.ws()`. Applying it twice is a no-op (named plugin dedupe).
 - **wrapWebSocketMessageValidation** _(function)_ - `wrapWebSocketMessageValidation: (handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning) => WebSocketHandler`
-  If the handler declares a `messageSchema`, return a copy whose `message` validates each frame - parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at `app.ws(…
 
 ## @nifrajs/cron
 
@@ -3227,14 +3363,16 @@ _No named exports (side-effect entrypoint)._
 - **GraphqlHttpOptions** _(interface)_ - `interface GraphqlHttpOptions<Context = unknown, Env = unknown>`
 - **GraphqlPubSub** _(interface)_ - `interface GraphqlPubSub<Event = unknown>`
   The subscription source shape a resolver's `subscribe` consumes. Swap the impl for a durable bus.
+- **GraphqlPubSubOptions** _(interface)_ - `interface GraphqlPubSubOptions`
+- **GraphqlPubSubOverflowError** _(class)_ - `class GraphqlPubSubOverflowError`
 - **GraphqlWsOptions** _(interface)_ - `interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>>`
 - **MountGraphqlOptions** _(interface)_ - `interface MountGraphqlOptions<Context = unknown, Env = unknown>`
 - **NifraContextLike** _(interface)_ - `interface NifraContextLike<Env = unknown>`
   The subset of a nifra route context this package surfaces to a resolver-context builder. Structural, so the real `c` satisfies it without a nominal import. Kept to the non-body accessors a resolver legitimately needs; the raw body belongs to the GraphQL executor, not the builder.
 - **buildContext** _(function)_ - `buildContext: <Context, Env>(builder: GraphqlContextBuilder<Context, Env> | undefined, input: GraphqlContextInput<Env>) => Promise<Context>`
   Resolve a context builder to a concrete value, defaulting to an empty object.
-- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>() => GraphqlPubSub<Event>`
-  Create an in-memory {@link GraphqlPubSub}.
+- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>(options?: GraphqlPubSubOptions) => GraphqlPubSub<Event>`
+  Create an in-memory {@link GraphqlPubSub} with finite subscriber queues.
 - **graphqlWebSocket** _(function)_ - `graphqlWebSocket: <Context extends Record<string, unknown> = Record<string, unknown>>(options: GraphqlWsOptions<Context>) => WebSocketHandler<GraphqlWsConnection>`
   Build a nifra {@link WebSocketHandler} that terminates the `graphql-transport-ws` protocol. Register it on a route enabled with `.use(websocket())`:
 - **mountGraphql** _(function)_ - `mountGraphql: <Context = unknown, Env = unknown>(app: MountableApp<Env>, options: MountGraphqlOptions<Context, Env>) => void`
@@ -3499,6 +3637,8 @@ _No named exports (side-effect entrypoint)._
 - **BindableElement** _(interface)_ - `interface BindableElement`
   The element surface the walker needs - structural, so tests can drive it without a real DOM.
 - **BindableRoot** _(interface)_ - `interface BindableRoot`
+- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
+  A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
 - **IslandContext** _(interface)_ - `interface IslandContext`
 - **IslandHost** _(interface)_ - `interface IslandHost`
   The host-element surface `mountIslands` needs beyond bindings.
@@ -3513,9 +3653,9 @@ _No named exports (side-effect entrypoint)._
 - **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
   Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
 - **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
-  Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of the created effects (an island unmount can stop them; page-lifetime islands just drop them).
-- **computed** _(function)_ - `computed: <T>(fn: () => T) => () => T`
-  Derived value, cached into a signal - recomputes when its tracked inputs change.
+  Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for both reactive effects and event listeners.
+- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
+  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
   Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
 - **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`
@@ -3558,6 +3698,8 @@ _No named exports (side-effect entrypoint)._
   How an attempt ended: removed, rescheduled, or moved to the dead-letter set.
 - **JobStore** _(interface)_ - `interface JobStore`
   Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async - the queue awaits them.
+- **JobTimeoutError** _(class)_ - `class JobTimeoutError`
+  What an attempt that outran its job's `timeoutMs` fails with; the attempt's `ctx.signal` aborts with it.
 - **JobTraceContext** _(interface)_ - `interface JobTraceContext`
   The trace an instrumented attempt runs in. It has the shape of `c.trace` from `@nifrajs/otel`, so `cache.for(ctx)` and a nested `job.for(ctx).enqueue()` inside the handler stay in the same trace.
 - **JobValidationError** _(class)_ - `class JobValidationError`
@@ -3796,7 +3938,7 @@ _No named exports (side-effect entrypoint)._
 - **fitToBytes** _(function)_ - `fitToBytes: <T>(count: number, build: (shown: number) => T, maxBytes: number) => { readonly value: T; readonly serialized: string; readonly shown: number; } | undefined`
   Serialize `build(shown)` for the largest `shown <= count` (halving from `count`) whose JSON fits `maxBytes`. `undefined` when even `build(0)` does not fit.
 - **gateSqliteStatement** _(function)_ - `gateSqliteStatement: (input: string, exposed: (relation: string) => boolean) => SqliteGate`
-  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN` exposed. Returns the statement without its terminator, ready to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an alia…
+  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an…
 - **isDbRefusal** _(function)_ - `isDbRefusal: (value: unknown) => value is DbRefusal`
   True for a value {@link dbRefusal} built.
 - **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>`
@@ -3857,7 +3999,7 @@ _No named exports (side-effect entrypoint)._
 - **postgresRoleRefusal** _(function)_ - `postgresRoleRefusal: (report: PostgresRoleReport, options?: { readonly allowExtensions?: readonly string[]; }) => DbRefusal | undefined`
   The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}.
 - **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
-  Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data` on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would override a…
+  Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions. `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a REVOKE. Not…
 - **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
   Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name is masked as well.
 - **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`
@@ -3949,6 +4091,9 @@ _No named exports (side-effect entrypoint)._
 - **RateLimitResult** _(interface)_ - `interface RateLimitResult`
 - **RateLimitStore** _(interface)_ - `interface RateLimitStore`
   Counter backend. Production deploys MUST use a shared store (Redis, etc.) so the limit holds across instances - that's a user dependency, not ours, hence the interface. {@link MemoryStore} is for dev / single-instance only.
+- **RateLimitTier** _(interface)_ - `interface RateLimitTier`
+  One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it.
+- **RateLimitTiersOptions** _(interface)_ - `interface RateLimitTiersOptions`
 - **RequestIdOptions** _(interface)_ - `interface RequestIdOptions`
 - **RequestLogFields** _(interface)_ - `interface RequestLogFields`
   Structured fields logged per request.
@@ -4041,6 +4186,8 @@ _No named exports (side-effect entrypoint)._
   Create a standards-shaped byte representation response with Range, If-Range, and conditional validator handling. The input is already caller-owned memory; this helper does not read or retain external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.
 - **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => Middleware`
   Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it also covers 404s); over the limit → `429` + `Retry-After`. Every response carries `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
+- **rateLimitTiers** _(function)_ - `rateLimitTiers: (options: RateLimitTiersOptions) => Middleware`
+  Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is charged to exactly one bucket: the tier with the longest `prefix` that is the request's path or an ancestor of it, else the `floor`. Tiers never stack, so a tier may sit above the floor (`600/min` for …
 - **requestId** _(function)_ - `requestId: (options?: RequestIdOptions) => ContextPlugin<{ requestId: string; }>`
   A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw `Response`s…
 - **responseCache** _(const)_ - `responseCache: (options: CacheOptions) => Middleware`
@@ -4073,9 +4220,11 @@ _No named exports (side-effect entrypoint)._
   Minimal route shape returned by `app.routes()`.
 - **UnsupportedMockSchemaError** _(class)_ - `class UnsupportedMockSchemaError`
 - **autoReflectJsonSchema** _(function)_ - `autoReflectJsonSchema: (schema: unknown) => JsonSchema | undefined`
-  Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change one that already carries JSON Schema metadata.
+  Derive a JSON Schema from a Standard Schema's own converter, or from zod for a zod schema without one; `undefined` for anything else (no converter and not zod, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change o…
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
   Create a mock server from a Nifra app's route definitions. For each route with a `schema.response`, generates a handler returning fake data that matches the response schema structure. Routes without response schemas return `{}`.
+- **explainAutoReflectJsonSchema** _(function)_ - `explainAutoReflectJsonSchema: (schema: unknown) => string | undefined`
+  Why {@link autoReflectJsonSchema} could not read a schema: its converter threw or returned nothing, or, for a zod schema without one, zod is not resolvable or is older than 4. `undefined` for a schema it reads, or one it has no way to read.
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
   Generate a mock value from a schema object. Inspects JSON Schema properties (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema objects carry directly. Unsupported constraints fail closed with {@link UnsupportedMockSchemaError} rather than returning a known-invalid response.
 
@@ -4310,6 +4459,8 @@ _No named exports (side-effect entrypoint)._
 - **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory`
 - **ImportedRoute** _(interface)_ - `interface ImportedRoute`
 - **ImportedRouteQuery** _(interface)_ - `interface ImportedRouteQuery`
+- **JsonValue** _(type)_ - `type JsonValue = | string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }`
+  Any value that survives `JSON.stringify` and `JSON.parse` unchanged.
 - **NifraSchema** _(type)_ - `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }`
   A `t` schema. It is a Standard Schema (so any nifra route validates it with no special-casing) whose raw TypeBox definition stays reachable as `jsonSchema` - and because a TypeBox schema *is* a JSON Schema, that field is exactly what lets `toOpenAPI` emit a real request/response schema for the rout…
 - **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument`
@@ -4317,6 +4468,7 @@ _No named exports (side-effect entrypoint)._
   OpenAPI 3.x inventory import - the structural half of an export/import roundtrip.
 - **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
+- **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
 - **OpenApiInventoryDrift** _(interface)_ - `interface OpenApiInventoryDrift`
 - **Page** _(interface)_ - `interface Page<Item>`
   A cursor-pagination page - matches the shape of `t.paginated(item)`.
@@ -4356,6 +4508,7 @@ _No named exports (side-effect entrypoint)._
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
 - **OpenAPIServer** _(interface)_ - `interface OpenAPIServer`
 - **OpenAPITag** _(interface)_ - `interface OpenAPITag`
+- **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
 - **SecurityRequirement** _(type)_ - `type SecurityRequirement = Readonly<Record<string, readonly string[]>>`
   A document-wide / per-operation security requirement: scheme name → required scopes.
 - **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions`
@@ -4444,6 +4597,7 @@ _No named exports (side-effect entrypoint)._
 - **AgentFailureMatrixError** _(class)_ - `class AgentFailureMatrixError`
 - **AgentFailureMatrixKind** _(type)_ - `type AgentFailureMatrixKind = | "model" | "tool" | "approval" | "cancellation" | "lease" | "cursor" | "registry" | "deployment"`
   Fault boundaries covered by the public deterministic matrix.
+- **AgentFailureMatrixOptions** _(interface)_ - `interface AgentFailureMatrixOptions`
 - **AgentFailureMatrixReport** _(interface)_ - `interface AgentFailureMatrixReport`
 - **AppLike** _(interface)_ - `interface AppLike`
   The minimal shape a nifra `server()` app satisfies - its own `fetch`.
@@ -4472,7 +4626,7 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
-- **ComparisonCode** _(type)_ - `type ComparisonCode = | "equal" | "improved" | "tolerated" | "regressed" | "missing" | "incomparable"`
+- **ComparisonCode** _(type)_ - `type ComparisonCode`
 - **ContractAuthContext** _(type)_ - `type ContractAuthContext = "authenticated" | "unauthenticated"`
 - **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
@@ -4488,13 +4642,13 @@ _No named exports (side-effect entrypoint)._
 - **ContractReplay** _(interface)_ - `interface ContractReplay`
 - **ContractRuntime** _(interface)_ - `interface ContractRuntime`
   A runtime target for the same generated contract cases (for example Bun, Node, and Workers).
-- **ContractTarget** _(type)_ - `type ContractTarget = "body" | "query" | "response"`
+- **ContractTarget** _(type)_ - `type ContractTarget = "headers" | "cookies" | "params" | "body" | "query" | "response"`
 - **ContractTestApp** _(interface)_ - `interface ContractTestApp`
   Anything that exposes reflected routes and a Web-standard in-process fetch handler.
 - **ContractWitness** _(interface)_ - `interface ContractWitness`
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ - `interface CookieJar`
-  A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+  A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age` of zero or less, or a past `Expires`) so logout clears the cookie; other att…
 - **CreateTrajectoryTranscriptOptions** _(interface)_ - `interface CreateTrajectoryTranscriptOptions`
 - **DataAdapterConformanceError** _(class)_ - `class DataAdapterConformanceError`
 - **DataAdapterConformanceReport** _(interface)_ - `interface DataAdapterConformanceReport`
@@ -4568,7 +4722,8 @@ _No named exports (side-effect entrypoint)._
 - **assertPredictionLab** _(function)_ - `assertPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>`
   Run the lab and throw a joined error on failure - the `assertAdversarialContract` shape.
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
-- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
+- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: (options?: { readonly fencing?: boolean; }) => AdapterCertificationProfile<CertifiableCacheStore>`
+  The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence` refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load …
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
@@ -4598,7 +4753,7 @@ _No named exports (side-effect entrypoint)._
 - **gatewayCertificationProfile** _(function)_ - `gatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
   Certification for provider-neutral gateways. It never emits request or response content.
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
-  Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
+  Emit a committable regression test from a capsule. Body strings, query values, header values (bar `content-type`) and the note are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The path is kept verbatim because it…
 - **httpToolAdapter** _(function)_ - `httpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
   Exercise the Web adapter while returning the same normalized result shape as direct calls.
 - **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
@@ -4615,7 +4770,7 @@ _No named exports (side-effect entrypoint)._
 - **recordTrajectory** _(const)_ - `recordTrajectory: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
   Alias that reads naturally at a call site which has just completed a run.
 - **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
-  Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
+  Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings and object keys are kept - they carry the structure that makes the fixture reproduce - and the emitted file says so in a review banner. A committed fixture must not leak PII/secrets.
 - **referenceFaultProfile** _(const)_ - `referenceFaultProfile: FaultProfile`
   A small smoke profile for consumers that only need to verify the harness wiring.
 - **registryCertificationProfile** _(function)_ - `registryCertificationProfile: () => AdapterCertificationProfile<CertifiableDescriptorAdapter>`
@@ -4628,8 +4783,8 @@ _No named exports (side-effect entrypoint)._
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **runAgentEvalComposition** _(function)_ - `runAgentEvalComposition: (options: AgentEvalCompositionOptions) => Promise<AgentEvalCompositionReport>`
   Compose existing trajectory, fault, contract, idempotency, and certification owners.
-- **runAgentFailureMatrix** _(function)_ - `runAgentFailureMatrix: (options?: { readonly seed?: number; }) => Promise<AgentFailureMatrixReport>`
-  Run the same token-only crash fixture at each agent boundary. The implementation intentionally delegates scheduling and replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault engine.
+- **runAgentFailureMatrix** _(function)_ - `runAgentFailureMatrix: (options?: AgentFailureMatrixOptions) => Promise<AgentFailureMatrixReport>`
+  Inject a crash at each agent boundary. The implementation intentionally delegates scheduling and replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault engine.
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
 - **runContractLabOverHttp** _(function)_ - `runContractLabOverHttp: (origin: string, fetcher?: typeof fetch) => Promise<void>`
@@ -4680,7 +4835,8 @@ _No named exports (side-effect entrypoint)._
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
-- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
+- **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: (options?: { readonly fencing?: boolean; }) => AdapterCertificationProfile<CertifiableCacheStore>`
+  The cache-store profile. `fencing: true` adds the optional `fenced-write` capability: `setIfFence` refuses a write after an invalidation of its tag, a delete or set of its key, or a clear since its `fence`, and accepts one after an unrelated change. A store several caches share needs it, or a load …
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
@@ -4906,6 +5062,8 @@ _No named exports (side-effect entrypoint)._
   Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget.
 - **ISRQuery** _(type)_ - `type ISRQuery = "bypass" | "all" | readonly string[]`
   Which query parameters an ISR key carries - see {@link ISROptions.query}.
+- **ISRStoreOp** _(type)_ - `type ISRStoreOp = "get" | "set" | "delete" | "fence"`
+  The store operation an {@link ISROptions.onStoreError} report is about.
 - **ISR_REVALIDATE_HEADER** _(const)_ - `ISR_REVALIDATE_HEADER: "x-nifra-isr-revalidate"`
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…
 - **ISR_REVALIDATE_TAGS_HEADER** _(const)_ - `ISR_REVALIDATE_TAGS_HEADER: "x-nifra-isr-tags"`
@@ -4951,7 +5109,7 @@ _No named exports (side-effect entrypoint)._
 - **Meta** _(interface)_ - `interface Meta`
   The document head a route contributes - title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and ac…
 - **MetaArgs** _(interface)_ - `interface MetaArgs<Data = unknown>`
-  Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through l…
+  Args for a route's or layout's `meta` function: its own loader's `data` + the page's `pageData` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (s…
 - **MetaDescriptor** _(interface)_ - `interface MetaDescriptor`
   One managed `<meta>` tag. Standard attributes and inert `data-*` metadata only.
 - **MetaInput** _(type)_ - `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
@@ -5157,9 +5315,9 @@ _No named exports (side-effect entrypoint)._
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
-  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization, an explicit `public`. The one rule b…
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
-  Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, or tampered cookie returns `false`.
+  Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
@@ -5181,6 +5339,8 @@ _No named exports (side-effect entrypoint)._
 - **renderPage** _(function)_ - `renderPage: (options: RenderPageInput) => MaybePromise<Response>`
   Server: render a full HTML document for a page - the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module - as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
 - **renderPageResult** _(function)_ - `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
+- **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
+  Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveDynamicBoundaries** _(function)_ - `resolveDynamicBoundaries: (boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx) => Promise<BoundaryStates>`
   Resolve all dynamic boundaries concurrently. Each receives a fresh frozen context object; one failure becomes that boundary's error state and never rejects a sibling or exposes sibling data. Static/intercepting modes remain `unresolved` until their phase-specific runtime owns them.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
@@ -5346,7 +5506,6 @@ _No named exports (side-effect entrypoint)._
 - **prerenderRoutes** _(function)_ - `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
   Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient` (so the app references the hashed client entry). Returns a report of what was emitted vs skipped - the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR work…
 - **publicEnvDefines** _(function)_ - `publicEnvDefines: (prefix: string, env: Readonly<Record<string, string | undefined>>) => Record<string, string>`
-  The `process.env.<NAME>` → `JSON.stringify(value)` define entries for every env var whose name carries `prefix` (the Vite/Next public-env convention). Exposing ONLY the prefixed vars is the security boundary: an unprefixed var (a secret) never gets a define, so the bare `process.env` define resolve…
 - **reactDedupePlugin** _(const)_ - `reactDedupePlugin: (from: string) => BunPlugin`
 - **renderSizeReport** _(function)_ - `renderSizeReport: (report: SizeReport) => string`
   Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row - the text `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.
@@ -5442,6 +5601,8 @@ _No named exports (side-effect entrypoint)._
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
+- **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
+  Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
 - **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`
@@ -5475,7 +5636,6 @@ _No named exports (side-effect entrypoint)._
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string`
-  Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError whose message is just "Bundle failed" - the actionable part (which file, which import) lives in `.errors`. Surface it, or the guard reports a failure while hiding the reason.
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`
@@ -5861,7 +6021,7 @@ _No named exports (side-effect entrypoint)._
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
 - **LeakGuardSecretOptions** _(interface)_ - `interface LeakGuardSecretOptions`
-- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" >`
+- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" > & { readonly componentModules?: ReadonlySet<string> }`
   What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
 - **viteAssetUrlGuard** _(function)_ - `viteAssetUrlGuard: (options?: ServerZoneGuardOptions) => AssetUrlGuardPlugin`
   Keep server files out of a Vite client build's assets. A `new URL("./x", import.meta.url)` makes Vite copy the file it names into the output, or inline it into the chunk as a `data:` URL when it is small - no module and no import edge, so {@link viteLeakGuard}'s graph never sees it. This refuses a …
@@ -5940,6 +6100,147 @@ _No named exports (side-effect entrypoint)._
 - **writeRouteTypes** _(function)_ - `writeRouteTypes: (options: RouteTypesOptions) => RouteTypesResult`
   Bring `.nifra/types` up to date with the app's routes. Unchanged files are left alone, so an editor watching them sees only real changes. Owns the directory: anything else in it is removed.
 
+### `@nifrajs/web/server-components`
+
+- **ComponentErrorCode** _(type)_ - `type ComponentErrorCode = (typeof COMPONENT_ERROR_CODES)[number]`
+- **ComponentInstance** _(interface)_ - `interface ComponentInstance`
+- **ComponentIsland** _(interface)_ - `interface ComponentIsland`
+- **ComponentKey** _(type)_ - `type ComponentKey = string | number`
+- **ComponentOwner** _(interface)_ - `interface ComponentOwner`
+- **ComponentRecord** _(interface)_ - `interface ComponentRecord`
+- **ComponentRender** _(interface)_ - `interface ComponentRender`
+- **ComponentRenderContext** _(interface)_ - `interface ComponentRenderContext`
+- **ComponentState** _(interface)_ - `interface ComponentState`
+- **ComponentValue** _(type)_ - `type ComponentValue = | null | boolean | number | string | readonly ComponentValue[] | { readonly [key: string]: ComponentValue }`
+- **PreparedServerComponent** _(interface)_ - `interface PreparedServerComponent<Props = unknown, View = unknown>`
+- **ServerComponent** _(interface)_ - `interface ServerComponent<Input = unknown, Props = unknown, View = unknown>`
+- **ServerComponentContext** _(interface)_ - `interface ServerComponentContext`
+- **ServerComponentDefinition** _(interface)_ - `interface ServerComponentDefinition<Input, Props, View>`
+- **ServerComponentError** _(class)_ - `class ServerComponentError`
+- **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
+- **ServerComponentRenderAdapter** _(interface)_ - `interface ServerComponentRenderAdapter`
+- **ServerComponentRuntime** _(interface)_ - `interface ServerComponentRuntime`
+  Optional seam passed to createWebApp; disabled applications have no runtime import of this feature.
+- **ServerComponentsOptions** _(interface)_ - `interface ServerComponentsOptions`
+- **createServerComponents** _(function)_ - `createServerComponents: (options: ServerComponentsOptions) => ServerComponentRuntime`
+- **defineComponentOwner** _(function)_ - `defineComponentOwner: <const Owner extends ComponentOwner>(owner: Owner) => Owner`
+- **defineServerComponent** _(function)_ - `defineServerComponent: <Input, Props, View>(definition: ServerComponentDefinition<Input, Props, View>, reference?: string) => ServerComponent<Input, Props, View>`
+- **inheritOwnerAuthorization** _(function)_ - `inheritOwnerAuthorization: () => void`
+- **isServerComponent** _(function)_ - `isServerComponent: (value: unknown) => value is ServerComponent`
+- **prepareServerComponent** _(function)_ - `prepareServerComponent: <Input, Props, View>(component: ServerComponent<Input, Props, View>, input: unknown, ctx: ServerComponentContext) => Promise<PreparedServerComponent<Props, View>>`
+- **serverComponentIdentity** _(function)_ - `serverComponentIdentity: (owner: string, component: ServerComponentHandle, key: string | number, parent?: string | null) => Promise<string>`
+- **serverComponentInstance** _(function)_ - `serverComponentInstance: <Input, Props, View>(component: ServerComponent<Input, Props, View>, key: string | number, input: Input, parent?: string) => ComponentInstance`
+
+### `@nifrajs/web/server-components/build`
+
+- **ComponentPipelineOptions** _(interface)_ - `interface ComponentPipelineOptions`
+- **buildServerComponents** _(function)_ - `buildServerComponents: (options: ComponentPipelineOptions) => Promise<ComponentBuildResult>`
+- **componentBuildId** _(function)_ - `componentBuildId: (root: string, outDir?: string) => string`
+  One content-derived generation for every environment; no payloads or paths are published.
+- **devServerComponents** _(function)_ - `devServerComponents: (options: ComponentPipelineOptions) => Promise<Awaited<ReturnType<typeof createServer>>>`
+- **serverComponentsConfig** _(function)_ - `serverComponentsConfig: (options: ComponentPipelineOptions, generationId?: string) => Promise<UserConfig>`
+  Coordinated Vite 8 build/dev configuration with the ordinary Nifra boundary guards.
+
+### `@nifrajs/web/server-components/build-info`
+
+- **componentBuild** _(const)_ - `componentBuild: string`
+  The coordinated compiler replaces this value in every environment.
+
+### `@nifrajs/web/server-components/client`
+
+- **ComponentClientAdapter** _(interface)_ - `interface ComponentClientAdapter`
+- **ComponentClientRoot** _(interface)_ - `interface ComponentClientRoot`
+- **ComponentController** _(class)_ - `class ComponentController`
+- **ComponentControllerOptions** _(interface)_ - `interface ComponentControllerOptions`
+- **ComponentKey** _(type)_ - `type ComponentKey = string | number`
+- **ComponentRecord** _(interface)_ - `interface ComponentRecord`
+- **ComponentState** _(interface)_ - `interface ComponentState`
+- **CurrentComponent** _(type)_ - `type CurrentComponent = () => boolean`
+- **ServerComponent** _(interface)_ - `interface ServerComponent<Input = unknown, Props = unknown, View = unknown>`
+- **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
+- **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
+  Optional router integration; imported only by opted-in application entries.
+- **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
+- **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
+- **refreshAfterComponentMutation** _(function)_ - `refreshAfterComponentMutation: <T extends { readonly ok: boolean; }>(mutation: Promise<T>, controller: ComponentController, instances: readonly string[]) => Promise<T>`
+  Refresh only after the existing mutation transport reports success.
+- **resolveComponentRecord** _(function)_ - `resolveComponentRecord: <Input>(state: ComponentState, component: Pick<ServerComponent<Input>, "reference" | "input">, key: ComponentKey, input: NoInfer<Input>, parent?: string | null) => ComponentRecord`
+
+### `@nifrajs/web/server-components/islands`
+
+- **ClientIsland** _(interface)_ - `interface ClientIsland<Props = unknown, Component = unknown>`
+- **IslandInstance** _(interface)_ - `interface IslandInstance`
+- **NativeServerView** _(interface)_ - `interface NativeServerView`
+- **clientIsland** _(function)_ - `clientIsland: <Props>(contract: ClientIsland<Props>, key: ComponentKey, props: NoInfer<Props>, slots?: Readonly<Record<string, string>>) => IslandInstance`
+- **defineClientIsland** _(function)_ - `defineClientIsland: <Props, Component>(definition: { readonly props: StandardSchemaV1<unknown, Props>; readonly component: Component; readonly slots?: readonly string[]; } & CompatibleComponent<NoInfer<Props>, NoInfer<C…`
+- **isClientIsland** _(function)_ - `isClientIsland: (value: unknown) => value is ClientIsland`
+- **isNativeServerView** _(function)_ - `isNativeServerView: (value: unknown) => value is NativeServerView`
+- **nativeServerView** _(function)_ - `nativeServerView: (component: unknown, islands?: Readonly<Record<string, IslandInstance>>, ranges?: Readonly<Record<string, ComponentRecord>>) => NativeServerView`
+  Server-only native view rendered by the selected framework's own renderer.
+- **serverComponentChild** _(function)_ - `serverComponentChild: (children: readonly ComponentRecord[], component: Pick<ServerComponentHandle, "reference">, key: ComponentKey) => ComponentRecord`
+
+### `@nifrajs/web/server-components/native`
+
+- **NativeRender** _(type)_ - `type NativeRender = ( component: unknown, props: Record<string, unknown>, renderId: string, ) => string | Promise<string>`
+- **nativeServerComponents** _(function)_ - `nativeServerComponents: (name: "vue" | "svelte" | "solid" | "preact", render: NativeRender) => ServerComponentRenderAdapter`
+
+### `@nifrajs/web/server-components/portal`
+
+- **componentPortalTarget** _(function)_ - `componentPortalTarget: (source: Element, target: Element) => Element`
+  Resolve only a declared target inside the island or component that owns the calling node.
+- **disposeComponentPortals** _(function)_ - `disposeComponentPortals: (owner: Element) => Promise<void>`
+- **ownComponentPortal** _(function)_ - `ownComponentPortal: (source: Element, target: Element, cleanup: () => void | Promise<void>) => () => Promise<void>`
+  Native portal actions register cleanup with the island that owns their target.
+
+### `@nifrajs/web/server-components/props`
+
+- **guardComponentProps** _(function)_ - `guardComponentProps: (schema: StandardSchemaV1, value: unknown) => Promise<unknown>`
+
+### `@nifrajs/web/server-components/range`
+
+- **NativeIslandRoot** _(interface)_ - `interface NativeIslandRoot`
+- **NativeIslandRuntime** _(interface)_ - `interface NativeIslandRuntime`
+- **NativeRangeOptions** _(interface)_ - `interface NativeRangeOptions`
+- **nativeComponentClient** _(function)_ - `nativeComponentClient: (options: NativeRangeOptions) => ComponentClientAdapter`
+- **parseComponentHTML** _(function)_ - `parseComponentHTML: (html: string, context: Element, trustedHTML?: NativeRangeOptions["trustedHTML"]) => DocumentFragment`
+  Parse inertly and reject executable content before it can reach a live document.
+
+### `@nifrajs/web/server-components/source`
+
+- **CompiledComponentModule** _(interface)_ - `interface CompiledComponentModule`
+- **compileComponentModule** _(function)_ - `compileComponentModule: (source: string, file: string, root: string, environment: string, kind?: "server" | "island") => CompiledComponentModule`
+- **componentReference** _(function)_ - `componentReference: (file: string, root: string, name: string) => string`
+- **directive** _(function)_ - `directive: (file: TS.SourceFile, value: string) => boolean`
+- **exportedValues** _(function)_ - `exportedValues: (file: TS.SourceFile) => readonly string[]`
+- **guardCreateElementCalls** _(function)_ - `guardCreateElementCalls: (source: string, file: string) => string`
+- **sourceFile** _(function)_ - `sourceFile: (source: string, file: string) => TS.SourceFile`
+- **staticComponentPipeline** _(function)_ - `staticComponentPipeline: (source: string, file: string) => unknown`
+  The `componentPipeline` a config module exports as a plain literal, read without running the module, or `undefined` when it exports none or one that is not a literal.
+
+### `@nifrajs/web/server-components/state`
+
+- **componentToken** _(function)_ - `componentToken: (value: unknown) => value is string`
+- **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
+
+### `@nifrajs/web/server-components/stream`
+
+- **bytesStream** _(function)_ - `bytesStream: (bytes: Uint8Array) => ReadableStream<Uint8Array>`
+- **decodeComponentBytes** _(function)_ - `decodeComponentBytes: (value: unknown) => Uint8Array`
+- **encodeComponentBytes** _(function)_ - `encodeComponentBytes: (bytes: Uint8Array) => string`
+- **readComponentBytes** _(function)_ - `readComponentBytes: (stream: ReadableStream<Uint8Array>, signal: AbortSignal, limit?: number) => Promise<Uint8Array>`
+  The bounded snapshot is shared by SSR and hydration; it never tees into an unread branch.
+
+### `@nifrajs/web/server-components/trusted-html`
+
+- **installComponentTrustedTypesPolicy** _(function)_ - `installComponentTrustedTypesPolicy: () => void`
+  Explicit opt-in for native framework HTML sinks. Every accepted string is tokenized first.
+
+### `@nifrajs/web/server-components/vite`
+
+- **ServerComponentsPluginOptions** _(interface)_ - `interface ServerComponentsPluginOptions`
+- **serverComponentsPlugin** _(function)_ - `serverComponentsPlugin: (options: ServerComponentsPluginOptions) => Plugin & { readonly api: { readonly componentModules: ReadonlySet<string>; }; }`
+  Compiler bridge. The ordinary build must continue rejecting arbitrary server imports.
+
 ### `@nifrajs/web/service-worker`
 
 - **ServiceWorkerManifest** _(interface)_ - `interface ServiceWorkerManifest`
@@ -5986,6 +6287,7 @@ _No named exports (side-effect entrypoint)._
 - **PackageEnvironment** _(type)_ - `type PackageEnvironment = "frontend" | "backend" | "shared" | "library"`
 - **ROUTE_BACKEND_FILE** _(const)_ - `ROUTE_BACKEND_FILE: RegExp`
   A route's backend half: `x.backend.ts`. Script extensions only; JSX belongs to the frontend half.
+- **SERVER_COMPONENT_FILE** _(const)_ - `SERVER_COMPONENT_FILE: RegExp`
 - **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
   Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
@@ -5997,6 +6299,10 @@ _No named exports (side-effect entrypoint)._
 - **Zone** _(type)_ - `type Zone`
 - **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
 - **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
+- **ZoneConfig** _(interface)_ - `interface ZoneConfig`
+  App-side zone settings, read from `"nifra": { "zones": ... }` in the app's package.json so every build, dev server, `nifra check` and the editor plugin see the same ones without running app code.
+- **ZoneConfigError** _(class)_ - `class ZoneConfigError`
+  A `"nifra": { "zones": ... }` setting that cannot be applied. Thrown when a classifier is created.
 - **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined`
   Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver entry is recognized by the import as written (`specifier`) or by the file's path in the package.
 - **createZoneClassifier** _(function)_ - `createZoneClassifier: (options: ZoneClassifierOptions) => ZoneClassifier`
@@ -6007,6 +6313,10 @@ _No named exports (side-effect entrypoint)._
   The message for an import {@link importAllowed} refuses.
 - **isSensitiveFieldName** _(function)_ - `isSensitiveFieldName: (name: string) => boolean`
   A field name that usually holds a credential or personal identifier.
+- **isServerPackageSpecifier** _(function)_ - `isServerPackageSpecifier: (specifier: string) => boolean`
+  Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry.
+- **parseZoneConfig** _(function)_ - `parseZoneConfig: (value: unknown, source: string) => ZoneConfig`
+  Validate a `zones` setting. `source` names where it came from in the error. Folders are plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a pattern can never match less than its author meant without saying so.
 - **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`
   The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
 - **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`
@@ -6115,6 +6425,19 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed cl…
+
+### `@nifrajs/web-preact/server-components`
+
+- **preactServerComponents** _(const)_ - `preactServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-preact/server-components/client`
+
+- **preactComponentClient** _(function)_ - `preactComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
+
+### `@nifrajs/web-preact/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("preact").VNode<import("preact").Attributes & { key: string; state: ComponentState; record: import("@nifrajs/web/server-co…`
+- **ServerComponentProps** _(interface)_ - `interface ServerComponentProps<Input, Props, View>`
 
 ## @nifrajs/web-react
 
@@ -6286,6 +6609,51 @@ _No named exports (side-effect entrypoint)._
 - **useSearchParams** _(function)_ - `useSearchParams: () => readonly [URLSearchParams, SetSearchParams]`
   The current query as a `URLSearchParams` (SSR-correct via the router context) plus a setter that navigates to the new query. Mirrors react-router's `useSearchParams` tuple.
 
+### `@nifrajs/web-react/server-components`
+
+- **ReactFlightRenderer** _(type)_ - `type ReactFlightRenderer = ( reference: string, props: unknown, context: ComponentRenderContext, ) => Promise<ReadableStream<Uint8Array>>`
+- **reactServerComponents** _(function)_ - `reactServerComponents: (renderFlight: ReactFlightRenderer) => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-react/server-components/client`
+
+- **reactComponentClient** _(function)_ - `reactComponentClient: () => ComponentClientAdapter`
+
+### `@nifrajs/web-react/server-components/guard`
+
+- **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined`
+- **guardedClientReference** _(function)_ - `guardedClientReference: (reference: unknown, schema: StandardSchemaV1, slots?: readonly string[]) => ComponentType<Record<string, unknown>>`
+  Called by generated facades. The actual native reference stays private to this module.
+- **guardedCloneElement** _(function)_ - `guardedCloneElement: (element: ReactElement, props?: unknown, ...children: ReactNode[]) => ReactNode`
+- **guardedCreateElement** _(function)_ - `guardedCreateElement: (type: unknown, props?: unknown, ...children: ReactNode[]) => ReactNode`
+
+### `@nifrajs/web-react/server-components/jsx-dev-runtime`
+
+- **Fragment** _(const)_ - `Fragment: ExoticComponent<FragmentProps>`
+  Lets you group elements without a wrapper node.
+- **jsxDEV** _(function)_ - `jsxDEV: (type: unknown, props: unknown, key: unknown, isStaticChildren: boolean, source?: { fileName: string; lineNumber: number; columnNumber: number; }, self?: unknown) => unknown`
+
+### `@nifrajs/web-react/server-components/jsx-runtime`
+
+- **Fragment** _(const)_ - `Fragment: ExoticComponent<FragmentProps>`
+  Lets you group elements without a wrapper node.
+- **jsx** _(function)_ - `jsx: (type: unknown, props: unknown, key?: unknown) => unknown`
+- **jsxs** _(function)_ - `jsxs: (type: unknown, props: unknown, key?: unknown) => unknown`
+
+### `@nifrajs/web-react/server-components/nested`
+
+- **NestedServerComponent** _(function)_ - `NestedServerComponent: ({ instance, html, }: { readonly instance: string; readonly html: string; }) => import("react").DOMElement<{ "data-nifra-component": string; dangerouslySetInnerHTML: { __html: string; }; }, Elemen…`
+  The outer Flight root preserves this host; the controller owns the complete nested range.
+
+### `@nifrajs/web-react/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("react").FunctionComponentElement<{ readonly state: ComponentState; readonly record: import("@nifrajs/web/server-component…`
+- **ServerComponentProps** _(interface)_ - `interface ServerComponentProps<Input, Props, View>`
+
+### `@nifrajs/web-react/server-components/rsc`
+
+- **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRenderContext) => Promise<ReadableStream<Uint8Array>>`
+  Export this renderer from the compiler's RSC entry, which owns React's server condition.
+
 ## @nifrajs/web-solid
 
 ### `@nifrajs/web-solid`
@@ -6397,6 +6765,18 @@ _No named exports (side-effect entrypoint)._
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read…
 
+### `@nifrajs/web-solid/server-components`
+
+- **solidServerComponents** _(const)_ - `solidServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-solid/server-components/client`
+
+- **solidComponentClient** _(function)_ - `solidComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
+
+### `@nifrajs/web-solid/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: { readonly state: ComponentState; readonly component: Handle<Input, Props, View>; readonly instanceKey: ComponentKey; readonly input: NoInfer<Input>; readonly parent?: string…`
+
 ### `@nifrajs/web-solid/svg`
 
 - **solidSvgComponentBunPlugin** _(function)_ - `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
@@ -6496,6 +6876,14 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
+
+### `@nifrajs/web-svelte/server-components`
+
+- **svelteServerComponents** _(const)_ - `svelteServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-svelte/server-components/client`
+
+- **svelteComponentClient** _(function)_ - `svelteComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
 
 ### `@nifrajs/web-svelte/svg`
 
@@ -6628,6 +7016,21 @@ _No named exports (side-effect entrypoint)._
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
   The route's typed, validated search params as a reactive ref - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value` …
 
+### `@nifrajs/web-vue/server-components`
+
+- **vueServerComponents** _(const)_ - `vueServerComponents: () => ServerComponentRenderAdapter`
+
+### `@nifrajs/web-vue/server-components/client`
+
+- **vueComponentClient** _(function)_ - `vueComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").ComponentClientAdapter`
+
+### `@nifrajs/web-vue/server-components/outlet`
+
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => VNode`
+- **ServerComponentProps** _(interface)_ - `interface ServerComponentProps<Input, Props, View>`
+- **createServerComponentOutlet** _(function)_ - `createServerComponentOutlet: <Input, Props, View>(component: Handle<Input, Props, View>) => FunctionalComponent<Omit<ServerComponentProps<Input, Props, View>, "component">>`
+  Specialize the schema before Vue's h/template component-prop inference.
+
 ### `@nifrajs/web-vue/svg`
 
 - **svgToVueSfc** _(function)_ - `svgToVueSfc: (xml: string) => string`
@@ -6670,6 +7073,8 @@ _No named exports (side-effect entrypoint)._
 - **ToolContractOptions** _(interface)_ - `interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **ToolError** _(interface)_ - `interface ToolError`
 - **ToolEvidence** _(interface)_ - `interface ToolEvidence`
+- **WebMcpExecuteContext** _(interface)_ - `interface WebMcpExecuteContext`
+  What a WebMCP host passes as `execute`'s second argument; its `signal` cancels the call.
 - **WebMcpExecutionOptions** _(interface)_ - `interface WebMcpExecutionOptions`
 - **WebMcpModelContext** _(interface)_ - `interface WebMcpModelContext`
 - **WebMcpReceipt** _(interface)_ - `interface WebMcpReceipt<Output = unknown>`
@@ -6757,7 +7162,7 @@ _No named exports (side-effect entrypoint)._
 - **AuthenticationFailure** _(interface)_ - `interface AuthenticationFailure`
 - **AuthenticationFailureReason** _(type)_ - `type AuthenticationFailureReason = "unauthenticated" | "forbidden" | "unavailable"`
 - **AuthenticationInput** _(interface)_ - `interface AuthenticationInput<Env = unknown>`
-  The authentication trust boundary. There is intentionally no `Request`, `body`, or parsed query here. Route parameters are present only for selecting an identity policy and remain untrusted strings until the normal route validation stage completes.
+  The authentication trust boundary. A stage runs before input validation, so everything here is untrusted: route parameters and the query select an identity policy or carry a credential, and stay unvalidated strings until the route's own validation completes.
 - **AuthenticationResult** _(type)_ - `type AuthenticationResult<Principal> = | AuthenticationSuccess<Principal> | AuthenticationFailure`
 - **AuthenticationStage** _(interface)_ - `interface AuthenticationStage<Principal = unknown, Env = unknown>`
   A dedicated authentication stage. Stages are captured by route scope at registration time and execute before input validation on required protected routes.
@@ -6770,6 +7175,8 @@ _No named exports (side-effect entrypoint)._
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **DeclaredMountRoute** _(interface)_ - `interface DeclaredMountRoute`
+  One route an opaque mount serves, as the app states it.
 - **DefinePluginResult** _(type)_ - `type DefinePluginResult<In extends AnyServer, Out extends AnyServer> = ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>`
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -6834,7 +7241,10 @@ _No named exports (side-effect entrypoint)._
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
-- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
+- **OnRequestResult** _(type)_ - `type OnRequestResult = Response | ResponseResult | Request | undefined`
+  What an `onRequest` hook returns: a reply (a `Response`, or a `status()`/`json()` result that takes the normal response path), a replacement `Request`, or `undefined` to continue.
+- **OpaqueMountDeclaration** _(interface)_ - `interface OpaqueMountDeclaration`
+  An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not analyzed: their capabilities are the mount's word, checked against the policy but never proven.
 - **Params** _(type)_ - `type Params<Path extends string>`
   The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
@@ -6924,7 +7334,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "4.0.2"`
+- **VERSION** _(const)_ - `VERSION: "5.0.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -6933,7 +7343,7 @@ _No named exports (side-effect entrypoint)._
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ - `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined, Extra = unknown>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
@@ -6952,12 +7362,16 @@ _No named exports (side-effect entrypoint)._
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
+- **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+  Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
+  Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
@@ -6989,3 +7403,5 @@ _No named exports (side-effect entrypoint)._
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
+  The response to write headers on for the request being answered: `response` itself, or a copy.

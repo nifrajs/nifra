@@ -63,6 +63,24 @@ describe("scanServerFnExports", () => {
         `export const a = serverFn({}, () => ({}))\n/* export const b = serverFn(`,
       ),
     ).toEqual(["a"])
+    expect(
+      scanServerFnExports("export const a = serverFn({}, () => ({}))\nconst open = `left open"),
+    ).toEqual(["a"])
+  })
+
+  test("comment markers inside a string do not hide a declaration", () => {
+    const source = [
+      `export const upload = serverFn({ accept: "image/*" }, async (input) => input)`,
+      `export const remove = serverFn({ path: '//x', note: \`a /* b\` }, async (input) => input)`,
+      "/** Rename one. */",
+      `export const rename = serverFn({ quote: "say \\"/*\\"" }, async (input) => input)`,
+      "// it's a comment, its apostrophe opens no string",
+      "export const last = serverFn({}, async (input) => input)",
+      "const apostrophe = /'/ // a stray quote outside a string misreads this line only",
+      "export const after = serverFn({}, async (input) => input)",
+      "// export const ghost = serverFn({}, async (input) => input)",
+    ].join("\n")
+    expect(scanServerFnExports(source)).toEqual(["upload", "remove", "rename", "last", "after"])
   })
 
   test("explicit type arguments are part of the declaration form", () => {

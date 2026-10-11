@@ -49,6 +49,7 @@ export {
   type AgentFailureMatrixCase,
   AgentFailureMatrixError,
   type AgentFailureMatrixKind,
+  type AgentFailureMatrixOptions,
   type AgentFailureMatrixReport,
   assertAgentEval,
   assertAgentEvalBaseline,

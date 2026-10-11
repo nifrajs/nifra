@@ -13,12 +13,12 @@ import ts from "typescript"
 import { runNodeOutcomeConformance } from "./node-outcome-conformance.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
-const OUTCOME_SOURCE = resolve(ROOT, "packages/core/src/server/node-outcome.ts")
-const OUTCOME_TARGET = resolve(ROOT, "packages/node/src/generated/node-outcome.ts")
-const MARKERS_SOURCE = resolve(ROOT, "packages/core/src/server/bridge-markers.ts")
-const MARKERS_TARGET = resolve(ROOT, "packages/node/src/generated/bridge-markers.ts")
-const TARGET_SOURCE = resolve(ROOT, "packages/core/src/server/request-target.ts")
-const TARGET_TARGET = resolve(ROOT, "packages/node/src/generated/request-target.ts")
+const OUTCOME_SOURCE = "packages/core/src/server/node-outcome.ts"
+const OUTCOME_TARGET = "packages/node/src/generated/node-outcome.ts"
+const MARKERS_SOURCE = "packages/core/src/server/bridge-markers.ts"
+const MARKERS_TARGET = "packages/node/src/generated/bridge-markers.ts"
+const TARGET_SOURCE = "packages/core/src/server/request-target.ts"
+const TARGET_TARGET = "packages/node/src/generated/request-target.ts"
 
 function parse(sourcePath: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -30,8 +30,8 @@ function parse(sourcePath: string): ts.SourceFile {
   )
 }
 
-export function generateNodeOutcomeContract(): string {
-  const source = parse(OUTCOME_SOURCE)
+export function generateNodeOutcomeContract(root: string = ROOT): string {
+  const source = parse(resolve(root, OUTCOME_SOURCE))
   const declaration = source.statements.find(
     (statement): statement is ts.TypeAliasDeclaration =>
       ts.isTypeAliasDeclaration(statement) && statement.name.text === "NodeServeOutcome",
@@ -52,8 +52,8 @@ export function generateNodeOutcomeContract(): string {
  * (the strings ARE the protocol), but still no runtime dependency on core: the literals are inlined at
  * generation time exactly as the outcome type is.
  */
-export function generateBridgeMarkers(): string {
-  const source = parse(MARKERS_SOURCE)
+export function generateBridgeMarkers(root: string = ROOT): string {
+  const source = parse(resolve(root, MARKERS_SOURCE))
   const declaration = source.statements.find(
     (statement): statement is ts.VariableStatement =>
       ts.isVariableStatement(statement) &&
@@ -78,8 +78,8 @@ export function generateBridgeMarkers(): string {
  * adapter resolves it with the exact function core applies to a raw `Request` URL. The module must
  * stay import-free for the copy to run without core.
  */
-export function generateRequestTarget(): string {
-  const source = parse(TARGET_SOURCE)
+export function generateRequestTarget(root: string = ROOT): string {
+  const source = parse(resolve(root, TARGET_SOURCE))
   if (source.statements.some((statement) => ts.isImportDeclaration(statement))) {
     throw new Error(`${TARGET_SOURCE} must not import anything - @nifrajs/node runs a copy of it`)
   }
@@ -91,25 +91,33 @@ export function generateRequestTarget(): string {
   ].join("\n")
 }
 
-const ARTIFACTS: readonly { readonly target: string; readonly render: () => string }[] = [
-  { target: OUTCOME_TARGET, render: generateNodeOutcomeContract },
-  { target: MARKERS_TARGET, render: generateBridgeMarkers },
-  { target: TARGET_TARGET, render: generateRequestTarget },
-]
+const ARTIFACTS: readonly { readonly target: string; readonly render: (root: string) => string }[] =
+  [
+    { target: OUTCOME_TARGET, render: generateNodeOutcomeContract },
+    { target: MARKERS_TARGET, render: generateBridgeMarkers },
+    { target: TARGET_TARGET, render: generateRequestTarget },
+  ]
+
+/** The generated files under `root` whose content differs from what this generator writes. */
+export function staleArtifacts(root: string = ROOT): string[] {
+  return ARTIFACTS.filter(({ target, render }) => {
+    const path = resolve(root, target)
+    return (existsSync(path) ? readFileSync(path, "utf8") : "") !== render(root)
+  }).map(({ target }) => target)
+}
 
 if (import.meta.main) {
   const check = process.argv.includes("--check")
-  for (const { target, render } of ARTIFACTS) {
-    const generated = render()
-    if (check) {
-      const current = existsSync(target) ? readFileSync(target, "utf8") : ""
-      if (current !== generated) {
-        console.error(`✗ ${target} is stale - run \`bun run gen:node-outcome\`.`)
-        process.exit(1)
-      }
-    } else {
-      mkdirSync(resolve(target, ".."), { recursive: true })
-      writeFileSync(target, generated)
+  if (check) {
+    const stale = staleArtifacts()
+    for (const target of stale)
+      console.error(`✗ ${target} is stale - run \`bun run gen:node-outcome\`.`)
+    if (stale.length > 0) process.exit(1)
+  } else {
+    for (const { target, render } of ARTIFACTS) {
+      const path = resolve(ROOT, target)
+      mkdirSync(resolve(path, ".."), { recursive: true })
+      writeFileSync(path, render(ROOT))
     }
   }
   if (check) {

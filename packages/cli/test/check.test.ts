@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: SQL scanner fixtures intentionally contain literal interpolation syntax.
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { existsSync, readFileSync } from "node:fs"
+import { mkdir, mkdtemp, realpath, rm, symlink, watch, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import ts from "typescript"
@@ -20,7 +21,9 @@ import {
   scanServerManifestDrift,
   scanServerOnlyImports,
   scanStaticRouteText,
+  scanStaticSocketText,
   scanStreamText,
+  scanUnresolvedRoutePaths,
   scanUntypedClient,
   stripComments,
   walkServerOnlyChain,
@@ -42,12 +45,29 @@ import {
 } from "../src/verification-plan.ts"
 import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
+test("the help and README say a contract lock makes check import backend/app.ts, --lints-only too", async () => {
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "--help"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [help, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+  expect(code).toBe(0)
+  expect(help.replace(/\s+/g, " ")).toContain(
+    "With a contracts.lock.json, both modes import backend/app.ts (running its top-level code)",
+  )
+  const readme = await Bun.file(join(import.meta.dir, "../README.md")).text()
+  expect(readme.replace(/\s+/g, " ")).toContain(
+    "`nifra check` (with `--lints-only` too) imports `backend/app.ts`, running its top-level code",
+  )
+})
+
 describe("release verification", () => {
   test("uses explicit gate IDs so default-plan edits cannot re-point the release plan", () => {
     expect(verificationPlanIds()).toEqual([
       "lint",
       "typecheck",
       "tests",
+      "server-components-contracts",
       "docs",
       "api-corpus",
       "cards-corpus",
@@ -67,6 +87,7 @@ describe("release verification", () => {
       "cli-isolation",
       "coverage",
       "corpus",
+      "sitemap",
       "docs",
       "public-boundary",
       "public-manifest",
@@ -85,6 +106,9 @@ describe("release verification", () => {
       "pipeline-parity",
       "leak-matrix",
       "verification-parity",
+      "server-components",
+      "server-components-performance",
+      "server-components-contracts",
       "changesets",
     ])
     const release = verificationPlan("release")
@@ -98,6 +122,7 @@ describe("release verification", () => {
     expect(release.find((gate) => gate.id === "tests")?.workflowRequired).toBe(true)
     expect(omittedVerificationGateIds()).toContain("core-performance")
     expect(omittedVerificationGateIds()).not.toContain("public-manifest")
+    expect(release.find((gate) => gate.id === "sitemap")?.workflowRequired).toBe(true)
   })
 
   test("reports omitted release gates for the default plan", async () => {
@@ -141,6 +166,7 @@ describe("release verification", () => {
         "lint",
         "typecheck",
         "tests",
+        "server-components-contracts",
         "docs",
         "api-corpus",
         "cards-corpus",
@@ -250,6 +276,7 @@ describe("release verification", () => {
         "middleware-performance",
         "output-guard-performance",
         "edge-startup",
+        "server-components-performance",
       ])
       expect(result.ok).toBe(true)
       expect(result.localGateIds).toEqual(local)
@@ -327,6 +354,26 @@ describe("scanFetchText - own-API fetch detection", () => {
     expect(scanFetchText("a.ts", src)).toEqual([])
   })
 
+  test("a nifra-expect NF-C002 comment rides on the finding, with its reason", () => {
+    const src = [
+      "// The chat stream is a POST that no typed client covers.",
+      "// nifra-expect NF-C002: streamed POST, read with a reader",
+      'const r = await fetch("/api/ai/chat/stream", { method: "POST" })',
+      'const s = await fetch("/logo.svg") // nifra-expect NF-C002: static file',
+      "// nifra-expect NF-C002",
+      'const u = await fetch("/users")',
+      "// nifra-expect NF-C002: separated by a blank line",
+      "",
+      'const v = await fetch("/users")',
+    ].join("\n")
+    expect(scanFetchText("a.ts", src).map((f) => [f.line, f.expected])).toEqual([
+      [3, { reason: "streamed POST, read with a reader" }],
+      [4, { reason: "static file" }],
+      [6, { reason: undefined }],
+      [9, undefined],
+    ])
+  })
+
   test("does NOT flag Nifra page-data fetches with a literal x-nifra-data header", () => {
     const src = [
       'const first = fetch("/", { headers: { "x-nifra-data": "1" } })',
@@ -382,6 +429,21 @@ describe("scanFetchText - own-API fetch detection", () => {
 })
 
 describe("scanStreamText - own-API EventSource/WebSocket detection", () => {
+  test("a nifra-expect NF-C002 comment rides on a stream finding too", () => {
+    const src = [
+      "// nifra-expect NF-C002: legacy feed, retired next release",
+      'const es = new EventSource("/feed")',
+    ].join("\n")
+    expect(scanStreamText("a.ts", src)).toEqual([
+      {
+        file: "a.ts",
+        line: 2,
+        snippet: 'const es = new EventSource("/feed")',
+        expected: { reason: "legacy feed, retired next release" },
+      },
+    ])
+  })
+
   test("flags relative-path constructions, with accurate line numbers", () => {
     const src = [
       "const a = 1",
@@ -533,6 +595,105 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
   })
 })
 
+describe("scanStaticRouteText - constant paths", () => {
+  const backend = (lines: readonly string[]) =>
+    ['import { server } from "@nifrajs/core"', ...lines].join("\n")
+  const shown = (routes: readonly { method: string; path: string }[]) =>
+    routes.map((route) => `${route.method} ${route.path}`)
+
+  test("resolves a module-level const, with or without as const, and a plain template", () => {
+    const src = backend([
+      'const USERS = "/users"',
+      "export const ORDERS = '/orders' as const",
+      "const HEALTH: string = `/health`;",
+      "export const backend = server()",
+      "  .get(USERS, () => [])",
+      "  .post(ORDERS, { body }, (c) => c.body)",
+      "  .get(HEALTH, () => 'ok')",
+    ])
+    const routes = scanStaticRouteText("backend.ts", src)
+    expect(shown(routes)).toEqual(["GET /users", "POST /orders", "GET /health"])
+    expect(routes[0]).toMatchObject({ line: 6, snippet: ".get(USERS, () => [])" })
+    expect(scanStaticRouteText("backend.ts", src, createSourceFacts(ts))).toEqual(routes)
+  })
+
+  test("resolves a constant imported from another project file", () => {
+    const project = new Map([
+      [
+        "backend/paths.ts",
+        'export const USERS = "/users"\nexport const ITEM = "/items/:id" as const\n',
+      ],
+    ])
+    const src = backend([
+      'import { USERS, ITEM as ONE } from "./paths.ts"',
+      "export const backend = server()",
+      "  .get(USERS, list)",
+      "  .get(ONE, show)",
+    ])
+    expect(shown(scanStaticRouteText("backend/app.ts", src, undefined, project))).toEqual([
+      "GET /users",
+      "GET /items/:id",
+    ])
+    const extensionless = src.replace('"./paths.ts"', '"./paths"')
+    expect(shown(scanStaticRouteText("backend/app.ts", extensionless, undefined, project))).toEqual(
+      ["GET /users", "GET /items/:id"],
+    )
+  })
+
+  test("a local const shadowing nothing, a function argument or a Map lookup is not a route", () => {
+    const src = backend([
+      "function routes(path) {",
+      '  const LOCAL = "/local"',
+      "  return server().get(LOCAL, handler).get(path, handler)",
+      "}",
+      "const cached = cache.get(key)",
+      "const value = settings.get(name, fallback)",
+    ])
+    expect(scanStaticRouteText("backend.ts", src)).toEqual([])
+    expect(scanUnresolvedRoutePaths("backend.ts", src)).toEqual([])
+  })
+
+  test("names an interpolated template and a constant that is not a literal", () => {
+    const project = new Map([["backend/config.ts", "export const BASE = process.env.BASE\n"]])
+    const src = backend([
+      'import { BASE } from "./config.ts"',
+      'const PREFIX = BASE + "/v1"',
+      "export const backend = server()",
+      "  .get(`${PREFIX}/users`, list)",
+      "  .get(PREFIX, root)",
+      "  .delete(BASE, remove)",
+    ])
+    expect(scanStaticRouteText("backend/app.ts", src, undefined, project)).toEqual([])
+    expect(
+      scanUnresolvedRoutePaths("backend/app.ts", src, project).map(
+        (finding) => `${finding.line} ${finding.method} ${finding.expression}`,
+      ),
+    ).toEqual(["5 GET `${PREFIX}/users`", "6 GET PREFIX", "7 DELETE BASE"])
+  })
+
+  test("a socket path given as a constant is a WS route, and an interpolated one is named", () => {
+    const project = new Map([["backend/paths.ts", 'export const CHAT = "/chat"\n']])
+    const src = backend([
+      'import { CHAT } from "./paths.ts"',
+      'const LIVE = "/live" as const',
+      "export const backend = server()",
+      "  .ws(CHAT, chat)",
+      "  .ws(LIVE, live)",
+      "  .ws(`/rooms/${ROOM}`, room)",
+    ])
+    expect(shown(scanStaticSocketText("backend/app.ts", src, undefined, project))).toEqual([
+      "WS /chat",
+      "WS /live",
+    ])
+    expect(scanStaticRouteText("backend/app.ts", src, undefined, project)).toEqual([])
+    expect(
+      scanUnresolvedRoutePaths("backend/app.ts", src, project).map(
+        (finding) => `${finding.line} ${finding.method} ${finding.expression}`,
+      ),
+    ).toEqual(["7 WS `/rooms/${ROOM}`"])
+  })
+})
+
 describe("scanServerOnlyImports - server-only imports in route modules", () => {
   test("flags DB drivers, node:/bun: builtins, and the ./db module in a routes/ file", () => {
     const flag = (src: string) => scanServerOnlyImports("routes/notes.tsx", src)
@@ -646,6 +807,35 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     expect(importDiag?.message).toContain('server-only "../db"')
     // The fix references the exact specifier so an agent acts without re-reading the source.
     expect(importDiag?.suggestion?.steps?.join("\n")).toContain('"../db"')
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a reasoned nifra-expect NF-C002 keeps the fetch as info; one without a reason still fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(
+      join(dir, "routes", "chat.tsx"),
+      [
+        "// nifra-expect NF-C002: better-auth owns this path",
+        'export const a = () => fetch("/auth/session")',
+      ].join("\n"),
+    )
+    const expected = await collectCheckResult(dir)
+    const info = expected.diagnostics.find((d) => d.rule === "typed-client")
+    expect(expected.ok).toBe(true)
+    expect(info?.severity).toBe("info")
+    expect(info?.message).toContain("own-API fetch is expected here")
+    expect(info?.evidence).toEqual(["nifra-expect NF-C002: better-auth owns this path"])
+
+    await writeFile(
+      join(dir, "routes", "chat.tsx"),
+      ["// nifra-expect NF-C002", 'export const a = () => fetch("/auth/session")'].join("\n"),
+    )
+    const unreasoned = await collectCheckResult(dir)
+    const error = unreasoned.diagnostics.find((d) => d.rule === "typed-client")
+    expect(unreasoned.ok).toBe(false)
+    expect(error?.severity).toBe("error")
+    expect(error?.message).toContain("gives no reason after its colon")
     await rm(dir, { recursive: true, force: true })
   })
 
@@ -787,6 +977,59 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
         expect(copy.absolutePath !== undefined && isAbsolute(copy.absolutePath)).toBe(true)
         expect(copy.importers.length).toBeGreaterThan(0)
       }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("duplicate-install reports packages duplicated the same way as one finding with one fix", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-dup-group-"))
+    const names = ["@nifrajs/client", "@nifrajs/core", "@nifrajs/web"]
+    try {
+      const app = join(dir, "packages", "app")
+      const dependencies = Object.fromEntries(names.map((name) => [name, "1.12.0"]))
+      await mkdir(join(app, "src"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies,
+        }),
+      )
+      await writeFile(join(app, "package.json"), JSON.stringify({ name: "app", dependencies }))
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      for (const copy of [dir, app]) {
+        for (const name of names) {
+          await mkdir(join(copy, "node_modules", name), { recursive: true })
+          await writeFile(
+            join(copy, "node_modules", name, "package.json"),
+            JSON.stringify({ name, version: "1.12.0" }),
+          )
+        }
+      }
+
+      const result = await collectCheckResult(dir, { lintsOnly: true })
+      const diagnostics = result.diagnostics.filter((d) => d.rule === "duplicate-install")
+      expect(diagnostics).toHaveLength(1)
+      const [diagnostic] = diagnostics
+      expect(diagnostic?.severity).toBe("error")
+      expect(diagnostic?.message).toContain(
+        "3 packages share one identity preflight finding, duplicate-path - @nifrajs/client, @nifrajs/core, @nifrajs/web are each loaded from more than one physical path",
+      )
+      expect(diagnostic?.message).toContain("Topology: 2 paths under 2 install roots")
+      expect(diagnostic?.fix).toContain(
+        '"nifra": { "singleCopy": ["@nifrajs/client", "@nifrajs/core", "@nifrajs/web"] }',
+      )
+      expect(diagnostic?.suggestion?.diff).toContain(
+        '"nifra": { "singleCopy": ["@nifrajs/client", "@nifrajs/core", "@nifrajs/web"] }',
+      )
+      const steps = diagnostic?.suggestion?.steps ?? []
+      expect(steps.filter((step) => step.startsWith("Copy: "))).toHaveLength(6)
+      expect(steps.filter((step) => step.startsWith("Fix 1"))).toHaveLength(1)
+      // --json consumers still get one entry per package.
+      expect(result.identityPreflight?.duplicates.map((finding) => finding.package)).toEqual(names)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -1031,6 +1274,21 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
         "  // nifra-expect raw-response",
         '  .get("/redirect", () => new Response(null, { status: 302 }))', // pragma on the line above
         '  .get("/real", () => new Response("y"))', // no pragma → still flagged
+      ].join("\n"),
+    )
+    const found = scanResponseRoutes("backend.ts", src)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.snippet).toContain('"/real"')
+  })
+
+  test("the NF-C007 code form counts anywhere in the comment block above the return", () => {
+    const src = backend(
+      [
+        "",
+        "  // nifra-expect NF-C007: the download is served as bytes",
+        "  // and the typed client never calls it.",
+        '  .get("/file", () => new Response("x"))',
+        '  .get("/real", () => new Response("y"))',
       ].join("\n"),
     )
     const found = scanResponseRoutes("backend.ts", src)
@@ -1387,6 +1645,25 @@ describe("walkServerOnlyChain - bounded transitive walk over a fake module graph
     expect(chain).toEqual(["/app/routes/m.tsx", "../secrets.ts"])
   })
 
+  test("the marker counts only as code: a mention in a comment or a string marks nothing", () => {
+    const mention =
+      '// opt in with: import "@nifrajs/web/backend-only"\n' +
+      'export const hint = `import "@nifrajs/web/backend-only"`\nexport const fmt = 1'
+    const routes: Record<string, string> = {
+      "/app/routes/m.tsx": 'import { fmt } from "../shared/fmt.ts"\nexport default () => fmt',
+      "/app/routes/n.tsx": 'import { fmt } from "../shared/re.ts"\nexport default () => fmt',
+    }
+    const g: Record<string, string> = {
+      ...routes,
+      "/app/shared/re.ts": 'export { fmt } from "./fmt.ts"\nimport "./fmt.ts"',
+      "/app/shared/fmt.ts": mention,
+    }
+    const read = (abs: string) => g[abs]
+    for (const [route, content] of Object.entries(routes)) {
+      expect(walkServerOnlyChain(route, content, resolve, read)).toBeUndefined()
+    }
+  })
+
   test("is cycle-safe (a → b → a) - never loops, returns undefined for no sink", () => {
     const g: Record<string, string> = {
       "/app/routes/c.tsx": 'import { a } from "../a.ts"\nexport default () => a',
@@ -1674,6 +1951,120 @@ describe("scanInterpolatedSql", () => {
       expect(scanInterpolatedSql("a.ts", byRequest, ts)).toHaveLength(1)
     })
 
+    test("a function-local const of literals or a literal ternary is static text", () => {
+      const src = [
+        "function list(desc: boolean, limit: number) {",
+        '  const dir = desc ? "DESC" : "ASC"',
+        '  const cols = "id, email"',
+        "  return db.query(`SELECT ${cols} FROM users ORDER BY id ${dir} LIMIT $1`, [limit])",
+        "}",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("join over an array that provably holds its literals is static text", () => {
+      const sources = [
+        // A module array that is only ever read.
+        ['const COLS = ["id", "email"]', 'db.query(`SELECT ${COLS.join(", ")} FROM users`)'],
+        // A frozen array, exported or not.
+        [
+          'export const COLS = Object.freeze(["id", "email"])',
+          "db.query(`SELECT ${COLS.join()} FROM users`)",
+        ],
+        // A function-local array, and an inline literal.
+        [
+          "function list() {",
+          '  const cols = ["id", "email"]',
+          '  if (cols.includes("id") && cols.length > 0) return db.query(`SELECT ${cols.join(", ")} FROM t`)',
+          '  return db.query(`SELECT ${["a", "b"].join(", ")} FROM t`)',
+          "}",
+        ],
+      ]
+      for (const lines of sources) {
+        expect([lines[0], scanInterpolatedSql("a.ts", lines.join("\n"), ts).length]).toEqual([
+          lines[0],
+          0,
+        ])
+      }
+    })
+
+    test("every form that could carry other text still flags", () => {
+      const sources = [
+        // A reassigned `let`, and a parameter.
+        ['let cols = "id"', 'cols = "x"', "db.query(`SELECT ${cols} FROM t`)"],
+        [
+          "function run(cols: string[]) {",
+          "  return db.query(`SELECT ${cols.join()} FROM t`)",
+          "}",
+        ],
+        // An array that is pushed to, passed to a call, or exported unfrozen.
+        ['const COLS = ["id"]', "COLS.push(input)", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        ['const COLS = ["id"]', "mutate(COLS)", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        ['export const COLS = ["id"]', "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        [
+          'const COLS = ["id"] as const',
+          "export { COLS }",
+          "db.query(`SELECT ${COLS.join()} FROM t`)",
+        ],
+        ['const COLS = ["id"]', "COLS.length = 0", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        // A shadowed name: the nearer binding is a parameter.
+        [
+          'const COLS = ["id"]',
+          "function run(COLS: string[]) {",
+          "  return db.query(`SELECT ${COLS.join()} FROM t`)",
+          "}",
+        ],
+        // A template with a call inside, a computed separator, a spread, and a local `let`.
+        [
+          "function run() {",
+          "  const cols = `${pick()}`",
+          "  return db.query(`SELECT ${cols} FROM t`)",
+          "}",
+        ],
+        ['const COLS = ["id"]', "db.query(`SELECT ${COLS.join(sep)} FROM t`)"],
+        ['const COLS = ["id", ...more]', "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        [
+          "function run() {",
+          '  let cols = "id"',
+          "  return db.query(`SELECT ${cols} FROM t`)",
+          "}",
+        ],
+        // A frozen array whose element is not static, and Object shadowed.
+        ["const COLS = Object.freeze([input])", "db.query(`SELECT ${COLS.join()} FROM t`)"],
+        [
+          "function run(Object: { freeze: (x: unknown) => unknown }) {",
+          '  const COLS = Object.freeze(["id"])',
+          "  return db.query(`SELECT ${COLS.join()} FROM t`)",
+          "}",
+        ],
+      ]
+      for (const lines of sources) {
+        const found = scanInterpolatedSql("a.ts", lines.join("\n"), ts).length
+        expect([lines.join(" | "), found]).toEqual([lines.join(" | "), 1])
+      }
+    })
+
+    test("an imported array is static only when frozen", () => {
+      const modules: Record<string, string> = {
+        "/p/frozen.ts": 'export const COLS = Object.freeze(["id", "email"])',
+        "/p/plain.ts": 'export const COLS = ["id", "email"]',
+      }
+      const imports = createSqlImports((_from, specifier) => {
+        const id = `/p/${specifier.replace("./", "")}`
+        const content = modules[id]
+        return content === undefined ? undefined : { id, content }
+      })
+      const scanWith = (from: string) =>
+        scanInterpolatedSql(
+          "/p/a.ts",
+          [`import { COLS } from "${from}"`, "db.query(`SELECT ${COLS.join()} FROM t`)"].join("\n"),
+          ts,
+          imports,
+        ).length
+      expect(scanWith("./frozen.ts")).toBe(0)
+      expect(scanWith("./plain.ts")).toBe(1)
+    })
+
     test("a shadowed name still flags - the module const is not what is read", () => {
       const src = [
         'const COLS = "id, name"',
@@ -1745,9 +2136,37 @@ describe("scanInterpolatedSql", () => {
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
 
-    test("a reassigned `let` does not resolve - left unflagged, not a false laundering channel", () => {
-      const src = ["let q = `SELECT ${x} FROM t`", "q = whatever", "db.query(q)"].join("\n")
-      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    test("a reassigned `let` is read through every value it may hold", () => {
+      const scan = (lines: string[]): number =>
+        scanInterpolatedSql("a.ts", lines.join("\n"), ts).length
+      expect(scan(["let q = `SELECT ${x} FROM t`", "q = whatever", "db.query(q)"])).toBe(1)
+      expect(scan(['let q = ""', "q = `SELECT * FROM t WHERE id = ${id}`", "db.query(q)"])).toBe(1)
+      expect(scan(["let q", "q = `SELECT * FROM t WHERE id = ${id}`", "db.query(q)"])).toBe(1)
+      expect(
+        scan(["var q = `SELECT * FROM t WHERE id = ${id}`", "q = q.trim()", "db.query(q)"]),
+      ).toBe(1)
+      // Every value static, or the dynamic one is not SQL text: nothing to flag.
+      expect(
+        scan(['let q = "SELECT 1 FROM t"', 'if (c) q = "SELECT 2 FROM t"', "db.query(q)"]),
+      ).toBe(0)
+      expect(scan(['let q = "SELECT 1 FROM t"', "q = statement", "db.query(q)"])).toBe(0)
+    })
+
+    test("a statement built up in steps flags at the call that sends it", () => {
+      const builder = (step: string): string =>
+        [
+          "export function find(db: any, name: string, age: number) {",
+          '  let q = "SELECT * FROM users WHERE 1=1"',
+          `  if (name) ${step}`,
+          "  return db.query(q)",
+          "}",
+        ].join("\n")
+      const scan = (src: string): number => scanInterpolatedSql("a.ts", src, ts).length
+      expect(scan(builder("q += ` AND name = '${name}'`"))).toBe(1)
+      expect(scan(builder('q = q + " AND name = \'" + name + "\'"'))).toBe(1)
+      expect(scan(builder("q = `${q} AND name = '${name}'`"))).toBe(1)
+      expect(scan(builder('q += " AND name = $1"'))).toBe(0)
+      expect(scan(builder("q += ` AND age > ${Number(age)}`"))).toBe(1)
     })
 
     test("transitive: q = a, a = dynamic template - flags", () => {
@@ -1809,12 +2228,13 @@ describe("scanInterpolatedSql", () => {
   })
 
   describe("sql-dynamic pragma - a reason-carrying opt-out for bound-but-dynamic SQL", () => {
+    // `city.slot` is a number only by the author's word: nothing the scan reads proves it.
     const genPlaceholders = [
-      "const rows = cities.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')",
+      "const rows = cities.map((city) => `($${city.slot}, $${city.slot + 1})`).join(', ')",
       "const q = `INSERT INTO cities (name, country) VALUES ${rows}`",
     ]
 
-    test("generated-placeholder batch insert flags without the pragma", () => {
+    test("placeholders the scan cannot prove numeric flag without the pragma", () => {
       const src = [...genPlaceholders, "db.query(q, params)"].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
@@ -1826,6 +2246,20 @@ describe("scanInterpolatedSql", () => {
         "db.query(q, params)",
       ].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("the NF-C006 code form with a reason silences it; without one it does not", () => {
+      const at = (comment: string) =>
+        scanInterpolatedSql(
+          "a.ts",
+          [...genPlaceholders, comment, "db.query(q, params)"].join("\n"),
+          ts,
+        )
+      expect(at("// nifra-expect NF-C006: placeholders are generated, values bound")).toHaveLength(
+        0,
+      )
+      expect(at("// nifra-expect NF-C006")).toHaveLength(1)
+      expect(at("// nifra-expect NF-C007: names another finding")).toHaveLength(1)
     })
 
     test("a trailing pragma with a reason silences it", () => {
@@ -1859,6 +2293,121 @@ describe("scanInterpolatedSql", () => {
       ].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
     })
+
+    test("a silenced site stays in the check report as info, with the comment's reason", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+      try {
+        await mkdir(join(dir, "backend"), { recursive: true })
+        await writeFile(
+          join(dir, "package.json"),
+          JSON.stringify({ name: "app", private: true, nifra: { kind: "api" } }),
+        )
+        await writeFile(
+          join(dir, "backend", "q.ts"),
+          [
+            "export async function f(db: any, id: string) {",
+            "  // nifra-expect NF-C006: id is checked against an allowlist",
+            "  return db.query(`SELECT * FROM users WHERE id = ${id}`)",
+            "}",
+            "export function g(token: string, secret: string) {",
+            "  // nifra-expect NF-S002: both values are public",
+            "  return token === secret",
+            "}",
+          ].join("\n"),
+        )
+        const result = await collectCheckResult(dir, { lintsOnly: true })
+        const silenced = result.diagnostics
+          .filter((d) => d.rule === "interpolated-sql" || d.rule === "NF-S002")
+          .map(({ rule, severity, line, evidence }) => ({ rule, severity, line, evidence }))
+        expect(silenced).toEqual([
+          {
+            rule: "interpolated-sql",
+            severity: "info",
+            line: 3,
+            evidence: ["nifra-expect NF-C006: id is checked against an allowlist"],
+          },
+          {
+            rule: "NF-S002",
+            severity: "info",
+            line: 7,
+            evidence: ["token", "nifra-expect NF-S002: both values are public"],
+          },
+        ])
+        expect(result.ok).toBe(true)
+        const report = renderCheckReport(result)
+        expect(report).toContain(
+          "• SQL built by interpolating a value into the statement: 1 (info)",
+        )
+        expect(report).toContain("• Non-constant-time secret comparison (NF-S002): 1 (info)")
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe("placeholder numbers - `$${n}` where n is provably a number", () => {
+    const query = (body: string): string =>
+      `export async function f(db: any, rows: any[], ids: string[], n: number, x: string) {\n${body}\n}`
+    const clean: Record<string, string> = {
+      "batch VALUES from the map index": [
+        "const values = rows.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')",
+        "return db.query(`INSERT INTO t (a, b) VALUES ${values}`, rows.flat())",
+      ].join("\n"),
+      "IN list from the map index":
+        "return db.query(`SELECT * FROM t WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids)",
+      "Array.from with a length":
+        "return db.query(`SELECT * FROM t WHERE id IN (${Array.from({ length: n }, (_, i) => `$${i + 1}`).join(',')})`)",
+      "a WHERE builder numbered by params.push": [
+        "const params: unknown[] = []",
+        "const where: string[] = []",
+        "if (x) where.push(`name = $${params.push(x)}`)",
+        "return db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`, params)",
+      ].join("\n"),
+      "the length of a local array": [
+        "const params: unknown[] = [x]",
+        "return db.query(`SELECT * FROM t WHERE a = $1 AND b = $${params.length + 1}`, [...params, x])",
+      ].join("\n"),
+      "a for counter":
+        "for (let i = 1; i <= 3; i++) db.query(`SELECT * FROM t WHERE a = $${i}`, [i])",
+      "a map to fixed text":
+        "return db.query(`SELECT * FROM t WHERE id IN (${ids.map(() => '?').join(', ')})`, ids)",
+    }
+    const flagged: Record<string, string> = {
+      "a parameter, whatever its annotation": "return db.query(`SELECT * FROM t WHERE id = $${n}`)",
+      "a string concatenated with a number":
+        "return db.query(`SELECT * FROM t WHERE id = $${x + n}`)",
+      "an element's field":
+        "return db.query(`INSERT INTO t VALUES ${rows.map((r) => `('${r.name}')`).join(',')}`)",
+      "the element itself after a $": "return db.query(`SELECT $${rows.map((r) => r).join(',')}`)",
+      "filter, which keeps the elements":
+        "return db.query(`SELECT * FROM t WHERE id IN (${ids.filter((_, i) => `$${i}`).join(',')})`)",
+      "a reassigned index":
+        "return db.query(`SELECT ${ids.map((_, i) => { i = x as any; return `$${i}` }).join(',')}`)",
+      "a nearer binding over the index":
+        "return db.query(`SELECT ${ids.map((_, i) => { { const i = x; return `$${i}` } }).join(',')}`)",
+      "the length of a parameter":
+        "return db.query(`SELECT * FROM t WHERE a = $${(x as any).length}`)",
+      "a counter assigned a string":
+        "for (let i = 0; i < 2; i++) { i = x as any; db.query(`SELECT * FROM t WHERE a = $${i}`) }",
+      "a shadowed Number":
+        "const Number = (v: string) => v\nreturn db.query(`SELECT * FROM t WHERE a = $${Number(x)}`)",
+      "a builder that pushes caller text":
+        "const where: string[] = []\nwhere.push(`${x} = 1`)\nreturn db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`)",
+      "a builder that pushes a spread":
+        "const where: string[] = []\nwhere.push(...ids)\nreturn db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`)",
+      "a builder handed to other code":
+        "const where: string[] = ['a = 1']\nrows.push(where)\nreturn db.query(`SELECT * FROM t WHERE ${where.join(' AND ')}`)",
+    }
+    for (const [name, body] of Object.entries(clean)) {
+      test(`clean: ${name}`, () => {
+        expect(scanInterpolatedSql("a.ts", query(body), ts)).toEqual([])
+      })
+    }
+    for (const [name, body] of Object.entries(flagged)) {
+      test(`flags: ${name}`, () => {
+        expect(scanInterpolatedSql("a.ts", query(body), ts)).toHaveLength(1)
+      })
+    }
   })
 
   /**
@@ -2229,17 +2778,75 @@ describe("scanInterpolatedSql", () => {
 
   test("trust is by NAME, which is the documented limit of a scanner with no type checker", () => {
     // Worth pinning rather than leaving implied. `sql` is trusted because postgres.js, drizzle,
-    // slonik and Bun's driver all call theirs that, and nothing here can prove a given `sql` binds
-    // anything. So a no-op with the name passes: this rule catches mistakes, not an adversary who
-    // has read it. Deciding otherwise needs a type checker, which is a different tool.
-    expect(
-      scan("const sql = (s) => s.raw.join('')\ndb.query(sql`SELECT * FROM t WHERE id = ${x}`)"),
-    ).toBe(0)
+    // slonik and Bun's driver all call theirs that, and nothing here can prove an imported `sql`
+    // binds anything: this rule catches mistakes, not an adversary who has read it. A `sql` the same
+    // file defines as a function is visibly not a driver, so it is read as plain interpolation.
+    const statement = "db.query(sql`SELECT * FROM t WHERE id = ${x}`)"
+    expect(scan(`import { sql } from "./tag"\n${statement}`)).toBe(0)
+    expect(scan(`const sql = postgres(url)\n${statement}`)).toBe(0)
+    expect(scan(`function run(sql) {\n  return ${statement}\n}`)).toBe(0)
+    expect(scan(`const sql = (s) => s.raw.join('')\n${statement}`)).toBe(1)
+    expect(scan(`function sql(s) { return s.raw.join('') }\n${statement}`)).toBe(1)
   })
 
   test("stays silent on a parameterised statement", () => {
     expect(scan('db.query("SELECT * FROM users WHERE id = ?").get(id)')).toBe(0)
     expect(scan("db.query(`SELECT * FROM users WHERE id = $1`, [id])")).toBe(0)
+  })
+
+  test("every way a call can send a statement is read", () => {
+    const tpl = "`SELECT * FROM users WHERE id = ${id}`"
+    expect(scan(`db.query({ text: ${tpl}, values: [] })`)).toBe(1)
+    expect(scan(`conn.execute({ sql: ${tpl} })`)).toBe(1)
+    expect(scan(`const text = ${tpl}\ndb.query({ text })`)).toBe(1)
+    expect(scan(`db.query({ name: "find", values: [${tpl}] })`)).toBe(0)
+    expect(scan(`db[\`query\`](${tpl})`)).toBe(1)
+    expect(scan(`const { query } = db\nquery(${tpl})`)).toBe(1)
+    expect(scan(`db.query(${tpl} as string)`)).toBe(1)
+    expect(scan(`db.query(String(${tpl}))`)).toBe(1)
+    expect(scan(`db.query(${tpl}.trim())`)).toBe(1)
+    expect(scan('db.execute(["SELECT * FROM users WHERE id = ", id].join(""))')).toBe(1)
+    expect(scan('db.execute("SELECT * FROM users WHERE id = ".concat(id))')).toBe(1)
+    expect(scan('db.execute(["SELECT", "id", "FROM users"].join(" "))')).toBe(0)
+  })
+
+  test("node-sqlite3 and pg-promise calls are sinks when their text starts a statement", () => {
+    const tpl = "`SELECT * FROM users WHERE id = ${id}`"
+    for (const method of ["all", "get", "each", "any", "one", "oneOrNone", "many", "none"])
+      expect([method, scan(`db.${method}(${tpl})`)]).toEqual([method, 1])
+    expect(scan(`pool.manyOrNone(${tpl})`)).toBe(1)
+    expect(scan("db.one(`SELECT * FROM t WHERE id = $1`, [id])")).toBe(0)
+    // Everyday names: a URL with a keyword in it is not a statement.
+    expect(scan("client.get(`/users/${id}/update`)")).toBe(0)
+    expect(scan('client.get("/users/" + id)')).toBe(0)
+    expect(scan("map.get(`select:${id}`)")).toBe(0)
+    expect(scan("exec(`npm update ${pkg}`)")).toBe(0)
+  })
+
+  test("a template that only glues values together is concatenation", () => {
+    expect(scan("db.query(`${where}`)")).toBe(1)
+    expect(scan("db.query(`${select} ${where}`)")).toBe(1)
+    expect(scan("cache.query(`${key}`)")).toBe(0)
+    expect(scan("db.query(statement)")).toBe(0)
+  })
+
+  test("a same-file function that sends its parameter as a statement is a sink", () => {
+    const helper = "async function run(db: any, q: string) {\n  return db.query(q)\n}\n"
+    expect(scan(`${helper}run(db, \`SELECT * FROM users WHERE id = \${id}\`)`)).toBe(1)
+    expect(scan(`${helper}run(db, "SELECT * FROM users WHERE id = $1")`)).toBe(0)
+    const arrow = "const one = (sql: string) => pool.query({ text: sql })\n"
+    expect(scan(`${arrow}one(\`DELETE FROM t WHERE id = \${id}\`)`)).toBe(1)
+    // The helper's own hatch call answers for the variable; its callers are judged as statements.
+    const hatch = "function raw(q: string) {\n  return sql.unsafe(q)\n}\n"
+    expect(scanInterpolatedSql("a.ts", `${hatch}raw(STATEMENT)`, ts)).toMatchObject([{ line: 2 }])
+  })
+
+  test("a marker inside a string the call passes does not silence it", () => {
+    const tpl = "`SELECT * FROM users WHERE id = ${id}`"
+    expect(scan(`db.query(${tpl}, ["nifra-expect NF-C006: reason"])`)).toBe(1)
+    expect(scan(`db.query(${tpl}, [\`nifra-expect NF-C006: \${reason}\`])`)).toBe(1)
+    expect(scan(`db.query(${tpl}) // nifra-expect NF-C006: id is an integer`)).toBe(0)
+    expect(scan(`/* nifra-expect NF-C006: id is an integer */ db.query(${tpl})`)).toBe(0)
   })
 
   test("stays silent on a call that is not SQL", () => {
@@ -2375,6 +2982,51 @@ describe("typecheck gate - project TypeScript resolution", () => {
     expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
     await rm(root, { recursive: true, force: true })
   })
+})
+
+describe("typecheck gate - cancel", () => {
+  test.skipIf(process.platform === "win32")(
+    "a cancel stops a compiler process the tsc entry started, so the check ends",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+      const marker = join(dir, "compiler.pid")
+      await mkdir(join(dir, "node_modules", "typescript", "bin"), { recursive: true })
+      await writeFile(join(dir, "tsconfig.json"), "{}")
+      // Like a TS 7 entry: the real compiler is another process, holding the gate's output pipes.
+      await writeFile(
+        join(dir, "node_modules", "typescript", "bin", "tsc"),
+        [
+          'const { spawn } = require("node:child_process")',
+          'const { writeFileSync } = require("node:fs")',
+          'const compiler = spawn("sleep", ["600"], { stdio: ["ignore", "inherit", "inherit"] })',
+          `writeFileSync(${JSON.stringify(marker)}, String(compiler.pid))`,
+          "setInterval(() => {}, 60_000)",
+          "",
+        ].join("\n"),
+      )
+      const controller = new AbortController()
+      const watcher = new AbortController()
+      const started = (async () => {
+        const events = watch(dir, { signal: watcher.signal })
+        if (existsSync(marker)) return
+        for await (const _event of events) if (existsSync(marker)) return
+      })()
+      const run = collectCheckResult(dir, { signal: controller.signal })
+      try {
+        await started
+        controller.abort()
+        const result = await run
+        expect(result.typecheck).toBe("fail")
+      } finally {
+        watcher.abort()
+        try {
+          process.kill(Number(readFileSync(marker, "utf8")), "SIGKILL")
+        } catch {}
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
 })
 
 describe("nifra.check.json rule overrides", () => {
@@ -2625,6 +3277,157 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("an undeclared package is one finding, and the app's zones setting gives it a side", async () => {
+    const files = {
+      "packages/loose/package.json": '{ "name": "@ws/loose" }',
+      "packages/loose/src/a.ts": "export const a = 1\n",
+      "packages/loose/src/b.ts": "export const b = 2\n",
+      "app/routes/index.tsx":
+        'import { a } from "../../packages/loose/src/a"\nexport default () => a\n',
+      "app/frontend/card.tsx":
+        'import { b } from "../../packages/loose/src/b"\nexport const Card = () => b\n',
+    }
+    const undeclared = await project(files)
+    const found = await findings(undeclared, "NF-C028")
+    expect(found).toHaveLength(1)
+    expect(found[0]).toContain('package "@ws/loose" is first-party code outside the app')
+    expect(found[0]).toContain('"packages": { "@ws/*": "backend" }')
+    const mapped = await project({
+      ...files,
+      "app/package.json": JSON.stringify({
+        nifra: { zones: { packages: { "@ws/*": "library" } } },
+      }),
+    })
+    expect(await findings(mapped, "NF-C028")).toEqual([])
+    await rm(undeclared, { recursive: true, force: true })
+    await rm(mapped, { recursive: true, force: true })
+  })
+
+  test("an invalid zones setting is one finding on the app's package.json", async () => {
+    const dir = await project({
+      "app/package.json": JSON.stringify({ nifra: { zones: { backend: "migrations" } } }),
+      "app/routes/index.tsx": "export default () => null\n",
+      "app/frontend/card.tsx": "export const Card = () => null\n",
+    })
+    const found = await findings(dir, "NF-C028")
+    expect(found).toHaveLength(1)
+    expect(found[0]).toStartWith("app/package.json:undefined [nifra]")
+    expect(found[0]).toContain('"backend" must be an array')
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("another framework's app beside a nifra app is not zoned; a nifra package still is", async () => {
+    const files = {
+      "web/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "~/*": ["./src/*"] } } }),
+      "web/src/routes/index.tsx":
+        'import { catalog } from "~/lib/catalog"\nimport { readFileSync } from "node:fs"\nexport default () => [catalog, readFileSync]\n',
+      "web/src/lib/catalog.ts": "export const catalog = []\n",
+    }
+    const serverOnly = async (dir: string) =>
+      (await collectCheckResult(dir, { lintsOnly: true })).diagnostics.filter(
+        (d) => d.rule === "server-only-import",
+      )
+    const other = await project({
+      ...files,
+      "web/package.json": JSON.stringify({ dependencies: { "solid-js": "^1.9.0" } }),
+    })
+    expect(await findings(other, "NF-C028")).toEqual([])
+    expect(await serverOnly(other)).toEqual([])
+    const nifra = await project({
+      ...files,
+      "web/package.json": JSON.stringify({ dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    })
+    expect(await findings(nifra, "NF-C028")).toEqual([
+      'web/src/routes/index.tsx:1 web/src/routes/index.tsx imports web/src/lib/catalog.ts: "lib/catalog.ts" is in no zone. Every file a build loads lives under routes/, frontend/, backend/ or shared/, or carries a .frontend/.backend/.shared suffix. If this project serves no pages, declare it in package.json: "nifra": { "kind": "api" }',
+    ])
+    expect(await serverOnly(nifra)).toHaveLength(1)
+    // A nifra config inside another package's tree is a nifra app of its own.
+    const nested = await project({
+      ...files,
+      "web/package.json": JSON.stringify({ dependencies: { "solid-js": "^1.9.0" } }),
+      "web/src/nifra.config.ts": 'export const clientModule = "@nifrajs/web-solid/client"\n',
+    })
+    expect(await findings(nested, "NF-C028")).toHaveLength(1)
+    // The checked root is a nifra project whatever its own package.json names.
+    const root = await project({
+      ...Object.fromEntries(Object.entries(files).map(([path, text]) => [path.slice(4), text])),
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.9.0" } }),
+    })
+    expect(await findings(root, "NF-C028")).toHaveLength(1)
+    for (const dir of [other, nifra, nested, root]) await rm(dir, { recursive: true, force: true })
+  })
+
+  test('"nifra": { "kind": "api" } takes an API-only project out of the zone checks', async () => {
+    const api = {
+      "src/routes/users.ts":
+        'import { db } from "../db"\nimport { readFileSync } from "node:fs"\nexport const users = () => [db, readFileSync]\n',
+      "src/db.ts": "export const db = 1\n",
+      "backend/app.ts":
+        'import { users } from "../src/routes/users"\nexport const backend = users\n',
+    }
+    const serverOnly = async (dir: string) =>
+      (await collectCheckResult(dir, { lintsOnly: true })).diagnostics.filter(
+        (d) => d.rule === "server-only-import",
+      )
+    // Undeclared, the same shape is zoned like a web app's, and each finding names the setting.
+    const undeclared = await project({
+      ...api,
+      "package.json": JSON.stringify({ dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    })
+    const zoneFindings = await findings(undeclared, "NF-C028")
+    expect(zoneFindings.length).toBeGreaterThan(0)
+    for (const found of zoneFindings) expect(found).toEndWith('"nifra": { "kind": "api" }')
+    const chains = await serverOnly(undeclared)
+    expect(chains.length).toBeGreaterThan(0)
+    for (const chain of chains) expect(chain.message).toEndWith('"nifra": { "kind": "api" }')
+    const declared = await project({
+      ...api,
+      "package.json": JSON.stringify({
+        nifra: { kind: "api" },
+        dependencies: { "@nifrajs/core": "^5.0.0" },
+      }),
+    })
+    expect(await findings(declared, "NF-C028")).toEqual([])
+    expect(await serverOnly(declared)).toEqual([])
+    expect(await findings(declared, "NF-C037")).toEqual([])
+    for (const dir of [undeclared, declared]) await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a web app keeps its zone checks under an API-only declaration, and NF-C037 names the clash", async () => {
+    const web = {
+      "web/routes/index.tsx": 'import { util } from "../lib/util"\nexport default () => util\n',
+      "web/lib/util.ts": "export const util = 1\n",
+    }
+    // Under the API root's package.json: the clash is an error, and the web app is still zoned.
+    const nested = await project({
+      ...web,
+      "package.json": JSON.stringify({ nifra: { kind: "api" } }),
+      "web/backend/framework.ts": "export const adapter = {}\n",
+    })
+    expect(await findings(nested, "NF-C037")).toEqual([
+      'package.json:undefined "nifra": { "kind": "api" } in package.json governs web/, which has web config (web/backend/framework.ts). An app that serves pages keeps its zone checks; remove "kind", or give the web app its own package.json',
+    ])
+    expect(await findings(nested, "NF-C028")).toHaveLength(1)
+    // With its own package.json, the web app is a project of its own: checked, and no clash.
+    const own = await project({
+      ...web,
+      "package.json": JSON.stringify({ nifra: { kind: "api" } }),
+      "web/package.json": JSON.stringify({ dependencies: { "@nifrajs/web": "^5.0.0" } }),
+      "web/nifra.config.ts": 'export const adapter = {}\nexport const clientModule = "x"\n',
+    })
+    expect(await findings(own, "NF-C037")).toEqual([])
+    expect(await findings(own, "NF-C028")).toHaveLength(1)
+    // Only "api" and "web" are values.
+    const invalid = await project({
+      ...web,
+      "package.json": JSON.stringify({ nifra: { kind: "server" } }),
+    })
+    expect(await findings(invalid, "NF-C028")).toEqual([
+      'package.json:undefined [nifra] package.json "nifra.kind" must be "api" or "web", not "server"',
+    ])
+    for (const dir of [nested, own, invalid]) await rm(dir, { recursive: true, force: true })
+  })
+
   test("browser code reading a private variable, under the app's declared prefix", async () => {
     const dir = await project({
       "backend/framework.ts": 'export const publicEnvPrefix = "APP_PUBLIC_"\n',
@@ -2681,9 +3484,88 @@ describe("data guard from source (NF-C030, NF-C031)", () => {
       ].join("\n"),
     })
     expect(await findings(dir, "NF-C030")).toEqual([
-      "routes/a.backend.ts:1 warning",
-      "routes/a.backend.ts:4 warning",
+      "routes/a.backend.ts:1 error",
+      "routes/a.backend.ts:4 error",
     ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an error only when the function's own body returns a data literal", async () => {
+    const cases: Record<string, string> = {
+      // Proven: the runtime refuses every one of these without a schema.
+      object: "export const loader = async () => ({ items: [] })",
+      array:
+        'export async function loader() {\n  if (Date.now() < 0) return redirect("/")\n  return [1, 2]\n}',
+      text: "export const loader = () => 'text'",
+      template: "export const loader = (n: number) => `n=${n}`",
+      number: "export const loader = () => -42",
+      boolean: "export const action = async () => {\n  return true\n}",
+      blocks: [
+        "export async function loader(a: boolean, xs: number[]) {",
+        "  for (const x of xs) {",
+        "    try {",
+        "      if (a) { return { x } } else { return null }",
+        "    } catch {",
+        "      return null",
+        "    }",
+        "  }",
+        "  return null",
+        "}",
+      ].join("\n"),
+      switchCase:
+        "export function loader(n: number) {\n  switch (n) {\n    case 1: return { n }\n  }\n  return null\n}",
+      // Possible: what an expression evaluates to is not read from source.
+      call: "export const loader = async () => rows()",
+      variable: "export function loader() {\n  const data = { n: 1 }\n  return data\n}",
+      ternary: "export const loader = (a: boolean) => (a ? { n: 1 } : null)",
+      member: "export const loader = () => ({ n: 1 }).n",
+      concat: "export const loader = (s: string) => 'a' + s",
+      // A return inside a nested function, method, class or case block is not the loader's own.
+      nested: [
+        "export async function loader(xs: number[]) {",
+        "  const a = xs.map(function (x) { return { x } })",
+        "  const b = xs.map((x) => { return [x] })",
+        "  const o = { get() { return { o: 1 } } }",
+        "  class K { m() { return {} } }",
+        "  switch (xs.length) { case 1: { return { a, b, o, K } } }",
+        '  return redirect("/")',
+        "}",
+      ].join("\n"),
+    }
+    const files: Record<string, string> = {}
+    for (const [name, source] of Object.entries(cases)) {
+      files[`routes/${name}.tsx`] = "export default () => null\n"
+      files[`routes/${name}.backend.ts`] =
+        `import { redirect } from "@nifrajs/web"\ndeclare const rows: () => Promise<unknown[]>\n${source}\n`
+    }
+    const dir = await project(files)
+    const found = await findings(dir, "NF-C030")
+    expect(found).toEqual(
+      [
+        "array error",
+        "blocks error",
+        "boolean error",
+        "call warning",
+        "concat warning",
+        "member warning",
+        "nested warning",
+        "number error",
+        "object error",
+        "switchCase error",
+        "template error",
+        "ternary warning",
+        "text error",
+        "variable warning",
+      ].map((entry) => {
+        const [name, severity] = entry.split(" ")
+        return `routes/${name}.backend.ts:3 ${severity}`
+      }),
+    )
+    const message = (await collectCheckResult(dir, { lintsOnly: true })).diagnostics.find(
+      (d) => d.code === "NF-C030" && d.file === "routes/object.backend.ts",
+    )
+    expect(message?.message).toContain("It returns a data literal, so every request that reaches")
+    expect(message?.evidence).toContain("returns: a data literal")
     await rm(dir, { recursive: true, force: true })
   })
 
@@ -2714,6 +3596,76 @@ describe("data guard from source (NF-C030, NF-C031)", () => {
     expect(await findings(dir, "NF-C031")).toEqual([
       "backend/todos.fn.ts:4 error",
       "routes/a.backend.ts:3 error",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an output schema given by name is read where the name is declared", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "const member = t.object({ name: t.string(), apiKey: t.string() })",
+        "const userOutput = member",
+        "export const loaderOutput = userOutput",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "backend/me.fn.ts": [
+        'import { t } from "@nifrajs/schema"',
+        'import { serverFn } from "@nifrajs/web/fn"',
+        "const meOutput = t.object({",
+        "  name: t.string(),",
+        "  password: t.string(),",
+        "})",
+        'export const me = serverFn({ output: meOutput }, () => ({ name: "a", password: "b" }))',
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C031")).toEqual([
+      "backend/me.fn.ts:5 error",
+      "routes/a.backend.ts:2 error",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a schema named inside an output schema, or imported, is read where it is declared", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        'import { account as accountSchema, type Plan } from "../shared/schemas.ts"',
+        "const member = t.object({ name: t.string(), apiKey: t.string() })",
+        "export const loaderOutput = t.object({",
+        "  user: member,",
+        "  account: accountSchema,",
+        "  members: t.array(member),",
+        '  audited: t.declassified("an audit export", auditRow),',
+        "})",
+        "const auditRow = t.object({ email: t.string() })",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "routes/b.tsx": "export default () => null\n",
+      "routes/b.backend.ts": [
+        'import { account } from "../shared/schemas.ts"',
+        "export const loaderOutput = account",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "shared/schemas.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "export type Plan = string",
+        "export const account = t.object({",
+        "  id: t.string(),",
+        "  password: t.string(),",
+        "})",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C031")).toEqual([
+      "routes/a.backend.ts:3 error",
+      "shared/schemas.ts:5 error",
     ])
     await rm(dir, { recursive: true, force: true })
   })

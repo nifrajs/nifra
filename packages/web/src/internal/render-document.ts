@@ -76,6 +76,7 @@ export interface RenderedPage {
 }
 
 export interface RenderPageOptions {
+  readonly serverComponents?: import("../server-components/types.ts").ComponentState
   readonly adapter: RenderAdapter
   /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */
   readonly chain: readonly unknown[]
@@ -343,6 +344,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     boundarySplit === undefined
       ? ""
       : `,"${BOUNDARY_GLOBAL}":${serializeData(boundarySplit.forClient)}`
+  const componentTail =
+    options.serverComponents === undefined
+      ? ""
+      : `,"__NIFRA_COMPONENTS__":${serializeData(options.serverComponents)}`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
@@ -443,7 +448,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Tail - the page-state handover + the client module. Module scripts defer (run after parse), so
   // the handover + every streamed deferred resolution are in the document before the entry hydrates.
   const tailHtml = hydrate
-    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${slot.tailPost}`
+    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${componentTail}${slot.tailPost}`
     : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   // Caller-supplied headers (a terminal status page's `cache-control`, say). Applied before the
@@ -469,6 +474,9 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     if (policy !== undefined) headers["content-security-policy"] = policy
   }
   const renderProps: RenderProps = {
+    ...(options.serverComponents === undefined
+      ? {}
+      : { serverComponents: options.serverComponents }),
     data: forComponent,
     actionData: actionSplit?.forComponent,
     // `params`/`path` thread the matched route + URL to the adapter's `useParams`/`useLocation` so they
@@ -616,13 +624,17 @@ function streamDocument(
   enc: TextEncoder,
   nonceAttr: string,
 ): ReadableStream<Uint8Array> {
+  const reader = stream.getReader()
+  // A client that goes away cancels the body: the renderer stops, and nothing more is written.
+  let cancelled = false
+  let released = false
   return new ReadableStream({
     async start(controller) {
-      const reader = stream.getReader()
       try {
         controller.enqueue(shell)
         for (;;) {
           const { done, value } = await reader.read()
+          if (cancelled) return
           if (done) break
           controller.enqueue(value)
         }
@@ -631,33 +643,36 @@ function streamDocument(
         // defer() must not block a faster one; each script self-addresses by id, so order is irrelevant.
         await Promise.all(
           deferred.map(async (d) => {
+            let script: string
             try {
               const value = serializeData(await d.promise)
               // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
               // separators before this framework-owned script is emitted.
-              controller.enqueue(
-                enc.encode(`<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>`), // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
-              )
+              script = `<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>` // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
             } catch (err) {
               // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) - it must
               // not break the whole body. Redact: stream a stable opaque code, never the raw error
               // text; log the real reason server-side.
               console.error("[nifra/web] deferred value rejected:", err)
-              controller.enqueue(
-                enc.encode(
-                  `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`,
-                ),
-              )
+              script = `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
             }
+            if (!cancelled) controller.enqueue(enc.encode(script))
           }),
         )
+        if (cancelled) return
         controller.enqueue(tail)
         controller.close()
       } catch (err) {
-        controller.error(err)
+        if (!cancelled) controller.error(err)
       } finally {
+        released = true
         reader.releaseLock()
       }
+    },
+    cancel(reason) {
+      cancelled = true
+      // Once the renderer is drained the reader is released, and there is nothing left to stop.
+      return released ? undefined : reader.cancel(reason)
     },
   })
 }

@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test"
 import {
   AGENT_PROTOCOL_VERSION,
   type AgentEvent,
+  agentEventProblem,
   createAgentEventStream,
   isAgentEvent,
+  isAgentExtensionEventType,
 } from "../src/index.ts"
 
 function event(seq: number): AgentEvent {
@@ -29,6 +31,31 @@ describe("agent protocol", () => {
     expect((await stream.next()).value?.seq).toBe(2)
     stream.complete()
     expect((await stream.next()).done).toBe(true)
+  })
+
+  test("a consumer that falls behind loses deltas before lifecycle events", async () => {
+    const lifecycle = (seq: number): AgentEvent => ({
+      version: AGENT_PROTOCOL_VERSION,
+      sessionId: "session",
+      seq,
+      at: seq,
+      type: "turn.started",
+      turnId: "turn",
+      prompt: String(seq),
+    })
+    const stream = createAgentEventStream(2)
+    stream.push(lifecycle(0))
+    stream.push(event(1))
+    stream.push(event(2))
+    stream.push(lifecycle(3))
+    stream.push(event(4))
+    expect(stream.dropped).toBe(3)
+    stream.push(lifecycle(5))
+    expect(stream.dropped).toBe(4)
+    stream.complete()
+    const seqs: number[] = []
+    for await (const received of stream) seqs.push(received.seq)
+    expect(seqs).toEqual([3, 5])
   })
 
   test("rejects an unbounded live event queue configuration", () => {
@@ -105,5 +132,110 @@ describe("agent protocol", () => {
         error: { code: "failed", message: null },
       }),
     ).toBe(false)
+  })
+
+  test("a problem names the field and the limit, never the content", () => {
+    const base = { version: 1, sessionId: "s", seq: 0, at: 0 }
+    const prompt = `secret-${"a".repeat(256 * 1024)}`
+    expect(agentEventProblem({ ...base, type: "turn.started", turnId: "t", prompt })).toBe(
+      "turn.started.prompt is longer than 262144 characters",
+    )
+    expect(
+      agentEventProblem({
+        ...base,
+        type: "tool.completed",
+        turnId: "t",
+        callId: "c",
+        name: "write",
+        ok: false,
+        error: { code: "E", message: "" },
+      }),
+    ).toBe("tool.completed.error.message must not be empty")
+    expect(agentEventProblem({ ...base, type: "agent.spawned" })).toBe(
+      "unknown event type agent.spawned",
+    )
+    expect(agentEventProblem({ ...base, type: "secret value!" })).toBe("unknown event type")
+    expect(agentEventProblem({ ...base, seq: -1, type: "session.stopped" })).toBe(
+      "seq must be a non-negative safe integer",
+    )
+    expect(agentEventProblem(event(1))).toBeUndefined()
+  })
+
+  test("x-<vendor>.<name> events pass with bounded data and an optional turn", () => {
+    const base = { version: 1, sessionId: "s", seq: 0, at: 0 }
+    expect(
+      isAgentEvent({ ...base, type: "x-codex.plan", turnId: "t", data: { steps: ["a", "b"] } }),
+    ).toBe(true)
+    expect(isAgentEvent({ ...base, type: "x-acme-labs.context.usage" })).toBe(true)
+    expect(agentEventProblem({ ...base, type: "x-codex.plan", data: "a".repeat(70_000) })).toMatch(
+      /^x-codex\.plan\.data is outside the payload bounds/,
+    )
+    expect(agentEventProblem({ ...base, type: "x-codex.plan", turnId: "" })).toMatch(
+      /^x-codex\.plan\.turnId must be/,
+    )
+    for (const type of [
+      "x-Codex.plan",
+      "x-codex",
+      "x-.plan",
+      "x-codex..plan",
+      `x-a.${"b".repeat(61)}`,
+    ])
+      expect(agentEventProblem({ ...base, type })).toMatch(/^extension event type must be/)
+    expect(isAgentExtensionEventType("x-codex.plan")).toBe(true)
+    expect(isAgentExtensionEventType(`x-a.${"b".repeat(60)}`)).toBe(true)
+    expect(isAgentExtensionEventType("turn.started")).toBe(false)
+  })
+
+  test("reasoning, plan, and context usage events are part of the protocol", () => {
+    const base = { version: 1, sessionId: "s", seq: 0, at: 0 }
+    expect(
+      isAgentEvent({ ...base, type: "reasoning.delta", turnId: "t", itemId: "r", text: "hm" }),
+    ).toBe(true)
+    expect(
+      isAgentEvent({
+        ...base,
+        type: "plan.updated",
+        turnId: "t",
+        explanation: "why",
+        entries: [
+          { content: "read", status: "completed", priority: "high" },
+          { content: "write", status: "in_progress" },
+        ],
+      }),
+    ).toBe(true)
+    expect(
+      isAgentEvent({
+        ...base,
+        type: "context.usage",
+        usedTokens: 10,
+        windowTokens: 100,
+        estimated: false,
+      }),
+    ).toBe(true)
+    expect(
+      agentEventProblem({
+        ...base,
+        type: "plan.updated",
+        turnId: "t",
+        entries: [{ content: "x", status: "done" }],
+      }),
+    ).toBe("plan.updated.entries[0].status must be one of pending, in_progress, completed")
+    expect(
+      agentEventProblem({
+        ...base,
+        type: "plan.updated",
+        turnId: "t",
+        entries: [{ content: "x".repeat(4_097), status: "pending" }],
+      }),
+    ).toBe("plan.updated.entries[0].content is longer than 4096 characters")
+    expect(agentEventProblem({ ...base, type: "context.usage", usedTokens: 1.5 })).toBe(
+      "context.usage.usedTokens must be a non-negative safe integer",
+    )
+    expect(
+      agentEventProblem({ ...base, type: "context.usage", usedTokens: 1, estimated: "no" }),
+    ).toBe("context.usage.estimated must be a boolean")
+    expect(agentEventProblem({ ...base, type: "reasoning.delta", turnId: "t" })).toBe(
+      "reasoning.delta.text must be a string",
+    )
   })
 })

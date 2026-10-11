@@ -50,6 +50,15 @@ export interface LocaleContext {
   readonly localeSource: LocaleSource
 }
 
+/** `value` naming each of `names` once; `Vary: *` already covers every request header. */
+function varyOn(value: string | null, names: readonly string[]): string {
+  if (value === null || value.trim() === "") return names.join(", ")
+  const fields = value.split(",").map((field) => field.trim().toLowerCase())
+  if (fields.includes("*")) return value
+  const missing = names.filter((name) => !fields.includes(name.toLowerCase()))
+  return missing.length === 0 ? value : `${value}, ${missing.join(", ")}`
+}
+
 /**
  * Detect the request's locale and expose it as `c.locale` / `c.localeSource`.
  *
@@ -91,6 +100,8 @@ export function localeDetector(options: LocaleDetectorOptions) {
   // Fail a bad cookie name or Max-Age at construction, not on the first persisting response.
   if (persistCookie !== undefined) serializeCookie(persistCookie, defaultLocale, cookieAttrs)
   const emitHeader = options.header !== false
+  // The locale is chosen from these request headers, so a shared cache must key on them too.
+  const varies = cookieName === undefined ? ["Accept-Language"] : ["Accept-Language", "Cookie"]
 
   return defineContextPlugin<LocaleContext>("localeDetector", (app) =>
     app
@@ -115,6 +126,7 @@ export function localeDetector(options: LocaleDetectorOptions) {
               { header: (name) => req.header(name), url: req.url },
               options,
             )
+            headers.set("vary", varyOn(headers.get("vary"), varies))
             if (emitHeader && !headers.has("content-language")) {
               headers.set("content-language", resolved.locale)
             }

@@ -12,6 +12,7 @@ nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript 
 - **Secure by default.** Body-size cap, `requestTimeoutMs` + `c.signal`, graceful shutdown, redacting logger, same-origin `redirect()`, constant-time secret comparison, fail-closed middleware.
 - **Money** in integer minor units; **time** parsed to absolute UTC at the boundary.
 - Throwing a `Response` anywhere in the lifecycle is control flow (returned as-is), not an error.
+Optional server components (post-4.0): React, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.
 
 ---
 
@@ -212,24 +213,19 @@ The data model (loaders, actions, `defer`, progressive enhancement, fetchers,
 revalidation) is closest to **Remix / React Router** - delivered across five UI libraries instead
 of one.
 
-### Server code on every page - RSC is the one protocol Nifra trades away
+### Server code and server-only views
 
-Nifra covers the full server side: typed **loaders and actions**, **streaming SSR** with
-out-of-order Suspense, **islands**, and typed
-[server functions](/docs/server-functions) - `serverFn` RPC whose body (DB
-handles, secrets, imports) is _never_ shipped to the browser, callable as a normal typed
-function from any component, on all five UI libraries. Data on the server, mutations on the
-server, minimal client JS: all there, by a framework-agnostic mechanism instead of a
-React-only one.
+Nifra provides typed loaders and actions, streaming SSR, islands and typed
+[server functions](/docs/server-functions). Server functions keep their
+implementation, secrets and database handles off the browser and use the same validated
+mutation API across the supported UI libraries.
 
-What Nifra deliberately does not adopt is **React Server Components as a component
-protocol** - `"use server"` / `"use client"` directives and the
-server-only component tree. RSC is React-specific; a core that also serves Vue, Solid,
-Svelte, and Preact can't be built on it. (Nuxt, SvelteKit, and Remix don't ship RSC either -
-this is _Nifra vs. Next App Router specifically_.) So the call is simple: if your app is
-architected around RSC itself, **Next.js App Router is the right tool**. For everything RSC
-is usually reached for - server-side data, secrets off the client, less JS - loaders,
-`defer()`, islands, and server functions cover it here.
+The optional [server-components pipeline](/docs/server-components) adds
+server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte
+and Solid use their native islands in validated server-rendered ranges. The feature is
+intended for the release after 4.0.0 and requires all four adapters to pass certification.
+Server functions remain the mutation API; native React `"use server"` actions
+are unsupported.
 
 ### Also a standalone backend (vs. Hono & Elysia)
 
@@ -347,10 +343,10 @@ version-checked examples, which no other framework ships.
 **To start lean and grow** - begin as a typed API, graduate to full-stack on the same core,
 no rewrite.
 
-The one deliberate trade: Nifra is streaming SSR + islands + typed
-[server functions](/docs/server-functions), **not** the RSC component protocol -
-framework-agnostic by design. Apps architected around RSC itself belong on Next App Router;
-everyone else gives up nothing server-side here.
+Nifra provides streaming SSR, islands and typed
+[server functions](/docs/server-functions). The optional
+[server-components pipeline](/docs/server-components) adds native React
+RSC/Flight and corresponding Vue, Svelte and Solid views under a shared execution contract.
 
 ## Nifra - Routing
 
@@ -396,7 +392,8 @@ reaches the browser - see [Project structure](/docs/structure).
 
 -
 `_404.tsx` renders unmatched paths, and whatever a loader answers with
-`notFound()`. At the routes root it renders on its own. In a directory below (
+`notFound()`. At the routes root it renders inside the root layout, as below. In
+a directory below (
 `admin/_404.tsx`) it answers for that part of the app: the unmatched URLs under
 `/admin` and `notFound()` from the routes beneath it, the nearest one
 winning, rendered inside the layouts at or above it with their loader data. Those layouts run
@@ -407,6 +404,21 @@ data for it; a navigation that lands on one loads the URL as a document. Two rou
 with a `_404` at one URL prefix are a boot error unless a directory containing
 both has one too. `gone()`, `statusPage()` and the
 `_410.tsx`-style pages stay at the root, as does the 404 of a static export.
+
+-
+A root status page (`_404.tsx`, `_503.tsx`, ...) or an
+`_error.tsx` renders inside the layouts above it with their loader data, and the
+server puts its `meta` in the head. For a request no route ran (an unmatched
+URL) the root middleware and layout loaders run first; otherwise the page reuses the data
+the request already loaded. When those layouts cannot render it - a loader throws, a
+`gate` or the middleware refuses - a root status page renders alone and an
+`_error` inside its layouts without their data, with the same status, so a
+status page never fails into a second error. The response is
+`private, no-store` once a layout loaded data, and a navigation that lands on
+one loads the URL as a document. `export const inLayouts = false` always renders
+the page that way and runs no layout loader for it. A root status page that wraps the root
+layout itself would render it twice; `nifra check` reports one as
+`NF-C034`.
 
 -
 `_loading.tsx` is what the page slot shows while a client navigation loads. A
@@ -429,8 +441,9 @@ renders in its place, wrapped by the layouts at/above that segment, at status 50
 non-hydrated). On the **client** - a render error during navigation/interaction is caught by
 the nearest boundary, which renders `_error` in place (all five adapters). It
 receives the serialized error as `{ data: { name, message } }` (never the
-stack; on the server in production, a generic `Internal Server Error` rather
-than the error's own text); a thrown control-flow value (e.g. a guard
+stack; on the server, a generic `Internal Server Error` rather than the error's
+own text unless `NODE_ENV` is `development` or `test`); a
+thrown control-flow value (e.g. a guard
 `redirect`) passes through.
 
 -
@@ -466,6 +479,13 @@ Each page default-exports a component; an optional `meta` export drives
 `<head>` (applied on SSR and on client navigation). Its data comes from a
 `loader` in its `.backend.ts` half - see
 [Loaders & actions](/docs/data).
+
+A layout's `meta` receives its own loader's data as `data`, the value its
+component renders, or `null` when the layout has no loader. The page's data is
+`pageData`, for a layout title template. A layout that loads the locale can set
+`lang` from its data, and a client navigation keeps it. `nifra check`
+reports a layout with no loader whose `meta` reads `data` as
+`NF-C040`.
 
 ```ts
 // routes/users/[id].tsx
@@ -855,7 +875,7 @@ answers `422`.
 
 Other param modifiers (`:id+`, `:id*`, `:id(\\d+)`) are not
 part of the path grammar and match as literal text. Where that text is intended, put
-`// nifra-expect param-modifier` above the registration.
+`// nifra-expect NF-C026: ` above the registration.
 
 ### Param constraints
 
@@ -933,7 +953,7 @@ not look for another split.
 `/users/:id{[0-9]+}` serve no request in common, so `nifra check`
 (`NF-C024`) has nothing to report. A constrained route beside a bare
 `:param` route still overlaps and is still reported; mark the pair with
-`// nifra-expect route-overlap` where it is intended.
+`// nifra-expect NF-C024: ` where it is intended.
 
 -
 **OpenAPI and the typed client use the bare name.** The path is
@@ -993,9 +1013,11 @@ in the same call keep both. Call a custom one with
 `fetch(url, { method: "PURGE" })`.
 
 -
-**An assurance policy selects standard methods only.** A rule with `methods`
-never matches a custom-method route, so classify it with a path rule. Left unmatched, it is
-reported as `unclassified-route`.
+**An assurance rule names standard methods only.** A rule with `methods`
+never matches a custom-method route; one with `exceptMethods` does, unless the
+route is under a method it lists. `securityBaseline()` holds a custom method to
+its mutation rules, CSRF included, and `csrf()` publishes its evidence for one.
+Left unmatched, a route is reported as `unclassified-route`.
 
 Whether a custom method reaches the app is up to the runtime's HTTP parser.
 `PROPFIND`, `REPORT`, `PURGE` and `QUERY` arrive on
@@ -1033,6 +1055,14 @@ return makes the typed client infer `data: never`, so you silently lose drift
 detection for that route (`nifra check` flags it). `c.set` keeps your
 plain-object return fully typed.
 
+A `Response` a handler or hook returns or throws still gets the
+`c.set.headers` it lacks and the queued cookies, so a guard's
+`cache-control: no-store` reaches it. Its own headers win, `content-type`, `content-length`,
+`content-encoding`, `content-range` and `transfer-encoding`
+come from it alone, and `c.set.status` does not change its status. A
+`Response` shared across requests is copied first, so one request's headers never
+reach another.
+
 When you genuinely want a `Response` - an **error short-circuit** from a
 `derive` / `beforeHandle` (auth, rate limits) - `c.json(body, status?)`
 and `c.text(body, status?)` build one in a line:
@@ -1045,6 +1075,42 @@ typed client stays in sync.)
 The request is on `c.req`, also available as `c.request` - the same name a
 page loader/action receives (which in turn also accepts `ctx.req`), so one name works
 in both places.
+
+### Typed error responses
+
+Declare a route's error bodies in `errors`, keyed by status, and answer with
+`status(code, body, { headers })` from `@nifrajs/core/server`. It
+ends the request from a handler or any hook, returned or thrown, without building a
+`Response`: the body is serialized like a plain return, the headers ride with it,
+and queued cookies still apply. On the typed client, checking `res.status === 409`
+narrows `res.data` to the declared 409 body; a status the route does not declare
+falls into one arm whose `data` is `unknown`.
+
+```ts
+import { client } from "@nifrajs/client"
+import { server, status } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+const conflict = t.object({ code: t.literal("conflict"), retryAfter: t.number() })
+const locked = new Set(["7"])
+
+export const app = server().post("/orders/:id/pay", { errors: { 409: conflict } }, (c) => {
+  if (locked.has(c.params.id))
+    // The body is the typed contract; the header serves proxies and plain HTTP clients.
+    return status(409, { code: "conflict", retryAfter: 5 }, { headers: { "retry-after": "5" } })
+  return { paid: true }
+})
+
+const api = client<typeof app>("https://api.example.com")
+const res = await api.orders({ id: "7" }).pay.post()
+if (!res.ok && res.status === 409) {
+  const wait: number = res.data.retryAfter // narrowed to the declared 409 body
+}
+```
+
+The client's `Result` carries the body, not the response headers. A value the
+caller acts on, such as how long to wait, belongs in the declared body; set the matching
+header too when proxies or plain HTTP clients read it.
 
 ### Typed request cookies (schema.cookies)
 
@@ -1227,7 +1293,7 @@ same call params use, accepting exactly the colliding segment names. The client 
 the dot access at compile time with that guidance, and `nifra check` reports the
 collision (`NF-C018`, advisory). Prefer a verb-free segment
 (e.g. `/api/remove`) when you control the path; mark a route served only to
-non-typed-client consumers with `// nifra-expect reserved-segment` above its
+non-typed-client consumers with `// nifra-expect NF-C018: ` above its
 registration.
 
 ### Results never throw
@@ -1253,9 +1319,11 @@ if (res.ok) {
 const { data, error } = await api.users.post({ name: "" })  // 422 if the schema rejects it
 ```
 
-A call that gets no HTTP answer has `status: 0` and one of four codes:
-`network_error`, `timeout`, `response_too_large`, or
-`invalid_path`. `invalid_path` means a param value was `.`
+A call that gets no HTTP answer it can read has `status: 0` and one of five
+codes: `network_error`, `timeout`, `response_too_large`,
+`malformed_response`, or `invalid_path`.
+`malformed_response` means the body did not decode as its content type says - a
+proxy's HTML error page labelled JSON, say. `invalid_path` means a param value was `.`
 or `..`: a URL reads those as steps to another path, in every encoding, so the
 client sends nothing rather than reach a route the call does not name.
 `.subscribe()` reports it through `onError` and closes;
@@ -1279,8 +1347,11 @@ the client never throws, it returns `{ data, error }`.
 A route's `loader` runs on the server and calls your backend in-process during
 SSR - no network hop. Its `loaderOutput` schema is the contract with the page:
 the page receives that shape as `data`, and nothing else the loader returns
-leaves the server. A `Date` travels as its ISO string, so declare a timestamp
-column as `t.string()`. A loader without a schema is flagged by
+leaves the server. Declare a timestamp as `t.date()` and the page gets a
+`Date` in the server render and in the browser alike; under
+`t.string()` it travels as its ISO string. `t.json()` declares a
+field that is any JSON value, passed through whole - a tool-call payload or a settings blob
+the page does not pick apart. A loader without a schema is flagged by
 `nifra check`. See
 [Project structure](/docs/structure) for the route pair.
 
@@ -1294,7 +1365,8 @@ import type { Route } from "./+types/[id]"
 // The page receives exactly this shape. Anything else the loader returns stays on the server.
 export const loaderOutput = t.object({ id: t.string(), name: t.string() })
 
-export async function loader({ params, api }: Route.LoaderArgs) {
+// Route.Loader checks what this returns against loaderOutput at compile time.
+export const loader: Route.Loader = async ({ params, api }) => {
   const res = await api.users({ id: params.id }).get()
   if (!res.ok) throw notFound()
   return res.data
@@ -1309,6 +1381,30 @@ export default function User({ data }: Route.ComponentProps) {
   return <h1>{data.name}</h1>
 }
 ```
+
+Annotating the loader with `Route.Loader` from the generated
+`./+types/<name>` checks what it returns against `loaderOutput`
+at compile time: a field of the wrong type, a `defer(...)` whose value does not
+match its `t.deferred(...)` field, or any data from a loader with no
+`loaderOutput` is a type error. A redirect, a `Response` and returning
+nothing stay allowed. `Route.Action` does the same against
+`actionOutput`, `revalidate(paths, data)` included. A field the schema
+does not declare is not a type error: the guard drops it before it ships. The annotation
+makes the loader's type the schema's, so `nifra schemas` cannot read what an
+annotated loader returns. It reports a generated schema over one as unchecked: annotate a
+loader whose schema you write, and leave a loader whose schema is generated unannotated.
+
+`nifra schemas` drafts the schemas from your code for review: it reads each
+loader's and action's TypeScript return type, and with `--write` puts a schema
+above every one that has none. It leaves out a field named like a credential and anything
+that is not JSON, says so in a comment, and marks what it wrote with a
+`nifra:generated` line. While that line stays, a later
+`nifra schemas --write` keeps the schema in step with the return type, and
+`nifra check` fails (NF-C033) when the two have drifted apart, or when the schema
+under the line was edited (reformatting it is not an edit); delete the line to own the
+schema by hand. A hand-written schema is never rewritten: the report lists the
+returned fields it drops, by path. Nothing is derived at request time - the schema in the
+file is the one the guard enforces.
 
 A field named like a credential (`password`, `token`,
 `apiKey`) fails the route when it loads unless its schema is wrapped in
@@ -1333,7 +1429,7 @@ import type { Route } from "./+types/new"
 
 export const actionOutput = t.object({ ok: t.boolean() })
 
-export async function action({ api, request }: Route.ActionArgs) {
+export const action: Route.Action = async ({ api, request }) => {
   const form = await request.formData()
   await api.users.post({ name: String(form.get("name")) })
   return { ok: true }                  // the page's loaders revalidate automatically
@@ -1608,6 +1704,10 @@ Nothing here touches the kernel or the request path. An app that mounts no serve
 pays exactly nothing for the feature - which is the reason it is built as a plugin over the
 public registration API rather than as a bespoke dispatcher.
 
+## Nifra - Server components
+
+> Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte, Solid and Preact hydration.
+
 ## Nifra - Optimistic UI & fetchers
 
 > Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
@@ -1838,7 +1938,9 @@ wouldn't propagate across instances. In production use a shared, durable store. 
 `KVCacheStore` wraps a Workers KV namespace; any backend that fits the small
 `CacheStore` interface (Redis, the Cache API) works too. Every read is validated
 before it's trusted, so a corrupt or version-skewed entry is treated as a miss, not served
-broken.
+broken. A store that also implements `fence()` keeps a purge that lands while a
+page renders from being undone when that render stores the page it built from the old data;
+both built-in stores do.
 
 ```ts
 // doc-check: skip - Workers entry: `Env`/`ExecutionContext` globals + your `app` from server.ts.
@@ -1858,6 +1960,13 @@ export default {
 }
 ```
 
+A store outage never fails a page. A read that throws, rejects, or outlives
+`storeTimeoutMs` is a miss and the page renders; a failed write still returns the
+rendered page; a failed background regeneration keeps the stale entry. Each failure goes to
+`onStoreError(error, &#123; op &#125;)`, which by default logs one line per operation
+per minute without the cache key. Set `storeTimeoutMs` for a network store, so a
+hung connection costs a miss rather than the request.
+
 ### On-demand revalidation
 
 Purge a path the moment its data changes (a CMS webhook, an admin action) with
@@ -1871,6 +1980,21 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \
   -H 'x-nifra-revalidate-token: $REVALIDATE_SECRET'
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)
 ```
+
+A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give
+`createWebApp` a `csp` from `createCspPolicy` instead of a
+`nonce`: constant scripts are allowed by hash, so only a page that needs a nonce
+carries one - see [A strict CSP that still caches](/docs/contract#strict-csp).
+
+A page that must not be cached as a whole, because it is personalized or carries a nonce, can
+still cache the data its loader reads. Wrap the expensive call in `cache.wrap` from
+`@nifrajs/cache`, with the same tags the pages use. Concurrent loads of one key run
+once, and a store outage falls through to the loader. Pass that cache to
+`revalidateEndpoint` as `dataCaches: [cache]`. A tag purge then
+invalidates it first, then the page store, then the CDN, so no page is rebuilt from stale
+data. If a data cache fails, the endpoint answers `500` before it touches the page
+store, so a retry purges everything again. `createInvalidator` from
+`@nifrajs/web/cdn` takes the same `dataCaches` for purges from app code.
 
 `revalidateTags` names what a purge by tag reaches. A list tags every page of the
 route alike; a function of the route's params and URL tags each page on its own. Tags travel to
@@ -2570,6 +2694,54 @@ stripped from `event`/`id` to prevent frame injection); multi-line
 `data` is split into multiple `data:` lines per the spec; and
 `keepAlive` emits comment pings so idle proxies don't drop the connection.
 
+A client that stops reading is dropped once it has `maxBufferedBytes` (default 1
+MiB) of events unread: `stream.signal` aborts with `sse_client_too_slow`,
+the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
+server memory without limit. Raise it for a burst larger than that sent before the client can
+read, or pass `Infinity` to turn the limit off.
+
+### Typed SSE routes
+
+`app.sse(path, schema, run)` declares the event payload with `sse`, so
+`stream.send()` is type-checked and the typed client grows
+`.subscribe(onEvent)` with the same event type. A route whose schema declares a
+`body` is a POST stream: the body validates as on any POST, and
+`.subscribe(onEvent, &#123; body &#125;)` sends it. A GET stream reconnects after a
+drop and resumes with `Last-Event-ID`; a POST stream does not reconnect unless you
+pass `reconnect: true`, since a reconnect sends the body again. The client&apos;s
+`onRequest` hook runs before each connect, so a refreshed token reaches the stream.
+
+```ts
+import { client } from "@nifrajs/client"
+import { server } from "@nifrajs/core/server"
+import { streaming } from "@nifrajs/core/sse"
+import { t } from "@nifrajs/schema"
+
+declare function generate(prompt: string): AsyncIterable<string>
+
+export const app = server()
+  .use(streaming())
+  // A GET stream: the event payload is contracted by `sse`.
+  .sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) }, (_c, stream) => {
+    stream.send({ id: 1, title: "hello" })
+    stream.close()
+  })
+  // A body makes it a POST stream, validated like any POST: a chat that posts its prompt.
+  .sse(
+    "/chat",
+    { body: t.object({ prompt: t.string() }), sse: t.object({ token: t.string() }) },
+    async (c, stream) => {
+      for await (const token of generate(c.body.prompt)) stream.send({ token })
+      stream.close()
+    },
+  )
+
+const api = client<typeof app>("https://example.com")
+const feed = api.feed.subscribe((post) => console.log(post.title))
+api.chat.subscribe((event) => console.log(event.token), { body: { prompt: "Hi" } })
+feed.close()
+```
+
 ## Nifra - Query cache
 
 > Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.
@@ -2657,7 +2829,7 @@ than small.
 ```ts
 import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
 
-// routes/hotels.ts - a route file, no .tsx needed.
+// routes/hotels.tsx - a page keeps a route extension even with no JSX in it.
 export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
   // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
   return html`<ul>${data.hotels.map((h) => html`<li>${h.name}</li>`)}</ul>`
@@ -2876,6 +3048,48 @@ const app = server()
   // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
 ```
+
+To refuse a request in `onRequest`, return the same `status()` value a
+route would: `return status(401, { error: "key required" })`. It takes the
+normal response path, so the body is serialized with its content-type, and declared
+`responseHeaders` and every `onResponse` hook apply to it. A hand-built
+`Response` still works.
+
+#### Which hooks run where
+
+Where a hook is registered decides which requests it sees. `nifra routes --hooks`
+prints, for every backend route and for each prefix's unmatched paths, the hooks that run
+and the site that registered them (`app`, `group /admin`,
+`merge #1`, `mount /m`), named by plugin where one registered them:
+
+-
+A **group**'s hooks cover its whole prefix, including that prefix's 404 and 405
+responses.
+
+-
+A **merged** server's `onRequest` runs only for its own routes; its
+response hooks and static headers become app-wide.
+
+-
+A **mount** runs the child's full lifecycle inside the parent's request and response
+hooks.
+
+-
+`around`, `derive`, and `beforeHandle` apply only to
+routes declared after them.
+
+-
+A **WebSocket** route, listed as `WS /path`, runs the request hooks, then the
+authentication stages, `derive`s, `beforeHandle`s and
+`onError` declared before it. Its handshake runs no `around`,
+`afterHandle` or response hooks, but a refused handshake carries the
+app&rsquo;s `responseHeaders()`.
+
+`nifra routes --hooks --json` writes the report; `--since <file>`
+prints what runs differently from a saved one. `nifra upgrade --write` saves the
+report before it edits anything and prints the scope diff, and `nifra check --json`
+includes it as `hooks` when `nifra.assurance.ts` names a
+`source`. Origins are recorded only outside production builds.
 
 ### Header middleware: one portable hook, fast everywhere
 
@@ -3177,6 +3391,36 @@ const app = server()
 // poweredBy() is opt-in (Nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin.
 ```
 
+### Rate-limit tiers
+
+A `rateLimit()` inside a `group()` still sits under an app-wide one, so a
+group can only be stricter than the app. `rateLimitTiers()` is one limiter that
+charges each request to exactly one bucket - the tier with the longest static
+`prefix` holding the path, else the `floor` - so a public API can allow
+more than the floor while a login path allows less. It runs before routing, so 404s, 405s and
+bodies that fail validation are charged too. Prefixes are checked when the limiter is built
+(static, no trailing slash, no duplicates), and each tier counts in its own keys, so one store
+serves them all. `skip`, on both limiters, leaves a request uncharged.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+// Each request is charged to ONE bucket: the longest matching prefix, else the floor.
+// A tier may sit above the floor - tiers never stack on it.
+const app = server().use(
+  rateLimitTiers({
+    store: new MemoryStore(),
+    floor: { max: 120, windowMs: 60_000 },
+    tiers: [
+      { prefix: "/api/public", max: 600, windowMs: 60_000 },
+      { prefix: "/auth/login", max: 10, windowMs: 60_000 },
+    ],
+    skip: (req) => new URL(req.url).pathname === "/health", // never charged
+  }),
+)
+```
+
 ### Security middleware
 
 The security set - `csrf` (signed double-submit + Origin/Referer), `jwt`,
@@ -3249,8 +3493,10 @@ keeps the lane out of your bundle rather than shipping a disabled branch to ever
 serves the payload **unchanged** - so turning it on in staging can never be the
 thing that broke production. `"enforce"` serializes the validated value
 instead of the raw result. Both cover a returned value, a `status(...)` result and
-a `c.json(...)` reply alike; only a hand-built `Response` (a redirect, a
-stream) passes unchecked. Install it before the routes it should cover: like
+a `c.json(...)` reply alike, whether the handler returns or throws it, a hook
+returns it early, or `onError` answers with it; only a hand-built
+`Response` (a redirect, a stream) passes unchecked. Install it before the routes it
+should cover: like
 `idempotency()`, the decision is made per route at registration.
 
 Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes
@@ -3654,7 +3900,9 @@ Verification is **constant-time** - the provider's signature goes straight into
 `crypto.subtle.verify`, so a wrong signature can't be discovered byte-by-byte through
 timing. Presets cover **Stripe** (parses `t=…,v1=…` and enforces a 5-minute replay
 window on the signed timestamp) and **GitHub** (`sha256=…`); the `generic`
-preset takes an explicit header, encoding, and prefix for anything else. Pass an array of secrets to
+preset takes an explicit header, encoding (`"hex"`, `"base64"` or
+`"base64url"`, padded or not), and prefix for anything else. A signature that does not
+decode is refused as `malformed_signature`, never thrown. Pass an array of secrets to
 accept either during a key rotation.
 
 ### Idempotency - `idempotency()` middleware
@@ -3786,6 +4034,13 @@ group can apply its own configuration over the app&apos;s - `admin.use(securityH
 inside `app.group("/admin", ...)` - and each header it sets replaces the app&apos;s
 value on the group&apos;s routes only.
 
+A fixed `Content-Security-Policy` here cannot allow nifra&apos;s inline scripts by
+nonce. For a strict `script-src` on web pages, give `createWebApp` a
+`csp` from `createCspPolicy`: it allows the framework&apos;s constant
+scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
+same header and stays cacheable under `withISR` or a CDN. See
+[A strict CSP that still caches](/docs/contract#strict-csp).
+
 ### Route assurance - prove every route is guarded
 
 Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
@@ -3806,10 +4061,14 @@ export default defineAssuranceConfig({
     rules: [
       { name: "health", match: { paths: ["/health"] }, require: [],
         forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
-      { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+      // Every method but these, so a custom one such as PURGE is a mutation too.
+      { name: "mutation", match: { exceptMethods: ["GET", "HEAD", "OPTIONS", "WS"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF,
           NIFRA_ASSURANCE.BODY_BOUNDED] },
       { name: "read", match: { methods: ["GET", "HEAD"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      // WebSocket routes reflect under the pseudo-method "WS".
+      { name: "socket", match: { methods: ["WS"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED] },
     ],
   },
@@ -3823,6 +4082,14 @@ Evidence follows real lifecycle semantics: pre-routing and response hooks cover 
 while authentication and other order-scoped hooks cover only routes registered after them.
 Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
 runs only through reflection or `nifra assure`, so requests pay no assurance cost.
+
+WebSocket routes are reflected under the pseudo-method `"WS"`, so a policy classifies
+every socket too. A handshake runs the auth guards registered before the socket and the
+app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
+It never claims evidence whose enforcement its message handlers bypass, such as a durable
+command journal. A socket declares its effects with
+`app.ws(path, { capabilities })`, and capability assurance checks them against
+the module that registers it.
 
 ### Effect assurance - declared capability versus provenance
 
@@ -3887,7 +4154,11 @@ Approval resumes are HMAC-signed, expire, bind to the tenant, principal, capabil
 digest, and are consumed atomically once. The effect journal marks execution before the provider
 call, so a crash after an external commit remains `ambiguous` for reconciliation instead
 of being retried blindly. Typed sagas persist compensation arguments separately from the sealed
-token-only ledger and compensate committed steps in reverse order with retry/backoff state.
+token-only ledger and compensate committed steps in reverse order with retry/backoff state. One
+`resume` or `compensate` call owns a saga at a time through a lease every
+transition renews (`leaseMs`, default 5 minutes): a second call meanwhile throws
+`SagaConcurrencyError` and changes nothing, and a call that died is taken over once its
+lease lapses.
 
 ```ts
 // doc-check: skip - durable store implementations are deployment-specific.
@@ -4109,6 +4380,15 @@ there and grants exactly `db.read` - it never reaches the driver underneath. Kee
 the two halves import-disjoint, at the seam and at the route modules, and every route's
 declaration equals its reach.
 
+The walk starts at the module that registers the route, which Nifra finds by reading the
+source without running it. It reads a path written as a string literal, or as a name bound to
+a module-level `const` string, with or without `as const`. The
+`const` can live in the same file or be exported from a project file it imports.
+The same holds for a WebSocket route's `app.ws(path, ...)`. A path built at runtime, such as a template with `${...}` in it, cannot be read
+this way. `nifra check` names that expression in an NF-C036 finding, because the
+route then has no module to start from. List the module in
+`provenance.routeModules` to give it one.
+
 ### Runtime beacons
 
 Static provenance answers what a _module_ can reach, so its evidence is as broad as the
@@ -4219,6 +4499,33 @@ same
 $ nifra check
 • known gap, not capability-analyzed: /api/auth/* - better-auth's own handler; its effects are its own
 ```
+
+A mount can also state the routes it serves and the capabilities each one exercises. Pass an
+object with the `reason` and a `routes` list. Each path is the full
+request path and must sit under the mount:
+
+```ts
+export const app = server().mount({
+  path: "/api/auth",
+  app: authHandler,
+  opaque: {
+    reason: "better-auth's own handler; its effects are its own",
+    routes: [
+      { method: "POST", path: "/api/auth/sign-in/email", capabilities: ["session.write"] },
+      { method: "GET", path: "/api/auth/get-session", capabilities: ["session.read"] },
+    ],
+  },
+})
+```
+
+Assurance lists these routes with `analysis: "declared"`, apart from the routes it
+analyzed. The mount stays a known gap with its reason. A declared capability the policy does
+not define fails, as it does on a route, and so does a domain write declared on
+`GET`. Nothing else is checked, because there is no evidence to read. The routes
+also appear in the capability lockfile, so a changed declaration shows up in review. They
+appear in the `nifra context` route index too. An L4 run lists them as having no
+contract to test. A malformed entry, or a path outside the mount, stops the analysis with an
+error that names it.
 
 ### The lockfile
 
@@ -4416,6 +4723,102 @@ export async function loader({ request }: Route.LoaderArgs) {
   return { userId }
 }
 ```
+
+Without `redirectTo`, a guard denies with a 401 JSON
+`{ ok: false, error: "unauthorized" }`. `unauthenticated` sets that
+response's status (400-599), body and headers instead; the same option exists on
+`@nifrajs/better-auth`'s `requireSession`, `requirePrincipal`
+and `authed`, and on `@nifrajs/authjs`'s `requireAuthUser`. A
+guard given both `redirectTo` and `unauthenticated` throws.
+
+```ts
+// doc-check: skip - fragment: `session` is the request's session.
+requireUser(session, "userId", {
+  unauthenticated: { status: 403, body: { error: "login_required" }, headers: { "www-authenticate": "Session" } },
+})
+```
+
+### One request-scoped context from authentication to the handler
+
+`around` wraps everything after routing for the routes declared after it:
+authentication, body validation, `derive` and the handler. An
+`AsyncLocalStorage` frame or a database session setting opened there stays open
+until the response is decided. `authenticate` runs inside that frame before
+validation, resolves the caller once and types it as `c.principal`, so it can write
+what it resolved into the frame instead of a second lookup in a `derive`. Both are
+order-scoped, so inside a `group` they cover only its routes.
+
+```ts
+// doc-check: skip - fragment: `app`, `readSession`, `Note`, and `db` are your application's.
+import { AsyncLocalStorage } from "node:async_hooks"
+import { authenticated, rejected } from "@nifrajs/core"
+
+const frame = new AsyncLocalStorage<{ userId?: string }>()
+
+app.group("/api", (api) =>
+  api
+    // Opens before authentication and closes after the response: validation, derive and the
+    // handler all run inside it, and so does a thrown Response.
+    .around((_c, next) => frame.run({}, next))
+    // Resolves the caller once: typed as c.principal, and written into the open frame.
+    .authenticate({
+      id: "session",
+      run: async (input) => {
+        const session = await readSession(input.headers.get("cookie"))
+        if (session === null) return rejected()
+        const store = frame.getStore()
+        if (store !== undefined) store.userId = session.userId
+        return authenticated(session)
+      },
+    })
+    .post("/notes", { body: Note }, (c) => db.notes.insert({ ...c.body, owner: c.principal.userId })),
+)
+```
+
+### Authentication runs first
+
+`authenticate()` refuses a request before anything reads it: the body is not read,
+no schema runs, and no `derive` or `beforeHandle` sees it. An
+unauthenticated caller gets the 401 (or the refusal `run` returns), never a 413 or a
+422 that describes the route's input. `basicAuth`, `bearer`,
+`apiKey` and `jwt` from `@nifrajs/middleware` run there. With
+`optional: true` they never refuse, so validation answers as usual.
+
+`run` receives the method, pathname, headers, path params, the raw
+`search` and the parsed `query` (frozen, read by the parser
+`c.query` uses; a repeated key is an array), the `request` (never read
+its body), `env`, `clientIp` and an abort `signal`. Every
+field is the caller's and unvalidated. Read the query only for a short-lived, single-use
+ticket, such as one for a WebSocket handshake a browser cannot set a header on: a URL lands in
+proxy and access logs. The dev feed records a query's keys, never its values.
+
+```ts
+// doc-check: skip - fragment: `app` and `tickets` (a single-use store) are your application's.
+import { authenticated, rejected } from "@nifrajs/core"
+
+app
+  .authenticate({
+    id: "socket-ticket",
+    run: async (input) => {
+      // A browser cannot set a header on a WebSocket handshake, so the ticket rides in the URL.
+      const ticket = input.query.ticket
+      if (typeof ticket !== "string") return rejected()
+      const user = await tickets.take(ticket) // single use, expires in seconds
+      return user === null ? rejected() : authenticated(user)
+    },
+  })
+  .ws("/live", { upgrade: (c) => ({ user: c.principal.id }) })
+```
+
+A guard written as a `beforeHandle` runs after validation, so an unauthenticated
+caller reaches the body parser. When `nifra check` loads
+`backend/app.ts` (it does when a `contracts.lock.json` exists), NF-S008
+names each route that claims authentication this way and declares an input schema. Move the
+check into `authenticate()`, or set
+`validationOrder: "auth-before-validation"` on the route to run its hooks first. A
+rate limiter written as a `beforeHandle` behind `authenticate()` does not
+see refused requests; `rateLimit()` runs in `onRequest`, before routing,
+and counts them.
 
 ### Session code stays in the backend
 
@@ -5215,15 +5618,16 @@ app.listen(3000) // Bun
 ### Lifecycle
 
 Every callback is optional - `{ message }` alone is a valid echo server.
-`upgrade` is the only one that runs before the socket opens, so it’s the one place
-to reject a connection.
+`upgrade` is the only callback that runs before the socket opens, so it’s where a
+route rejects a connection or seeds its data.
 
 ```ts
 // doc-check: skip - illustrative lifecycle (empty close/error bodies, cookie shape).
 app.ws<{ user: string }>("/chat", {
-  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens -
-  // authenticate, check origin, rate-limit. Return the per-connection data (→ ws.data,
-  // typed), or a Response to REJECT the upgrade. A thrown error rejects with 500.
+  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens, after the
+  // guards registered before this route. Return the per-connection data (→ ws.data, typed),
+  // or a Response or status(...) to REJECT the upgrade. A thrown Response rejects with it;
+  // any other throw goes to onError, then a 500.
   upgrade(c) {
     const user = c.cookies.session
     if (user === undefined) return new Response("unauthorized", { status: 401 })
@@ -5235,6 +5639,37 @@ app.ws<{ user: string }>("/chat", {
   error: (ws, err) => {}, // a throw in any callback routes here, never crashing the connection
 })
 ```
+
+### Guards
+
+A handshake is a `GET`, and it runs the chain an HTTP `GET` registered
+at the same point runs: the `authenticate()` stages, `derive`s and
+`beforeHandle`s added before `app.ws()`, then `upgrade`. So
+auth middleware such as `basicAuth` or `jwt` guards the sockets
+registered after it, any guard can refuse the handshake with the response it would send an
+HTTP request, and `upgrade` reads what the guards derived. The origin check runs
+first. A socket registered before a guard stays public, like an HTTP route there. A browser
+cannot set a header on the handshake, so `authenticate()` can read a short-lived,
+single-use ticket from `input.query` - see
+[Authentication runs first](/docs/auth#auth-first).
+
+```ts
+// doc-check: skip - illustrative: an existing auth guard and session lookup.
+app
+  .ws("/status", {})                       // registered before the guard: public
+  .authenticate(sessionAuth)               // or .use(basicAuth(...)), .derive(...), .beforeHandle(...)
+  .get("/me", (c) => c.principal)
+  .ws("/chat", {
+    // Reached only when sessionAuth accepted the handshake, exactly as GET /me is.
+    upgrade: (c) => ({ user: c.principal.id }),
+  })
+```
+
+A socket declares the effects its code may reach with `capabilities`, as an HTTP
+route does. `nifra capabilities check` compares them with what the registering
+module can reach, and the handshake context carries the runtime guard for
+`upgrade()`. Reflection lists every socket under the pseudo-method
+`"WS"`, so `nifra assure` classifies sockets too.
 
 ### NifraWebSocket
 
@@ -5388,6 +5823,47 @@ it). Install it when you use `app.ws()`; without it a WS upgrade gets a clean
 npm i ws
 ```
 
+### In a composed app
+
+`mount({ path, app })` carries WebSocket upgrades as well as HTTP: when the
+serving adapter sees an upgrade under the mount's path, it asks the child's
+`resolveWebSocketUpgrade` and upgrades its own socket with the outcome. Any nifra
+server with `websocket()` installed has one. A child that is not a nifra server can
+implement it too, building the outcome from `@nifrajs/core/ws`:
+`attachWebSocket` wires the socket to a handler and a `TopicRegistry`
+owns its pub/sub. On Bun, install `websocket()` on the parent or on a mounted nifra
+child, or `listen()` refuses to start with `INVALID_WS_RUNTIME`.
+
+`mountFetch(path, handler)` and a plain fetch handler carry HTTP only. An upgrade
+request under such a path reaches the handler as an ordinary request and never becomes a
+socket. Serve that path's WebSockets from a mounted child, or keep that server beside nifra.
+
+```ts
+// server.ts - one listener; the chat child and a non-nifra child both take upgrades.
+import { server } from "@nifrajs/core/server"
+import { attachWebSocket, TopicRegistry, websocket, type WebSocketUpgradeOutcome } from "@nifrajs/core/ws"
+
+const chat = server()
+  .use(websocket())
+  .ws("/room", { message: (ws, data) => ws.send(data) })
+
+// Not a nifra server: it answers HTTP through fetch and builds its own upgrade outcome.
+const topics = new TopicRegistry()
+const legacy = {
+  fetch: () => new Response("legacy"),
+  resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome =>
+    new URL(request.url).pathname === "/feed"
+      ? { kind: "upgrade", handler: { open: (ws) => ws.send("hello") }, data: undefined, pubsub: topics, attach: attachWebSocket }
+      : { kind: "pass" },
+}
+
+server()
+  .use(websocket()) // Bun: the parent holds the socket table every mounted upgrade runs through
+  .mount({ path: "/chat", app: chat, stripPrefix: true })
+  .mount({ path: "/legacy", app: legacy, stripPrefix: true })
+  .listen(3000)
+```
+
 ## Nifra - Deployment
 
 > One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
@@ -5519,6 +5995,11 @@ hand one visitor a response produced for another:
 from cache forever is correct by construction. Unhashed URLs are left to the network.
 
 -
+**Only the build's own URLs are answered, from the build's own cache.** Any other request,
+an API call included, goes to the network untouched, and a cache the page or another app
+stored on the origin is never read.
+
+-
 **Documents are never cached.** Only navigations that FAIL are answered, and only with the
 offline page you nominate - which must be static and user-independent, since every visitor
 gets the same bytes. Caching HTML is how a worker serves one signed-in user the page rendered
@@ -5529,8 +6010,9 @@ for another.
 straight to the network.
 
 -
-**The cache name carries the build id**, and activation deletes every older cache - so a
-stale worker cannot pin an old build indefinitely.
+**The cache name carries the build id**, and activation deletes every older cache named
+`<cacheName>:<buildId>` - so a stale worker cannot pin an old build
+indefinitely, and the origin's other caches are left alone.
 
 Omit `offlineUrl` and a failed navigation simply fails, which is the honest default:
 an offline page you have not written is not better than a browser error.
@@ -5571,6 +6053,14 @@ Self-hosting (no CDN in front)? Hand `@nifrajs/node`'s `serve` a
 content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
 untouched: `serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})`.
 On Cloudflare/Vercel the platform serves assets, so you don't need it there.
+
+Every file under the mount is cached as immutable by default. If the directory also holds
+files that keep their name across deploys, pass the build manifest's `assets` as
+`hashedFiles`: only those URL paths stay immutable, and every other file is sent
+with its validators so the browser revalidates it. The server that
+`nifra build --target bun` or `node` generates does this already. It
+caches only the client build's own content-hashed outputs as immutable. A file copied from
+`public/`, even under `public/assets/`, gets a one-day policy.
 
 ### HTTPS without a proxy
 
@@ -5765,6 +6255,40 @@ import { stylexVite } from "@nifrajs/web/plugins/stylex"
 
 export const vitePlugins = [react(), stylexVite()]
 ```
+
+### Upgrading nifra
+
+Every `@nifrajs/*` package, `nifra` and `create-nifra` ship
+together at one version. Move a workspace between releases with
+`nifra upgrade <version>` rather than by editing pins: it runs every release
+recipe between the oldest version your `package.json` files pin and the target,
+oldest first. A recipe moves a removed package to its replacement, rewrites imports that
+moved, lists comments a release stopped honoring, and pins each group dependency to the
+target, keeping its `^` or `~` unless you pass `--exact`.
+The pins in `overrides`, `resolutions` and
+`pnpm.overrides` move with them, since an override decides what installs.
+
+```ts
+nifra upgrade --list          # the release targets this CLI knows
+nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
+nifra upgrade 5.0.0 --write   # apply, then nifra check verifies (--no-verify skips it)
+nifra doctor                  # afterwards: no "mixed nifra versions" advisory left
+```
+
+It is a dry-run until `--write`, and the same run twice makes no further edits. An
+unknown version or a target below what is installed is refused (`--allow-downgrade`
+when the rollback is intended); a target newer than the running CLI prints the command for
+that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
+directory or `package.json` is never followed, and a group package installed by a
+link from outside the root is listed under "Left alone" for you to upgrade in its
+own repository. So is another version pinned outside `package.json`, with its
+line: an MCP config such as `.mcp.json`, a Dockerfile or compose file, a CI
+workflow, and a lockfile other than the workspace&apos;s own (an image build&apos;s frozen
+lockfile, say), which you regenerate after installing. With `--write` it also
+prints how hook scope changed across the
+upgrade (`--no-hooks` skips that). `nifra doctor` and
+`nifra check` (NF-D002) point here when a workspace carries more than one version;
+see [mixed nifra versions](/docs/troubleshooting#mixed-versions).
 
 ### Scope
 
@@ -6310,8 +6834,10 @@ database connection is not the same as handing it a query tool, and this is the 
 `@nifrajs/agent-protocol` is the small versioned session and event contract.
 `@nifrajs/coding-agent` provides the standalone `nifra-agent` host with
 bounded sessions, checkpoints, workflows, extensions, verification, and authenticated local
-RPC. `@nifrajs/pi` is an optional Pi backend; other backends implement the same
-protocol port.
+RPC. `@nifrajs/pi` is an optional Pi backend, and `@nifrajs/acp` drives
+any Agent Client Protocol agent (Claude Code, Codex, Gemini CLI) over stdio; other backends
+implement the same protocol port and can prove it with `checkAgentBackend` from
+`@nifrajs/agent-protocol/conformance`.
 
 ```ts
 bun add @nifrajs/coding-agent @nifrajs/pi
@@ -6439,6 +6965,14 @@ content-free snapshots, ordered evidence refs, feature negotiation, handoff stat
 resume. `@nifrajs/agent-telemetry` converts the same constrained evidence into
 fail-open OpenTelemetry run and step spans. Providers, credentials, durable storage, retention,
 and tenant policy remain application-owned ports.
+
+A step that suspends for approval resumes with the decision the caller sends in
+`resume.approval`. Over A2A, or on an AG-UI or `mountAgent` route that
+anyone can reach, that caller may be the party asking for the tool. Return
+`resumeApproval: "port"` from `ports` to keep the configured approval
+port authoritative: it is asked again on resume, receives the caller's decision as
+`callerDecision`, and its verdict stands. Without a port, such a resume suspends
+again.
 
 ### Where your code and secrets run
 
@@ -6765,6 +7299,17 @@ fetches it. Turn it off for one run with `nifra dev --no-indicator`, for every r
 with `export const dev = { indicator: false }` in `nifra.config.ts`,
 or with `indicator: false` on `createDevServer`; the errors still reach
 the feed.
+
+### Host check
+
+The Bun dev server listens on 127.0.0.1 and answers only loopback host names:
+`localhost`, any `*.localhost`, `127.0.0.1` and
+`[::1]`. Any other `Host` gets a 403, so a page on another site whose
+name a DNS rebind points at your machine cannot read your pages, loader data or error overlay.
+To reach the server under another name (a hosts-file entry, a tunnel), list it with
+`export const dev = { allowedHosts: ["app.test"] }` in
+`nifra.config.ts` or `allowedHosts` on `createDevServer`.
+The Vite pipeline applies Vite's own `server.allowedHosts`.
 
 ### Containers & sandboxes
 
@@ -7217,7 +7762,12 @@ classes with separate request state. The second copy prints
 
 **The build honours the declaration on its own** -
 `buildClient` and `buildServer` inject the resolver, so bundled output
-already loads one copy. Unbundled phases do not: Bun's _runtime_ resolver never offers a
+already loads one copy, and so does the browser bundle `nifra dev` serves on Bun.
+Listing `singleCopyPlugin()` in `clientPlugins` as well is harmless: dev
+runs that instance in the resolver's place instead of a second one. On Vite, the dev server and
+both Vite builds add each declared package to `resolve.dedupe`, a
+`@scope/*` pattern as every package installed under that scope. Unbundled phases do
+not: Bun's _runtime_ resolver never offers a
 bare specifier to a plugin, so `bun test`, `bun run`, and preloaded
 scripts still load both copies unless you preload the registrar:
 
@@ -7420,6 +7970,23 @@ which the server logs. Read the body in a hook with `c.req.bytes()`,
 instead: they read it once, within the route's body limit, and every reader after the hook
 replays the same bytes.
 
+### "mixed nifra versions in this workspace"
+
+Every `@nifrajs/*` package, `nifra` and `create-nifra` ship
+together at one version. `nifra doctor` (and `nifra check`, as the
+`NF-D002` advisory) reads the versions your `package.json` files pin,
+the versions installed in `node_modules` - followed to their real location, so a
+linked repository reports its own - and the running CLI. When they disagree it names each
+version and where it came from. It only reads files, and it never fails the run.
+
+The fix is [`nifra upgrade <highest>`](/docs/cli#upgrade), not a
+hand edit of the pins: it runs
+every release's migration steps between your oldest pin and the target, then re-pins. Run it
+without `--write` first to see each planned edit. It edits files under the
+workspace root only. A symlinked package directory or `package.json` is never
+followed, and a group package installed by a link from outside the root is listed under
+"Left alone" - upgrade that repository on its own.
+
 ### Still stuck?
 
 Run `nifra check --json` as the done-gate - it surfaces the import-chain leaks,
@@ -7429,13 +7996,14 @@ package ships a tight `LLM.md` contract card.
 
 ## Nifra - Backends & API (dev and prod)
 
-> How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* - in `nifra dev` and production alike, no hand-dispatch.
+> How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp serves the backend over HTTP at the apiPrefix you set - in `nifra dev` and production alike, no hand-dispatch.
 
 Your `@nifrajs/core` backend reaches a Nifra app two ways from a single wiring.
 `inProcessClient(backend)` is fed to every loader and action as
-`ctx.api` - and `createWebApp` now **auto-mounts** that
-backend over HTTP at `/api/*`, so the browser can call the very same routes. No
-hand-written `if (pathname.startsWith("/api/"))` branch in your server entry.
+`ctx.api` - and, given an `apiPrefix`, `createWebApp`
+**mounts** that backend over HTTP there, so the browser can call the very same
+routes. No hand-written `if (pathname.startsWith("/api/"))` branch in your server
+entry.
 
 ### One backend, two call paths
 
@@ -7475,20 +8043,19 @@ export async function loader({ api }: Route.LoaderArgs) {
 }
 ```
 
-### The auto-mounted /api/* (the new part)
+### The mounted /api/*
 
-Before, `inProcessClient` fed `ctx.api` but did _not_ serve the
-backend over HTTP - so a browser `POST /api/sync` hit the page router and 404/405'd
-until you hand-wrote a dispatch branch in `server-bun.ts`. Now
-`createWebApp` mounts it for you: a request whose pathname is exactly
-`apiPrefix` (default `/api`) or starts with
+Without an `apiPrefix`, `inProcessClient` feeds `ctx.api` but
+the backend is _not_ served over HTTP, so a browser `POST /api/sync` reaches
+the page router. Set `apiPrefix: "/api"` and `createWebApp` mounts it: a
+request whose pathname is exactly `apiPrefix` or starts with
 `apiPrefix + "/"` is dispatched through Nifra's platform-aware backend mount
 interface **before** page routing. The backend receives the same Workers
 `env` bindings and `waitUntil` lifetime as the web app, and its
 `Response` is returned untouched (the request body is passed through, never pre-read).
 
 ```ts
-// backend/server.ts - a hand-written server: createWebApp serves pages AND auto-mounts the
+// backend/server.ts - a hand-written server: createWebApp serves pages AND mounts the
 // backend at /api/*. (`nifra build` emits this wiring for you; write it only for a custom host.)
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
@@ -7500,8 +8067,8 @@ export const app = createWebApp({
   adapter: reactAdapter,
   manifest,
   clientEntry,
-  api: inProcessClient(backend), // → ctx.api in loaders/actions AND auto-mounted at /api/*
-  // apiPrefix: "/api",          // the default; pass "" to disable the HTTP mount (pages only)
+  api: inProcessClient(backend), // → ctx.api in loaders/actions
+  apiPrefix: "/api", // AND served over HTTP at /api/*; without it the backend is loader-only
 })
 
 // Bun: Bun.serve({ fetch: app.fetch }). No `if (pathname.startsWith("/api/")) …` branch needed -
@@ -7513,8 +8080,16 @@ for **every method** - so `GET`/`POST`/`PUT`/… all
 reach the backend, and an unknown `/api/…` path returns the _backend's_ 404,
 not the page's. A sibling path that merely shares the prefix string (e.g.
 `/apidocs`) is **not** captured - only the `/api` boundary
-is. Pass `apiPrefix: ""` to turn the mount off and keep `ctx.api` as a
-loader-only client.
+is. Leave `apiPrefix` unset, or set it to `""`, to keep
+`ctx.api` as a loader-only client.
+
+Loader-only is the default because an app that also serves the same backend behind its own
+server - with that server's rate limits and guards - would otherwise get a second path to it
+that skips them. `nifra check` reports `NF-C035` for a
+`backend/framework.ts` that sets no `apiPrefix`, so the choice is
+written down: `nifra fix --code NF-C035` adds
+`export const apiPrefix = "/api"`, which is what 4.x mounted by default, and
+`""` keeps the backend loader-only.
 
 Because the backend answers first and its 404 is final, a page file under the prefix (
 `routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
@@ -7549,8 +8124,8 @@ export const use = (app: { get(path: string, handler: () => Response): unknown }
 
 [!NOTE] The mount lives in `createWebApp`, and `nifra dev` (the
 Vite-backed dev server) routes every request through that same app's `fetch`. So
-the `/api/*` routes are served identically in development and production - there is
-nothing extra to wire for the dev loop.
+the mounted routes are served identically in development and production - there is nothing
+extra to wire for the dev loop.
 
 ### Events that survive the transport
 
@@ -7650,6 +8225,7 @@ const agents = server().get("/api/agents", (c) => ({ ok: new URL(c.req.url).path
 
 // merge() folds both groups into ONE flat path space at their defined paths; a path+method clash
 // throws a RouteConfigError right here at merge time (fail-closed), never a silent shadow at runtime.
+// A group holding .ws() routes or mount()s is refused the same way: add those on the parent.
 export const backend = server().merge(listings).merge(agents)
 ```
 
@@ -7902,11 +8478,12 @@ than something we vouch for.
 {
   "schemaVersion": 1,
   "ok": true,
-  "profile": { "id": "cache-store", "version": 1 },
+  "profile": { "id": "cache-store", "version": 2 },
   "adapterId": "redis-cache",
   "capabilities": [
-    { "capability": "read-write", "status": "passed", "checks": ["set-get", "delete"] },
-    { "capability": "tag-invalidation", "status": "passed", "checks": ["invalidate-tag"] }
+    { "capability": "roundtrip", "status": "passed", "checks": ["set-get-delete"] },
+    { "capability": "tag-invalidation", "status": "passed", "checks": ["invalidate-tag"] },
+    { "capability": "clear", "status": "passed", "checks": ["clear"] }
   ],
   "evidenceHash": "9f2c..."
 }
@@ -7972,11 +8549,13 @@ A route is two files. The page (`x.tsx`) holds the view and its head:
 // own backend, so it can't compile standalone (see the typed examples elsewhere).
 import type { Route } from "./+types/[id]"
 
-// Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
-// recomputes per request (its content can vary with loader data). `origin` is the request's
-// scheme+host (server-resolved, matches the client's location.origin) - use it for ABSOLUTE
-// canonical / og:url / og:image URLs without threading siteUrl through loader data.
-export const meta = ({ data, params, origin }) => ({
+// Static OR a function of { data, pageData, params, origin }. Static meta is serialized once; function
+// meta recomputes per request (its content can vary with loader data). `data` is the exporting
+// module's own loader data: a layout's meta gets its layout's (null without a loader) and reads the
+// page's as `pageData`. `origin` is the request's scheme+host (server-resolved, matches the
+// client's location.origin) - use it for ABSOLUTE canonical / og:url / og:image URLs without threading
+// siteUrl through loader data.
+export const meta = ({ data, params, origin }: Route.MetaArgs) => ({
   title: `User ${data.name}`,
   meta: [{ name: "description", content: data.bio }],
   link: [{ rel: "canonical", href: `${origin}/users/${params.id}` }],
@@ -8241,7 +8820,7 @@ base, a CDN host) belongs in the `loader`, not `meta()`.
 ```ts
 // routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
 // with ABSOLUTE URLs built from `origin`. The three helpers (canonical/openGraph/jsonLd) are public
-// exports of @nifrajs/web; `origin` is the third MetaArgs field (after data + params).
+// exports of @nifrajs/web; `origin` is a MetaArgs field beside data, pageData and params.
 import { canonical, jsonLd, openGraph, type MetaArgs } from "@nifrajs/web"
 
 // CAVEAT: meta() runs in BOTH SSR and client navigation, so it has NO server env - never read
@@ -8329,6 +8908,8 @@ const page = renderPage({
 })
 ```
 
+#### A strict CSP that still caches
+
 A nonce makes every document unique, so a nonce-bearing page is
 `private, no-store` and no shared cache - `withISR`, a CDN - may store
 it. Page data never needs one: it rides in an inert
@@ -8385,6 +8966,16 @@ file that reaches it.
 //  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
 //     same layout-chain head, so sitewide tags persist across navigation - no page-only flash.
 ```
+
+### Optional server components
+
+The post-4.0 [server-components pipeline](/docs/server-components) supports
+React, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
+in `*.component.server.ts(x)`, register owner instances and export a named
+`componentPipeline` configuration. React uses native RSC/Flight; the other three
+hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
+HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
+router and await auth-scope invalidation on identity, tenant or permission changes.
 
 ### The build-output contract
 
@@ -8553,6 +9144,399 @@ stable. The consumer still gets full end-to-end types both ways -
 See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for the
 two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
 data layer in depth.
+
+## Nifra - Control APIs (one schema, every client)
+
+> Build an RPC-style control API on core routes: one schema per method gives request validation, a typed TypeScript client, and an OpenAPI 3.2 document whose SSE events let Swift, Kotlin, or Python clients be generated.
+
+A desktop app, a CLI, or a mobile companion that drives a local service needs a control API:
+a set of methods, a stream of events, and clients in more than one language. Write each
+method once as a route with a schema. The schema validates requests, types the TypeScript
+client, and describes the method in an OpenAPI document that generators turn into clients for
+other languages.
+
+### One file, three methods
+
+Two methods take a JSON body and answer JSON. The third is a typed event stream. This file
+typechecks against the current packages.
+
+```ts
+import { timingSafeEqual } from "node:crypto"
+import { server } from "@nifrajs/core"
+import { streaming } from "@nifrajs/core/sse"
+import { t, toOpenAPI } from "@nifrajs/schema"
+
+const token = process.env.CONTROL_TOKEN
+if (token === undefined || token.length < 32) throw new Error("CONTROL_TOKEN must be 32+ characters")
+const expected = Buffer.from(`Bearer ${token}`)
+const authorized = (request: Request): boolean => {
+  const given = Buffer.from(request.headers.get("authorization") ?? "")
+  return given.length === expected.length && timingSafeEqual(given, expected)
+}
+
+const Session = t.object({
+  id: t.string(),
+  status: t.union([t.literal("idle"), t.literal("running")]),
+})
+const TurnEvent = t.object({
+  seq: t.integer({ minimum: 0 }),
+  type: t.string(),
+  text: t.optional(t.string()),
+})
+
+export const app = server()
+  .use(streaming())
+  .onRequest((request) =>
+    authorized(request) ? undefined : Response.json({ error: "unauthorized" }, { status: 401 }),
+  )
+  .post(
+    "/session/create",
+    { body: t.object({ cwd: t.string({ minLength: 1, maxLength: 4096 }) }), response: Session },
+    () => ({ id: crypto.randomUUID(), status: "idle" as const }),
+  )
+  .post(
+    "/turn/send",
+    {
+      body: t.object({
+        sessionId: t.string(),
+        message: t.string({ minLength: 1, maxLength: 256 * 1024 }),
+      }),
+      response: t.object({ turnId: t.string() }),
+      bodyLimit: 512 * 1024,
+    },
+    () => ({ turnId: crypto.randomUUID() }),
+  )
+  .sse(
+    "/turn/events",
+    { query: t.object({ turnId: t.string() }), sse: TurnEvent },
+    (c, stream) => {
+      const after = Number(c.req.headers.get("last-event-id") ?? -1)
+      for (let seq = after + 1; seq < 3; seq++)
+        stream.send({ seq, type: "assistant.delta", text: `part ${seq}` }, { id: String(seq) })
+      stream.close()
+    },
+  )
+
+export const spec = toOpenAPI(app, { openapiVersion: "3.2.0", title: "Control API", version: "1.0.0" })
+```
+
+-
+**Methods are routes.** A method name like `session/create` is a path, so a
+call is `POST /session/create` and the typed client reads
+`api.session.create.post(body)`. Use `POST` for anything that changes
+state; one envelope endpoint that dispatches on a method field would hide every method
+from the schema, the client, and the document.
+
+-
+**The schema is the validator.** A body that does not match answers `422`
+before the handler runs. `maxLength` bounds each field and
+`bodyLimit` bounds the request as it arrives.
+
+-
+**Authorization runs first.** An `onRequest` hook that returns a response
+ends the request before routing, so no method is reachable without the token. The
+comparison is constant-time, and the server refuses to start without a long token.
+
+-
+**Retries.** A method that must not run twice declares
+`idempotency` on its route, with `.use(idempotency())` from
+`@nifrajs/core/idempotency-plugin` and a namespace per caller.
+
+### Event streams that resume
+
+`.sse(path, { sse: schema }, run)` declares the type of every event the stream
+sends. Give each event an `id` (here its sequence number). A browser
+`EventSource`, or the typed client's `subscribe`, sends the last id it
+saw as `Last-Event-ID` when it reconnects, so the handler replays only what the
+client missed. Keep the events a reconnect may need in memory or in your own store: core
+sends the header, and what to replay is your service's to decide.
+
+### The TypeScript client
+
+```ts
+// doc-check: skip - fragment: app is the control server above, imported from its module.
+import { client } from "@nifrajs/client"
+
+const api = client<typeof app>("http://127.0.0.1:4100", {
+  headers: { authorization: `Bearer ${token}` },
+})
+
+const session = await api.session.create.post({ cwd: "/work/repo" })
+if (!session.ok) throw new Error(`create failed: ${session.status}`)
+
+const subscription = api.turn.events.subscribe((event) => render(event.seq, event.text ?? ""), {
+  query: { turnId },
+  // After a dropped connection the client reconnects and sends Last-Event-ID itself.
+})
+// subscription.close() ends it.
+```
+
+Every call is typed from the server's routes, with no generated code. A call returns a
+`Result`: check `ok`, then read `data`, or
+`status` and `error`.
+
+### Clients in other languages
+
+`toOpenAPI(app, { openapiVersion: "3.2.0" })` from `@nifrajs/schema`
+describes each method's request and response, and each typed stream as
+`text/event-stream` whose `itemSchema` is the SSE event: a
+`data` field holding JSON that matches the route's event schema, plus
+`event`, `id`, and `retry`. The event schema is also a named
+component (`TurnEventsEvent` here), so a generator emits a type for it. The
+`openapi()` plugin from `@nifrajs/middleware` takes the same option and
+serves the document.
+
+```ts
+// doc-check: skip - shell commands, not TypeScript.
+// Write the document at build time, then hand it to any OpenAPI 3.2 generator.
+bun -e 'import { spec } from "./control.ts"; await Bun.write("openapi.json", JSON.stringify(spec, null, 2))'
+```
+
+OpenAPI 3.1 has no field for the items of a stream. Without `openapiVersion` the
+document stays 3.1, declares the stream as a string, and carries the same item schema as
+`x-itemSchema`; the named event component is there either way. A generator that
+reads only 3.1 still produces the event type, and your code decodes each
+`data` line with it.
+
+## Nifra - Custom server (createWebApp)
+
+> Run a page app from your own server entry with createWebApp: static and hashed files, a strict CSP on nifra's nonce, middleware order, loader error logging, graceful shutdown, and nifra check settings.
+
+The standard project layout gets its server entry from `nifra build`. An app that
+calls `createWebApp` from its own entry wires the same pieces by hand. Each one is an
+option or a single call.
+
+### A complete entry
+
+Everything on this page in one file. The sections below explain each part. This file
+typechecks against the current packages.
+
+```ts
+import { fileURLToPath } from "node:url"
+import { createCspPolicy, createWebApp, servePublicDir } from "@nifrajs/web"
+import type { Manifest, RenderAdapter } from "@nifrajs/web"
+
+// From your build: the framework adapter, the route manifest, and what buildClient() returned.
+declare const adapter: RenderAdapter
+declare const manifest: Manifest
+declare const build: {
+  readonly entry: string
+  readonly assets: readonly string[]
+  readonly routes: Readonly<Record<string, readonly string[]>>
+  readonly css?: readonly string[]
+}
+declare const errors: { capture(error: unknown, tags: Record<string, string>): void }
+
+// buildClient({ outDir: "dist/assets" }) writes the chunks where their /assets/ URLs point.
+const bundle = servePublicDir({
+  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
+  hashedFiles: new Set(build.assets),
+})
+const publicFiles = servePublicDir({ dir: fileURLToPath(new URL("./public/", import.meta.url)) })
+
+const csp = createCspPolicy({
+  header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,
+})
+
+export const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry: build.entry,
+  routePreload: build.routes,
+  styles: build.css ?? [],
+  csp,
+  server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },
+  use: (app) => {
+    app.onRequest(async (request) => (await bundle(request)) ?? (await publicFiles(request)))
+  },
+  onLoaderError: (error, { route }) => errors.capture(error, { route }),
+})
+
+app.listen(3000)
+```
+
+### Static and hashed files
+
+`servePublicDir` from `@nifrajs/web` serves a directory on Bun, Node and
+Deno. It answers `GET` and `HEAD` only, refuses paths that leave the
+directory or name a hidden file, sets the content type and `nosniff`, handles range
+requests, and returns `undefined` on a miss so the request falls through to your
+routes.
+
+-
+**Hashed build output.** Pass `buildClient()`'s `assets` as
+`hashedFiles`: those files get `immutable` for a year, and anything
+else in the directory gets one day. Write the build to `outDir: "dist/assets"` so
+a chunk's `/assets/...` URL is also its path under `dist/`.
+
+-
+**Your own files.** A second handler on `public/` serves them at the root,
+with the one-day policy.
+
+-
+**Where it runs.** Register the handlers with `app.onRequest` inside
+`use`, so a static hit never reaches page rendering.
+
+On Node, `serve()` from `@nifrajs/node` can serve the bundle itself before
+the app runs, which keeps the direct request path for everything else:
+
+```ts
+// doc-check: skip - fragment: app and build are the createWebApp app and buildClient() output above.
+import { serve } from "@nifrajs/node"
+
+await serve(app, {
+  port: 3000,
+  static: { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets },
+  signals: { drainMs: 8_000 },
+})
+```
+
+### A strict CSP on nifra's nonce
+
+Pass `createCspPolicy` as `csp` and nifra writes the
+`Content-Security-Policy` header for each document. You do not stash a nonce or set
+the header yourself. Your `header` function receives `sources`: a hash
+for each constant inline script nifra writes, plus a nonce only when the document carries a
+request-specific script (a `defer()`ed value, or `unsafeInlineScript` in
+`meta`).
+
+A document without a nonce gets the same header on every request, so it can still be cached by
+`withISR` or a CDN. A document with a nonce is sent `private, no-store`.
+The older `nonce` option puts a nonce on every document, so nothing is cacheable.
+`createWebApp` refuses `csp` and `nonce` together.
+
+### Middleware goes in use
+
+`createWebApp` declares every page route, and the `/*` catch-all, before
+it returns. `beforeHandle`, `afterHandle`, `around`,
+`derive`, `decorate` and `onError` are copied into each route
+when the route is declared. One of those hooks added to the returned app would therefore reach
+no page. `requestId()` is a `derive`: added late, no page would see
+`c.requestId`. Outside production, adding one throws a `FrameworkError`
+with code `HOOK_AFTER_PAGES` that names the call site. Hooks added inside
+`app.group(prefix, ...)` are still allowed, because a group is its own scope.
+
+Apply middleware in the `use` option instead. It runs before any page is declared,
+and ahead of `mounts` and the `api` mount, so an `onRequest`
+guard also covers a mounted auth handler:
+
+```ts
+// doc-check: skip - fragment: the use option of the createWebApp call above; @nifrajs/middleware is not installed in the docs sandbox.
+import { requestId, securityHeaders } from "@nifrajs/middleware"
+
+createWebApp({
+  // ...
+  use: (app) => {
+    app.use(securityHeaders())
+    app.use(requestId())
+  },
+})
+```
+
+`onRequest` and `onResponse` are read per request, so those two still
+work when added late. Putting everything in `use` means you never need to remember
+which hooks those are.
+
+A plugin applied in `use` works at runtime but cannot add to the returned app's type.
+To get `c.requestId` typed on routes you declare afterwards, call
+`app.use(requestId())` again on the returned app. Named plugins apply once.
+
+### Loader errors
+
+When a loader or action throws and an `_error` boundary renders the page, the error
+is written to the server's `logger`, at the detail set by
+`server.errorLogDetail`. That is the same log line an unhandled 500 produces, and you
+do not need to configure anything for it. A soft-navigation data request that fails is logged
+the same way. A thrown `Response`, such as `redirect()`, is not an
+error and is not logged.
+
+`onLoaderError` is for an error reporter. It sees every real throw with the request,
+params and route id before the boundary renders. If it throws, the error is ignored so rendering
+continues.
+
+### Graceful shutdown
+
+On Bun, `server: { gracefulSignals: { drainMs } }` makes `listen()`
+handle `SIGTERM` and `SIGINT`. The server gives in-flight requests up
+to `drainMs` (default 10 000) to finish, then stops, closing any that are still
+running. On Bun, new connections can still arrive during that window, so the load balancer
+should stop routing to the instance first, as most platforms do before they send
+`SIGTERM`. Keep `drainMs` under your platform's kill grace period:
+`docker stop` waits 10 seconds. `true` uses the default. On Node and
+Deno, pass
+`signals: { drainMs }` to `serve()` instead, as above.
+
+### Letting check and assure read the app
+
+`nifra check`, `assure`, `routes` and the other commands that
+read the app import it, so everything the app does at module scope runs. A command that only
+reads what the app declares sets `NIFRA_REFLECT` to its own name first:
+`check`, `routes`, `context`, `openapi`,
+`contracts`, `capabilities`, `manifest`, `doctor`
+, `diff`, `sync-routes`, `sync-manifest`, and
+`assure` without `--bundle`, `--strict`,
+`--hydration`, `--interact` or `--out`. Commands that send the
+app requests, such as `smoke`, `prove`, `levels` and the
+`assure` bundle, leave it unset. Check it to skip work a read never needs:
+
+```ts
+// doc-check: skip - fragment: an app module's Redis client; ioredis is not installed in the docs sandbox.
+import Redis from "ioredis"
+
+// Unset when the app really runs; "check", "routes", "assure", ... while nifra only reads it.
+export const redis = process.env.NIFRA_REFLECT ? undefined : new Redis(process.env.REDIS_URL!)
+```
+
+-
+**Environment validation.** An app that validates its environment on import still needs
+values to pass it. Supply them with `--env-file`, for example
+`nifra check --env-file .env.example`. Variables already set in the shell win.
+
+-
+**A process that will not exit.** If something the app opened is still keeping the process
+alive 2 seconds after the command has answered, the command exits with its own result and
+says that the app kept it open.
+
+### nifra check for a custom entry
+
+-
+**Routes nifra cannot see.** A mounted handler such as better-auth answers paths that are
+not in your backend, and no typed client covers them. Declare the mount opaque,
+`
+mounts: [{ path: "/api/auth", app: auth, opaque: "better-auth" }]
+`
+, and when `nifra.assurance.ts` names this app as its `source`, the
+check skips a `fetch` into that prefix by itself. Without that, list the prefixes
+in `nifra.check.json` next to `package.json`:
+
+```ts
+{
+  "externalMounts": ["/api/auth"]
+}
+```
+
+-
+**One call nifra cannot type.** For a single call rather than a whole prefix, such as a
+static file, put `// nifra-expect NF-C002: ` on the line or in the
+comment block above it. The finding stays in the report as info, with your reason. A comment
+with no reason silences nothing.
+
+-
+**Two repositories, one runtime.** When a linked sibling repository brings its own install
+of nifra or React, `nifra check` reports the duplicates. A reinstall in this app
+cannot remove a copy that another project installed. Declare the packages single-copy and
+nifra loads this app's copy for every importer:
+
+```ts
+{
+  "name": "my-app",
+  "nifra": { "singleCopy": ["@nifrajs/*", "react", "react-dom"] }
+}
+```
+
+Packages duplicated the same way are reported as one finding with one combined
+`singleCopy` list. The preload this needs, and the version-skew case it cannot
+cover, are in [Troubleshooting](/docs/troubleshooting).
 
 ## Nifra - Databases
 
@@ -8929,7 +9913,10 @@ Route data failed the output guard that stands between loaders/actions and the b
 
 **Fix:** declare `loaderOutput`/`actionOutput` as a Standard
 Schema that describes exactly the fields the page needs. `nifra check` flags routes
-without one (NF-C030).
+without one (NF-C030): an error when the loader's own body returns a literal (an object,
+array, string, number or boolean), since every request that reaches that return fails, and a
+warning when only running it shows what it returns. `nifra schemas --write` drafts
+a schema from the loader's return type for review.
 
 ### Rendering and data
 
@@ -8991,6 +9978,22 @@ serving the old page until its freshness runs out. The revalidate endpoint answe
 **Fix:** read the reason in the line. A 401 or 403 means the token lacks purge
 permission for this zone, project or service; a 5xx or `network_error` is retried on
 its own.
+
+### Silencing a nifra check finding
+
+`nifra check` names each finding with an `NF-` code. Where a finding is
+reviewed and intended, a comment on the flagged line, or anywhere in the comment block directly
+above it, says so and why:
+
+The comment answers only the code it names. A finding that fails the check, and every security
+finding, is silenced only with a reason after the colon; an advisory also accepts the comment
+without one. A blank line or a line of code ends the block, so a comment never reaches the next
+statement. A silenced security finding, interpolated SQL (NF-C006) included, stays in the report
+as information, with the comment and its reason as evidence. Some codes also answer to a name: `sql-dynamic` (NF-C006),
+`raw-response` (NF-C007), `reserved-segment` (NF-C018),
+`route-overlap` (NF-C024 and NF-C025) and `param-modifier` (NF-C026).
+`@nifra-gate-reviewed` silences nothing; a finding under it names the comment to
+write instead.
 
 ## Nifra - Failure laboratory
 
@@ -10431,6 +11434,49 @@ in its `package.json`:
 `{'"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }'}`.
 A file in no zone is a build error, so nothing is ever classified by accident.
 
+The app's own `package.json` can set sides too, so a folder that has to stay
+where it is, or a family of workspace packages, needs no edit of its own:
+
+```ts
+{
+  "name": "my-app",
+  "nifra": {
+    "zones": {
+      "packages": { "@shop/*": "library", "@shop/db": "backend" },
+      "backend": ["migrations"]
+    }
+  }
+}
+```
+
+`packages` gives a side to a package that does not declare one, by exact name or
+by a prefix ending in `*`; a package's own declaration always wins.
+`backend`, `frontend` and `shared` list app folders that
+count as that zone folder. Builds, dev servers, `nifra check` and the editor
+plugin all read this setting.
+
+A project that serves no pages has no browser, so the zones do not apply to it. Declare that
+in its `package.json` with `{'"nifra": { "kind": "api" }'}`:
+`nifra check` then skips the zone checks and the server-only import check there,
+and treats every file as server code. It is read from the nearest `package.json`
+and only takes values `"api"` and `"web"`. A directory with web config
+(`nifra.config.ts` exporting `adapter`, or
+`backend/framework.ts`) keeps its zone checks under it, and
+`nifra check` reports the clash (NF-C037); builds and dev servers never read it.
+
+A directory with `backend/app.ts` and no web config is read as an API-only app
+whether or not it declares the kind: `nifra routes`, `nifra context`,
+`nifra openapi` and `nifra mcp` load `backend/app.ts` alone,
+and the tools, resources and prompts its backend declares reach `nifra mcp`.
+
+Those commands, the contract lock and the route lints see only what
+`backend/app.ts` exports. An API whose app is built by a factory such as
+`createApp(deps)`, with its real dependencies wired in another entry, exports the
+same app from `backend/app.ts` built with stand-in dependencies, so every operation
+is visible without a database or secrets; `nifra check` names an implemented
+operation it does not serve (NF-C039). See
+[the stand-in entry](/docs/types-first#stub-entry).
+
 ### A route is two files
 
 The page renders; its backend half loads. A server-only export (`loader`,
@@ -10461,7 +11507,8 @@ import { notFound } from "@nifrajs/web"
 import type { Route } from "./+types/[id]"
 
 // What the page receives - and the ONLY fields that leave the server. A field the loader returns
-// but the schema does not declare is dropped before rendering.
+// but the schema does not declare is dropped before rendering; in development the console names
+// each dropped field, so a missing declaration never shows up as a silently blank page.
 export const loaderOutput = t.object({ name: t.string(), avatarUrl: t.string() })
 
 export async function loader({ params, api }: Route.LoaderArgs) {
@@ -10529,9 +11576,28 @@ page, `frontend/` or `shared/` fails the build.
 that contains what looks like a credential fails the build.
 
 The same rules run in `nifra dev` (a refused module is answered with a 403 before
-its source is sent), in both bundlers, for every framework, and in `nifra check`.
-An app on the older layout moves with `nifra migrate layout`: a dry run that
-reports every move, then `--write`.
+its source is sent), in both bundlers, for every framework, and in `nifra check`,
+which follows the imports the bundler follows: relative paths, tsconfig `paths`
+and `baseUrl`, `package.json` `imports`, and the
+`clientModule` the browser entry loads. An app on the older layout moves with `nifra migrate layout`: a dry run that
+reports every move, then `--write`. It follows the same imports, rewrites them
+and test-runner mocks (an alias through the same alias), moves the config's
+`clientModule` and component pipeline entries with their modules, adds the zone
+folders to tsconfig `include` and `.nifra/` to
+`.gitignore`, and leaves data files and folders zoned in
+`package.json` where they are. It reports what still needs a hand, such as an
+alias with no target that covers a moved file, or a specifier that names nothing installed.
+
+An API-only app, one that declares `{'"nifra": { "kind": "api" }'}` or has no web
+config, no `routes/` and a `backend.ts` that exports
+`backend`, migrates as one: only
+`backend.ts` moves, to `backend/app.ts`, with the imports from it and
+to it. Nothing is split or zoned. The migration adds `backend` to tsconfig
+`include`, `.nifra/` to `.gitignore`, and the declaration
+to `package.json` when it is missing. Web config without `routes/`
+could be either kind of app, so the migration stops and asks which. Until an app moves,
+`nifra check` fails with NF-C038 on its root `backend.ts` or
+`framework.ts`, since no contract gate reads them there.
 
 ## Nifra - Contract-derived adversarial testing
 
@@ -10617,6 +11683,14 @@ await assertAdversarialContract(app, {
 Missing, invalid, or unsynthesizable witnesses become explicit coverage gaps. The default is
 fail-closed; `requireCoverage: false` makes gaps advisory.
 
+Declared `params` and `headers` get witnesses too, validated before any
+case runs, so a body or query case is rejected by the input it mutates. The harness never
+invents credentials: `authorization`, `cookie`, `x-api-key`
+and names that look like a key, token, secret or signature come from the witness and
+`prepareRequest` only, and are never mutated. A route with a `cookies`
+schema needs `headers.cookie` in its witness, and a missing credential is a gap that
+names it.
+
 ### Auth and tenant context
 
 `prepareRequest` runs for every case and runtime. Use it to attach a test session,
@@ -10692,6 +11766,41 @@ await assertAdversarialContract(app, {
   only: failure.replay.caseId,
 })
 ```
+
+### A web app's routes in a test
+
+Give the test the same route manifest the app serves. `discoverRoutes(dir)` from
+`@nifrajs/web/fs` scans a routes directory the way the build does, so every page
+arrives with its `.backend.ts` half: its loader, action, output schemas and
+middleware. A built app can import the generated `server-manifest` instead, which
+bakes the same pairs into static imports.
+
+```ts
+// test/routes.test.ts - render the real routes in-process, each page with its backend half.
+import { expect, test } from "bun:test"
+import { createWebApp } from "@nifrajs/web"
+import { discoverRoutes } from "@nifrajs/web/fs"
+import { reactAdapter } from "@nifrajs/web-react"
+
+const app = createWebApp({
+  adapter: reactAdapter,
+  // Scans routes/ the way the build does: a page and its .backend.ts half always arrive together.
+  manifest: discoverRoutes(`${import.meta.dir}/../routes`),
+  clientEntry: "/client.js",
+})
+
+test("the users page runs its loader", async () => {
+  const res = await app.fetch(new Request("http://localhost/users/7"))
+  expect(res.status).toBe(200)
+})
+```
+
+`buildManifest(files, load)` pairs a page with its backend half only when both are
+in `files`. It is pure, so it cannot know a half is missing, and a hand-written list
+that names the page alone serves it without its loader and guards: the test passes against a
+route production never runs. `nifra doctor` flags a `buildManifest(...)`
+call whose array literal or `import.meta.glob` patterns reach a page but not the
+backend half beside it.
 
 ### Browser end-to-end
 
@@ -10825,6 +11934,23 @@ implementation into the client.
 
 See [Framework contract](/docs/contract) for the decoupled form and its scaling
 guidance.
+
+The tooling reads the backend `backend/app.ts` exports. An app that
+`implement`s a contract somewhere else, such as a `createApp(deps)`
+factory, is invisible to the contract lock and the route lints until that file serves it.
+`nifra check` names each implemented operation the backend does not serve
+(NF-C039), and counts them when there is no `backend/app.ts` at all. Export the
+same app built with stand-in dependencies:
+
+```ts
+// backend/app.ts - the backend nifra's tooling reads
+import { createApp } from "../src/app"
+import { stubDeps } from "../src/stub-deps"
+
+// The real entry builds the app with real dependencies elsewhere. This one builds the same routes with
+// stand-ins, so the contract lock, the typed client checks and `nifra routes` see every operation.
+export const backend = createApp(stubDeps())
+```
 
 ### OpenAPI
 
@@ -10964,6 +12090,47 @@ L4 requires an **explicit** executor. Invariant runs send deliberately hostile
 input, so Nifra will not guess which app to point them at; a level that fuzzed your live
 server by default would be a footgun, and a skipped route is reported rather than passed over
 in silence.
+
+An app that needs a session, real row ids or signed tokens passes them to the runner instead of
+rewriting requests inside the executor: `witnesses`, `prepareRequest`,
+`isRejected`, `include` and `maxMutationsPerInput` on
+`invariants` reach every L4 run, from `nifra levels` and the
+`nifra_levels` MCP tool alike. `setup` provisions a throwaway target only
+when L4 runs: it is called once, before the first L4 request, and its `teardown`
+always runs after the run, a failing one included. The example keeps its target in memory; a
+database or container belongs in your own `setup`.
+
+```ts
+// nifra.assurance.ts
+// doc-check: skip - the backend and its seed data are app-specific
+import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+import { createBackend } from "./backend"
+
+export default defineAssuranceConfig({
+  source: createBackend({ rows: new Map() }),
+  policy: { rules: [/* ... */] },
+  invariants: {
+    // Called once, before the first L4 request - never when this file is imported, so
+    // `nifra check` and `nifra assure` provision nothing.
+    setup: async () => {
+      const rows = new Map([["row_1", { id: "row_1", owner: "fixture" }]])
+      const target = createBackend({ rows })
+      return {
+        executor: (request) => target.fetch(request),
+        teardown: () => rows.clear(), // runs after a failing run too
+      }
+    },
+    // Known-good inputs for schemas L4 cannot synthesize (an opaque validator, a real id).
+    witnesses: { "PATCH /rows/:id": { params: { id: "row_1" }, body: { title: "ok" } } },
+    // Attach what the app needs on every case: a session, a signed token.
+    prepareRequest: (request) => {
+      const headers = new Headers(request.headers)
+      headers.set("cookie", "session=fixture")
+      return new Request(request, { headers })
+    },
+  },
+})
+```
 
 ### For coding agents
 
@@ -11149,6 +12316,62 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
 [`../../llms-full.txt`](../../llms-full.txt).
 
+## @nifrajs/acp
+
+An `AgentBackend` for agents that speak the [Agent Client Protocol](https://agentclientprotocol.com)
+(version 1) over stdio: Claude Code through `claude-code-acp`, Codex through `codex-acp`, Gemini CLI
+with `--experimental-acp`, or any other ACP agent. A Nifra host, RPC server, or app drives it like any
+other backend.
+
+```ts
+import { AcpBackend } from "@nifrajs/acp"
+import { CodingAgentHost } from "@nifrajs/coding-agent"
+
+const backend = new AcpBackend({
+  command: "claude-code-acp",
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY },
+})
+const host = new CodingAgentHost({ backend })
+```
+
+Each session is one agent process: `initialize` (protocol version 1, refused otherwise), an optional
+`authenticate` with `authMethod`, then `session/new` in the session's absolute `cwd`. A message is a
+`session/prompt`; its updates become protocol events:
+
+| ACP update | Event |
+| --- | --- |
+| `agent_message_chunk` | `assistant.delta`, and the whole reply as `assistant.message` before a tool call and at the end |
+| `agent_thought_chunk` | `reasoning.delta` |
+| `tool_call`, `tool_call_update` | `tool.started`, then `tool.completed` once the status is `completed` or `failed` |
+| `plan` | `plan.updated` |
+| `usage_update` | `context.usage` (`used`, `size`) |
+| anything else | `x-acp.<sessionUpdate>` with a bounded copy of the update |
+
+The stop reason ends the turn: `end_turn`, `max_tokens`, and `max_turn_requests` complete it (any but
+`end_turn` also reported as `x-acp.stop_reason`), `refusal` fails it, and `cancelled` stops it.
+
+`session/request_permission` surfaces as `approval.required` (`capability` is `acp.<tool kind>`).
+`resolveApproval` answers with the agent's `allow_once` or `reject_once` option and never an "always"
+one, so the host's approval policy stays in charge; with no such option it answers `cancelled`. An
+approval the agent withdraws with `$/cancel_request` is answered and reported as `approval.resolved`
+with `approved: false`.
+
+The client offers no filesystem or terminal methods: the agent uses its own tools, and those
+requests get JSON-RPC `-32601`. `cancel` answers open approvals `cancelled` and sends
+`session/cancel`; an agent that has not ended the turn after `cancelGraceMs` (default 2 seconds) is
+stopped, which ends its session.
+
+The agent runs with `PATH`, `HOME`, locale, terminal, user, shell, and temp variables plus what `env`
+adds; nothing else from the parent environment passes, so give it its model credentials explicitly.
+Error text from the agent (a refused request, or the last error-looking stderr line when it exits)
+is cut to a bounded length with those values and common key shapes masked. stdout carries only
+JSON-RPC, one message per line, each at most `maxRecordBytes` (default 1 MiB).
+
+The package passes `@nifrajs/agent-protocol/conformance` against a scripted ACP agent.
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).
+
 ## @nifrajs/ag-ui
 
 Mount a nifra agent as an [AG-UI](https://docs.ag-ui.com) (Agent-User Interaction protocol) endpoint: one POST accepting `RunAgentInput`, a stream of AG-UI events out over SSE - run lifecycle, step and tool-call events projected from the runner's step evidence, text message events for the output, and a typed continuation for human-in-the-loop resume.
@@ -11269,6 +12492,11 @@ terminal events - the run is never re-executed. A disconnected run keeps going a
 real terminal events for that reconnect. Without an `evidenceLog` nothing can rejoin a dropped
 stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 
+Exceeding `maxOutputBytes` detaches the viewer in the same way, including an oversized initial state
+snapshot. The response closes immediately, with an `output_limit` error frame when the remaining
+budget permits it. Without a log the turn is aborted; with a log it continues recording its real
+terminal result for reconnect rather than storing the viewer's output-limit error as the run result.
+
 ```ts
 import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
 
@@ -11367,6 +12595,11 @@ dropped stream, so the disconnect aborts `ports.signal` and the turn suspends as
 `createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
 reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
 interface.
+
+One SSE response emits at most `maxOutputBytes` (default 4 MiB), so a client that stops reading
+cannot make the server queue a whole run. Past the cap the response ends with an `error` frame
+(`output_limit`): with an `evidenceLog` the run keeps recording and a `Last-Event-ID` reconnect reads
+on from where the response stopped; without one the run is cancelled.
 When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
 tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
 reused `turnId` finds none of them. Without it a turn id works as a bearer capability. The owner
@@ -11404,6 +12637,11 @@ counts.
 - **Ordered, deduplicated streaming.** A turn arrives as an ordered stream of `AgentEventView`s.
   Out-of-order and redelivered frames are reordered and de-duplicated by sequence; a bounded buffer
   skips an unfilled gap rather than stalling.
+- **Turns that survive a dropped connection.** When a turn's stream breaks mid-turn, `send` follows
+  the turn again with `turn.attach` from the last seq it received (`resumeAttempts`, default 3;
+  `resumeDelayMs`, default 250), so the views continue without a gap or a repeat. The host must keep
+  turns (`resumableTurns` on `CodingAgentRpcServer`); one that cannot resume refuses, and `send`
+  throws the original break.
 - **Cursor resume.** A persisted log can be replayed from a cursor. A cursor whose next record was
   evicted from the retained window asks the caller to resync.
 - **Approvals and handoffs.** Pending approvals list as identifiers; decisions and handoff outcomes go
@@ -11469,9 +12707,56 @@ const events = createAgentEventStream(256)
 events.push(/* a versioned AgentEvent */)
 ```
 
+`isAgentEvent` refuses an event past the protocol's bounds: 256 KiB characters of `text`, `prompt`, or
+error message, and 64 KiB per string inside `input`, `output`, or `details`. A backend keeps its
+events inside them with `splitAgentText` (a long reply as consecutive events that join back),
+`boundAgentText` (one field, cut with a marker), and `boundAgentValue` (a display copy of a tool's
+input or output; the tool itself still gets the whole value). `agentEventProblem` says why an event
+was refused, naming the field and the limit but never its content.
+
+Three events carry what most coding agents report besides their reply: `reasoning.delta` (a piece
+of the model's reasoning, grouped by an optional `itemId`), `plan.updated` (the whole current plan,
+entries of `content`, `status`, and optional `priority`, each event replacing the last), and
+`context.usage` (`usedTokens` of the latest request, the model's `windowTokens` when known, and
+optional input, output, cached, and reasoning counts).
+
+Any other frame a backend has of its own travels as an extension event:
+`type` is `x-<vendor>.<name>` (lowercase, at most 64 characters), with an optional `turnId` and a
+`data` value inside the same payload bounds. Hosts that do not know the type pass it through; a host
+that does can register a check for it.
+
+```ts
+yield { version: 1, sessionId, seq, at: Date.now(), type: "x-codex.plan", turnId, data: { steps } }
+```
+
 Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
 runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI
 clients can share it without pulling in the Nifra application framework.
+
+## Conformance kit
+
+`@nifrajs/agent-protocol/conformance` drives an `AgentBackend` through what a host relies on and
+returns a report, so an adapter for another agent can prove itself in any test runner:
+
+```ts
+import { checkAgentBackend } from "@nifrajs/agent-protocol/conformance"
+
+const report = await checkAgentBackend({
+  backend: () => new MyBackend(),
+  cwd: process.cwd(),
+  prompt: "say hi",
+  slowPrompt: "wait until cancelled", // enables turn.busy and turn.cancel
+  approvalPrompt: "write a file", // enables the approval checks
+})
+expect(report.checks.filter((check) => check.status === "failed")).toEqual([])
+```
+
+Each scenario gets a fresh backend and session. The checks: a valid session snapshot; a turn whose
+events are valid, ordered, of one turn, and end with exactly one terminal event; `session.completed`
+for a plain turn and an idle snapshot after it; a second message refused while a turn runs, without
+ending it; a cancel that ends with `session.stopped` and leaves the session usable; approvals allowed
+and denied; `undefined` from `resolveApproval` for an approval it never asked for or whose turn was
+cancelled; and no turn for a closed session.
 
 ## Version 1 compatibility
 
@@ -11846,7 +13131,12 @@ await cache.invalidateTag(`user:${id}`)
     **immediately** while a **background** refresh runs (deduped). Latency stays flat; data self-heals.
   - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
   - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
-- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**.
+  - **Store outage**: a store `get` that throws or rejects is a miss, so the loader answers; a `set` that
+    fails still returns the loaded value, and a `fence` that fails leaves that load uncached. Each
+    failure goes to `onStoreError(error, { op })`, which by default logs one line per operation per
+    minute without the key. The explicit `get`, `set`, `delete`, `invalidateTag` and `clear` still
+    reject, so a failed invalidation is never silent.
+- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**. A `delete`, `invalidateTag`, `clear` or newer `set` also stops a `wrap` load or background refresh already running for that key or tag from storing its result, and the next `wrap` loads afresh. A `delete`, `invalidateTag` or `clear` runs after this cache's own async store writes it covers, so a store that applies requests out of order cannot land one after it.
 - TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
 
 ## Stores
@@ -11860,6 +13150,14 @@ opt-in. For a cache shared across instances, implement `CacheStore`
 const cache = createCache({ store: new RedisCacheStore(redis) })
 ```
 
+A store several caches or processes share should also implement the optional `fence(key, tags)` and
+`setIfFence(key, entry, tags, token)`. A `wrap` load takes a fence before it runs and stores its result
+through `setIfFence`, which must refuse, in one atomic step, when a `set` or `delete` of the key, an
+`invalidateTag` of one of its tags, or a `clear` ran since that fence, from any cache. Without them, a
+load running in one process can store a value another process invalidated meanwhile. `MemoryCache`
+implements both, and `cacheStoreCertificationProfile({ fencing: true })` from
+`@nifrajs/testing/certification` checks a store's implementation.
+
 On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived - back it with **CF KV** (or
 the Cache API) via a `CacheStore` for anything that should survive across requests/instances.
 
@@ -11867,7 +13165,8 @@ the Cache API) via a `CacheStore` for anything that should survive across reques
 
 `observer` receives one event per operation after it settles: `{ op, outcome, startedAt, durationMs,
 key, tag, tagCount, context }`. `outcome` is `hit`, `stale` or `miss` for reads, `ok` for writes and a
-finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. An observer
+finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. A `wrap`
+that loaded through a store outage reports `miss`. An observer
 that throws is swallowed; it never changes a result. Without an observer the cache reads no extra clock.
 
 `cache.for(c)` binds a request (or job) context, and every event carries it. That is how
@@ -11890,7 +13189,7 @@ whenever it is set.
 
 ## API
 
-- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, observer?, beacon?, capabilities? }`.
+- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, onStoreError?, observer?, beacon?, capabilities? }`.
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
 - `cache.for(context)` → the same surface bound to a request or job context.
 - `MemoryCache({ maxEntries?, now? })` - the default store; implement `CacheStore` for your own.
@@ -11959,6 +13258,9 @@ the frontend asset `dist/manifest.json`.
 ## `nifra verify` - verification tiers
 
 `nifra check` is the fast project done-gate: TypeScript plus static contract and boundary diagnostics.
+It reads source without running it, with one exception: when the project has a `contracts.lock.json`,
+`nifra check` (with `--lints-only` too) imports `backend/app.ts`, running its top-level code, to compare
+the routes it serves against the lock.
 It is not a release claim. `nifra verify` runs the ordered local verification plan; its default mode
 is the feedback plan and reports which release gates it omits. CI and release automation should run
 `nifra verify --release` (or `bun run check:release`), which includes build, coverage, corpus,
@@ -12141,8 +13443,11 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
   `api.files("report.json").get()`.
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
-  pass `{ query, headers, signal }` as call options. A call that gets no HTTP answer has
-  `status: 0` and the code `network_error`, `timeout`, `response_too_large` or `invalid_path`.
+  pass `{ query, headers, signal }` as call options. A DELETE route with a body schema takes
+  its body as an option: `api.items.delete({ body: { ids } })`. A call that gets no HTTP answer it
+  can read has `status: 0` and the code `network_error`, `timeout`, `response_too_large`,
+  `malformed_response` (a body its content type does not decode, like a proxy's HTML error page
+  labelled JSON) or `invalid_path`.
 - **A param value is never a path step.** `.` and `..` are resolved by URL parsing in every
   encoding, so `api.users({ id: ".." }).delete()` sends nothing and returns `invalid_path`
   instead of reaching another route. `.subscribe()` reports it through `onError`; `.ws()` throws.
@@ -12198,6 +13503,14 @@ loopback debugger, set `exposeErrorStacks: true` (or pass
 `--expose-error-stacks` to `nifra-agent --rpc`) to include bounded exception
 stacks. This option is rejected for remote binding.
 
+Each `turn.send` SSE frame carries `id: <seq>`. By default a client that disconnects cancels its
+turn. With `resumableTurns: true` the turn keeps running: a client that comes back calls
+`turn.attach` with `{ afterSeq }` (or a `Last-Event-ID` header) to read the frames it missed and
+follow the rest. A cursor older than the held frames (`replayEvents`, default 1024; `replayBytes`,
+default 8 MiB) answers `409 resync_required`, so read `session.events` instead; a second
+`turn.send` while one runs answers `409 turn_running`; and a turn no client has followed for
+`detachedTimeoutMs` (default 2 minutes) is cancelled.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only
@@ -12211,7 +13524,10 @@ loading code you do not trust.
 an injected model implementation and bounded tools without importing a provider
 SDK. The conversation it sends the model is capped by `maxHistoryChars` (default
 1 MiB): past it, whole earlier turns are dropped, oldest first, and the current
-turn is always sent in full. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+turn is always sent in full. `maxMessageChars` (default 64 KiB) caps the message `send` accepts and
+`maxReplyChars` (default 1 MiB) the model's reply; a reply longer than one event's text arrives as
+consecutive `assistant.message` events, and a tool's event shows a bounded copy of its input while
+the tool runs with all of it. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
 ## At-least-once run dispatch
@@ -12233,7 +13549,8 @@ Legacy `FileSessionStore` files remain supported for explicit local compatibilit
 `nifra-agent --migrate-session <id> --migrate-from <legacy-dir> --migrate-to <evidence-dir>` to
 create a separately validated, evidence-only target. The source is left untouched and the command
 does not switch an active configuration pointer: after reviewing its report, point the host at the
-new directory yourself. To roll back, point it at the legacy directory again and remove the new
+new directory yourself. `FileSessionStore` reads the migrated rows as content-free entries whose
+type is the stable event code, and new appends continue the sequence. To roll back, point it at the legacy directory again and remove the new
 target; a failed or interrupted migration leaves the active choice unchanged.
 
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
@@ -12413,7 +13730,9 @@ route. Split groups before the compiler reports `TS2589`, rather than weakening 
   client's `transport` option with the same registry. `@nifrajs/core/transport-codec` negotiates
   bounded HTTP representations and supplies the same frame/loader adapters for WebSockets and
   deferred data. Import `richWireCodec()` from `@nifrajs/core/transport-codec-rich`; the separate
-  subpath keeps rich-wire code out of plain JSON bundles.
+  subpath keeps rich-wire code out of plain JSON bundles. The plugin decodes a codec body before
+  routing, so a route's `bodyLimit` and its authentication run after the decode; its own `maxBytes`
+  is the bound on that work.
 - **Typed data seam (opt in).** `@nifrajs/core/data` defines token-only operation contracts,
   `db.read`/`db.write` capability names, an opaque request-local `RlsScope`, typed adapter requests,
   drift snapshots, and `createDataPort(contract, adapter, { beacon: useCapability })`, which emits the
@@ -12451,7 +13770,9 @@ contract-first registry.
 
 `response` and `errors` are typed by default but are not runtime enforcement by themselves. Install
 `responseContract("enforce")` before the routes it should cover to validate JSON/status payloads and
-prevent extra fields from reaching the wire. `warn` preserves the original payload during migration.
+prevent extra fields from reaching the wire. That covers a `status(...)` or `c.json(...)` reply a
+handler returns or throws, a hook returns, or `onError` answers with. `warn` preserves the original
+payload during migration.
 Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
 must be governed by assurance/static review.
 
@@ -12559,6 +13880,7 @@ a Bun-`listen()`-style graceful `stop()` and opt-in signals.
 
 ```ts
 await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful stop()
+await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
 
 ## What you get for free
@@ -12593,6 +13915,13 @@ app.use(devtools())
 The plugin is enabled by default only when `NODE_ENV=development`. It records a bounded event buffer
 and serves the overlay stream at `/_nifra/devtools`; remote hosts and cross-origin access stay denied
 unless explicitly allowed. Leave it unregistered in production for zero request-path overhead.
+
+Each SSE connection also has a finite pending-byte budget (`maxPendingBytes`, default 64 KiB),
+including keep-alive frames. A slow reader that fills that budget is closed and releases its
+connection slot. Already queued frames drain before EOF; the overflow frame is dropped. Browser
+`EventSource` reconnects automatically. Initial delivery includes only the newest history suffix
+that fits the byte budget. This is a recent trace view, so reconnects can have event-id gaps when
+older events no longer fit the history or connection budget; it does not guarantee lossless replay.
 
 ## For AI agents
 
@@ -12780,7 +14109,8 @@ pass the request's bindings: `defineEnv(shape, { source: env })`.
 ## Secret safety
 
 Error messages name the offending variable and the reason - **never its value** (it may be a
-secret). `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
+secret). A BYO validator such as valibot may quote the value in its message; `defineEnv` replaces
+it with `<redacted>`. `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
 
 ## For AI agents
 
@@ -12875,6 +14205,15 @@ Resolvers read it as their third argument.
 
 Subscriptions run over the same route via `graphql-transport-ws`. Bring a subscription source - the bundled in-memory `createPubSub` is the reference implementation; swap in a durable bus (Redis, a Durable Object, NATS) that exposes the same `{ publish, subscribe }` shape for multi-instance deploys.
 
+Each reference subscriber queues at most 1024 events by default. If publication outruns consumption,
+the overloaded iterator detaches, clears its queued values, and its next pull rejects with
+`GraphqlPubSubOverflowError` (`code: "graphql_pubsub_overflow"`). Configure
+`createPubSub({ maxQueuedEvents: 256, overflow: "error" })` to change the finite limit. Explicit
+`"drop-oldest"` and `"drop-newest"` policies support consumers that accept missing events. Returning or
+throwing into an iterator clears its queue and terminates delivery. This is an event-count bound;
+publishers remain responsible for payload sizes. Synchronous `publish` does not provide producer
+backpressure or cross-instance delivery.
+
 ```ts
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
@@ -12897,6 +14236,8 @@ pubsub.publish("count", 1)
 
 The route must negotiate the `graphql-transport-ws` subprotocol at the WebSocket layer for a browser `graphql-ws` client to connect.
 
+With `subscriptions: true`, a socket is admitted only when `authorize` accepts its upgrade request, and operations over it get the same query limits as HTTP. A browser cannot set headers on a WebSocket upgrade, so cookie auth carries over and bearer-header auth does not; for a token sent in `connection_init`, pass WS options with `onConnect` instead. When `authorize` is set, WS options must have their own `authorize` or `onConnect` (`onConnect: () => true` admits every socket on purpose), or `mountGraphql` throws.
+
 ## Options
 
 | Option | Default | Purpose |
@@ -12909,12 +14250,12 @@ The route must negotiate the `graphql-transport-ws` subprotocol at the WebSocket
 | `allowedOrigins` | reflect `*` | CORS origin allowlist. |
 | `authorize` | - | Per-request guard; return `false` for 401. |
 | `enableGet` | `true` | Serve `GET /graphql` (queries only). |
-| `subscriptions` | `false` | `true` (reuse schema/context) or explicit WS options. |
+| `subscriptions` | `false` | `true` (reuse schema, context, `authorize` and limits) or explicit WS options. |
 | `legacyJsonResponse` | `false` | Old always-200 `application/json` shape. |
 
 ## Responses
 
-By default responses use the `application/graphql-response+json` media type with spec status codes: `200` for an executed result (including field errors in `errors`), `400` for a parse or validation failure, `401` for a rejected `authorize`, `405` for a mutation attempted over GET. Set `legacyJsonResponse: true` for the older always-`200` `application/json` behavior some clients expect.
+By default responses use the `application/graphql-response+json` media type with spec status codes: `200` for an executed result (including field errors in `errors`), `400` for a parse or validation failure, `401` for a rejected `authorize`, `405` for a mutation attempted over GET, `415` for a POST whose body is not `application/json` (or another `+json` type). The last keeps a cross-site HTML form, which can send only urlencoded, multipart or plain-text bodies, from posting a mutation with the visitor's cookies. Set `legacyJsonResponse: true` for the older always-`200` `application/json` behavior some clients expect.
 
 ## License
 
@@ -13110,7 +14451,7 @@ framework runtime. The client companion to `@nifrajs/web-vanilla`: the server re
 (zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
-The full island bundle is just under 2 KB gzipped, and a size test keeps it there. Use
+The full island bundle is about 2 KB gzipped (2,080 B at most), and a size test keeps it there. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
 ## Server side (any adapter - `@nifrajs/web-vanilla` shown)
@@ -13176,7 +14517,10 @@ bind it, for example to show or hide the nested island.
 
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
-into one flush. Island-scale by design: if a widget outgrows this (lists, ownership trees,
+into one flush. A `computed` runs on first read and stops by itself once nothing reads it: the
+next change to its inputs stops it instead of recomputing, and reading it again computes it afresh.
+Every effect an island's setup creates stops when `mountIslands`' disposer unmounts it; one created
+outside an island runs until its disposer is called. Island-scale by design: if a widget outgrows this (lists, ownership trees,
 async orchestration), that's the signal to use the Solid adapter for that page - both tiers are
 first-class.
 
@@ -13246,6 +14590,15 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+A job's `timeoutMs` bounds each attempt: one still running after that many ms fails with a
+`JobTimeoutError` (then retries or dead-letters), frees its worker slot, and aborts `ctx.signal`. Pass the
+signal on to `fetch` or your driver, since a handler that ignores it keeps running unobserved. Keep
+`timeoutMs` below `leaseMs`, after which the job can be leased again.
+
+```ts
+q.define("render", { timeoutMs: 10_000, async handler(id, ctx) { await fetch(url(id), { signal: ctx.signal }) } })
+```
+
 `enqueue` may pass an optional `traceparent` (the producer's W3C trace context); a store should persist
 it and hand it back on every `lease`. A store that drops it still runs every job - a traced run only
 loses its link to the producer. `jobStoreCertificationProfile({ traceparent: true })` from
@@ -13309,10 +14662,10 @@ the run stays in the producer's trace.
 ## API
 
 - `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff?, beacon?, capabilities?, instrument? }`.
-- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt?, traceparent? })` and `.for(context)`.
+- `queue.define(name, { handler, input?, retries?, timeoutMs? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt?, traceparent? })` and `.for(context)`.
 - `queue.enqueue(name, payload, options?)` - enqueue by name.
-- `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully).
-- `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until empty.
+- `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully). Each poll fills the slots free at that moment, so one slow job holds only its own slot.
+- `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until nothing is due or in flight.
 - `queue.counts()` → `{ pending, active, dead }`. `queue.store` - the underlying store.
 - Stores: `MemoryJobStore`. Backoff: `exponentialBackoff`, `fixedBackoff`, `noBackoff`.
 
@@ -13477,8 +14830,8 @@ Each layer refuses on its own, in this order:
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`
-writes the SQL for a read-only role (`pg_read_all_data` on 14+, or `GRANT SELECT` per schema with a
-`REVOKE` for each excluded table and its partitions) without running it.
+writes the SQL for a read-only role (`GRANT SELECT` on each allowed schema, with a `REVOKE` for each
+excluded table and its partitions) without running it.
 
 The live tests run against a throwaway server: set `NIFRA_TEST_POSTGRES_URL` to its superuser URL.
 
@@ -13533,6 +14886,9 @@ const app = server()
 - **`basicAuth(options)`** - Basic Auth plugin with constant-time static credential comparison or
   a custom verifier.
 - **`bearer(options)` / `apiKey(options)`** - token auth plugins with typed principals.
+- Required `basicAuth`, `bearer`, `apiKey` and `jwt` refuse in the core `authenticate()` stage:
+  before the body is read or validated and before any `derive` or `beforeHandle`. A rate limiter
+  that must count refused requests belongs in `onRequest`, where `rateLimit()` runs.
 - **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking. The
   token travels in the `x-csrf-token` header; set `field: "_csrf"` to also accept it from a plain
   HTML form's hidden input (urlencoded or multipart, bodies up to `fieldMaxBytes`, default 64 KiB).
@@ -13636,9 +14992,10 @@ The mock server matches reflected routes and synthesizes values from supported J
 Unsupported or unsatisfiable schemas fail explicitly instead of returning known-invalid data. Use a
 fixed seed when responses must be replayable across local development and CI.
 
-Routes whose response validator exposes no JSON Schema (zod, valibot, arktype) mock as `{}` by default.
-Pass `reflectJsonSchema` to derive a schema from such a validator so those routes mock real data; for zod,
-use the bridge shipped as `@nifrajs/testing/zod`:
+A validator that implements Standard JSON Schema (`~standard.jsonSchema`, zod 4.2+ among them) mocks
+real data with no wiring, and an older zod 4 is converted with `z.toJSONSchema`. Routes whose response
+validator exposes neither mock as `{}` by default. Pass `reflectJsonSchema` to derive a schema from such
+a validator; for zod, the bridge ships as `@nifrajs/testing/zod`:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"
@@ -13709,10 +15066,12 @@ The optional `static` root is served before `app.fetch` for GET and HEAD request
 public asset directory and must contain nothing private: no secrets, source maps, build
 metadata, or user uploads. The directory and its ancestor path must be read-only and owned by
 the service (or otherwise protected from untrusted local writers). Nifra resolves and confines
-the file before opening it and refuses symlinked final files, but Node does not expose a native
-per-component `openat` primitive; a process that can mutate the tree concurrently can still
-create a local TOCTOU race. Mutable or attacker-writable static trees are therefore outside the
-adapter's guarantee. Store user-controlled files outside the static root and serve them through
+the file before opening it, and refuses it when its final file or any directory on its path became
+a symlink in the meantime: on macOS the open itself refuses such a path, and on Linux the opened
+descriptor's path is checked. On Windows and other platforms no file API can open without following a
+middle link, so a process that swaps a directory concurrently can still win a local TOCTOU race;
+the check there only makes it need repeated swaps. Mutable or attacker-writable static trees are
+therefore outside the adapter's guarantee on those platforms. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
 Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
@@ -13730,12 +15089,23 @@ process signals should be a deliberate choice):
 await serve(app, { port: 3000, signals: true })
 ```
 
+In-flight requests get 10 s to finish before the stop forces them closed. Set the window to fit
+the platform's kill grace period:
+
+```ts
+await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+```
+
 ## What you get for free
 
 The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) and body-size
 cap live **inside `app.fetch`**, not Bun's `listen()` - so they apply through this adapter
 with no extra wiring. Slow-client / slow-loris protection is Node's built-in
 `requestTimeout` (300s) and `headersTimeout` (60s) defaults.
+
+A hook that throws past `app.fetch`, or a response Node refuses to write (a header value carrying
+CR/LF, say), answers `500` and is logged through the app's own `logger`, as Bun's `listen()` logs it. The `req` a hook sees is a lazy stand-in for Node's request: copy it
+with `req.clone()`, not `new Request(req)`, which Node's `Request` constructor refuses.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM-only. MIT.
 
@@ -13773,7 +15143,9 @@ const app = server()
   the inbound span as the parent. No inbound header → starts a fresh trace.
 - **Opens a span** with HTTP semantic-convention attributes (`http.request.method`, `url.path`,
   `http.response.status_code`, optional `service.name`), ended on response with duration + status
-  (`error` for 5xx, `ok` otherwise).
+  (`error` for 5xx, `ok` otherwise). A request that matched a route reports the route template as
+  `url.path`, so an id or a token in the path stays out of the trace backend; `rawUrlPath: true`
+  reports the raw path instead.
 - **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) - spread
   `traceHeaders(c.trace)` into any downstream `fetch`/`ctx.api` call to continue the trace.
 - **Exposes `c.causality`** - a bounded, payload-free request node that survives durable command,
@@ -14026,7 +15398,7 @@ const upstream = createProxy({ upstream: "http://127.0.0.1:8081" })
 const app = server().mountFetch("/api", upstream, { stripPrefix: true })
 ```
 
-The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Caller IP/protocol metadata is dropped unless `forwardClientIp: true`; the inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
+The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Every inbound `Forwarded` and `X-Forwarded-*` header is dropped; caller IP/protocol metadata is re-added only under `forwardClientIp: true`, and any other forwarding header only as a fixed `headers` entry. The inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
 
 ## Docs
 
@@ -14296,7 +15668,7 @@ const keys = await storage.list({ prefix: "avatars/" })
 | Adapter | Use | Notes |
 |---|---|---|
 | `MemoryStorage` | dev / tests | not durable, not shared across instances |
-| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | persists content type + custom metadata in an adjacent sidecar tree; legacy objects still infer MIME from extension |
+| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | writes each object whole (staged in `<root>.nifra-state`, then renamed into place); persists content type + custom metadata in a sidecar tree there; reads older `<root>.nifra-metadata` sidecars; objects with none infer MIME from extension |
 | `R2Storage(env.BUCKET)` | the edge (Cloudflare R2) | round-trips `contentType` + metadata; binding typed structurally (no `@cloudflare/workers-types`) |
 
 Implement `StorageAdapter` (`put` / `get` / `delete` / `exists` / `list`) for **S3 / GCS / anything else** -
@@ -14394,6 +15766,16 @@ The validator still decides which generated mutations are truly invalid; the sup
 weaken validation. A missing/invalid witness is a coverage gap, not a silent pass. Set
 `requireCoverage: false` only when gaps are intentionally advisory.
 
+Declared `params` and `headers` get witnesses too, validated before any case runs, so a body or query
+case is rejected by the input it mutates rather than by a placeholder param or a missing header. A `t`
+schema synthesizes them, the witness's `params` and `headers` override, and a route param the schema
+leaves out keeps a placeholder its pattern accepts. The harness never invents credentials:
+`authorization`, `proxy-authorization`, `cookie`, `x-api-key`, and names ending in `-key` or containing
+`token`, `secret` or `signature` come from the witness (and `prepareRequest`) only, and are never
+mutated; a schema that requires one the witness lacks is a `NO_WITNESS` gap that names it. Cookies are
+never synthesized either: a route with a `cookies` schema needs `headers.cookie` in its witness. A
+params or header field typed as bare text accepts any text, so it is not a `NO_REJECTED_MUTATION` gap.
+
 To exercise adapter parity, pass runtime fetch targets. The reflected `app` remains the one source of
 the contract:
 
@@ -14415,10 +15797,13 @@ laboratory at production.
 ### Opaque validators (zod / valibot / arktype)
 
 A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
-automatically. A Standard Schema validator that carries no JSON Schema (zod, valibot, arktype) validates
-requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
-type-confusion mutations. Pass `reflectJsonSchema` to convert such a validator; for zod, use the shipped
-bridge:
+automatically. So does any validator that implements Standard JSON Schema (`~standard.jsonSchema`,
+zod 4.2+ among them): the laboratory calls the schema's own converter, so nothing is resolved from disk
+and a monorepo run from its root reads an app's zod schemas too. An older zod 4 is converted with
+`z.toJSONSchema`, resolved from the project directory first, then from this package. A validator with
+neither validates requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS`
+and get only type-confusion mutations, and the gap says why when a conversion was tried and failed.
+Pass `reflectJsonSchema` to convert any other validator, or to choose the zod bridge explicitly:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"
@@ -14654,6 +16039,17 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
+Optional server components are implemented for React, Vue, Svelte and Solid in the post-4.0
+feature branch. React uses native RSC/Flight; the other adapters use native islands in validated
+server ranges. Definitions require closed input/public-props schemas and authorization. Refresh
+executes the actual owner GET, preserving admission, read capabilities, budgets and cancellation;
+output is private/no-store. Mutate through validated server functions or actions.
+
+Use the `/server-components`, `/server-components/client`, `/server-components/islands` and
+`/server-components/build` exports with an explicit `componentPipeline` named config export.
+See [the server-components guide](https://nifra.dev/docs/server-components) and the four runnable
+repository examples for complete entries, native outlets, exact compiler pins and rollback.
+
 Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
@@ -14885,7 +16281,8 @@ const registration = await registerWebMcpTools([addItem])
 
 The returned WebMCP `execute` function runs Nifra's existing input validation, capability, approval,
 idempotency, budget, cancellation, output validation, and evidence path. By default it returns a bounded
-receipt envelope so an agent can verify whether the operation committed. The normal human UI remains the
+receipt envelope so an agent can verify whether the operation committed. A `signal` the host passes as
+`execute`'s second argument reaches the executor as `ctx.signal`. The normal human UI remains the
 source of page rendering and works when WebMCP is absent.
 
 Receipt output is retained only while its JSON encoding stays within the bounded `maxReceiptBytes`
@@ -15094,6 +16491,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `A2AAgentCard`, `A2AAgentSkill`, `A2ACardInfo`, `A2AMountableApp`, `A2ARouteContext`, `A2ATaskState`, `A2A_ERROR_CODES`, `A2A_PROTOCOL_VERSION`, `AGENT_CARD_WELL_KNOWN_PATH`, `MountA2AOptions`, `agentCard`, `mountA2A`
 
+## @nifrajs/acp
+
+`AcpBackend`, `AcpBackendOptions`, `AcpClientInfo`
+
 ## @nifrajs/ag-ui
 
 `AgUIMountableApp`, `AgUIRouteContext`, `AgUIRunContext`, `AgUIRunUsage`, `MountAgUIOptions`, `mountAgUI`
@@ -15104,11 +16505,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-app
 
-`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `BoundaryDecisionResult`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `PendingApprovalView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `TurnStartedView`, `VerificationCompletedView`, `boundaryCommands`, `boundaryIsStale`, `parseEventStream`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `virtualizeEvidenceRows`
+`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `BoundaryDecisionResult`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `ContextUsageView`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionEventView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `PendingApprovalView`, `PlanUpdatedView`, `ReasoningDeltaView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `TurnStartedView`, `VerificationCompletedView`, `boundaryCommands`, `boundaryIsStale`, `parseEventStream`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `virtualizeEvidenceRows`
 
 ## @nifrajs/agent-protocol
 
-`AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `ReloadResult`, `SendMessageInput`, `agentError`, `createAgentEventStream`, `isAgentEvent`
+`AGENT_MAX_EVENT_TEXT`, `AGENT_MAX_PAYLOAD_STRING`, `AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `AgentContextUsageEvent`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionEvent`, `AgentExtensionEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentPlanEntry`, `AgentPlanEntryStatus`, `AgentPlanUpdatedEvent`, `AgentReasoningDeltaEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `ReloadResult`, `SendMessageInput`, `agentError`, `agentEventProblem`, `boundAgentText`, `boundAgentValue`, `createAgentEventStream`, `isAgentEvent`, `isAgentExtensionEventType`, `splitAgentText`
 
 ## @nifrajs/agent-review
 
@@ -15120,11 +16521,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/auth
 
-`AuthorizationRequest`, `Authorizer`, `CsrfOptions`, `GuardOptions`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`, `createSessions`, `csrf`, `isAuthorized`, `requireAuthorization`, `requireSession`, `requireUser`
+`AuthorizationRequest`, `Authorizer`, `CsrfOptions`, `GuardOptions`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`, `UnauthenticatedResponse`, `createSessions`, `csrf`, `isAuthorized`, `requireAuthorization`, `requireSession`, `requireUser`
 
 ## @nifrajs/authjs
 
-`AuthGuardOptions`, `AuthJSConfig`, `AuthJSOptions`, `Session`, `app`, `authjs`, `getSession`, `requireAuthUser`
+`AuthGuardOptions`, `AuthJSConfig`, `AuthJSOptions`, `Session`, `UnauthenticatedResponse`, `app`, `authjs`, `getSession`, `requireAuthUser`
 
 ## @nifrajs/aws-lambda
 
@@ -15132,19 +16533,19 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/better-auth
 
-`AuthedOptions`, `BetterAuthLike`, `BetterAuthOptions`, `Principal`, `PrincipalFor`, `RequireSessionOptions`, `SessionOf`, `SessionUserOf`, `WithPrincipal`, `authed`, `betterAuth`, `getSession`, `requirePrincipal`, `requireSession`
+`AuthedOptions`, `BetterAuthLike`, `BetterAuthOptions`, `Principal`, `PrincipalFor`, `RequireSessionOptions`, `SessionOf`, `SessionUserOf`, `UnauthenticatedResponse`, `WithPrincipal`, `authed`, `betterAuth`, `getSession`, `requirePrincipal`, `requireSession`
 
 ## @nifrajs/cache
 
-`Cache`, `CacheCapabilities`, `CacheEvent`, `CacheObserver`, `CacheOperation`, `CacheOptions`, `CacheOutcome`, `CacheStore`, `CapabilityBeacon`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`, `createCache`
+`Cache`, `CacheCapabilities`, `CacheEvent`, `CacheObserver`, `CacheOperation`, `CacheOptions`, `CacheOutcome`, `CacheStore`, `CacheStoreOp`, `CapabilityBeacon`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`, `createCache`
 
 ## @nifrajs/client
 
-`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `InProcessClient`, `InProcessClientOptions`, `Jsonify`, `LoaderArgs`, `LoaderData`, `LoaderResponseControls`, `OutputOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `Register`, `RegisteredBackend`, `RegisteredEnv`, `RegistryOf`, `ResponseContractViolation`, `Result`, `RouteLoaderArgs`, `SearchSchemaOf`, `SubscribeOptions`, `Subscription`, `TestClientOptions`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`, `client`, `inProcessClient`, `reservedKeyFor`, `testClient`
+`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `InProcessClient`, `InProcessClientOptions`, `InputOf`, `Jsonify`, `LoaderArgs`, `LoaderData`, `LoaderResponseControls`, `OutputOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `Register`, `RegisteredBackend`, `RegisteredEnv`, `RegistryOf`, `ResponseContractViolation`, `Result`, `RouteActionReturn`, `RouteLoaderArgs`, `RouteLoaderReturn`, `SearchSchemaOf`, `SubscribeOptions`, `Subscription`, `TestClientOptions`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`, `client`, `inProcessClient`, `reservedKeyFor`, `testClient`
 
 ## @nifrajs/coding-agent
 
-`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `DEPLOYMENT_REFERENCE_PROFILES`, `ExtensionCommand`, `ExtensionContext`, `ExtensionDescriptorOptions`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `MigrateLegacySessionOptions`, `NIFRA_AGENT_INSTRUCTIONS`, `NativeApprovalPort`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `SESSION_EVIDENCE_VERSION`, `SelfHealingController`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `SubagentAbandonment`, `SubagentAbandonmentLedger`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `extensionDescriptor`, `extensionDescriptors`, `getAgentPreset`, `isSafeReviewDiff`, `migrateLegacySession`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `stableSessionEventCode`, `validateExtensionModule`
+`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `DEPLOYMENT_REFERENCE_PROFILES`, `ExtensionCommand`, `ExtensionContext`, `ExtensionDescriptorOptions`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `MigrateLegacySessionOptions`, `NIFRA_AGENT_INSTRUCTIONS`, `NativeApprovalPort`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `SESSION_EVIDENCE_VERSION`, `SelfHealingController`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `SubagentAbandonment`, `SubagentAbandonmentLedger`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `extensionDescriptor`, `extensionDescriptors`, `getAgentPreset`, `isSafeReviewDiff`, `isVerificationAvailable`, `migrateLegacySession`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `stableSessionEventCode`, `validateExtensionModule`
 
 ## @nifrajs/content
 
@@ -15152,7 +16553,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `writableResponse`
 
 ## @nifrajs/cron
 
@@ -15180,7 +16581,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/graphql
 
-`GraphqlContextBuilder`, `GraphqlContextInput`, `GraphqlHttpOptions`, `GraphqlPubSub`, `GraphqlWsOptions`, `MountGraphqlOptions`, `NifraContextLike`, `buildContext`, `createPubSub`, `graphqlWebSocket`, `mountGraphql`, `respondGraphql`
+`GraphqlContextBuilder`, `GraphqlContextInput`, `GraphqlHttpOptions`, `GraphqlPubSub`, `GraphqlPubSubOptions`, `GraphqlPubSubOverflowError`, `GraphqlWsOptions`, `MountGraphqlOptions`, `NifraContextLike`, `buildContext`, `createPubSub`, `graphqlWebSocket`, `mountGraphql`, `respondGraphql`
 
 ## @nifrajs/i18n
 
@@ -15196,11 +16597,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/islets
 
-`BindableElement`, `BindableRoot`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `IslandStrategy`, `MountIslandOptions`, `Signal`, `batch`, `bindScope`, `computed`, `effect`, `island`, `islandState`, `mountIslands`, `signal`
+`BindableElement`, `BindableRoot`, `Computed`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `IslandStrategy`, `MountIslandOptions`, `Signal`, `batch`, `bindScope`, `computed`, `effect`, `island`, `islandState`, `mountIslands`, `signal`
 
 ## @nifrajs/jobs
 
-`Backoff`, `CapabilityBeacon`, `DeadLetterRecord`, `DeadLetterView`, `EnqueueOptions`, `ExponentialOptions`, `JobContext`, `JobCounts`, `JobDefinition`, `JobEnqueueInfo`, `JobError`, `JobHandle`, `JobHandler`, `JobRunInfo`, `JobRunOutcome`, `JobStore`, `JobTraceContext`, `JobValidationError`, `MemoryJobStore`, `Queue`, `QueueHealth`, `QueueInstrument`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `Worker`, `WorkerOptions`, `createQueue`, `exponentialBackoff`, `fixedBackoff`, `noBackoff`, `toDeadLetterView`, `toQueueHealth`
+`Backoff`, `CapabilityBeacon`, `DeadLetterRecord`, `DeadLetterView`, `EnqueueOptions`, `ExponentialOptions`, `JobContext`, `JobCounts`, `JobDefinition`, `JobEnqueueInfo`, `JobError`, `JobHandle`, `JobHandler`, `JobRunInfo`, `JobRunOutcome`, `JobStore`, `JobTimeoutError`, `JobTraceContext`, `JobValidationError`, `MemoryJobStore`, `Queue`, `QueueHealth`, `QueueInstrument`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `Worker`, `WorkerOptions`, `createQueue`, `exponentialBackoff`, `fixedBackoff`, `noBackoff`, `toDeadLetterView`, `toQueueHealth`
 
 ## @nifrajs/mcp
 
@@ -15212,11 +16613,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
 
 ## @nifrajs/mock
 
-`MockServer`, `MockServerOptions`, `MockableApp`, `MockableRoute`, `UnsupportedMockSchemaError`, `autoReflectJsonSchema`, `createMockServer`, `generateMockValue`
+`MockServer`, `MockServerOptions`, `MockableApp`, `MockableRoute`, `UnsupportedMockSchemaError`, `autoReflectJsonSchema`, `createMockServer`, `explainAutoReflectJsonSchema`, `generateMockValue`
 
 ## @nifrajs/node
 
@@ -15244,7 +16645,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
-`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
+`DeferredValue`, `ImportOpenAPIOptions`, `ImportedApiInventory`, `ImportedRoute`, `ImportedRouteQuery`, `JsonValue`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIImportError`, `OpenAPIInfo`, `OpenAPIVersion`, `OpenApiInventoryDrift`, `Page`, `decodeCursor`, `diffOpenApiInventory`, `encodeCursor`, `fromTypeBox`, `importOpenAPI`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
 
 ## @nifrajs/storage
 
@@ -15252,7 +16653,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/testing
 
-`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AgentEvalCase`, `AgentEvalComponentEvidence`, `AgentEvalCompositionOptions`, `AgentEvalCompositionReport`, `AgentEvalRegressionError`, `AgentEvalReport`, `AgentEvalSuite`, `AgentEvalSuiteSpec`, `AgentFailureMatrixCase`, `AgentFailureMatrixError`, `AgentFailureMatrixKind`, `AgentFailureMatrixReport`, `AppLike`, `BaselineComparison`, `BaselineOptions`, `CaptureIncidentOptions`, `CapturedRequest`, `CapturedRequestInput`, `CaseComparison`, `CaseResult`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDeploymentAdapter`, `CertifiableDescriptorAdapter`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableModelGateway`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `CertificationTarget`, `ComparisonCode`, `ContractAuthContext`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractExpectedResponse`, `ContractLabHandler`, `ContractLabRuntimeAdapter`, `ContractLabServer`, `ContractLabWitness`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `CookieJar`, `CreateTrajectoryTranscriptOptions`, `DataAdapterConformanceError`, `DataAdapterConformanceReport`, `DataAdapterConformanceTarget`, `DataConformanceCheck`, `DataConformanceFailure`, `DataConformancePage`, `DataConformanceScope`, `DataConformanceTransaction`, `EffectLedger`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `FaultProfile`, `FaultProfileFault`, `FaultProfileFaultKind`, `FaultProfileReport`, `FaultProfileScenario`, `FaultProfileScenarioReport`, `GenerateRegressionTestOptions`, `IdempotencyDivergence`, `IdempotencyProof`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `PREDICTION_LAB_SEED`, `PredictionLabContext`, `PredictionLabOptions`, `PredictionLabReplay`, `PredictionLabReport`, `PredictionLabResult`, `PredictionLabTarget`, `ReplayIncidentOptions`, `ReplayTrajectoryOptions`, `RubricShape`, `RubricSpec`, `RubricVerdict`, `RunFaultProfileOptions`, `ScoreTolerance`, `TestSession`, `TestSessionOptions`, `TrajectoryInvariantId`, `TrajectoryInvariantOptions`, `TrajectoryInvariantResult`, `TrajectoryReplayResult`, `TrajectoryRun`, `TrajectoryTranscript`, `assertAdapterCertification`, `assertAdversarialContract`, `assertAgentEval`, `assertAgentEvalBaseline`, `assertAgentFailureMatrix`, `assertDataAdapterConformance`, `assertIncidentReplays`, `assertPredictionLab`, `assertTrajectoryInvariants`, `cacheStoreCertificationProfile`, `captureIncident`, `certifyAdapter`, `checkTrajectoryInvariants`, `compareAgentEvalBaseline`, `contractLabWitnesses`, `cookieJar`, `createFailureLab`, `createReferenceContractLabHandler`, `createTrajectoryTranscript`, `defineAgentEvalSuite`, `defineCertificationProfile`, `defineFaultProfile`, `deploymentAdapterCertificationProfile`, `deploymentCertificationProfile`, `eventDeliveryCertificationProfile`, `gatewayCertificationProfile`, `generateRegressionTest`, `httpToolAdapter`, `inProcessToolAdapter`, `jobStoreCertificationProfile`, `mcpToolAdapter`, `modelGatewayCertificationProfile`, `parseRubricVerdict`, `predictionLabCaseIds`, `proveIdempotency`, `recordTrajectory`, `redactForEmission`, `referenceFaultProfile`, `registryCertificationProfile`, `replayIncident`, `replayTrajectory`, `runAdversarialContract`, `runAgentEvalComposition`, `runAgentFailureMatrix`, `runContractLab`, `runContractLabOverHttp`, `runContractLabThroughAdapter`, `runDataAdapterConformance`, `runFailureScenario`, `runFaultProfile`, `runPredictionLab`, `runTrajectory`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `testToolAdapter`, `toPredictionLabContext`, `trajectoryRegressionId`, `verifyAdapterCertification`
+`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AgentEvalCase`, `AgentEvalComponentEvidence`, `AgentEvalCompositionOptions`, `AgentEvalCompositionReport`, `AgentEvalRegressionError`, `AgentEvalReport`, `AgentEvalSuite`, `AgentEvalSuiteSpec`, `AgentFailureMatrixCase`, `AgentFailureMatrixError`, `AgentFailureMatrixKind`, `AgentFailureMatrixOptions`, `AgentFailureMatrixReport`, `AppLike`, `BaselineComparison`, `BaselineOptions`, `CaptureIncidentOptions`, `CapturedRequest`, `CapturedRequestInput`, `CaseComparison`, `CaseResult`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDeploymentAdapter`, `CertifiableDescriptorAdapter`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableModelGateway`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `CertificationTarget`, `ComparisonCode`, `ContractAuthContext`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractExpectedResponse`, `ContractLabHandler`, `ContractLabRuntimeAdapter`, `ContractLabServer`, `ContractLabWitness`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `CookieJar`, `CreateTrajectoryTranscriptOptions`, `DataAdapterConformanceError`, `DataAdapterConformanceReport`, `DataAdapterConformanceTarget`, `DataConformanceCheck`, `DataConformanceFailure`, `DataConformancePage`, `DataConformanceScope`, `DataConformanceTransaction`, `EffectLedger`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `FaultProfile`, `FaultProfileFault`, `FaultProfileFaultKind`, `FaultProfileReport`, `FaultProfileScenario`, `FaultProfileScenarioReport`, `GenerateRegressionTestOptions`, `IdempotencyDivergence`, `IdempotencyProof`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `PREDICTION_LAB_SEED`, `PredictionLabContext`, `PredictionLabOptions`, `PredictionLabReplay`, `PredictionLabReport`, `PredictionLabResult`, `PredictionLabTarget`, `ReplayIncidentOptions`, `ReplayTrajectoryOptions`, `RubricShape`, `RubricSpec`, `RubricVerdict`, `RunFaultProfileOptions`, `ScoreTolerance`, `TestSession`, `TestSessionOptions`, `TrajectoryInvariantId`, `TrajectoryInvariantOptions`, `TrajectoryInvariantResult`, `TrajectoryReplayResult`, `TrajectoryRun`, `TrajectoryTranscript`, `assertAdapterCertification`, `assertAdversarialContract`, `assertAgentEval`, `assertAgentEvalBaseline`, `assertAgentFailureMatrix`, `assertDataAdapterConformance`, `assertIncidentReplays`, `assertPredictionLab`, `assertTrajectoryInvariants`, `cacheStoreCertificationProfile`, `captureIncident`, `certifyAdapter`, `checkTrajectoryInvariants`, `compareAgentEvalBaseline`, `contractLabWitnesses`, `cookieJar`, `createFailureLab`, `createReferenceContractLabHandler`, `createTrajectoryTranscript`, `defineAgentEvalSuite`, `defineCertificationProfile`, `defineFaultProfile`, `deploymentAdapterCertificationProfile`, `deploymentCertificationProfile`, `eventDeliveryCertificationProfile`, `gatewayCertificationProfile`, `generateRegressionTest`, `httpToolAdapter`, `inProcessToolAdapter`, `jobStoreCertificationProfile`, `mcpToolAdapter`, `modelGatewayCertificationProfile`, `parseRubricVerdict`, `predictionLabCaseIds`, `proveIdempotency`, `recordTrajectory`, `redactForEmission`, `referenceFaultProfile`, `registryCertificationProfile`, `replayIncident`, `replayTrajectory`, `runAdversarialContract`, `runAgentEvalComposition`, `runAgentFailureMatrix`, `runContractLab`, `runContractLabOverHttp`, `runContractLabThroughAdapter`, `runDataAdapterConformance`, `runFailureScenario`, `runFaultProfile`, `runPredictionLab`, `runTrajectory`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `testToolAdapter`, `toPredictionLabContext`, `trajectoryRegressionId`, `verifyAdapterCertification`
 
 ## @nifrajs/ts-plugin
 
@@ -15264,7 +16665,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 
@@ -15292,7 +16693,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/webmcp
 
-`AgentCapability`, `AgentCapabilityReference`, `AgentSurfaceAuthoritativeState`, `AgentSurfaceConformanceCase`, `AgentSurfaceConformanceOptions`, `AgentSurfaceConformanceResult`, `AgentSurfaceDescriptor`, `AgentSurfacePrediction`, `AgentSurfacePredictionContext`, `AgentSurfacePredictor`, `AgentSurfaceReconcileContext`, `AgentSurfaceReconciler`, `AgentSurfaceScope`, `AgentSurfaceSnapshot`, `DefineAgentCapabilityOptions`, `ExecutePredictedOptions`, `PredictedExecutionResult`, `PredictionCommitOptions`, `PredictionPatchOperation`, `PredictionStore`, `PredictionStoreEvent`, `PredictionStoreResult`, `PredictionStoreSnapshot`, `ReconciliationMode`, `ToolApproval`, `ToolCallOptions`, `ToolCallResult`, `ToolContract`, `ToolContractOptions`, `ToolError`, `ToolEvidence`, `WebMcpExecutionOptions`, `WebMcpModelContext`, `WebMcpReceipt`, `WebMcpRegistrationFailure`, `WebMcpRegistrationReport`, `WebMcpTarget`, `WebMcpToolDefinition`, `createPredictionStore`, `defineAgentCapability`, `executeAgentCapability`, `executePredicted`, `registerWebMcpTools`, `runAgentSurfaceConformance`, `toWebMcpTool`
+`AgentCapability`, `AgentCapabilityReference`, `AgentSurfaceAuthoritativeState`, `AgentSurfaceConformanceCase`, `AgentSurfaceConformanceOptions`, `AgentSurfaceConformanceResult`, `AgentSurfaceDescriptor`, `AgentSurfacePrediction`, `AgentSurfacePredictionContext`, `AgentSurfacePredictor`, `AgentSurfaceReconcileContext`, `AgentSurfaceReconciler`, `AgentSurfaceScope`, `AgentSurfaceSnapshot`, `DefineAgentCapabilityOptions`, `ExecutePredictedOptions`, `PredictedExecutionResult`, `PredictionCommitOptions`, `PredictionPatchOperation`, `PredictionStore`, `PredictionStoreEvent`, `PredictionStoreResult`, `PredictionStoreSnapshot`, `ReconciliationMode`, `ToolApproval`, `ToolCallOptions`, `ToolCallResult`, `ToolContract`, `ToolContractOptions`, `ToolError`, `ToolEvidence`, `WebMcpExecuteContext`, `WebMcpExecutionOptions`, `WebMcpModelContext`, `WebMcpReceipt`, `WebMcpRegistrationFailure`, `WebMcpRegistrationReport`, `WebMcpTarget`, `WebMcpToolDefinition`, `createPredictionStore`, `defineAgentCapability`, `executeAgentCapability`, `executePredicted`, `registerWebMcpTools`, `runAgentSurfaceConformance`, `toWebMcpTool`
 
 ## @nifrajs/workers
 

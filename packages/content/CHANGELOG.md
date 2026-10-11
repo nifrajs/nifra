@@ -1,5 +1,12 @@
 # @nifrajs/content
 
+## 5.0.0
+
+### Patch Changes
+
+- 1f81be1: `defineCollection` reads the directory, stats and files with async file IO. It used the synchronous calls inside `all()` and `get()`, which blocked a long-lived server's event loop for the whole read.
+- 5f867e3: `collection.get(slug)` now throws for an entry whose frontmatter fails to parse or validate, as `all()` does, and returns `null` only when no file exists for the slug. A broken entry used to look like a missing one, so a page answered 404 instead of surfacing the error.
+
 ## 4.0.2
 
 ## 4.0.1

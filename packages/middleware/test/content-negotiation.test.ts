@@ -8,6 +8,24 @@ describe("negotiateContentType()", () => {
     ).toBe("application/json")
   })
 
+  test("*/* accepts any offer, ranks below a named type, and */json is no range", () => {
+    expect(negotiateContentType("*/*", ["application/json"])).toBe("application/json")
+    expect(negotiateContentType("*/*;q=0.1, text/html", ["application/json", "text/html"])).toBe(
+      "text/html",
+    )
+    expect(negotiateContentType("*/*", ["text/html", "application/json"])).toBe("text/html")
+    expect(negotiateContentType("*/json", ["application/json"])).toBeUndefined()
+    const ranges = parseAcceptHeader("*/*;q=0.5, */json").map(
+      ({ type, subtype, q, specificity }) => ({
+        type,
+        subtype,
+        q,
+        specificity,
+      }),
+    )
+    expect(ranges).toEqual([{ type: "*", subtype: "*", q: 0.5, specificity: 0 }])
+  })
+
   test("uses the most-specific media range and honors q=0", () => {
     expect(negotiateContentType("text/*;q=0.9, text/html;q=0.2", ["text/html", "text/plain"])).toBe(
       "text/plain",

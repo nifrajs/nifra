@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { server, toFetchHandler } from "../src/index.ts"
 import {
   applyTransportCap,
+  capBodyBytes,
   drainCapped,
   hasTrustedBodyFraming,
   markTransportCap,
@@ -196,6 +197,28 @@ describe("drainCapped", () => {
   })
 })
 
+describe("transport-capped request streams", () => {
+  test("an oversized stream answers 413 without waiting on an unread clone", async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(16))
+      },
+    })
+    const init: RequestInit & { duplex: "half" } = { method: "POST", body: source, duplex: "half" }
+    const request = new Request("http://x/body", init)
+    markTransportCap(request, 4)
+    applyTransportCap(request, request)
+    const clone = request.clone()
+    const reader = request.body?.getReader()
+    const failure = await reader?.read().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(failure instanceof Response ? failure.status : failure).toBe(413)
+    await clone.body?.cancel().catch(() => {})
+  })
+})
+
 describe("JSON schema lane - the cap holds on real bytes", () => {
   test("an understated Content-Length cannot bypass the JSON body cap", async () => {
     const app = server({ maxBodyBytes: 1000 }).post(
@@ -341,5 +364,41 @@ describe("trusted body framing", () => {
     )
     expect(response.status).toBe(413)
     expect(await response.json()).toEqual({ ok: false, error: "payload_too_large" })
+  })
+})
+
+describe("capBodyBytes", () => {
+  const post = (body: BodyInit | null, headers: Record<string, string> = {}) =>
+    new Request("http://test/", { method: "POST", body, headers })
+  const rejection = async (request: Request) => {
+    const thrown = await request.text().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    )
+    return thrown instanceof Response ? `${thrown.status} ${await thrown.text()}` : String(thrown)
+  }
+
+  test("a bodiless request is returned as is", () => {
+    const request = new Request("http://test/")
+    expect(capBodyBytes(request, 8)).toBe(request)
+  })
+
+  test("a body within the cap reads unchanged and keeps the request line and headers", async () => {
+    const capped = capBodyBytes(post("12345678", { "x-k": "v" }), 8)
+    expect(capped.method).toBe("POST")
+    expect(capped.headers.get("x-k")).toBe("v")
+    expect(await capped.text()).toBe("12345678")
+  })
+
+  test("delivered bytes past the cap, an over-cap or a malformed Content-Length reject the read", async () => {
+    expect(await rejection(capBodyBytes(post("123456789"), 8))).toBe(
+      '413 {"ok":false,"error":"payload_too_large"}',
+    )
+    expect(await rejection(capBodyBytes(post("1", { "content-length": "9" }), 8))).toStartWith(
+      "413",
+    )
+    expect(await rejection(capBodyBytes(post("1", { "content-length": "-1" }), 8))).toBe(
+      '400 {"ok":false,"error":"invalid_content_length"}',
+    )
   })
 })

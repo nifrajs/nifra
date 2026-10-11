@@ -77,6 +77,14 @@ export const IDENTITY_SENSITIVE_PACKAGES: readonly string[] = [
 
 /** Files a redirect may rewrite. Everything else in a package (json, css, wasm) loads unchanged. */
 const REDIRECTABLE = /\.(?:m|c)?[jt]sx?$/
+
+/** The loader a {@link REDIRECTABLE} file is parsed with. `.ts` is never `tsx`: under JSX rules a
+ * generic arrow (`<T>(x: T) => x`) reads as an unclosed element and swallows the file. */
+function sourceLoader(path: string): "js" | "jsx" | "ts" | "tsx" {
+  if (path.endsWith(".tsx")) return "tsx"
+  if (path.endsWith(".jsx")) return "jsx"
+  return /\.[mc]?ts$/.test(path) ? "ts" : "js"
+}
 /** Runaway guards. A real `node_modules` top level is hundreds of entries, a repo walk is a few. */
 const MAX_SCANNED_ENTRIES = 4_096
 const MAX_ANCESTOR_DIRS = 16
@@ -412,6 +420,17 @@ const declaredNames = (root: string, declared: readonly string[]): readonly stri
 }
 
 /**
+ * The installed package names the app's declaration covers: each exact name, and each package
+ * installed under a declared `@scope/*`. Empty without a declaration. A bundler that pins packages by
+ * name, such as Vite's `resolve.dedupe`, takes this list.
+ */
+export function singleCopyPackageNames(cwd: string): readonly string[] {
+  const root = realpathOrSelf(resolve(cwd))
+  const declared = readSingleCopyDeclaration(root)
+  return declared === undefined ? [] : declaredNames(root, declared)
+}
+
+/**
  * Work out which foreign copies exist and which of them may be redirected.
  *
  * Pure discovery: it reads `package.json` files and symlink targets, never application source, and
@@ -569,7 +588,7 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
         // A runtime `onLoad` must always return an object - returning nothing fails the load rather
         // than falling through to the default. Hand back the file as it was, at its own path, so its
         // relative imports keep resolving exactly as they would have.
-        return { contents: readFileSync(args.path, "utf8"), loader: "js" }
+        return { contents: readFileSync(args.path, "utf8"), loader: sourceLoader(args.path) }
       })
     },
   }

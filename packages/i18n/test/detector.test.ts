@@ -23,6 +23,25 @@ describe("localeDetector()", () => {
     expect(res.headers.get("content-language")).toBe("fr")
   })
 
+  test("varies on Accept-Language, and on Cookie once a locale cookie is read", async () => {
+    const withCookie = await app().fetch(new Request("http://x/"))
+    expect(withCookie.headers.get("vary")).toBe("Accept-Language, Cookie")
+    const headerOnly = await app({ locales: ["en", "fr"], defaultLocale: "en" }).fetch(
+      new Request("http://x/"),
+    )
+    expect(headerOnly.headers.get("vary")).toBe("Accept-Language")
+    const merged = await server()
+      .use(localeDetector(base))
+      .get("/", () => new Response("ok", { headers: { vary: "Origin, accept-language" } }))
+      .fetch(new Request("http://x/"))
+    expect(merged.headers.get("vary")).toBe("Origin, accept-language, Cookie")
+    const star = await server()
+      .use(localeDetector(base))
+      .get("/", () => new Response("ok", { headers: { vary: "*" } }))
+      .fetch(new Request("http://x/"))
+    expect(star.headers.get("vary")).toBe("*")
+  })
+
   test("source priority: query > cookie > header > default", async () => {
     const headers = { cookie: "locale=de", "accept-language": "fr" }
     const q = await app().fetch(new Request("http://x/?lang=en", { headers }))

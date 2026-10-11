@@ -25,7 +25,7 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 - **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
 - **virtualizeEvidenceRows** _(function)_ - `virtualizeEvidenceRows: <T>(rows: readonly T[], cursor: number, windowSize?: number) => { readonly offset: number; readonly rows: readonly …`
 
-_…and 51 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
+_…and 55 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
 
 ## Footguns
 

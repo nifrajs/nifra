@@ -24,7 +24,7 @@ import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
 import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
-import { applyEnvFiles, forgetAutoLoadedEnv, takeEnvFileFlags } from "./env-file.ts"
+import { applyEnvFiles, forgetAutoLoadedEnv, REFLECT_ENV, takeEnvFileFlags } from "./env-file.ts"
 import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 import {
@@ -165,6 +165,10 @@ Usage:
                                          against it: a route the target can't honour (an ssr route on a
                                          static build, ISR where there's no revalidation) exits nonzero
                                          with the consequence - run in CI so it fails the build, not prod.
+  nifra routes --hooks [--json]          List the hooks each backend route and each prefix's unmatched
+               [--since <file>]          paths actually run: kind, plugin name, and where it was
+                                         registered (app, group, merge, mount). --since diffs against a
+                                         saved --json report.
   nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent files a new app ships:
                                          .mcp.json + .cursor/mcp.json (register this project's nifra MCP),
                                          each agent's pointer to AGENTS.md (CLAUDE.md, GEMINI.md,
@@ -201,6 +205,8 @@ Usage:
                                          backend code in browser code). Run as "done"; --json for agents;
                                          --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
                                          review tools; --lints-only skips tsc for a near-instant inner-loop pass.
+                                         With a contracts.lock.json, both modes import backend/app.ts
+                                         (running its top-level code) to compare the routes it serves.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
                                          full build, test, coverage, corpus, consumer, and cross-runtime gate.
   nifra fix     [--code <NF-code>]       Apply a registered diagnostic recipe, then print the remaining
@@ -262,7 +268,8 @@ Usage:
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                                         to skip). --list shows available targets. A version newer than
+                [--no-hooks]             to skip), then prints how hook scope changed (--no-hooks to
+                                         skip). --list shows available targets. A version newer than
                                          this CLI prints the command for that release's CLI. Fail-closed
                                          on an unknown version or a rollback (--allow-downgrade
                                          overrides). Deterministic + idempotent.
@@ -276,6 +283,10 @@ Usage:
                                          params, the data its output schemas let through, and api typed
                                          by backend/app.ts. dev, build and check refresh them too;
                                          --check fails when one is stale.
+  nifra schemas [--write] [--json]       Draft loaderOutput/actionOutput from each loader's and
+                                         action's return type for review; --write adds the missing
+                                         ones (marked nifra:generated) and refreshes generated ones.
+                                         Lists the returned fields a hand-written schema drops.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -304,11 +315,22 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "4.0.2"
+const CLI_VERSION = "5.0.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
 const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
+
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Trusted application configuration supplies native Vite plugins; the pinned pipeline validates their hooks.
+const asComponentPlugins = (
+  value: readonly unknown[],
+): NonNullable<
+  import("@nifrajs/web/server-components/build").ComponentPipelineOptions["plugins"]
+> =>
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Trusted config forwards the pinned Vite plugin ABI; this does not accept request data.
+  value as NonNullable<
+    import("@nifrajs/web/server-components/build").ComponentPipelineOptions["plugins"]
+  >
 
 /**
  * Render an error for the CLI, unwrapping the detail a bare `.message` drops.
@@ -345,6 +367,27 @@ export function formatCliError(err: unknown): string {
 }
 
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
+  if (app.framework.componentPipeline !== undefined) {
+    if (flags.bun)
+      throw new Error(
+        "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
+      )
+    const { devServerComponents } = await import("@nifrajs/web/server-components/build")
+    if (
+      app.resolvedPlugins.clientPlugins.length > 0 ||
+      app.resolvedPlugins.serverPlugins.length > 0
+    )
+      throw new Error(
+        "[nifra/components] Use Vite equivalents for client/server Bun plugins in the component pipeline",
+      )
+    await devServerComponents({
+      ...app.framework.componentPipeline,
+      root: app.cwd,
+      port: flags.port,
+      plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
+    })
+    return
+  }
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra dev` takes `--vite` or `--bun`, not both.")
   }
@@ -511,6 +554,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
       indicator: showsIndicator(flags, fw),
+      allowedHosts: fw.dev?.allowedHosts ?? [],
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -693,7 +737,7 @@ async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
   let rootPackage: Record<string, unknown>
   try {
     rootPackage = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>
-    // @nifra-gate-reviewed: not a security gate. An unreadable/non-JSON package.json is a separate
+    // nifra-expect NF-S001: not a security gate. An unreadable/non-JSON package.json is a separate
     // build problem; returning here skips the freshness check rather than masking a denial.
   } catch {
     return // an unreadable/!JSON package.json is a separate problem; don't mask it as a stale-dist failure
@@ -727,6 +771,40 @@ async function buildForTarget(
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
   const { framework: fw } = app
+  if (fw.componentPipeline !== undefined) {
+    if (flags.bun)
+      throw new Error(
+        "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
+      )
+    if (target === "static")
+      throw new Error(
+        "[nifra/components] Component owners require private per-request execution; choose bun, node, deno, cloudflare, or vercel",
+      )
+    if (
+      app.resolvedPlugins.clientPlugins.length > 0 ||
+      app.resolvedPlugins.serverPlugins.length > 0
+    )
+      throw new Error(
+        "[nifra/components] Use Vite equivalents for client/server Bun plugins in the component pipeline",
+      )
+    const { buildServerComponents } = await import("@nifrajs/web/server-components/build")
+    const outDir =
+      target === "vercel" && flags.out === undefined
+        ? resolve(app.cwd, ".vercel/output")
+        : app.outDir
+    const result = await buildServerComponents({
+      ...fw.componentPipeline,
+      target,
+      root: app.cwd,
+      outDir,
+      plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
+    })
+    await assertFreshWorkspaceDists(app.cwd)
+    console.log(
+      `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`,
+    )
+    return
+  }
   const cssCodeSplitRequested = fw.cssCodeSplit === false
   const hasBunTransforms =
     app.resolvedPlugins.clientPlugins.length > 0 || app.resolvedPlugins.serverPlugins.length > 0
@@ -945,6 +1023,42 @@ function installReflectionExitHint(): (command: string | undefined) => void {
   }
 }
 
+/** Commands that import the app only to read what it declares, never sending it a request, so the
+ * app may skip connecting to its services. `assure` qualifies without its bundle lane, which renders. */
+const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+  "capabilities",
+  "check",
+  "context",
+  "contracts",
+  "diff",
+  "doctor",
+  "manifest",
+  "openapi",
+  "routes",
+  "sync-manifest",
+  "sync-routes",
+])
+
+const HELD_OPEN_GRACE_MS = 2_000
+
+/**
+ * A command that imports the app for its answer has already answered when the app's own work - a
+ * database or Redis client reconnecting, an interval - would keep the process alive indefinitely.
+ * A process that exits on its own never reaches this unref'd timer; a held one is ended with a note.
+ */
+function exitIfHeldOpen(command: string): void {
+  setTimeout(() => {
+    process.stderr.write(
+      `[nifra] \`nifra ${command}\` has finished, but something the app started when it was imported ` +
+        `(an open connection or a timer) is keeping the process alive, so nifra is exiting.` +
+        (process.env[REFLECT_ENV] === command
+          ? ` To skip that work while nifra only reads the app, check process.env.${REFLECT_ENV}, which is set to "${command}".\n`
+          : "\n"),
+    )
+    process.exit(typeof process.exitCode === "number" ? process.exitCode : 0)
+  }, HELD_OPEN_GRACE_MS).unref()
+}
+
 /** Set on the copy of `nifra mcp` that serves without `.env` files, so it does not restart again. */
 const MCP_WITHOUT_ENV_FILES = "NIFRA_MCP_WITHOUT_ENV_FILES"
 
@@ -1051,6 +1165,9 @@ async function main(): Promise<void> {
   const catalogSpec = findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
   if (catalogSpec?.transports.includes("cli")) {
     const markReflecting = installReflectionExitHint()
+    if (READ_ONLY_COMMANDS.has(command) || (command === "assure" && !assureBundleRequested(argv))) {
+      process.env[REFLECT_ENV] = command
+    }
     try {
       const input = bindCommandArgv(catalogSpec, argv.slice(dbSub === undefined ? 1 : 2))
       markReflecting(command)
@@ -1086,6 +1203,7 @@ async function main(): Promise<void> {
           ? candidate
           : 1
     }
+    exitIfHeldOpen(command)
     return
   }
   if (command === "verify") {
@@ -1150,6 +1268,7 @@ async function main(): Promise<void> {
         json: argv.includes("--json"),
         list: argv.includes("--list"),
         verify: !argv.includes("--no-verify"),
+        hooks: !argv.includes("--no-hooks"),
         allowDowngrade: argv.includes("--allow-downgrade"),
         exact: argv.includes("--exact"),
         cliVersion: CLI_VERSION,
@@ -1278,12 +1397,29 @@ function findCliCommand(values: readonly string[]): number {
   return values.findIndex((value) => isCliCommandToken(value))
 }
 
+/**
+ * The command vector from one runtime argv: the command, then its arguments. Arguments typed before
+ * the command (`nifra --json check`) follow the command's own, ahead of any `--`, rather than being
+ * dropped. Only when index 1 is the script: a runtime flag there means the leading entries are the
+ * runtime's own, not the caller's.
+ */
+export function commandArgv(values: readonly string[], commandIndex: number): readonly string[] {
+  const command = values.slice(commandIndex)
+  const script = values[1]
+  if (commandIndex <= 2 || script === undefined || script.startsWith("-")) return command
+  const leading = values.slice(2, commandIndex)
+  const separator = command.indexOf("--")
+  return separator === -1
+    ? [...command, ...leading]
+    : [...command.slice(0, separator), ...leading, ...command.slice(separator)]
+}
+
 function cliArgv(): readonly string[] {
   const reexec = reexecCliArgv()
   if (reexec !== undefined) return reexec
   for (const values of [Bun.argv, process.argv]) {
     const commandIndex = findCliCommand(values)
-    if (commandIndex >= 0) return values.slice(commandIndex)
+    if (commandIndex >= 0) return commandArgv(values, commandIndex)
   }
   return Bun.argv.slice(2)
 }

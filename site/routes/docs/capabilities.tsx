@@ -116,6 +116,18 @@ export const app = server().mount({
 const OPAQUE_CHECK = `$ nifra check
 • known gap, not capability-analyzed: /api/auth/* - better-auth's own handler; its effects are its own`
 
+const OPAQUE_ROUTES = `export const app = server().mount({
+  path: "/api/auth",
+  app: authHandler,
+  opaque: {
+    reason: "better-auth's own handler; its effects are its own",
+    routes: [
+      { method: "POST", path: "/api/auth/sign-in/email", capabilities: ["session.write"] },
+      { method: "GET", path: "/api/auth/get-session", capabilities: ["session.read"] },
+    ],
+  },
+})`
+
 const LEVELS = `$ nifra capabilities snapshot   # writes capabilities.lock.json
 $ nifra levels
 ✓ L0 typed contract
@@ -215,6 +227,16 @@ export default function Capabilities() {
         the two halves import-disjoint, at the seam and at the route modules, and every route's
         declaration equals its reach.
       </p>
+      <p>
+        The walk starts at the module that registers the route, which Nifra finds by reading the
+        source without running it. It reads a path written as a string literal, or as a name bound to
+        a module-level <code>const</code> string, with or without <code>as const</code>. The{" "}
+        <code>const</code> can live in the same file or be exported from a project file it imports.
+        The same holds for a WebSocket route's <code>app.ws(path, ...)</code>. A path built at runtime, such as a template with <code>{"${...}"}</code> in it, cannot be read
+        this way. <code>nifra check</code> names that expression in an NF-C036 finding, because the
+        route then has no module to start from. List the module in{" "}
+        <code>provenance.routeModules</code> to give it one.
+      </p>
 
       <h2>Runtime beacons</h2>
       <p>
@@ -286,6 +308,22 @@ export default function Capabilities() {
         <code>opaque</code> field works on a <code>createWebApp</code> <code>mounts</code> entry.
       </p>
       <CodeBlock code={OPAQUE_CHECK} lang="bash" />
+      <p>
+        A mount can also state the routes it serves and the capabilities each one exercises. Pass an
+        object with the <code>reason</code> and a <code>routes</code> list. Each path is the full
+        request path and must sit under the mount:
+      </p>
+      <CodeBlock code={OPAQUE_ROUTES} lang="ts" />
+      <p>
+        Assurance lists these routes with <code>analysis: "declared"</code>, apart from the routes it
+        analyzed. The mount stays a known gap with its reason. A declared capability the policy does
+        not define fails, as it does on a route, and so does a domain write declared on{" "}
+        <code>GET</code>. Nothing else is checked, because there is no evidence to read. The routes
+        also appear in the capability lockfile, so a changed declaration shows up in review. They
+        appear in the <code>nifra context</code> route index too. An L4 run lists them as having no
+        contract to test. A malformed entry, or a path outside the mount, stops the analysis with an
+        error that names it.
+      </p>
 
       <h2>The lockfile</h2>
       <p>

@@ -169,6 +169,45 @@ describe("runRequest", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a character split across two chunks decodes whole", async () => {
+    const euro = new TextEncoder().encode("€")
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(euro.subarray(0, 1))
+        controller.enqueue(euro.subarray(1))
+        controller.close()
+      },
+    })
+    const result = await runRequest({ fetch: () => new Response(body) }, { path: "/" })
+    expect(result.bodyText).toBe("€")
+    expect(result.truncated).toBeUndefined()
+  })
+
+  test("URLSearchParams is sent form-encoded, not as JSON", async () => {
+    const result = await runRequest(
+      {
+        fetch: async (req) =>
+          Response.json({ type: req.headers.get("content-type"), body: await req.text() }),
+      },
+      { method: "POST", path: "/", body: new URLSearchParams({ q: "x" }) },
+    )
+    expect(result.body).toEqual({
+      type: "application/x-www-form-urlencoded;charset=UTF-8",
+      body: "q=x",
+    })
+  })
+
+  test("keeps every Set-Cookie value", async () => {
+    const headers = new Headers({ "content-type": "text/plain" })
+    headers.append("set-cookie", "a=1; Path=/")
+    headers.append("set-cookie", "b=2; Path=/")
+    const r = await runRequest({ fetch: () => new Response("x", { headers }) }, { path: "/" })
+    expect(r.setCookie).toEqual(["a=1; Path=/", "b=2; Path=/"])
+    expect(r.headers?.["set-cookie"]).toBe("a=1; Path=/, b=2; Path=/")
+    const plain = await runRequest({ fetch: () => new Response("x") }, { path: "/" })
+    expect("setCookie" in plain).toBe(false)
+  })
+
   test("echoes the label", async () => {
     const r = await runRequest(echoApp, { path: "/users/1", label: "fetch user" })
     expect(r.label).toBe("fetch user")

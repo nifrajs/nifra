@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { defineCapabilityPolicy, evaluateCapabilityAssurance } from "../src/capabilities.ts"
+import {
+  defineCapabilityPolicy,
+  evaluateCapabilityAssurance,
+  snapshotCapabilities,
+} from "../src/capabilities.ts"
 import {
   composeProjectEvidence,
   serializeProjectEvidence,
@@ -129,5 +133,123 @@ describe("opaque mounts in project evidence", () => {
     ])
     expect(composed.routes.map((route) => route.path)).toEqual(["/", "/api/auth/session"])
     expect(composed.mounts).toEqual([{ path: "/api/auth/flows/*", opaque: "better-auth" }])
+  })
+})
+
+describe("an opaque mount that declares its routes", () => {
+  const declaringPolicy = defineCapabilityPolicy({
+    definitions: [
+      { id: "db.read", zone: "domain", access: "read" },
+      { id: "session.write", zone: "domain", access: "write" },
+    ],
+    provenance: { imports: [], forbiddenImports: [] },
+  })
+  const reason = "a third-party auth handler"
+  const declaring = (routes: readonly unknown[], why = reason) =>
+    server()
+      .get("/own", { capabilities: ["db.read"] }, () => ({ ok: true }))
+      .mount({
+        path: "/api/auth",
+        app: thirdParty,
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: malformed entries are the point of some cases; reflection must refuse them.
+        opaque: { reason: why, routes: routes as never },
+      })
+  const assureDeclared = (app: unknown) =>
+    evaluateCapabilityAssurance(app, declaringPolicy, {
+      routes: [{ method: "GET", path: "/own", covered: true, evidence: [] }],
+    })
+  const signIn = { method: "post", path: "/api/auth/sign-in", capabilities: ["session.write"] }
+  const session = { method: "GET", path: "/api/auth/session", capabilities: ["db.read"] }
+
+  test("reflection carries the declared routes, sorted, with the method upper-cased", () => {
+    expect(reflectMounts(declaring([signIn, session]))).toEqual([
+      {
+        path: "/api/auth/*",
+        opaque: reason,
+        routes: [
+          { method: "GET", path: "/api/auth/session", capabilities: ["db.read"] },
+          { method: "POST", path: "/api/auth/sign-in", capabilities: ["session.write"] },
+        ],
+      },
+    ])
+  })
+
+  test("assurance reports them as declared, keeps the gap and its reason, and passes", () => {
+    const report = assureDeclared(declaring([signIn, session]))
+    expect(report.ok).toBe(true)
+    expect(report.findings).toEqual([])
+    expect(report.gaps).toEqual([{ kind: "opaque-mount", path: "/api/auth/*", reason }])
+    expect(report.routes.find((route) => route.path === "/api/auth/sign-in")).toEqual({
+      method: "POST",
+      path: "/api/auth/sign-in",
+      declared: ["session.write"],
+      evidence: [],
+      unproven: ["session.write"],
+      covered: false,
+      analysis: "declared",
+    })
+    expect(report.routes.find((route) => route.path === "/own")?.analysis).toBeUndefined()
+    // The lockfile records the declaration too, so changing it is a reviewed diff.
+    expect(snapshotCapabilities(report).routes.map((route) => route.path)).toEqual([
+      "/api/auth/session",
+      "/api/auth/sign-in",
+      "/own",
+    ])
+  })
+
+  test("a declared capability nifra does not know fails, as it does on a route", () => {
+    const report = assureDeclared(
+      declaring([{ method: "POST", path: "/api/auth/x", capabilities: ["payments.charge"] }]),
+    )
+    expect(report.ok).toBe(false)
+    expect(report.findings.map((finding) => finding.code)).toEqual(["unknown-capability"])
+  })
+
+  test("a safe method that declares a domain write fails", () => {
+    const report = assureDeclared(
+      declaring([{ method: "GET", path: "/api/auth/sign-out", capabilities: ["session.write"] }]),
+    )
+    expect(report.findings.map((finding) => finding.code)).toEqual(["safe-method-domain-write"])
+  })
+
+  test("a malformed or out-of-mount declaration is refused at analysis, naming the entry", () => {
+    expect(() => reflectMounts(declaring([{ method: "GET", path: "/elsewhere" }]))).toThrow(
+      "outside",
+    )
+    expect(() => reflectMounts(declaring([{ method: "GET path", path: "/api/auth/a" }]))).toThrow(
+      "method",
+    )
+    expect(() => reflectMounts(declaring([{ method: "GET", path: "/api/auth/a" }, null]))).toThrow(
+      "route 2",
+    )
+    expect(() =>
+      reflectMounts(declaring([{ method: "GET", path: "/api/auth/a", capabilities: [1] }])),
+    ).toThrow("capabilities")
+    expect(() => reflectMounts(declaring([session, session]))).toThrow("twice")
+  })
+
+  test("routes without a reason leave the mount undeclared, failing as before", () => {
+    const report = assureDeclared(declaring([session], " "))
+    expect(report.ok).toBe(false)
+    expect(report.findings.map((finding) => finding.code)).toEqual(["opaque-mount-undeclared"])
+    expect(report.routes.map((route) => route.path)).toEqual(["/own"])
+  })
+
+  test("project evidence carries them, and composition prefixes them", () => {
+    const child = server().mount({
+      path: "/flows",
+      app: thirdParty,
+      opaque: { reason, routes: [{ method: "GET", path: "/flows/start" }] },
+    })
+    const composed = composeProjectEvidence([
+      { evidence: snapshotProjectEvidence(child), pathPrefix: "/api/auth" },
+    ])
+    expect(composed.mounts).toEqual([
+      {
+        path: "/api/auth/flows/*",
+        opaque: reason,
+        routes: [{ method: "GET", path: "/api/auth/flows/start", capabilities: [] }],
+      },
+    ])
   })
 })

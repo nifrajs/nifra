@@ -174,10 +174,17 @@ const flatError = (status: number, code: string): Response =>
  * Build the `Request`, or a flat error `Response` when the event must be rejected before the app
  * runs. The body is decoded and measured first - a 413 here means no `Request` ever existed.
  */
+/** A host name or IP literal with an optional port: nothing that could end the authority early. */
+const AUTHORITY = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/
+
 const toRequest = (event: LambdaEvent, maxBodyBytes: number): Request | Response => {
   const method = event.requestContext?.http?.method ?? "GET"
   const headers = requestHeaders(event)
-  const authority = event.requestContext?.domainName ?? headers.get("host") ?? "localhost"
+  // The Host header is the client's when the event names no domain. A `/`, `?`, `#` or `@` in it
+  // would move the URL's host or path away from the event's own `rawPath`.
+  const host = headers.get("host")
+  const authority =
+    event.requestContext?.domainName ?? (host !== null && AUTHORITY.test(host) ? host : "localhost")
   const path = event.rawPath !== undefined && event.rawPath !== "" ? event.rawPath : "/"
   const query =
     event.rawQueryString !== undefined && event.rawQueryString !== ""

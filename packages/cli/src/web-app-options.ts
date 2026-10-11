@@ -11,7 +11,7 @@ import { FRAMEWORK_WEB_OPTIONS, type FrameworkWebOption, type NifraFramework } f
 
 type FrameworkWebAppOptions = Pick<
   CreateWebAppOptions,
-  "use" | "api" | "apiPrefix" | "apiStrip" | "mounts" | "csp" | "nonce"
+  "use" | "api" | "apiPrefix" | "apiStrip" | "mounts" | "csp" | "nonce" | "serverComponents"
 >
 
 /** `use`, the backend as `api`, and every forwarded framework field the config sets. */
@@ -39,7 +39,7 @@ export function frameworkMountPaths(fw: NifraFramework, hasBackend: boolean): st
   for (const mount of fw.mounts ?? []) {
     if (typeof mount?.path === "string") paths.push(mount.path)
   }
-  const apiPrefix = fw.apiPrefix ?? "/api"
+  const apiPrefix = fw.apiPrefix ?? ""
   if (hasBackend && apiPrefix !== "") paths.push(apiPrefix)
   return paths
 }

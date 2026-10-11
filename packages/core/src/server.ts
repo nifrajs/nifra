@@ -42,6 +42,8 @@ export {
   type AuthHeaders,
   type AuthMaybePromise,
   authenticated,
+  isAuthenticatedRequest,
+  markAuthenticatedRequest,
   rejected,
 } from "./server/auth.ts"
 export type {
@@ -104,6 +106,7 @@ export type {
   RouteInfoFor,
 } from "./server/registry.ts"
 export { replacedRequestOf } from "./server/request-lineage.ts"
+export { writableResponse } from "./server/respond.ts"
 export {
   type PlainRender,
   type ResponseResult,
@@ -115,6 +118,7 @@ export {
   type AdmissionDecision,
   type AnyServer,
   type ContextPlugin,
+  type DeclaredMountRoute,
   type DefinePluginResult,
   defineContextPlugin,
   defineIdentityPlugin,
@@ -137,6 +141,7 @@ export {
   type NodeResponseHook,
   type NodeServeOutcome,
   type OnRequestResult,
+  type OpaqueMountDeclaration,
   type PluginTypeCollapsed,
   type PromptArgument,
   type PromptMessage,

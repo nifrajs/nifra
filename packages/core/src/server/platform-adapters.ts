@@ -67,8 +67,9 @@ function absoluteUrl(
       // Fall through to the structured event fields.
     }
   }
-  const host = headers.get("host") ?? "nifra.invalid"
-  const url = new URL(path || "/", `https://${host}`)
+  const url = new URL(`https://${headers.get("host") ?? "nifra.invalid"}`)
+  // Assigned, not resolved against the origin: resolving reads `//evil.example/admin` as a host.
+  url.pathname = path || "/"
   if (query !== undefined && query !== "") url.search = query.startsWith("?") ? query : `?${query}`
   return url.toString()
 }

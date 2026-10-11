@@ -67,6 +67,26 @@ test("crash after effect converges by proof without running the effect twice", a
   expect(effects).toBe(1)
 })
 
+test("a worker lost after the effect ran, before its proof, is dead-lettered on redelivery", async () => {
+  const clock = new TestClock(0)
+  const store = createMemoryRunDispatchStore({ now: clock.now })
+  await store.enqueue(makeDispatch())
+  let effects = 0
+  const machine = new RunRecoveryMachine({ store, clock: { now: clock.now }, leaseMs: 10 })
+  await machine.process(async () => {
+    effects++
+    throw new RecoveryCrashError("after-effect")
+  })
+  clock.advance(11)
+  const second = await machine.process(async () => {
+    effects++
+    return { committed: true }
+  })
+  expect(second.deadLettered).toBe(1)
+  expect(effects).toBe(1)
+  expect(store.deadLetters()[0]?.code).toBe("idempotency_required")
+})
+
 test("crash after a safe checkpoint reruns only the uncommitted effect", async () => {
   const clock = new TestClock(0)
   const store = createMemoryRunDispatchStore({ now: clock.now })

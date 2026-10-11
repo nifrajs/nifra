@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setSystemTime, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import {
   type JwkKey,
+  type JwtAlgorithm,
   type JwtClaims,
   jwk,
   jwks,
@@ -37,6 +38,13 @@ async function hmacToken(
   const sig = await crypto.subtle.sign("HMAC", key, ENC.encode(`${head}.${body}`))
   return `${head}.${body}.${b64url(sig)}`
 }
+
+/** A `fetch` that answers every call with `respond`. */
+function fetchStub(respond: () => Promise<Response>): typeof fetch {
+  return Object.assign(respond, { preconnect: fetch.preconnect })
+}
+
+const RS256: readonly JwtAlgorithm[] = ["RS256"]
 
 async function rsaToken(claims: JwtClaims, kid = "rsa-1"): Promise<{ token: string; jwk: JwkKey }> {
   const pair = await crypto.subtle.generateKey(
@@ -358,6 +366,67 @@ describe("jwt() / verifyJwt()", () => {
     expect((await verifyJwt(token, opts)).claims.sub).toBe("u1")
     await expect(verifyJwt(token, opts)).rejects.toThrow(/network down/)
     expect(calls).toBe(2)
+  })
+
+  test("inside the stale window a request is answered at once while one refresh runs behind it", async () => {
+    const { token, jwk: publicJwk } = await rsaToken({ sub: "u1", exp: 2_000_000_000 }, "kid-swr")
+    let calls = 0
+    const hung = Promise.withResolvers<Response>()
+    const fakeFetch = fetchStub(async () => {
+      calls += 1
+      return calls === 1 ? Response.json({ keys: [publicJwk] }) : hung.promise
+    })
+    const resolver = jwks({
+      url: "https://issuer.test/jwks.json",
+      fetch: fakeFetch,
+      cacheMs: 100,
+      staleMs: 60_000,
+    })
+    const opts = { key: resolver, algorithms: RS256, now: () => 1_900_000_000 }
+    try {
+      setSystemTime(new Date(1_000_000))
+      expect((await verifyJwt(token, opts)).claims.sub).toBe("u1")
+      setSystemTime(new Date(1_000_150))
+      expect((await verifyJwt(token, opts)).claims.sub).toBe("u1")
+      expect((await verifyJwt(token, opts)).claims.sub).toBe("u1")
+      // One refresh, still in flight, answered neither request.
+      expect(calls).toBe(2)
+    } finally {
+      setSystemTime()
+      hung.resolve(Response.json({ keys: [publicJwk] }))
+    }
+  })
+
+  test("a kid the cached set lacks refetches the set once per cooldown", async () => {
+    const first = await rsaToken({ sub: "old", exp: 2_000_000_000 }, "kid-old")
+    const rotated = await rsaToken({ sub: "new", exp: 2_000_000_000 }, "kid-new")
+    const forged = await rsaToken({ sub: "forged", exp: 2_000_000_000 }, "kid-unknown")
+    let calls = 0
+    const fakeFetch = fetchStub(async () => {
+      calls += 1
+      return Response.json({ keys: calls === 1 ? [first.jwk] : [first.jwk, rotated.jwk] })
+    })
+    const resolver = jwks({
+      url: "https://issuer.test/jwks.json",
+      fetch: fakeFetch,
+      cacheMs: 600_000,
+      cooldownMs: 30_000,
+    })
+    const opts = { key: resolver, algorithms: RS256, now: () => 1_900_000_000 }
+    try {
+      setSystemTime(new Date(2_000_000))
+      expect((await verifyJwt(first.token, opts)).claims.sub).toBe("old")
+      setSystemTime(new Date(2_040_000))
+      expect((await verifyJwt(rotated.token, opts)).claims.sub).toBe("new")
+      expect(calls).toBe(2)
+      await expect(verifyJwt(forged.token, opts)).rejects.toThrow(/key/)
+      expect(calls).toBe(2)
+      setSystemTime(new Date(2_070_001))
+      await expect(verifyJwt(forged.token, opts)).rejects.toThrow(/key/)
+      expect(calls).toBe(3)
+    } finally {
+      setSystemTime()
+    }
   })
 
   test("validates JWKS URL protocol", () => {

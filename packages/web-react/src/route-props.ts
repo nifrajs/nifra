@@ -17,6 +17,7 @@ export function routeProps(
   const rawSearch = q === -1 ? "" : state.path.slice(q)
   return {
     data: state.data,
+    ...(state.serverComponents === undefined ? {} : { serverComponents: state.serverComponents }),
     // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
     // server rendered it with its data - a hydration mismatch on the first paint.
     ...(state.layoutData !== undefined ? { layoutData: state.layoutData } : {}),

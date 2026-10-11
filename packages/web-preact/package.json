@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-preact",
-  "version": "4.0.2",
+  "version": "5.0.0",
   "description": "Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plugin).",
   "keywords": [
     "bun",
@@ -70,6 +70,21 @@
       "bun": "./src/fn.ts",
       "types": "./dist/fn.d.ts",
       "default": "./dist/fn.js"
+    },
+    "./server-components": {
+      "bun": "./src/server-components/server.ts",
+      "types": "./dist/server-components/server.d.ts",
+      "default": "./dist/server-components/server.js"
+    },
+    "./server-components/client": {
+      "bun": "./src/server-components/client.ts",
+      "types": "./dist/server-components/client.d.ts",
+      "default": "./dist/server-components/client.js"
+    },
+    "./server-components/outlet": {
+      "bun": "./src/server-components/outlet.ts",
+      "types": "./dist/server-components/outlet.d.ts",
+      "default": "./dist/server-components/outlet.js"
     }
   },
   "files": [

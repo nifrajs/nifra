@@ -51,6 +51,28 @@ test("serves a static file with content-type + immutable cache", async () => {
   expect(await res.text()).toBe("console.log('hi')")
 })
 
+test("hashedFiles narrows immutable caching to the listed files", async () => {
+  const base = await startWithStatic(undefined, { hashedFiles: ["/assets/app.js"] })
+  const hashed = await fetch(`${base}/assets/app.js`)
+  expect(hashed.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+  await hashed.text()
+  const unhashed = await fetch(`${base}/assets/style.css`)
+  expect(unhashed.status).toBe(200)
+  expect(unhashed.headers.get("cache-control")).toBeNull()
+  expect(unhashed.headers.get("etag")).not.toBeNull()
+  await unhashed.text()
+})
+
+test("hashedFiles matches the served URL path, including a custom prefix", async () => {
+  const base = await startWithStatic("/static/", { hashedFiles: new Set(["/static/app.js"]) })
+  const listed = await fetch(`${base}/static/app.js?v=1`)
+  expect(listed.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+  await listed.text()
+  const other = await fetch(`${base}/static/style.css`)
+  expect(other.headers.get("cache-control")).toBeNull()
+  await other.text()
+})
+
 test("revalidation answers 304 from If-None-Match or If-Modified-Since", async () => {
   const base = await startWithStatic()
   const first = await fetch(`${base}/assets/app.js`)

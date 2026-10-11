@@ -91,25 +91,20 @@ export default function Comparison() {
         of one.
       </p>
 
-      <h2>Server code on every page - RSC is the one protocol Nifra trades away</h2>
+      <h2>Server code and server-only views</h2>
       <p>
-        Nifra covers the full server side: typed <b>loaders and actions</b>, <b>streaming SSR</b> with
-        out-of-order Suspense, <b>islands</b>, and typed{" "}
-        <a href="/docs/server-functions">server functions</a> - <code>serverFn</code> RPC whose body (DB
-        handles, secrets, imports) is <i>never</i> shipped to the browser, callable as a normal typed
-        function from any component, on all five UI libraries. Data on the server, mutations on the
-        server, minimal client JS: all there, by a framework-agnostic mechanism instead of a
-        React-only one.
+        Nifra provides typed loaders and actions, streaming SSR, islands and typed{" "}
+        <a href="/docs/server-functions">server functions</a>. Server functions keep their
+        implementation, secrets and database handles off the browser and use the same validated
+        mutation API across the supported UI libraries.
       </p>
       <p>
-        What Nifra deliberately does not adopt is <b>React Server Components as a component
-        protocol</b> - <code>"use server"</code> / <code>"use client"</code> directives and the
-        server-only component tree. RSC is React-specific; a core that also serves Vue, Solid,
-        Svelte, and Preact can't be built on it. (Nuxt, SvelteKit, and Remix don't ship RSC either -
-        this is <i>Nifra vs. Next App Router specifically</i>.) So the call is simple: if your app is
-        architected around RSC itself, <b>Next.js App Router is the right tool</b>. For everything RSC
-        is usually reached for - server-side data, secrets off the client, less JS - loaders,{" "}
-        <code>defer()</code>, islands, and server functions cover it here.
+        The optional <a href="/docs/server-components">server-components pipeline</a> adds
+        server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte
+        and Solid use their native islands in validated server-rendered ranges. The feature is
+        intended for the release after 4.0.0 and requires all four adapters to pass certification.
+        Server functions remain the mutation API; native React <code>"use server"</code> actions
+        are unsupported.
       </p>
 
       <h2>Also a standalone backend (vs. Hono &amp; Elysia)</h2>
@@ -246,10 +241,10 @@ export default function Comparison() {
         </li>
       </ul>
       <p>
-        The one deliberate trade: Nifra is streaming SSR + islands + typed{" "}
-        <a href="/docs/server-functions">server functions</a>, <b>not</b> the RSC component protocol -
-        framework-agnostic by design. Apps architected around RSC itself belong on Next App Router;
-        everyone else gives up nothing server-side here.
+        Nifra provides streaming SSR, islands and typed{" "}
+        <a href="/docs/server-functions">server functions</a>. The optional{" "}
+        <a href="/docs/server-components">server-components pipeline</a> adds native React
+        RSC/Flight and corresponding Vue, Svelte and Solid views under a shared execution contract.
       </p>
     </div>
   )

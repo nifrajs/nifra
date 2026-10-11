@@ -226,6 +226,58 @@ describe("mountA2A", () => {
     expect(last.status.state).toBe("TASK_STATE_COMPLETED")
   })
 
+  test("a client that cancels the stream aborts the run's signal", async () => {
+    const { app, callPost } = captureApp()
+    const called = Promise.withResolvers<AbortSignal>()
+    const model: AgentModelPort = {
+      complete: (request) => {
+        called.resolve(request.signal)
+        return new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () => reject(new Error("aborted"))),
+        )
+      },
+    }
+    mountA2A(app, { agent: definition(), card: cardInfo, ports: ports({ model }) })
+    const res = await callPost(
+      rpc("SendStreamingMessage", message([], { metadata: { input: { prompt: "hey" } } })),
+    )
+    const signal = await called.promise
+    expect(signal.aborted).toBe(false)
+    await res.body?.cancel()
+    expect(signal.aborted).toBe(true)
+  })
+
+  test("a signal the caller passes through ports still reaches the streamed run", async () => {
+    const { app, callPost } = captureApp()
+    const caller = new AbortController()
+    const called = Promise.withResolvers<AbortSignal>()
+    const model: AgentModelPort = {
+      complete: (request) => {
+        called.resolve(request.signal)
+        return new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () => reject(new Error("aborted"))),
+        )
+      },
+    }
+    mountA2A(app, {
+      agent: definition(),
+      card: cardInfo,
+      ports: ports({ model, signal: caller.signal }),
+    })
+    const res = await callPost(
+      rpc("SendStreamingMessage", message([], { metadata: { input: { prompt: "hey" } } })),
+    )
+    const signal = await called.promise
+    caller.abort()
+    expect(signal.aborted).toBe(true)
+    expect(frames(await res.text()).at(-1)?.result).toEqual({
+      statusUpdate: expect.objectContaining({
+        final: true,
+        status: expect.objectContaining({ state: "TASK_STATE_CANCELED" }),
+      }),
+    })
+  })
+
   test("suspends for approval as input-required and resumes via message metadata", async () => {
     const { app, callPost } = captureApp()
     const store = new MemoryAgentStateStore()
@@ -274,6 +326,50 @@ describe("mountA2A", () => {
       )
     ).json()) as { result: { task: { status: { state: string } } } }
     expect(resumed.result.task.status.state).toBe("TASK_STATE_COMPLETED")
+  })
+
+  test("a task suspended on a model failure resumes with its echoed continuation", async () => {
+    const { app, callPost } = captureApp()
+    let calls = 0
+    mountA2A(app, {
+      agent: definition(),
+      card: cardInfo,
+      ports: ports({
+        model: {
+          complete: () => {
+            calls += 1
+            if (calls === 1) throw new Error("provider unavailable")
+            return { kind: "output", value: { answer: "recovered" } }
+          },
+        },
+        state: new MemoryAgentStateStore(),
+      }),
+    })
+    const first: {
+      result: {
+        task: { id: string; status: { message: { metadata: { continuation: unknown } } } }
+      }
+    } = await (
+      await callPost(rpc("SendMessage", message([], { metadata: { input: { prompt: "go" } } })))
+    ).json()
+    const task = first.result.task
+    const resumed: { result: { task: { status: { state: string } } } } = await (
+      await callPost(
+        rpc(
+          "SendMessage",
+          message([], {
+            taskId: task.id,
+            metadata: {
+              input: { prompt: "go" },
+              resume: { continuation: task.status.message.metadata.continuation },
+            },
+          }),
+          2,
+        ),
+      )
+    ).json()
+    expect(resumed.result.task.status.state).toBe("TASK_STATE_COMPLETED")
+    expect(calls).toBe(2)
   })
 
   test("a task id without resume metadata is rejected", async () => {

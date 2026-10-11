@@ -36,7 +36,7 @@
  */
 // The built `dist`, not `src` - same rule as serve.ts and _nifra-app.ts: a bench that imports source
 // measures an artifact no user runs.
-import { server, status as statusResult } from "../../packages/core/dist/index.js"
+import { type Middleware, server, status as statusResult } from "../../packages/core/dist/index.js"
 import { cors } from "../../packages/middleware/dist/index.js"
 
 const SHAPES = [
@@ -86,7 +86,8 @@ const unauthorized = (): Response =>
 type AnyApp = any
 
 let app: AnyApp = server()
-  .use(cors({ origin: ["https://app.example.com"], credentials: true }))
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the middleware's declarations resolve core through the root `paths` to src while this server is dist; ResponseResult's brand is one Symbol.for at runtime but two declared symbols to tsc.
+  .use(cors({ origin: ["https://app.example.com"], credentials: true }) as Middleware)
   .use({
     name: "request-id",
     beforeHandle: (c: AnyApp) => {

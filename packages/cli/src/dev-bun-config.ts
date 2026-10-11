@@ -42,10 +42,29 @@
 import { timingSafeEqual } from "node:crypto"
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { relative, resolve } from "node:path"
+import { readSingleCopyDeclaration } from "@nifrajs/core/single-copy"
 
-/** TOML string literal: basic (double-quoted) form with the two escapes it needs. */
+const TOML_ESCAPES: Readonly<Record<string, string>> = {
+  "\\": "\\\\",
+  '"': '\\"',
+  "\b": "\\b",
+  "\t": "\\t",
+  "\n": "\\n",
+  "\f": "\\f",
+  "\r": "\\r",
+}
+
+/** TOML string literal: basic (double-quoted) form. A basic string may hold no raw control
+ * character, so each one is escaped along with the quote and the backslash. */
 function tomlString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+  let out = '"'
+  for (const char of value) {
+    const code = char.charCodeAt(0)
+    out +=
+      TOML_ESCAPES[char] ??
+      (code < 0x20 || code === 0x7f ? `\\u${code.toString(16).padStart(4, "0")}` : char)
+  }
+  return `${out}"`
 }
 
 /** A parsed bunfig: plain data from `Bun.TOML.parse`. */
@@ -198,24 +217,40 @@ function relativeSpecifier(fromDir: string, target: string): string {
  * `servePlugins` are the app's own bunfig `[serve.static] plugins`, composed last and in order rather
  * than listed beside this module, so that every plugin reaching the bundler registers through
  * `reserveDevSpecifiers` (see `@nifrajs/web/internal/dev-reserved`).
+ *
+ * `singleCopy` is whether `package.json` declares `"nifra": { "singleCopy": [...] }`. The declared
+ * resolver then runs where `buildClient` runs it, after the zone guard; an app that also lists
+ * `singleCopyPlugin()` in `clientPlugins` gets its own instance in that place, once.
  */
 export function renderBoundaryPluginModule(
   configPath?: string,
   pluginDir?: string,
   servePlugins: readonly string[] = [],
+  singleCopy = false,
 ): string {
   const appImport =
     configPath !== undefined && pluginDir !== undefined
       ? `import * as appConfig from ${tomlString(relativeSpecifier(pluginDir, configPath))}\n`
       : ""
-  const appSetup =
+  const appPluginsSetup =
     appImport === ""
-      ? ""
+      ? "    const appPlugins = []\n"
       : `    // The app's OWN client transforms (SFC compilers etc.). \`clientPlugins\` may be a thunk.
     const field = appConfig.clientPlugins
     const appPlugins = (typeof field === "function" ? await field() : field) ?? []
-    for (const p of appPlugins) await p.setup(guarded)
 `
+  const singleCopySetup = singleCopy
+    ? `    const listedSingleCopy = appPlugins.find((p) => p?.name === "nifra-single-copy")
+    ;(listedSingleCopy ?? singleCopyPlugin({ cwd: appRoot })).setup(guarded)
+`
+    : ""
+  // Without a declaration the app's plugins are read where they are set up, as before.
+  const appSetup =
+    appImport === ""
+      ? ""
+      : singleCopy
+        ? "    for (const p of appPlugins) if (p !== listedSingleCopy) await p.setup(guarded)\n"
+        : `${appPluginsSetup}    for (const p of appPlugins) await p.setup(guarded)\n`
   const serveSetup =
     servePlugins.length === 0
       ? ""
@@ -232,10 +267,11 @@ export function renderBoundaryPluginModule(
 import { serverFnStubPlugin, zoneGuardPlugin } from "@nifrajs/web/build"
 import { reserveDevSpecifiers } from "@nifrajs/web/internal/dev-reserved"
 import { cssModulesBunPlugin } from "@nifrajs/web/plugins/css-modules"
-${appImport}
+${singleCopy ? 'import { singleCopyPlugin } from "@nifrajs/core/single-copy"\n' : ""}${appImport}
 // This module lives at <app>/.nifra/dev-bun/, so the app root is two directories up.
+const appRoot = Bun.fileURLToPath(new URL("../../", import.meta.url))
 const zones = zoneGuardPlugin({
-  appRoot: Bun.fileURLToPath(new URL("../../", import.meta.url)),${
+  appRoot,${
     appImport === ""
       ? ""
       : `
@@ -251,10 +287,10 @@ export default {
     // Every plugin below registers through this view: a resolve filter matching the dev entry script
     // or Bun's built-in React refresh runtime breaks the page even when its handler declines.
     const guarded = reserveDevSpecifiers(build)
-    // Boundary first: an app plugin must never get to transform a module that the boundary is about
+${singleCopy ? appPluginsSetup : ""}    // Boundary first: an app plugin must never get to transform a module that the boundary is about
     // to refuse or stub, or the transform decides what ships instead of the boundary.
     zones.setup(guarded)
-    fn.setup(guarded)
+${singleCopySetup}    fn.setup(guarded)
     cssModules.setup(guarded)
 ${appSetup}${serveSetup}  },
 }
@@ -287,7 +323,12 @@ export async function writeBunDevConfig(
   const user = parseUserBunfig(userToml)
   writeFileSync(
     pluginPath,
-    renderBoundaryPluginModule(configPath, dir, userServePlugins(user, appRoot)),
+    renderBoundaryPluginModule(
+      configPath,
+      dir,
+      userServePlugins(user, appRoot),
+      readSingleCopyDeclaration(appRoot) !== undefined,
+    ),
   )
   const bunfigPath = resolve(dir, "bunfig.toml")
   writeFileSync(bunfigPath, renderDevBunfig(pluginPath, user, appRoot, define))

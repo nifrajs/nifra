@@ -117,4 +117,22 @@ describe("FileEvidenceStore", () => {
     await expect(readFile(guarded, "utf8")).rejects.toThrow() // file never created
     expect(store.count).toBe(0)
   })
+
+  test("answers reads like a memory store fed the same records", async () => {
+    const mirrored = join(tmpdir(), "nifra-evidence-store-mirror.jsonl")
+    await rm(mirrored, { force: true })
+    const file = new FileEvidenceStore({ path: mirrored, maxLive: 2 })
+    const memory = new MemoryEvidenceStore({ maxLive: 2 })
+    for (const r of [...pairFor("a", 0), rec("b", "started", 2), rec("b", "failed", 3)]) {
+      await file.append(r)
+      await memory.append(r)
+    }
+    expect(file.count).toBe(4)
+    expect(file.live()).toEqual(memory.live())
+    expect(file.live().length).toBe(2)
+    expect(file.counters()).toEqual({ total: 4, started: 2, completed: 1, failed: 1 })
+    expect(file.completedNodeIds()).toEqual(["a"])
+    expect(file.artifacts()).toEqual(memory.artifacts())
+    expect(await file.digest()).toBe(await memory.digest())
+  })
 })

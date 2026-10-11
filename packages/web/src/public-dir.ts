@@ -12,12 +12,12 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
-import { constants as FS } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { extname, normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
+import { openResolved } from "./open-resolved.ts"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
  * user-authored file keeps its name across deploys, so it gets a day and a revalidation. */
@@ -31,8 +31,15 @@ export interface PublicDirCache {
 export interface ServePublicDirOptions {
   /** Absolute path of the directory to serve. */
   readonly dir: string
-  /** URL prefix whose files are content-hashed and may be cached immutably (default `"/assets/"`). */
+  /** URL prefix whose files are content-hashed and may be cached immutably (default `"/assets/"`).
+   * Ignored when `hashedFiles` is set. */
   readonly hashedPrefix?: string
+  /**
+   * Encoded URL paths of the content-hashed files, such as a build manifest's `assets`. When set, only
+   * these are cached immutably and every other file gets the `assets` policy, so a user-authored file
+   * that happens to sit under the hashed prefix still revalidates.
+   */
+  readonly hashedFiles?: ReadonlySet<string>
   readonly cache?: PublicDirCache
   /** Optional encoded URL-path allowlist. When present, route misses avoid a filesystem probe. */
   readonly files?: ReadonlySet<string>
@@ -166,6 +173,7 @@ export function servePublicDir(
   const root = resolve(options.dir)
   const rootReal = realpath(root).catch(() => undefined)
   const hashedPrefix = options.hashedPrefix ?? "/assets/"
+  const hashedFiles = options.hashedFiles
   const hashed = options.cache?.hashed ?? IMMUTABLE
   const assets = options.cache?.assets ?? ONE_DAY
 
@@ -192,16 +200,27 @@ export function servePublicDir(
     }
     // Open the canonical path once and stream from that descriptor. Reopening the pathname after
     // realpath containment checks would let a writable public tree swap a symlink between validation
-    // and the actual read. O_NOFOLLOW also rejects a final-component symlink if one appears before
-    // the open; the descriptor then pins the bytes for the lifetime of the response.
-    let handle: Awaited<ReturnType<typeof open>> | undefined
+    // and the actual read. openResolved also refuses the name once any component of it became a
+    // symlink; the descriptor then pins the bytes for the lifetime of the response.
+    let handle: Awaited<ReturnType<typeof openResolved>> | undefined
     try {
-      handle = await open(resolvedFile, FS.O_RDONLY | FS.O_NOFOLLOW)
+      try {
+        handle = await openResolved(resolvedFile)
+      } catch {
+        // A name refused or gone since realpath falls through, as a failed realpath does.
+        return undefined
+      }
       const stat = await handle.stat()
       if (!stat.isFile()) return undefined
       const size = stat.size
       const headers = new Headers({
-        "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,
+        "cache-control": (
+          hashedFiles === undefined
+            ? pathname.startsWith(hashedPrefix)
+            : hashedFiles.has(pathname)
+        )
+          ? hashed
+          : assets,
         // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
         // so a video or audio file under `public/` is scrubbable only once this header is present.
         "accept-ranges": "bytes",

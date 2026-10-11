@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
@@ -85,6 +86,24 @@ test("cache-control differs by subtree: hashed immutable, public/ revalidating",
     // A user-authored file keeps its name across deploys, so it must revalidate.
     expect((await serve(get("/logo.svg")))?.headers.get("cache-control")).toBe(
       "public, max-age=86400",
+    )
+  })
+})
+
+test("with hashedFiles, only the listed files are immutable, under the prefix or not", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, "assets"), { recursive: true })
+    await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
+    await writeFile(join(dir, "assets", "logo.png"), "png")
+    const serve = servePublicDir({ dir, hashedFiles: new Set(["/assets/app-a1b2c3.js"]) })
+    const cacheOf = async (path: string) => (await serve(get(path)))?.headers.get("cache-control")
+
+    expect(await cacheOf("/assets/app-a1b2c3.js")).toBe("public, max-age=31536000, immutable")
+    expect(await cacheOf("/assets/logo.png")).toBe("public, max-age=86400")
+    // Without the list the prefix still decides, as before.
+    const byPrefix = servePublicDir({ dir })
+    expect((await byPrefix(get("/assets/logo.png")))?.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
     )
   })
 })
@@ -211,6 +230,23 @@ test("a missing public/ directory is not an error", async () => {
     expect(await serve(get("/whatever.txt"))).toBeUndefined()
   })
 })
+
+// A name inside the root that cannot be opened as a file, such as a socket, falls through like a
+// missing one instead of failing the request.
+test.skipIf(process.platform === "win32")(
+  "a public name that cannot be opened falls through",
+  async () => {
+    await withDir(async (dir) => {
+      const server = createServer()
+      await new Promise<void>((resolve) => server.listen(join(dir, "live.sock"), resolve))
+      try {
+        expect(await servePublicDir({ dir })(get("/live.sock"))).toBeUndefined()
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      }
+    })
+  },
+)
 
 test("a directory is not served as a public file", async () => {
   await withDir(async (dir) => {

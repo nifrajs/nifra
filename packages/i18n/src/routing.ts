@@ -91,7 +91,8 @@ interface SplitPath {
 /**
  * Split `/fr/about?x=1#y` into its non-empty path segments plus the untouched query and hash. A
  * backslash separates segments, as URL parsing treats it, and empty segments are dropped, so no input
- * can produce an output path starting with `//` or `/\`, which a browser would follow off-site.
+ * can produce an output path starting with `//` or `/\`, which a browser would follow off-site. Tabs
+ * and newlines are dropped first, as URL parsing drops them: `/\t/evil.example` is `//evil.example`.
  */
 function splitPath(path: string): SplitPath {
   let end = path.length
@@ -99,7 +100,7 @@ function splitPath(path: string): SplitPath {
   const hash = path.indexOf("#")
   if (query !== -1) end = query
   if (hash !== -1 && hash < end) end = hash
-  const pathname = path.slice(0, end)
+  const pathname = path.slice(0, end).replace(/[\t\n\r]/g, "")
   const segments: string[] = []
   let start = 0
   for (let i = 0; i <= pathname.length; i++) {

@@ -10,7 +10,7 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 
 ## Public entrypoints
 
-`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/svg`
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
 
 ## Key exports
 
@@ -20,6 +20,7 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 - **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/web-svelte/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-svelte/fetcher`
 - **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/plugin`
+- **svelteComponentClient** _(function)_ - `svelteComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compon…` · from `@nifrajs/web-svelte/server-components/client`
 - **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }` · from `@nifrajs/web-svelte/plugin`
 - **svelteMdxBunPlugin** _(function)_ - `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/mdx`
 - **svelteSvgComponentBunPlugin** _(function)_ - `svelteSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/svg`
@@ -27,11 +28,11 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>` · from `@nifrajs/web-svelte/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
-- **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]` · from `@nifrajs/web-svelte/router`
 
-_…and 23 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 
+- The optional Vite component pipeline uses Svelte 5 native SSR/hydration and rune props, with compiler-generated generic outlet declarations. It compiles Svelte without a Bun preload. Stable keys preserve native state; removal awaits unmount. Native contexts are local to each owned root.
 - The `.svelte` compiler is a **Bun plugin** (`@nifrajs/web-svelte/plugin`) you must preload for SSR. attw/`.d.ts` don't model `.svelte`, so resolution flows through the consumer's Svelte toolchain.
 - Svelte HMR re-runs the edited component, so its own local state resets on edit (the page itself doesn't reload).

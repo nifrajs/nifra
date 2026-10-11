@@ -50,6 +50,16 @@ The validator still decides which generated mutations are truly invalid; the sup
 weaken validation. A missing/invalid witness is a coverage gap, not a silent pass. Set
 `requireCoverage: false` only when gaps are intentionally advisory.
 
+Declared `params` and `headers` get witnesses too, validated before any case runs, so a body or query
+case is rejected by the input it mutates rather than by a placeholder param or a missing header. A `t`
+schema synthesizes them, the witness's `params` and `headers` override, and a route param the schema
+leaves out keeps a placeholder its pattern accepts. The harness never invents credentials:
+`authorization`, `proxy-authorization`, `cookie`, `x-api-key`, and names ending in `-key` or containing
+`token`, `secret` or `signature` come from the witness (and `prepareRequest`) only, and are never
+mutated; a schema that requires one the witness lacks is a `NO_WITNESS` gap that names it. Cookies are
+never synthesized either: a route with a `cookies` schema needs `headers.cookie` in its witness. A
+params or header field typed as bare text accepts any text, so it is not a `NO_REJECTED_MUTATION` gap.
+
 To exercise adapter parity, pass runtime fetch targets. The reflected `app` remains the one source of
 the contract:
 
@@ -71,10 +81,13 @@ laboratory at production.
 ### Opaque validators (zod / valibot / arktype)
 
 A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
-automatically. A Standard Schema validator that carries no JSON Schema (zod, valibot, arktype) validates
-requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
-type-confusion mutations. Pass `reflectJsonSchema` to convert such a validator; for zod, use the shipped
-bridge:
+automatically. So does any validator that implements Standard JSON Schema (`~standard.jsonSchema`,
+zod 4.2+ among them): the laboratory calls the schema's own converter, so nothing is resolved from disk
+and a monorepo run from its root reads an app's zod schemas too. An older zod 4 is converted with
+`z.toJSONSchema`, resolved from the project directory first, then from this package. A validator with
+neither validates requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS`
+and get only type-confusion mutations, and the gap says why when a conversion was tried and failed.
+Pass `reflectJsonSchema` to convert any other validator, or to choose the zod bridge explicitly:
 
 ```ts
 import { zodJsonSchema } from "@nifrajs/testing/zod"

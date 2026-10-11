@@ -37,6 +37,20 @@ describe("canonical project evidence", () => {
     expect(serializeProjectEvidence(evidence)).not.toContain("user-1")
   })
 
+  test("keeps a chosen validationOrder through the snapshot and back", () => {
+    const body = t.object({ name: t.string() })
+    const app = server()
+      .post("/chosen", { body, validationOrder: "auth-before-validation" }, () => 1)
+      .post("/default", { body }, () => 1)
+    const orders = Object.fromEntries(
+      reflectedRoutesFromEvidence(snapshotProjectEvidence(app)).map((route) => [
+        route.path,
+        route.schema?.validationOrder,
+      ]),
+    )
+    expect(orders).toEqual({ "/chosen": "auth-before-validation", "/default": undefined })
+  })
+
   test("composes stripped mount evidence under its public prefix", () => {
     const page = snapshotProjectEvidence(server().get("/", () => ({})))
     const api = snapshotProjectEvidence(server().get("/health", () => ({})))

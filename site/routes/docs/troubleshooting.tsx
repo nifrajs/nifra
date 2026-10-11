@@ -225,7 +225,12 @@ export default function Troubleshooting() {
       <p>
         <strong>The build honours the declaration on its own</strong> -{" "}
         <code>buildClient</code> and <code>buildServer</code> inject the resolver, so bundled output
-        already loads one copy. Unbundled phases do not: Bun's <em>runtime</em> resolver never offers a
+        already loads one copy, and so does the browser bundle <code>nifra dev</code> serves on Bun.
+        Listing <code>singleCopyPlugin()</code> in <code>clientPlugins</code> as well is harmless: dev
+        runs that instance in the resolver's place instead of a second one. On Vite, the dev server and
+        both Vite builds add each declared package to <code>resolve.dedupe</code>, a{" "}
+        <code>@scope/*</code> pattern as every package installed under that scope. Unbundled phases do
+        not: Bun's <em>runtime</em> resolver never offers a
         bare specifier to a plugin, so <code>bun test</code>, <code>bun run</code>, and preloaded
         scripts still load both copies unless you preload the registrar:
       </p>
@@ -411,6 +416,25 @@ export default function Troubleshooting() {
         <code>c.req.text()</code>, <code>c.req.arrayBuffer()</code> or <code>c.req.json()</code>{" "}
         instead: they read it once, within the route's body limit, and every reader after the hook
         replays the same bytes.
+      </p>
+
+      <h2 id="mixed-versions">"mixed nifra versions in this workspace"</h2>
+      <p>
+        Every <code>@nifrajs/*</code> package, <code>nifra</code> and <code>create-nifra</code> ship
+        together at one version. <code>nifra doctor</code> (and <code>nifra check</code>, as the{" "}
+        <code>NF-D002</code> advisory) reads the versions your <code>package.json</code> files pin,
+        the versions installed in <code>node_modules</code> - followed to their real location, so a
+        linked repository reports its own - and the running CLI. When they disagree it names each
+        version and where it came from. It only reads files, and it never fails the run.
+      </p>
+      <p>
+        The fix is <a href="/docs/cli#upgrade"><code>nifra upgrade &lt;highest&gt;</code></a>, not a
+        hand edit of the pins: it runs
+        every release's migration steps between your oldest pin and the target, then re-pins. Run it
+        without <code>--write</code> first to see each planned edit. It edits files under the
+        workspace root only. A symlinked package directory or <code>package.json</code> is never
+        followed, and a group package installed by a link from outside the root is listed under
+        "Left alone" - upgrade that repository on its own.
       </p>
 
       <h2>Still stuck?</h2>

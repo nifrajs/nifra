@@ -1,6 +1,7 @@
-import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import * as ts from "typescript"
 import { middlewareSource, migrateLayout, splitRouteSource } from "../src/migrate-layout.ts"
 import {
@@ -125,6 +126,35 @@ describe("splitRouteSource", () => {
       true,
     )
   })
+
+  test("the page keeps the import its classic JSX compiles to", () => {
+    const pragma = split(
+      [
+        "/** @jsx h */",
+        "/** @jsxFrag Fragment */",
+        'import { Fragment, h } from "preact"',
+        'import { t } from "@nifrajs/schema"',
+        "export const loaderOutput = t.object({ title: t.string() })",
+        'export const loader = async () => ({ title: "x" })',
+        "export default function Page() { return <><main /></> }",
+        "",
+      ].join("\n"),
+    )
+    expect(pragma.frontend).toContain('import { Fragment, h } from "preact"')
+    expect(pragma.frontend).not.toContain("@nifrajs/schema")
+    expect(pragma.backend).not.toContain("preact")
+
+    const defaultFactory = split(
+      [
+        'import React from "react"',
+        "export const loader = async () => 1",
+        "export default function Page() { return <main /> }",
+        "",
+      ].join("\n"),
+    )
+    expect(defaultFactory.frontend).toContain('import React from "react"')
+    expect(defaultFactory.backend).not.toContain("react")
+  })
 })
 
 describe("middlewareSource", () => {
@@ -212,6 +242,74 @@ describe("migrateLayout", () => {
     })
   })
 
+  test("aliases and the config's module paths are followed, rewritten, or reported", async () => {
+    const dir = app({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "~/*": ["./*"], "@app/*": ["./src/*"] } },
+      }),
+      "package.json": JSON.stringify({ name: "alias-app", imports: { "#db/*": "./db/*.ts" } }),
+      "nifra.config.ts": [
+        'export const clientModule = "./client.tsx"',
+        "export const componentPipeline = {",
+        '  adapter: "react",',
+        '  entries: { client: "./entry-client.tsx", ssr: "./entry-server.tsx" },',
+        "} as const",
+        "",
+      ].join("\n"),
+      "client.tsx":
+        'import { theme } from "~/lib/theme"\nexport function mountRouter() {\n  return theme\n}\n',
+      "entry-client.tsx": "export const hydrate = 1\n",
+      "entry-server.tsx": "export const render = 1\n",
+      "lib/theme.ts": 'export const theme = "dark"\n',
+      "lib/fmt.ts": "export const fmt = (n: number) => String(n)\n",
+      "src/money.ts": "export const money = 1\n",
+      "db/pool.ts": "export const pool = 1\n",
+      "routes/index.tsx": [
+        'import { fmt } from "~/lib/fmt"',
+        'import { money } from "@app/money"',
+        'import { pool } from "#db/pool"',
+        'import ts from "typescript"',
+        'import { nothing } from "not-a-real-package-xyz"',
+        "export async function loader() { return { n: pool } }",
+        "export default function Page() { return fmt(money) + String(ts) + nothing }",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toEqual([
+      { from: "client.tsx", to: "frontend/client.tsx" },
+      { from: "db/pool.ts", to: "backend/db/pool.ts" },
+      { from: "entry-client.tsx", to: "frontend/entry-client.tsx" },
+      { from: "entry-server.tsx", to: "backend/entry-server.tsx" },
+      { from: "lib/fmt.ts", to: "frontend/lib/fmt.ts" },
+      { from: "lib/theme.ts", to: "frontend/lib/theme.ts" },
+      { from: "src/money.ts", to: "frontend/src/money.ts" },
+    ])
+    expect(read(dir, "routes/index.tsx")).toContain('from "~/frontend/lib/fmt"')
+    expect(read(dir, "frontend/client.tsx")).toContain('from "~/frontend/lib/theme"')
+    const config = read(dir, "nifra.config.ts")
+    expect(config).toContain('export const clientModule = "./frontend/client.tsx"')
+    expect(config).toContain(
+      'entries: { client: "./frontend/entry-client.tsx", ssr: "./backend/entry-server.tsx" }',
+    )
+    expect(result.rewritten).toContain("nifra.config.ts")
+    // No target of `@app/*` or `#db/*` covers the new place: left as written and reported.
+    expect(read(dir, "routes/index.tsx")).toContain('from "@app/money"')
+    expect(read(dir, "routes/index.backend.ts")).toContain('from "#db/pool"')
+    const reasons = result.issues.map((issue) => `${issue.file}: ${issue.reason}`)
+    expect(reasons).toContain(
+      'routes/index.tsx: "not-a-real-package-xyz" names no installed package and no file through the app\'s tsconfig paths or package.json imports, so the migration cannot tell where it belongs; check it by hand',
+    )
+    expect(reasons).toContain(
+      'routes/index.backend.ts: the path alias "#db/pool" names "db/pool.ts", which moves to "backend/db/pool.ts", and no target of that alias covers the new location; point it there by hand',
+    )
+    expect(reasons).toContain(
+      'routes/index.tsx: the path alias "@app/money" names "src/money.ts", which moves to "frontend/src/money.ts", and no target of that alias covers the new location; point it there by hand',
+    )
+    // An installed package and the aliases that still resolve are not issues.
+    expect(reasons.filter((reason) => /typescript|~\/|clientModule/.test(reason))).toEqual([])
+  })
+
   test("a page the server imports is rendered there, so what only pages use still goes to frontend/", async () => {
     const dir = app({
       "routes/index.tsx":
@@ -254,13 +352,14 @@ describe("migrateLayout", () => {
       "backend/app.ts",
       "backend/db/migrate.ts",
       "backend/migrations/0002_backfill.ts",
-      "backend/release.json",
     ])
-    // `./release.json` from backend/app.ts moved with it, so that import is current and not reported.
+    // Data stays where other tools read it; backend/app.ts now reaches it as `../release.json`.
+    expect(read(dir, "backend/app.ts")).toContain('import release from "../release.json"')
     expect(result.issues).toEqual([
       {
-        file: "package.json",
-        reason: 'mentions "release.json" by path; it moved to "backend/release.json"',
+        file: "release.json",
+        reason:
+          'is data backend code imports, and a build only loads files in a zone; it stays here because other tools may read it by path. Move it to "backend/release.json" by hand, or into a folder listed under "nifra": { "zones": { "backend": [...] } } in package.json',
       },
       {
         file: "scripts/release.sh",
@@ -466,8 +565,397 @@ describe("migrateLayout", () => {
       {
         file: "routes/index.backend.ts",
         reason:
-          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... })",
+          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... }), or run `nifra schemas --write` after the migration to draft it from the loader's return type",
       },
     ])
+  })
+
+  test("test-runner mocks follow the module they name", async () => {
+    const dir = app({
+      "backend.ts": 'import { db } from "./lib/db.ts"\nexport const backend = db\n',
+      "lib/db.ts": "export const db = 1\n",
+      "test/db.test.ts": [
+        'import { mock } from "bun:test"',
+        'mock.module("../lib/db.ts", () => ({ db: 2 }))',
+        'vi.mock("../lib/db")',
+        'jest.requireActual("../lib/db.ts")',
+        'other.mock("../lib/db.ts")',
+        "",
+      ].join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((m) => m.to)).toContain("backend/lib/db.ts")
+    expect(read(dir, "test/db.test.ts")).toBe(
+      [
+        'import { mock } from "bun:test"',
+        'mock.module("../backend/lib/db.ts", () => ({ db: 2 }))',
+        'vi.mock("../backend/lib/db")',
+        'jest.requireActual("../backend/lib/db.ts")',
+        'other.mock("../lib/db.ts")',
+        "",
+      ].join("\n"),
+    )
+  })
+
+  test("tsconfig include gains the zone folders moved code lands in, layout and comments kept", async () => {
+    const files = {
+      "backend.ts": 'import { db } from "./lib/db.ts"\nexport const backend = db\n',
+      "lib/db.ts": "export const db = 1\n",
+      "components/card.tsx": "export const Card = () => null\n",
+      "routes/index.tsx": 'import { Card } from "../components/card.tsx"\nexport default Card\n',
+    }
+    const multiline = app({
+      ...files,
+      "tsconfig.json": [
+        "{",
+        "  // app sources",
+        '  "include": [',
+        '    "routes",',
+        '    "lib",',
+        '    "components", // UI',
+        "  ],",
+        "}",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(multiline, { typescript: ts, write: true })
+    expect(result.tooling).toContainEqual({
+      file: "tsconfig.json",
+      change: "include += backend, frontend",
+    })
+    expect(read(multiline, "tsconfig.json")).toBe(
+      [
+        "{",
+        "  // app sources",
+        '  "include": [',
+        '    "routes",',
+        '    "lib",',
+        '    "components", // UI',
+        '    "backend",',
+        '    "frontend",',
+        "  ],",
+        "}",
+        "",
+      ].join("\n"),
+    )
+
+    const noTrailingComma = app({
+      ...files,
+      "tsconfig.json":
+        '{\n  "include": [\n    "routes",\n    "lib",\n    "components" // UI\n  ]\n}\n',
+    })
+    await migrateLayout(noTrailingComma, { typescript: ts, write: true })
+    expect(read(noTrailingComma, "tsconfig.json")).toBe(
+      '{\n  "include": [\n    "routes",\n    "lib",\n    "components", // UI\n    "backend",\n    "frontend"\n  ]\n}\n',
+    )
+
+    const inline = app({
+      ...files,
+      "tsconfig.json": '{ "include": ["routes", "lib", "components"] }\n',
+    })
+    await migrateLayout(inline, { typescript: ts, write: true })
+    expect(read(inline, "tsconfig.json")).toBe(
+      '{ "include": ["routes", "lib", "components", "backend", "frontend"] }\n',
+    )
+
+    // Already covered by a glob, or no include at all: tsc's own rules hold, so nothing changes.
+    const covered = app({ ...files, "tsconfig.json": '{ "include": ["**/*.ts", "**/*.tsx"] }\n' })
+    expect((await migrateLayout(covered, { typescript: ts })).tooling).toEqual([])
+    const open = app({ ...files, "tsconfig.json": '{ "compilerOptions": { "strict": true } }\n' })
+    expect((await migrateLayout(open, { typescript: ts })).tooling).toEqual([])
+  })
+
+  test("tailwind content globs that lose a moved file are reported", async () => {
+    const dir = app({
+      "components/card.tsx": "export const Card = () => null\n",
+      "routes/index.tsx": 'import { Card } from "../components/card.tsx"\nexport default Card\n',
+      "tailwind.config.ts":
+        'export default { content: ["./routes/**/*.tsx", "./components/**/*.tsx"] }\n',
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.issues).toContainEqual({
+      file: "tailwind.config.ts",
+      reason:
+        'its content globs matched 1 file(s) that move, but none of their new paths (such as "components/card.tsx" -> "frontend/components/card.tsx"), so Tailwind would stop seeing their classes. Add globs for "./frontend/**/*" (with the extensions you use)',
+    })
+  })
+
+  test("only the folders the move emptied are removed", async () => {
+    const dir = app({
+      "components/card.tsx": "export const Card = () => null\n",
+      "routes/index.tsx": 'import { Card } from "../components/card.tsx"\nexport default Card\n',
+    })
+    mkdirSync(join(dir, "assets", "uploads"), { recursive: true })
+    mkdirSync(join(dir, "routes", "drafts"))
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toContainEqual({
+      from: "components/card.tsx",
+      to: "frontend/components/card.tsx",
+    })
+    expect(existsSync(join(dir, "components"))).toBe(false)
+    expect(existsSync(join(dir, "assets", "uploads"))).toBe(true)
+    expect(existsSync(join(dir, "routes", "drafts"))).toBe(true)
+  })
+
+  test("a machine without git still migrates and ignores .nifra/", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nifra-migrate-nogit-"))
+    writeFileSync(join(dir, "package.json"), "{}\n")
+    mkdirSync(join(dir, "routes"))
+    writeFileSync(join(dir, "routes", "index.tsx"), "export default () => null\n")
+    const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
+      throw new Error('Executable not found in $PATH: "git"')
+    })
+    try {
+      await migrateLayout(dir, { typescript: ts, write: true })
+      expect(spawn).toHaveBeenCalled()
+      expect(read(dir, ".gitignore")).toBe(".nifra/\n")
+    } finally {
+      spawn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("folders the app already zones in package.json stay where they are", async () => {
+    const dir = app({
+      "package.json": JSON.stringify({ nifra: { zones: { backend: ["migrations"] } } }),
+      "backend.ts":
+        'import { up } from "./migrations/0002_backfill.ts"\nexport const backend = up\n',
+      "migrations/0001_init.sql": "create table t (id int);\n",
+      "migrations/0002_backfill.ts": "export const up = () => 1\n",
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((m) => m.to)).toEqual(["backend/app.ts"])
+    expect(result.issues).toEqual([])
+    expect(read(dir, "backend/app.ts")).toContain('from "../migrations/0002_backfill.ts"')
+  })
+
+  test(".nifra/ is added to .gitignore unless it is already ignored", async () => {
+    // Outside any git checkout, so the app's own .gitignore is the only answer.
+    const make = (files: Record<string, string>): string => {
+      const dir = mkdtempSync(join(tmpdir(), "nifra-migrate-gitignore-"))
+      for (const [path, content] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, path)), { recursive: true })
+        writeFileSync(join(dir, path), content)
+      }
+      return dir
+    }
+    const page = { "routes/index.tsx": "export default () => null\n" }
+    const bare = make({ ...page, ".gitignore": "node_modules" })
+    const ignored = make({ ...page, ".gitignore": "dist\n/.nifra\n" })
+    const none = make(page)
+    try {
+      const result = await migrateLayout(bare, { typescript: ts, write: true })
+      expect(result.tooling).toContainEqual({
+        file: ".gitignore",
+        change: "ignore .nifra/ (dev and build state)",
+      })
+      expect(read(bare, ".gitignore")).toBe("node_modules\n.nifra/\n")
+      expect((await migrateLayout(ignored, { typescript: ts, write: true })).tooling).toEqual([])
+      expect(read(ignored, ".gitignore")).toBe("dist\n/.nifra\n")
+      await migrateLayout(none, { typescript: ts, write: true })
+      expect(read(none, ".gitignore")).toBe(".nifra/\n")
+      // A dry run reports the change and writes nothing.
+      const dry = make(page)
+      expect((await migrateLayout(dry, { typescript: ts })).tooling).toHaveLength(1)
+      expect(existsSync(join(dry, ".gitignore"))).toBe(false)
+      rmSync(dry, { recursive: true, force: true })
+    } finally {
+      for (const dir of [bare, ignored, none]) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  const semicolonRoute = [
+    'import { db } from "../lib/db";',
+    'import { format } from "../lib/format";',
+    "",
+    "export const loader = async () => {",
+    "  return { n: format(db) };",
+    "};",
+    "",
+    "export default function Page() {",
+    "  return <p>{format(1)}</p>;",
+    "}",
+    "",
+  ].join("\n")
+  const semicolonApp = {
+    "lib/db.ts": "export const db = 1;\n",
+    "lib/format.ts": "export const format = (n: number): string => String(n);\n",
+    "routes/index.tsx": semicolonRoute,
+  }
+
+  test("rebuilt imports keep the statement terminator the file was written with", async () => {
+    const dir = app(semicolonApp)
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "routes/index.tsx")).toStartWith(
+      'import { format } from "../shared/lib/format";\n',
+    )
+    const backendHalf = read(dir, "routes/index.backend.ts")
+    expect(backendHalf).toContain('import { db } from "../backend/lib/db";\n')
+    expect(backendHalf).toContain('import { format } from "../shared/lib/format";\n')
+    expect(split('import { a } from "./a"\nexport const loader = () => a\n').backend).toContain(
+      'import { a } from "./a"\n',
+    )
+    expect(middlewareSource(ts, "export default (ctx) => ctx.next();\n", "_middleware.ts")).toBe(
+      "export const middleware = (ctx) => ctx.next();\n",
+    )
+  })
+
+  test("an importer of a moved export reads it from the backend half; the rest stays", async () => {
+    const dir = app({
+      ...semicolonApp,
+      "routes/__tests__/index.test.ts": [
+        'import Page, { loader as load } from "../index";',
+        'export { loader } from "../index";',
+        'import type { loader as L } from "../index.tsx";',
+        'import * as page from "../index";',
+        "",
+        "void [Page, load, page.loader] as unknown as L;",
+        "",
+      ].join("\n"),
+      "scripts/warm.ts": 'const route = await import("../routes/index")\nawait route.loader()\n',
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "routes/__tests__/index.test.ts")).toBe(
+      [
+        'import Page from "../index";',
+        'import { loader as load } from "../index.backend";',
+        'export { loader } from "../index.backend";',
+        'import type { loader as L } from "../index.backend.ts";',
+        'import * as page from "../index";',
+        "",
+        "void [Page, load, page.loader] as unknown as L;",
+        "",
+      ].join("\n"),
+    )
+    expect(result.rewritten).toContain("routes/__tests__/index.test.ts")
+    expect(result.issues).toContainEqual({
+      file: "routes/__tests__/index.test.ts",
+      reason:
+        'reads "loader" through a namespace import of "../index", but they moved to "routes/index.backend.ts"; import them from there by hand',
+    })
+    expect(result.issues).toContainEqual({
+      file: "scripts/warm.ts",
+      reason:
+        'loads "../routes/index" with import() and mentions "loader", which moved to "routes/index.backend.ts"; load the backend half for them by hand',
+    })
+  })
+
+  test("an app one folder down: the dry run from the package names --dir, and code beside it is reported", async () => {
+    const pkg = app({
+      "package.json": '{ "name": "site" }\n',
+      ...Object.fromEntries(
+        Object.entries(semicolonApp).map(([path, text]) => [`src/${path}`, text]),
+      ),
+      "test/index.test.ts":
+        'import { loader } from "../src/routes/index";\nimport { db } from "../src/lib/db";\nvoid [loader, db];\n',
+    })
+    await expect(migrateLayout(pkg, { typescript: ts })).rejects.toThrow(
+      "src/routes/ exists: run `nifra migrate layout --dir src` to migrate the app there",
+    )
+    const result = await migrateLayout(join(pkg, "src"), { typescript: ts, write: true })
+    expect(result.issues).toContainEqual({
+      file: "../test/index.test.ts",
+      reason:
+        'imports "loader" from "../src/routes/index"; import it from "../src/routes/index.backend" - it is outside src/, so the migration does not rewrite it',
+    })
+    expect(result.issues).toContainEqual({
+      file: "../test/index.test.ts",
+      reason:
+        'imports "../src/lib/db", which moves to "backend/lib/db.ts" - it is outside src/, so the migration does not rewrite it',
+    })
+    expect(read(pkg, "test/index.test.ts")).toContain('from "../src/routes/index"')
+    expect(
+      result.issues.find((issue) => issue.file === "routes/index.backend.ts")?.reason,
+    ).toContain("run `nifra schemas --write` after the migration")
+  })
+})
+
+describe("migrateLayout on an API-only app", () => {
+  const PACKAGE = '{\n  "name": "orders-api",\n  "scripts": { "start": "bun backend.ts" }\n}\n'
+  const backendOnly = (extra: Record<string, string> = {}) =>
+    app({
+      "package.json": PACKAGE,
+      "tsconfig.json": '{ "include": ["*.ts", "lib"] }\n',
+      "backend.ts":
+        'import { server } from "@nifrajs/core"\nimport { db } from "./lib/db"\nexport const backend = server().get("/orders", () => db.all())\n',
+      "lib/db.ts": "export const db = { all: () => [] }\n",
+      "scripts/seed.ts": 'import { backend } from "../backend"\nvoid backend\n',
+      ...extra,
+    })
+
+  test("only the backend entry moves; nothing is split or zoned, and the dry run shows the kind it declares", async () => {
+    const dir = backendOnly()
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.mode).toBe("api")
+    expect(result.splits).toEqual([])
+    expect(result.moves).toEqual([{ from: "backend.ts", to: "backend/app.ts" }])
+    expect(result.rewritten).toEqual(["scripts/seed.ts"])
+    expect(result.tooling).toContainEqual({ file: "tsconfig.json", change: "include += backend" })
+    expect(result.tooling).toContainEqual({
+      file: "package.json",
+      change: '"nifra": { "kind": "api" }',
+    })
+    expect(result.issues).toEqual([
+      {
+        file: "package.json",
+        reason: 'mentions "backend.ts" by path; it moved to "backend/app.ts"',
+      },
+    ])
+    expect(read(dir, "package.json")).toBe(PACKAGE)
+  })
+
+  test("--write moves it, follows its imports both ways and declares the kind in place", async () => {
+    const dir = backendOnly()
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(existsSync(join(dir, "backend.ts"))).toBe(false)
+    expect(read(dir, "backend/app.ts")).toContain('from "../lib/db"')
+    expect(read(dir, "lib/db.ts")).toBe("export const db = { all: () => [] }\n")
+    expect(read(dir, "scripts/seed.ts")).toContain('from "../backend/app"')
+    expect(read(dir, "package.json")).toBe(
+      '{\n  "name": "orders-api",\n  "scripts": { "start": "bun backend.ts" },\n  "nifra": { "kind": "api" }\n}\n',
+    )
+    expect(read(dir, "tsconfig.json")).toBe('{ "include": ["*.ts", "lib", "backend"] }\n')
+  })
+
+  test("a declared kind keeps routes/ unsplit and adds nothing to package.json", async () => {
+    const declared = '{ "name": "x", "nifra": { "kind": "api" } }\n'
+    const dir = app({
+      "package.json": declared,
+      "backend.ts": "export const backend = { routes: () => [] }\n",
+      "routes/index.tsx":
+        "export async function loader() { return {} }\nexport default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.mode).toBe("api")
+    expect(result.splits).toEqual([])
+    expect(result.moves).toEqual([{ from: "backend.ts", to: "backend/app.ts" }])
+    expect(result.tooling.map((edit) => edit.file)).not.toContain("package.json")
+  })
+
+  test("the kind goes into an existing nifra object, on the object's own line style", async () => {
+    const dir = backendOnly({ "package.json": '{"name":"x","nifra":{"zones":{}}}' })
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "package.json")).toBe('{"name":"x","nifra":{"zones":{}, "kind": "api"}}')
+  })
+
+  test("web config without routes/, or a kind that clashes with it, is refused with the choice to make", async () => {
+    const config = 'export const adapter = {}\nexport const clientModule = "x"\n'
+    const unrouted = app({ "nifra.config.ts": config, "backend.ts": "export const backend = 1\n" })
+    await expect(migrateLayout(unrouted, { typescript: ts })).rejects.toThrow(
+      'but it has web config (nifra.config.ts). A web app is file-routed under routes/; if this one serves no pages, remove the web config and declare "nifra": { "kind": "api" } in package.json',
+    )
+    const clash = app({
+      "package.json": '{ "nifra": { "kind": "api" } }',
+      "nifra.config.ts": config,
+      "routes/index.tsx": "export default () => null\n",
+    })
+    await expect(migrateLayout(clash, { typescript: ts })).rejects.toThrow(
+      'package.json declares "nifra": { "kind": "api" }, but',
+    )
+    await expect(migrateLayout(app({ "lib/x.ts": "" }), { typescript: ts })).rejects.toThrow(
+      "there is nothing to migrate",
+    )
   })
 })

@@ -37,6 +37,37 @@ const isDeferredValue = (_: unknown, value: unknown): boolean =>
   (value as { readonly __nifra_deferred?: unknown }).__nifra_deferred === true &&
   typeof (value as { readonly promise?: { readonly then?: unknown } }).promise?.then === "function"
 
+/** Any value that survives `JSON.stringify` and `JSON.parse` unchanged. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+const JSON_KIND = "NifraJson"
+const DATE_KIND = "NifraDate"
+// Deeper than any real payload; it also ends a walk into a cycle, which JSON cannot carry.
+const MAX_JSON_DEPTH = 256
+
+function isJsonValue(value: unknown, depth: number): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true
+  if (typeof value === "number") return Number.isFinite(value)
+  if (typeof value !== "object" || depth > MAX_JSON_DEPTH) return false
+  if (Array.isArray(value)) return value.every((item) => isJsonValue(item, depth + 1))
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) return false
+  for (const item of Object.values(value)) {
+    // JSON drops an undefined property, as it would here.
+    if (item !== undefined && !isJsonValue(item, depth + 1)) return false
+  }
+  return true
+}
+
+const isValidDate = (_: unknown, value: unknown): boolean =>
+  value instanceof Date && !Number.isNaN(value.getTime())
+
 /**
  * Pull each property's raw TypeBox schema out of its `NifraSchema` wrapper. `where` names the calling
  * constructor: these objects are checked as JSON, so a file field is refused here (it belongs in
@@ -195,6 +226,34 @@ export const t = {
         "x-nifra-deferred": true,
         inner: inner.jsonSchema,
         [DEFERRED_VALIDATE]: inner["~standard"].validate,
+      }),
+    )
+  },
+  /**
+   * Any JSON value: strings, finite numbers, booleans, `null`, and arrays and plain objects of them, at
+   * any depth. A function, a class instance, `NaN` or a cycle fails. The output guard cannot see inside
+   * it, so `nifra check` and the sensitive-field rule do not either: prefer a declared shape for
+   * anything that might hold a credential.
+   */
+  json: (): NifraSchema<TUnsafe<JsonValue>> => {
+    if (!TypeRegistry.Has(JSON_KIND))
+      TypeRegistry.Set(JSON_KIND, (_: unknown, value: unknown) => isJsonValue(value, 0))
+    return fromTypeBox(Type.Unsafe<JsonValue>({ [Kind]: JSON_KIND, "x-nifra-json": true }))
+  },
+  /**
+   * A `Date` for page data: `loaderOutput`, `actionOutput` and a server function's `output`. The
+   * loader may return a `Date` or an ISO 8601 string; the page receives a `Date`, on the server render
+   * and in the browser alike. A request body or a `backend/app.ts` response is plain JSON, which has
+   * no dates: use `t.string({ format: "date-time" })` there.
+   */
+  date: (): NifraSchema<TUnsafe<Date>> => {
+    if (!TypeRegistry.Has(DATE_KIND)) TypeRegistry.Set(DATE_KIND, isValidDate)
+    return fromTypeBox(
+      Type.Unsafe<Date>({
+        [Kind]: DATE_KIND,
+        type: "string",
+        format: "date-time",
+        "x-nifra-date": true,
       }),
     )
   },

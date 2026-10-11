@@ -63,7 +63,10 @@ export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV
     payload: InferInput<Schema>,
     options?: { id?: string; occurredAt?: string; causality?: CausalityContext },
   ): EventEnvelope<InferOutput<Schema>>
-  /** Parse untrusted input against this exact contract (type + version + payload). Never throws. */
+  /**
+   * Parse untrusted input against this exact contract (type + version + payload). Bad input never
+   * throws; it returns the issues. An async payload schema throws, as in {@link create}.
+   */
   parse(input: unknown): EventParseResult<InferOutput<Schema>>
   /** Boolean guard form of {@link parse}. */
   is(input: unknown): input is EventEnvelope<InferOutput<Schema>>
@@ -122,6 +125,8 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
   ): { ok: true; value: InferOutput<Schema> } | { ok: false; issues: readonly StandardIssue[] } {
     const outcome = validateStandard(payload, value)
     if (outcome instanceof Promise) {
+      // Observed so a rejecting schema does not also surface as an unhandled rejection.
+      outcome.catch(() => {})
       throw new Error(
         `event contract ${type}@${version}: async payload schemas are not supported - use a sync schema`,
       )

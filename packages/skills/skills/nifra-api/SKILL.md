@@ -68,7 +68,8 @@ Three consequences worth internalising:
 `@nifrajs/middleware` ships the production set: `requestId`, `logger`, `etag`, `bearer`, `apiKey`,
 `basicAuth`, `jwt`/`jwks`, `csrf`, `ipRestriction`, `bodyLimit`, `cors`, `securityHeaders`,
 `rateLimit`, `compression`, `cacheControl`, `cache`, `prettyJson`, `timing`, `methodOverride`,
-`trailingSlash`, `language`, `poweredBy`, `combine`, `openapi`, `healthcheck`, `idempotency`.
+`trimTrailingSlash`/`appendTrailingSlash`, `language`, `poweredBy`, `combine`, `openapi`, `healthcheck`,
+`idempotency`.
 
 Check that list before writing your own. Hand-rolled CORS, rate limiting, or CSRF is how a project
 acquires a security hole. Custom cross-cutting behaviour goes through `definePlugin` (typed context,

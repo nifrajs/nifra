@@ -48,11 +48,14 @@ export function unsupportedTypeScriptMessage(version: string): string {
   return `${NIFRA_TS_UNSUPPORTED}: TypeScript ${version} is outside the compiler API versions supported by Nifra scanners. Use TypeScript 5, 6, or 7, or pin the project to TypeScript 6 (for example, \`bun add -d typescript@^6\`).`
 }
 
-export function unsupportedTypeScriptDiagnostic(version: string): Diagnostic {
+export function unsupportedTypeScriptDiagnostic(
+  version: string,
+  message = unsupportedTypeScriptMessage(version),
+): Diagnostic {
   return diagnostic({
     code: NIFRA_TS_UNSUPPORTED,
     severity: "error",
-    message: unsupportedTypeScriptMessage(version),
+    message,
     fix: {
       recipe: "toolchain.install-typescript",
       command: "bun add -d typescript@^6",
@@ -412,7 +415,11 @@ function sourceEntries(
     const content = sourceIndex.read(file)
     if (content === undefined) continue
     const absolute = isAbsolute(file) ? file : resolve(root, file)
-    const normalized = normalizedPath(absolute)
+    // The session opens script extensions only; a component's script blocks are opened as TypeScript
+    // beside it, and `createSourceFile` finds them by their text.
+    const normalized = normalizedPath(
+      /\.(?:svelte|vue)$/.test(absolute) ? `${absolute}.ts` : absolute,
+    )
     paths.push(normalized)
     for (const variant of pathVariants(normalized)) files.set(variant, content)
   }

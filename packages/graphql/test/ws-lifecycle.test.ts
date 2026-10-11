@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { GraphQLObjectType, GraphQLSchema, GraphQLString } from "graphql"
+import { GraphQLObjectType, type GraphQLResolveInfo, GraphQLSchema, GraphQLString } from "graphql"
 import { createPubSub, graphqlWebSocket } from "../src/index.ts"
 
 type Handler = ReturnType<typeof graphqlWebSocket>
@@ -14,6 +14,21 @@ interface Frame {
 // Nothing is ever published, so a subscription to it stays live until the client completes it.
 const quiet = createPubSub<string>()
 
+// A subscription whose source arrives only when the test releases it, recording its own return().
+let slowSignal: AbortSignal | undefined
+
+// A reset outside the test body, so TypeScript does not narrow `late.signal` to undefined there.
+function resetLate(): void {
+  late.returned = 0
+  late.signal = undefined
+}
+
+const late: { release: () => void; returned: number; signal: AbortSignal | undefined } = {
+  release: () => {},
+  returned: 0,
+  signal: undefined,
+}
+
 const schema = new GraphQLSchema({
   query: new GraphQLObjectType({
     name: "Query",
@@ -21,7 +36,15 @@ const schema = new GraphQLSchema({
       ping: { type: GraphQLString, resolve: () => "pong" },
       slow: {
         type: GraphQLString,
-        resolve: () => new Promise((resolve) => setTimeout(() => resolve("late"), 200)),
+        resolve: (
+          _source: unknown,
+          _args: unknown,
+          _context: unknown,
+          info: GraphQLResolveInfo,
+        ) => {
+          slowSignal = info.getAbortSignal()
+          return new Promise((resolve) => setTimeout(() => resolve("late"), 200))
+        },
       },
     },
   }),
@@ -31,6 +54,28 @@ const schema = new GraphQLSchema({
       live: {
         type: GraphQLString,
         subscribe: () => quiet.subscribe("live"),
+        resolve: (payload: string) => payload,
+      },
+      late: {
+        type: GraphQLString,
+        subscribe: (
+          _source: unknown,
+          _args: unknown,
+          _context: unknown,
+          info: GraphQLResolveInfo,
+        ) =>
+          new Promise<AsyncIterableIterator<string>>((resolve) => {
+            late.signal = info.getAbortSignal()
+            const source: AsyncIterableIterator<string> = {
+              [Symbol.asyncIterator]: () => source,
+              next: () => new Promise<IteratorResult<string>>(() => {}),
+              return: async () => {
+                late.returned++
+                return { done: true, value: undefined }
+              },
+            }
+            late.release = () => resolve(source)
+          }),
         resolve: (payload: string) => payload,
       },
       broken: {
@@ -49,6 +94,7 @@ function connect(handler: Handler): {
   readonly frames: Frame[]
   readonly closes: { readonly code: number | undefined; readonly reason: string | undefined }[]
   send(frame: Record<string, unknown>): void
+  close(): void
 } {
   const frames: Frame[] = []
   const closes: { code: number | undefined; reason: string | undefined }[] = []
@@ -66,7 +112,12 @@ function connect(handler: Handler): {
     raw: { protocol: "graphql-transport-ws" },
   }
   handler.open?.(socket)
-  return { frames, closes, send: (frame) => handler.message?.(socket, JSON.stringify(frame)) }
+  return {
+    frames,
+    closes,
+    send: (frame) => handler.message?.(socket, JSON.stringify(frame)),
+    close: () => handler.close?.(socket, 1000, ""),
+  }
 }
 
 async function until(done: () => boolean): Promise<void> {
@@ -182,6 +233,7 @@ describe("graphql-ws failures stay on the socket", () => {
       const socket = await acknowledged(handler)
       socket.send({ id: "1", type: "subscribe", payload: { query: "{ slow }" } })
       await until(ended(socket.frames, "1"))
+      expect(slowSignal?.aborted).toBe(true)
       socket.send({ id: "2", type: "subscribe", payload: { query: "{ ping }" } })
       await until(ended(socket.frames, "2"))
       expect(socket.frames.filter((frame) => frame.id === "1")).toEqual([
@@ -195,5 +247,72 @@ describe("graphql-ws failures stay on the socket", () => {
       expect(socket.closes).toEqual([])
     })
     expect(unhandled).toEqual([])
+  })
+
+  test("a subscription source that arrives after its timeout is returned, not left open", async () => {
+    const handler = graphqlWebSocket({ schema, executionTimeoutMs: 20 })
+    late.returned = 0
+    const socket = await acknowledged(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
+    await until(ended(socket.frames, "1"))
+    expect(late.returned).toBe(0)
+    expect(late.signal?.aborted).toBe(true)
+    late.release()
+    await until(() => late.returned === 1)
+    expect(socket.closes).toEqual([])
+  })
+
+  test("a client complete aborts a subscription still setting up and returns its late source", async () => {
+    const handler = graphqlWebSocket({ schema })
+    resetLate()
+    const socket = await acknowledged(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
+    await until(() => late.signal !== undefined)
+    expect(late.signal?.aborted).toBe(false)
+    socket.send({ id: "1", type: "complete" })
+    expect(late.signal?.aborted).toBe(true)
+    late.release()
+    await until(() => late.returned === 1)
+  })
+
+  test("a socket close aborts a subscription still setting up and returns its late source", async () => {
+    const handler = graphqlWebSocket({ schema })
+    resetLate()
+    const socket = await acknowledged(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "subscription { late }" } })
+    await until(() => late.signal !== undefined)
+    socket.close()
+    expect(late.signal?.aborted).toBe(true)
+    late.release()
+    await until(() => late.returned === 1)
+  })
+})
+
+// graphql-ws refuses a subscribe sent before connection_init is admitted. Answering it with a
+// validation error first told an unauthenticated socket the schema's field names.
+describe("a subscribe frame before connection_ack", () => {
+  test("gets no validation answer and closes the socket as unauthorized", async () => {
+    const handler = graphqlWebSocket({ schema, onConnect: () => false })
+    const socket = connect(handler)
+    socket.send({ id: "1", type: "subscribe", payload: { query: "{ pin }" } })
+    await until(() => socket.closes.length > 0)
+    expect(socket.closes[0]?.code).toBe(4401)
+    expect(socket.frames).toEqual([])
+  })
+
+  test("an admitted socket still gets the limit errors", async () => {
+    const socket = await acknowledged(graphqlWebSocket({ schema }))
+    socket.send({ id: "1", type: "subscribe", payload: { query: `{${" ping".repeat(100)} }` } })
+    await until(ended(socket.frames, "1"))
+    expect(socket.frames.at(-1)).toEqual({
+      id: "1",
+      type: "error",
+      payload: [
+        {
+          message:
+            "GraphQL document repeats field names in one selection set beyond the limit of 2000 same-named field pairs.",
+        },
+      ],
+    })
   })
 })

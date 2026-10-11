@@ -178,12 +178,32 @@ const GATES = Object.freeze([
     [["run", "check:verification-parity"]],
     "Run `bun run check:verification-parity` and reconcile the release plan with CI.",
   ),
+  gate(
+    "server-components-contracts",
+    [["run", "check:server-components:contracts"]],
+    "Run `bun run check:server-components:contracts` and fix the component admission, transport or lifecycle regression.",
+  ),
+  gate(
+    "server-components",
+    [
+      ["run", "check:server-components"],
+      ["run", "check:server-components:consumers"],
+    ],
+    "Run the server-components matrix and packaged-consumer commands; every adapter and required row must pass.",
+  ),
+  gate(
+    "server-components-performance",
+    [["run", "check:server-components:performance"]],
+    "Run the five-run component performance comparison and investigate the measured regression.",
+    { workflowRequired: false },
+  ),
 ])
 
 const DEFAULT_PLAN = Object.freeze([
   "lint",
   "typecheck",
   "tests",
+  "server-components-contracts",
   "docs",
   "api-corpus",
   "cards-corpus",
@@ -204,6 +224,7 @@ const RELEASE_PLAN = Object.freeze([
   "cli-isolation",
   "coverage",
   "corpus",
+  "sitemap",
   "docs",
   "public-boundary",
   "public-manifest",
@@ -222,6 +243,9 @@ const RELEASE_PLAN = Object.freeze([
   "pipeline-parity",
   "leak-matrix",
   "verification-parity",
+  "server-components",
+  "server-components-performance",
+  "server-components-contracts",
   "changesets",
 ] as const)
 

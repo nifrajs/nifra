@@ -47,7 +47,11 @@ export interface RunResult {
   /** HTTP status - present when the app returned a response (absent when it threw). */
   readonly status?: number
   readonly statusText?: string
+  /** Response headers. Repeated `set-cookie` values are joined with `, `, as `Headers.get` does;
+   * `setCookie` keeps them apart. */
   readonly headers?: Readonly<Record<string, string>>
+  /** Each `set-cookie` value, in order - present when the response set at least one cookie. */
+  readonly setCookie?: readonly string[]
   /** Parsed JSON when the response is JSON; otherwise the (possibly truncated) text. */
   readonly body?: unknown
   /** The response body as text, truncated to `maxBodyChars`. */
@@ -77,14 +81,9 @@ const now = (): number =>
 
 const METHODS_WITHOUT_BODY: ReadonlySet<string> = new Set(["GET", "HEAD"])
 
-/** A plain JSON-ish object/array (encode it as JSON) - vs a string/binary body we pass through. */
+/** Any object that is not a native Fetch body; callers check `isRequestBody` first. */
 function isJsonBody(body: unknown): body is Record<string, unknown> | unknown[] {
-  if (body === null || typeof body !== "object") return false
-  if (body instanceof Uint8Array || body instanceof ArrayBuffer || body instanceof Blob)
-    return false
-  if (typeof FormData !== "undefined" && body instanceof FormData) return false
-  if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) return false
-  return true
+  return body !== null && typeof body === "object"
 }
 
 type RequestBody = Exclude<RequestInit["body"], undefined>
@@ -108,14 +107,15 @@ function buildRequest(spec: RequestSpec, origin: string): Request {
   const init: RequestInit = { method, headers }
 
   if (spec.body !== undefined && !METHODS_WITHOUT_BODY.has(method)) {
-    if (isJsonBody(spec.body)) {
+    // A native Fetch body (URLSearchParams, FormData, a typed array) is an object too, so it is
+    // matched first and sent with the content type Fetch gives it.
+    if (isRequestBody(spec.body)) {
+      init.body = spec.body
+    } else if (isJsonBody(spec.body)) {
       if (!headers.has("content-type")) headers.set("content-type", "application/json")
       init.body = JSON.stringify(spec.body)
     } else {
-      if (!isRequestBody(spec.body)) {
-        throw new TypeError("@nifrajs/runner: body must be a Fetch Request body")
-      }
-      init.body = spec.body
+      throw new TypeError("@nifrajs/runner: body must be a Fetch Request body")
     }
   }
   return new Request(url, init)
@@ -124,9 +124,15 @@ function buildRequest(spec: RequestSpec, origin: string): Request {
 function headersToObject(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {}
   headers.forEach((value, key) => {
-    out[key] = value
+    // Iteration yields each set-cookie on its own, so plain assignment would keep only the last.
+    out[key] = key === "set-cookie" && key in out ? `${out[key]}, ${value}` : value
   })
   return out
+}
+
+function setCookieOf(headers: Headers): { readonly setCookie?: readonly string[] } {
+  const cookies = headers.getSetCookie()
+  return cookies.length === 0 ? {} : { setCookie: cookies }
 }
 
 interface BoundedText {
@@ -163,9 +169,8 @@ async function readBoundedText(response: Response, maxChars: number): Promise<Bo
       // while the final string slice preserves the public character-count contract.
       const byteBudget = Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, remaining * 4))
       const allowed = Math.min(value.byteLength, byteBudget)
-      const chunk = decoder.decode(value.subarray(0, allowed), {
-        stream: allowed < value.byteLength,
-      })
+      // Always streamed: a character split across two chunks decodes once the second arrives.
+      const chunk = decoder.decode(value.subarray(0, allowed), { stream: true })
       chunks.push(chunk)
       totalChars += chunk.length
       if (allowed < value.byteLength || chunk.length > remaining) {
@@ -225,6 +230,7 @@ export async function runRequest(
       status: res.status,
       statusText: res.statusText,
       headers: headersToObject(res.headers),
+      ...setCookieOf(res.headers),
       body,
       bodyText,
       ...(captured.truncated ? { truncated: true } : {}),

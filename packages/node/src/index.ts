@@ -11,8 +11,7 @@
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
-import { constants as FS } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -31,6 +30,7 @@ import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { hasDotSegment, resolveDotSegments } from "./generated/request-target.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
+import { openResolved } from "./open-resolved.ts"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
@@ -97,6 +97,7 @@ type WsUpgradeOutcome =
 interface WsSocket {
   send(data: string | ArrayBufferView | ArrayBuffer): void
   close(code?: number, reason?: string): void
+  terminate(): void
   readonly readyState: number
   on(event: "message", listener: (data: Buffer, isBinary: boolean) => void): void
   on(event: "close", listener: (code: number, reason: Buffer) => void): void
@@ -210,6 +211,15 @@ const RESOLVE_NODE_MOUNT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.resolveNodeMount)
 const JSON_CONTENT_TYPE = Response.json(0).headers.get("content-type") ?? "application/json"
 
 const INTERNAL_ERROR_BODY = '{"ok":false,"error":"internal_error"}'
+/** A handler's Response whose body was already sent: refused, since its headers were written for the
+ * request it already answered. */
+const SENT_BODY_OUTCOME: NodeServeOutcome = Object.freeze({
+  kind: "json",
+  status: 500,
+  headers: undefined,
+  cookies: undefined,
+  body: INTERNAL_ERROR_BODY,
+})
 const EMPTY_BUFFER = Buffer.alloc(0)
 const NODE_RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
 const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
@@ -256,14 +266,15 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
         return {
           kind: "body",
           status: body.status,
-          headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
+          headers: applySetToNodeHeaders(body.headers, body.status, set),
           body: isBodylessStatus(body.status) ? new Uint8Array(0) : body.body,
         }
       }
-      return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set._cookies))
+      return nodeOutcomeFromResponse(applySetToResponse(result.toResponse(), set))
     }
     if (result instanceof Response) {
-      return nodeOutcomeFromResponse(appendCookiesToResponse(result, set._cookies))
+      if (result.bodyUsed) return SENT_BODY_OUTCOME
+      return nodeOutcomeFromResponse(applySetToResponse(result, set))
     }
     const status = set.status ?? (result === undefined ? 204 : 200)
     const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
@@ -509,21 +520,65 @@ function installFastResponse(): void {
   globalThis.Response = DeferringResponse as unknown as typeof Response
 }
 
-function appendCookiesToResponse(
-  response: Response,
-  cookies: readonly string[] | undefined,
-): Response {
-  if (cookies === undefined || cookies.length === 0) return response
-  try {
-    for (const cookie of cookies) response.headers.append("set-cookie", cookie)
-    return response
-  } catch {
-    // Guarded `Headers` (`Response.redirect()`, a raw `fetch()` result) reject every write, so the
-    // first append throws with nothing applied and the cookies land on a mutable copy instead.
-    const clone = new Response(response.body, response)
-    for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
-    return clone
+/** Headers that describe a Response's body or its framing - core's list, mirrored here because the
+ * adapter does not import core: a `c.set` value for one describes a body the handler did not return. */
+const RESPONSE_OWNED_HEADERS: ReadonlySet<string> = new Set([
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-range",
+  "transfer-encoding",
+])
+
+/**
+ * `response` with this request's `c.set` headers it lacks and its queued cookies - core's
+ * `applySetToResponse` and `writableResponse` rules, mirrored. A Response without a body can be sent
+ * any number of times, so the object a handler returns may answer other requests too and is always
+ * copied; one with a body can be sent once, so it is this request's and takes the writes in place
+ * unless its `Headers` are guarded (`Response.redirect()`, a raw `fetch()` result).
+ */
+function applySetToResponse(response: Response, set: NodeContextSet): Response {
+  const ambient = response.status >= 200 ? set._headers : undefined
+  const cookies = set._cookies ?? []
+  const added: Array<readonly [string, string]> = []
+  if (ambient !== undefined) {
+    for (const name in ambient) {
+      if (RESPONSE_OWNED_HEADERS.has(name.toLowerCase()) || response.headers.has(name)) continue
+      added.push([name, ambient[name]!])
+    }
   }
+  if (added.length === 0 && cookies.length === 0) return response
+  const write = (target: Response): Response => {
+    for (const [name, value] of added) target.headers.set(name, value)
+    for (const cookie of cookies) target.headers.append("set-cookie", cookie)
+    return target
+  }
+  if (response.body === null && response.status >= 200) {
+    return write(
+      copiedResponse(
+        response,
+        new Response(null, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      ),
+    )
+  }
+  try {
+    return write(response)
+  } catch {
+    // Guarded `Headers` reject every write, so the first one throws with nothing applied and the
+    // writes land on a mutable copy instead.
+    return write(copiedResponse(response, new Response(response.body, response)))
+  }
+}
+
+/** `copy` carrying `original`'s buffered-body marker, so the direct writer still sends those bytes. */
+function copiedResponse(original: Response, copy: Response): Response {
+  const body: unknown = Reflect.get(original, NODE_RESPONSE_BODY)
+  if (body !== undefined) Object.defineProperty(copy, NODE_RESPONSE_BODY, { value: body })
+  return copy
 }
 
 /** Early exits built outside the handler's finalizer - an `onRequest` hook's response, a mount's,
@@ -627,13 +682,33 @@ function responseHeaders(
   return headers
 }
 
-function appendCookiesToNodeHeaders(
+/** {@link applySetToResponse} for a body the direct writer sends from a header record. */
+function applySetToNodeHeaders(
   headers: Readonly<Record<string, string | readonly string[]>> | undefined,
-  cookies: readonly string[] | undefined,
+  status: number,
+  set: NodeContextSet,
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
-  if (cookies === undefined || cookies.length === 0) return headers
-  const out = Object.create(null) as Record<string, string | readonly string[]>
-  if (headers !== undefined) Object.assign(out, headers)
+  const ambient = status >= 200 ? set._headers : undefined
+  const cookies = set._cookies
+  const copy = (): Record<string, string | readonly string[]> =>
+    Object.assign(Object.create(null) as Record<string, string | readonly string[]>, headers)
+  let out: Record<string, string | readonly string[]> | undefined
+  if (ambient !== undefined) {
+    let own: Set<string> | undefined
+    for (const name in ambient) {
+      const lower = name.toLowerCase()
+      if (RESPONSE_OWNED_HEADERS.has(lower)) continue
+      own ??= new Set(
+        headers === undefined ? [] : Object.keys(headers).map((key) => key.toLowerCase()),
+      )
+      if (own.has(lower)) continue
+      own.add(lower)
+      out ??= copy()
+      out[name] = ambient[name]!
+    }
+  }
+  if (cookies === undefined || cookies.length === 0) return out ?? headers
+  out ??= copy()
   const existing = out["set-cookie"]
   const setCookies =
     existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]
@@ -653,6 +728,12 @@ export interface ServeStaticOptions {
   readonly prefix?: string
   /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */
   readonly immutable?: boolean
+  /**
+   * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,
+   * `immutable` applies only to these; any other file is sent with its validators and no
+   * `cache-control`, so a file that keeps its name across deploys still revalidates.
+   */
+  readonly hashedFiles?: Iterable<string>
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
   /**
@@ -691,13 +772,15 @@ export interface ServeOptions {
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
    * mirroring nifra's Bun `listen({ gracefulSignals })`.
+   * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed
+   * (default 10_000).
    *
    * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap
    * are *not* set here - they live inside `app.fetch`, so they already apply through
    * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /
    * `headersTimeout` (60s) defaults.
    */
-  readonly signals?: boolean
+  readonly signals?: boolean | { readonly drainMs?: number }
   /**
    * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
    * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
@@ -723,7 +806,8 @@ export interface NodeServer {
   readonly port: number
   /**
    * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then
-   * force-close stragglers + idle keep-alives. Mirrors nifra's Bun `stop()`.
+   * force-close stragglers + idle keep-alives. Open WebSockets get a 1001 close at once and are
+   * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: { drainMs?: number }): Promise<void>
 }
@@ -760,7 +844,8 @@ function normalizeHostAuthority(value: string): string | undefined {
       hostname = value.slice(0, colon)
       port = value.slice(colon + 1)
     }
-    if (hostname.length === 0 || !/^[a-z0-9.-]+$/i.test(hostname)) return undefined
+    // `_` is a legal reg-name character (RFC 3986) and common in container service names.
+    if (hostname.length === 0 || !/^[\w.-]+$/.test(hostname)) return undefined
     hostname = hostname.toLowerCase()
   }
   if (port !== undefined) {
@@ -855,6 +940,7 @@ interface StaticState {
   readonly root: string
   readonly prefix: string // normalized: "/assets" (no trailing slash) or "/"
   readonly immutable: boolean
+  readonly hashedFiles: ReadonlySet<string> | undefined
   readonly headers: Readonly<Record<string, string>> | undefined
   readonly denyDotfiles: boolean
 }
@@ -881,6 +967,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
     root,
     prefix,
     immutable: options.immutable !== false,
+    hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
     headers: staticHeadersOf(options.headers),
     denyDotfiles: options.dotfiles !== "allow",
   }
@@ -894,7 +981,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
 function staticMatch(
   state: StaticState,
   rawUrl: string,
-): "pass" | { readonly reject: Response } | { readonly file: string } {
+): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
   const query = rawUrl.indexOf("?")
   const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
   const underPrefix =
@@ -933,7 +1020,9 @@ function staticMatch(
   if (contained.startsWith("..") || isAbsolute(contained)) {
     return { reject: new Response("Forbidden", { status: 403 }) }
   }
-  return { file }
+  const immutable =
+    state.immutable && (state.hashedFiles === undefined || state.hashedFiles.has(path))
+  return { file, immutable }
 }
 
 /** Strong validator from mtime + size (the nginx scheme): rewriting a file changes at least one. */
@@ -1021,31 +1110,32 @@ function staticByteRange(
 
 async function readStatic(
   file: string,
+  immutable: boolean,
   state: StaticState,
   method: string,
   requestHeaders: IncomingHttpHeaders,
 ): Promise<NodeServeOutcome> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined
+  let handle: Awaited<ReturnType<typeof openResolved>> | undefined
   try {
     // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
     // points outside it. Resolve first, check containment on the RESOLVED name, and open that -
     // never open the requested path and re-resolve it afterwards. A local attacker who can write
     // inside the served tree wins that ordering: swap a link between the open and the lookup and the
     // descriptor already streaming refers to an external file while the lookup answers with a
-    // contained path. `O_NOFOLLOW` closes the remainder on the final component - `realpath` returned
-    // a name with no links left in it, so one appearing before the open is an attack, not a layout.
+    // contained path. openResolved closes the remainder - `realpath` returned a name with no links
+    // left in it, so one appearing in any component before the open is an attack, not a layout.
     const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
     if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
       return { kind: "response", response: new Response("Forbidden", { status: 403 }) }
     }
-    handle = await open(realFile, FS.O_RDONLY | FS.O_NOFOLLOW)
+    handle = await openResolved(realFile)
     const stat = await handle.stat()
     if (!stat.isFile()) {
       await handle.close()
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
     const headers: Record<string, string> = { ...state.headers }
-    if (state.immutable && headers["cache-control"] === undefined) {
+    if (immutable && headers["cache-control"] === undefined) {
       headers["cache-control"] = "public, max-age=31536000, immutable"
     }
     headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
@@ -1117,6 +1207,14 @@ async function readStatic(
 // @nifrajs/core, and no-op on a handler that does not expose the seam (a plain `{ fetch }`) or one that
 // is already frozen (the per-request `resolveNodeSource` path supplies the runtime regardless).
 const INSTALL_NODE_DIRECT = Symbol.for("@nifrajs/core/install-node-direct")
+// A nifra server logs what an adapter reports through this seam, as Bun's `listen()` does; a plain
+// `{ fetch }` handler has no logger, so its failures stay a bare 500.
+const REPORT_ERROR = Symbol.for("@nifrajs/core/report-error")
+function errorReporterOf(app: FetchHandler): ((error: unknown) => void) | undefined {
+  const report: unknown = Reflect.get(app, REPORT_ERROR)
+  return typeof report === "function" ? (error) => report.call(app, error) : undefined
+}
+
 function enableNodeDirect(app: FetchHandler): void {
   const install = (app as unknown as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
   if (typeof install !== "function") return
@@ -1148,6 +1246,8 @@ interface ActiveResponseState {
   readonly socket: { readonly destroyed: boolean; destroy(): void }
   active: number
   parserError: boolean
+  /** The served app's own error log, when it has one. */
+  readonly report: ((error: unknown) => void) | undefined
 }
 
 const ACTIVE_RESPONSE_STATE = Symbol("nifra.node.active-response-state")
@@ -1184,12 +1284,21 @@ function clearActiveResponseState(this: TrackedSocket): void {
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
   activateAsyncContextFrame()
   enableNodeDirect(app)
+  const report = errorReporterOf(app)
   if (options.fastResponse === true) installFastResponse()
   let inFlight = 0
   let closed = false
   // Upgrade sockets an HTTP route answers instead: Node's server no longer tracks them, so stop()
   // drains and closes them itself.
   const answering = new Set<Duplex>()
+  // Upgraded WebSockets: Node's server stops tracking a socket once `ws` takes it over.
+  const upgraded = new Set<WsSocket>()
+  const adopt = (ws: WsSocket): boolean => {
+    if (closed) return false
+    upgraded.add(ws)
+    ws.on("close", () => upgraded.delete(ws))
+    return true
+  }
   const protocol = protocolResolver(
     options.protocol ?? (options.tls === undefined ? undefined : "https"),
   )
@@ -1203,7 +1312,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     const socket = nodeReq.socket as TrackedSocket
     let responseState = socket[ACTIVE_SOCKET_STATE]
     if (responseState === undefined) {
-      responseState = { socket, active: 0, parserError: false }
+      responseState = { socket, active: 0, parserError: false, report }
       socket[ACTIVE_SOCKET_STATE] = responseState
       socket.once("close", clearActiveResponseState)
     }
@@ -1218,18 +1327,19 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       if (handled instanceof Promise) {
         // `catch` before `finally`: a `finally` alone forwards the rejection to a promise nothing
         // observes, and Node terminates the process on an unhandled rejection by default. Every
-        // writer already ends its own failures (`failWrite`), so anything arriving here is a fault
-        // no response can still be built from - the connection is the only thing left to end.
+        // writer already ends and reports its own failures (`failAndReport`), so anything arriving
+        // here is a fault no response can still be built from - the connection is the only thing
+        // left to end.
         void handled
-          .catch(() => failWrite(nodeRes))
+          .catch((error: unknown) => failAndReport(nodeRes, error))
           .finally(() => {
             inFlight -= 1
           })
         return
       }
       inFlight -= 1
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       inFlight -= 1
     }
   }
@@ -1261,11 +1371,14 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   // the optional `ws` package - lazy-imported (and the server lazily built) on the FIRST real WS
   // upgrade, so a non-WS Node app never loads `ws`.
   if (resolveWs !== undefined) {
-    let wssPromise: Promise<WsServer | undefined> | undefined
+    // One `ws` server per payload cap: its `maxPayload` bounds buffering before a frame is delivered,
+    // and mounted children can declare different caps.
+    const servers = new Map<number | undefined, Promise<WsServer | undefined>>()
     server.on("upgrade", (nodeReq, socket, head) => {
       void handleUpgrade(
         app,
         answering,
+        adopt,
         resolveWs,
         protocol,
         hostPolicy,
@@ -1273,8 +1386,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
         socket,
         head,
         (maxPayloadBytes) => {
-          wssPromise ??= loadWsServer(maxPayloadBytes)
-          return wssPromise
+          let wss = servers.get(maxPayloadBytes)
+          if (wss === undefined) {
+            wss = loadWsServer(maxPayloadBytes)
+            servers.set(maxPayloadBytes, wss)
+          }
+          return wss
         },
       )
     })
@@ -1282,25 +1399,29 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
 
   // Opt-in: own SIGTERM/SIGINT so `docker stop` / Ctrl-C drains in-flight requests
   // before exit. `stop` is hoisted, so `onSignal` can reference it.
+  const signals = options.signals === true ? {} : options.signals || undefined
   const onSignal = (): void => {
-    void stop()
+    void stop(signals)
   }
 
   async function stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
     if (closed) return // idempotent
     closed = true
-    if (options.signals === true) {
+    if (signals !== undefined) {
       // Remove our own handlers so repeated serve()/stop() cycles don't leak listeners.
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
     }
     server.close() // stop accepting new connections; existing requests continue
+    // A WebSocket gets a close handshake now and the drain window to finish it.
+    for (const ws of upgraded) ws.close(1001, "server shutting down")
     const deadline = Date.now() + drainMs
-    while ((inFlight > 0 || answering.size > 0) && Date.now() < deadline) {
+    while ((inFlight > 0 || answering.size > 0 || upgraded.size > 0) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, DRAIN_POLL_MS))
     }
     server.closeAllConnections() // force-close stragglers + idle keep-alive sockets
     for (const socket of answering) socket.destroy()
+    for (const ws of upgraded) ws.terminate()
   }
 
   return new Promise((resolve) => {
@@ -1310,7 +1431,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     const onListening = (): void => {
       const address = server.address()
       const port = address !== null && typeof address === "object" ? address.port : options.port
-      if (options.signals === true) {
+      if (signals !== undefined) {
         process.once("SIGTERM", onSignal)
         process.once("SIGINT", onSignal)
       }
@@ -1340,11 +1461,11 @@ function runNodeSource(
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            () => failWrite(nodeRes),
+            (error: unknown) => failAndReport(nodeRes, error),
           )
         : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       return
     }
   }
@@ -1357,11 +1478,11 @@ function runNodeSource(
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            () => failWrite(nodeRes),
+            (error: unknown) => failAndReport(nodeRes, error),
           )
         : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       return
     }
   }
@@ -1371,12 +1492,12 @@ function runNodeSource(
     return response instanceof Promise
       ? response.then(
           (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
-          () => failWrite(nodeRes),
+          (error: unknown) => failAndReport(nodeRes, error),
         )
       : writeResponseSafely(response, nodeRes, nodeReq.method)
-  } catch {
-    // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
-    failWrite(nodeRes)
+  } catch (error) {
+    // A request hook that throws escapes `fetch`; never leak a stack to the wire.
+    failAndReport(nodeRes, error)
     return
   }
 }
@@ -1447,7 +1568,13 @@ function handle(
     const matched = staticMatch(staticState, nodeReq.url ?? "/")
     if (matched !== "pass") {
       if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
-      return readStatic(matched.file, staticState, nodeReq.method ?? "GET", nodeReq.headers).then(
+      return readStatic(
+        matched.file,
+        matched.immutable,
+        staticState,
+        nodeReq.method ?? "GET",
+        nodeReq.headers,
+      ).then(
         (outcome) => writeOutcomeSafely(outcome, nodeRes, nodeReq.method),
         () => failWrite(nodeRes),
       )
@@ -1493,12 +1620,12 @@ function handle(
                 handled === false
                   ? runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
                   : undefined,
-              () => failWrite(nodeRes),
+              (error: unknown) => failAndReport(nodeRes, error),
             )
           }
           if (outcome !== false) return
-        } catch {
-          failWrite(nodeRes)
+        } catch (error) {
+          failAndReport(nodeRes, error)
           return
         }
       }
@@ -1515,11 +1642,11 @@ function handle(
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            () => failWrite(nodeRes),
+            (error: unknown) => failAndReport(nodeRes, error),
           )
         : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch {
-      failWrite(nodeRes)
+    } catch (error) {
+      failAndReport(nodeRes, error)
       return
     }
   }
@@ -1529,12 +1656,12 @@ function handle(
     return response instanceof Promise
       ? response.then(
           (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
-          () => failWrite(nodeRes),
+          (error: unknown) => failAndReport(nodeRes, error),
         )
       : writeResponseSafely(response, nodeRes, nodeReq.method)
-  } catch {
-    // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
-    failWrite(nodeRes)
+  } catch (error) {
+    // A request hook that throws escapes `fetch`; never leak a stack to the wire.
+    failAndReport(nodeRes, error)
     return
   }
 }
@@ -1578,6 +1705,9 @@ function writeInternalError(nodeRes: ServerResponse): void {
 function failWrite(nodeRes: ServerResponse): void {
   try {
     if (!nodeRes.headersSent) {
+      // The failed write may have staged the response's own headers (cookies among them) with
+      // `setHeaders`; the 500 must not carry them.
+      for (const name of nodeRes.getHeaderNames()) nodeRes.removeHeader(name)
       writeInternalError(nodeRes)
       return
     }
@@ -1587,7 +1717,20 @@ function failWrite(nodeRes: ServerResponse): void {
   nodeRes.destroy()
 }
 
-/** {@link writeNodeOutcome} with {@link failWrite} behind it, sync throw and async rejection alike. */
+/** {@link failWrite} for a failure the app never answered, logged through the app's own logger. */
+function failAndReport(nodeRes: ServerResponse, error: unknown): void {
+  const state: ActiveResponseState | undefined = Reflect.get(nodeRes, ACTIVE_RESPONSE_STATE)
+  const report = state?.report
+  try {
+    report?.(error)
+  } catch {
+    // A logger that throws must not keep the 500 from going out.
+  }
+  failWrite(nodeRes)
+}
+
+/** {@link writeNodeOutcome} with {@link failAndReport} behind it, sync throw and async rejection
+ * alike. */
 function writeOutcomeSafely(
   outcome: NodeServeOutcome,
   nodeRes: ServerResponse,
@@ -1595,14 +1738,16 @@ function writeOutcomeSafely(
 ): void | Promise<void> {
   try {
     const written = writeNodeOutcome(outcome, nodeRes, method)
-    return written instanceof Promise ? written.catch(() => failWrite(nodeRes)) : written
-  } catch {
-    failWrite(nodeRes)
+    return written instanceof Promise
+      ? written.catch((error: unknown) => failAndReport(nodeRes, error))
+      : written
+  } catch (error) {
+    failAndReport(nodeRes, error)
     return
   }
 }
 
-/** {@link writeNodeResponse} with {@link failWrite} behind it - same contract as
+/** {@link writeNodeResponse} with {@link failAndReport} behind it - same contract as
  * {@link writeOutcomeSafely}, for the lanes that carry a `Response`. */
 function writeResponseSafely(
   response: Response,
@@ -1611,9 +1756,11 @@ function writeResponseSafely(
 ): void | Promise<void> {
   try {
     const written = writeNodeResponse(response, nodeRes, method)
-    return written instanceof Promise ? written.catch(() => failWrite(nodeRes)) : written
-  } catch {
-    failWrite(nodeRes)
+    return written instanceof Promise
+      ? written.catch((error: unknown) => failAndReport(nodeRes, error))
+      : written
+  } catch (error) {
+    failAndReport(nodeRes, error)
     return
   }
 }
@@ -2436,6 +2583,8 @@ function writeNodeResponse(
   nodeRes: ServerResponse,
   method?: string,
 ): void | Promise<void> {
+  // A body already sent once answered another request, with headers written for that one.
+  if (response.bodyUsed) throw new TypeError("[nifra] a Response body can be sent only once")
   const isHead = method?.toUpperCase() === "HEAD"
   // `ServerResponse.setHeaders` (Node 18.14+) takes the Headers object directly and iterates its
   // native Symbol.iterator, which - unlike `Headers.forEach`/`.get()` - never comma-joins repeated
@@ -2682,12 +2831,14 @@ async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefi
       default?: { WebSocketServer?: WsServerCtor }
     }
     const Ctor = mod.WebSocketServer ?? mod.default?.WebSocketServer
+    // `ws` reads `maxPayload: 0` as no limit, so a cap of 0 buffers at most a byte and the message
+    // check in `attachNodeWebSocket` refuses anything but an empty frame.
     return Ctor === undefined
       ? undefined
       : new Ctor(
           maxPayloadBytes === undefined
             ? { noServer: true }
-            : { noServer: true, maxPayload: maxPayloadBytes },
+            : { noServer: true, maxPayload: Math.max(maxPayloadBytes, 1) },
         )
   } catch {
     return undefined // `ws` not installed - caller responds 501
@@ -2709,6 +2860,7 @@ const WS_STATUS_TEXT: Readonly<Record<number, string>> = {
 async function handleUpgrade(
   app: FetchHandler,
   answering: Set<Duplex>,
+  adopt: (ws: WsSocket) => boolean,
   resolveWs: (
     request: Request,
     platform?: NodePlatform,
@@ -2774,8 +2926,15 @@ async function handleUpgrade(
     writeUpgradeRejection(socket, 501, "websocket_unavailable") // `ws` not installed
     return
   }
-  const { handler, data, pubsub } = outcome
-  wss.handleUpgrade(nodeReq, socket, head, (ws) => attachNodeWebSocket(ws, handler, data, pubsub))
+  const { handler, data, pubsub, maxPayloadBytes } = outcome
+  wss.handleUpgrade(nodeReq, socket, head, (ws) => {
+    // An upgrade still resolving when stop() ran must not outlive it.
+    if (!adopt(ws)) {
+      ws.terminate()
+      return
+    }
+    attachNodeWebSocket(ws, handler, data, pubsub, maxPayloadBytes)
+  })
 }
 
 /** Wire a `ws` socket (already open in `handleUpgrade`'s callback) to a nifra WS handler. The Node copy
@@ -2786,6 +2945,7 @@ function attachNodeWebSocket(
   handler: NifraWsHandler,
   data: unknown,
   pubsub: WsPubSub,
+  maxPayloadBytes: number | undefined,
 ): void {
   const nifra: NifraWs = {
     send: (payload) => ws.send(payload),
@@ -2816,6 +2976,10 @@ function attachNodeWebSocket(
     }
   }
   ws.on("message", (raw, isBinary) => {
+    if (maxPayloadBytes !== undefined && raw.byteLength > maxPayloadBytes) {
+      ws.close(1009, "message too large")
+      return
+    }
     const payload: NifraWsData = isBinary
       ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
       : raw.toString()

@@ -88,6 +88,12 @@ test("firstParagraphs keeps each entry's first paragraph and the headings", () =
   ).toBe("### Patch Changes\n\n- a: First.\n  Still first.\n\n- b: Only one.")
 })
 
+test("firstParagraphs ends a paragraph at a whitespace-only line", () => {
+  expect(
+    firstParagraphs("### Patch Changes\n\n- a: First.\n  \n  - bullet\n  \n- b: Only one."),
+  ).toBe("### Patch Changes\n\n- a: First.\n\n- b: Only one.")
+})
+
 describe("releaseNotes", () => {
   const pkg = (name: string, changelog: string) => ({
     name,

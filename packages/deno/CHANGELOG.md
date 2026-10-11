@@ -1,5 +1,12 @@
 # @nifrajs/deno
 
+## 5.0.0
+
+### Patch Changes
+
+- 558f92a: `stop({ drainMs })` counts a request as in flight until its whole response body is sent. A streamed response still running at the deadline is force-closed; before, the handler returning was enough to count as drained, and `stop()` then waited on the stream with no deadline.
+- 077657f: `server({ gracefulSignals: { drainMs } })`, and `serve(app, { signals: { drainMs } })` on Node and Deno, set how long in-flight requests get to finish when SIGTERM or SIGINT stops the server before the stop forces them closed. `true` keeps the 10 second default. `nifra doctor` counts the object form as a graceful lifecycle.
+
 ## 4.0.2
 
 ## 4.0.1

@@ -48,6 +48,80 @@ export { withRouteAssurance }
 /** Isolated request executor used by adversarial contract verification. */
 export type InvariantExecutor = (request: Request) => Response | Promise<Response>
 
+export type ContractTarget = "headers" | "cookies" | "params" | "body" | "query" | "response"
+export type ContractCaseKind = "input-rejection" | "response-conformance"
+export type ContractAuthContext = "authenticated" | "unauthenticated"
+
+export interface ContractExpectedResponse {
+  readonly status: number
+  readonly contentType?: "json" | "text"
+  readonly headers?: Readonly<Record<string, string>>
+  /** When present, the decoded body is compared byte-structure-wise to this value. */
+  readonly body?: unknown
+}
+
+/** A known-good request. Missing body/query values are synthesized from inspectable JSON Schema. */
+export interface ContractWitness {
+  readonly params?: Readonly<Record<string, string>>
+  readonly query?: unknown
+  readonly body?: unknown
+  readonly headers?: ConstructorParameters<typeof Headers>[0]
+  /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */
+  readonly auth?: ContractAuthContext
+  /** Expected response for a guard/error witness. Omit for the normal success witness. */
+  readonly expected?: ContractExpectedResponse
+}
+
+/** Stable context passed to request/rejection hooks. It contains no request payloads or secrets. */
+export interface ContractCaseContext {
+  readonly seed: number
+  readonly caseId: string
+  readonly route: ReflectedRoute
+  readonly runtime: string
+  readonly kind: ContractCaseKind
+  readonly target: ContractTarget
+  readonly auth?: ContractAuthContext
+  readonly mutation?: string
+}
+
+/** What `invariants.setup` provisions for one L4 run. */
+export interface InvariantSetupResult {
+  /** The isolated target for this run. Replaces `invariants.executor`. */
+  readonly executor?: InvariantExecutor
+  /** Called once the run ends, after a failure too. */
+  readonly teardown?: () => void | Promise<void>
+}
+
+/** Provisions a throwaway L4 target. Called once, before the first L4 request - never on import. */
+export type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>
+
+/** Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`). */
+export interface InvariantRunOptions {
+  /** Known-good request values keyed by `"METHOD /path"`. Required for opaque Standard Schemas. */
+  readonly witnesses?: Readonly<Record<string, ContractWitness>>
+  /** Attach a session, real row ids or signed tokens. Return a new Request. */
+  readonly prepareRequest?: (
+    request: Request,
+    context: ContractCaseContext,
+  ) => Request | Promise<Request>
+  /** Override rejection semantics, for an app with a custom validation response. */
+  readonly isRejected?: (
+    response: Response,
+    context: ContractCaseContext,
+  ) => boolean | Promise<boolean>
+  /** Run L4 on a subset of the reflected routes. */
+  readonly include?: (route: ReflectedRoute) => boolean
+  /** Maximum validator-proven mutations per body/query schema. Default 32. */
+  readonly maxMutationsPerInput?: number
+}
+
+/** L4 configuration: an isolated `executor`, a `setup` that provisions one, or both. */
+export type InvariantsConfig = InvariantRunOptions &
+  (
+    | { readonly executor: InvariantExecutor; readonly setup?: InvariantSetup }
+    | { readonly executor?: InvariantExecutor; readonly setup: InvariantSetup }
+  )
+
 /** Canonical evidence ids emitted by Nifra's official middleware modules. */
 export const NIFRA_ASSURANCE = NIFRA_ASSURANCE_IDS
 
@@ -103,8 +177,14 @@ export function assure(
 }
 
 export interface AssuranceRouteSelector {
-  /** Omit for every method. */
-  readonly methods?: readonly Method[]
+  /** Omit for every method. `"WS"` selects WebSocket routes. */
+  readonly methods?: readonly (Method | "WS")[]
+  /**
+   * Skip routes under these methods; `"WS"` skips WebSocket routes. Every other method matches, a
+   * custom one such as `PURGE` included, so `["GET", "HEAD", "OPTIONS", "WS"]` selects every route
+   * that can change state.
+   */
+  readonly exceptMethods?: readonly (Method | "WS")[]
   /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */
   readonly paths?: readonly string[]
   /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */
@@ -292,9 +372,7 @@ export interface AssuranceConfig {
     readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>
   }
   /** Dynamic invariant execution is opt-in and must use a disposable/sandboxed target. */
-  readonly invariants?: {
-    readonly executor: InvariantExecutor
-  }
+  readonly invariants?: InvariantsConfig
   /** Optional application-supplied rule packs appended after built-in verification rules. */
   readonly rulePacks?: readonly AssuranceRulePack[]
   /** Optional sink for an assurance bundle. The CLI validates the callable shape at runtime. */
@@ -306,6 +384,23 @@ export interface AssuranceConfig {
 }
 
 const nonEmpty = (value: string): boolean => value.trim() !== ""
+
+/** A selector's method list, upper-cased. Standard methods and `"WS"` only, so a typo throws rather
+ * than leaving a rule that never matches. */
+function selectorMethods(
+  values: readonly string[] | undefined,
+): readonly (Method | "WS")[] | undefined {
+  if (values === undefined) return undefined
+  return Object.freeze(
+    values.map((value): Method | "WS" => {
+      const method = value.toUpperCase()
+      if (method !== "WS" && !validMethod(method)) {
+        throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
+      }
+      return method
+    }),
+  )
+}
 
 function normalizeEvidenceIds(
   values: readonly string[] | undefined,
@@ -359,6 +454,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
       (key) =>
         ![
           "methods",
+          "exceptMethods",
           "paths",
           "tools",
           "capabilities",
@@ -397,7 +493,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     }
     // An empty list matches nothing, so the rule is inert and its routes fall through to whatever
     // laxer rule comes next - the same hole as a dropped key, the other way round.
-    for (const key of ["methods", "paths"] as const) {
+    for (const key of ["methods", "exceptMethods", "paths"] as const) {
       const list = rule.match[key]
       if (list !== undefined && (!Array.isArray(list) || list.length === 0)) {
         throw new Error(
@@ -405,12 +501,8 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         )
       }
     }
-    const methods = rule.match.methods?.map((method) => method.toUpperCase())
-    for (const method of methods ?? []) {
-      if (!validMethod(method)) {
-        throw new Error(`route assurance: unsupported HTTP method ${JSON.stringify(method)}`)
-      }
-    }
+    const methods = selectorMethods(rule.match.methods)
+    const exceptMethods = selectorMethods(rule.match.exceptMethods)
     const paths = rule.match.paths?.map((path) => {
       routeGlob(path)
       return path
@@ -480,21 +572,22 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         `route assurance: rule ${JSON.stringify(name)} both requires and forbids ${overlap}`,
       )
     }
+    const match: { -readonly [K in keyof AssuranceRouteSelector]: AssuranceRouteSelector[K] } = {}
+    if (methods !== undefined) match.methods = methods
+    if (exceptMethods !== undefined) match.exceptMethods = exceptMethods
+    if (paths !== undefined) match.paths = Object.freeze(paths)
+    if (rule.match.tools !== undefined) match.tools = rule.match.tools
+    if (capabilities !== undefined) match.capabilities = Object.freeze([...capabilities])
+    if (access !== undefined) match.access = access
+    if (zone !== undefined) match.zone = zone
+    if (rule.match.classificationAtLeast !== undefined) {
+      match.classificationAtLeast = rule.match.classificationAtLeast
+    }
+    if (rule.match.hasBody !== undefined) match.hasBody = rule.match.hasBody
+    if (rule.match.bodyLimit !== undefined) match.bodyLimit = rule.match.bodyLimit
     return Object.freeze({
       name,
-      match: Object.freeze({
-        ...(methods !== undefined ? { methods: Object.freeze(methods as Method[]) } : {}),
-        ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
-        ...(rule.match.tools !== undefined ? { tools: rule.match.tools } : {}),
-        ...(capabilities !== undefined ? { capabilities: Object.freeze([...capabilities]) } : {}),
-        ...(access !== undefined ? { access } : {}),
-        ...(zone !== undefined ? { zone } : {}),
-        ...(rule.match.classificationAtLeast !== undefined
-          ? { classificationAtLeast: rule.match.classificationAtLeast }
-          : {}),
-        ...(rule.match.hasBody !== undefined ? { hasBody: rule.match.hasBody } : {}),
-        ...(rule.match.bodyLimit !== undefined ? { bodyLimit: rule.match.bodyLimit } : {}),
-      }),
+      match: Object.freeze(match),
       require: required,
       forbid: forbidden,
       ...(rule.requireProvenance !== undefined
@@ -511,6 +604,63 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
   })
 }
 
+const INVARIANT_FUNCTIONS = [
+  "executor",
+  "setup",
+  "prepareRequest",
+  "isRejected",
+  "include",
+] as const
+
+function assertInvariantsConfig(invariants: InvariantsConfig): void {
+  if (invariants === null || typeof invariants !== "object") {
+    throw new TypeError("route assurance: invariants must be an object")
+  }
+  for (const name of INVARIANT_FUNCTIONS) {
+    const value: unknown = invariants[name]
+    if (value !== undefined && typeof value !== "function") {
+      throw new TypeError(
+        name === "executor"
+          ? "route assurance: invariant executor must be a function"
+          : `route assurance: invariants.${name} must be a function`,
+      )
+    }
+  }
+  if (invariants.executor === undefined && invariants.setup === undefined) {
+    throw new TypeError("route assurance: invariants needs an executor or a setup")
+  }
+  const witnesses: unknown = invariants.witnesses
+  if (witnesses !== undefined) {
+    if (witnesses === null || typeof witnesses !== "object" || Array.isArray(witnesses)) {
+      throw new TypeError(
+        'route assurance: invariants.witnesses must map "METHOD /path" to a witness',
+      )
+    }
+    for (const [key, witness] of Object.entries(witnesses)) {
+      if (witness === null || typeof witness !== "object" || Array.isArray(witness)) {
+        throw new TypeError(
+          `route assurance: invariants.witnesses[${JSON.stringify(key)}] must be an object`,
+        )
+      }
+    }
+  }
+  const max = invariants.maxMutationsPerInput
+  if (max !== undefined && (!Number.isSafeInteger(max) || max < 1)) {
+    throw new RangeError(
+      "route assurance: invariants.maxMutationsPerInput must be a positive integer",
+    )
+  }
+}
+
+function frozenInvariantsConfig(invariants: InvariantsConfig): InvariantsConfig {
+  const witnesses = invariants.witnesses
+  return Object.freeze(
+    witnesses === undefined
+      ? { ...invariants }
+      : { ...invariants, witnesses: Object.freeze({ ...witnesses }) },
+  )
+}
+
 /** Identity helper for a `nifra.assurance.ts` default export. */
 export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig {
   if (config.manifest?.path !== undefined && config.manifest.path.trim() === "") {
@@ -519,9 +669,7 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   if (config.manifest?.signer !== undefined && typeof config.manifest.signer !== "function") {
     throw new Error("route assurance: manifest signer must be a function")
   }
-  if (config.invariants !== undefined && typeof config.invariants.executor !== "function") {
-    throw new Error("route assurance: invariant executor must be a function")
-  }
+  if (config.invariants !== undefined) assertInvariantsConfig(config.invariants)
   if (config.rulePacks !== undefined) {
     if (!Array.isArray(config.rulePacks))
       throw new TypeError("route assurance: rulePacks must be an array")
@@ -616,7 +764,7 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
         }
       : {}),
     ...(config.invariants !== undefined
-      ? { invariants: Object.freeze({ executor: config.invariants.executor }) }
+      ? { invariants: frozenInvariantsConfig(config.invariants) }
       : {}),
     ...(config.rulePacks !== undefined ? { rulePacks: Object.freeze([...config.rulePacks]) } : {}),
     ...(config.assureSink !== undefined ? { assureSink: config.assureSink } : {}),
@@ -656,8 +804,9 @@ export function matchesAssuranceSelector(
   definitions?: ReadonlyMap<string, CapabilityDefinition>,
 ): boolean {
   const { methods, paths, tools, capabilities, access, zone, classificationAtLeast } = selector
-  const { hasBody, bodyLimit } = selector
-  if (methods !== undefined && !methods.includes(route.method as Method)) return false
+  const { exceptMethods, hasBody, bodyLimit } = selector
+  if (methods !== undefined && !methods.includes(route.method as Method | "WS")) return false
+  if (exceptMethods?.some((method) => method === route.method) === true) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false

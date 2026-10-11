@@ -124,10 +124,14 @@ export function timing(options: TimingOptions = {}): ContextPlugin<{ timing: Tim
         if (metrics.length === 0) return res
 
         const value = metrics.map((metric) => formatMetric(metric, precision)).join(", ")
-        return withHeaders(res, (headers) => {
-          const existing = headers.get("server-timing")
-          headers.set("server-timing", existing === null ? value : `${existing}, ${value}`)
-        })
+        return withHeaders(
+          res,
+          (headers) => {
+            const existing = headers.get("server-timing")
+            headers.set("server-timing", existing === null ? value : `${existing}, ${value}`)
+          },
+          req,
+        )
       }),
   )
 }

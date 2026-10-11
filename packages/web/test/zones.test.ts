@@ -10,6 +10,8 @@ import {
   createZoneClassifier,
   importAllowed,
   importRuleMessage,
+  parseZoneConfig,
+  ZoneConfigError,
 } from "../src/zones.ts"
 
 const root = mkdtempSync(join(tmpdir(), "nifra-zones-"))
@@ -157,10 +159,15 @@ describe("createZoneClassifier", () => {
     expect(zoneOf("node_modules/@ws/db/src/index.ts").zone).toBe("backend")
   })
 
-  test("a workspace package that declares no side is an error", () => {
+  test("a workspace package that declares no side is an error, named once for the package", () => {
     const result = zoneOf("node_modules/@ws/loose/src/index.ts")
     expect(result.zone).toBe("error")
-    expect(result.zone === "error" && result.reason).toContain('"nifra": { "environment"')
+    if (result.zone !== "error") return
+    expect(result.package).toBe("@ws/loose")
+    expect(result.reason).toContain('package "@ws/loose" is first-party code outside the app')
+    expect(result.reason).toContain('"nifra": { "environment"')
+    expect(result.reason).toContain('"packages": { "@ws/*": "backend" }')
+    expect(result.reason).not.toContain("src/index.ts")
   })
 
   test("files passed as generated entries classify as generated", () => {
@@ -191,6 +198,90 @@ describe("createZoneClassifier", () => {
     expect(createZoneClassifier({ appRoot: app }).classify(handWritten)).toEqual({
       zone: "backend",
     })
+  })
+})
+
+describe("app zone settings", () => {
+  const configured = (zones: unknown) =>
+    createZoneClassifier({ appRoot: app, zones: parseZoneConfig(zones, "test") })
+
+  test("packages gives an undeclared package a side; a package's own declaration still wins", () => {
+    const classifier = configured({ packages: { "@ws/*": "library", "@ws/db": "frontend" } })
+    expect(classifier.classify(join(app, "node_modules/@ws/loose/src/index.ts"))).toEqual({
+      zone: "library",
+      packageName: "@ws/loose",
+      declared: "library",
+    })
+    // @ws/db declares backend in its own package.json; the app's exact entry does not override it.
+    expect(classifier.classify(join(app, "node_modules/@ws/db/src/index.ts")).zone).toBe("backend")
+  })
+
+  test("an exact name beats a prefix, and the longest prefix beats a shorter one", () => {
+    const exact = configured({ packages: { "@ws/*": "library", "@ws/loose": "backend" } })
+    expect(exact.classify(join(app, "node_modules/@ws/loose/src/index.ts")).zone).toBe("backend")
+    const longest = configured({ packages: { "@*": "library", "@ws/lo*": "frontend" } })
+    expect(longest.classify(join(app, "node_modules/@ws/loose/src/index.ts")).zone).toBe("frontend")
+  })
+
+  test("packages also marks a third-party package, which browserDenial then honors", () => {
+    const classifier = configured({ packages: { pg: "backend" } })
+    const pg = classifier.classify(join(app, "node_modules/pg/index.js"))
+    expect(pg).toEqual({
+      zone: "library",
+      packageName: "pg",
+      modulePath: "pg/index.js",
+      declared: "backend",
+    })
+    expect(browserDenial(pg)).toContain("declares itself backend-only")
+  })
+
+  test("a configured folder is a zone folder, suffix rules included", () => {
+    write("app/migrations/001-init.ts")
+    write("app/migrations/seed/users.ts")
+    write("app/migrations/view.frontend.tsx")
+    write("app/ui-kit/Card.tsx")
+    const classifier = configured({ backend: ["migrations/**"], frontend: ["./ui-kit/"] })
+    expect(classifier.classify(join(app, "migrations/001-init.ts")).zone).toBe("backend")
+    expect(classifier.classify(join(app, "migrations/seed/users.ts")).zone).toBe("backend")
+    expect(classifier.classify(join(app, "ui-kit/Card.tsx")).zone).toBe("frontend")
+    const misplaced = classifier.classify(join(app, "migrations/view.frontend.tsx"))
+    expect(misplaced.zone === "error" && misplaced.reason).toContain("sits in migrations/")
+    // Without the setting the same file is in no zone.
+    expect(zoneOf("migrations/001-init.ts").zone).toBe("error")
+  })
+
+  test("the app's package.json is read when no setting is passed", () => {
+    const own = join(root, "own-config")
+    mkdirSync(join(own, "jobs"), { recursive: true })
+    writeFileSync(join(own, "jobs", "nightly.ts"), "export {}\n")
+    writeFileSync(
+      join(own, "package.json"),
+      JSON.stringify({ name: "own", nifra: { zones: { backend: ["jobs"] } } }),
+    )
+    expect(createZoneClassifier({ appRoot: own }).classify(join(own, "jobs/nightly.ts")).zone).toBe(
+      "backend",
+    )
+  })
+
+  test.each([
+    [[], "must be an object"],
+    [{ packges: {} }, 'unknown key "packges"'],
+    [{ packages: { "@ws/*": "server" } }, "must be one of frontend, backend, shared, library"],
+    [{ packages: { "a*b": "backend" } }, 'may use "*" only at its end'],
+    [{ backend: "migrations" }, "must be an array"],
+    [{ backend: ["migrations/*.ts"] }, "must be a plain folder path"],
+    [{ backend: ["../outside"] }, 'may not contain ".."'],
+    [{ backend: ["/abs"] }, "must be a folder relative to the app"],
+    [{ shared: ["backend/util"] }, "inside backend/"],
+    [{ backend: ["jobs"], frontend: ["jobs/ui"] }, "a folder has one side"],
+  ] as const)("refuses %j", (zones, message) => {
+    expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(ZoneConfigError)
+    expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(message)
+    try {
+      parseZoneConfig(zones, "app/package.json")
+    } catch (error) {
+      expect(error instanceof ZoneConfigError && error.source).toBe("app/package.json")
+    }
   })
 })
 

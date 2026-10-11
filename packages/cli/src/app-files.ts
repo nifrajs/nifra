@@ -6,7 +6,7 @@
  *   kept free of build tooling because it is bundled into every server build.
  * - `backend/app.ts` - exports `backend`, the app's API (a `@nifrajs/core` server). Optional.
  */
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 export const CONFIG_FILE = "nifra.config.ts"
@@ -19,11 +19,41 @@ export const RETIRED_ROOT_FILES: Readonly<Record<string, string>> = {
   "framework.ts": FRAMEWORK_FILE,
 }
 
+/** Outside a routed app, what made each retired root file the app's: else it is just a module. */
+const RETIRED_EXPORTS: Readonly<Record<string, RegExp>> = {
+  "backend.ts":
+    /\bexport\s+(?:const|let|var|(?:async\s+)?function|class)\s+backend\b|\bexport\s*\{[^}]*\bbackend\b/,
+  "framework.ts":
+    /\bexport\s+(?:const|let|var|(?:async\s+)?function|class)\s+adapter\b|\bexport\s*\{[^}]*\badapter\b/,
+}
+
+function exportsRetiredName(path: string, pattern: RegExp | undefined): boolean {
+  if (!existsSync(path)) return false
+  try {
+    return pattern === undefined || pattern.test(readFileSync(path, "utf8"))
+  } catch {
+    // Unreadable: the commands that would load it fail too, so report it rather than skip it.
+    return true
+  }
+}
+
+/**
+ * The retired root files present in `cwd`, each with where it lives now. The old loader imported them
+ * whatever they exported, so in an app with `routes/` or a config each one counts; elsewhere only one
+ * that exports what the loader read does, and a library's `backend.ts` module does not.
+ */
+export function retiredRootFiles(cwd: string): ReadonlyArray<readonly [string, string]> {
+  const routed = ["routes", CONFIG_FILE, FRAMEWORK_FILE].some((entry) =>
+    existsSync(resolve(cwd, entry)),
+  )
+  return Object.entries(RETIRED_ROOT_FILES).filter(([file]) =>
+    exportsRetiredName(resolve(cwd, file), routed ? undefined : RETIRED_EXPORTS[file]),
+  )
+}
+
 /** Refuse an app still on the retired root files: run against it, a command would silently miss them. */
 export function assertCurrentLayout(cwd: string): void {
-  const retired = Object.entries(RETIRED_ROOT_FILES).filter(([file]) =>
-    existsSync(resolve(cwd, file)),
-  )
+  const retired = retiredRootFiles(cwd)
   if (retired.length === 0) return
   const moves = retired.map(([from, to]) => `${from} -> ${to}`).join(", ")
   throw new Error(

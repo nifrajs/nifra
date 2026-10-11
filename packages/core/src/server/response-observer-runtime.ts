@@ -1,3 +1,4 @@
+import { tagSource } from "../internal/hook-origins.ts"
 import type {
   NodeRequestContext,
   NodeResponseBodyHook,
@@ -7,7 +8,7 @@ import type {
   ResponseHeadersView,
 } from "./node-outcome-hook.ts"
 import { recordHeadersView } from "./node-outcome-hook.ts"
-import { knownMutableHeaders, rememberMutableHeaders, taggedResponseBody } from "./respond.ts"
+import { taggedResponseBody, writableResponse } from "./respond.ts"
 import { applyBodyReplacement, withReplacedBody } from "./response-hooks.ts"
 
 type MaybePromise<T> = T | Promise<T>
@@ -18,6 +19,9 @@ export type {
   ResponseBodyHook,
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
+
+// Deno reports `process.env` reads as `NotCapable` without --allow-env; read it only off Deno.
+declare const Deno: unknown
 
 export interface ResponseObserverHost {
   assertConfigurable(operation: string): void
@@ -44,32 +48,6 @@ export interface ResponseObserverRuntime {
   install(host: ResponseObserverHost): ResponseObserverMethods
 }
 
-const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
-const GUARDED_RESPONSE_HEADERS = new WeakSet<Headers>()
-
-function hasMutableResponseHeaders(headers: Headers): boolean {
-  if (knownMutableHeaders(headers)) return true
-  if (GUARDED_RESPONSE_HEADERS.has(headers)) return false
-  let previous: string | null = null
-  try {
-    previous = headers.get(HEADER_MUTABILITY_PROBE)
-    headers.set(HEADER_MUTABILITY_PROBE, "1")
-    if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
-    else headers.set(HEADER_MUTABILITY_PROBE, previous)
-    rememberMutableHeaders(headers)
-    return true
-  } catch {
-    try {
-      if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
-      else headers.set(HEADER_MUTABILITY_PROBE, previous)
-    } catch {
-      // A guarded response rejected the probe and the clone path is authoritative.
-    }
-    GUARDED_RESPONSE_HEADERS.add(headers)
-    return false
-  }
-}
-
 function webRequestView(req: Request): NodeRequestContext {
   return { method: req.method, url: req.url, header: (name) => req.headers.get(name) }
 }
@@ -82,12 +60,8 @@ function webHeadersView(
   readonly headers: ResponseHeadersView
   readonly request: NodeRequestContext
 } {
-  const request = webRequestView(req)
-  if (!hasMutableResponseHeaders(response.headers)) {
-    const clone = new Response(response.body, response)
-    return { response: clone, headers: clone.headers, request }
-  }
-  return { response, headers: response.headers, request }
+  const writable = writableResponse(response, req)
+  return { response: writable, headers: writable.headers, request: webRequestView(req) }
 }
 
 export function createResponseObserverRuntime(): ResponseObserverRuntime {
@@ -100,12 +74,16 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
           node?: NodeResponseHook,
         ): ResponseObserverMethods {
           host.assertConfigurable("onResponseHeaders()")
+          const web: Parameters<typeof host.addResponseHook>[0] = (response, req) => {
+            const view = webHeadersView(response, req)
+            const out = fn(view.headers, view.request, response.status)
+            return out instanceof Promise ? out.then(() => view.response) : view.response
+          }
+          // Development-only provenance for `reflectHooks`; a production define folds it away.
+          if (typeof Deno === "undefined" && process.env.NODE_ENV !== "production")
+            tagSource(web, fn)
           host.addResponseHook(
-            (response, req) => {
-              const view = webHeadersView(response, req)
-              const out = fn(view.headers, view.request, response.status)
-              return out instanceof Promise ? out.then(() => view.response) : view.response
-            },
+            web,
             node ?? ((response, req) => fn(recordHeadersView(response), req, response.status)),
             true,
           )

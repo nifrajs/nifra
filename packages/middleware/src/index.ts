@@ -127,7 +127,10 @@ export {
   type RateLimitOptions,
   type RateLimitResult,
   type RateLimitStore,
+  type RateLimitTier,
+  type RateLimitTiersOptions,
   rateLimit,
+  rateLimitTiers,
 } from "./rate-limit.ts"
 export { type RequestIdOptions, requestId } from "./request-id.ts"
 export { type SecurityHeadersOptions, securityHeaders } from "./security-headers.ts"

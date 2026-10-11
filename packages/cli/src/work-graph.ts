@@ -251,16 +251,15 @@ export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGr
   const files = input.files ?? []
   const nodes = new Map<string, WorkGraphNode>()
   const edges: WorkGraphEdge[] = []
+  const edgeKeys = new Set<string>()
   const addNode = (node: WorkGraphNode): void => {
     if (!nodes.has(node.id)) nodes.set(node.id, node)
   }
   const addEdge = (edge: WorkGraphEdge): void => {
-    if (
-      !edges.some(
-        (item) => item.from === edge.from && item.to === edge.to && item.relation === edge.relation,
-      )
-    )
-      edges.push(edge)
+    const key = `${edge.from}\n${edge.to}\n${edge.relation}`
+    if (edgeKeys.has(key)) return
+    edgeKeys.add(key)
+    edges.push(edge)
   }
   for (const file of files) {
     const kind =
@@ -381,14 +380,20 @@ export function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): 
   // Any backend or shared module can reach every handler through backend/app.ts.
   if (unmodeled.length > 0 || normalized.some((file) => BACKEND_SOURCE_DIR.test(file)))
     for (const node of graph.nodes) if (node.kind === "route") seeds.add(node.id)
+  const targets = new Map<string, string[]>()
+  for (const edge of graph.edges) {
+    const from = targets.get(edge.from)
+    if (from === undefined) targets.set(edge.from, [edge.to])
+    else from.push(edge.to)
+  }
   const impacted = new Set(seeds)
   const queue = [...seeds]
-  while (queue.length > 0) {
-    const current = queue.shift()!
-    for (const edge of graph.edges) {
-      if (edge.from !== current || impacted.has(edge.to)) continue
-      impacted.add(edge.to)
-      queue.push(edge.to)
+  // Iterating an array visits what is pushed onto it meanwhile, so this is the breadth-first walk.
+  for (const current of queue) {
+    for (const to of targets.get(current) ?? []) {
+      if (impacted.has(to)) continue
+      impacted.add(to)
+      queue.push(to)
     }
   }
   const impactedRoutes = graph.nodes

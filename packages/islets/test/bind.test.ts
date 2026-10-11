@@ -116,6 +116,16 @@ describe("bindScope - the closed attribute set", () => {
     expect(el.textContent).toBe("server-rendered") // static content untouched
   })
 
+  test("a name an object inherits is unknown too", () => {
+    const el = new FakeElement({
+      "data-bind-text": "constructor",
+      "data-bind-on": "click:toString",
+    })
+    el.textContent = "server-rendered"
+    bindScope(new FakeRoot([el]), scopeOf({}))
+    expect(el.textContent).toBe("server-rendered")
+  })
+
   test("disposers stop updates", () => {
     const count = signal(1)
     const el = new FakeElement({ "data-bind-text": "count" })
@@ -123,6 +133,28 @@ describe("bindScope - the closed attribute set", () => {
     for (const stop of stops) stop()
     count.set(99)
     expect(el.textContent).toBe("1")
+  })
+
+  test("disposers remove value and handler listeners", () => {
+    const value = signal<unknown>("initial")
+    const input = new FakeElement({ "data-bind-value": "value" })
+    const button = new FakeElement({ "data-bind-on": "click:save" })
+    let saves = 0
+    const stops = bindScope(
+      new FakeRoot([input, button]),
+      scopeOf({ value }, { save: () => saves++ }),
+    )
+    input.value = "live"
+    input.dispatch("input")
+    button.dispatch("click")
+    expect(value()).toBe("live")
+    expect(saves).toBe(1)
+    for (const stop of stops) stop()
+    input.value = "disposed"
+    input.dispatch("input")
+    button.dispatch("click")
+    expect(value()).toBe("live")
+    expect(saves).toBe(1)
   })
 
   test("malformed pair entries are skipped, valid ones still bind", () => {

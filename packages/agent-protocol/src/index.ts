@@ -16,6 +16,9 @@ export type AgentEventType =
   | "turn.started"
   | "assistant.delta"
   | "assistant.message"
+  | "reasoning.delta"
+  | "plan.updated"
+  | "context.usage"
   | "tool.started"
   | "tool.delta"
   | "tool.completed"
@@ -28,6 +31,13 @@ export type AgentEventType =
   | "session.completed"
   | "session.failed"
   | "session.stopped"
+  | AgentExtensionEventType
+
+/**
+ * The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64
+ * characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
+ */
+export type AgentExtensionEventType = `x-${string}`
 
 export interface AgentSessionSnapshot {
   readonly version: typeof AGENT_PROTOCOL_VERSION
@@ -83,6 +93,48 @@ export interface AgentAssistantMessageEvent extends AgentSessionEventBase {
   readonly type: "assistant.message"
   readonly turnId: string
   readonly text: string
+}
+
+/** A piece of the model's reasoning. `itemId` groups the pieces of one reasoning block. */
+export interface AgentReasoningDeltaEvent extends AgentSessionEventBase {
+  readonly type: "reasoning.delta"
+  readonly turnId: string
+  readonly itemId?: string
+  readonly text: string
+}
+
+export type AgentPlanEntryStatus = "pending" | "in_progress" | "completed"
+
+export interface AgentPlanEntry {
+  readonly content: string
+  readonly status: AgentPlanEntryStatus
+  readonly priority?: "high" | "medium" | "low"
+}
+
+/** The agent's whole current plan: each event replaces the one before. */
+export interface AgentPlanUpdatedEvent extends AgentSessionEventBase {
+  readonly type: "plan.updated"
+  readonly turnId: string
+  /** The tool call that carried the plan, when a tool did. */
+  readonly callId?: string
+  readonly explanation?: string
+  readonly entries: readonly AgentPlanEntry[]
+}
+
+/** How full the model's context is after its latest request. Token counts only. */
+export interface AgentContextUsageEvent extends AgentSessionEventBase {
+  readonly type: "context.usage"
+  readonly turnId?: string
+  /** Tokens the latest request used: its prompt plus its answer. */
+  readonly usedTokens: number
+  /** The model's context window, when known. */
+  readonly windowTokens?: number
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly cachedInputTokens?: number
+  readonly reasoningTokens?: number
+  /** True when the provider reported no usage and the counts are an estimate. */
+  readonly estimated?: boolean
 }
 
 export interface AgentToolStartedEvent extends AgentSessionEventBase {
@@ -181,12 +233,25 @@ export interface AgentSessionStoppedEvent extends AgentSessionEventBase {
   readonly reason?: string
 }
 
+/**
+ * A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the
+ * type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.
+ */
+export interface AgentExtensionEvent extends AgentSessionEventBase {
+  readonly type: AgentExtensionEventType
+  readonly turnId?: string
+  readonly data?: unknown
+}
+
 export type AgentEvent =
   | AgentSessionStartedEvent
   | AgentSessionUpdatedEvent
   | AgentTurnStartedEvent
   | AgentAssistantDeltaEvent
   | AgentAssistantMessageEvent
+  | AgentReasoningDeltaEvent
+  | AgentPlanUpdatedEvent
+  | AgentContextUsageEvent
   | AgentToolStartedEvent
   | AgentToolDeltaEvent
   | AgentToolCompletedEvent
@@ -199,6 +264,7 @@ export type AgentEvent =
   | AgentSessionCompletedEvent
   | AgentSessionFailedEvent
   | AgentSessionStoppedEvent
+  | AgentExtensionEvent
 
 /** Event payload before the transport adds protocol version, session id, sequence, and timestamp. */
 export type AgentEventPayload =
@@ -207,6 +273,9 @@ export type AgentEventPayload =
   | Omit<AgentTurnStartedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentAssistantDeltaEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentAssistantMessageEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentReasoningDeltaEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentPlanUpdatedEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentContextUsageEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentToolStartedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentToolDeltaEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentToolCompletedEvent, "version" | "sessionId" | "seq" | "at">
@@ -219,6 +288,7 @@ export type AgentEventPayload =
   | Omit<AgentSessionCompletedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentSessionFailedEvent, "version" | "sessionId" | "seq" | "at">
   | Omit<AgentSessionStoppedEvent, "version" | "sessionId" | "seq" | "at">
+  | Omit<AgentExtensionEvent, "version" | "sessionId" | "seq" | "at">
 
 export interface AgentError {
   readonly code: string
@@ -274,7 +344,11 @@ export interface AgentBackend {
   fork?(input: ForkSessionInput): Promise<ForkSessionResult>
   checkpoint?(sessionId: string, payload?: unknown): Promise<AgentSessionCheckpoint>
   reload(sessionId: string): Promise<ReloadResult>
-  /** Resolve an approval surfaced by a backend UI/tool, when that backend supports interactive approvals. */
+  /**
+   * Resolve an approval surfaced by a backend UI/tool, when that backend supports interactive
+   * approvals. Returns a boolean once the backend has taken the answer, or `undefined` when it does not
+   * know the approval (never asked, already settled, or its turn ended).
+   */
   resolveApproval?(
     sessionId: string,
     approvalId: string,
@@ -296,9 +370,13 @@ export interface AgentEventStream extends AgentEventSink, AsyncIterableIterator<
 
 const MAX_AGENT_EVENT_QUEUE_SIZE = 65_536
 
+// The final `assistant.message` / `tool.completed` carries what the deltas streamed.
+const isTransientEvent = (event: AgentEvent): boolean =>
+  event.type === "assistant.delta" || event.type === "tool.delta"
+
 /**
- * Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to
- * the backend/session store; this live view may drop old transient events if a consumer falls behind.
+ * Small bounded event stream for RPC clients and UIs. When a consumer falls behind, the oldest
+ * delta goes first; a lifecycle event is dropped only once no delta is left to drop.
  */
 export function createAgentEventStream(maxQueueSize = 256): AgentEventStream {
   if (
@@ -341,8 +419,11 @@ export function createAgentEventStream(maxQueueSize = 256): AgentEventStream {
         return
       }
       if (queue.length >= maxQueueSize) {
-        queue.shift()
         dropped += 1
+        const at = queue.findIndex(isTransientEvent)
+        if (at >= 0) queue.splice(at, 1)
+        else if (isTransientEvent(event)) return
+        else queue.shift()
       }
       queue.push(event)
     },
@@ -401,6 +482,8 @@ export * from "./run-lifecycle.ts"
 export * from "./transport-policy.ts"
 
 const AGENT_TOKEN_RE = /^[A-Za-z0-9._:/-]{1,128}$/
+const AGENT_EXTENSION_TYPE_RE = /^x-[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+(?:[._-][a-z0-9]+)*$/
+const AGENT_MAX_EXTENSION_TYPE = 64
 const AGENT_MAX_TEXT = 256 * 1024
 const AGENT_MAX_PAYLOAD_TEXT = 64 * 1024
 const AGENT_MAX_ARRAY = 256
@@ -414,12 +497,173 @@ const AGENT_STATUSES: ReadonlySet<string> = new Set([
   "failed",
   "stopped",
 ])
+const AGENT_PLAN_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed"])
+const AGENT_PLAN_PRIORITIES: ReadonlySet<string> = new Set(["high", "medium", "low"])
+const AGENT_MAX_PLAN_ENTRY = 4_096
 const AGENT_COMPACTION_REASONS: ReadonlySet<string> = new Set([
   "manual",
   "threshold",
   "overflow",
   "workflow",
 ])
+
+/** Longest `text`, `prompt`, or error message an event may carry, in UTF-16 code units. */
+export const AGENT_MAX_EVENT_TEXT = AGENT_MAX_TEXT
+/** Longest string an event's `input`, `output`, or `details` value may carry. */
+export const AGENT_MAX_PAYLOAD_STRING = AGENT_MAX_PAYLOAD_TEXT
+
+const AGENT_TRUNCATED = "…[truncated]"
+const AGENT_REPLACEMENT = String.fromCodePoint(0xfffd)
+// Soft budget for the strings of one bounded value, so a display copy stays near one text field.
+const AGENT_MAX_VALUE_CHARS = AGENT_MAX_TEXT
+
+/**
+ * Split text into pieces that each fit an event's text field, so a long reply travels as
+ * consecutive events instead of failing validation. Joined, the pieces give back the text with
+ * each NUL replaced by U+FFFD. A piece ends after a line break when one falls in its last
+ * quarter, and never between the halves of a surrogate pair. Empty text gives one empty piece.
+ */
+export function splitAgentText(text: string, maxChars: number = AGENT_MAX_TEXT): string[] {
+  if (!Number.isSafeInteger(maxChars) || maxChars < 2 || maxChars > AGENT_MAX_TEXT)
+    throw new RangeError(`splitAgentText: maxChars must be between 2 and ${AGENT_MAX_TEXT}`)
+  const clean = text.replaceAll("\0", AGENT_REPLACEMENT)
+  if (clean.length <= maxChars) return [clean]
+  const pieces: string[] = []
+  let start = 0
+  while (clean.length - start > maxChars) {
+    let end = start + maxChars
+    const searchFrom = start + Math.floor((maxChars * 3) / 4)
+    const lineEnd = clean.slice(searchFrom, end).lastIndexOf("\n")
+    if (lineEnd !== -1) end = searchFrom + lineEnd + 1
+    else if (isHighSurrogate(clean.charCodeAt(end - 1)) && isLowSurrogate(clean.charCodeAt(end)))
+      end -= 1
+    pieces.push(clean.slice(start, end))
+    start = end
+  }
+  pieces.push(clean.slice(start))
+  return pieces
+}
+
+/**
+ * Bound text for one event field: NUL becomes U+FFFD and text past `maxChars` is cut, ending
+ * in a truncation marker, never between the halves of a surrogate pair.
+ */
+export function boundAgentText(text: string, maxChars: number = AGENT_MAX_TEXT): string {
+  if (
+    !Number.isSafeInteger(maxChars) ||
+    maxChars < AGENT_TRUNCATED.length ||
+    maxChars > AGENT_MAX_TEXT
+  )
+    throw new RangeError(
+      `boundAgentText: maxChars must be between ${AGENT_TRUNCATED.length} and ${AGENT_MAX_TEXT}`,
+    )
+  const clean = text.replaceAll("\0", AGENT_REPLACEMENT)
+  return clean.length <= maxChars ? clean : truncateAgentText(clean, maxChars)
+}
+
+/**
+ * A copy of a JSON-like value that fits an event's `input`, `output`, or `details`, for display
+ * only: the tool, model, or store keeps the full value. Strings are cut with a truncation marker
+ * (and their NULs replaced); arrays keep their first items and end with a marker string; objects
+ * keep their first keys and drop entries whose key the protocol refuses; a container too deep
+ * becomes a marker string; numbers past the safe-integer range become strings, non-finite ones
+ * null; functions, symbols, bigints, and `undefined` are dropped (null inside an array). Returns
+ * `undefined` when the value itself is one of those.
+ */
+export function boundAgentValue(value: unknown): unknown {
+  const copy = copyBoundedAgentValue(value, 0, { nodes: 2_048, chars: AGENT_MAX_VALUE_CHARS })
+  return copy === AGENT_OMIT ? undefined : copy
+}
+
+interface AgentValueBudget {
+  nodes: number
+  chars: number
+}
+
+const AGENT_OMIT: unique symbol = Symbol("omit")
+
+function copyBoundedAgentValue(
+  value: unknown,
+  depth: number,
+  budget: AgentValueBudget,
+): unknown | typeof AGENT_OMIT {
+  if (
+    value === undefined ||
+    typeof value === "function" ||
+    typeof value === "symbol" ||
+    typeof value === "bigint"
+  )
+    return AGENT_OMIT
+  if (budget.nodes <= 0) return AGENT_OMIT
+  budget.nodes -= 1
+  if (value === null || typeof value === "boolean") return value
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null
+    return Math.abs(value) <= Number.MAX_SAFE_INTEGER ? value : String(value)
+  }
+  if (typeof value === "string") {
+    const clean = value.replaceAll("\0", AGENT_REPLACEMENT)
+    const limit = Math.max(AGENT_TRUNCATED.length, Math.min(AGENT_MAX_PAYLOAD_TEXT, budget.chars))
+    const bounded = clean.length <= limit ? clean : truncateAgentText(clean, limit)
+    budget.chars = Math.max(0, budget.chars - bounded.length)
+    return bounded
+  }
+  if (typeof value !== "object") return AGENT_OMIT
+  if (Array.isArray(value)) {
+    if (depth >= AGENT_MAX_PAYLOAD_DEPTH) return value.length === 0 ? [] : AGENT_TRUNCATED
+    const copy: unknown[] = []
+    for (const [index, item] of value.entries()) {
+      if (copy.length === AGENT_MAX_ARRAY - 1 && value.length > AGENT_MAX_ARRAY) {
+        const marker = copyBoundedAgentValue(
+          `…[${value.length - index} more items]`,
+          depth + 1,
+          budget,
+        )
+        if (marker !== AGENT_OMIT) copy.push(marker)
+        break
+      }
+      // An item JSON has no form for stands as null, which costs a node like any other.
+      const child = copyBoundedAgentValue(item, depth + 1, budget)
+      const kept = child === AGENT_OMIT ? copyBoundedAgentValue(null, depth + 1, budget) : child
+      if (kept === AGENT_OMIT) break
+      copy.push(kept)
+    }
+    return copy
+  }
+  const entries = Object.entries(value)
+  if (depth >= AGENT_MAX_PAYLOAD_DEPTH) return entries.length === 0 ? {} : AGENT_TRUNCATED
+  const copy: Record<string, unknown> = {}
+  let keys = 0
+  for (const [key, item] of entries) {
+    if (keys === AGENT_MAX_OBJECT_KEYS || budget.nodes <= 0) break
+    if (!agentText(key, 128, false)) continue
+    const child = copyBoundedAgentValue(item, depth + 1, budget)
+    if (child === AGENT_OMIT) continue
+    // A "__proto__" key from parsed JSON must stay an own entry, not replace the prototype.
+    Object.defineProperty(copy, key, {
+      value: child,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+    keys += 1
+  }
+  return copy
+}
+
+function truncateAgentText(text: string, maxChars: number): string {
+  let end = Math.max(0, maxChars - AGENT_TRUNCATED.length)
+  if (end > 0 && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1
+  return `${text.slice(0, end)}${AGENT_TRUNCATED}`
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
+}
 
 function agentRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -463,144 +707,273 @@ function boundedAgentValue(
   )
 }
 
-function optionalBoundedAgentValue(record: Record<string, unknown>, key: string): boolean {
+type AgentProblem = string | undefined
+
+function tokenProblem(value: unknown, field: string): AgentProblem {
+  return agentToken(value) ? undefined : `${field} must be 1-128 characters of [A-Za-z0-9._:/-]`
+}
+
+function optionalTokenProblem(value: unknown, field: string): AgentProblem {
+  return value === undefined ? undefined : tokenProblem(value, field)
+}
+
+function textProblem(
+  value: unknown,
+  field: string,
+  max = AGENT_MAX_TEXT,
+  allowEmpty = true,
+): AgentProblem {
+  if (typeof value !== "string") return `${field} must be a string`
+  if (value.length > max) return `${field} is longer than ${max} characters`
+  if (!allowEmpty && value.length === 0) return `${field} must not be empty`
+  return value.includes("\0") ? `${field} contains NUL` : undefined
+}
+
+function optionalTextProblem(value: unknown, field: string): AgentProblem {
+  return value === undefined ? undefined : textProblem(value, field)
+}
+
+function countProblem(value: unknown, field: string): AgentProblem {
+  return agentCount(value) ? undefined : `${field} must be a non-negative safe integer`
+}
+
+function booleanProblem(value: unknown, field: string): AgentProblem {
+  return typeof value === "boolean" ? undefined : `${field} must be a boolean`
+}
+
+function tokenListProblem(value: unknown, field: string): AgentProblem {
+  if (!Array.isArray(value) || value.length > AGENT_MAX_ARRAY)
+    return `${field} must be an array of at most ${AGENT_MAX_ARRAY} tokens`
+  return value.every(agentToken) ? undefined : `${field} must hold only tokens`
+}
+
+function valueProblem(record: Record<string, unknown>, key: string, field: string): AgentProblem {
   return !Object.hasOwn(record, key) || boundedAgentValue(record[key])
+    ? undefined
+    : `${field} is outside the payload bounds (strings ${AGENT_MAX_PAYLOAD_TEXT} characters, ${AGENT_MAX_ARRAY} items or keys, depth ${AGENT_MAX_PAYLOAD_DEPTH})`
 }
 
-function validAgentError(value: unknown): boolean {
-  if (!agentRecord(value)) return false
+function optionalCountProblem(value: unknown, field: string): AgentProblem {
+  return value === undefined ? undefined : countProblem(value, field)
+}
+
+function planEntriesProblem(value: unknown, field: string): AgentProblem {
+  if (!Array.isArray(value) || value.length > AGENT_MAX_ARRAY)
+    return `${field} must be an array of at most ${AGENT_MAX_ARRAY} entries`
+  for (const [index, entry] of value.entries()) {
+    const at = `${field}[${index}]`
+    if (!agentRecord(entry)) return `${at} must be an object`
+    const problem =
+      textProblem(entry.content, `${at}.content`, AGENT_MAX_PLAN_ENTRY) ??
+      (typeof entry.status === "string" && AGENT_PLAN_STATUSES.has(entry.status)
+        ? undefined
+        : `${at}.status must be one of ${[...AGENT_PLAN_STATUSES].join(", ")}`) ??
+      (entry.priority === undefined ||
+      (typeof entry.priority === "string" && AGENT_PLAN_PRIORITIES.has(entry.priority))
+        ? undefined
+        : `${at}.priority must be one of ${[...AGENT_PLAN_PRIORITIES].join(", ")}`)
+    if (problem !== undefined) return problem
+  }
+  return undefined
+}
+
+function errorProblem(value: unknown, field: string): AgentProblem {
+  if (!agentRecord(value)) return `${field} must be an object`
   return (
-    agentToken(value.code) &&
-    agentText(value.message, AGENT_MAX_TEXT, false) &&
-    optionalBoundedAgentValue(value, "details")
+    tokenProblem(value.code, `${field}.code`) ??
+    textProblem(value.message, `${field}.message`, AGENT_MAX_TEXT, false) ??
+    valueProblem(value, "details", `${field}.details`)
   )
 }
 
-function validAgentSnapshot(value: unknown, sessionId: string): value is AgentSessionSnapshot {
-  if (!agentRecord(value)) return false
-  if (
-    value.version !== AGENT_PROTOCOL_VERSION ||
-    !agentToken(value.id) ||
-    value.id !== sessionId ||
-    !agentToken(value.backend) ||
-    !agentText(value.cwd, 4_096, false) ||
-    typeof value.status !== "string" ||
-    !AGENT_STATUSES.has(value.status) ||
-    !agentCount(value.createdAt) ||
-    !agentCount(value.updatedAt) ||
-    !agentCount(value.lastSeq) ||
-    !Array.isArray(value.capabilities) ||
-    value.capabilities.length > AGENT_MAX_ARRAY ||
-    !value.capabilities.every(agentToken)
+function snapshotProblem(value: unknown, sessionId: unknown, field: string): AgentProblem {
+  if (!agentRecord(value)) return `${field} must be an object`
+  if (value.version !== AGENT_PROTOCOL_VERSION)
+    return `${field}.version must be ${AGENT_PROTOCOL_VERSION}`
+  if (value.id !== sessionId) return `${field}.id must be the event's sessionId`
+  return (
+    tokenProblem(value.backend, `${field}.backend`) ??
+    textProblem(value.cwd, `${field}.cwd`, 4_096, false) ??
+    (typeof value.status === "string" && AGENT_STATUSES.has(value.status)
+      ? undefined
+      : `${field}.status must be one of ${[...AGENT_STATUSES].join(", ")}`) ??
+    countProblem(value.createdAt, `${field}.createdAt`) ??
+    countProblem(value.updatedAt, `${field}.updatedAt`) ??
+    countProblem(value.lastSeq, `${field}.lastSeq`) ??
+    tokenListProblem(value.capabilities, `${field}.capabilities`) ??
+    optionalTokenProblem(value.activeTurnId, `${field}.activeTurnId`) ??
+    optionalTokenProblem(value.extensionRevision, `${field}.extensionRevision`)
   )
-    return false
-  if (value.activeTurnId !== undefined && !agentToken(value.activeTurnId)) return false
-  if (value.extensionRevision !== undefined && !agentToken(value.extensionRevision)) return false
-  return true
 }
 
-function validRepairTask(value: unknown): boolean {
-  if (!agentRecord(value)) return false
+function repairTaskProblem(value: unknown, field: string): AgentProblem {
+  if (!agentRecord(value)) return `${field} must be an object`
   return (
-    agentToken(value.id) &&
+    tokenProblem(value.id, `${field}.id`) ??
     (value.verification === "check" ||
-      value.verification === "assure" ||
-      value.verification === "test") &&
-    agentText(value.cwd, 4_096, false) &&
-    agentText(value.reason, AGENT_MAX_TEXT, false) &&
-    Array.isArray(value.capabilities) &&
-    value.capabilities.length <= AGENT_MAX_ARRAY &&
-    value.capabilities.every(agentToken) &&
-    (value.output === undefined || agentText(value.output)) &&
-    optionalBoundedAgentValue(value, "report")
+    value.verification === "assure" ||
+    value.verification === "test"
+      ? undefined
+      : `${field}.verification must be check, assure, or test`) ??
+    textProblem(value.cwd, `${field}.cwd`, 4_096, false) ??
+    textProblem(value.reason, `${field}.reason`, AGENT_MAX_TEXT, false) ??
+    tokenListProblem(value.capabilities, `${field}.capabilities`) ??
+    optionalTextProblem(value.output, `${field}.output`) ??
+    valueProblem(value, "report", `${field}.report`)
+  )
+}
+
+/**
+ * Whether `type` names an extension event: `x-<vendor>.<name>` in lowercase letters, digits, and
+ * single `-`, `.`, or `_` separators, at most 64 characters.
+ */
+export function isAgentExtensionEventType(type: unknown): type is AgentExtensionEventType {
+  return (
+    typeof type === "string" &&
+    type.length <= AGENT_MAX_EXTENSION_TYPE &&
+    AGENT_EXTENSION_TYPE_RE.test(type)
   )
 }
 
 /** Validate the complete discriminated event union before a projection or UI consumer sees it. */
 export function isAgentEvent(value: unknown): value is AgentEvent {
-  if (!agentRecord(value)) return false
-  if (
-    value.version !== AGENT_PROTOCOL_VERSION ||
-    !agentToken(value.sessionId) ||
-    !agentCount(value.seq) ||
-    !agentCount(value.at) ||
-    typeof value.type !== "string"
-  )
-    return false
-  switch (value.type) {
+  return agentEventProblem(value) === undefined
+}
+
+/**
+ * Why `value` is not a valid agent event, naming the field and the limit it broke but never its
+ * content, so the text is safe to log or show; `undefined` when it is valid.
+ */
+export function agentEventProblem(value: unknown): string | undefined {
+  if (!agentRecord(value)) return "event must be an object"
+  if (value.version !== AGENT_PROTOCOL_VERSION) return `version must be ${AGENT_PROTOCOL_VERSION}`
+  const base =
+    tokenProblem(value.sessionId, "sessionId") ??
+    countProblem(value.seq, "seq") ??
+    countProblem(value.at, "at")
+  if (base !== undefined) return base
+  if (typeof value.type !== "string") return "type must be a string"
+  const type = value.type
+  switch (type) {
     case "session.started":
     case "session.updated":
     case "session.completed":
-      return validAgentSnapshot(value.snapshot, value.sessionId)
+      return snapshotProblem(value.snapshot, value.sessionId, `${type}.snapshot`)
     case "turn.started":
-      return agentToken(value.turnId) && agentText(value.prompt)
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ?? textProblem(value.prompt, `${type}.prompt`)
+      )
     case "assistant.delta":
     case "assistant.message":
-      return agentToken(value.turnId) && agentText(value.text)
+      return tokenProblem(value.turnId, `${type}.turnId`) ?? textProblem(value.text, `${type}.text`)
+    case "reasoning.delta":
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        optionalTokenProblem(value.itemId, `${type}.itemId`) ??
+        textProblem(value.text, `${type}.text`)
+      )
+    case "plan.updated":
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        optionalTokenProblem(value.callId, `${type}.callId`) ??
+        (value.explanation === undefined
+          ? undefined
+          : textProblem(value.explanation, `${type}.explanation`, AGENT_MAX_PAYLOAD_TEXT)) ??
+        planEntriesProblem(value.entries, `${type}.entries`)
+      )
+    case "context.usage":
+      return (
+        optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+        countProblem(value.usedTokens, `${type}.usedTokens`) ??
+        optionalCountProblem(value.windowTokens, `${type}.windowTokens`) ??
+        optionalCountProblem(value.inputTokens, `${type}.inputTokens`) ??
+        optionalCountProblem(value.outputTokens, `${type}.outputTokens`) ??
+        optionalCountProblem(value.cachedInputTokens, `${type}.cachedInputTokens`) ??
+        optionalCountProblem(value.reasoningTokens, `${type}.reasoningTokens`) ??
+        (value.estimated === undefined
+          ? undefined
+          : booleanProblem(value.estimated, `${type}.estimated`))
+      )
     case "tool.started":
       return (
-        agentToken(value.turnId) &&
-        agentToken(value.callId) &&
-        agentToken(value.name) &&
-        optionalBoundedAgentValue(value, "input")
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.callId, `${type}.callId`) ??
+        tokenProblem(value.name, `${type}.name`) ??
+        valueProblem(value, "input", `${type}.input`)
       )
     case "tool.delta":
-      return agentToken(value.turnId) && agentToken(value.callId) && agentText(value.text)
+      return (
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.callId, `${type}.callId`) ??
+        textProblem(value.text, `${type}.text`)
+      )
     case "tool.completed":
       return (
-        agentToken(value.turnId) &&
-        agentToken(value.callId) &&
-        agentToken(value.name) &&
-        typeof value.ok === "boolean" &&
-        optionalBoundedAgentValue(value, "output") &&
-        (value.error === undefined || validAgentError(value.error))
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.callId, `${type}.callId`) ??
+        tokenProblem(value.name, `${type}.name`) ??
+        booleanProblem(value.ok, `${type}.ok`) ??
+        valueProblem(value, "output", `${type}.output`) ??
+        (value.error === undefined ? undefined : errorProblem(value.error, `${type}.error`))
       )
     case "approval.required":
       return (
-        agentToken(value.turnId) &&
-        agentToken(value.approvalId) &&
-        agentText(value.action, AGENT_MAX_TEXT, false) &&
-        agentToken(value.capability) &&
-        (value.reason === undefined || agentText(value.reason))
+        tokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.approvalId, `${type}.approvalId`) ??
+        textProblem(value.action, `${type}.action`, AGENT_MAX_TEXT, false) ??
+        tokenProblem(value.capability, `${type}.capability`) ??
+        optionalTextProblem(value.reason, `${type}.reason`)
       )
     case "approval.resolved":
       return (
-        (value.turnId === undefined || agentToken(value.turnId)) &&
-        agentToken(value.approvalId) &&
-        typeof value.approved === "boolean" &&
-        (value.reason === undefined || agentText(value.reason))
+        optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+        tokenProblem(value.approvalId, `${type}.approvalId`) ??
+        booleanProblem(value.approved, `${type}.approved`) ??
+        optionalTextProblem(value.reason, `${type}.reason`)
       )
     case "repair.required":
-      return (value.turnId === undefined || agentToken(value.turnId)) && validRepairTask(value.task)
+      return (
+        optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+        repairTaskProblem(value.task, `${type}.task`)
+      )
     case "verification.completed":
       return (
-        (value.name === "check" || value.name === "assure" || value.name === "test") &&
-        typeof value.ok === "boolean" &&
-        optionalBoundedAgentValue(value, "report")
+        (value.name === "check" || value.name === "assure" || value.name === "test"
+          ? undefined
+          : `${type}.name must be check, assure, or test`) ??
+        booleanProblem(value.ok, `${type}.ok`) ??
+        valueProblem(value, "report", `${type}.report`)
       )
     case "memory.compacted":
       return (
-        agentCount(value.before) &&
-        agentCount(value.after) &&
-        typeof value.reason === "string" &&
-        AGENT_COMPACTION_REASONS.has(value.reason)
+        countProblem(value.before, `${type}.before`) ??
+        countProblem(value.after, `${type}.after`) ??
+        (typeof value.reason === "string" && AGENT_COMPACTION_REASONS.has(value.reason)
+          ? undefined
+          : `${type}.reason must be one of ${[...AGENT_COMPACTION_REASONS].join(", ")}`)
       )
     case "extension.reloaded":
       return (
-        agentToken(value.revision) &&
-        Array.isArray(value.loaded) &&
-        value.loaded.length <= AGENT_MAX_ARRAY &&
-        value.loaded.every(agentToken) &&
-        Array.isArray(value.disabled) &&
-        value.disabled.length <= AGENT_MAX_ARRAY &&
-        value.disabled.every(agentToken) &&
-        typeof value.rolledBack === "boolean"
+        tokenProblem(value.revision, `${type}.revision`) ??
+        tokenListProblem(value.loaded, `${type}.loaded`) ??
+        tokenListProblem(value.disabled, `${type}.disabled`) ??
+        booleanProblem(value.rolledBack, `${type}.rolledBack`)
       )
     case "session.failed":
-      return validAgentError(value.error) && typeof value.recoverable === "boolean"
+      return (
+        errorProblem(value.error, `${type}.error`) ??
+        booleanProblem(value.recoverable, `${type}.recoverable`)
+      )
     case "session.stopped":
-      return value.reason === undefined || agentText(value.reason)
+      return optionalTextProblem(value.reason, `${type}.reason`)
     default:
-      return false
+      if (isAgentExtensionEventType(type))
+        return (
+          optionalTokenProblem(value.turnId, `${type}.turnId`) ??
+          valueProblem(value, "data", `${type}.data`)
+        )
+      if (type.startsWith("x-"))
+        return "extension event type must be x-<vendor>.<name>, lowercase, at most 64 characters"
+      return agentToken(type) ? `unknown event type ${type}` : "unknown event type"
   }
 }

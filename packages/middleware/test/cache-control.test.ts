@@ -75,4 +75,28 @@ describe("cacheControl()", () => {
     if (outcome.kind !== "json") throw new Error("unreachable")
     expect(outcome.headers?.["cache-control"]).toBe("public, max-age=60")
   })
+
+  test("a second, differently configured instance applies too", async () => {
+    const app = server()
+      .use(cacheControl((req) => (new URL(req.url).pathname === "/a" ? "no-store" : undefined)))
+      .use(cacheControl("public, max-age=60"))
+      .get("/a", () => "a")
+      .get("/b", () => "b")
+    expect(cc(await app.fetch(new Request("http://x/a")))).toBe("no-store")
+    expect(cc(await app.fetch(new Request("http://x/b")))).toBe("public, max-age=60")
+  })
+
+  test("the same instance applied twice is wired once", async () => {
+    let calls = 0
+    const once = cacheControl(() => {
+      calls++
+      return "no-store"
+    })
+    const app = server()
+      .use(once)
+      .use(once)
+      .get("/", () => "x")
+    await app.fetch(new Request("http://x/"))
+    expect(calls).toBe(1)
+  })
 })

@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { AgentAppClient, type AgentEventView, HttpAgentTransport } from "@nifrajs/agent-app"
 import type { AgentEvent } from "@nifrajs/agent-protocol"
-import { CodingAgentRpcServer, ReplayBackend } from "@nifrajs/coding-agent"
+import { CodingAgentRpcServer, NifraBackend, ReplayBackend } from "@nifrajs/coding-agent"
 
 const sessionId = "smoke-session"
 const turnId = "turn-1"
@@ -84,5 +84,34 @@ describe("workbench SDK smoke", () => {
     const tool = views.find((v) => v.kind === "tool.started")
     expect(tool && "name" in tool ? tool.name : "").toBe("read_file")
     expect(tool).not.toHaveProperty("input")
+  })
+
+  test("lists a pending approval from the real host under the id it resolves by", async () => {
+    const approvals = new CodingAgentRpcServer({
+      backend: new NifraBackend({ model: { complete: () => ({ type: "text", text: "ok" }) } }),
+      cwd: process.cwd(),
+      hostname: "127.0.0.1",
+    })
+    const handle = await approvals.start()
+    try {
+      const transport = new HttpAgentTransport({
+        endpoint: handle.url,
+        authorize: () => handle.token,
+      })
+      const client = new AgentAppClient(transport)
+      await client.createSession()
+      await approvals.host.offerApproval({
+        id: "smoke-a1",
+        action: "write-file",
+        capability: "filesystem.write",
+      })
+      expect(await client.listApprovals()).toEqual([
+        { approvalId: "smoke-a1", action: "write-file", capability: "filesystem.write" },
+      ])
+      expect(await client.resolveApproval("smoke-a1", false)).toBe(false)
+      expect(await client.listApprovals()).toEqual([])
+    } finally {
+      await handle.stop()
+    }
   })
 })

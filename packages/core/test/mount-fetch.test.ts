@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "../../schema/src/index.ts"
-import { server } from "../src/index.ts"
+import { RouteConfigError, server } from "../src/index.ts"
 import { responseContract } from "../src/server/response-contract-lane.ts"
 
 describe("mountFetch", () => {
@@ -125,5 +125,26 @@ describe("mountFetch", () => {
 
     expect(await (await app.fetch(new Request("http://test/legacy/item"))).json()).toEqual(leaked)
     expect((await app.fetch(new Request("http://test/typed"))).status).toBe(500)
+  })
+
+  test("a mount that leads back to its parent without stripPrefix is refused when it is made", async () => {
+    const app = server().get("/x/ok", () => "ok")
+    expect(() => app.mount({ path: "/x", app })).toThrow(
+      "mount /x: the app leads back to this one without stripPrefix",
+    )
+
+    const a = server().get("/a", () => "a")
+    const b = server().mount({ path: "/m/inner", app: a })
+    expect(() => a.mount({ path: "/m", app: b })).toThrow(RouteConfigError)
+    expect((await b.fetch(new Request("http://h/m/inner/x"))).status).toBe(404)
+
+    // Each pass strips a segment, or the prefixes never share a path: these end.
+    const stripped = server().get("/ok", () => "ok")
+    stripped.mount({ path: "/self", app: stripped, stripPrefix: true })
+    expect(await (await stripped.fetch(new Request("http://h/self/ok"))).json()).toBe("ok")
+    const c = server().get("/c", () => "c")
+    const d = server().mount({ path: "/to-c", app: c })
+    c.mount({ path: "/to-d", app: d })
+    expect((await d.fetch(new Request("http://h/to-c/to-d/c"))).status).toBe(404)
   })
 })

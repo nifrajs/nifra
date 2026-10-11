@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { island, islandState, mountIslands } from "../src/island.ts"
+import { computed, effect, signal } from "../src/signals.ts"
 import { FakeElement, FakeHost, FakeRoot } from "./_fake-dom.ts"
 
 let n = 0
@@ -87,6 +88,30 @@ describe("islands", () => {
     expect((first as () => string)()).toBe("fallback")
   })
 
+  test("state(): a key named like an Object.prototype member is a signal of its own", () => {
+    const name = uniqueName()
+    const text = new FakeElement({ "data-bind-text": "__proto__" })
+    const host = new FakeHost(
+      { "data-island": name, "data-island-state": '{"constructor":5,"__proto__":7}' },
+      [text],
+    )
+    const seen: Array<[unknown, boolean]> = []
+    island(name, ({ state }) => {
+      for (const key of ["constructor", "__proto__", "toString"]) {
+        const s = state(key, 3)
+        seen.push([s(), typeof s.set === "function"])
+      }
+      return undefined
+    })
+    mountIslands(new FakeRoot([host]))
+    expect(seen).toEqual([
+      [5, true],
+      [7, true],
+      [3, true],
+    ])
+    expect(text.textContent).toBe("7")
+  })
+
   test("mounting is idempotent; unregistered islands are skipped", () => {
     const name = uniqueName()
     let mounts = 0
@@ -101,6 +126,34 @@ describe("islands", () => {
     mountIslands(root)
     expect(mounts).toBe(1)
     expect(stranger.getAttribute("data-island-mounted")).toBeNull()
+  })
+
+  test("disposing releases handlers and the host for remount, once per mount", () => {
+    const name = uniqueName()
+    const button = new FakeElement({ "data-bind-on": "click:save" })
+    const host = new FakeHost({ "data-island": name }, [button])
+    const root = new FakeRoot([host])
+    let mounts = 0
+    let saves = 0
+    island(name, () => {
+      mounts++
+      return { save: () => saves++ }
+    })
+    const first = mountIslands(root)
+    button.dispatch("click")
+    first()
+    button.dispatch("click")
+    expect(saves).toBe(1)
+    expect(host.getAttribute("data-island-mounted")).toBeNull()
+    const second = mountIslands(root)
+    first()
+    expect(host.getAttribute("data-island-mounted")).toBe("")
+    button.dispatch("click")
+    expect(mounts).toBe(2)
+    expect(saves).toBe(2)
+    second()
+    button.dispatch("click")
+    expect(saves).toBe(2)
   })
 
   test("malformed state JSON mounts with fallbacks (static markup stays usable)", () => {
@@ -134,6 +187,44 @@ describe("islands", () => {
     const escaped = json.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
     const unescaped = escaped.replace(/&quot;/g, '"').replace(/&amp;/g, "&")
     expect(JSON.parse(unescaped)).toEqual(state)
+  })
+
+  test("unmounting stops what setup created, across repeated mounts of one island", () => {
+    const shared = signal(0)
+    let computes = 0
+    let effects = 0
+    const name = uniqueName()
+    island(name, () => {
+      const doubled = computed(() => {
+        computes++
+        return shared() * 2
+      })
+      effect(() => {
+        effects++
+        doubled()
+      })
+      return undefined
+    })
+    const mount = () =>
+      mountIslands(
+        new FakeRoot([
+          new FakeHost({ "data-island": name }, [new FakeElement({ "data-bind-text": "n" })]),
+        ]),
+      )
+    for (let i = 0; i < 100; i++) mount()()
+    computes = 0
+    effects = 0
+    shared.set(1)
+    expect(computes).toBe(0)
+    expect(effects).toBe(0)
+
+    const live = mount()
+    computes = 0
+    effects = 0
+    shared.set(2)
+    expect(computes).toBe(1)
+    expect(effects).toBe(1)
+    live()
   })
 
   test("media trigger waits for a match and disposes the listener", () => {

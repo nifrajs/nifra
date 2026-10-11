@@ -1,5 +1,124 @@
 # @nifrajs/testing
 
+## 5.0.0
+
+### Major Changes
+
+- 4199ff3: The adversarial contract laboratory witnesses and mutates declared `params` and `headers`. A `t` schema synthesizes them, the witness's `params` and `headers` override, and each is validated before any case runs, so a body or query case is rejected by the input it mutates rather than by a placeholder param or a missing header. An opaque params or headers schema without a witness is a `NO_WITNESS` gap; placeholders no longer stand in for it.
+
+  The laboratory never invents credentials: `authorization`, `proxy-authorization`, `cookie`, `x-api-key`, and names ending in `-key` or containing `token`, `secret` or `signature` come from the witness and `prepareRequest` only and are never mutated, and runtime-owned headers are never set. A schema that requires a credential the witness lacks is a `NO_WITNESS` gap naming it. Cookies are never synthesized: a route with a `cookies` schema needs `headers.cookie` in its witness, else a `cookies` gap. A params or header field typed as bare text is not a `NO_REJECTED_MUTATION` gap. `ContractTarget` adds `"headers"`, `"cookies"` and `"params"`.
+
+  `autoReflectJsonSchema` resolves zod from the project directory first, then from `@nifrajs/mock`. `explainAutoReflectJsonSchema` says why a zod schema stayed opaque (zod not resolvable, older than 4, or its converter threw), and a laboratory gap for such a schema carries the reason.
+
+- b7eff12: `compareAgentEvalBaseline` and `assertAgentEvalBaseline` now fail by default on a verdict the current run stopped producing (`missing`) or whose rubric changed shape (`incomparable`), not only on `regressed`. A verdict new in the current run gets its own `added` code and does not fail. Pass `failOn: ["regressed"]` for the old behaviour. `runAgentFailureMatrix` takes an `execute(boundary, checkpoint)` option that drives the agent under test through each boundary; a case passes only when the injected crash surfaces. Without it the matrix still proves only its own schedule.
+
+### Minor Changes
+
+- dd0e530: `CacheStore` gains two optional methods for a store that several caches or processes share: `fence(key, tags)` and `setIfFence(key, entry, tags, token)`. A `wrap` load takes a fence before its loader runs and stores its result through `setIfFence`, which refuses the write when a `set` or `delete` of the key, an `invalidateTag` of one of its tags, or a `clear` ran in the meantime from any cache sharing the store. `MemoryCache` implements both, so two caches over one `MemoryCache` no longer write back a value the other invalidated.
+
+  A `delete`, `invalidateTag` or `clear` now runs after the cache's own async store writes it covers, so a store that applies requests out of order cannot land an earlier write after the invalidation.
+
+  `cacheStoreCertificationProfile({ fencing: true })` adds the `fenced-write` capability, which checks a store's `fence` and `setIfFence`.
+
+- c333ca7: The cache, job and storage certification profiles now fail the adapters they should, and pass the ones they should. Each profile moves to version 2.
+
+  - **cache-store**: entries are fresh until 2100. A store that honors expiry on the wall clock used to fail, because the old entries expired in 1970.
+  - **job-store**: a new `lease-exclusive` check, under `lease-complete`. A leased job must stay hidden from other workers until its lease runs out, and then come back. A store that handed one job to every worker used to pass.
+  - **storage-adapter**: a new required `key-safety` capability. `put`, `get`, `exists` and `delete` must refuse a `..` segment, an absolute key, a backslash, a NUL, and an empty, `.` or trailing segment, as `@nifrajs/storage`'s key contract does.
+
+- 7544cc0: `generateRegressionTest` redacts query values, header values other than `content-type`, and the capsule note by default, not only body strings, and raises the sanitize banner when it does. New `allowQuery`, `allowHeaders` and `keepNote` options keep chosen values verbatim. The emitted file also asks for the path, which is kept verbatim, to be reviewed.
+- 9f58295: An opaque mount can declare the routes it serves: `opaque: { reason, routes: [{ method, path, capabilities }] }` on `mount()`, `mountFetch()` and a `createWebApp` `mounts` entry. Capability assurance reports those routes with `analysis: "declared"` beside the known gap, checks their capabilities against the policy (an unknown id, or a domain write on a safe method, fails), and records them in the lockfile. `reflectMounts` returns them, project evidence carries them, the `nifra context` index lists them, and an adversarial contract run notes them as having no contract to test. A malformed declaration or a path outside the mount stops the analysis with an error that names it. A mount without a reason fails as before.
+- b40e83e: `captureIncident` keeps every query pair in order as `request.queryPairs` when the `query` object cannot rebuild it, such as a repeated name, and keeps a non-JSON request body as its text with `request.bodyEncoding: "text"`. `replayIncident` sends both back exactly as captured, so a request with `?q=a&q=b` or a `text/plain` body reproduces. `generateRegressionTest` redacts the values in `queryPairs` like those in `query`.
+
+### Patch Changes
+
+- 8860117: `runDataAdapterConformance` no longer certifies an adapter that breaks three of its guarantees:
+
+  - **cancellation** passed on any error, because the signal it checked had always been aborted. It now needs an abort error, and the cancelled row must not be stored.
+  - **pagination** passed when every page was empty. The pages must now return exactly the rows a read of the scope returns.
+  - **backup-restore** passed when restore deleted everything. Both scopes must now hold exactly the rows they held at the snapshot.
+
+- dab880c: `generateRegressionTest()` writes the captured method, path and status into the generated test only as escaped string literals. A path containing `"` used to close the `describe()` title and inject statements that ran when the test file was imported. The import path is emitted the same way, and `appExport` must be a plain identifier.
+- 846e2f6: `invariants` in `nifra.assurance.ts` accepts the L4 runner's fixture options - `witnesses`, `prepareRequest`, `isRejected`, `include` and `maxMutationsPerInput` - and `nifra levels` and the `nifra_levels` MCP tool pass them to every L4 run. `invariants.setup` provisions a throwaway target only when L4 runs: it is called once, before the first L4 request and never when the config is imported, and the `teardown` it returns runs after the run, a failing one included. A config needs an `executor`, a `setup`, or both. The contract witness and case-context types now live in `@nifrajs/core/assurance`; `@nifrajs/testing` re-exports them unchanged.
+- c92f85f: The default `reflectJsonSchema` hook reads a schema's own Standard JSON Schema converter (`~standard.jsonSchema.input`, implemented by zod 4.2+ and other libraries) before it looks for zod on disk. The adversarial laboratory and the mock server now inspect such a schema wherever the test runs from, including a monorepo root whose zod is installed only in one app, and a validator other than zod that implements the converter gets witnesses and mock data too. An older zod 4 is still converted with `z.toJSONSchema`. When a converter throws, the gap names it.
+- c669c6a: `cookieJar` removes a cookie for any `Max-Age` of zero or less (`Max-Age=-1`, `Max-Age=00`), and lets `Max-Age` outrank `Expires`, as browsers do. Only an exact `Max-Age=0` counted before, so a test could pass with a cookie a browser would already have dropped.
+- 067ea67: `generateRegressionTest` now adds a review banner when the emitted request body keeps numbers, booleans or object keys verbatim. Only string values are redacted, so a card number or an email used as a key went into the fixture with no prompt to check it.
+- 6e88552: `replayTrajectory` now fires tool faults. Replay runs tools dry, so a tool's own `execute` never runs, and the faults were injected there. A `tool-error`, `cancellation` or `budget-pressure` fault on the `tool` point never fired, and the replay reported a completed run. Tool faults now fire at the budget check that a dry tool call still makes: a tool error fails the call with `execution_failed`, a cancellation cancels the call and the run, and budget pressure fails the call with `budget_exceeded`. Replay still runs no real tool.
+- Updated dependencies [2198640]
+- Updated dependencies [6b96131]
+- Updated dependencies [d6a7fa0]
+- Updated dependencies [6340cd8]
+- Updated dependencies [34b3014]
+- Updated dependencies [848ce97]
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [1af7543]
+- Updated dependencies [4edee67]
+- Updated dependencies [281f5de]
+- Updated dependencies [6a95376]
+- Updated dependencies [6426107]
+- Updated dependencies [23b3672]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [1bd2352]
+- Updated dependencies [f0c88c1]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [b70b18a]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [c92f85f]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [bdd6231]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/agent@5.0.0
+  - @nifrajs/core@5.0.0
+  - @nifrajs/mcp@5.0.0
+  - @nifrajs/client@5.0.0
+  - @nifrajs/mock@5.0.0
+  - @nifrajs/webmcp@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

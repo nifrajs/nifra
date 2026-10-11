@@ -1,4 +1,5 @@
-import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
+import { createReadStream } from "node:fs"
+import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises"
 import { basename, join, resolve } from "node:path"
 import { sessionFileStem } from "./sessions.ts"
 
@@ -164,7 +165,7 @@ export async function migrateLegacySession(
   const targetFile = join(targetRoot, `${sessionFileStem(sessionId)}.jsonl`)
   await commitTarget(targetRoot, targetFile, content, options.signal)
   // Re-read the committed target and validate every line before the caller treats this as active.
-  const committed = await readEvidenceTarget(targetFile, sessionId)
+  const committed = await readEvidenceTarget(targetFile, sessionId, Buffer.byteLength(content))
   if (committed.records.length !== records.length || (await sha256Hex(committed.raw)) !== digest)
     throw new SessionMigrationError("target_validation", "committed evidence target changed")
   for (let index = 0; index < committed.records.length; index++) {
@@ -225,8 +226,8 @@ async function readLegacyEntries(
   const path = join(sourceRoot, `${sessionFileStem(sessionId)}.jsonl`)
   let text: string
   try {
-    const bytes = await readFile(path)
-    if (bytes.byteLength > maxSourceBytes)
+    const bytes = await readCapped(path, maxSourceBytes)
+    if (bytes === undefined)
       throw new SessionMigrationError("source_too_large", "legacy session exceeds maxSourceBytes")
     text = bytes.toString("utf8")
   } catch (error) {
@@ -306,11 +307,34 @@ async function commitTarget(
   }
 }
 
+/** The file's bytes, or `undefined` as soon as it passes `maxBytes`, without reading the rest. */
+async function readCapped(path: string, maxBytes: number): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = []
+  let total = 0
+  // Sequential reads, not a start/end range: a positioned read fails on a pipe.
+  const stream = createReadStream(path, { highWaterMark: Math.min(maxBytes + 1, 64 * 1024) })
+  try {
+    for await (const chunk of stream) {
+      const bytes: Buffer = chunk
+      total += bytes.byteLength
+      if (total > maxBytes) return undefined
+      chunks.push(bytes)
+    }
+  } finally {
+    stream.destroy()
+  }
+  return Buffer.concat(chunks, total)
+}
+
 async function readEvidenceTarget(
   path: string,
   sessionId: string,
+  expectedBytes: number,
 ): Promise<{ readonly records: readonly SessionEvidenceRecord[]; readonly raw: string }> {
-  const raw = await readFile(path, "utf8")
+  const bytes = await readCapped(path, expectedBytes)
+  if (bytes === undefined)
+    throw new SessionMigrationError("target_validation", "committed evidence target changed")
+  const raw = bytes.toString("utf8")
   const records: SessionEvidenceRecord[] = []
   let previousSeq = -1
   for (const line of raw.split("\n")) {

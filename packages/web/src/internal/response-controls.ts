@@ -2,9 +2,15 @@ import {
   type CookieOptions,
   type ResponseResult,
   status as statusResult,
+  writableResponse,
 } from "@nifrajs/core/server"
 import type { LoaderResponseControls } from "../manifest.ts"
 import { DATA_HEADER } from "../router.ts"
+import {
+  type ProgressiveCookie,
+  progressiveCookieHeader,
+  progressiveCookieRedirect,
+} from "./progressive-cookies.ts"
 import { isResponseResult } from "./render-document.ts"
 
 /** The serving app's response controls - the structural subset of a route handler's `c.set` used here. */
@@ -107,19 +113,9 @@ export function privateOutcome(outcome: unknown): unknown {
 
 function privateResponse(response: Response): Response {
   if (response.headers.get(CACHE_CONTROL) === PRIVATE_NO_STORE) return response
-  try {
-    response.headers.set(CACHE_CONTROL, PRIVATE_NO_STORE)
-    return response
-  } catch {
-    // Immutable headers (`Response.redirect()`, a `fetch()` result): answer with a copy.
-    const headers = new Headers(response.headers)
-    headers.set(CACHE_CONTROL, PRIVATE_NO_STORE)
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    })
-  }
+  const target = writableResponse(response)
+  target.headers.set(CACHE_CONTROL, PRIVATE_NO_STORE)
+  return target
 }
 
 interface WrittenHeaders {
@@ -140,6 +136,7 @@ export class PageResponseControls {
   #written: WrittenHeaders[] | undefined
   #sealed = false
   #personalized = false
+  #cookieChanges: ProgressiveCookie[] | undefined
 
   constructor(c: { readonly set: CoreResponseControls }) {
     this.#c = c
@@ -167,7 +164,27 @@ export class PageResponseControls {
   cookies(member: string): CoreResponseControls {
     this.assertOpen(member)
     this.personalize()
-    return this.#c.set
+    const controls = this.#c.set
+    return {
+      headers: controls.headers,
+      cookie: (name, value, options) => {
+        controls.cookie(name, value, options)
+        this.#cookieChanges ??= []
+        this.#cookieChanges.push({ name, value, options })
+      },
+      deleteCookie: (name, options) => {
+        controls.deleteCookie(name, options)
+        this.#cookieChanges ??= []
+        this.#cookieChanges.push({ name, value: "", options, deleted: true })
+      },
+    }
+  }
+
+  progressiveCookies(request: Request): string {
+    return progressiveCookieHeader(request, this.#cookieChanges ?? [])
+  }
+  progressiveRedirect(request: Request): boolean {
+    return progressiveCookieRedirect(request, this.#cookieChanges ?? [])
   }
 
   /** Mark the response as one visitor's - a queued cookie, or a draft render - so no cache stores it. */

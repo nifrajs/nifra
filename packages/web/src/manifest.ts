@@ -271,13 +271,24 @@ export interface Meta {
 }
 
 /**
- * Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`.
- * `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** -
- * `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through loader data
- * for absolute `og:url`/`canonical`/`og:image` URLs). See {@link origin}.
+ * Args for a route's or layout's `meta` function: its own loader's `data` + the page's `pageData` + the
+ * route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has
+ * **no `request`/`process.env`/server access** - `origin` is the only server-resolved fact it gets (so you
+ * needn't thread `siteUrl` through loader data for absolute `og:url`/`canonical`/`og:image` URLs). See
+ * {@link origin}.
  */
 export interface MetaArgs<Data = unknown> {
+  /**
+   * The loader data of the module that exports this `meta`: the page's for a page, the layout's own for a
+   * layout (`null` when the layout has no loader), the same value its component receives. A layout that
+   * loads the locale sets `lang` from here, so a soft navigation keeps it.
+   */
   readonly data: Data
+  /**
+   * The page's loader data, for a layout's `meta` that builds on the page (a title template). In a page's
+   * own `meta` it is the same value as {@link data}. Always set by the framework.
+   */
+  readonly pageData?: unknown
   readonly params: Record<string, string>
   /** The resolved document CSP nonce, when this render uses per-request nonce protection. */
   readonly nonce?: string
@@ -323,6 +334,8 @@ export type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>
 export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
+  /** Layout loader that must run before actions and is not retained across the action's render. */
+  readonly gate?: boolean
   readonly action?: Action
   /**
    * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the
@@ -384,6 +397,14 @@ export interface RouteModule {
    * the module on the server and in the browser, so it must be the same value on both.
    */
   readonly handle?: unknown
+  /**
+   * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the
+   * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`
+   * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -
+   * a root status page renders alone and an `_error` inside its layouts without their data, with the
+   * same status. `false` always renders them that way, and runs no layout loader for them.
+   */
+  readonly inLayouts?: boolean
   /**
    * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`
    * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build
@@ -998,6 +1019,9 @@ const ancestorDirs = (file: string): string[] => {
  * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
  * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware`
  * files are special; other `_`-prefixed files are ignored (private/colocated, never routed).
+ * A page pairs with its `.backend.*` half only when both are in `files`, so a hand-written list that
+ * omits the half serves the page without its loader and guards; `discoverRoutes` from
+ * `@nifrajs/web/fs` scans a routes dir and never does.
  */
 export function buildManifest(
   files: readonly string[],

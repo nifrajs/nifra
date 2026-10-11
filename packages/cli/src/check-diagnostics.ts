@@ -10,7 +10,9 @@ import { join } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import type { CapabilityGap } from "@nifrajs/core/capabilities"
 import type { ProjectEvidenceSnapshot } from "@nifrajs/core/evidence"
+import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
+import { scanFetchText, scanStreamText } from "./check-scan.ts"
 import {
   type Diagnostic,
   type DiagnosticSuggestion,
@@ -20,9 +22,11 @@ import {
 import type { DuplicateInstallFinding } from "./doctor.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
+import { contractVisibilityRule } from "./rules/contract-visibility.ts"
 import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
 import { islandRules } from "./rules/islands.ts"
+import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
 import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
@@ -72,8 +76,9 @@ export type CheckSuggestion = DiagnosticSuggestion
 export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
-  /** Why `typecheck` is `"skipped"` (no tsconfig.json, typescript not installed, lints-only mode).
-   * Absent when the typecheck ran. Echoed in the human report so a skip is never a dim mystery. */
+  /** Why `typecheck` is `"skipped"` (no tsconfig.json, typescript not installed, lints-only mode), or
+   * why it failed when the compiler itself passed (zoned files outside its program). Echoed in the
+   * human report so a skip is never a dim mystery. */
   readonly typecheckNote?: string
   readonly diagnostics: readonly CheckDiagnostic[]
   /** Normalized diagnostics with stable codes for agents and external renderers. */
@@ -108,6 +113,13 @@ export interface CheckResult {
    * the `duplicate-install` diagnostics; this field is what `--json` consumers parse instead.
    */
   readonly identityPreflight?: IdentityPreflightResult
+  /**
+   * The hooks each backend route and each prefix's unmatched paths run (`nifra routes --hooks`), read
+   * from the `source` of `nifra.assurance.ts`, which check already loads - check runs no other app
+   * code. Omitted without that config, and when `maxDiagnostics` caps the output for the MCP transport,
+   * where `nifra_routes` with `hooks` returns it.
+   */
+  readonly hooks?: ReflectedHookReport
 }
 
 /** The `identityPreflight` slice of {@link CheckResult}. */
@@ -172,7 +184,7 @@ const MAX_IGNORE_GLOB_ALTERNATIVES = 64
  * The matcher supports the portable glob forms users expect here: `*`, `?`, `**`, character
  * classes, and brace alternatives.
  */
-function safeIgnoreGlobMatch(pattern: string, file: string): boolean {
+export function safeIgnoreGlobMatch(pattern: string, file: string): boolean {
   if (pattern.length === 0 || pattern.length > MAX_IGNORE_GLOB_LENGTH) return false
   for (const alternative of expandIgnoreGlobBraces(pattern)) {
     if (matchIgnoreGlobPath(alternative, file)) return true
@@ -356,6 +368,7 @@ export interface CheckTypecheckResult {
   readonly note?: string
   readonly output?: string
   readonly missingTypeScript?: boolean
+  readonly outsideProgram?: readonly string[]
 }
 
 export interface CheckAnalysisInput {
@@ -365,6 +378,19 @@ export interface CheckAnalysisInput {
 export interface CheckDiagnosticsOptions {
   readonly maxDiagnostics?: number
   readonly assurance?: CheckAssuranceContext
+}
+
+/**
+ * The prefixes of the mounts the assurance source declares `opaque` (a better-auth handler nifra
+ * cannot read): no typed client covers them, so a hand-written fetch into one is deliberate, exactly
+ * like a `nifra.check.json` `externalMounts` entry. A mount without that declaration stays checked.
+ */
+async function mountPrefixes(source: unknown): Promise<readonly string[]> {
+  if (source === undefined) return []
+  const { reflectMounts } = await import("@nifrajs/core/reflection")
+  return reflectMounts(source).flatMap((mount) =>
+    mount.opaque === undefined || mount.path === "/*" ? [] : [mount.path.slice(0, -"/*".length)],
+  )
 }
 
 export async function collectCheckDiagnostics(
@@ -422,6 +448,31 @@ export async function collectCheckDiagnostics(
       rulePacks: applicationRulePacks,
     },
   }
+  const configuredMounts = factsSeed.policies.checkConfig.externalMounts
+  const appMounts = (await mountPrefixes(loadedPolicy?.config?.source)).filter(
+    (prefix) => !configuredMounts.includes(prefix),
+  )
+  if (appMounts.length > 0) {
+    const externalMounts = [...configuredMounts, ...appMounts]
+    const files = factsSeed.source.files.map((file) => ({
+      file,
+      content: factsSeed.source.read(file) ?? "",
+    }))
+    factsSeed = {
+      ...factsSeed,
+      policies: {
+        ...factsSeed.policies,
+        checkConfig: { ...factsSeed.policies.checkConfig, externalMounts },
+      },
+      sourceFindings: {
+        ...factsSeed.sourceFindings,
+        fetches: files.flatMap(({ file, content }) => scanFetchText(file, content, externalMounts)),
+        streams: files.flatMap(({ file, content }) =>
+          scanStreamText(file, content, externalMounts),
+        ),
+      },
+    }
+  }
   const projectFacts = freezeProjectFacts(factsSeed)
   const ruleContext = {
     root: cwd,
@@ -433,9 +484,11 @@ export async function collectCheckDiagnostics(
   }
 
   const builtInRules = [
+    retiredLayoutRule,
     ...legacyRules,
     ...securityRules,
     ...routeRules,
+    contractVisibilityRule,
     ...pageRules,
     ...zoneRules,
     ...dataGuardRules,
@@ -514,7 +567,7 @@ export async function collectCheckDiagnostics(
     if (knownLegacyCodes.has(item.code)) continue
     compatibilityRows.push({
       rule: item.code,
-      severity: item.severity === "error" ? "error" : "warning",
+      severity: item.severity === "warn" ? "warning" : item.severity,
       code: item.code,
       ...(item.file === undefined ? {} : { file: item.file }),
       ...(item.line === undefined ? {} : { line: item.line }),
@@ -583,17 +636,27 @@ export async function collectCheckDiagnostics(
     shown.length < total ? shown.length + nonLegacyStructuredCount : finalStructured.length
 
   const doctor = projectFacts.packages.doctor
+  const outsideProgram = projectFacts.check.typecheck.outsideProgram?.length ?? 0
   const knownGaps = projectFacts.policies.capability?.report.gaps ?? []
+  const hookSource = projectFacts.policies.assurance?.config?.source
+  const hooks =
+    hookSource === undefined || opts.maxDiagnostics !== undefined
+      ? undefined
+      : (await import("@nifrajs/core/reflection")).reflectHooks(hookSource)
   const result: CheckResult = {
     ok: !finalDiagnostics.some((value) => value.severity === "error"),
-    typecheck: projectFacts.check.typecheck.ran
-      ? projectFacts.check.typecheck.ok
+    typecheck: !projectFacts.check.typecheck.ran
+      ? "skipped"
+      : projectFacts.check.typecheck.ok && outsideProgram === 0
         ? "pass"
-        : "fail"
-      : "skipped",
+        : "fail",
     ...(!projectFacts.check.typecheck.ran && projectFacts.check.typecheck.note !== undefined
       ? { typecheckNote: projectFacts.check.typecheck.note }
-      : {}),
+      : outsideProgram > 0
+        ? {
+            typecheckNote: `${outsideProgram} file(s) in zone folders are outside tsc's program, so the typecheck never read them`,
+          }
+        : {}),
     diagnostics: shown,
     ...(projectFacts.pipeline !== undefined ? { pipeline: projectFacts.pipeline } : {}),
     ...(doctor.ran
@@ -610,6 +673,7 @@ export async function collectCheckDiagnostics(
       ? {}
       : { externalMounts: checkConfig.externalMounts }),
     ...(knownGaps.length === 0 ? {} : { knownGaps }),
+    ...(hooks === undefined ? {} : { hooks }),
     ...(Object.keys(checkConfig.rules).length === 0 ? {} : { ruleOverrides: checkConfig.rules }),
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }

@@ -1,5 +1,32 @@
 # @nifrajs/node
 
+## 5.0.0
+
+### Major Changes
+
+- 4064f36: A `Response` a handler or hook returns or throws gets the request's `c.set.headers` it does not already carry, as well as its queued cookies, on every lane. A guard's `cache-control: no-store` now reaches a handler-built `Response`. The `Response`'s own headers win. `content-type`, `content-length`, `content-encoding`, `content-range` and `transfer-encoding` come from it alone, and `c.set.status` does not change its status. A `Response` that answers many requests is copied first, so one request's headers never reach another. A 101 upgrade and `Response.error()` take no headers. Mounted apps and `onRequest` responses are unchanged.
+
+### Minor Changes
+
+- de2cc1d: The Bun and Node servers that `buildTarget` generates cache only the client build's content-hashed outputs as immutable. A file copied from `public/` into `/assets/` now gets the one-day asset policy, so the browser revalidates it after a deploy. `servePublicDir` takes a `hashedFiles` set, and `serve`'s `static` mount takes `hashedFiles`, so a build manifest's `assets` list can decide which files are immutable. Without the list, both keep their prefix behavior.
+
+### Patch Changes
+
+- 077657f: `server({ gracefulSignals: { drainMs } })`, and `serve(app, { signals: { drainMs } })` on Node and Deno, set how long in-flight requests get to finish when SIGTERM or SIGINT stops the server before the stop forces them closed. `true` keeps the 10 second default. `nifra doctor` counts the object form as a graceful lifecycle.
+- 5b22f4d: On Node, a hook that throws past `app.fetch` (an `onRequest` hook that reads `new Request(req)`, a mount handler that throws) used to answer `500` with nothing logged anywhere. The error now goes through the app's own `logger`, as Bun's `listen()` logs it, and the README says to copy a hook's request with `req.clone()`.
+- 85e30d0: `serve()` accepts a `Host` name with an underscore, such as a container service name (`api_gateway:3000`). It used to answer every such request 400. The same names are accepted in `allowedHosts` and `canonicalHost`.
+- f2c7943: `stop()` closes open WebSockets with code 1001 and terminates any still open when `drainMs` runs out. Before, an upgraded socket kept serving messages after `stop()` returned. An upgrade still resolving when `stop()` runs is terminated instead of opened.
+- 146dbb9: On Node, a response the runtime refuses to write (a header value carrying CR/LF set through `status(...)` or `c.set.headers`) answered `500` with nothing logged. The error now goes through the app's own `logger`, as it does on Bun.
+- e137d4a: A WebSocket on the Node adapter gets the `wsMaxPayloadBytes` of the app or mounted child that accepted it. Before, the first upgrade's cap applied to every later socket, so a child with a smaller cap could receive larger messages, or a larger cap could be cut short, depending on which child a client reached first. A cap of `0` now refuses every non-empty message with close code `1009`, as on Bun; before, `0` meant no limit.
+- 7a165de: A Response returned to more than one request no longer carries one request's headers to another. A Response without a body (a module-level `new Response(null, { status: 204 })`, a kept redirect) can be sent any number of times, so the cookies a handler queues with `c.set.cookie`, the app's `responseHeaders`, and the headers written by `onResponse` hooks, response observers and response middleware go on a copy made for the request; the Response the handler returned stays as it was built. A Response with a body can be sent once: returning it again answers `500` with `{"ok":false,"error":"internal_error"}` and none of the headers written for the earlier request. On `@nifrajs/node`, a response whose body cannot be written is answered with a `500` that carries none of the headers set for it.
+
+  `writableResponse(response, request?)`, exported from `@nifrajs/core/server`, returns the Response a request may write headers on: the response itself when it has a body and writable headers, otherwise a copy. Pass the request and a copy already made for it is reused by its later writers. `toResponse`, exported from `@nifrajs/core/edge-kit`, takes the same optional last argument: the copies and body-less responses it builds are then reused by that request's later writers instead of being copied again. A Response the handler returned is never treated as the request's own.
+
+  `renderResult(result)`, exported from `@nifrajs/core/edge-kit`, renders a framework `ResponseResult` exactly as `toResponse` does without taking a handler's `Response`. `@nifrajs/edge` renders its rejections with it; responses are unchanged and the bundle is smaller.
+
+- bf6eeb0: Static files, `public/` files and local image sources refuse a resolved path when any directory along it became a symlink between the containment check and the open. On macOS the open itself refuses such a path; on Linux the opened descriptor's path is checked; elsewhere the opened file must still be the one at the checked path. Before, only a symlink in the last component was refused. A refused `public/` file falls through like a missing one.
+- 5a3c27a: On platforms other than macOS and Linux, Windows included, the check that a static, `public/` or local image file is still the file at its resolved path now runs its steps one after another and compares file identities exactly, so a single directory swap during the open cannot pass it. A race-free check does not exist there, because no file API can open a path without following a link in a middle directory; the `@nifrajs/node` README states that a tree a concurrent local writer can change is outside the guarantee on those platforms.
+
 ## 4.0.2
 
 ## 4.0.1

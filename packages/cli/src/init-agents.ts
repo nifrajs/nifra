@@ -9,8 +9,8 @@
  *                                   `## Project structure` section, appended when missing (or a minimal
  *                                   file if none exists)
  *
- * The generators are imported from `create-nifra/agent-files` - the SAME source of truth `create-nifra`
- * uses at scaffold time - so a retrofitted app and a freshly scaffolded one get byte-identical configs.
+ * The generators come from `./agent-files.ts`, a byte-identical copy of the module `create-nifra` uses at
+ * scaffold time, so a retrofitted app and a freshly scaffolded one get byte-identical configs.
  *
  * Safety: this writes into the user's existing tree, so it NEVER silently clobbers a file they may have
  * customized. By default an existing `.mcp.json` / `CLAUDE.md` / `.cursor/mcp.json` is SKIPPED with a
@@ -44,7 +44,7 @@ import {
   MCP_SERVER_COMMAND,
   mcpJson,
   STRUCTURE_HEADING,
-} from "create-nifra/agent-files"
+} from "./agent-files.ts"
 import { installedNifraVersion, resolveRootState } from "./mcp-root.ts"
 
 /** What happened to one file during the retrofit, for the printed report + the `--json` shape. */
@@ -121,13 +121,17 @@ async function assertSafeParents(cwd: string, abs: string): Promise<void> {
   }
 }
 
-/** Refuse to write anything that is not a plain absent-or-regular file: a symlink here would
- * redirect the write, and a directory or device node would make it fail in a confusing way. */
-async function assertRegularTarget(abs: string, rel: string): Promise<void> {
+/** Never write anything that is not a plain absent-or-regular file: a symlink here would redirect
+ * the write, and a directory or device node would make it fail in a confusing way. Such a file is
+ * reported and left alone rather than stopping the run - a symlinked CLAUDE.md is a common alias
+ * for AGENTS.md. */
+async function nonRegularTarget(
+  abs: string,
+  rel: string,
+): Promise<InitAgentsFileResult | undefined> {
   const stat = await lstatOrMissing(abs)
-  if (stat !== undefined && (stat.isSymbolicLink() || !stat.isFile())) {
-    throw new Error(`[nifra] refusing to write non-regular file: ${rel}`)
-  }
+  if (stat === undefined || (stat.isFile() && !stat.isSymbolicLink())) return undefined
+  return { path: rel, action: "skipped", note: "not a regular file - left alone" }
 }
 
 /**
@@ -142,7 +146,8 @@ async function writeOwned(
 ): Promise<InitAgentsFileResult> {
   const abs = safeJoin(cwd, rel)
   await assertSafeParents(cwd, abs)
-  await assertRegularTarget(abs, rel)
+  const irregular = await nonRegularTarget(abs, rel)
+  if (irregular !== undefined) return irregular
   if (!force && (await fileExists(abs))) {
     return { path: rel, action: "skipped", note: "exists - pass --force to overwrite" }
   }
@@ -180,7 +185,8 @@ async function atomicWrite(
 async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
   const abs = safeJoin(cwd, AGENTS_MD_PATH)
   await assertSafeParents(cwd, abs)
-  await assertRegularTarget(abs, AGENTS_MD_PATH)
+  const irregular = await nonRegularTarget(abs, AGENTS_MD_PATH)
+  if (irregular !== undefined) return irregular
   const sections = [{ heading: "## MCP server", text: agentsMcpSection() }]
   if (await isDirectory(safeJoin(cwd, "routes"))) {
     sections.push({ heading: STRUCTURE_HEADING, text: agentsStructureSection() })

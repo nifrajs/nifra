@@ -1,3 +1,5 @@
+import { emitRequestErrorLog } from "@nifrajs/core/edge-kit"
+import { jsonLogger } from "@nifrajs/core/logger"
 import {
   type BackendEvidenceProvider,
   type BackendMount,
@@ -16,12 +18,15 @@ import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
-import { PRERENDERED_LIST_PATH } from "../router.ts"
+import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
+import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
+import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 export interface CreateWebAppOptions<Env = unknown> {
+  readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
   /** URL of the built client entry (module script) injected into every page. */
@@ -78,9 +83,10 @@ export interface CreateWebAppOptions<Env = unknown> {
    *
    * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and
    * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every
-   * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards binds
-   * them to nothing, silently. `requestId()` is exactly that case: it is a `derive`, so applied late
-   * it leaves every page without `c.requestId`. Route assurance evidence is order-scoped the same
+   * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards would
+   * bind them to no page, and outside production it throws (`HOOK_AFTER_PAGES`). `requestId()` is
+   * exactly that case: it is a `derive`, so applied late it would leave every page without
+   * `c.requestId`. A `group()` is its own scope and stays allowed. Route assurance evidence is order-scoped the same
    * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`
    * even though it does still set it.
    *
@@ -101,10 +107,11 @@ export interface CreateWebAppOptions<Env = unknown> {
    * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.
    *
    * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend
-   * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at
-   * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
-   * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`
-   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it.
+   * mount interface from `@nifrajs/core/mount`; given an {@link apiPrefix}, `createWebApp` also serves
+   * that backend over HTTP there: a request whose pathname starts with the prefix is dispatched before
+   * page routing with the same `env`/`waitUntil` platform context, and the backend's `Response` is
+   * returned untouched. The mount runs in `nifra dev` too. Without `apiPrefix` the backend is
+   * loader-only.
    *
    * **Request-scoped loader calls.** While a page renders, its loaders, actions and boundaries get a
    * `ctx.api` bound to that request's platform identity: a backend handler reached through it sees the
@@ -114,12 +121,12 @@ export interface CreateWebAppOptions<Env = unknown> {
    * does not lose it. Headers do NOT travel: the page request's `cookie` and `authorization` are never
    * copied, so a loader call is anonymous unless the loader passes headers on the call itself. */
   readonly api?: unknown
-  /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
+  /** HTTP path prefix the {@link api} backend is mounted at, such as `"/api"`. A request whose
    * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
    * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
-   * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
-   * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
-   * is also a no-op when `api` does not expose the symbol mount.
+   * sync", …)`), matching the in-process `inProcessClient` call sites. Unset or `""`, nothing is
+   * mounted: the app serves pages only and `api` stays a loader-only `ctx.api`. Mounting is also a
+   * no-op when `api` does not expose the symbol mount.
    *
    * A page file under the prefix (`routes/api/report.tsx`) could never render - the backend answers
    * first and its 404 is final - so `createWebApp` throws, naming the file. The same holds for every
@@ -146,7 +153,8 @@ export interface CreateWebAppOptions<Env = unknown> {
    * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend
    * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:
    * leave it off to pass the full path through. `opaque` states why a mount whose routes nifra cannot
-   * read (better-auth's handler) is outside assurance; it is then listed as a known gap.
+   * read (better-auth's handler) is outside assurance; it is then listed as a known gap, with any
+   * routes it declares reported as declared.
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string
@@ -154,7 +162,7 @@ export interface CreateWebAppOptions<Env = unknown> {
     readonly stripPrefix?: boolean
     readonly priority?: number
     readonly fallbackOn?: 404
-    readonly opaque?: string
+    readonly opaque?: MountOptions<Env>["opaque"]
   }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
@@ -204,8 +212,9 @@ export interface CreateWebAppOptions<Env = unknown> {
   readonly staticBoundaryCache?: import("../boundary.ts").StaticBoundaryCache
   /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for
    * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`
-   * boundary renders / a soft-nav 500 / a rethrow - so it sees errors that the boundary would
-   * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break
+   * boundary renders / a soft-nav 500 / a rethrow. A failure a boundary answers is also written to the
+   * server's `logger` (under its `errorLogDetail`) whether or not this is set, exactly as an unhandled
+   * error is. Observation only; its own throws are swallowed so a faulty reporter can't break
    * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover
    * pre-request work.) */
   readonly onLoaderError?: (
@@ -258,10 +267,14 @@ function backendMountOf<Env>(api: unknown): MountableApp<Env> | undefined {
   return mount
 }
 
-function evidenceProviderOf(value: unknown): BackendEvidenceProvider | undefined {
+/** A provider a web app composes: it also takes the chain of web providers above it, which a
+ * provider that composes nothing ignores. */
+type ComposedEvidenceProvider = (ancestry?: EvidenceAncestry) => ReturnType<BackendEvidenceProvider>
+
+function evidenceProviderOf(value: unknown): ComposedEvidenceProvider | undefined {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
   const provider = (value as { [NIFRA_BACKEND_EVIDENCE]?: unknown })[NIFRA_BACKEND_EVIDENCE]
-  return typeof provider === "function" ? (provider as BackendEvidenceProvider) : undefined
+  return typeof provider === "function" ? (provider as ComposedEvidenceProvider) : undefined
 }
 
 function mountPathPrefix(path: string): string {
@@ -272,6 +285,15 @@ function mountPathPrefix(path: string): string {
   let end = withoutWildcard.length
   while (end > 0 && withoutWildcard.charCodeAt(end - 1) === 47 /* '/' */) end--
   return withoutWildcard.slice(0, end)
+}
+
+/** The server's own error log, for page failures an `_error` boundary answers before it sees them. */
+function boundaryErrorLog(
+  options: ServerOptions | undefined,
+): (error: unknown, request: Request) => void {
+  const logger = options?.logger ?? jsonLogger()
+  const detail = options?.errorLogDetail ?? "full"
+  return (error, request) => emitRequestErrorLog(logger, detail, error, { req: request })
 }
 
 /**
@@ -306,6 +328,38 @@ export function createWebApp<Env = unknown>(
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
   options.use?.(app)
+  if (options.serverComponents !== undefined) {
+    const runtime = options.serverComponents
+    const match = createMatcher(
+      manifest.routes
+        .filter((route) => runtime.owns(route.id))
+        .map((route) => ({ routeId: route.id, pattern: route.pattern })),
+    )
+    const privateRoute = (request: Request): boolean =>
+      request.headers.has("x-nifra-component") || match(new URL(request.url).pathname) !== undefined
+    Object.defineProperty(app, Symbol.for("nifra.web.private-route"), { value: privateRoute })
+    app.onResponse((response, request) => {
+      if (!privateRoute(request)) return response
+      const headers = new Headers(response.headers)
+      headers.set("cache-control", "private, no-store")
+      const vary = new Set(
+        (headers.get("vary") ?? "")
+          .split(",")
+          .map((name) => name.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      vary.add("x-nifra-component")
+      vary.add("x-nifra-data")
+      headers.set("vary", [...vary].join(", "))
+      headers.delete("x-nifra-isr-revalidate")
+      headers.delete("x-nifra-isr-tags")
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      })
+    })
+  }
   // A resolver created by `createNonceResolver({ header })` carries a paired response hook. Register it
   // after caller middleware so its request-specific CSP value is the last default applied to a page.
   const nonceResponse = options.nonce?.onResponse
@@ -322,15 +376,15 @@ export function createWebApp<Env = unknown>(
       cacheChannel.enabled = true
     },
   })
-  // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
+  // Mount the in-process backend over HTTP at `apiPrefix`, when one is given, BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
   // The mount handles every HTTP method and preserves backend 404 responses instead of letting the
   // page catch-all render them. We dispatch the same `Request` object (its body unread), so
   // streamed/large bodies pass through untouched. The backend defines full prefixed paths
-  // (`server().post("/api/sync", …)`) unless `apiStrip` is enabled. `apiPrefix: ""` opts out;
-  // a non-mountable `api` remains loader-only and pages-only apps keep the no-mount fast path.
-  const apiPrefix = options.apiPrefix ?? "/api"
+  // (`server().post("/api/sync", …)`) unless `apiStrip` is enabled. Without a prefix, or with a
+  // non-mountable `api`, the backend is loader-only and pages-only apps keep the no-mount fast path.
+  const apiPrefix = options.apiPrefix ?? ""
   const apiStrip = options.apiStrip === true
   const mountedApi = backendMountOf<Env>(api)
   // Longest path first, so a more specific mount (`/api/auth`) is tried before a broader one (`/api`)
@@ -361,6 +415,22 @@ export function createWebApp<Env = unknown>(
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
   const pageExecutor = createPageRequestExecutor<Env>({
+    ...(options.serverComponents === undefined
+      ? {}
+      : { serverComponents: options.serverComponents }),
+    ...(options.serverComponents === undefined
+      ? {}
+      : {
+          rerenderOwnerGET: async (
+            request: Request,
+            context: import("./page-execution.ts").PageRouteContext<Env>,
+          ) =>
+            app.fetch(request, {
+              env: context.env,
+              ...(context.waitUntil === undefined ? {} : { waitUntil: context.waitUntil }),
+              ...(context.clientIp === undefined ? {} : { clientIp: context.clientIp }),
+            }),
+        }),
     adapter,
     manifest,
     clientEntry,
@@ -384,18 +454,30 @@ export function createWebApp<Env = unknown>(
       ? {}
       : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
+    logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
   })
 
   for (const route of manifest.routes) {
-    app.register("GET", route.pattern, undefined, pageExecutor.get(route))
-    app.register("POST", route.pattern, undefined, pageExecutor.post(route))
+    const pattern = requestPattern(route.pattern)
+    app.register(
+      "GET",
+      pattern,
+      options.serverComponents?.owns(route.id)
+        ? { capabilities: options.serverComponents.capabilities(route.id) }
+        : undefined,
+      pageExecutor.get(route),
+    )
+    app.register("POST", pattern, undefined, pageExecutor.post(route))
   }
   // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
   // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An
   // app route at either path takes precedence, and each text is built once per app.
   if (options.llmsTxt !== false) {
-    const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
+    const llmsOptions = {
+      includeLocalGuidelines: options.publishLocalGuidelines === true,
+      apiPathPrefix: apiStrip ? mountPathPrefix(apiPrefix) : "",
+    }
     const publicApi = mountedApi !== undefined && apiPrefix !== "" ? api : undefined
     for (const [path, full] of [
       ["/llms.txt", false],
@@ -439,13 +521,9 @@ export function createWebApp<Env = unknown>(
   // absent.
   app.register("GET", "/*", undefined, pageExecutor.fallback)
 
-  let evidenceComposing = false
-  const evidenceProvider: BackendEvidenceProvider = async () => {
-    if (evidenceComposing) {
-      throw new Error("[nifra/web] cyclic composed assurance evidence mount")
-    }
-    evidenceComposing = true
-    try {
+  const evidenceProvider: ComposedEvidenceProvider = async (passed) => {
+    const { traverseEvidence } = await import("./evidence-traversal.ts")
+    return traverseEvidence(evidenceProvider, passed, async (ancestry) => {
       const { composeProjectEvidence, snapshotProjectEvidence } = await import(
         "@nifrajs/core/evidence"
       )
@@ -464,7 +542,7 @@ export function createWebApp<Env = unknown>(
           )
         }
         parts.push({
-          evidence: await provider.call(mount.app),
+          evidence: await provider.call(mount.app, ancestry),
           ...(mount.stripPrefix === true ? { pathPrefix: mountPathPrefix(mount.path) } : {}),
         })
       }
@@ -476,14 +554,13 @@ export function createWebApp<Env = unknown>(
           )
         }
         parts.push({
-          evidence: await provider.call(api),
+          evidence: await provider.call(api, ancestry),
+          // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: Evidence paths acquire a prefix only when the mounted backend strips it.
           ...(apiStrip ? { pathPrefix: mountPathPrefix(apiPrefix) } : {}),
         })
       }
       return composeProjectEvidence(parts)
-    } finally {
-      evidenceComposing = false
-    }
+    })
   }
   Object.defineProperty(app, NIFRA_BACKEND_EVIDENCE, {
     configurable: false,
@@ -491,6 +568,8 @@ export function createWebApp<Env = unknown>(
     value: evidenceProvider,
     writable: false,
   })
+  // Core's dev-time hook audit reads this: an order-scoped hook added from here on skips every page.
+  Object.defineProperty(app, Symbol.for("nifra.web.pagesDeclared"), { value: true })
 
   return app
 }

@@ -43,13 +43,24 @@ import { notFound } from "@nifrajs/web"
 import type { Route } from "./+types/[id]"
 
 // What the page receives - and the ONLY fields that leave the server. A field the loader returns
-// but the schema does not declare is dropped before rendering.
+// but the schema does not declare is dropped before rendering; in development the console names
+// each dropped field, so a missing declaration never shows up as a silently blank page.
 export const loaderOutput = t.object({ name: t.string(), avatarUrl: t.string() })
 
 export async function loader({ params, api }: Route.LoaderArgs) {
   const res = await api.users({ id: params.id }).get()
   if (!res.ok) throw notFound()
   return res.data
+}`
+
+const ZONES_SETTING = `{
+  "name": "my-app",
+  "nifra": {
+    "zones": {
+      "packages": { "@shop/*": "library", "@shop/db": "backend" },
+      "backend": ["migrations"]
+    }
+  }
 }`
 
 const REFUSED = `[nifra/web] the browser build reached code that may not ship to a browser:
@@ -140,6 +151,43 @@ export default function Structure() {
         <code>{'"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }'}</code>.
         A file in no zone is a build error, so nothing is ever classified by accident.
       </p>
+      <p>
+        The app's own <code>package.json</code> can set sides too, so a folder that has to stay
+        where it is, or a family of workspace packages, needs no edit of its own:
+      </p>
+      <CodeBlock code={ZONES_SETTING} lang="json" />
+      <p>
+        <code>packages</code> gives a side to a package that does not declare one, by exact name or
+        by a prefix ending in <code>*</code>; a package's own declaration always wins.{" "}
+        <code>backend</code>, <code>frontend</code> and <code>shared</code> list app folders that
+        count as that zone folder. Builds, dev servers, <code>nifra check</code> and the editor
+        plugin all read this setting.
+      </p>
+      <p>
+        A project that serves no pages has no browser, so the zones do not apply to it. Declare that
+        in its <code>package.json</code> with <code>{'"nifra": { "kind": "api" }'}</code>:{" "}
+        <code>nifra check</code> then skips the zone checks and the server-only import check there,
+        and treats every file as server code. It is read from the nearest <code>package.json</code>{" "}
+        and only takes values <code>"api"</code> and <code>"web"</code>. A directory with web config
+        (<code>nifra.config.ts</code> exporting <code>adapter</code>, or{" "}
+        <code>backend/framework.ts</code>) keeps its zone checks under it, and{" "}
+        <code>nifra check</code> reports the clash (NF-C037); builds and dev servers never read it.
+      </p>
+      <p>
+        A directory with <code>backend/app.ts</code> and no web config is read as an API-only app
+        whether or not it declares the kind: <code>nifra routes</code>, <code>nifra context</code>,{" "}
+        <code>nifra openapi</code> and <code>nifra mcp</code> load <code>backend/app.ts</code> alone,
+        and the tools, resources and prompts its backend declares reach <code>nifra mcp</code>.
+      </p>
+      <p>
+        Those commands, the contract lock and the route lints see only what{" "}
+        <code>backend/app.ts</code> exports. An API whose app is built by a factory such as{" "}
+        <code>createApp(deps)</code>, with its real dependencies wired in another entry, exports the
+        same app from <code>backend/app.ts</code> built with stand-in dependencies, so every operation
+        is visible without a database or secrets; <code>nifra check</code> names an implemented
+        operation it does not serve (NF-C039). See{" "}
+        <a href="/docs/types-first#stub-entry">the stand-in entry</a>.
+      </p>
 
       <h2>A route is two files</h2>
       <p>
@@ -219,9 +267,29 @@ export default function Structure() {
       </ul>
       <p>
         The same rules run in <code>nifra dev</code> (a refused module is answered with a 403 before
-        its source is sent), in both bundlers, for every framework, and in <code>nifra check</code>.
-        An app on the older layout moves with <code>nifra migrate layout</code>: a dry run that
-        reports every move, then <code>--write</code>.
+        its source is sent), in both bundlers, for every framework, and in <code>nifra check</code>,
+        which follows the imports the bundler follows: relative paths, tsconfig <code>paths</code>{" "}
+        and <code>baseUrl</code>, <code>package.json</code> <code>imports</code>, and the{" "}
+        <code>clientModule</code> the browser entry loads. An app on the older layout moves with <code>nifra migrate layout</code>: a dry run that
+        reports every move, then <code>--write</code>. It follows the same imports, rewrites them
+        and test-runner mocks (an alias through the same alias), moves the config's{" "}
+        <code>clientModule</code> and component pipeline entries with their modules, adds the zone
+        folders to tsconfig <code>include</code> and <code>.nifra/</code> to{" "}
+        <code>.gitignore</code>, and leaves data files and folders zoned in{" "}
+        <code>package.json</code> where they are. It reports what still needs a hand, such as an
+        alias with no target that covers a moved file, or a specifier that names nothing installed.
+      </p>
+      <p>
+        An API-only app, one that declares <code>{'"nifra": { "kind": "api" }'}</code> or has no web
+        config, no <code>routes/</code> and a <code>backend.ts</code> that exports{" "}
+        <code>backend</code>, migrates as one: only{" "}
+        <code>backend.ts</code> moves, to <code>backend/app.ts</code>, with the imports from it and
+        to it. Nothing is split or zoned. The migration adds <code>backend</code> to tsconfig{" "}
+        <code>include</code>, <code>.nifra/</code> to <code>.gitignore</code>, and the declaration
+        to <code>package.json</code> when it is missing. Web config without <code>routes/</code>{" "}
+        could be either kind of app, so the migration stops and asks which. Until an app moves,{" "}
+        <code>nifra check</code> fails with NF-C038 on its root <code>backend.ts</code> or{" "}
+        <code>framework.ts</code>, since no contract gate reads them there.
       </p>
     </div>
   )

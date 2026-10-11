@@ -106,7 +106,7 @@ export function assembleContext(
     seen.add(entry.item.id)
   }
 
-  const selected: NormalizedItem[] = []
+  let selected: NormalizedItem[] = []
   for (const entry of normalized.filter((candidate) => candidate.item.required === true)) {
     const candidate = [...selected, entry]
     const tokens = count(render(candidate, separator), tokenCounter)
@@ -123,13 +123,14 @@ export function assembleContext(
       const recency = (right.item.recency ?? 0) - (left.item.recency ?? 0)
       return recency !== 0 ? recency : left.index - right.index
     })
+  // Each candidate is counted as it would be returned, in source order, because a custom counter
+  // may score the same items differently in another order.
   for (const entry of optional) {
-    const candidate = [...selected, entry]
+    const candidate = inSourceOrder(selected, entry)
     const tokens = count(render(candidate, separator), tokenCounter)
-    if (tokens <= budget.availableTokens) selected.push(entry)
+    if (tokens <= budget.availableTokens) selected = candidate
   }
 
-  selected.sort((left, right) => left.index - right.index)
   const outputItems = Object.freeze(selected.map((entry) => entry.item))
   const text = render(selected, separator)
   const includedIds = Object.freeze(outputItems.map((item) => item.id))
@@ -138,6 +139,7 @@ export function assembleContext(
     normalized.filter((entry) => !included.has(entry.item.id)).map((entry) => entry.item.id),
   )
   const tokens = count(text, tokenCounter)
+  if (tokens > budget.availableTokens) throw new ContextBudgetError(tokens, budget.availableTokens)
 
   return Object.freeze({
     version: 1 as const,
@@ -186,6 +188,14 @@ export async function collectContext<Input>(
 interface NormalizedItem {
   readonly index: number
   readonly item: ContextItem
+}
+
+function inSourceOrder(
+  entries: readonly NormalizedItem[],
+  entry: NormalizedItem,
+): NormalizedItem[] {
+  const at = entries.findIndex((existing) => existing.index > entry.index)
+  return at === -1 ? [...entries, entry] : [...entries.slice(0, at), entry, ...entries.slice(at)]
 }
 
 function normalizeItem(value: ContextItem, index: number): NormalizedItem {

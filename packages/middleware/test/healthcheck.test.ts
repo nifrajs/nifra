@@ -50,4 +50,13 @@ describe("healthcheck()", () => {
     expect((await app.fetch(new Request("http://x/livez"))).status).toBe(200)
     expect((await app.fetch(new Request("http://x/readyz"))).status).toBe(200)
   })
+
+  test("a second instance on other paths serves them too", async () => {
+    const app = server()
+      .use(healthcheck())
+      .use(healthcheck({ path: "/internal/health", readyPath: "/internal/ready" }))
+    expect((await app.fetch(new Request("http://x/health"))).status).toBe(200)
+    expect((await app.fetch(new Request("http://x/internal/health"))).status).toBe(200)
+    expect((await app.fetch(new Request("http://x/internal/ready"))).status).toBe(200)
+  })
 })

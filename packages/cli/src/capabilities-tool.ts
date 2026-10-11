@@ -18,7 +18,7 @@ import {
 } from "@nifrajs/core/capabilities"
 import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
-import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
+import { scanStaticRouteText, scanStaticSocketText, stripComments, walkSource } from "./check.ts"
 
 // Import and re-export clauses are spelled out (a default binding, then `* as ns` or a `{ … }` list)
 // rather than scanned lazily, which is quadratic on a long semicolon-free module.
@@ -200,7 +200,10 @@ function resolveLocalModule(
     const fromAbsolute = join(cwd, from)
     const resolved = Bun.resolveSync(specifier, dirname(fromAbsolute))
     const rel = relative(cwd, resolved).replaceAll("\\", "/")
-    if (rel.startsWith("../") || isAbsolute(rel)) return undefined
+    // Outside the app is still the app's code: a workspace package resolves through its node_modules
+    // link to its source beside the app (`../../packages/db`), and an installed package may be hoisted
+    // above it. Both are walked, as a package in the app's own node_modules is.
+    if (isAbsolute(rel)) return undefined
     if (!sources.has(rel) && existsSync(resolved)) {
       try {
         sources.set(rel, readFileSync(resolved, "utf8"))
@@ -338,7 +341,10 @@ export async function collectCapabilityProjectReport(
   const sources = await readSources(cwd)
   const automatic = new Map<string, Set<string>>()
   for (const [file, content] of sources) {
-    for (const route of scanStaticRouteText(file, content)) {
+    for (const route of [
+      ...scanStaticRouteText(file, content, undefined, sources),
+      ...scanStaticSocketText(file, content, undefined, sources),
+    ]) {
       // A path ending in optional params is reflected as one route per form it serves.
       for (const path of staticRouteForms(route.path)) {
         const modules = automatic.get(routeKey(route.method, path)) ?? new Set<string>()
@@ -703,6 +709,12 @@ export async function runCapabilityCheck(
     // Stated on every run, passing or not: a gap is the report's own boundary, not a failure.
     for (const gap of result.report.gaps ?? [])
       console.log(`• known gap, not analyzed: ${gap.path} - ${gap.reason}`)
+    for (const route of result.report.routes) {
+      if (route.analysis === "declared")
+        console.log(
+          `• declared by an opaque mount, not analyzed: ${route.method} ${route.path} [${route.declared.join(", ")}]`,
+        )
+    }
     for (const finding of result.report.findings) console.log(`✖ ${finding.message}`)
     for (const violation of result.violations)
       console.log(

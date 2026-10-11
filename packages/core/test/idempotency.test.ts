@@ -301,13 +301,20 @@ describe("effect-aware idempotency fallback", () => {
         config,
         post({ amount: 1 }, "ambiguous"),
         undefined,
-        {},
+        { around: [], program: {} },
         {},
         undefined,
         (r) => r,
         {
           maxBodyBytes: 1024,
-          async runLanes(request) {
+          async runLanes(request, _platform, entry) {
+            if (
+              typeof entry === "object" &&
+              entry !== null &&
+              "handler" in entry &&
+              typeof entry.handler === "function"
+            )
+              return entry.handler()
             runs++
             markBeaconEffectBegan({ req: request })
             throw new Error("connection dropped after send")
@@ -319,6 +326,26 @@ describe("effect-aware idempotency fallback", () => {
     expect(replay.status).toBe(500)
     expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(runs).toBe(1)
+  })
+
+  test("buffered Request construction failure cannot reserve a key", async () => {
+    const store = new MemoryIdempotencyStore()
+    const { runtime, config } = configFor(store)
+    const request = post({ amount: 1 }, "invalid-signal")
+    // Model an exceptional request source without replacing the global Request constructor.
+    Object.defineProperty(request, "signal", { value: {} })
+    let runs = 0
+    await expect(
+      runtime.run(config, request, undefined, {}, {}, undefined, (response) => response, {
+        maxBodyBytes: 1024,
+        async runLanes() {
+          runs++
+          return new Response()
+        },
+      }),
+    ).rejects.toThrow("signal")
+    expect(store.size).toBe(0)
+    expect(runs).toBe(0)
   })
 
   test("request-local evidence distinguishes executing, committed, and ambiguous states", () => {
@@ -701,6 +728,36 @@ describe("server({ idempotency }) - request path", () => {
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
     expect(await (await app.fetch(request("b"))).json()).toEqual({ run: 2 })
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
+  })
+
+  test("a namespace resolver sees the method, URL and headers but no body", async () => {
+    let view: Record<string, unknown> = {}
+    const app = server({ maxBodyBytes: 1024 })
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: {
+            scope: "request",
+            namespace: (request) => {
+              view = {
+                method: request.method,
+                url: request.url,
+                body: Reflect.get(request, "body"),
+                text: Reflect.get(request, "text"),
+              }
+              return "tenant:a"
+            },
+          },
+        },
+        async (c) => ({ body: await c.req.json() }),
+      )
+    const response = await app.fetch(post({ amount: 1 }, "key-view"))
+    expect(await response.json()).toEqual({ body: { amount: 1 } })
+    expect(view.body).toBeUndefined()
+    expect(view.text).toBeUndefined()
+    expect(view.method).toBe("POST")
+    expect(view.url).toBe("http://test/pay")
   })
 
   test("a namespace resolver does not hold up the 413 for a length-less body over the cap", async () => {

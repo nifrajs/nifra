@@ -7,6 +7,14 @@
  * responses are validated off the hot path as part of the same laboratory run.
  */
 
+import type {
+  ContractAuthContext,
+  ContractCaseContext,
+  ContractCaseKind,
+  ContractExpectedResponse,
+  ContractTarget,
+  ContractWitness,
+} from "@nifrajs/core/assurance"
 import {
   compileRoutePattern,
   type ParamConstraint,
@@ -15,10 +23,15 @@ import {
 import {
   type JsonSchema,
   type ReflectedRoute,
+  reflectMounts,
   reflectRoutes,
   type SchemaReflection,
 } from "@nifrajs/core/reflection"
-import { autoReflectJsonSchema, generateMockValue } from "@nifrajs/mock"
+import {
+  autoReflectJsonSchema,
+  explainAutoReflectJsonSchema,
+  generateMockValue,
+} from "@nifrajs/mock"
 
 const DEFAULT_ORIGIN = "http://nifra.contract"
 const DEFAULT_SEED = 0x4e_49_46_52
@@ -26,12 +39,40 @@ const DEFAULT_MAX_MUTATIONS = 32
 const DEFAULT_MAX_SHRINK_ATTEMPTS = 12
 const DEFAULT_MAX_WITNESS_BYTES = 256 * 1024
 const NO_BODY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"])
-type HeaderSource = ConstructorParameters<typeof Headers>[0]
 
-type InputTarget = "body" | "query"
-export type ContractTarget = "body" | "query" | "response"
-export type ContractCaseKind = "input-rejection" | "response-conformance"
-export type ContractAuthContext = "authenticated" | "unauthenticated"
+type InputTarget = "headers" | "params" | "body" | "query"
+
+/** In the order a route validates them, so the first input that cannot resolve is the one named. */
+const INPUT_TARGETS: readonly InputTarget[] = ["headers", "params", "body", "query"]
+
+/**
+ * Header names the harness never invents or mutates: a credential belongs to the witness or
+ * `prepareRequest`, and the rest are owned by the fetch runtime.
+ */
+const CREDENTIAL_HEADER =
+  /^(?:authorization|proxy-authorization|cookie|x-api-key)$|-key$|token|secret|signature/
+const RUNTIME_HEADERS: ReadonlySet<string> = new Set([
+  "connection",
+  "content-length",
+  "expect",
+  "host",
+  "keep-alive",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+])
+const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
+export type {
+  ContractAuthContext,
+  ContractCaseContext,
+  ContractCaseKind,
+  ContractExpectedResponse,
+  ContractTarget,
+  ContractWitness,
+}
 
 /** Anything that exposes reflected routes and a Web-standard in-process fetch handler. */
 export interface ContractTestApp {
@@ -43,38 +84,6 @@ export interface ContractTestApp {
 export interface ContractRuntime {
   readonly name: string
   fetch(request: Request): Response | Promise<Response>
-}
-
-/** A known-good request. Missing body/query values are synthesized from inspectable JSON Schema. */
-export interface ContractWitness {
-  readonly params?: Readonly<Record<string, string>>
-  readonly query?: unknown
-  readonly body?: unknown
-  readonly headers?: HeaderSource
-  /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */
-  readonly auth?: ContractAuthContext
-  /** Expected response for a guard/error witness. Omit for the normal success witness. */
-  readonly expected?: ContractExpectedResponse
-}
-
-export interface ContractExpectedResponse {
-  readonly status: number
-  readonly contentType?: "json" | "text"
-  readonly headers?: Readonly<Record<string, string>>
-  /** When present, the decoded body is compared byte-structure-wise to this value. */
-  readonly body?: unknown
-}
-
-/** Stable context passed to request/rejection hooks. It contains no request payloads or secrets. */
-export interface ContractCaseContext {
-  readonly seed: number
-  readonly caseId: string
-  readonly route: ReflectedRoute
-  readonly runtime: string
-  readonly kind: ContractCaseKind
-  readonly target: ContractTarget
-  readonly auth?: ContractAuthContext
-  readonly mutation?: string
 }
 
 export interface AdversarialContractOptions {
@@ -124,10 +133,10 @@ export interface AdversarialContractOptions {
    * generation for that route. Fail-safe: throwing or returning undefined leaves the schema opaque
    * (NO_WITNESS, as today). Ready-made for zod: `import { zodJsonSchema } from "@nifrajs/testing/zod"`.
    *
-   * Defaults to `@nifrajs/mock`'s `autoReflectJsonSchema`, which recognizes zod by its Standard Schema
-   * vendor tag and converts via `z.toJSONSchema` when zod is installed - so zod routes get witnesses and
-   * constraint-driven mutations with no wiring. Pass a hook to override, or `() => undefined` to force
-   * every opaque schema to stay opaque.
+   * Defaults to `@nifrajs/mock`'s `autoReflectJsonSchema`, which reads the schema's own Standard JSON
+   * Schema converter (`~standard.jsonSchema`, zod 4.2+ and other libraries) and, for an older zod,
+   * converts via `z.toJSONSchema` - so these routes get witnesses and constraint-driven mutations with
+   * no wiring. Pass a hook to override, or `() => undefined` to force every opaque schema to stay opaque.
    */
   readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }
@@ -233,10 +242,10 @@ interface RouteLaboratory {
   readonly route: ReflectedRoute
   readonly routeKey: string
   readonly witness: ContractWitness
-  readonly body?: ResolvedInput
-  readonly query?: ResolvedInput
-  readonly bodyMutations: readonly Mutation[]
-  readonly queryMutations: readonly Mutation[]
+  readonly inputs: Partial<Record<InputTarget, ResolvedInput>>
+  readonly mutations: Readonly<Record<InputTarget, readonly Mutation[]>>
+  /** Every declared input, cookies included, has a value its validator accepts. */
+  readonly resolved: boolean
 }
 
 const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
@@ -482,19 +491,32 @@ async function rejectedByValidator(reflection: SchemaReflection, value: unknown)
   return result.issues !== undefined
 }
 
+/**
+ * Validator-proven hostile values for one input. A header mutation touches only a field the harness
+ * owns, and an extra header proves nothing (servers tolerate them). `constrained` reports whether any
+ * transportable candidate came from a schema constraint rather than a bare type swap: a params or
+ * headers validator that accepts every type swap may simply accept any text.
+ */
 async function provenMutations(
   input: ResolvedInput,
   target: InputTarget,
   maxMutations: number,
-): Promise<Mutation[]> {
+  paramNames: readonly string[],
+): Promise<{ readonly mutations: Mutation[]; readonly constrained: boolean }> {
   const candidates = candidateMutations(input.value, input.reflection.jsonSchema, maxMutations)
   const mutations: Mutation[] = []
   const seen = new Set<string>()
+  let constrained = false
   for (const candidate of candidates) {
+    if (target === "headers") {
+      const name = candidate.path[0]
+      if (typeof name !== "string" || !harnessOwnsHeader(name)) continue
+      if (candidate.reason === "additional-property") continue
+    }
     let serialized: string
     let value: unknown
     try {
-      value = target === "query" ? queryInput(candidate.value) : jsonClone(candidate.value)
+      value = transported(target, candidate.value, paramNames)
       if (value === undefined) continue
       serialized = JSON.stringify(value)
     } catch {
@@ -502,6 +524,7 @@ async function provenMutations(
     }
     if (seen.has(serialized)) continue
     seen.add(serialized)
+    if (!candidate.reason.startsWith("wrong-type-")) constrained = true
     try {
       if (await rejectedByValidator(input.reflection, value))
         mutations.push({ ...candidate, value })
@@ -511,7 +534,107 @@ async function provenMutations(
     }
     if (mutations.length >= maxMutations) break
   }
-  return mutations
+  return { mutations, constrained }
+}
+
+/** The header names the harness may set or mutate. */
+const harnessOwnsHeader = (name: string): boolean => {
+  const lower = name.toLowerCase()
+  return !CREDENTIAL_HEADER.test(lower) && !RUNTIME_HEADERS.has(lower)
+}
+
+const scalarText = (value: unknown): string | undefined =>
+  typeof value === "string"
+    ? value
+    : (typeof value === "number" && Number.isFinite(value)) || typeof value === "boolean"
+      ? String(value)
+      : undefined
+
+/** Path params as the router hands them over: exactly the route's names, each a non-empty segment
+ * text that survives URL normalization (no `.` or `..` part). Anything else cannot be sent. */
+const paramsInput = (
+  value: unknown,
+  names: readonly string[],
+): Record<string, string> | undefined => {
+  const record = recordOf(value)
+  if (record === undefined || Object.keys(record).length !== names.length) return undefined
+  const entries: [string, string][] = []
+  for (const name of names) {
+    const text = own(record, name) ? scalarText(record[name]) : undefined
+    if (
+      text === undefined ||
+      text.split("/").some((part) => part === "" || part === "." || part === "..")
+    )
+      return undefined
+    entries.push([name, text])
+  }
+  return Object.fromEntries(entries)
+}
+
+/** Headers as a server reads them: lower-case names to values `Headers` carries unchanged. */
+const headersInput = (value: unknown): Record<string, string> | undefined => {
+  const record = recordOf(value)
+  if (record === undefined) return undefined
+  const entries: [string, string][] = []
+  for (const [name, item] of Object.entries(record)) {
+    if (item === undefined) continue
+    const text = scalarText(item)
+    if (
+      text === undefined ||
+      !HEADER_NAME.test(name) ||
+      text !== text.trim() ||
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: a header value may carry none of these
+      /[\r\n\u0000]|[^\u0000-\u00ff]/.test(text)
+    )
+      return undefined
+    entries.push([name.toLowerCase(), text])
+  }
+  return Object.fromEntries(entries)
+}
+
+/** The names a route pattern binds, each with a value its own matcher accepts. */
+function placeholderParams(path: string): Record<string, string> {
+  let segments: readonly RoutePatternSegment[]
+  try {
+    segments = compileRoutePattern(path).segments
+  } catch {
+    return {}
+  }
+  const entries: [string, string][] = []
+  for (const segment of segments) {
+    if (segment.kind === "param") entries.push([segment.name, `${segment.name}-contract`])
+    else if (segment.kind === "wildcard") {
+      entries.push([segment.name, `${segment.name === "*" ? "path" : segment.name}/contract`])
+    } else if (segment.kind === "mixed") {
+      for (const part of segment.parts) {
+        if (part.t !== "lit") {
+          entries.push([
+            part.name,
+            part.c === undefined ? `${part.name}-contract` : satisfying(part.c),
+          ])
+        }
+      }
+    }
+  }
+  return Object.fromEntries(entries)
+}
+
+/** `value` when it is a record of strings, as a resolved params input always is. */
+const stringRecordOf = (value: unknown): Readonly<Record<string, string>> | undefined => {
+  const record = recordOf(value)
+  if (record === undefined) return undefined
+  const entries = Object.entries(record)
+  return entries.every((entry): entry is [string, string] => typeof entry[1] === "string")
+    ? Object.fromEntries(entries)
+    : undefined
+}
+
+/** `value` in the form `target` travels in, or `undefined` when no request could carry it. */
+function transported(target: InputTarget, value: unknown, paramNames: readonly string[]): unknown {
+  if (target === "query") return queryInput(value)
+  if (target === "headers") return headersInput(value)
+  if (target === "params") return paramsInput(value, paramNames)
+  return jsonClone(value)
 }
 
 const queryPairs = (value: unknown): readonly [string, string][] | undefined => {
@@ -569,11 +692,22 @@ const withReflectedJsonSchema = (
   }
 }
 
+/** What a route's witness and its schema give one input before it is validated. */
+interface InputSource {
+  /** The witness's own value, already in a form `transported` reads; `undefined` when it has none. */
+  readonly given: unknown
+  /** Merge a synthesized value with what the witness gave (headers and params fill gaps around it). */
+  readonly merge?: (synthesized: unknown | undefined) => unknown
+  readonly paramNames: readonly string[]
+  /** Why an opaque schema could not be read, for the gap message. */
+  readonly opaqueReason: string | undefined
+}
+
 async function resolveInput(
   routeKey: string,
   target: InputTarget,
   reflection: SchemaReflection,
-  witness: ContractWitness,
+  source: InputSource,
   seed: number,
   maxWitnessBytes: number,
 ): Promise<ResolveInput> {
@@ -590,15 +724,16 @@ async function resolveInput(
   }
 
   let value: unknown
-  if (own(witness, target)) {
-    value = witness[target]
+  if (source.given !== undefined && source.merge === undefined) {
+    value = source.given
   } else if (reflection.jsonSchema !== undefined) {
     try {
-      value = generateMockValue(
+      const synthesized = generateMockValue(
         reflection.jsonSchema,
         target,
         seededRandom(seed ^ hash(`${routeKey}:${target}`)),
       )
+      value = source.merge === undefined ? synthesized : source.merge(synthesized)
     } catch (error) {
       return {
         ok: false,
@@ -610,6 +745,8 @@ async function resolveInput(
         },
       }
     }
+  } else if (source.merge !== undefined && source.given !== undefined) {
+    value = source.merge(undefined)
   } else {
     return {
       ok: false,
@@ -617,13 +754,13 @@ async function resolveInput(
         route: routeKey,
         target,
         code: "NO_WITNESS",
-        message: `opaque ${target} schema needs witnesses[${JSON.stringify(routeKey)}].${target}`,
+        message: `opaque ${target} schema${source.opaqueReason === undefined ? "" : ` (${source.opaqueReason})`} needs witnesses[${JSON.stringify(routeKey)}].${target}`,
       },
     }
   }
 
   try {
-    value = target === "query" ? queryInput(value) : jsonClone(value)
+    value = transported(target, value, source.paramNames)
     if (value === undefined) throw new TypeError(`${target} witness is not transport-serializable`)
     if (valueSize(value) > maxWitnessBytes) {
       return {
@@ -704,23 +841,48 @@ function materializePath(
   return `/${filled.join("/")}`
 }
 
+const paramNamesOf = (laboratory: RouteLaboratory): readonly string[] =>
+  Object.keys(recordOf(laboratory.inputs.params?.value) ?? {})
+
+/** The laboratory's resolved inputs, with `target` replaced by `value` when one is given. */
+function inputValues(
+  laboratory: RouteLaboratory,
+  target?: InputTarget,
+  value?: unknown,
+): Partial<Record<InputTarget, unknown>> {
+  const values: Partial<Record<InputTarget, unknown>> = {}
+  for (const name of INPUT_TARGETS) {
+    const current = name === target ? value : laboratory.inputs[name]?.value
+    if (current !== undefined) values[name] = current
+  }
+  return values
+}
+
 function requestFor(
   laboratory: RouteLaboratory,
   origin: string,
-  body: unknown,
-  query: unknown,
+  values: Partial<Record<InputTarget, unknown>>,
 ): Request {
-  const path = materializePath(laboratory.route.path, laboratory.witness.params)
+  const params = stringRecordOf(values.params)
+  const path = materializePath(laboratory.route.path, params ?? laboratory.witness.params)
   const url = new URL(path, origin)
-  for (const [key, value] of queryPairs(query) ?? []) url.searchParams.append(key, value)
+  for (const [key, value] of queryPairs(values.query) ?? []) url.searchParams.append(key, value)
   const headers = new Headers(laboratory.witness.headers)
+  const headerValues = recordOf(values.headers)
+  if (headerValues !== undefined) {
+    // The resolved record holds the witness's headers too, so a mutation that drops one drops it here.
+    for (const name of Object.keys(recordOf(laboratory.inputs.headers?.value) ?? {})) {
+      headers.delete(name)
+    }
+    for (const [name, value] of Object.entries(headerValues)) headers.set(name, String(value))
+  }
   const init: RequestInit = { method: laboratory.route.method, headers }
   if (
     laboratory.route.schema?.body !== undefined &&
     !NO_BODY_METHODS.has(laboratory.route.method)
   ) {
     if (!headers.has("content-type")) headers.set("content-type", "application/json")
-    init.body = JSON.stringify(body)
+    init.body = JSON.stringify(values.body)
   }
   return new Request(url.toString(), init)
 }
@@ -788,10 +950,8 @@ async function executeRejection(
     mutation: `${displayPath(target, mutation.path)} ${mutation.reason}`,
   }
   try {
-    const body = target === "body" ? mutation.value : laboratory.body?.value
-    const query = target === "query" ? mutation.value : laboratory.query?.value
     const request = await preparedRequest(
-      requestFor(laboratory, origin, body, query),
+      requestFor(laboratory, origin, inputValues(laboratory, target, mutation.value)),
       context,
       options.prepareRequest,
     )
@@ -828,17 +988,16 @@ async function shrinkFailure(
     for (const value of simplerValues(current.value)) {
       attempts += 1
       if (attempts > maxAttempts) break
-      const reflection =
-        target === "body" ? laboratory.body?.reflection : laboratory.query?.reflection
-      const transported = target === "query" ? queryInput(value) : jsonClone(value)
-      if (transported === undefined) continue
+      const reflection = laboratory.inputs[target]?.reflection
+      const carried = transported(target, value, paramNamesOf(laboratory))
+      if (carried === undefined) continue
       if (reflection === undefined) continue
       try {
-        if (!(await rejectedByValidator(reflection, transported))) continue
+        if (!(await rejectedByValidator(reflection, carried))) continue
       } catch {
         continue
       }
-      const candidate = { ...current, value: transported }
+      const candidate = { ...current, value: carried }
       const result = await executeRejection(
         runtime,
         laboratory,
@@ -874,6 +1033,23 @@ const resultForFailure = (
   replay: { seed, caseId: base.id, runtime: base.runtime },
 })
 
+/** A witness's headers as the lower-case record a server validates. */
+function headerRecordOf(init: ContractWitness["headers"]): Record<string, string> {
+  const entries: [string, string][] = []
+  new Headers(init).forEach((value, name) => {
+    entries.push([name, value])
+  })
+  return Object.fromEntries(entries)
+}
+
+/** The `required` property names a JSON Schema object states. */
+const requiredNames = (schema: JsonSchema | undefined): readonly string[] => {
+  const required = schemaRecord(schema)?.required
+  return Array.isArray(required)
+    ? required.filter((name): name is string => typeof name === "string")
+    : []
+}
+
 async function buildLaboratories(
   routes: readonly ReflectedRoute[],
   options: AdversarialContractOptions,
@@ -888,95 +1064,146 @@ async function buildLaboratories(
   for (const route of routes) {
     const routeKey = routeKeyOf(route)
     const witness = options.witnesses?.[routeKey] ?? {}
-    let body: ResolvedInput | undefined
-    let query: ResolvedInput | undefined
+    const schema = route.schema
+    const witnessKey = `witnesses[${JSON.stringify(routeKey)}]`
+    const witnessHeaders = headerRecordOf(witness.headers)
+    const placeholders = placeholderParams(route.path)
+    const paramNames = Object.keys(placeholders)
+    const sendsBody = !NO_BODY_METHODS.has(route.method)
+    const inputs: Partial<Record<InputTarget, ResolvedInput>> = {}
+    let resolved = true
 
-    if (route.schema?.body !== undefined) {
+    if (schema?.cookies !== undefined && witnessHeaders.cookie === undefined) {
+      resolved = false
+      gaps.push({
+        route: routeKey,
+        target: "cookies",
+        code: "NO_WITNESS",
+        message: `cookies are credentials and are never synthesized: set ${witnessKey}.headers.cookie`,
+      })
+    }
+
+    for (const target of INPUT_TARGETS) {
+      const declared = schema?.[target]
+      if (declared === undefined) continue
       targetCount += 1
-      if (NO_BODY_METHODS.has(route.method)) {
+      if (target === "body" && !sendsBody) {
+        resolved = false
         gaps.push({
           route: routeKey,
           target: "body",
           code: "UNSUPPORTED_BODY_METHOD",
           message: `${route.method} cannot carry a request body`,
         })
-      } else {
-        const resolved = await resolveInput(
-          routeKey,
-          "body",
-          withReflectedJsonSchema(
-            route.schema.body,
-            options.reflectJsonSchema ?? autoReflectJsonSchema,
-          ),
-          witness,
-          seed,
-          maxWitnessBytes,
-        )
-        if (resolved.ok) body = resolved.input
-        else gaps.push(resolved.gap)
+        continue
       }
-    }
-    if (route.schema?.query !== undefined) {
-      targetCount += 1
-      const resolved = await resolveInput(
-        routeKey,
-        "query",
-        withReflectedJsonSchema(
-          route.schema.query,
-          options.reflectJsonSchema ?? autoReflectJsonSchema,
-        ),
-        witness,
-        seed,
-        maxWitnessBytes,
+      const reflection = withReflectedJsonSchema(
+        declared,
+        options.reflectJsonSchema ?? autoReflectJsonSchema,
       )
-      if (resolved.ok) query = resolved.input
-      else gaps.push(resolved.gap)
+      const opaqueReason =
+        reflection.jsonSchema === undefined && options.reflectJsonSchema === undefined
+          ? explainAutoReflectJsonSchema(reflection.standard)
+          : undefined
+      const source: InputSource =
+        target === "params"
+          ? {
+              given: witness.params,
+              merge: (synthesized) => ({
+                ...placeholders,
+                ...Object.fromEntries(
+                  Object.entries(recordOf(synthesized) ?? {}).filter(([name]) =>
+                    own(placeholders, name),
+                  ),
+                ),
+                ...witness.params,
+              }),
+              paramNames,
+              opaqueReason,
+            }
+          : target === "headers"
+            ? {
+                given: witness.headers === undefined ? undefined : witnessHeaders,
+                merge: (synthesized) => {
+                  const merged: Record<string, unknown> = {
+                    ...Object.fromEntries(
+                      Object.entries(recordOf(synthesized) ?? {}).filter(
+                        ([name]) =>
+                          harnessOwnsHeader(name) && !own(witnessHeaders, name.toLowerCase()),
+                      ),
+                    ),
+                    ...witnessHeaders,
+                  }
+                  // The request carries this for a body, so the validator must see it too.
+                  if (schema?.body !== undefined && sendsBody && !own(merged, "content-type"))
+                    merged["content-type"] = "application/json"
+                  return merged
+                },
+                paramNames,
+                opaqueReason,
+              }
+            : {
+                given: own(witness, target) ? witness[target] : undefined,
+                paramNames,
+                opaqueReason,
+              }
+      const result = await resolveInput(routeKey, target, reflection, source, seed, maxWitnessBytes)
+      if (result.ok) {
+        inputs[target] = result.input
+        continue
+      }
+      resolved = false
+      const credentials =
+        target === "headers" && result.gap.code === "INVALID_WITNESS"
+          ? requiredNames(reflection.jsonSchema).filter(
+              (name) => !harnessOwnsHeader(name) && !own(witnessHeaders, name.toLowerCase()),
+            )
+          : []
+      gaps.push(
+        credentials.length === 0
+          ? result.gap
+          : {
+              ...result.gap,
+              code: "NO_WITNESS",
+              message: `the harness never invents credentials: set ${credentials.join(", ")} in ${witnessKey}.headers (prepareRequest may replace them per runtime)`,
+            },
+      )
     }
+
     const expectedStatus = witness.expected?.status
     const expectedResponseSchema =
       expectedStatus !== undefined && (expectedStatus < 200 || expectedStatus >= 300)
-        ? route.schema?.errors?.[expectedStatus]
-        : route.schema?.response
+        ? schema?.errors?.[expectedStatus]
+        : schema?.response
     if (options.validateResponses !== false && expectedResponseSchema !== undefined)
       targetCount += 1
 
-    const allInputsResolved =
-      (route.schema?.body === undefined || body !== undefined) &&
-      (route.schema?.query === undefined || query !== undefined)
-    const bodyMutations =
-      body !== undefined && allInputsResolved
-        ? await provenMutations(body, "body", maxMutations)
-        : []
-    const queryMutations =
-      query !== undefined && allInputsResolved
-        ? await provenMutations(query, "query", maxMutations)
-        : []
-    if (body !== undefined && allInputsResolved && bodyMutations.length === 0) {
-      gaps.push({
-        route: routeKey,
-        target: "body",
-        code: "NO_REJECTED_MUTATION",
-        message: "the body validator accepted every generated hostile mutation",
-      })
+    const mutations: Record<InputTarget, Mutation[]> = {
+      headers: [],
+      params: [],
+      body: [],
+      query: [],
     }
-    if (query !== undefined && allInputsResolved && queryMutations.length === 0) {
-      gaps.push({
-        route: routeKey,
-        target: "query",
-        code: "NO_REJECTED_MUTATION",
-        message: "the query validator accepted every generated hostile mutation",
-      })
+    for (const target of INPUT_TARGETS) {
+      const input = inputs[target]
+      if (input === undefined || !resolved) continue
+      const proven = await provenMutations(input, target, maxMutations, paramNames)
+      mutations[target] = proven.mutations
+      // A params or headers field typed as bare text accepts every type swap, so only a constraint
+      // the schema states is a rejection to expect there.
+      const expectRejection = target === "body" || target === "query" || proven.constrained
+      if (proven.mutations.length === 0 && expectRejection) {
+        gaps.push({
+          route: routeKey,
+          target,
+          code: "NO_REJECTED_MUTATION",
+          message: `the ${target} validator accepted every generated hostile mutation`,
+        })
+      }
     }
-    laboratories.push({
-      route,
-      routeKey,
-      witness,
-      ...(body === undefined ? {} : { body }),
-      ...(query === undefined ? {} : { query }),
-      bodyMutations,
-      queryMutations,
-    })
+    laboratories.push({ route, routeKey, witness, inputs, mutations, resolved })
   }
+
   return { laboratories, targetCount }
 }
 
@@ -1020,14 +1247,13 @@ export async function runAdversarialContract(
   if (targetCount === 0) {
     gaps.push({
       code: "NO_CONTRACT_TARGETS",
-      message: "selected routes declare no body, query, or response contracts",
+      message: "selected routes declare no headers, params, body, query, or response contracts",
     })
   }
 
   for (const laboratory of laboratories) {
-    for (const target of ["body", "query"] as const) {
-      const mutations = target === "body" ? laboratory.bodyMutations : laboratory.queryMutations
-      for (const mutation of mutations) {
+    for (const target of INPUT_TARGETS) {
+      for (const mutation of laboratory.mutations[target]) {
         const id = mutationId(laboratory.routeKey, target, mutation)
         if (only !== undefined && !only.has(id)) continue
         for (const runtime of runtimes) {
@@ -1124,10 +1350,7 @@ export async function runAdversarialContract(
       })
       continue
     }
-    const allInputsResolved =
-      (laboratory.route.schema?.body === undefined || laboratory.body !== undefined) &&
-      (laboratory.route.schema?.query === undefined || laboratory.query !== undefined)
-    if (!allInputsResolved) continue
+    if (!laboratory.resolved) continue
 
     for (const runtime of runtimes) {
       const context: ContractCaseContext = {
@@ -1148,7 +1371,7 @@ export async function runAdversarialContract(
       }
       try {
         const request = await preparedRequest(
-          requestFor(laboratory, origin, laboratory.body?.value, laboratory.query?.value),
+          requestFor(laboratory, origin, inputValues(laboratory)),
           context,
           options.prepareRequest,
         )
@@ -1276,6 +1499,14 @@ export async function runAdversarialContract(
         "conformance checked 0 targets. Response types inferred from a handler's return are a client-side " +
         "contract only - declare `response:` or `errors:` on the routes you want the laboratory to verify.",
     )
+  }
+  // Declared on an opaque mount's word: listed so the run states what it could not test.
+  for (const mount of reflectMounts(app)) {
+    for (const route of mount.routes ?? []) {
+      advisories.push(
+        `${route.method} ${route.path} is declared by the opaque mount ${mount.path} (${mount.opaque}) and has no contract to test`,
+      )
+    }
   }
   return {
     ok: failures.length === 0 && !fatalGap && (!coverageRequired || gaps.length === 0),

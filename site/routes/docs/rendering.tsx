@@ -273,9 +273,19 @@ export default function Rendering() {
         <code>KVCacheStore</code> wraps a Workers KV namespace; any backend that fits the small{" "}
         <code>CacheStore</code> interface (Redis, the Cache API) works too. Every read is validated
         before it's trusted, so a corrupt or version-skewed entry is treated as a miss, not served
-        broken.
+        broken. A store that also implements <code>fence()</code> keeps a purge that lands while a
+        page renders from being undone when that render stores the page it built from the old data;
+        both built-in stores do.
       </p>
       <CodeBlock code={KV} />
+      <p>
+        A store outage never fails a page. A read that throws, rejects, or outlives{" "}
+        <code>storeTimeoutMs</code> is a miss and the page renders; a failed write still returns the
+        rendered page; a failed background regeneration keeps the stale entry. Each failure goes to{" "}
+        <code>onStoreError(error, &#123; op &#125;)</code>, which by default logs one line per operation
+        per minute without the cache key. Set <code>storeTimeoutMs</code> for a network store, so a
+        hung connection costs a miss rather than the request.
+      </p>
 
       <h2>On-demand revalidation</h2>
       <p>
@@ -285,6 +295,23 @@ export default function Rendering() {
         <code>401</code>, a missing or relative path is <code>400</code>.
       </p>
       <CodeBlock code={PURGE} />
+      <p>
+        A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give{" "}
+        <code>createWebApp</code> a <code>csp</code> from <code>createCspPolicy</code> instead of a{" "}
+        <code>nonce</code>: constant scripts are allowed by hash, so only a page that needs a nonce
+        carries one - see <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
+      </p>
+      <p>
+        A page that must not be cached as a whole, because it is personalized or carries a nonce, can
+        still cache the data its loader reads. Wrap the expensive call in <code>cache.wrap</code> from{" "}
+        <code>@nifrajs/cache</code>, with the same tags the pages use. Concurrent loads of one key run
+        once, and a store outage falls through to the loader. Pass that cache to{" "}
+        <code>revalidateEndpoint</code> as <code>dataCaches: [cache]</code>. A tag purge then
+        invalidates it first, then the page store, then the CDN, so no page is rebuilt from stale
+        data. If a data cache fails, the endpoint answers <code>500</code> before it touches the page
+        store, so a retry purges everything again. <code>createInvalidator</code> from{" "}
+        <code>@nifrajs/web/cdn</code> takes the same <code>dataCaches</code> for purges from app code.
+      </p>
       <p>
         <code>revalidateTags</code> names what a purge by tag reaches. A list tags every page of the
         route alike; a function of the route's params and URL tags each page on its own. Tags travel to

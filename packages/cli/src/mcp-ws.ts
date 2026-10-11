@@ -21,7 +21,7 @@ interface RunningServerLike {
 }
 
 interface ListenableApp {
-  listen(port: number): RunningServerLike
+  listen(port: number, options: { readonly hostname: string }): RunningServerLike
 }
 
 interface NormalizedInput {
@@ -206,7 +206,9 @@ export async function runWebSocket(
   let running: RunningServerLike | undefined
   let socket: WebSocket | undefined
   try {
-    running = app.listen(0)
+    // Loopback only: the project's backend, with its environment loaded, must not be reachable
+    // from the network for the length of a verification.
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const url = `ws://127.0.0.1:${running.port}${normalized.path}`
     socket = new WebSocket(url)
     socket.binaryType = "arraybuffer"

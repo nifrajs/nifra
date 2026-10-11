@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import ts from "typescript"
 import { githubDeployWorkflow, parseArgs, run, scaffold } from "../src/cli.ts"
 import { SHARED_SITE_FILES } from "../src/scaffold/site.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
@@ -113,7 +114,7 @@ describe("scaffold - templates", () => {
     expect((await readPkg(dir)).scripts).toEqual({
       dev: "nifra dev",
       build: "nifra build",
-      start: "bun dist/server.js",
+      start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
       check: "nifra check && nifra assure",
     })
   })
@@ -130,6 +131,15 @@ describe("scaffold - templates", () => {
     }
   })
 
+  test("the ISR starter deploys no revalidation secret; only its local dev script sets one", async () => {
+    const dir = await freshDir("isr-secret")
+    await scaffold({ target: dir, template: "isr" })
+    const toml = await readFile(join(dir, "wrangler.toml"), "utf8")
+    expect(toml).not.toMatch(/^\s*REVALIDATE_SECRET\s*=/m)
+    expect(toml).not.toMatch(/^\s*\[vars\]/m)
+    expect((await readPkg(dir)).scripts?.dev).toContain("--var REVALIDATE_SECRET:dev-secret")
+  })
+
   test("a project name a platform would refuse is lowered to one it takes in deploy config", async () => {
     const dir = await freshDir("My_Site.v2")
     await scaffold({ target: dir, template: "site", deployTarget: "cloudflare" })
@@ -140,7 +150,7 @@ describe("scaffold - templates", () => {
     await scaffold({ target: docked, template: "site", deployTarget: "bun", docker: true })
     const pkg = await readPkg(docked)
     expect(pkg.scripts?.deploy).toBe(
-      "docker build -t dock-app . && docker run -p 3000:3000 dock-app",
+      "docker build -t dock-app . && docker run -e NIFRA_ALLOW_MEMORY_RATE_LIMIT=true -p 3000:3000 dock-app",
     )
     // The package keeps the name it was given.
     expect(pkg.name).toBe("Dock_App")
@@ -250,10 +260,19 @@ describe("scaffold - agent-discovery files (MCP auto-discovery)", () => {
 describe("scaffold - --target and --docker", () => {
   test("each target gets its scripts, its config file and its runtime package", async () => {
     const expected = {
-      bun: { start: "bun dist/server.js", deploy: undefined, files: [] },
-      node: { start: "node dist/server.js", deploy: undefined, files: [] },
+      bun: {
+        start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
+        deploy: undefined,
+        files: [],
+      },
+      node: {
+        start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true node dist/server.js",
+        deploy: undefined,
+        files: [],
+      },
       deno: {
-        start: "deno run --allow-net --allow-read --allow-env dist/server.js",
+        start:
+          "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true deno run --allow-net --allow-read --allow-env dist/server.js",
         deploy: "deployctl deploy --prod --entrypoint=dist/server.js",
         files: ["deno.json"],
       },
@@ -291,7 +310,7 @@ describe("scaffold - --target and --docker", () => {
     })
     expect(res.deploy).toEqual({ target: "node", label: "Node", docker: true })
     expect((await readPkg(dir)).scripts?.deploy).toBe(
-      "docker build -t dock-app . && docker run -p 3000:3000 dock-app",
+      "docker build -t dock-app . && docker run -e NIFRA_ALLOW_MEMORY_RATE_LIMIT=true -p 3000:3000 dock-app",
     )
     const dockerfile = await readFile(join(dir, "Dockerfile"), "utf8")
     expect(dockerfile).toContain("RUN bun run build")
@@ -778,6 +797,20 @@ describe("scaffold - --db (Drizzle presets)", () => {
     })
   }
 
+  // Bun runs a `./schema.ts` import as written; tsc accepts it only with allowImportingTsExtensions.
+  for (const template of ["site", "isr", "api", "batteries"] as const) {
+    test(`the ${template} scaffold with --db typechecks its .ts-suffixed imports`, async () => {
+      const dir = await freshDir(`ts-ext-${template}`)
+      await scaffold({ target: dir, template, db: "drizzle-sqlite" })
+      const config = ts.readConfigFile(join(dir, "tsconfig.json"), ts.sys.readFile)
+      const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dir)
+      const program = ts.createProgram(parsed.fileNames, parsed.options)
+      // Dependencies are not installed here, so only the import-extension rule is in scope.
+      const refused = ts.getPreEmitDiagnostics(program).filter(({ code }) => code === 5097)
+      expect(refused.map(({ file }) => file?.fileName)).toEqual([])
+    }, 60_000)
+  }
+
   test("without --db the app stays db-free (no backend/db/ directory)", async () => {
     const dir = await freshDir("plain")
     await scaffold({ target: dir })
@@ -948,6 +981,19 @@ describe("run - db/auth next steps + --link dependency rewriting", () => {
     expect(message).toContain("bun run db:generate")
     expect(message).toContain("bun run db:migrate")
     expect(message).toContain("better-auth") // preset tag in the header
+  })
+
+  test("every db preset's next steps run only scripts it scaffolded", async () => {
+    for (const db of ["drizzle-sqlite", "prisma-sqlite", "kysely-postgres"]) {
+      const dir = await freshDir(`steps-${db}`)
+      const { code, message } = await run([dir, "--db", db])
+      expect(code).toBe(0)
+      const scripts = (await readPkg(dir)).scripts ?? {}
+      const named = [...message.matchAll(/bun run ([\w:-]+)/g)].map((match) => match[1] ?? "")
+      expect(named).toContain("db:migrate")
+      for (const script of named)
+        expect([db, script, script in scripts]).toEqual([db, script, true])
+    }
   })
 
   test("--link rewrites @nifrajs/* deps that exist in the linked repo to file: paths", async () => {

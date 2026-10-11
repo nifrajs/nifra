@@ -50,7 +50,7 @@ rules:
       Spawning with shell:true on interpolated input invites command injection. Pass an argv array
       with shell disabled.
     patterns:
-      - pattern: $SPAWN(..., { ..., shell: true, ... })
+      - pattern: '$SPAWN(..., { ..., shell: true, ... })'
 
   - id: nifra-eval-on-input
     languages: [typescript, javascript]

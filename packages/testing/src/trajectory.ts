@@ -9,7 +9,7 @@ import {
   runAgent,
 } from "@nifrajs/agent"
 import type { StandardSchemaV1 } from "@nifrajs/core/schema"
-import { createToolBudget, type ToolBudget, type ToolContract } from "@nifrajs/core/tool-contract"
+import type { ToolBudget } from "@nifrajs/core/tool-contract"
 import { createFailureLab, type FailureEvidence } from "./failure-lab.ts"
 import type { FaultProfile, FaultProfileFault, FaultProfileFaultKind } from "./fault-profile.ts"
 
@@ -169,7 +169,32 @@ export async function replayTrajectory<
       return lab.provider("trajectory.model", () => response)
     },
   }
-  const tools = definition.tools.map((tool) => wrapTool(tool, lab, () => takeFault("tool")))
+  // Tools run dry, so a tool's own execute never runs: its faults fire at the budget check every
+  // tool call still makes. Each replayed tool carries its own cost object, which is how that check
+  // tells a tool's charge from the model's.
+  const toolCosts = new Map<object, string>()
+  const tools = definition.tools.map((tool) => {
+    const cost = { ...tool.cost }
+    toolCosts.set(cost, tool.name)
+    return Object.freeze({ ...tool, cost })
+  })
+  const callerBudget = ports.budget
+  const budget: ToolBudget = {
+    consume: (cost) => {
+      const tool = cost === undefined ? undefined : toolCosts.get(cost)
+      if (tool !== undefined) {
+        lab.checkpoint(`trajectory.tool.${tool}`)
+        const fault = takeFault("tool")
+        if (fault?.kind === "budget-pressure") return false
+        if (fault?.kind === "tool-error") throw new Error("trajectory tool fault")
+        // The call then stops as cancelled, and so does the run, as a cancelled model call does.
+        if (fault?.kind === "cancellation") controller.abort()
+        else lab.checkpoint(`trajectory.effect.${tool}`)
+      }
+      return callerBudget?.consume(cost) ?? true
+    },
+    snapshot: () => callerBudget?.snapshot() ?? {},
+  }
   const replayDefinition: AgentDefinition<InputSchema, OutputSchema> = { ...definition, tools }
   let effectiveApproval = ports.approval
   if (effectiveApproval !== undefined) {
@@ -182,17 +207,14 @@ export async function replayTrajectory<
       },
     }
   }
-  const pressuredBudget: ToolBudget = createToolBudget({ limits: { calls: 0 } })
   const effectivePorts: AgentPorts = {
     ...ports,
     model,
     dryRun: true,
     signal: controller.signal,
+    budget,
     idFactory: () => `trajectory-${seed}-${++idSequence}`,
     ...(effectiveApproval === undefined ? {} : { approval: effectiveApproval }),
-    ...(faults.some((fault) => fault.kind === "budget-pressure")
-      ? { budget: pressuredBudget }
-      : {}),
   }
   const result = await runAgent(replayDefinition, input, effectivePorts, {
     state: options.state,
@@ -282,28 +304,6 @@ export async function trajectoryRegressionId(
 ): Promise<string> {
   if (faultProfile.trim() === "") throw new TypeError("trajectory: fault profile name is required")
   return digest({ transcript: transcript.digest, faultProfile, invariant })
-}
-
-function wrapTool<Input, Output>(
-  tool: ToolContract<Input, Output>,
-  lab: ReturnType<typeof createFailureLab>,
-  nextFault: () => FaultProfileFault | undefined,
-): ToolContract<Input, Output> {
-  return Object.freeze({
-    ...tool,
-    execute: async (
-      input: Input,
-      context: Parameters<ToolContract<Input, Output>["execute"]>[1],
-    ) => {
-      lab.checkpoint(`trajectory.tool.${tool.name}`)
-      const fault = nextFault()
-      if (fault?.kind === "tool-error" || fault?.kind === "budget-pressure")
-        throw new Error("trajectory tool fault")
-      if (fault?.kind === "cancellation") throw new Error("trajectory cancellation")
-      lab.checkpoint(`trajectory.effect.${tool.name}`)
-      return tool.execute(input, context)
-    },
-  })
 }
 
 function validateAgentTranscript(value: AgentTranscript): void {

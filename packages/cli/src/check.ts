@@ -16,8 +16,10 @@
  * anything fails. Pure scanners (`scanFetchText`, `scanServerOnlyImports`) are unit-tested.
  */
 
-import { existsSync, readFileSync } from "node:fs"
-import { dirname, isAbsolute, join, relative } from "node:path"
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { specifierPackage } from "@nifrajs/web/zones"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
@@ -26,16 +28,22 @@ import {
   type CheckResult,
   collectCheckDiagnostics,
   type RuleOverride,
+  safeIgnoreGlobMatch,
 } from "./check-diagnostics.ts"
+import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
+import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+import { forwardTerminalSignals, OWN_PROCESS_GROUP, signalProcessGroup } from "./mcp-io.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
+import { filesOutsideProgram, splitListedFiles } from "./typecheck-coverage.ts"
 
 export type {
   CheckAnalysisInput,
@@ -50,24 +58,31 @@ export type {
 } from "./check-diagnostics.ts"
 
 import {
+  COMPONENT_FILE,
+  componentScripts,
   createProjectSqlImports,
+  createServerOnlyChains,
   isBrowserSource,
   type ModuleReader,
   type ModuleResolver,
-  resolveServerOnlyChains,
   type SourceFinding,
+  type SqlFinding,
   type StaticRouteFinding,
   scanFetchText,
-  scanInterpolatedSql,
   scanRemovedImports,
   scanResponseRoutes,
   scanServerManifestDrift,
+  scanSqlSites,
   scanStaticRouteText,
   scanStreamText,
+  scanUnresolvedRoutePaths,
   scanUntypedClient,
   type TransitiveServerImportFinding,
+  type TypedClientFinding,
+  type UnresolvedRoutePathFinding,
   walkSource,
 } from "./check-scan.ts"
+import { componentCheckReceipts } from "./component-check.ts"
 
 export * from "./check-scan.ts"
 
@@ -80,6 +95,10 @@ interface TypecheckResult {
   /** tsconfig.json exists but no `typescript` install was found walking up from cwd. The contract
    * gate could not run - the caller surfaces this as a FAILING diagnostic, never a silent skip. */
   readonly missingTypeScript?: boolean
+  /** Every file in the compiler's program, absolute. Absent when the compiler listed none. */
+  readonly programFiles?: readonly string[]
+  /** Zoned TypeScript files outside the program, project-relative: the typecheck never read them. */
+  readonly outsideProgram?: readonly string[]
 }
 
 /**
@@ -117,38 +136,70 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
       note: "typescript not installed (run: bun add -d typescript)",
     }
   }
+  const first = await runTsc(cwd, tscBin, tsconfig, true, signal)
+  // A compiler that rejects `--listFiles` still gets its typecheck; only the coverage check is lost.
+  if (!first.ok && !first.cancelled && /TS50(?:23|25)\b[^\n]*listFiles/.test(first.output ?? ""))
+    return runTsc(cwd, tscBin, tsconfig, false, signal)
+  return first
+}
+
+async function runTsc(
+  cwd: string,
+  tscBin: string,
+  tsconfig: string,
+  listFiles: boolean,
+  signal?: AbortSignal,
+): Promise<TypecheckResult> {
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
-  const proc = Bun.spawn([process.execPath, tscBin, "--noEmit", "-p", tsconfig], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  let cancelled = false
-  const abort = (): void => {
-    cancelled = true
-    proc.kill()
-  }
-  signal?.addEventListener("abort", abort, { once: true })
-  let out = ""
-  let err = ""
-  let code: number | null = null
+  const args = [process.execPath, tscBin, "--noEmit", "-p", tsconfig]
+  if (listFiles) args.push("--listFiles")
+  // tsc calls process.exit after printing. Bun can discard buffered pipe writes at that point,
+  // especially while the parent's other scans occupy the event loop. Files keep the full program.
+  const outputDirectory = mkdtempSync(join(tmpdir(), "nifra-tsc-"))
+  const stdout = Bun.file(join(outputDirectory, "stdout"))
+  const stderr = Bun.file(join(outputDirectory, "stderr"))
   try {
-    const result = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    out = result[0]
-    err = result[1]
-    code = result[2]
+    const proc = Bun.spawn(args, {
+      cwd,
+      stdout,
+      stderr,
+      // Its own group lets cancellation also stop a compiler process the tsc entry started.
+      detached: OWN_PROCESS_GROUP,
+    })
+    let cancelled = false
+    const stop = (): void => signalProcessGroup(proc, "SIGTERM")
+    const abort = (): void => {
+      cancelled = true
+      stop()
+    }
+    signal?.addEventListener("abort", abort, { once: true })
+    const releaseSignals = forwardTerminalSignals(stop)
+    let out = ""
+    let err = ""
+    let code: number | null = null
+    try {
+      code = await proc.exited
+      const result = await Promise.all([stdout.text(), stderr.text()])
+      out = result[0]
+      err = result[1]
+    } finally {
+      signal?.removeEventListener("abort", abort)
+      releaseSignals()
+    }
+    if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
+    const listed = listFiles ? splitListedFiles(out) : undefined
+    return {
+      ran: true,
+      ok: code === 0,
+      output: `${listed?.output ?? out}${err}`.trim(),
+      ...(listed !== undefined && listed.programFiles.length > 0
+        ? { programFiles: listed.programFiles }
+        : {}),
+    }
   } finally {
-    signal?.removeEventListener("abort", abort)
-  }
-  return {
-    ran: true,
-    ok: code === 0 && !cancelled,
-    output: cancelled ? "cancelled" : `${out}${err}`.trim(),
-    ...(cancelled ? { cancelled: true } : {}),
+    rmSync(join(outputDirectory, "stdout"), { force: true })
+    rmSync(join(outputDirectory, "stderr"), { force: true })
+    rmdirSync(outputDirectory)
   }
 }
 
@@ -244,12 +295,7 @@ async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
   const hasLock = existsSync(join(cwd, DEFAULT_CONTRACTS_LOCK))
   if (!hasBackend && !hasLock) return { present: false, vacuous: false, diagnostics: [] }
   try {
-    const result = await checkContractsLock(cwd)
-    return {
-      present: result.present,
-      vacuous: result.vacuous,
-      diagnostics: result.diagnostics,
-    }
+    return await checkContractsLock(cwd)
   } catch (error) {
     if (error instanceof Error && error.message === "contract source not configured") {
       return { present: false, vacuous: false, diagnostics: [] }
@@ -263,42 +309,79 @@ async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
   }
 }
 
+/** Record the zoned files the compiler's program left out, minus the typecheck rule's `ignore` globs. */
+function withProgramCoverage(
+  cwd: string,
+  result: TypecheckResult,
+  sourceFiles: ReadonlyArray<{ readonly file: string }>,
+  checkConfig: CheckConfig,
+): TypecheckResult {
+  const { programFiles, ...rest } = result
+  if (programFiles === undefined) return result
+  const ignore = (checkConfig.rules.typecheck ?? checkConfig.rules["NF-C001"])?.ignore
+  const outside = filesOutsideProgram(
+    cwd,
+    sourceFiles.map((source) => source.file),
+    programFiles,
+  ).filter((file) => !ignore?.some((pattern) => safeIgnoreGlobMatch(pattern, file)))
+  return outside.length === 0 ? rest : { ...rest, outsideProgram: outside }
+}
+
 /** Build the rule input from one source walk and the other check-wide scans. */
 async function buildProjectScan(
   cwd: string,
   opts: Pick<CheckCollectionOptions, "lintsOnly" | "signal" | "loadTypeScript">,
 ): Promise<ProjectScan> {
-  const fetches: SourceFinding[] = []
-  const streams: SourceFinding[] = []
+  const fetches: TypedClientFinding[] = []
+  const streams: TypedClientFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
   const untypedClients: SourceFinding[] = []
   const removedImports: SourceFinding[] = []
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
-  const interpolatedSql: SourceFinding[] = []
+  const interpolatedSql: SqlFinding[] = []
+  const routePaths: UnresolvedRoutePathFinding[] = []
   const browserModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
+  const inNifraProject = createNifraProjectProbe(cwd)
+  // An API-only project has no browser bundle for server code to reach.
+  const apiOnly = createApiOnlyProbe(cwd)
   const {
     config: checkConfig,
     error: checkConfigError,
     warnings: checkConfigWarnings,
   } = await loadCheckConfig(cwd)
-  const [typecheckResult, _, doctor, manifestDrift, contracts] = await Promise.all([
+  const [typecheckRun, _, doctor, manifestDrift, contracts] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
       : typecheck(cwd, opts.signal),
-    walkSource(cwd, (rel, content) => {
-      sourceFiles.push({ file: rel, content })
-      fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
-      streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
-      untypedClients.push(...scanUntypedClient(rel, content))
-      removedImports.push(...scanRemovedImports(rel, content))
-      if (isBrowserSource(rel)) browserModules.push({ rel, content })
-    }),
+    walkSource(
+      cwd,
+      (rel, content) => {
+        sourceFiles.push({ file: rel, content })
+        fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
+        streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
+        untypedClients.push(...scanUntypedClient(rel, content))
+        removedImports.push(...scanRemovedImports(rel, content))
+        const dir = dirname(rel).replace(/^\.$/, "")
+        if (isBrowserSource(rel) && inNifraProject(dir) && !apiOnly(dir))
+          browserModules.push({ rel, content })
+      },
+      { scripts: true },
+    ),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
     collectContractFacts(cwd),
   ])
+
+  // tsc compiles TypeScript sources only; the JavaScript and component files the scan reads are no
+  // program's to cover.
+  const typecheckResult = withProgramCoverage(
+    cwd,
+    typecheckRun,
+    sourceFiles.filter(({ file }) => /\.[cm]?tsx?$/.test(file)),
+    checkConfig,
+  )
 
   // TypeScript 7's unstable API materializes source files through one project session. Build the
   // source index first so every syntax-backed scanner (including the independent rule registry)
@@ -309,37 +392,95 @@ async function buildProjectScan(
     const sqlCompiler = loadedTypeScript.compiler
     const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
     const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
+    const project = new Map(
+      sourceFiles.map(({ file, content }) => [file.replaceAll("\\", "/"), content]),
+    )
     for (const { file, content } of sourceFiles) {
-      staticRoutes.push(...scanStaticRouteText(file, content, sourceFacts))
+      staticRoutes.push(...scanStaticRouteText(file, content, sourceFacts, project))
+      routePaths.push(...scanUnresolvedRoutePaths(file, content, project, sourceFacts))
       responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts))
       if (sqlCompiler !== undefined)
-        interpolatedSql.push(...scanInterpolatedSql(file, content, sqlCompiler, sqlImports))
+        interpolatedSql.push(...scanSqlSites(file, content, sqlCompiler, sqlImports))
     }
 
     // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
     // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
-    const resolveModule: ModuleResolver = (fromFile, specifier) => {
+    // The resolver answers with real paths, so the project root is read as one too.
+    const realCwd = (() => {
       try {
-        const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
-        const resolved = Bun.resolveSync(specifier, dirname(fromAbs))
-        const rel = relative(cwd, resolved).replaceAll("\\", "/")
-        return rel.startsWith("../") || isAbsolute(rel) ? resolved : rel
+        return realpathSync(cwd)
       } catch {
-        return undefined
+        return cwd
       }
+    })()
+    const resolveSpecifier = createSpecifierResolver()
+    const projectPath = (path: string): string => {
+      const rel = relative(realCwd, path).replaceAll("\\", "/")
+      return rel.startsWith("../") || isAbsolute(rel) ? path : rel
+    }
+    const resolveModule: ModuleResolver = (fromFile, specifier) => {
+      const resolved = resolveSpecifier(
+        isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile),
+        specifier,
+      )
+      return resolved === undefined ? undefined : projectPath(resolved)
     }
     const readModule: ModuleReader = (path) => {
+      let text: string
       try {
-        return readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
+        text = readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
       } catch {
         return undefined
       }
+      return COMPONENT_FILE.test(path) ? componentScripts(text) : text
     }
-    for (const { rel, content } of browserModules) {
-      serverImports.push(
-        ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
-      )
+    const components = await componentCheckReceipts(cwd, source)
+    const componentReceipts = components.receipts
+    // An app's `clientModule` is browser code wherever it lives: the generated client entry imports it.
+    const browserRoots = new Set<string>()
+    for (const app of appDirs(source.files)) {
+      const entry = clientModuleRoot(cwd, app, resolveSpecifier)
+      if (entry === undefined) continue
+      const rel = projectPath(entry.file)
+      if (isBrowserSource(rel) || browserRoots.has(rel)) continue
+      const content = readModule(rel)
+      if (content === undefined) continue
+      browserRoots.add(rel)
+      browserModules.push({ rel, content })
     }
+    // Node's lookup: the nearest `node_modules/<name>` at or above the importing file.
+    const backendPackage = (fromFile: string, specifier: string): boolean => {
+      const name = specifierPackage(specifier)
+      if (name === undefined) return false
+      let dir = dirname(isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile))
+      for (;;) {
+        const manifest = join(dir, "node_modules", name, "package.json")
+        if (existsSync(manifest)) {
+          try {
+            const nifra: unknown = JSON.parse(readFileSync(manifest, "utf8"))?.nifra
+            return (
+              typeof nifra === "object" &&
+              nifra !== null &&
+              Reflect.get(nifra, "environment") === "backend"
+            )
+          } catch {
+            return false
+          }
+        }
+        const parent = dirname(dir)
+        if (parent === dir) return false
+        dir = parent
+      }
+    }
+    const serverOnlyChains = createServerOnlyChains({
+      resolve: resolveModule,
+      read: readModule,
+      facts: sourceFacts,
+      componentReceipts,
+      backendPackage,
+    })
+    for (const { rel, content } of browserModules)
+      serverImports.push(...serverOnlyChains(rel, content, browserRoots.has(rel)))
 
     const facts: ProjectFactsSeed = {
       source,
@@ -351,6 +492,10 @@ async function buildProjectScan(
       check: {
         typecheck: typecheckResult,
         sqlCompilerAvailable: sqlCompiler !== undefined,
+        componentCheckUnsupported:
+          components.unsupported === undefined
+            ? undefined
+            : { version: components.unsupported.version, message: components.unsupported.message },
         ...(loadedTypeScript.unsupported === undefined
           ? {}
           : { unsupportedTypeScriptVersion: loadedTypeScript.unsupported.version }),
@@ -368,6 +513,7 @@ async function buildProjectScan(
         removedImports,
         responseRoutes,
         interpolatedSql,
+        routePaths,
       },
     }
     return { facts }
@@ -381,9 +527,11 @@ async function buildProjectScan(
  * report, `--json`, and the MCP tool all render from. */
 /** Run the scan, freeze its facts, and project them into the public diagnostic result. */
 export async function collectCheckResult(
-  cwd: string,
+  root: string,
   opts: CheckCollectionOptions = {},
 ): Promise<CheckResult> {
+  // The zone classifier works on absolute paths; under a relative root every file read as unzoned.
+  const cwd = resolve(root)
   const scan = await buildProjectScan(cwd, opts)
   try {
     return await collectCheckDiagnostics(cwd, scan, opts)
@@ -416,7 +564,7 @@ const REPORT_SECTIONS = [
 /**
  * Render the human-readable check report as lines. Pure (no I/O, no cwd) so tests can assert
  * report/exit-code parity: every diagnostic in `result.diagnostics` appears in the output, and the
- * trailer states the error/advisory counts that produced `ok`.
+ * trailer states the error, advisory and info counts that produced `ok`.
  */
 export function renderCheckReport(result: CheckResult): string[] {
   const lines: string[] = []
@@ -425,7 +573,7 @@ export function renderCheckReport(result: CheckResult): string[] {
     result.typecheck === "pass"
       ? "✓ typecheck passed"
       : result.typecheck === "fail"
-        ? "✗ typecheck failed - the frontend/backend contract is broken"
+        ? `✗ typecheck failed - ${result.typecheckNote ?? "the frontend/backend contract is broken"}`
         : `⚠ typecheck SKIPPED - ${result.typecheckNote ?? "no tsconfig / typescript not installed"} (the contract gate did not run)`,
   )
   // Stated on every run, passing or not. "Which bundler is this app on" decides which plugin slot is
@@ -467,13 +615,17 @@ export function renderCheckReport(result: CheckResult): string[] {
       // resolve condition the Bun dev bundler can't take does not), so the counts are split rather than
       // rounded up to the worse of the two.
       const errors = ds.filter((d) => d.severity === "error").length
-      const advisory = ds.length - errors
+      const warnings = ds.filter((d) => d.severity === "warning").length
+      const infos = ds.length - errors - warnings
+      const rest = belowError(warnings, infos)
       lines.push(
         ds.length === 0
           ? `✓ ${label}: none`
-          : errors === 0
-            ? `⚠ ${label}: ${advisory} (advisory)`
-            : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+          : errors + warnings === 0
+            ? `• ${label}: ${ds.length} (info)`
+            : errors === 0
+              ? `⚠ ${label}: ${warnings} (advisory)${infos > 0 ? ` (+${infos} info)` : ""}`
+              : `✗ ${label}: ${errors}${rest === "" ? "" : ` (+${rest})`}`,
       )
     }
     for (const d of ds) {
@@ -520,16 +672,25 @@ export function renderCheckReport(result: CheckResult): string[] {
     )
   }
   const errors = result.diagnostics.filter((d) => d.severity === "error").length
-  const advisory = result.diagnostics.length - errors
+  const warnings = result.diagnostics.filter((d) => d.severity === "warning").length
+  const rest = belowError(warnings, result.diagnostics.length - errors - warnings)
   lines.push(
     "",
     result.ok
-      ? advisory > 0
-        ? `✓ check passed (${advisory} advisory)`
-        : "✓ check passed"
-      : `✗ check failed: ${errors} error${errors === 1 ? "" : "s"}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+      ? rest === ""
+        ? "✓ check passed"
+        : `✓ check passed (${rest})`
+      : `✗ check failed: ${errors} error${errors === 1 ? "" : "s"}${rest === "" ? "" : ` (+${rest})`}`,
   )
   return lines
+}
+
+/** The findings that do not fail the check, named by severity: an info finding is not advisory. */
+function belowError(warnings: number, infos: number): string {
+  const parts: string[] = []
+  if (warnings > 0) parts.push(`${warnings} advisory`)
+  if (infos > 0) parts.push(`${infos} info`)
+  return parts.join(", ")
 }
 
 /** Run the full check; print a report (`--json` for machine output) and return whether it passed. */

@@ -1,5 +1,17 @@
 # @nifrajs/image
 
+## 5.0.0
+
+### Minor Changes
+
+- c75818d: `wasmImageBackend` now turns a square JPEG upright by its EXIF orientation. It took any quarter-turn image that decoded to its displayed size as already turned by the codec, which a square always does, so square photos were served sideways. `WasmImageCodecs` takes an `orientsJpeg` flag for a decoder that applies the orientation itself; the backend then leaves its pixels alone.
+
+### Patch Changes
+
+- 05587e0: A remote image source refused before its body is read (an upstream error status or a declared size over `maxSourceBytes`) now has its body cancelled and its fetch aborted, so the upstream exchange ends with the request instead of staying open.
+- bf6eeb0: Static files, `public/` files and local image sources refuse a resolved path when any directory along it became a symlink between the containment check and the open. On macOS the open itself refuses such a path; on Linux the opened descriptor's path is checked; elsewhere the opened file must still be the one at the checked path. Before, only a symlink in the last component was refused. A refused `public/` file falls through like a missing one.
+- 5a3c27a: On platforms other than macOS and Linux, Windows included, the check that a static, `public/` or local image file is still the file at its resolved path now runs its steps one after another and compares file identities exactly, so a single directory swap during the open cannot pass it. A race-free check does not exist there, because no file API can open a path without following a link in a middle directory; the `@nifrajs/node` README states that a tree a concurrent local writer can change is outside the guarantee on those platforms.
+
 ## 4.0.2
 
 ## 4.0.1

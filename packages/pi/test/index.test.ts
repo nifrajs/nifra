@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { AgentEvent } from "@nifrajs/agent-protocol"
 import registerNifraTools from "../extensions/nifra.ts"
 import { PiBackend } from "../src/index.ts"
 
@@ -135,6 +136,112 @@ process.stdin.on("data", (chunk) => {
     await oversized.close("oversized-jsonl")
   })
 
+  test("the record cap applies to each JSONL record, not to a chunk holding several", async () => {
+    const fakeBatched = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const delta = (text) => JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } })
+  process.stdout.write([delta("x".repeat(700)), delta("y".repeat(700)), JSON.stringify({ type: "agent_end" }), JSON.stringify({ type: "agent_settled" })].join("\\n") + "\\n")
+})
+`
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", fakeBatched],
+      maxRecordBytes: 1_024,
+    })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "batched-jsonl" })
+    const events = await collect(backend.send({ sessionId: "batched-jsonl", message: "hello" }))
+    await backend.close("batched-jsonl")
+    expect(events.filter((event) => event.type === "assistant.delta")).toHaveLength(2)
+    expect(events.some((event) => event.type === "session.failed")).toBe(false)
+  })
+
+  test("a turn whose model call failed fails, with Pi's error, instead of completing", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "OAuth refresh failed for openai-codex" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed], willRetry: false }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-failed" })
+      const events: AgentEvent[] = []
+      await expect(
+        (async () => {
+          for await (const event of backend.send({ sessionId: "model-failed", message: "hello" }))
+            events.push(event)
+        })(),
+      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      expect(events.some((event) => event.type === "session.completed")).toBe(false)
+      expect(events.find((event) => event.type === "session.failed")).toMatchObject({
+        error: { code: "PI_MODEL_FAILED", message: "OAuth refresh failed for openai-codex" },
+      })
+      expect((await backend.snapshot("model-failed")).status).toBe("failed")
+    } finally {
+      await backend.close("model-failed")
+    }
+  })
+
+  test("a model error keeps its reason and not a credential the provider echoed", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234. Authorization: Bearer eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed] }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-key-echo" })
+      const events: AgentEvent[] = []
+      await expect(
+        (async () => {
+          for await (const event of backend.send({ sessionId: "model-key-echo", message: "hello" }))
+            events.push(event)
+        })(),
+      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      const failed = events.find((event) => event.type === "session.failed")
+      const message = failed?.type === "session.failed" ? failed.error.message : ""
+      expect(message).toContain("401 Incorrect API key provided: [REDACTED]")
+      expect(message).not.toContain("abcdefghijklmnop")
+      expect(message).not.toContain("eyJ")
+    } finally {
+      await backend.close("model-key-echo")
+    }
+  })
+
+  test("a model error Pi retries does not end the turn, and the retried answer completes it", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "overloaded" }
+  const answered = { role: "assistant", content: [{ type: "text", text: "retried" }], stopReason: "stop" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed], willRetry: true }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "auto_retry_start", attempt: 1 }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "message_end", message: answered }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [answered], willRetry: false }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-retried" })
+      const events = await collect(backend.send({ sessionId: "model-retried", message: "hello" }))
+      expect(events.find((event) => event.type === "assistant.message")).toMatchObject({
+        text: "retried",
+      })
+      expect(events.at(-1)?.type).toBe("session.completed")
+      expect(events.some((event) => event.type === "session.failed")).toBe(false)
+    } finally {
+      await backend.close("model-retried")
+    }
+  })
+
   test("cancelling an idle session does not fabricate a stopped turn", async () => {
     const backend = new PiBackend({
       command: process.execPath,
@@ -257,6 +364,38 @@ process.stdin.on("data", (chunk) => {
     }
     expect(events.some((event) => event.type === "approval.required")).toBe(true)
     await backend.close("approval")
+  })
+
+  test("cancels an extension dialog it cannot map instead of leaving the turn waiting", async () => {
+    const fakeDialog = `
+let buffer = ""
+process.stdin.on("data", (chunk) => {
+  buffer += String(chunk)
+  for (;;) {
+    const newline = buffer.indexOf("\\n")
+    if (newline === -1) break
+    const command = JSON.parse(buffer.slice(0, newline))
+    buffer = buffer.slice(newline + 1)
+    if (command.type === "prompt") {
+      process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "note-1", method: "notify", message: "hi" }) + "\\n")
+      process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "select-1", method: "select", title: "Pick", options: ["a", "b"] }) + "\\n")
+    }
+    if (command.type === "extension_ui_response") {
+      process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: JSON.stringify(command) } }) + "\\n")
+      process.stdout.write(JSON.stringify({ type: "agent_end" }) + "\\n")
+    }
+  }
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakeDialog] })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "dialog" })
+    const replies: string[] = []
+    for await (const event of backend.send({ sessionId: "dialog", message: "hello" }))
+      if (event.type === "assistant.message") replies.push(event.text)
+    expect(replies).toEqual([
+      JSON.stringify({ type: "extension_ui_response", id: "select-1", cancelled: true }),
+    ])
+    await backend.close("dialog")
   })
 
   test("ships an opt-in Nifra verification extension through Pi's public API", async () => {

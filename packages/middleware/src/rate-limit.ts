@@ -164,6 +164,27 @@ export interface RateLimitOptions {
    * when none is declared).
    */
   readonly key?: (req: Request, platform?: Platform) => string
+  /**
+   * Leave a request uncharged: it is not counted and carries no `RateLimit-*` headers. Runs before
+   * the key is derived, so a health check or an internal probe never touches the store.
+   */
+  readonly skip?: (req: Request, platform?: Platform) => boolean
+}
+
+/** One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it. */
+export interface RateLimitTier {
+  /** Static path prefix such as `/api/public`: no params, wildcards, dot segments or trailing slash. */
+  readonly prefix: string
+  readonly max: number
+  readonly windowMs: number
+  /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. */
+  readonly key?: (req: Request, platform?: Platform) => string
+}
+
+export interface RateLimitTiersOptions extends Omit<RateLimitOptions, "max" | "windowMs"> {
+  /** The bucket for every request no tier claims. */
+  readonly floor: { readonly max: number; readonly windowMs: number }
+  readonly tiers: readonly RateLimitTier[]
 }
 
 /**
@@ -230,49 +251,76 @@ function nativeKey(
   return allowGlobalKey ? "global" : null
 }
 
-/**
- * Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it
- * also covers 404s); over the limit → `429` + `Retry-After`. Every response carries
- * `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
- */
-export function rateLimit(options: RateLimitOptions): Middleware {
-  const { store, max, windowMs } = options
-  if (!Number.isInteger(max) || max < 1)
-    throw new Error("rateLimit: max must be a positive integer")
+interface QuotaInfo {
+  readonly limit: number
+  readonly remaining: number
+  readonly resetSeconds: number
+}
+
+/** A counter a request can be charged to. `scope` prefixes its store keys so buckets never share one. */
+interface Bucket {
+  readonly max: number
+  readonly windowMs: number
+  readonly scope: string
+  readonly key: (req: Request, platform?: Platform) => string | null
+  readonly nativeKey: ((req: NodeRequestContext, platform?: Platform) => string | null) | undefined
+}
+
+function assertWindow(max: number, windowMs: number, label: string): void {
+  if (!Number.isInteger(max) || max < 1) throw new Error(`${label}: max must be a positive integer`)
   if (!Number.isFinite(windowMs) || windowMs <= 0) {
-    throw new Error("rateLimit: windowMs must be a positive number")
+    throw new Error(`${label}: windowMs must be a positive number`)
   }
+}
+
+/** The shared keying options, validated once, as the default key pair every bucket starts from. */
+function defaultKeys(
+  options: RateLimitOptions | RateLimitTiersOptions,
+  label: string,
+): Pick<Bucket, "key" | "nativeKey"> {
   const trustedProxies = options.trustedProxies ?? 0
   if (!Number.isInteger(trustedProxies) || trustedProxies < 0) {
-    throw new Error("rateLimit: trustedProxies must be a non-negative integer")
+    throw new Error(`${label}: trustedProxies must be a non-negative integer`)
   }
   const header = options.header?.trim().toLowerCase()
-  if (header !== undefined && header.trim() === "") throw new Error("rateLimit: header is empty")
+  if (header !== undefined && header.trim() === "") throw new Error(`${label}: header is empty`)
   const allowGlobalKey = options.allowGlobalKey === true
-  const keyOf =
-    options.key ??
-    ((req: Request, platform?: Platform) =>
-      defaultKey(req, platform, trustedProxies, header, allowGlobalKey))
-  const quota = new WeakMap<Request, { remaining: number; resetSeconds: number }>()
+  if (options.key !== undefined) return { key: options.key, nativeKey: undefined }
+  return {
+    key: (req, platform) => defaultKey(req, platform, trustedProxies, header, allowGlobalKey),
+    nativeKey: (req, platform) => nativeKey(req, platform, trustedProxies, header, allowGlobalKey),
+  }
+}
+
+/**
+ * The limiter both public factories build: `bucketFor` picks the one bucket a request is charged to,
+ * from its pathname when `pathAware`. The Node twins exist only when every bucket can key the
+ * allocation-light native request and nothing needs a real `Request` (`skip`, a custom `key`).
+ */
+function limiter(
+  name: string,
+  store: RateLimitStore,
+  buckets: readonly Bucket[],
+  bucketFor: (pathname: string) => Bucket,
+  pathAware: boolean,
+  skip: RateLimitOptions["skip"],
+): Middleware {
+  const quota = new WeakMap<Request, QuotaInfo>()
   // State for the Node twins, keyed by the NodeRequestContext identity (the same object is passed
   // to the request and response twins - the core identity contract that replaces `Request` keying).
-  const nativeQuota = new WeakMap<object, { remaining: number; resetSeconds: number }>()
+  const nativeQuota = new WeakMap<object, QuotaInfo>()
 
-  interface QuotaInfo {
-    readonly remaining: number
-    readonly resetSeconds: number
-  }
-
-  const hitStore = async (
+  const charge = async (
+    bucket: Bucket,
     key: string | null,
   ): Promise<{ info: QuotaInfo; reject: Response | undefined } | Response> => {
     if (typeof key !== "string" || key.trim() === "") {
       return Response.json({ ok: false, error: "rate_limit_key_unavailable" }, { status: 500 })
     }
-    const { count, resetAt } = await store.hit(key, windowMs)
+    const { count, resetAt } = await store.hit(bucket.scope + key, bucket.windowMs)
     const resetSeconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
-    const info = { remaining: Math.max(0, max - count), resetSeconds }
-    if (count > max) {
+    const info = { limit: bucket.max, remaining: Math.max(0, bucket.max - count), resetSeconds }
+    if (count > bucket.max) {
       return {
         info,
         reject: new Response(JSON.stringify({ ok: false, error: "rate_limited" }), {
@@ -284,10 +332,13 @@ export function rateLimit(options: RateLimitOptions): Middleware {
     return { info, reject: undefined }
   }
 
+  const native = skip === undefined && buckets.every((bucket) => bucket.nativeKey !== undefined)
   const middleware: Middleware = {
-    name: guardName("rate-limit"),
+    name,
     async onRequest(req, platform) {
-      const outcome = await hitStore(keyOf(req, platform))
+      if (skip?.(req, platform) === true) return undefined
+      const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
+      const outcome = await charge(bucket, bucket.key(req, platform))
       if (outcome instanceof Response) return outcome
       quota.set(req, outcome.info)
       return outcome.reject
@@ -296,20 +347,21 @@ export function rateLimit(options: RateLimitOptions): Middleware {
       const info = quota.get(req)
       if (info === undefined) return res
       quota.delete(req)
-      return withHeaders(res, (headers) => {
-        headers.set("RateLimit-Limit", String(max))
-        headers.set("RateLimit-Remaining", String(info.remaining))
-        headers.set("RateLimit-Reset", String(info.resetSeconds))
-      })
+      return withHeaders(
+        res,
+        (headers) => {
+          headers.set("RateLimit-Limit", String(info.limit))
+          headers.set("RateLimit-Remaining", String(info.remaining))
+          headers.set("RateLimit-Reset", String(info.resetSeconds))
+        },
+        req,
+      )
     },
-    // Node twins exist only for the built-in header/XFF key derivation - a custom `key` callback
-    // takes a real `Request`, which is exactly the object the native lane avoids building.
-    ...(options.key === undefined
+    ...(native
       ? {
           onNodeRequest: async (req: NodeRequestContext, platform?: Platform) => {
-            const outcome = await hitStore(
-              nativeKey(req, platform, trustedProxies, header, allowGlobalKey),
-            )
+            const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
+            const outcome = await charge(bucket, bucket.nativeKey?.(req, platform) ?? null)
             if (outcome instanceof Response) return outcome
             nativeQuota.set(req, outcome.info)
             return outcome.reject
@@ -320,16 +372,156 @@ export function rateLimit(options: RateLimitOptions): Middleware {
             nativeQuota.delete(req)
             // Lowercase on purpose: the Web path's `Headers` lowercases names on the wire, so this
             // is byte-identical output.
-            setNodeHeader(res, "ratelimit-limit", String(max))
+            setNodeHeader(res, "ratelimit-limit", String(info.limit))
             setNodeHeader(res, "ratelimit-remaining", String(info.remaining))
             setNodeHeader(res, "ratelimit-reset", String(info.resetSeconds))
           },
         }
       : {}),
   }
+  return middleware
+}
+
+/**
+ * The pathname the router matches: an absolute URL's path or a raw request target, without query
+ * or fragment. A dot segment is resolved the way the server resolves it before routing.
+ */
+function pathnameOf(url: string): string {
+  let start = 0
+  if (!url.startsWith("/")) {
+    const authority = url.indexOf("//")
+    const slash = url.indexOf("/", authority === -1 ? 0 : authority + 2)
+    if (slash === -1) return "/"
+    start = slash
+  }
+  let end = url.length
+  const query = url.indexOf("?", start)
+  if (query !== -1) end = query
+  const hash = url.indexOf("#", start)
+  if (hash !== -1 && hash < end) end = hash
+  const path = url.slice(start, end)
+  return DOT_SEGMENT.test(path) ? new URL(path, "http://n").pathname : path
+}
+
+const DOT_SEGMENT = /\/(?:\.|%2e)/i
+
+/**
+ * Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it
+ * also covers 404s); over the limit → `429` + `Retry-After`. Every response carries
+ * `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
+ */
+export function rateLimit(options: RateLimitOptions): Middleware {
+  assertWindow(options.max, options.windowMs, "rateLimit")
+  if (options.skip !== undefined && typeof options.skip !== "function") {
+    throw new TypeError("rateLimit: skip must be a function")
+  }
+  const bucket: Bucket = {
+    max: options.max,
+    windowMs: options.windowMs,
+    scope: "",
+    ...defaultKeys(options, "rateLimit"),
+  }
+  const middleware = limiter(
+    guardName("rate-limit"),
+    options.store,
+    [bucket],
+    () => bucket,
+    false,
+    options.skip,
+  )
   return withRouteAssurance(middleware, {
     id: NIFRA_ASSURANCE.RATE_LIMITED,
     source: "rate-limit",
+    scope: "global",
+  })
+}
+
+const STATIC_PREFIX = /^(?:\/[A-Za-z0-9\-._~%!$&'()+,;=@]+)+$/
+
+function assertTierPrefix(prefix: unknown): asserts prefix is string {
+  const bad = (why: string): never => {
+    throw new Error(`rateLimitTiers: tier prefix ${JSON.stringify(prefix)} ${why}`)
+  }
+  if (typeof prefix !== "string" || !STATIC_PREFIX.test(prefix)) {
+    return bad('must be a static path such as "/api/public", with no trailing slash')
+  }
+  for (const segment of prefix.split("/").slice(1)) {
+    if (segment === "." || segment === "..") bad("must not contain a dot segment")
+    if (segment.startsWith(":") || segment.startsWith("*"))
+      bad("must be static: no params or wildcards")
+  }
+}
+
+/**
+ * Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is
+ * charged to exactly one bucket: the tier with the longest `prefix` that is the request's path or an
+ * ancestor of it, else the `floor`. Tiers never stack, so a tier may sit above the floor
+ * (`600/min` for `/api/public` under a `120/min` floor). It runs in `onRequest`, before routing, so
+ * a 404, a 405 or a body that fails validation is charged too. Prefixes are validated here; each
+ * tier counts in its own keys, so tiers can share one store.
+ */
+export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
+  const label = "rateLimitTiers"
+  if (options.floor === null || typeof options.floor !== "object") {
+    throw new TypeError(`${label}: floor must be { max, windowMs }`)
+  }
+  if (!Array.isArray(options.tiers)) throw new TypeError(`${label}: tiers must be an array`)
+  if (options.skip !== undefined && typeof options.skip !== "function") {
+    throw new TypeError(`${label}: skip must be a function`)
+  }
+  assertWindow(options.floor.max, options.floor.windowMs, `${label} floor`)
+  const keys = defaultKeys(options, label)
+  const floor: Bucket = {
+    max: options.floor.max,
+    windowMs: options.floor.windowMs,
+    scope: "floor:",
+    ...keys,
+  }
+  const seen = new Set<string>()
+  const tiers: (Bucket & { readonly prefix: string })[] = []
+  for (const tier of options.tiers) {
+    assertTierPrefix(tier.prefix)
+    if (seen.has(tier.prefix)) {
+      throw new Error(`${label}: duplicate tier prefix ${JSON.stringify(tier.prefix)}`)
+    }
+    seen.add(tier.prefix)
+    assertWindow(tier.max, tier.windowMs, `${label} tier ${tier.prefix}`)
+    if (tier.key !== undefined && typeof tier.key !== "function") {
+      throw new TypeError(`${label}: tier ${tier.prefix} key must be a function`)
+    }
+    tiers.push({
+      prefix: tier.prefix,
+      max: tier.max,
+      windowMs: tier.windowMs,
+      scope: `tier:${tier.prefix}:`,
+      key: tier.key ?? keys.key,
+      nativeKey: tier.key === undefined ? keys.nativeKey : undefined,
+    })
+  }
+  // Longest first, so the first tier whose prefix holds the path is the most specific one.
+  tiers.sort((a, b) => b.prefix.length - a.prefix.length)
+  const bucketFor = (pathname: string): Bucket => {
+    for (const tier of tiers) {
+      if (
+        pathname.startsWith(tier.prefix) &&
+        (pathname.length === tier.prefix.length || pathname.charCodeAt(tier.prefix.length) === 47)
+      ) {
+        return tier
+      }
+    }
+    return floor
+  }
+  const middleware = limiter(
+    guardName("rate-limit-tiers"),
+    options.store,
+    [floor, ...tiers],
+    bucketFor,
+    true,
+    options.skip,
+  )
+  return withRouteAssurance(middleware, {
+    id: NIFRA_ASSURANCE.RATE_LIMITED,
+    source: "rate-limit-tiers",
     scope: "global",
   })
 }

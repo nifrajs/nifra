@@ -26,17 +26,26 @@ type CallOptions<I extends RouteInfo> = {
  * value instead of being treated like an omitted object property by the general `Jsonify` helper. */
 type JsonifyResponses<T> = T extends object ? { [K in keyof T]: Jsonify<T[K]> } : never
 
-type IsBodyVerb<M extends string> = M extends "POST" | "PUT" | "PATCH" ? true : false
+/** Where a verb's body goes: slot 0 for POST/PUT/PATCH, `options.body` for DELETE, nowhere else. */
+type BodySlot<M extends string> = M extends "POST" | "PUT" | "PATCH"
+  ? "positional"
+  : M extends "DELETE"
+    ? "option"
+    : "none"
 
 /**
  * A terminal method call. The shape is **verb-aware** so the runtime can read
  * args unambiguously with no route info: body-verbs (POST/PUT/PATCH) always take
  * the body positionally Eden-style (typed `undefined` when the route has no body
- * schema, so it's still slot 0); GET/DELETE/HEAD take only options. Returns a
+ * schema, so it's still slot 0); GET/DELETE/HEAD take only options, and a DELETE
+ * whose route declares a body schema requires it as `options.body`. Returns a
  * `Result` whose data is the handler's output as it arrives over the wire
  * (`Jsonify`).
  */
-type MethodCall<I extends RouteInfo, BodyVerb extends boolean> = BodyVerb extends true
+type MethodCall<
+  I extends RouteInfo,
+  Slot extends "positional" | "option" | "none",
+> = Slot extends "positional"
   ? [I["body"]] extends [never]
     ? (
         body?: undefined,
@@ -50,11 +59,23 @@ type MethodCall<I extends RouteInfo, BodyVerb extends boolean> = BodyVerb extend
       ) => Promise<
         Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
       >
-  : (
-      options?: CallOptions<I>,
-    ) => Promise<
-      Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
-    >
+  : Slot extends "option"
+    ? [I["body"]] extends [never]
+      ? (
+          options?: CallOptions<I>,
+        ) => Promise<
+          Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
+        >
+      : (
+          options: CallOptions<I> & { body: I["body"] },
+        ) => Promise<
+          Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
+        >
+    : (
+        options?: CallOptions<I>,
+      ) => Promise<
+        Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
+      >
 
 // --- typed SSE subscriptions ---
 
@@ -67,8 +88,9 @@ export interface SubscribeOptions<I extends RouteInfo> {
   /** Abort to close the subscription (same effect as calling `close()`). */
   signal?: AbortSignal
   /**
-   * Reconnect after a dropped/errored stream (default true - EventSource semantics, so a proxy
-   * closing an idle feed doesn't silently kill it). A FINITE stream should pass `false` so a clean
+   * Reconnect after a dropped/errored stream. Default `true` for a GET stream (EventSource semantics,
+   * so a proxy closing an idle feed doesn't silently kill it) and `false` for one that posts a body,
+   * since a reconnect sends the body again. A FINITE stream should pass `false` so a clean
    * server-side end completes the subscription instead of replaying it. Delays follow exponential
    * backoff with jitter, honoring the server's `retry:` hint when sent.
    */
@@ -89,12 +111,24 @@ type SubscribeCall<I extends RouteInfo> = (
   options?: SubscribeOptions<I>,
 ) => Subscription
 
-/** Routes declared via `app.sse()` grow a `.subscribe()` beside their verbs. */
-type SseMethods<MethodMap> = MethodMap extends { GET: infer G }
+/** A POST stream's `.subscribe()`: the route's body is required and is posted on every connect. */
+type SubscribeBodyCall<I extends RouteInfo> = (
+  onEvent: (event: Jsonify<SseOf<I>>) => void,
+  options: SubscribeOptions<I> & { body: I["body"] },
+) => Subscription
+
+/** Routes declared via `app.sse()` grow a `.subscribe()` beside their verbs; one whose schema
+ * declares a body is a POST route, and its `.subscribe()` takes that body. */
+type SseMethods<MethodMap> = (MethodMap extends { GET: infer G }
   ? [SseOf<G>] extends [never]
     ? unknown
     : { subscribe: SubscribeCall<G & RouteInfo> }
-  : unknown
+  : unknown) &
+  (MethodMap extends { POST: infer P }
+    ? [SseOf<P>] extends [never]
+      ? unknown
+      : { subscribe: SubscribeBodyCall<P & RouteInfo> }
+    : unknown)
 
 // --- typed WebSocket handles ---
 
@@ -146,7 +180,7 @@ type WsMethods<MethodMap> = MethodMap extends { WS: infer G }
 type Methods<MethodMap> = {
   [M in Exclude<keyof MethodMap, "WS"> as Lowercase<M & string>]: MethodCall<
     MethodMap[M] & RouteInfo,
-    IsBodyVerb<M & string>
+    BodySlot<M & string>
   >
 } & SseMethods<MethodMap> &
   WsMethods<MethodMap>

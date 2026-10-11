@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createCache } from "../src/index.ts"
+import { type CacheStore, createCache, MemoryCache } from "../src/index.ts"
 
 function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number) => void } {
   let ms = start
@@ -8,6 +8,30 @@ function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number
 
 /** Let any fire-and-forget background revalidation settle. */
 const flush = (): Promise<void> => Bun.sleep(2)
+
+/** A loader the test finishes by hand, with a promise for the moment the cache called it. */
+function gatedLoader(): {
+  readonly load: () => Promise<string>
+  readonly started: Promise<void>
+  release(value: string): void
+} {
+  let begin = (): void => {}
+  const started = new Promise<void>((resolve) => {
+    begin = resolve
+  })
+  let finish: (value: string) => void = () => {}
+  const result = new Promise<string>((resolve) => {
+    finish = resolve
+  })
+  return {
+    load: () => {
+      begin()
+      return result
+    },
+    started,
+    release: (value) => finish(value),
+  }
+}
 
 describe("createCache - wrap (cache-aside)", () => {
   test("rejects non-finite TTL configuration", async () => {
@@ -106,6 +130,65 @@ describe("createCache - invalidation", () => {
     await cache.clear()
     expect(await cache.get("x")).toBeUndefined()
   })
+
+  test("a stale refresh that started before invalidateTag does not write the old value back", async () => {
+    const clock = makeClock()
+    let refreshed: (() => void) | undefined
+    const settled = new Promise<void>((resolve) => {
+      refreshed = resolve
+    })
+    const cache = createCache({
+      now: clock.now,
+      observer: (event) => {
+        if (event.op === "revalidate") refreshed?.()
+      },
+    })
+    const opts = { ttlMs: 100, swrMs: 10_000, tags: ["user:1"] }
+    await cache.wrap("user:1", () => "v1", opts)
+    clock.advance(200)
+    const loader = gatedLoader()
+    expect(await cache.wrap("user:1", loader.load, opts)).toBe("v1")
+    await loader.started
+    await cache.invalidateTag("user:1")
+    loader.release("old-refresh")
+    await settled
+    expect(await cache.get("user:1")).toBeUndefined()
+  })
+
+  test("delete, clear or a newer set during a load keeps the load from storing", async () => {
+    const withdrawals: readonly [
+      string,
+      (cache: ReturnType<typeof createCache>) => Promise<void>,
+      unknown,
+    ][] = [
+      ["delete", (cache) => cache.delete("k"), undefined],
+      ["clear", (cache) => cache.clear(), undefined],
+      ["set", (cache) => cache.set("k", "newer"), "newer"],
+    ]
+    for (const [label, withdraw, expected] of withdrawals) {
+      const cache = createCache()
+      const loader = gatedLoader()
+      const pending = cache.wrap("k", loader.load)
+      await loader.started
+      await withdraw(cache)
+      loader.release("loaded")
+      expect(await pending).toBe("loaded")
+      expect({ label, stored: await cache.get("k") }).toEqual({ label, stored: expected })
+    }
+  })
+
+  test("a wrap after an invalidation runs its own load instead of joining the withdrawn one", async () => {
+    const cache = createCache()
+    const loader = gatedLoader()
+    const first = cache.wrap("k", loader.load, { tags: ["t"] })
+    await loader.started
+    await cache.invalidateTag("t")
+    const second = await cache.wrap("k", () => "fresh", { tags: ["t"] })
+    loader.release("old")
+    expect(await first).toBe("old")
+    expect(second).toBe("fresh")
+    expect(await cache.get<string>("k")).toBe("fresh")
+  })
 })
 
 // Background revalidation is fire-and-forget, so its error handling is the only thing between a failing
@@ -186,5 +269,62 @@ describe("createCache - background revalidation errors", () => {
     }
     expect(logged.length).toBeGreaterThan(0)
     expect(String(logged[0]?.[0])).toContain("revalidate")
+  })
+})
+
+describe("createCache - a store shared by several caches", () => {
+  test("an invalidation or newer set from another cache keeps a running load from storing", async () => {
+    const changes: readonly [
+      string,
+      (other: ReturnType<typeof createCache>) => Promise<void>,
+      unknown,
+    ][] = [
+      ["invalidateTag", (other) => other.invalidateTag("t"), undefined],
+      ["delete", (other) => other.delete("k"), undefined],
+      ["set", (other) => other.set("k", "newer"), "newer"],
+    ]
+    for (const [, change, left] of changes) {
+      const store = new MemoryCache()
+      const loading = createCache({ store })
+      const other = createCache({ store })
+      const loader = gatedLoader()
+      const wrapped = loading.wrap("k", loader.load, { tags: ["t"] })
+      await loader.started
+      await change(other)
+      loader.release("old")
+      expect(await wrapped).toBe("old")
+      const stored: unknown = await loading.get("k")
+      expect(stored).toBe(left)
+    }
+  })
+
+  test("a delete, invalidation or clear waits for this cache's async write it covers", async () => {
+    const changes: readonly ((cache: ReturnType<typeof createCache>) => Promise<void>)[] = [
+      (cache) => cache.delete("k"),
+      (cache) => cache.invalidateTag("t"),
+      (cache) => cache.clear(),
+    ]
+    for (const change of changes) {
+      const memory = new MemoryCache()
+      const landed = Promise.withResolvers<void>()
+      // An async store that applies a write only when the test lets it, after a later invalidation
+      // would otherwise already have run.
+      const store: CacheStore = {
+        get: (key) => memory.get(key),
+        set: async (key, entry, tags) => {
+          await landed.promise
+          memory.set(key, entry, tags)
+        },
+        delete: (key) => memory.delete(key),
+        invalidateTag: (tag) => memory.invalidateTag(tag),
+        clear: () => memory.clear(),
+      }
+      const cache = createCache({ store })
+      const write = cache.set("k", "v", { tags: ["t"] })
+      const changed = change(cache)
+      landed.resolve()
+      await Promise.all([write, changed])
+      expect(await cache.get("k")).toBeUndefined()
+    }
   })
 })

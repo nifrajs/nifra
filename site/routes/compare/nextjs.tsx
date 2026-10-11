@@ -76,13 +76,11 @@ export default function VsNextjs() {
 
       <h2>Where Next.js is the right choice</h2>
       <p>
-        Nifra does not implement React Server Components, and that is a deliberate line: RSC is a
-        React-only architecture, and a framework core that five UI frameworks share cannot be built
-        on it. If your application is architected around RSC itself - streaming component payloads,
-        server-only component trees as the organizing idea -{" "}
-        <strong>Next.js App Router is the right tool</strong>, and Nifra will not pretend otherwise.
-        Next.js also brings the largest React ecosystem, years of production hardening at every
-        scale, and first-party Vercel integration.
+        Next.js brings the largest React ecosystem, years of production hardening at scale, and
+        first-party Vercel integration. Nifra's optional{" "}
+        <a href="/docs/server-components">server-components pipeline</a> uses native React
+        RSC/Flight and corresponding Vue, Svelte and Solid implementations. It is intended for the
+        release after 4.0.0, with its own certified compiler tuple and explicit support limits.
       </p>
 
       <h2>Where Nifra wins</h2>

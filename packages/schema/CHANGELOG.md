@@ -1,5 +1,70 @@
 # @nifrajs/schema
 
+## 5.0.0
+
+### Minor Changes
+
+- 62d73a7: A typed SSE route (`app.sse()`) is now in the OpenAPI document. Before, it was a bare `200` with no content, so a client generator for another language had nothing to build the event type from. Its `200` answers `text/event-stream`, and its event schema becomes a named component (`<operationId>Event`, or one named after the path, deduplicated) so a generator emits a type for it. `toOpenAPI(app, { openapiVersion: "3.2.0" })` (and `openapi({ openapiVersion })`) declares OpenAPI 3.2 and describes each event with the standard `itemSchema`: a `data` string whose `contentSchema` is the event schema, plus `event`, `id`, and `retry`. The default stays 3.1, which has no field for stream items, so the same schema rides as `x-itemSchema` beside `schema: { type: "string" }`. A new docs page, /docs/control-api, shows a control API built this way: methods as routes, a resumable typed event stream, the typed client, and the document for other languages.
+- 2fbb4f0: `t.date()` and `t.json()` for page data. A `loaderOutput` or `actionOutput` field declared `t.date()` reaches the page as a `Date` in the server render, on hydration, on client navigations, in streamed `t.deferred` values and in server function results; a `Date` or an ISO date string is accepted, anything else fails the route by path. `t.json()` declares a field that is any JSON value and passes it through whole. `JsonValue` is exported from `@nifrajs/schema`.
+
+### Patch Changes
+
+- c669308: A schema validating in a browser page uses TypeBox's eval-free checker from the start. It used to try a `new Function` compile first, which under a Content-Security-Policy without `'unsafe-eval'`, or under Trusted Types, is a violation the browser logs and sends to any report endpoint, once per schema, before the fallback took over. Servers and edge runtimes are unchanged.
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [8bf8bc7]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+  - @nifrajs/uploads@5.0.0
+
 ## 4.0.2
 
 ### Patch Changes

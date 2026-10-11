@@ -6,6 +6,7 @@
  *
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
+import { isAuthenticatedRequest, writableResponse } from "@nifrajs/core/server"
 import { isDraftEnabled } from "./draft.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
@@ -22,6 +23,9 @@ export interface CachedResponse {
   readonly revalidate: number
   /** Public, bounded invalidation labels. A tag purge makes matching entries miss immediately. */
   readonly tags?: readonly string[]
+  /** The store's {@link CacheStore.fence} as the render behind this entry began. A store that keeps
+   * purge order skips the write when this key or one of its tags was purged after it. */
+  readonly fence?: number | undefined
 }
 
 /**
@@ -39,6 +43,13 @@ export interface CacheStore {
   delete(key: string): Promise<void>
   /** Drop every cached response carrying `tag`, when the backend supports tag invalidation. */
   readonly invalidateTag?: (tag: string) => Promise<void>
+  /**
+   * The current point in this store's purge order. `withISR` takes one before each render and hands it
+   * back as {@link CachedResponse.fence}, and `set` skips that entry when its key or one of its tags
+   * was purged after the point. Without it, a purge that lands while a page renders is undone when the
+   * render stores the page it built from data read before the purge.
+   */
+  readonly fence?: () => number | Promise<number>
 }
 
 const ISR_TAG_PATTERN = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
@@ -145,6 +156,10 @@ export class MemoryCacheStore implements CacheStore {
   >()
   private readonly max: number
   private readonly tagEpoch = new Map<string, string>()
+  // Purge order: `fence` reads it; each purge advances it and records where, per key and per tag.
+  private order = 0
+  private readonly purgedKeys = new Map<string, number>()
+  private readonly purgedTags = new Map<string, number>()
 
   constructor(options: MemoryCacheStoreOptions = {}) {
     const isProd = typeof process !== "undefined" && process.env?.NODE_ENV === "production"
@@ -188,8 +203,14 @@ export class MemoryCacheStore implements CacheStore {
     return Promise.resolve(value)
   }
 
+  fence(): number {
+    return this.order
+  }
+
   set(key: string, value: CachedResponse): Promise<void> {
     const tags = normalizeTags(value.tags)
+    if (value.fence !== undefined && this.purgedAfter(key, tags, value.fence))
+      return Promise.resolve()
     const tagEpochs: Record<string, string> = {}
     for (const tag of tags) tagEpochs[tag] = this.tagEpoch.get(tag) ?? "0"
     this.cache.delete(key) // re-insert at the tail so Map order tracks recency (with get) for the LRU evict
@@ -205,6 +226,7 @@ export class MemoryCacheStore implements CacheStore {
 
   delete(key: string): Promise<void> {
     this.cache.delete(key)
+    this.markPurged(this.purgedKeys, key)
     this.pruneTagEpochs()
     return Promise.resolve()
   }
@@ -212,6 +234,7 @@ export class MemoryCacheStore implements CacheStore {
   invalidateTag(tag: string): Promise<void> {
     normalizeTag(tag)
     this.tagEpoch.set(tag, crypto.randomUUID())
+    this.markPurged(this.purgedTags, tag)
     // This store is bounded and local, so eagerly remove matching rows. It keeps invalidation
     // immediate and lets us discard epoch keys that no retained entry references anymore.
     for (const [key, row] of this.cache) {
@@ -219,6 +242,22 @@ export class MemoryCacheStore implements CacheStore {
     }
     this.pruneTagEpochs()
     return Promise.resolve()
+  }
+
+  private purgedAfter(key: string, tags: readonly string[], fence: number): boolean {
+    if ((this.purgedKeys.get(key) ?? 0) > fence) return true
+    return tags.some((tag) => (this.purgedTags.get(tag) ?? 0) > fence)
+  }
+
+  private markPurged(marks: Map<string, number>, name: string): void {
+    marks.delete(name)
+    marks.set(name, ++this.order)
+    // Bounded like the entries: a mark matters only to a render still in flight.
+    while (marks.size > this.max) {
+      const oldest = marks.keys().next().value
+      if (oldest === undefined) break
+      marks.delete(oldest)
+    }
   }
 
   private pruneTagEpochs(): void {
@@ -276,13 +315,22 @@ export interface KVCacheStoreOptions {
 const isCachedResponse = (value: unknown): value is CachedResponse => {
   if (typeof value !== "object" || value === null) return false
   const v = value as Record<string, unknown>
+  // Everything a replay hands to `new Response` must be legal there, or a corrupt record would throw
+  // on every hit instead of reading as a miss.
   if (
     typeof v.body !== "string" ||
     typeof v.status !== "number" ||
+    !Number.isInteger(v.status) ||
+    v.status < 200 ||
+    v.status > 599 ||
     typeof v.storedAt !== "number" ||
+    !Number.isFinite(v.storedAt) ||
     typeof v.revalidate !== "number" ||
+    !Number.isFinite(v.revalidate) ||
+    v.revalidate < 0 ||
     typeof v.headers !== "object" ||
-    v.headers === null
+    v.headers === null ||
+    Array.isArray(v.headers)
   ) {
     return false
   }
@@ -294,13 +342,54 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
       return false
     }
   }
-  for (const headerValue of Object.values(v.headers as Record<string, unknown>)) {
+  const headers: Record<string, string> = {}
+  for (const [name, headerValue] of Object.entries(v.headers)) {
     if (typeof headerValue !== "string") return false
+    headers[name] = headerValue
+  }
+  try {
+    new Headers(headers)
+  } catch {
+    return false
   }
   return true
 }
 
 const KV_TAG_EPOCH_PREFIX = "__nifra_isr_tag_v1:"
+const KV_PURGED_AT = "__nifraPurgedAt"
+
+/** When a KV page key was purged, from the marker `delete` leaves; `-Infinity` for a page or nothing. */
+function kvPurgedAt(raw: string | null): number {
+  if (raw === null || !raw.includes(KV_PURGED_AT)) return Number.NEGATIVE_INFINITY
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null && KV_PURGED_AT in parsed) {
+      const at = parsed[KV_PURGED_AT]
+      if (typeof at === "number") return at
+    }
+  } catch {
+    // Not a marker.
+  }
+  return Number.NEGATIVE_INFINITY
+}
+
+/** When a tag epoch was written (`<time>:<uuid>`); an epoch from before epochs carried a time is older
+ * than any render. */
+function kvEpochTime(epoch: string): number {
+  const at = epoch.indexOf(":")
+  const time = at === -1 ? Number.NaN : Number(epoch.slice(0, at))
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY
+}
+
+let lastKvTime = 0
+/** Wall-clock ms, strictly increasing per process so a purge orders after a render it follows. Not
+ * `timeOrigin + performance.now()`: that clock stops while the host sleeps, so a purge from a process
+ * that slept would order before renders other instances began earlier. */
+const kvClock = (): number => {
+  const now = Date.now()
+  lastKvTime = now > lastKvTime ? now : lastKvTime + 0.001
+  return lastKvTime
+}
 
 type StoredTaggedResponse = CachedResponse & {
   readonly __nifraTagEpochs?: Readonly<Record<string, string>>
@@ -373,10 +462,18 @@ export class KVCacheStore implements CacheStore {
     return value
   }
 
+  /** Wall-clock time, so purges on any instance order against it. KV is eventually consistent, so the
+   * fence holds only for purges this location has already seen. */
+  fence(): number {
+    return kvClock()
+  }
+
   async set(key: string, value: CachedResponse): Promise<void> {
-    const tags = normalizeTags(value.tags)
+    const { fence, ...entry } = value
+    if (fence !== undefined && kvPurgedAt(await this.kv.get(key)) > fence) return
+    const tags = normalizeTags(entry.tags)
     if (tags.length === 0) {
-      await this.kv.put(key, JSON.stringify(value), this.putOptions)
+      await this.kv.put(key, JSON.stringify(entry), this.putOptions)
       return
     }
     const epochs = Object.fromEntries(
@@ -384,24 +481,29 @@ export class KVCacheStore implements CacheStore {
         tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
       ),
     )
+    if (fence !== undefined && Object.values(epochs).some((epoch) => kvEpochTime(epoch) > fence)) {
+      return
+    }
     const stored: StoredTaggedResponse = {
-      ...value,
+      ...entry,
       tags,
       __nifraTagEpochs: epochs,
     }
     await this.kv.put(key, JSON.stringify(stored), this.putOptions)
   }
 
+  /** Leaves a marker rather than removing the key, so `set` can refuse a render that began before
+   * the purge. The marker reads as a miss. */
   async delete(key: string): Promise<void> {
-    await this.kv.delete(key)
+    await this.kv.put(key, JSON.stringify({ [KV_PURGED_AT]: kvClock() }), this.putOptions)
   }
 
   async invalidateTag(tag: string): Promise<void> {
     normalizeTag(tag)
     // Epoch invalidation avoids KV key enumeration and remains bounded for a tag with millions of
     // pages. Epoch keys intentionally have no expiration: an expired epoch would resurrect entries
-    // written before the invalidation when their page key still exists.
-    await this.kv.put(this.tagKey(tag), crypto.randomUUID())
+    // written before the invalidation when their page key still exists. The time orders it for `set`.
+    await this.kv.put(this.tagKey(tag), `${kvClock()}:${crypto.randomUUID()}`)
   }
 
   private tagKey(tag: string): string {
@@ -450,17 +552,10 @@ export function withoutCacheChannel(res: Response): Response {
   if (!res.headers.has(ISR_REVALIDATE_HEADER) && !res.headers.has(ISR_REVALIDATE_TAGS_HEADER)) {
     return res
   }
-  try {
-    res.headers.delete(ISR_REVALIDATE_HEADER)
-    res.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
-    return res
-  } catch {
-    // A `fetch()` response has immutable headers: rebuild it around the same body instead.
-    const headers = new Headers(res.headers)
-    headers.delete(ISR_REVALIDATE_HEADER)
-    headers.delete(ISR_REVALIDATE_TAGS_HEADER)
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-  }
+  const target = writableResponse(res)
+  target.headers.delete(ISR_REVALIDATE_HEADER)
+  target.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+  return target
 }
 
 export interface ISROptions {
@@ -473,8 +568,17 @@ export interface ISROptions {
   readonly now: () => number
   /** Cache key for a request. Default: `origin + pathname`, plus the query parameters `query` admits,
    * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for
-   * this request (it goes straight to the app, uncached). Replaces `query` entirely. */
+   * this request (it goes straight to the app, uncached). Replaces `query` entirely. Under the default
+   * key a request carrying `Authorization` or a cookie outside `anonymousCookies` never reads the
+   * store; a custom key takes that decision over, so include whatever identifies the visitor in it. */
   readonly key?: (req: Request) => string | null
+  /**
+   * Cookie names that never change the page, such as a consent or analytics cookie. Under the default
+   * key a request carrying `Authorization` or any other cookie skips the stored page and renders fresh,
+   * because a signed-in visitor's page can differ from the anonymous one; a request whose cookies are
+   * all listed here is served from the cache like one with none. Default none.
+   */
+  readonly anonymousCookies?: readonly string[]
   /**
    * How the query string reaches the default key. Default `"bypass"`: a request carrying any query
    * parameter skips the cache - rendered fresh, never stored - so `?a=1`, `?a=2`, ... cannot each
@@ -488,6 +592,41 @@ export interface ISROptions {
    * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
+  /**
+   * Called when a store call fails: it throws, rejects, or outlives {@link storeTimeoutMs}. The request
+   * is served without the cache either way - a failed read is a miss, a failed write still returns the
+   * rendered page, a failed regeneration keeps the stale entry - so a store outage never changes a
+   * status. Default: one `console.error` line per operation per minute, never naming the cache key.
+   */
+  readonly onStoreError?: (error: unknown, info: { readonly op: ISRStoreOp }) => void
+  /**
+   * Longest a store call may take (ms) before it counts as failed. Default none, so a hung store holds
+   * the request; set it when the store is a network service.
+   */
+  readonly storeTimeoutMs?: number
+}
+
+/** The store operation an {@link ISROptions.onStoreError} report is about. */
+export type ISRStoreOp = "get" | "set" | "delete" | "fence"
+
+const STORE_FAILED = Symbol("nifra.isr.store-failed")
+const STORE_REPORT_INTERVAL_MS = 60_000
+const STORE_REPORT_DETAIL_CHARS = 200
+
+/** The error's own words with the cache key cut out, since a store may name the key it failed on. */
+function storeErrorDetail(error: unknown, key: string): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  let path: string | undefined
+  try {
+    path = new URL(key).pathname
+  } catch {
+    path = undefined
+  }
+  let redacted = text.split(key).join("<key>")
+  if (path !== undefined && path.length > 1) redacted = redacted.split(path).join("<key>")
+  return redacted.length > STORE_REPORT_DETAIL_CHARS
+    ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
+    : redacted
 }
 
 /** `createWebApp`'s marker for how its documents meet a CSP (see `DOCUMENT_POLICY` in ./csp.ts). Read
@@ -554,8 +693,19 @@ const cacheControlHas = (headers: Headers, names: readonly string[]): boolean =>
 const hasSetCookie = (headers: Headers): boolean =>
   headers.has("set-cookie") || (headers.getSetCookie?.().length ?? 0) > 0
 
+/** Whether every cookie in a `Cookie` header is named in `names`. */
+const cookieNamesWithin = (header: string, names: ReadonlySet<string>): boolean => {
+  for (const pair of header.split(";")) {
+    const name = pair.split("=", 1)[0]?.trim() ?? ""
+    if (name !== "" && !names.has(name)) return false
+  }
+  return true
+}
+
+// An authentication stage may read any header, so a request it accepted is private whatever carried
+// the credential. The mark is set on the request the app was handed, which is why this runs after it.
 const requestCarriesPrivateState = (req: Request): boolean =>
-  req.headers.has("authorization") || req.headers.has("cookie")
+  req.headers.has("authorization") || req.headers.has("cookie") || isAuthenticatedRequest(req)
 
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
@@ -575,7 +725,8 @@ const responseDeclaresVary = (res: Response): boolean => {
 /**
  * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
  * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
- * the data header, and, for a request carrying a cookie or Authorization, an explicit `public`.
+ * the data header, and, for a request carrying a cookie or Authorization or accepted by an
+ * authentication stage, an explicit `public`.
  * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
  */
 export const isCacheablePage = (req: Request, res: Response): boolean => {
@@ -653,8 +804,22 @@ function sanitizeCachedHeaders(headers: Readonly<Record<string, string>>): Recor
   return out
 }
 
-const isInvalidationResponse = (res: Response): boolean =>
-  res.status === 404 || res.status === 410 || (res.status >= 300 && res.status < 400)
+/**
+ * Whether a regeneration's answer withdraws the stored page: it is gone or moved, or, rendered for a
+ * request with no cookie or Authorization, refused (401, 403) or declared `private`/`no-store`. A
+ * signed-in visitor's own 403 or private copy says nothing about the shared page. A 5xx or 429 keeps
+ * serving the stale copy.
+ */
+const isInvalidationResponse = (req: Request, res: Response): boolean => {
+  if (res.status === 404 || res.status === 410 || (res.status >= 300 && res.status < 400))
+    return true
+  if (requestCarriesPrivateState(req)) return false
+  return (
+    res.status === 401 ||
+    res.status === 403 ||
+    (res.status >= 200 && res.status < 300 && cacheControlHas(res.headers, ["private", "no-store"]))
+  )
+}
 
 /**
  * Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from
@@ -673,8 +838,77 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
+  const storeTimeoutMs = options.storeTimeoutMs
+  if (storeTimeoutMs !== undefined && !(Number.isFinite(storeTimeoutMs) && storeTimeoutMs > 0)) {
+    throw new RangeError("[nifra/web] ISR storeTimeoutMs must be a positive finite number")
+  }
+  const lastReport = new Map<ISRStoreOp, number>()
+  const reportStoreError = (op: ISRStoreOp, key: string, error: unknown): void => {
+    try {
+      if (options.onStoreError !== undefined) {
+        options.onStoreError(error, { op })
+        return
+      }
+      const last = lastReport.get(op)
+      const at = now()
+      if (last !== undefined && at - last < STORE_REPORT_INTERVAL_MS) return
+      lastReport.set(op, at)
+      console.error(
+        `[nifra/web] ISR store ${op} failed; serving without the cache (${storeErrorDetail(error, key)})`,
+      )
+    } catch {
+      // A failing reporter must not turn a served page into an error.
+    }
+  }
+  // Runs one store call; a throw, a rejection or a timeout is reported and answered with STORE_FAILED.
+  const attempt = async <T>(
+    op: ISRStoreOp,
+    key: string,
+    call: () => Promise<T>,
+  ): Promise<T | typeof STORE_FAILED> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const pending = call()
+      if (storeTimeoutMs === undefined) return await pending
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error(`ISR store ${op} exceeded storeTimeoutMs (${storeTimeoutMs} ms)`)
+          error.name = "TimeoutError"
+          reject(error)
+        }, storeTimeoutMs)
+      })
+      return await Promise.race([pending, timeout])
+    } catch (error) {
+      reportStoreError(op, key, error)
+      return STORE_FAILED
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+  // A store without purge order, or one whose fence failed, stores the render unfenced.
+  const fenceFor = async (key: string): Promise<number | undefined> => {
+    const { fence } = store
+    if (fence === undefined) return undefined
+    const taken = await attempt("fence", key, async () => fence.call(store))
+    return taken === STORE_FAILED ? undefined : taken
+  }
   const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
+  const anonymousCookies = new Set(options.anonymousCookies ?? [])
+  // A request whose cookies are all anonymous is judged for storage as if it carried none.
+  const judged = (req: Request): Request => {
+    if (
+      anonymousCookies.size === 0 ||
+      req.headers.has("authorization") ||
+      isAuthenticatedRequest(req)
+    )
+      return req
+    const cookie = req.headers.get("cookie")
+    if (cookie === null || !cookieNamesWithin(cookie, anonymousCookies)) return req
+    const headers = new Headers(req.headers)
+    headers.delete("cookie")
+    return new Request(req.url, { method: req.method, headers })
+  }
   const regenerating = new Set<string>()
   openCacheChannel(app)
   // An outer cache layer (`withCdn`) opens this wrapper's own channel: cached responses then carry how
@@ -727,10 +961,13 @@ export function withISR(
     req: Request,
     platform: ISRPlatform | undefined,
     key: string,
+    remember: boolean,
+    stored?: (entry: CachedResponse) => void,
   ): Promise<Response> => {
+    const fence = await fenceFor(key)
     const res = await app.fetch(req, platform)
-    if (!isCacheablePage(req, res)) {
-      rememberUncacheable(key, res)
+    if (!isCacheablePage(judged(req), res)) {
+      if (remember) rememberUncacheable(key, res)
       return withoutCacheChannel(res)
     }
     uncacheable.delete(key)
@@ -743,14 +980,49 @@ export function withISR(
       storedAt: now(),
       revalidate: ttlMs(res),
       ...(tags.length === 0 ? {} : { tags }),
+      fence,
     }
-    await store.set(key, entry)
-    const fresh = new Response(body, {
-      status: res.status,
+    // A failed write still answers with the page, and still hands it to concurrent misses: whether it
+    // may be shared was decided above, not by the store.
+    await attempt("set", key, () => store.set(key, entry))
+    stored?.(entry)
+    return fresh(entry)
+  }
+
+  const fresh = (entry: CachedResponse): Response => {
+    const res = new Response(entry.body, {
+      status: entry.status,
       headers: { ...entry.headers, [ISR_STATUS_HEADER]: "miss" },
     })
-    advertise(fresh.headers, entry.revalidate, tags)
-    return fresh
+    advertise(res.headers, entry.revalidate, entry.tags ?? [])
+    return res
+  }
+
+  // Cold misses in flight per key. Concurrent misses wait for the first one's stored entry instead
+  // of each rendering the page; a render that is not stored (private, failed) sends each waiter to
+  // render for itself, so a waiter never receives a page that was not safe to share.
+  const coldRenders = new Map<string, Promise<CachedResponse | undefined>>()
+  const renderCold = async (
+    req: Request,
+    platform: ISRPlatform | undefined,
+    key: string,
+  ): Promise<Response> => {
+    const pending = coldRenders.get(key)
+    if (pending !== undefined) {
+      const entry = await pending
+      return entry === undefined ? render(req, platform, key, true) : fresh(entry)
+    }
+    const shared = Promise.withResolvers<CachedResponse | undefined>()
+    coldRenders.set(key, shared.promise)
+    let entry: CachedResponse | undefined
+    try {
+      return await render(req, platform, key, true, (stored) => {
+        entry = stored
+      })
+    } finally {
+      coldRenders.delete(key)
+      shared.resolve(entry)
+    }
   }
 
   // Background regeneration (single-flight per key) - a failed regen keeps the stale entry; the next
@@ -763,22 +1035,26 @@ export function withISR(
     if (regenerating.has(key)) return
     regenerating.add(key)
     try {
+      const fence = await fenceFor(key)
       const res = await app.fetch(req, platform)
-      if (isCacheablePage(req, res)) {
+      if (isCacheablePage(judged(req), res)) {
         const tags = tagsOf(res)
-        await store.set(key, {
+        const entry: CachedResponse = {
           body: await res.text(),
           status: res.status,
           headers: headersOf(res),
           storedAt: now(),
           revalidate: ttlMs(res),
           ...(tags.length === 0 ? {} : { tags }),
-        })
-      } else if (isInvalidationResponse(res)) {
-        // A successful deletion or redirect is authoritative. Keeping the old entry would make a
-        // withdrawn page stay publicly visible forever because every stale request would retry the same
-        // non-cacheable response while continuing to serve the old body.
-        await store.delete(key)
+          fence,
+        }
+        await attempt("set", key, () => store.set(key, entry))
+      } else if (isInvalidationResponse(judged(req), res)) {
+        // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
+        // publicly visible forever, because every stale request would retry the same non-cacheable
+        // response while continuing to serve the old body.
+        await res.body?.cancel()
+        await attempt("delete", key, () => store.delete(key))
       } else {
         await res.body?.cancel()
       }
@@ -793,7 +1069,15 @@ export function withISR(
     // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
     // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
     // the loader payload. (The write path already refuses to cache data-mode responses.)
-    const key = req.method === "GET" && req.headers.get("x-nifra-data") === null ? keyOf(req) : null
+    const privateRoute: unknown = Reflect.get(app, Symbol.for("nifra.web.private-route"))
+    const ownsPrivate = typeof privateRoute === "function" && privateRoute(req) === true
+    const key =
+      req.method === "GET" &&
+      req.headers.get("x-nifra-data") === null &&
+      !req.headers.has("x-nifra-component") &&
+      !ownsPrivate
+        ? keyOf(req)
+        : null
     if (key === null) return withoutCacheChannel(await app.fetch(req, platform))
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so
@@ -802,13 +1086,18 @@ export function withISR(
       return withoutCacheChannel(await app.fetch(req, platform))
     }
 
+    // A cookie or Authorization request may be personalized: under the default key it never reads
+    // the store, and its private render never marks the URL uncacheable for everyone else.
+    const personal = options.key === undefined && requestCarriesPrivateState(judged(req))
+
     const until = uncacheable.get(key)
     if (until !== undefined) {
-      if (now() < until) return render(req, platform, key)
+      if (now() < until) return render(req, platform, key, !personal)
       uncacheable.delete(key)
     }
 
-    const hit = await store.get(key)
+    const read = personal ? undefined : await attempt("get", key, () => store.get(key))
+    const hit = read === STORE_FAILED ? undefined : read
     if (hit !== undefined) {
       if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).
@@ -817,7 +1106,7 @@ export function withISR(
       else void task.catch(() => {})
       return served(hit, "stale")
     }
-    return render(req, platform, key)
+    return personal ? render(req, platform, key, false) : renderCold(req, platform, key)
   }
   Object.defineProperty(handler, CACHE_CHANNEL, {
     value: () => {
@@ -870,6 +1159,13 @@ export interface RevalidateEndpointOptions {
    * the purge, `202` when it is queued (rate limit or retry), and `502` when the CDN refused it.
    */
   readonly cdn?: CdnPurgeTarget
+  /**
+   * Caches below the pages whose entries carry the same tags, such as a `@nifrajs/cache` holding
+   * loader data. A tag purge invalidates each of them first, then the page store, then the CDN, so a
+   * page regenerated mid-purge cannot be rebuilt from stale data. A failure answers `500` before the
+   * page store is touched, so a retry purges everything again. Path purges do not reach them.
+   */
+  readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
 }
 
 const stringList = (value: unknown): string[] | null | undefined => {
@@ -953,6 +1249,18 @@ export function revalidateEndpoint(
       return jsonError(501, "tag_invalidation_not_supported")
     }
 
+    if (tags.length > 0 && options.dataCaches !== undefined) {
+      try {
+        for (const cache of options.dataCaches) {
+          for (const candidate of tags) await cache.invalidateTag(candidate)
+        }
+      } catch {
+        return Response.json(
+          { ok: false, error: "data_cache_invalidation_failed" },
+          { status: 500 },
+        )
+      }
+    }
     for (const key of keys) await options.store.delete(key)
     for (const candidate of tags) await invalidateTag?.call(options.store, candidate)
     const done =

@@ -9,6 +9,8 @@ import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
+import { parsePageData } from "./internal/revive-dates.ts"
+import { requestPattern } from "./internal/route-path.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -90,6 +92,7 @@ export const NAV_FROM_HEADER = "x-nifra-from"
  * structure rather than by assuming the deploy was atomic.
  */
 export interface RouteDataEnvelope {
+  readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
   readonly v: 1
   readonly data: unknown
   readonly layoutData?: readonly unknown[]
@@ -129,6 +132,7 @@ export interface Submission {
 
 /** The router's observable state. A new object is published on every transition. */
 export interface RouterState {
+  readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
   readonly routeId: string
   readonly params: Record<string, string>
   /** The current URL path (used to revalidate the active loader after an action). */
@@ -173,7 +177,7 @@ export function createMatcher(
   for (const pattern of patterns) {
     // Pass the literal to the public router seam: package type resolution may point the two core
     // subpaths at different source/dist declarations, while registration-time compilation is cheap.
-    routeIndex.add("GET", pattern.pattern, pattern.routeId)
+    routeIndex.add("GET", requestPattern(pattern.pattern), pattern.routeId)
   }
   return (path) => {
     // Strip the query without allocating a `split("?")` array - matcher runs per match.
@@ -258,8 +262,9 @@ export interface ClientRouter {
    * loader is revalidated so the mutation is reflected. Pass `{ revalidate: false }` to SKIP that
    * revalidation - keep the current `data` and just publish the action's `actionData` (useful when
    * the action already returned everything that changed, saving the extra round-trip). A redirect
-   * always loads its target regardless. Rejects on failure (caller falls back); once the action has
-   * run, the rejection's `redirectTo` names the page to load instead of posting again.
+   * always loads its target regardless. Rejects on failure (caller falls back); once the server has
+   * answered, at any status, the rejection's `redirectTo` names the page to load instead of posting
+   * again.
    */
   submit: (
     action: string,
@@ -310,6 +315,10 @@ export interface ClientRouterOptions {
   /** Terminal status → client route id. Generated entries populate this from `_404` and
    * `_<status>` files so soft navigation renders the same boundary as a hard request. */
   readonly statusRoutes?: Readonly<Record<number, string>>
+  /** Status route ids whose page renders inside layouts (all but `inLayouts = false`), filled in by the generated entry's
+   * `loadModule`. A soft navigation that ends on one loads the URL as a document, as one ending on a
+   * nested `_404` does: only the server runs those layouts' loaders. */
+  readonly layoutStatusRoutes?: Readonly<Record<string, true>>
   /** routeId → the route's client-only search keys (its `searchClientKeys` export). When a soft
    * navigation stays on the same route + pathname and changes ONLY these keys, `navigate` publishes the
    * new URL WITHOUT re-running the loader (re-render, not revalidate). Populated lazily by the generated
@@ -346,7 +355,7 @@ export interface MountRouterOptions {
 const readResponseData = (res: Response, signal?: AbortSignal): Promise<unknown> =>
   (res.headers.get("content-type") ?? "").includes("application/x-ndjson") && res.body !== null
     ? parseNdjsonData(res.body, signal)
-    : res.json()
+    : res.text().then(parsePageData)
 
 // Index scan, not `/\/+$/` - the unanchored-start trailing-run replace backtracks quadratically and
 // the pathname is caller-controlled.
@@ -404,8 +413,8 @@ const targetUrl = (to: string): URL | undefined => {
   }
 }
 
-const redirected = (to: string): Error =>
-  Object.assign(new Error(`[nifra/web] redirected to ${to}`), { redirectTo: to })
+const redirected = (to: string, cause?: unknown): Error =>
+  Object.assign(new Error(`[nifra/web] redirected to ${to}`, { cause }), { redirectTo: to })
 
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
@@ -519,11 +528,18 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
    * an older build be read by newer client code.
    */
   type LoadedRouteData = {
+    readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
     readonly data: unknown
     readonly layoutData?: readonly unknown[] | undefined
     readonly terminalRouteId?: string | undefined
     readonly boundaries?: BoundaryStates
   }
+  const dataFields = (value: LoadedRouteData) => ({
+    data: value.data,
+    layoutData: value.layoutData,
+    serverComponents: value.serverComponents,
+    ...(value.boundaries === undefined ? {} : { boundaries: value.boundaries }),
+  })
   const loadRouteData = async (
     path: string,
     match: { routeId: string; params: Record<string, string> },
@@ -551,24 +567,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
       return { data: null, terminalRouteId }
     }
-    if (retainFrom === undefined || payload.retained === undefined) {
-      return {
-        data: payload.data,
-        layoutData: payload.layoutData,
-        ...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),
-      }
+    let layoutData = payload.layoutData
+    if (retainFrom !== undefined && payload.retained !== undefined) {
+      const retained = new Set(
+        payload.retained.filter(
+          (index) => Number.isInteger(index) && index >= 0 && index < retainFrom.layoutData.length,
+        ),
+      )
+      layoutData = layoutData?.map((value, index) =>
+        retained.has(index) ? retainFrom.layoutData[index] : value,
+      )
     }
-    const retained = new Set(
-      payload.retained.filter(
-        (index) => Number.isInteger(index) && index >= 0 && index < retainFrom.layoutData.length,
-      ),
-    )
-    const layoutData = payload.layoutData?.map((value, index) =>
-      retained.has(index) ? retainFrom.layoutData[index] : value,
-    )
     return {
       data: payload.data,
       layoutData,
+      serverComponents: payload.serverComponents,
       ...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),
     }
   }
@@ -644,11 +657,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     navAbort?.abort()
     const ac = new AbortController()
     navAbort = ac
-    const initial = {
-      data: state.data,
-      layoutData: state.layoutData,
-      ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-    }
+    const initial = dataFields(state)
     const loaded = await applyClientLoader(
       state.path,
       route,
@@ -663,9 +672,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     } else {
       state = {
         ...state,
-        data: loaded.data,
-        layoutData: loaded.layoutData,
-        ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+        ...dataFields(loaded),
       }
     }
     emit()
@@ -707,6 +714,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     }
   >()
   const cachePut = (path: string, loaded: LoadedRouteData): void => {
+    if (loaded.serverComponents !== undefined) {
+      cache.delete(path)
+      return
+    }
     if (!cache.has(path) && cache.size >= MAX_CACHE) {
       const oldest = cache.keys().next().value
       if (oldest !== undefined) cache.delete(oldest)
@@ -789,7 +800,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           () => loadRouteData(at, route, signal, keepLayouts),
           prefetchedData,
         )
-        if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
+        if (loaded.terminalRouteId !== undefined) {
+          await loadModule?.(loaded.terminalRouteId)
+          if (options.layoutStatusRoutes?.[loaded.terminalRouteId] === true) {
+            throw new Error(
+              `[nifra/web] ${loaded.terminalRouteId} renders inside layouts; loading ${at} as a document`,
+            )
+          }
+        }
         return [at, route, loaded]
       } catch (error) {
         const next = hops < 20 ? appRedirect(redirectOf(error)) : undefined
@@ -817,9 +835,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       cachePut(state.path, loaded)
       state = {
         ...state,
-        data: loaded.data,
-        layoutData: loaded.layoutData,
-        ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+        ...dataFields(loaded),
         pending: false,
       }
       emit()
@@ -989,11 +1005,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       ) {
         ++generation // supersede any in-flight navigation so its late result is dropped
         navAbort?.abort()
-        cachePut(path, {
-          data: state.data,
-          layoutData: state.layoutData,
-          ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-        })
+        cachePut(path, dataFields(state))
         state = { ...state, path, pending: false, pendingPath: undefined }
         emit()
         return
@@ -1041,9 +1053,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           routeId: loaded.terminalRouteId ?? target.routeId,
           params: loaded.terminalRouteId === undefined ? target.params : {},
           path: to,
-          data: loaded.data,
-          layoutData: loaded.layoutData,
-          ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+          ...dataFields(loaded),
           actionData: undefined, // a fresh navigation has no action result
           pending: false,
         }
@@ -1089,8 +1099,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           body: prepared.body,
           headers: { [DATA_HEADER]: "1" },
         })
-        if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
+        // Whatever the status, the server took the POST: the action may have run before it failed.
         posted = true
+        if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
         if (redirectTo !== null) {
           // The action redirected (Post/Redirect/Get) - treat it as a client navigation.
@@ -1114,9 +1125,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             routeId: loaded.terminalRouteId ?? target.routeId,
             params: loaded.terminalRouteId === undefined ? target.params : {},
             path: to,
-            data: loaded.data,
-            layoutData: loaded.layoutData,
-            ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+            ...dataFields(loaded),
             actionData: undefined,
             pending: false,
           }
@@ -1137,9 +1146,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const active = { routeId: state.routeId, params: state.params }
         const loaded = skipActive
           ? {
-              data: state.data,
-              layoutData: state.layoutData,
-              ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
+              ...dataFields(state),
             }
           : await applyClientLoader(state.path, active, ac.signal, () =>
               loadRouteData(state.path, active, ac.signal),
@@ -1154,9 +1161,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           routeId: state.routeId,
           params: state.params,
           path: state.path,
-          data: loaded.data,
-          layoutData: loaded.layoutData,
-          ...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),
+          ...dataFields(loaded),
           actionData,
           pending: false,
         }
@@ -1172,9 +1177,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             routeId: state.routeId,
             params: state.params,
             path: state.path,
-            data: state.data,
-            layoutData: state.layoutData,
-            ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
+            ...dataFields(state),
             actionData: previousActionData,
             pending: false,
           }
@@ -1182,7 +1185,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         if (!posted) throw err
         if (mine !== generation) return // a newer navigation or submit owns the page
-        throw redirectOf(err) === undefined ? redirected(landing ?? state.path) : err
+        throw redirectOf(err) === undefined ? redirected(landing ?? state.path, err) : err
       }
     },
     hydrate,
@@ -1216,7 +1219,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           const oldest = prefetched.keys().next().value
           if (oldest !== undefined) prefetched.delete(oldest)
         }
-        prefetched.set(path, [loaded, Date.now()])
+        if (loaded.serverComponents === undefined) prefetched.set(path, [loaded, Date.now()])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {

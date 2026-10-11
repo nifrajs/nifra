@@ -189,7 +189,7 @@ export function generateApiReference(): string {
 }
 
 /** Sanity-check the output so a broken generator (e.g. a resolution change) fails loudly, not silently. */
-function assertSane(out: string): void {
+export function assertSane(out: string): void {
   if (
     !out.includes("## @nifrajs/core") ||
     !out.includes("### `@nifrajs/core/contract`") ||
@@ -200,6 +200,15 @@ function assertSane(out: string): void {
   }
 }
 
+/** Why the committed reference is not `generated` (it is absent or differs), or undefined when current. */
+export function apiReferenceDrift(
+  current: string | undefined,
+  generated: string,
+): string | undefined {
+  if (current === generated) return undefined
+  return "api-reference.md is stale - run `bun run gen:api` and commit the result."
+}
+
 if (import.meta.main) {
   const out = generateApiReference()
   assertSane(out)
@@ -207,9 +216,12 @@ if (import.meta.main) {
   const count = (out.match(/^- \*\*/gm) ?? []).length
   // `--check` is the gate (run by `check:api`): verify the committed file is current, never write.
   if (process.argv.includes("--check")) {
-    const current = existsSync(target) ? readFileSync(target, "utf8") : ""
-    if (current !== out) {
-      console.error("✗ api-reference.md is stale - run `bun run gen:api` and commit the result.")
+    const drift = apiReferenceDrift(
+      existsSync(target) ? readFileSync(target, "utf8") : undefined,
+      out,
+    )
+    if (drift !== undefined) {
+      console.error(`✗ ${drift}`)
       process.exit(1)
     }
     console.log(`✓ api-reference.md is up to date (${count} exports)`)

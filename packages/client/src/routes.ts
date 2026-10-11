@@ -1,5 +1,11 @@
 import type { ContractShape, RegistryFor } from "@nifrajs/core/contract"
-import type { CookieOptions, InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
+import type {
+  CookieOptions,
+  InferInput,
+  InferOutput,
+  ResponseResult,
+  StandardSchemaV1,
+} from "@nifrajs/core/server"
 import type { Treaty, TreatyFromRegistry } from "./treaty.ts"
 
 /**
@@ -101,6 +107,48 @@ export type OutputOf<Module, Name extends string> = Module extends { readonly [K
     ? InferOutput<S>
     : never
   : null
+
+/**
+ * What a route module's output schema accepts from its loader or action: the input type of its `Name`
+ * export, or `null` when the module declares none. A `t.deferred(inner)` field accepts `defer(...)`.
+ */
+export type InputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S }
+  ? S extends StandardSchemaV1
+    ? InferInput<S>
+    : never
+  : null
+
+type RouteControl = Response | ResponseResult | null | undefined
+
+/**
+ * What a route module's `loader` may return: data its `loaderOutput` accepts, a `Response` or a
+ * `ResponseResult` such as `redirect(...)`, or nothing. With no `loaderOutput`, returning data is a
+ * type error, as it is a refusal at runtime.
+ */
+export type RouteLoaderReturn<Module> =
+  | InputOf<Module, "loaderOutput">
+  | RouteControl
+  | Promise<InputOf<Module, "loaderOutput"> | RouteControl>
+
+/**
+ * What a route module's `action` may return: as {@link RouteLoaderReturn} against `actionOutput`,
+ * plus that data wrapped in `revalidate(paths, data)`.
+ */
+export type RouteActionReturn<Module> =
+  | InputOf<Module, "actionOutput">
+  | RouteRevalidate<InputOf<Module, "actionOutput">>
+  | RouteControl
+  | Promise<
+      | InputOf<Module, "actionOutput">
+      | RouteRevalidate<InputOf<Module, "actionOutput">>
+      | RouteControl
+    >
+
+// Structural, so this stays decoupled from `@nifrajs/web`'s `revalidate()`.
+type RouteRevalidate<Data> = {
+  readonly __nifraRevalidate: readonly string[]
+  readonly data: Data
+}
 
 /** The `searchSchema` a route's frontend half declares, or `undefined`. */
 export type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S }

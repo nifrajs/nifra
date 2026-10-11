@@ -12,6 +12,10 @@ interface Row {
   tags: readonly string[]
 }
 
+// How many distinct keys (and, separately, tags) the fence remembers changing. A load that outlives
+// this many distinct changes is refused its write, which costs one cache miss, never a stale value.
+const MAX_TRACKED_CHANGES = 65_536
+
 export interface MemoryCacheOptions {
   /** Evict the least-recently-used entry once the count exceeds this. Default 10,000; `0` explicitly
    * opts into an unbounded cache. */
@@ -27,6 +31,14 @@ export class MemoryCache implements CacheStore {
   private expirySweep = this.rows.entries()
   private readonly maxEntries: number
   private readonly now: () => number
+  // The epoch of each key's and tag's latest change, oldest first. Only the change that matters to a
+  // load is compared, so unrelated writes never age its fence out. Bounded: a fence older than a
+  // forgotten change is refused.
+  private readonly keyChanges = new Map<string, number>()
+  private readonly tagChanges = new Map<string, number>()
+  private clearedAt = 0
+  private forgottenAt = 0
+  private epoch = 0
 
   constructor(options: MemoryCacheOptions = {}) {
     this.maxEntries = options.maxEntries ?? 10_000
@@ -50,6 +62,7 @@ export class MemoryCache implements CacheStore {
   }
 
   set(key: string, entry: StoredEntry, tags: readonly string[]): void {
+    this.record(this.keyChanges, key)
     // Incremental expiry keeps cold, high-cardinality keys from occupying the entire bound until
     // their exact key is read. A fixed batch avoids an O(n) latency spike on a write.
     this.sweepExpired(8)
@@ -75,24 +88,56 @@ export class MemoryCache implements CacheStore {
   }
 
   delete(key: string): void {
+    this.record(this.keyChanges, key)
     this.evict(key)
   }
 
   invalidateTag(tag: string): void {
+    this.record(this.tagChanges, tag)
     const keys = this.tagIndex.get(tag)
     if (keys === undefined) return
     for (const key of [...keys]) this.evict(key)
   }
 
   clear(): void {
+    // Every older fence is refused from here on, so the earlier changes need no remembering.
+    this.clearedAt = ++this.epoch
+    this.keyChanges.clear()
+    this.tagChanges.clear()
     this.rows.clear()
     this.tagIndex.clear()
     this.expirySweep = this.rows.entries()
   }
 
+  /** The current epoch: {@link MemoryCache.setIfFence} compares what changed after it. */
+  fence(): number {
+    return this.epoch
+  }
+
+  setIfFence(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean {
+    if (typeof token !== "number" || !Number.isSafeInteger(token) || token > this.epoch)
+      return false
+    if (token < this.clearedAt || token < this.forgottenAt) return false
+    if ((this.keyChanges.get(key) ?? 0) > token) return false
+    for (const tag of tags) if ((this.tagChanges.get(tag) ?? 0) > token) return false
+    this.set(key, entry, tags)
+    return true
+  }
+
   /** Live entry count (for observability/tests). */
   size(): number {
     return this.rows.size
+  }
+
+  private record(changes: Map<string, number>, name: string): void {
+    changes.delete(name)
+    changes.set(name, ++this.epoch)
+    if (changes.size <= MAX_TRACKED_CHANGES) return
+    const first = changes.entries().next()
+    if (first.done) return
+    const [oldest, at] = first.value
+    changes.delete(oldest)
+    this.forgottenAt = Math.max(this.forgottenAt, at)
   }
 
   /** Remove a key and unlink it from every tag set it belonged to. */

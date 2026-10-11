@@ -23,6 +23,8 @@ export type Zone =
   | "shared"
   /** A server-function module (`*.fn.ts`); the browser only ever receives its generated RPC stub. */
   | "fn"
+  /** A compiler-owned server UI module; only opaque reference stubs may reach a browser. */
+  | "component"
   /** Framework output (the client entry, the server composition, generated types). */
   | "generated"
   /** A third-party package, or a workspace package declaring `"nifra": { "environment": "library" }`. */
@@ -38,7 +40,12 @@ export type Classification =
       /** A third-party file's path inside `node_modules`: `drizzle-orm/node-postgres/index.js`. */
       readonly modulePath?: string
     }
-  | { readonly zone: "error"; readonly reason: string }
+  | {
+      readonly zone: "error"
+      readonly reason: string
+      /** The undeclared package this error is about: every file in it shares the one fix. */
+      readonly package?: string
+    }
 
 export type PackageEnvironment = "frontend" | "backend" | "shared" | "library"
 const PACKAGE_ENVIRONMENTS: ReadonlySet<string> = new Set([
@@ -113,6 +120,7 @@ const SOURCE = "(?:[cm]?[jt]sx?|svelte|vue|mdx)"
 export const ROUTE_BACKEND_FILE = /\.backend\.(?:[cm]?[jt]s)$/
 const ZONE_SUFFIX = new RegExp(`\\.(frontend|backend|shared|fn)\\.${SOURCE}$`)
 const LEGACY_SERVER_SUFFIX = new RegExp(`\\.server\\.${SOURCE}$`)
+export const SERVER_COMPONENT_FILE = /\.component\.server\.[cm]?[jt]sx?$/
 
 const ZONE_FOLDERS: Readonly<Record<string, Zone>> = {
   frontend: "frontend",
@@ -128,7 +136,168 @@ export interface ZoneClassifierOptions {
   readonly routesDir?: string
   /** Extra absolute files treated as `generated` - a build's own entry modules. */
   readonly generatedFiles?: readonly string[]
+  /** The app's zone settings. Default: `"nifra": { "zones": ... }` in the app's package.json. */
+  readonly zones?: ZoneConfig
 }
+
+/**
+ * App-side zone settings, read from `"nifra": { "zones": ... }` in the app's package.json so every
+ * build, dev server, `nifra check` and the editor plugin see the same ones without running app code.
+ */
+export interface ZoneConfig {
+  /**
+   * The side of a package that does not declare one in its own package.json, by name: exact
+   * (`"@shop/db"`) or a trailing-`*` prefix (`"@shop/*"`). The exact name wins over a prefix, the
+   * longest prefix over a shorter one, and a package's own declaration over all of them.
+   */
+  readonly packages?: Readonly<Record<string, PackageEnvironment>>
+  /** App-relative folders holding backend code, beside `backend/` (`"migrations"`). */
+  readonly backend?: readonly string[]
+  /** App-relative folders holding frontend code, beside `frontend/`. */
+  readonly frontend?: readonly string[]
+  /** App-relative folders holding code both sides import, beside `shared/`. */
+  readonly shared?: readonly string[]
+}
+
+/** A `"nifra": { "zones": ... }` setting that cannot be applied. Thrown when a classifier is created. */
+export class ZoneConfigError extends Error {
+  override readonly name = "ZoneConfigError"
+  /** The file holding the setting, as the caller named it. */
+  readonly source: string
+  constructor(source: string, problem: string) {
+    super(`[nifra] ${source} "nifra.zones": ${problem}`)
+    this.source = source
+  }
+}
+
+const FOLDER_SIDES = ["backend", "frontend", "shared"] as const
+const FOLDER_SIDE_NAMES: ReadonlySet<string> = new Set(FOLDER_SIDES)
+const isPackageEnvironment = (value: unknown): value is PackageEnvironment =>
+  typeof value === "string" && PACKAGE_ENVIRONMENTS.has(value)
+const RESERVED_FOLDERS: ReadonlySet<string> = new Set([
+  "routes",
+  "frontend",
+  "backend",
+  "shared",
+  "public",
+  "node_modules",
+])
+
+const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : undefined
+
+/**
+ * Validate a `zones` setting. `source` names where it came from in the error. Folders are plain
+ * app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a
+ * pattern can never match less than its author meant without saying so.
+ */
+export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
+  const fail = (message: string): never => {
+    throw new ZoneConfigError(source, message)
+  }
+  const record = recordOf(value) ?? fail("must be an object")
+  const config: {
+    packages?: Record<string, PackageEnvironment>
+    backend?: string[]
+    frontend?: string[]
+    shared?: string[]
+  } = {}
+  for (const key of Object.keys(record)) {
+    if (key !== "packages" && !FOLDER_SIDE_NAMES.has(key))
+      fail(`unknown key "${key}" (expected packages, backend, frontend or shared)`)
+  }
+  if (record.packages !== undefined) {
+    const packages = recordOf(record.packages) ?? fail('"packages" must be an object')
+    const parsed: Record<string, PackageEnvironment> = {}
+    for (const [pattern, side] of Object.entries(packages)) {
+      if (pattern === "" || pattern.indexOf("*") !== pattern.lastIndexOf("*"))
+        fail(`package pattern "${pattern}" must be a name, or a name prefix ending in one "*"`)
+      if (pattern.includes("*") && !pattern.endsWith("*"))
+        fail(`package pattern "${pattern}" may use "*" only at its end`)
+      parsed[pattern] = isPackageEnvironment(side)
+        ? side
+        : fail(`packages["${pattern}"] must be one of frontend, backend, shared, library`)
+    }
+    config.packages = parsed
+  }
+  const owner = new Map<string, string>()
+  for (const side of FOLDER_SIDES) {
+    const raw = record[side]
+    if (raw === undefined) continue
+    const entries: readonly unknown[] = Array.isArray(raw)
+      ? raw
+      : fail(`"${side}" must be an array of app-relative folders`)
+    const folders: string[] = []
+    for (const entry of entries) {
+      const folder = (typeof entry === "string" ? entry : fail(`"${side}" must hold strings`))
+        .replaceAll("\\", "/")
+        .replace(/^\.\//, "")
+        .replace(/\/\*\*$/, "")
+        .replace(/\/+$/, "")
+      const top = folder.split("/")[0] ?? ""
+      if (folder === "" || folder.startsWith("/") || /^[a-z]:/i.test(folder))
+        fail(`"${side}" entry "${entry}" must be a folder relative to the app`)
+      if (folder.split("/").includes("..")) fail(`"${side}" entry "${entry}" may not contain ".."`)
+      if (/[*?[\]{}!]/.test(folder))
+        fail(`"${side}" entry "${entry}" must be a plain folder path (a trailing "/**" is allowed)`)
+      if (RESERVED_FOLDERS.has(top) || top.startsWith(".nifra"))
+        fail(`"${side}" entry "${entry}" is inside ${top}/, which already has its own rules`)
+      for (const [other, otherSide] of owner) {
+        const nested =
+          other === folder || other.startsWith(`${folder}/`) || folder.startsWith(`${other}/`)
+        if (nested && otherSide !== side)
+          fail(`"${folder}" (${side}) overlaps "${other}" (${otherSide}); a folder has one side`)
+      }
+      owner.set(folder, side)
+      folders.push(folder)
+    }
+    config[side] = folders
+  }
+  return config
+}
+
+/** The `nifra.zones` of the nearest package.json at or above `appRoot`, validated. */
+function appZoneConfig(appRoot: string): ZoneConfig {
+  let dir = appRoot
+  for (;;) {
+    const manifest = join(dir, "package.json")
+    if (existsSync(manifest)) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(readFileSync(manifest, "utf8"))
+      } catch {
+        return {}
+      }
+      const zones = recordOf(recordOf(parsed)?.nifra)?.zones
+      return zones === undefined ? {} : parseZoneConfig(zones, toPosix(manifest))
+    }
+    const parent = dirname(dir)
+    if (parent === dir) return {}
+    dir = parent
+  }
+}
+
+/** The side `packages` gives `name`: the exact entry, else the longest matching prefix. */
+function mappedSide(
+  packages: Readonly<Record<string, PackageEnvironment>> | undefined,
+  name: string | undefined,
+): PackageEnvironment | undefined {
+  if (packages === undefined || name === undefined) return undefined
+  const exact = packages[name]
+  if (exact !== undefined && Object.hasOwn(packages, name)) return exact
+  let best: string | undefined
+  for (const pattern of Object.keys(packages)) {
+    if (!pattern.endsWith("*") || !name.startsWith(pattern.slice(0, -1))) continue
+    if (best === undefined || pattern.length > best.length) best = pattern
+  }
+  return best === undefined ? undefined : packages[best]
+}
+
+/** How the `packages` setting would name `name`: its scope wildcard when it has a scope. */
+const suggestedPattern = (name: string): string =>
+  name.startsWith("@") && name.includes("/") ? `${name.slice(0, name.indexOf("/"))}/*` : name
 
 export interface ZoneClassifier {
   readonly appRoot: string
@@ -198,6 +367,18 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
   const appRoot = realFile(resolve(options.appRoot))
   const routesDir = realFile(resolve(options.routesDir ?? join(options.appRoot, "routes")))
   const generated = new Set((options.generatedFiles ?? []).map((file) => realFile(resolve(file))))
+  const zones =
+    options.zones === undefined
+      ? appZoneConfig(appRoot)
+      : parseZoneConfig(options.zones, "ZoneClassifierOptions")
+  const configuredFolders: Array<readonly [string, "backend" | "frontend" | "shared"]> = []
+  for (const side of FOLDER_SIDES)
+    for (const folder of zones[side] ?? []) configuredFolders.push([folder, side])
+  const folderSide = (rel: string): "backend" | "frontend" | "shared" | undefined => {
+    for (const [folder, side] of configuredFolders)
+      if (rel === folder || rel.startsWith(`${folder}/`)) return side
+    return undefined
+  }
   const cache = new Map<string, Classification>()
   const packages = new Map<string, PackageInfo | null>()
 
@@ -246,7 +427,7 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
       const declared =
         info?.environment !== undefined && PACKAGE_ENVIRONMENTS.has(info.environment)
           ? (info.environment as PackageEnvironment)
-          : undefined
+          : mappedSide(zones.packages, thirdParty)
       return {
         zone: "library",
         packageName: thirdParty,
@@ -259,6 +440,8 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
       if (SERVER_MANIFEST_FILE.test(base) && isGeneratedServerManifest(file)) {
         return { zone: "generated" }
       }
+      if (SERVER_COMPONENT_FILE.test(base)) return { zone: "component" }
+      if (/\.island\.[cm]?[jt]sx?$/.test(base)) return { zone: "frontend" }
       if (LEGACY_SERVER_SUFFIX.test(base)) {
         return {
           zone: "error",
@@ -289,7 +472,7 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
         if (suffix === "shared") return { zone: "shared" }
         return { zone: "route-frontend" }
       }
-      const folder = ZONE_FOLDERS[top]
+      const folder = ZONE_FOLDERS[top] ?? folderSide(rel)
       if (folder !== undefined) {
         if (suffix === undefined || suffix === folder) return { zone: folder }
         if (suffix === "fn" && folder === "backend") return { zone: "fn" }
@@ -303,8 +486,11 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
     }
     // First-party code outside the app: a workspace package, or a relative import out of the app.
     const info = packageFor(toPosix(dirname(file)))
-    const environment = info?.environment
-    if (environment !== undefined && PACKAGE_ENVIRONMENTS.has(environment)) {
+    const environment =
+      info?.environment !== undefined && PACKAGE_ENVIRONMENTS.has(info.environment)
+        ? info.environment
+        : mappedSide(zones.packages, info?.name)
+    if (environment !== undefined) {
       return environment === "library"
         ? {
             zone: "library",
@@ -313,10 +499,18 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
           }
         : { zone: environment as Zone }
     }
-    const where = info?.name ?? info?.dir ?? dirname(file)
+    const declare = `"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }`
+    if (info?.name === undefined) {
+      return {
+        zone: "error",
+        reason: `"${file}" is first-party code outside the app and declares no side. Add ${declare} to ${info === undefined ? "a package.json above it" : `${info.dir}/package.json`}`,
+      }
+    }
+    // Named per package, not per file, so a build that reaches 50 files of it reports one fact once.
     return {
       zone: "error",
-      reason: `"${file}" is first-party code outside the app (${where}) and declares no side. Add "nifra": { "environment": "frontend" | "backend" | "shared" | "library" } to ${info === undefined ? "its package.json" : `${info.dir}/package.json`}`,
+      package: info.name,
+      reason: `package "${info.name}" is first-party code outside the app and declares no side. Add ${declare} to ${info.dir}/package.json, or give it a side from the app's package.json: "nifra": { "zones": { "packages": { "${suggestedPattern(info.name)}": "backend" } } } (or "library" if the browser may load it)`,
     }
   }
 
@@ -388,8 +582,15 @@ export function browserDenial(
   return undefined
 }
 
+/** Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry. */
+export function isServerPackageSpecifier(specifier: string): boolean {
+  const name = specifierPackage(specifier)
+  return (name !== undefined && SERVER_PACKAGES.includes(name)) || SERVER_SUBPATHS.test(specifier)
+}
+
 /** Whether a module in `from` may import (with a value import) a module in `to`. */
 export function importAllowed(from: Zone, to: Zone): boolean {
+  if (from === "component") return true
   if (from === "generated" || from === "library") return true
   if (to === "generated" || to === "library") return true
   if (FRONTEND_ZONES.has(from)) return FRONTEND_ZONES.has(to) || to === "shared" || to === "fn"

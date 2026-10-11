@@ -26,6 +26,7 @@ Official Auth.js integration for nifra - mount Auth.js (OAuth, OIDC, credentials
 - **Session** _(interface)_ - `interface Session` · from `@nifrajs/authjs`
 - **SignInOptions** _(interface)_ - `interface SignInOptions` · from `@nifrajs/authjs/client`
 - **SignOutOptions** _(interface)_ - `interface SignOutOptions` · from `@nifrajs/authjs/client`
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse` · from `@nifrajs/authjs`
 - **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">` · from `@nifrajs/authjs`
 
 ## Footguns

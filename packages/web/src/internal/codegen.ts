@@ -4,6 +4,7 @@ import type { LayoutEntry, Manifest } from "../manifest.ts"
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
+  COMPONENT_GLOBAL,
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
@@ -11,7 +12,7 @@ import {
   ROUTE_GLOBAL,
 } from "../render-seam.ts"
 import { PRERENDERED_GLOBAL } from "../router.ts"
-import { jsStringLiteral } from "./js-string.ts"
+import { jsStringLiteral, jsValueLiteral } from "./js-string.ts"
 
 /** The globals the page-state handover may set - nothing else in it reaches `window`. */
 const HANDOVER_GLOBALS = [
@@ -20,6 +21,7 @@ const HANDOVER_GLOBALS = [
   ROUTE_GLOBAL,
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
+  COMPONENT_GLOBAL,
   PRERENDERED_GLOBAL,
 ]
 export interface GenerateClientEntryOptions {
@@ -36,6 +38,7 @@ export interface GenerateClientEntryOptions {
   readonly clientModule: string
   /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */
   readonly resolve: (file: string) => string
+  readonly serverComponents?: boolean
 }
 
 /**
@@ -81,21 +84,43 @@ export function generateClientEntry(
       files.push(errorFile)
       errorRouteIds.push(route.id)
     }
-    loaderRows.push(`  ${JSON.stringify(route.id)}: ${lazyLoader(files)},`)
+    loaderRows.push(`  ${jsStringLiteral(route.id)}: ${lazyLoader(files)},`)
     if (route.layoutIds.length > 0) layoutIdsOf[route.id] = route.layoutIds
     patternRows.push(
-      `  { routeId: ${JSON.stringify(route.id)}, pattern: ${JSON.stringify(route.pattern)} },`,
+      `  { routeId: ${jsStringLiteral(route.id)}, pattern: ${jsStringLiteral(route.pattern)} },`,
     )
   }
+  // A root status page renders inside the root layout unless it exports `inLayouts = false`, which
+  // only its module says - so the layout loads after the page, and only for a page that does not opt out.
+  const rootLayout = manifest.layouts._layout
+  const statusLoader = (routeId: string, file: string): string =>
+    rootLayout === undefined
+      ? lazyLoader([file])
+      : `() => import(${jsStringLiteral(resolve(file))}).then((page) => withRootLayout(${jsStringLiteral(routeId)}, page))`
   if (manifest.notFound !== undefined) {
-    loaderRows.push(`  "_404": ${lazyLoader([manifest.notFound.file])},`)
+    loaderRows.push(`  "_404": ${statusLoader("_404", manifest.notFound.file)},`)
     statusRoutes[404] = "_404"
   }
   for (const [status, entry] of Object.entries(manifest.statusPages ?? {})) {
     const routeId = `_${status}`
-    loaderRows.push(`  ${JSON.stringify(routeId)}: ${lazyLoader([entry.file])},`)
+    loaderRows.push(`  ${jsStringLiteral(routeId)}: ${statusLoader(routeId, entry.file)},`)
     statusRoutes[Number(status)] = routeId
   }
+  const layoutStatusLines =
+    rootLayout === undefined || Object.keys(statusRoutes).length === 0
+      ? []
+      : [
+          "const layoutStatusRoutes = {}",
+          "const withRootLayout = (id, page) => {",
+          "  if (page.inLayouts === false) return [page]",
+          `  return import(${jsStringLiteral(resolve(rootLayout.file))}).then((layout) => {`,
+          "    layoutStatusRoutes[id] = true",
+          '    layoutIdsOf[id] = ["_layout"]',
+          "    return [layout, page]",
+          "  })",
+          "}",
+        ]
+  const routerStatusOption = layoutStatusLines.length === 0 ? "" : ", layoutStatusRoutes"
   // `_loading` pages. Emitted only when the app has one, so an app without them imports nothing extra.
   // Each is its own lazy chunk; a route row carries its layout ids and the loading pages above it with
   // the number of those layouts each sits under - all the runtime needs to choose one.
@@ -110,14 +135,14 @@ export function generateClientEntry(
       ])
       routeRows.set(
         route.id,
-        `  ${JSON.stringify(route.id)}: ${JSON.stringify([route.layoutIds, above])},`,
+        `  ${jsStringLiteral(route.id)}: ${jsValueLiteral([route.layoutIds, above])},`,
       )
     }
     loadingLines.push(
       "const loadingModules = {",
       ...loadings.map(
         ([id, entry]) =>
-          `  ${JSON.stringify(id)}: () => import(${jsStringLiteral(resolve(entry.file))}),`,
+          `  ${jsStringLiteral(id)}: () => import(${jsStringLiteral(resolve(entry.file))}),`,
       ),
       "}",
       "const loadingRoutes = {",
@@ -129,14 +154,17 @@ export function generateClientEntry(
   return `${[
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
-    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
+    'import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"',
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
+    ...(options.serverComponents
+      ? ['import { bindComponentRouter } from "@nifrajs/web/server-components/client"']
+      : []),
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     ...(loadings.length > 0
       ? ['import { withLoading } from "@nifrajs/web/internal/loading-runtime"']
       : []),
-    `import * as __adapter from ${JSON.stringify(clientModule)}`,
+    `import * as __adapter from ${jsStringLiteral(clientModule)}`,
     "const { mountRouter } = __adapter",
     // The assurance hook is optional: ordinary client entries pay only for the namespace lookup, while
     // hydration runners get a runtime identity from the exact adapter module that mounted the page. The
@@ -152,8 +180,8 @@ export function generateClientEntry(
     // names actually exports `mountRouter`. Without this the miss surfaces as
     // "mountRouter is not a function" from inside a bundled chunk, at first paint, naming neither the
     // module nor the requirement - a self-executing entry passes every build and fails only here.
-    `if (typeof mountRouter !== "function") throw new Error(${JSON.stringify(
-      `[nifra/web] clientModule ${JSON.stringify(clientModule)} does not export \`mountRouter\`. ` +
+    `if (typeof mountRouter !== "function") throw new Error(${jsValueLiteral(
+      `[nifra/web] clientModule ${jsStringLiteral(clientModule)} does not export \`mountRouter\`. ` +
         "A client module must export `mountRouter({ router, routes, container })` - it is called by " +
         "the generated bootstrap, so a self-executing entry will not work. Use your adapter's " +
         '`/client` entry (e.g. "@nifrajs/web-react/client"), or re-export mountRouter from it.',
@@ -169,10 +197,11 @@ export function generateClientEntry(
     // to act on. An adapter that knows its framework is in that position says so, and the entry turns
     // the swallowed update into an honest full reload.
     'if (import.meta.hot && __adapter.hotUpdateNeedsReload) import.meta.hot.on("bun:afterUpdate", () => location.reload())',
-    `const errorRouteIds = new Set(${JSON.stringify(errorRouteIds)})`,
+    `const errorRouteIds = new Set(${jsValueLiteral(errorRouteIds)})`,
     // Each route is a lazy loader: dynamic imports → Bun.build (splitting) emits one chunk per
     // route, shared layouts/deps deduped into shared chunks, so a route's code loads only when
     // visited. loadModule caches the [layouts…, page] component chain + the chain's meta list per id.
+    ...layoutStatusLines,
     "const loaders = {",
     ...loaderRows,
     "}",
@@ -191,7 +220,7 @@ export function generateClientEntry(
     // boundary), with the page's `HydrateFallback` - or an empty leaf - where the component goes.
     "const holds = {}",
     // routeId → the ids and `handle` exports `useMatches` reports (layouts, then the page).
-    `const layoutIdsOf = ${JSON.stringify(layoutIdsOf)}`,
+    `const layoutIdsOf = ${jsValueLiteral(layoutIdsOf)}`,
     "const matchChains = {}",
     "const loadModule = async (id) => {",
     "  if (chains[id]) return",
@@ -235,11 +264,11 @@ export function generateClientEntry(
     // router, the deferred mapper and the adapters read, before any of them runs. Only the LAST
     // matching <script> counts, and only known keys: page HTML (sanitized user content) can carry an
     // element with the same id, and arbitrary keys copied onto `window` include `location`.
-    `const handovers = document.querySelectorAll(${JSON.stringify(`script[type="application/json"][id="${HANDOVER_ID}"]`)})`,
+    `const handovers = document.querySelectorAll(${jsValueLiteral(`script[type="application/json"][id="${HANDOVER_ID}"]`)})`,
     "const handover = handovers[handovers.length - 1]",
     "if (handover !== undefined) {",
     '  const state = JSON.parse(handover.textContent || "{}")',
-    `  for (const key of ${JSON.stringify(HANDOVER_GLOBALS)}) {`,
+    `  for (const key of ${jsValueLiteral(HANDOVER_GLOBALS)}) {`,
     "    if (Object.prototype.hasOwnProperty.call(state, key)) Reflect.set(window, key, state[key])",
     "  }",
     "}",
@@ -249,7 +278,7 @@ export function generateClientEntry(
     // Derive the initial route from the URL (correct on refresh/deep-link); fall back to the
     // server-injected route id for non-pattern routes (e.g. _404, which matches nothing).
     "const matched = createMatcher(patterns)(location.pathname)",
-    `const statusRoutes = ${JSON.stringify(statusRoutes)}`,
+    `const statusRoutes = ${jsValueLiteral(statusRoutes)}`,
     `const serverRoute = window.${ROUTE_GLOBAL} ?? ""`,
     // A terminal status page the server rendered (`_404`, `_410`, ...) outranks the URL match: a
     // loader that throws notFound() on `/learn/bad-slug` leaves a URL that still matches
@@ -270,6 +299,7 @@ export function generateClientEntry(
     // Undefined on a page-only app, which is exactly what the router treats as "no layout data".
     `  layoutData: window.${LAYOUT_DATA_GLOBAL} && window.${LAYOUT_DATA_GLOBAL}.map(mapDeferred),`,
     `  boundaries: mapDeferred(window.${BOUNDARY_GLOBAL}),`,
+    `  serverComponents: window.${COMPONENT_GLOBAL},`,
     // actionData (only set after a form POST) is in the initial state so the binding hydrates
     // consistently with the server-rendered markup; mapped through `mapDeferred` too so a deferred
     // action's placeholders become registry markers (a no-op when the action didn't defer).
@@ -280,8 +310,9 @@ export function generateClientEntry(
     // With `_loading` pages the store is wrapped: a slow navigation then names a loading chain (the
     // shared layouts + the `_loading` component) for the mounted view to render in the meantime.
     loadings.length > 0
-      ? "const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })"
-      : "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
+      ? `const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })`
+      : `const router = createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks })`,
+    ...(options.serverComponents ? ["bindComponentRouter(router)"] : []),
     "installHistory(router)",
     "installForms(router)",
     // The container is found in the DOM, not baked in. `rootId` is a per-render option and this entry
@@ -292,7 +323,7 @@ export function generateClientEntry(
     `const root = document.querySelector("body > div[${ROOT_ATTRIBUTE}]") ?? document.getElementById("root")`,
     // Loud, because there is no recoverable case: this entry ships only in a document `renderPage`
     // opened a container in, so reaching here means the document is not the one it was built for.
-    `if (!root) throw new Error(${JSON.stringify(
+    `if (!root) throw new Error(${jsValueLiteral(
       "[nifra/web] no hydration container found. The generated bootstrap mounts into the element " +
         `renderPage opened the app in - the one marked \`${ROOT_ATTRIBUTE}\` when a custom \`rootId\` ` +
         "is set, `#root` otherwise - and this document has neither. If you emit the document yourself, " +
@@ -351,8 +382,8 @@ export function generateClientEntry(
     // `origin: location.origin` matches the SSR `originOf(req)` (both are `URL.origin` for the same
     // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
     "      const nonce = currentDocumentNonce()",
-    "      const args = { data: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
-    "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
+    "      const args = { data: s.data, pageData: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
+    "      applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)))",
     "    }",
     "  })",
     "}).catch((error) => console.error('[nifra/web] hydration failed:', error))",
@@ -391,13 +422,13 @@ export function generateRouteSearchTypes(
     .sort((a, b) => (a[0] < b[0] ? -1 : 1))
     .map(
       ([pattern, spec]) =>
-        `    ${JSON.stringify(pattern)}: SearchOf<typeof import(${JSON.stringify(spec)})>`,
+        `    ${jsStringLiteral(pattern)}: SearchOf<typeof import(${jsStringLiteral(spec)})>`,
     )
   return `${[
     "// GENERATED by @nifrajs/web generateRouteSearchTypes - typed cross-route navigate({ to, search }).",
     "// Regenerated from the route files; a stale navigate search shape becomes a tsc error. Do not edit.",
     'import type { SearchOf } from "@nifrajs/web"',
-    `declare module ${JSON.stringify(module)} {`,
+    `declare module ${jsStringLiteral(module)} {`,
     "  interface RouteSearch {",
     ...entries,
     "  }",
@@ -504,12 +535,12 @@ export function generateServerManifest(
     "// the same pure logic discoverRoutes feeds, so patterns + layout chains match exactly.",
     'import { buildManifest, type RouteModule } from "@nifrajs/web"',
   ]
-  const clientEntryLine = `export const clientEntry = ${JSON.stringify(clientEntry)}`
+  const clientEntryLine = `export const clientEntry = ${jsStringLiteral(clientEntry)}`
   // Baked stylesheet URLs so the server entry can pass them to createWebApp → <link rel="stylesheet">.
   // Always emitted (default empty) so consumers can `import { styles, routeStyles }` unconditionally.
-  const stylesLine = `export const styles = ${JSON.stringify(styles ?? [])}`
-  const routeStylesLine = `export const routeStyles = ${JSON.stringify(routeStyles ?? {})}`
-  const cssLoadingLine = `export const cssLoading = ${JSON.stringify(cssLoading)}`
+  const stylesLine = `export const styles = ${jsValueLiteral(styles ?? [])}`
+  const routeStylesLine = `export const routeStyles = ${jsValueLiteral(routeStyles ?? {})}`
+  const cssLoadingLine = `export const cssLoading = ${jsStringLiteral(cssLoading)}`
   if (lazy) {
     // Lazy: `() => import("./routes/x")` per route (static specifier → one chunk per route under a
     // code-splitting bundler, loaded on first request). The map keys are the route-relative paths
@@ -533,9 +564,9 @@ export function generateServerManifest(
   // Eager: `import * as` per route (all bundled into the entry, parsed at boot). Index-based
   // identifiers are collision-proof regardless of filename.
   const imports = files.map(
-    (file, i) => `import * as m${i} from ${JSON.stringify(moduleSpecifier(resolve(file)))}`,
+    (file, i) => `import * as m${i} from ${jsStringLiteral(moduleSpecifier(resolve(file)))}`,
   )
-  const entries = files.map((file, i) => `  ${JSON.stringify(file)}: m${i},`)
+  const entries = files.map((file, i) => `  ${jsStringLiteral(file)}: m${i},`)
   return `${[
     ...header,
     ...imports,

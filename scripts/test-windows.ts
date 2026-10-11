@@ -27,6 +27,7 @@ const groups: ReadonlyArray<readonly string[]> = [
     "packages/agent-review/test",
     "packages/agent-protocol/test",
     "packages/pi/test",
+    "packages/acp/test",
   ],
   [
     "packages/devtools/test",

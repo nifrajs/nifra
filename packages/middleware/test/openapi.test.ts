@@ -22,6 +22,16 @@ const build = (routes: RouteLike[], options?: Parameters<typeof buildOpenApiDocu
   buildOpenApiDocument(routes, options) as unknown as Doc
 
 describe("buildOpenApiDocument()", () => {
+  test("openapiVersion 3.2.0 declares 3.2 and describes a typed SSE route's events", () => {
+    const routes: RouteLike[] = [
+      { method: "GET", path: "/events", schema: { sse: t.object({ n: t.integer() }) } },
+    ]
+    const doc = buildOpenApiDocument(routes, { openapiVersion: "3.2.0" })
+    expect(doc.openapi).toBe("3.2.0")
+    expect(JSON.stringify(doc)).toContain('"itemSchema"')
+    expect(buildOpenApiDocument(routes).openapi).toBe("3.1.0")
+  })
+
   test("emits 3.1 paths, methods, and templated path params", () => {
     const doc = build(
       [
@@ -154,5 +164,14 @@ describe("openapi() plugin", () => {
       .use(openapi({ path: "/spec.json" }))
       .get("/", () => ({ ok: true }))
     expect((await app.fetch(new Request("http://x/spec.json"))).status).toBe(200)
+  })
+
+  test("a second instance at another path serves too", async () => {
+    const app = server()
+      .use(openapi())
+      .use(openapi({ path: "/internal/openapi.json" }))
+      .get("/", () => ({ ok: true }))
+    expect((await app.fetch(new Request("http://x/openapi.json"))).status).toBe(200)
+    expect((await app.fetch(new Request("http://x/internal/openapi.json"))).status).toBe(200)
   })
 })

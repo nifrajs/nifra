@@ -15,7 +15,7 @@
 import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   answerNotFound,
-  EMPTY_RESPONSE_CONTROLS,
+  capBodyBytes,
   type NotFoundHandler,
   type NotFoundInput,
   notFoundInput,
@@ -26,8 +26,8 @@ import {
   queryObjectOf,
   type ResponseResult,
   readBodyFramed,
+  renderResult,
   searchOf,
-  toResponse,
 } from "@nifrajs/core/edge-kit"
 import { decodeRouteParams, expandOptionalParams } from "@nifrajs/core/pattern"
 import { Router } from "@nifrajs/core/router"
@@ -39,7 +39,10 @@ const DEFAULT_MAX_BODY_BYTES = 1_000_000
 /** The request handed to a route. Compact by design: no cookies, no response builder - return a
  * value (rendered as JSON) or a `Response` for full control. */
 export interface EdgeContext<Path extends string = string, Body = unknown> {
-  /** The raw `Request`. */
+  /**
+   * The raw `Request`. On a route with no body schema, reading its body directly is held to
+   * `maxBodyBytes` like a schema route's: past it the read throws a `413` response.
+   */
   readonly request: Request
   /** Path parameters, typed from the route pattern (`/users/:id` -> `{ id: string }`). */
   readonly params: Params<Path>
@@ -86,7 +89,7 @@ export type EdgeNotFound = ((
 /** Render a rejection - a `Response` passes through, a plain `ResponseResult` (413 / 415 / 422 / 404
  * / 405 / 500) goes through the SAME renderer the full Server uses, so the wire bytes match. */
 const render = (r: Response | ResponseResult): Response =>
-  r instanceof Response ? r : toResponse(r, EMPTY_RESPONSE_CONTROLS)
+  r instanceof Response ? r : renderResult(r)
 
 /** A body-schema wrapper: `{ body }` narrows `c.body` to the schema's output type. */
 interface BodySchema<Body> {
@@ -196,9 +199,15 @@ export class EdgeServer {
     if (params === null) return render(plainError(400, "malformed_path"))
     const { bodySchema, handler } = match.payload
 
-    const dispatch = async (body: unknown): Promise<Response> => {
+    const maxBodyBytes = this.#maxBodyBytes
+    const dispatch = async (body: unknown, cap: boolean): Promise<Response> => {
+      let raw: Request | undefined
       const c: EdgeContext = {
-        request,
+        // Built on first access, so a handler that never reads the request pays nothing for the cap.
+        get request() {
+          raw ??= cap ? capBodyBytes(request, maxBodyBytes) : request
+          return raw
+        },
         params,
         body,
         query: () => queryObjectOf(searchOf(request.url)),
@@ -212,10 +221,12 @@ export class EdgeServer {
         if (err instanceof Response) return err
         return render(plainError(500, "internal_error"))
       }
-      return out instanceof Response ? out : Response.json(out)
+      if (out instanceof Response) return out
+      // Core answers a handler that returns nothing with an empty 204.
+      return out === undefined ? new Response(null, { status: 204 }) : Response.json(out)
     }
 
-    if (bodySchema === undefined) return dispatch(undefined)
+    if (bodySchema === undefined) return dispatch(undefined, true)
 
     // The body trust boundary IS the shipped lane: `readBodyFramed` does the content-type dispatch,
     // the bounded read + Content-Length pre-reject, and the prototype-poisoning guard. This layers
@@ -229,7 +240,7 @@ export class EdgeServer {
         if (result.issues !== undefined || result.value === undefined) {
           return render(plainValidationError((result.issues ?? []) as ReadonlyArray<StandardIssue>))
         }
-        return dispatch(result.value)
+        return dispatch(result.value, false)
       },
       render,
       () => render(plainError(400, "invalid_json")),

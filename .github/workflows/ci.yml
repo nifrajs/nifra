@@ -10,6 +10,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -74,9 +75,10 @@ jobs:
       # types.json), API reference, package cards, and the Node outcome contract. They were the only
       # generated artifacts with no gate, so they were as fresh as whoever last remembered to run
       # `gen:llms` - and `types.json` is what the `nifra_types` MCP tool answers from, so stale is not
-      # cosmetic: it hands an agent a signature the code no longer has.
-      - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora fresh)
-        run: bun run check:docs && bun run check:corpus
+      # cosmetic: it hands an agent a signature the code no longer has. `check:sitemap` fails when a
+      # docs page is added or removed without regenerating site/public/sitemap.xml.
+      - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora + sitemap fresh)
+        run: bun run check:docs && bun run check:corpus && bun run check:sitemap
 
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
@@ -136,6 +138,36 @@ jobs:
       # release gate because request throughput is too noisy to require on CI.
       - name: Verification plan / CI parity
         run: bun run check:verification-parity
+      - name: Server component contracts
+        run: bun run check:server-components:contracts
+
+  server-components:
+    # The browser x runtime matrix runs once per release, in release verification. This job is the
+    # manual pre-release run for a branch; PRs keep the contracts step and the component unit tests.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 26.10.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Install required browser engines
+        run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+      - name: All five adapters and every runtime, browser and lifecycle row
+        run: bun run check:server-components
+      - name: Isolated packaged feature consumers
+        run: bun run check:server-components:consumers
 
   windows:
     # Windows is the slowest platform job. Run it for main pushes, release PRs, and manual runs so a
@@ -147,6 +179,7 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository &&
        startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -176,6 +209,7 @@ jobs:
 
   deno:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -213,6 +247,7 @@ jobs:
   # the runtimes they exist for. This closes the Node half.
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -246,6 +281,7 @@ jobs:
   # SQLite state in a temporary directory owned by the job.
   workers:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -277,6 +313,7 @@ jobs:
   # turns this job red. Hashed filenames are intentionally ignored by the checker.
   pipeline-parity:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

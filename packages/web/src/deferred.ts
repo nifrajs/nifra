@@ -6,6 +6,7 @@
  * resolution scripts settle. The per-adapter `<Await>` lives in `@nifrajs/web-{solid,react}/client`.
  */
 import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-codec"
+import { parsePageData } from "./internal/revive-dates.ts"
 
 /**
  * A loader value marked to stream in after the shell. The component consumes it with the adapter's
@@ -164,25 +165,29 @@ export function ndjsonStream(
   deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
   codec: TransportCodec = plainJsonCodec,
 ): ReadableStream<Uint8Array> {
+  // A client that goes away cancels the body; a value settling after that has nowhere to go.
+  let cancelled = false
   return new ReadableStream({
     async start(controller) {
       controller.enqueue(NDJSON_ENCODER.encode(`${codec.encode(forClient)}\n`))
       await Promise.all(
         deferred.map(async (d) => {
+          let line: string
           try {
-            const value = await d.promise
-            controller.enqueue(NDJSON_ENCODER.encode(`${codec.encode({ i: d.id, v: value })}\n`))
+            line = codec.encode({ i: d.id, v: await d.promise })
           } catch (err) {
             // Redact: stream a stable opaque code, never the raw error text; log the real reason
             // server-side. The client's <Await> errorFallback receives this code.
             console.error("[nifra/web] deferred value rejected:", err)
-            controller.enqueue(
-              NDJSON_ENCODER.encode(`${codec.encode({ i: d.id, e: DEFERRED_ERROR_CODE })}\n`),
-            )
+            line = codec.encode({ i: d.id, e: DEFERRED_ERROR_CODE })
           }
+          if (!cancelled) controller.enqueue(NDJSON_ENCODER.encode(`${line}\n`))
         }),
       )
-      controller.close()
+      if (!cancelled) controller.close()
+    },
+    cancel() {
+      cancelled = true
     },
   })
 }
@@ -213,7 +218,16 @@ export const DEFERRED_RUNTIME = `(() => {
   // Tag the promise (status/value/reason) - React's use() reads them and returns SYNCHRONOUSLY at
   // hydration, so it renders the resolved content directly into the <Suspense> boundary the server
   // streamed (no re-suspend, no fallback flash). r/j also wake awaiters (Solid uses its own _$HY).
-  window.__nifraResolve = (id, v) => { const e = get(id); e.p.status = "fulfilled"; e.p.value = v; e.r(v); };
+  // A t.date() value arrives tagged; rebuild it before anything reads the settled value.
+  const __nifraDates = (d) => {
+    if (!d || typeof d !== "object") return d
+    if (Array.isArray(d)) { for (let i = 0; i < d.length; i++) d[i] = __nifraDates(d[i]); return d }
+    const k = Object.keys(d)
+    if (k.length === 1 && k[0] === "__nifra_date" && typeof d.__nifra_date === "string") return new Date(d.__nifra_date)
+    for (const x of k) { const v = __nifraDates(d[x]); if (v !== d[x]) Object.defineProperty(d, x, { value: v, enumerable: true, writable: true, configurable: true }) }
+    return d
+  };
+  window.__nifraResolve = (id, v) => { v = __nifraDates(v); const e = get(id); e.p.status = "fulfilled"; e.p.value = v; e.r(v); };
   window.__nifraReject = (id, x) => { const e = get(id); e.p.status = "rejected"; e.p.reason = x; e.j(x); };
 })();`
 
@@ -225,6 +239,7 @@ export const DEFERRED_RUNTIME = `(() => {
 export const MAP_DEFERRED_SOURCE = `const mapDeferred = (d) => {
   if (!d || typeof d !== "object") return d
   if (typeof d.__nifra_deferred === "number") return { __nifra_deferred: true, id: d.__nifra_deferred, promise: window.__nifraDeferred(d.__nifra_deferred) }
+  if (typeof d.__nifra_date === "string" && Object.keys(d).length === 1) return new Date(d.__nifra_date)
   if (Array.isArray(d)) return d.map(mapDeferred)
   const out = {}
   for (const k of Object.keys(d)) Object.defineProperty(out, k, { value: mapDeferred(d[k]), enumerable: true, writable: true, configurable: true })
@@ -326,8 +341,11 @@ export async function parseNdjsonData(
   }
 
   const pending: Pending = new Map()
+  // Only plain JSON carries t.date() tags; a richer codec decodes its own dates.
+  const decode = (line: string): unknown =>
+    codec === plainJsonCodec ? parsePageData(line) : codec.decode(line)
   const first = await readLine()
-  const data = markersFromPlaceholders(first === null ? null : codec.decode(first), pending)
+  const data = markersFromPlaceholders(first === null ? null : decode(first), pending)
 
   void (async () => {
     try {
@@ -335,7 +353,7 @@ export async function parseNdjsonData(
         const line = await readLine()
         if (line === null) break
         if (line === "") continue
-        const msg = codec.decode(line) as { i: number; v?: unknown; e?: string }
+        const msg = decode(line) as { i: number; v?: unknown; e?: string }
         const entry = pending.get(msg.i)
         if (entry === undefined) continue
         pending.delete(msg.i)

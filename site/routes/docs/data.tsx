@@ -16,7 +16,8 @@ import type { Route } from "./+types/[id]"
 // The page receives exactly this shape. Anything else the loader returns stays on the server.
 export const loaderOutput = t.object({ id: t.string(), name: t.string() })
 
-export async function loader({ params, api }: Route.LoaderArgs) {
+// Route.Loader checks what this returns against loaderOutput at compile time.
+export const loader: Route.Loader = async ({ params, api }) => {
   const res = await api.users({ id: params.id }).get()
   if (!res.ok) throw notFound()
   return res.data
@@ -35,7 +36,7 @@ import type { Route } from "./+types/new"
 
 export const actionOutput = t.object({ ok: t.boolean() })
 
-export async function action({ api, request }: Route.ActionArgs) {
+export const action: Route.Action = async ({ api, request }) => {
   const form = await request.formData()
   await api.users.post({ name: String(form.get("name")) })
   return { ok: true }                  // the page's loaders revalidate automatically
@@ -103,13 +104,42 @@ export default function Data() {
         A route's <code>loader</code> runs on the server and calls your backend in-process during
         SSR - no network hop. Its <code>loaderOutput</code> schema is the contract with the page:
         the page receives that shape as <code>data</code>, and nothing else the loader returns
-        leaves the server. A <code>Date</code> travels as its ISO string, so declare a timestamp
-        column as <code>t.string()</code>. A loader without a schema is flagged by{" "}
+        leaves the server. Declare a timestamp as <code>t.date()</code> and the page gets a{" "}
+        <code>Date</code> in the server render and in the browser alike; under{" "}
+        <code>t.string()</code> it travels as its ISO string. <code>t.json()</code> declares a
+        field that is any JSON value, passed through whole - a tool-call payload or a settings blob
+        the page does not pick apart. A loader without a schema is flagged by{" "}
         <code>nifra check</code>. See{" "}
         <a href="/docs/structure">Project structure</a> for the route pair.
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
+      <p>
+        Annotating the loader with <code>Route.Loader</code> from the generated{" "}
+        <code>./+types/&lt;name&gt;</code> checks what it returns against <code>loaderOutput</code>{" "}
+        at compile time: a field of the wrong type, a <code>defer(...)</code> whose value does not
+        match its <code>t.deferred(...)</code> field, or any data from a loader with no{" "}
+        <code>loaderOutput</code> is a type error. A redirect, a <code>Response</code> and returning
+        nothing stay allowed. <code>Route.Action</code> does the same against{" "}
+        <code>actionOutput</code>, <code>revalidate(paths, data)</code> included. A field the schema
+        does not declare is not a type error: the guard drops it before it ships. The annotation
+        makes the loader's type the schema's, so <code>nifra schemas</code> cannot read what an
+        annotated loader returns. It reports a generated schema over one as unchecked: annotate a
+        loader whose schema you write, and leave a loader whose schema is generated unannotated.
+      </p>
+      <p>
+        <code>nifra schemas</code> drafts the schemas from your code for review: it reads each
+        loader's and action's TypeScript return type, and with <code>--write</code> puts a schema
+        above every one that has none. It leaves out a field named like a credential and anything
+        that is not JSON, says so in a comment, and marks what it wrote with a{" "}
+        <code>nifra:generated</code> line. While that line stays, a later{" "}
+        <code>nifra schemas --write</code> keeps the schema in step with the return type, and{" "}
+        <code>nifra check</code> fails (NF-C033) when the two have drifted apart, or when the schema
+        under the line was edited (reformatting it is not an edit); delete the line to own the
+        schema by hand. A hand-written schema is never rewritten: the report lists the
+        returned fields it drops, by path. Nothing is derived at request time - the schema in the
+        file is the one the guard enforces.
+      </p>
       <p>
         A field named like a credential (<code>password</code>, <code>token</code>,{" "}
         <code>apiKey</code>) fails the route when it loads unless its schema is wrapped in{" "}

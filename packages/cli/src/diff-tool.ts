@@ -14,8 +14,8 @@
  * framework config or routes/ directory (unlike the eager `loadApp`).
  */
 
-import { existsSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, realpathSync } from "node:fs"
+import { isAbsolute, relative, resolve } from "node:path"
 import {
   diffRouteSnapshots,
   type RouteChange,
@@ -23,7 +23,7 @@ import {
   type RoutesDiff,
   snapshotRoutes,
 } from "@nifrajs/core/diff"
-import { BACKEND_APP_FILE } from "./app-files.ts"
+import { assertCurrentLayout, BACKEND_APP_FILE } from "./app-files.ts"
 
 /** Snapshot file envelope - versioned so a future format change can migrate instead of misparse. */
 export interface SnapshotFile {
@@ -84,6 +84,7 @@ export function formatDiff(diff: RoutesDiff): string {
 
 /** Import `backend/app.ts` from `cwd` and snapshot its routes. */
 export async function snapshotBackend(cwd: string): Promise<readonly RouteSnapshot[]> {
+  assertCurrentLayout(cwd)
   const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) {
     throw new Error(
@@ -97,35 +98,41 @@ export async function snapshotBackend(cwd: string): Promise<readonly RouteSnapsh
   return snapshotRoutes(backend)
 }
 
-/** `nifra snapshot`: write the current contract as the CI baseline. */
-export async function runSnapshot(cwd: string, options: { out?: string }): Promise<void> {
-  const routes = await snapshotBackend(cwd)
-  const file: SnapshotFile = { nifraSnapshot: 1, routes }
-  const outPath = resolve(cwd, options.out ?? DEFAULT_SNAPSHOT_FILE)
-  await Bun.write(outPath, `${JSON.stringify(file, null, 2)}\n`)
-  console.log(`[nifra] wrote ${routes.length} route${routes.length === 1 ? "" : "s"} to ${outPath}`)
+/** `nifra snapshot`: write the current contract to `out` (from `cwd`) as the CI baseline. */
+export async function writeSnapshot(
+  cwd: string,
+  out: string = DEFAULT_SNAPSHOT_FILE,
+): Promise<SnapshotFile> {
+  const snapshot: SnapshotFile = { nifraSnapshot: 1, routes: await snapshotBackend(cwd) }
+  await Bun.write(resolve(cwd, out), `${JSON.stringify(snapshot, null, 2)}\n`)
+  return snapshot
 }
 
-/** `nifra diff`: compare the current contract against a baseline. Returns false on breaking changes. */
-export async function runDiff(
+const outside = (root: string, target: string): boolean => {
+  const rel = relative(root, target)
+  return rel.startsWith("..") || isAbsolute(rel)
+}
+
+/**
+ * `nifra diff`: the current contract against the snapshot at `baselinePath` (from `cwd`). `contain`
+ * refuses a baseline outside `cwd`, symlinks followed, for a caller handed the path by someone else.
+ */
+export async function diffAgainstBaseline(
   cwd: string,
-  baselinePath: string,
-  options: { json?: boolean },
-): Promise<boolean> {
+  baselinePath: string = DEFAULT_SNAPSHOT_FILE,
+  options: { readonly contain?: boolean } = {},
+): Promise<RoutesDiff> {
   const resolved = resolve(cwd, baselinePath)
-  const baselineFile = Bun.file(resolved)
-  if (!(await baselineFile.exists())) {
+  const refuse = (): never => {
+    throw new Error(`[nifra] the baseline ${baselinePath} is outside the project directory`)
+  }
+  if (options.contain === true && outside(resolve(cwd), resolved)) refuse()
+  if (!existsSync(resolved)) {
     throw new Error(
       `[nifra] baseline not found: ${resolved} - create it on your main branch with \`nifra snapshot\`.`,
     )
   }
-  const baseline = parseSnapshotFile(await baselineFile.text(), baselinePath)
-  const current = await snapshotBackend(cwd)
-  const diff = diffRouteSnapshots(baseline.routes, current)
-  if (options.json === true) {
-    console.log(JSON.stringify({ hasBreaking: diff.hasBreaking, changes: diff.changes }, null, 2))
-  } else {
-    console.log(formatDiff(diff))
-  }
-  return !diff.hasBreaking
+  if (options.contain === true && outside(realpathSync(cwd), realpathSync(resolved))) refuse()
+  const baseline = parseSnapshotFile(await Bun.file(resolved).text(), baselinePath)
+  return diffRouteSnapshots(baseline.routes, await snapshotBackend(cwd))
 }

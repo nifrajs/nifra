@@ -1,5 +1,14 @@
 # @nifrajs/proxy
 
+## 5.0.0
+
+### Patch Changes
+
+- 7abbfdd: The proxy strips the single-IP headers a caller can forge (`X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP`, `X-Client-IP`, `X-Cluster-Client-IP`, `Fastly-Client-IP`, `Client-IP`) before forwarding, as it already did for `Forwarded` and `X-Forwarded-*`. An upstream that trusts one of them could be told any client address. A fixed static `headers` entry can still set one explicitly.
+- 4e5dcdf: A request sent with `Expect: 100-continue` now reaches the upstream. The proxy no longer forwards the `Expect` header: the front server has already answered the client's 100-continue, and the Node transport refuses a request that carries it, so the request was answered 502.
+- e688885: `createProxy` drops every inbound `X-Forwarded-*` header, not only `X-Forwarded-For`, `-Host` and `-Proto`, so a client can no longer pass `X-Forwarded-Port` or `X-Forwarded-Prefix` to the upstream. Emit one deliberately as a fixed `headers` entry.
+- e4640c2: A `Set-Cookie` the upstream names in its `Connection` header is no longer relayed to the client. Other cookies still arrive as separate `Set-Cookie` headers.
+
 ## 4.0.2
 
 ## 4.0.1

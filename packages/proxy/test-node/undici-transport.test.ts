@@ -110,6 +110,23 @@ suite("undiciTransport()", () => {
     assert.equal(seen?.headers["x-app"], "stays")
   })
 
+  test("a request sent with Expect: 100-continue reaches the upstream without it", async () => {
+    respond = (_req, res) => {
+      res.writeHead(200)
+      res.end("ok")
+    }
+    const res = await proxy()(
+      new Request("http://edge.test/upload", {
+        method: "POST",
+        headers: { expect: "100-continue" },
+        body: "x".repeat(2048),
+      }),
+    )
+    assert.equal(res.status, 200)
+    assert.equal(seen?.headers.expect, undefined)
+    assert.equal(seen?.body.length, 2048)
+  })
+
   test("strips hop-by-hop and Connection-nominated response headers", async () => {
     respond = (_req, res) => {
       res.writeHead(200, {

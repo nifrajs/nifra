@@ -9,8 +9,9 @@
  * Hop-by-hop hygiene runs in BOTH directions: the RFC 9110 hop-by-hop set, every header nominated
  * by a `Connection` header, and `Proxy-*` headers are dropped from the forwarded request and from
  * the relayed response (the Connection-nominated leak is the @fastify/http-proxy CVE-2026-33805 /
- * Hono proxy CVE-2026-71849 class). Forwarding metadata (`Forwarded`, `X-Forwarded-*`) is stripped
- * unless explicitly configured. `forwardClientIp: true` emits caller IP/protocol, while
+ * Hono proxy CVE-2026-71849 class). Forwarding metadata (`Forwarded`, `X-Forwarded-*`) and the
+ * single-IP aliases CDNs and load balancers set (`X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP`,
+ * ...) are stripped unless explicitly configured, so a caller cannot name its own address upstream. `forwardClientIp: true` emits caller IP/protocol, while
  * `forwardedHost` emits only its fixed authority and never the inbound Host. An inbound IP chain is
  * preserved only with the explicit `trustForwardedFor: true` declaration. Upstream
  * redirects are never followed (`redirect: "manual"`) - following one would let the upstream steer
@@ -184,12 +185,23 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
   "upgrade",
 ])
 
-/** Forwarding metadata is an explicit opt-in (`forwardClientIp` / `forwardedHost`), never passthrough. */
+/** Forwarding headers with a dedicated option (`forwardClientIp` / `forwardedHost`); refused as static headers. */
 const FORWARDING: ReadonlySet<string> = new Set([
   "forwarded",
   "x-forwarded-for",
   "x-forwarded-host",
   "x-forwarded-proto",
+])
+
+/** Caller-IP headers an edge sets for its upstream; a client can send any of them itself. */
+const CLIENT_IP_ALIASES: ReadonlySet<string> = new Set([
+  "x-real-ip",
+  "true-client-ip",
+  "cf-connecting-ip",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "fastly-client-ip",
+  "client-ip",
 ])
 
 const EMPTY: ReadonlySet<string> = new Set()
@@ -217,11 +229,20 @@ function dropHeader(name: string, nominated: ReadonlySet<string>): boolean {
 
 /**
  * A request header dropped before the hop: it names the proxy (`host`, which the transport derives
- * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, or is forwarding metadata that
- * only explicit proxy options may reintroduce. The single predicate both lanes filter through.
+ * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, is `Expect` (the server in
+ * front already answered the client's `100-continue`, and undici refuses the header outright), or is
+ * forwarding metadata (`Forwarded`, any `X-Forwarded-*`, or a client-IP alias) that only explicit
+ * proxy options may reintroduce. The single predicate both lanes filter through.
  */
 function isDroppedRequestHeader(name: string, nominated: ReadonlySet<string>): boolean {
-  return name === "host" || dropHeader(name, nominated) || FORWARDING.has(name)
+  return (
+    name === "host" ||
+    name === "expect" ||
+    dropHeader(name, nominated) ||
+    name === "forwarded" ||
+    name.startsWith("x-forwarded-") ||
+    CLIENT_IP_ALIASES.has(name)
+  )
 }
 
 /**
@@ -301,7 +322,9 @@ function relayedResponseHeaders(upstreamHeaders: Headers, bodyEncoded: boolean):
     if (!isKeptResponseHeader(name, nominated, bodyEncoded)) continue
     out.append(name, value)
   }
-  for (const cookie of upstreamHeaders.getSetCookie()) out.append("set-cookie", cookie)
+  if (isKeptResponseHeader("set-cookie", nominated, bodyEncoded)) {
+    for (const cookie of upstreamHeaders.getSetCookie()) out.append("set-cookie", cookie)
+  }
   return out
 }
 

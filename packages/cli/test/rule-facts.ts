@@ -39,6 +39,7 @@ export function projectFacts(
       removedImports: [],
       responseRoutes: [],
       interpolatedSql: [],
+      routePaths: [],
     },
   }
 }

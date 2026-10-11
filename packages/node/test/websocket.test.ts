@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { server } from "@nifrajs/core"
+import { server, status } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
 import { type NodeServer, serve } from "../src/index.ts"
@@ -53,7 +53,72 @@ function rt(url: string, send: string[], count: number): Promise<string[]> {
   })
 }
 
+/** Send one text frame and report the echo, or the close code when the server closes instead. */
+function echoOrClose(url: string, message: string): Promise<{ echo: string } | { close: number }> {
+  return new Promise((resolve, reject) => {
+    const c = new WebSocket(url)
+    const timer = setTimeout(() => reject(new Error("timeout")), 4000)
+    c.addEventListener("open", () => c.send(message))
+    c.addEventListener("message", (e) => {
+      clearTimeout(timer)
+      c.close()
+      resolve({ echo: String(e.data) })
+    })
+    c.addEventListener("close", (e) => {
+      clearTimeout(timer)
+      resolve({ close: e.code })
+    })
+  })
+}
+
+describe("@nifrajs/node WebSocket payload caps", () => {
+  const echo = (cap: number) =>
+    server({ wsMaxPayloadBytes: cap })
+      .use(websocket())
+      .ws("/", { message: (ws, data) => ws.send(data) })
+
+  test("each mounted child keeps its own cap, whichever upgrades first", async () => {
+    const app = server()
+      .mount({ path: "/small", app: echo(4), stripPrefix: true })
+      .mount({ path: "/large", app: echo(64), stripPrefix: true })
+    for (const order of [
+      ["/large", "/small"],
+      ["/small", "/large"],
+    ]) {
+      running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+      const base = `ws://127.0.0.1:${running.port}`
+      const results = []
+      for (const path of order)
+        results.push([path, await echoOrClose(`${base}${path}`, "x".repeat(16))])
+      expect(Object.fromEntries(results)).toEqual({
+        "/small": { close: 1009 },
+        "/large": { echo: "x".repeat(16) },
+      })
+      await running.stop({ drainMs: 50 })
+      running = undefined
+    }
+  })
+
+  test("a cap of 0 refuses every non-empty message", async () => {
+    running = await serve(echo(0), { hostname: "127.0.0.1", port: 0 })
+    expect(await echoOrClose(`ws://127.0.0.1:${running.port}/`, "x")).toEqual({ close: 1009 })
+  })
+})
+
 describe("@nifrajs/node WebSockets", () => {
+  test("stop() closes an open WebSocket with 1001 instead of leaving it serving", async () => {
+    running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
+    const c = new WebSocket(`ws://127.0.0.1:${running.port}/echo`)
+    const closed = new Promise<number>((resolve) =>
+      c.addEventListener("close", (e) => resolve(e.code)),
+    )
+    await new Promise((resolve) => c.addEventListener("message", resolve, { once: true }))
+    await running.stop({ drainMs: 2000 })
+    running = undefined
+    expect(await closed).toBe(1001)
+    expect(c.readyState).toBe(WebSocket.CLOSED)
+  })
+
   test("echo: open → welcome, message → echo", async () => {
     running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual(["welcome", "hi"])
@@ -259,5 +324,23 @@ describe("@nifrajs/node WebSockets", () => {
       })
     })
     expect(outcome).toBe("rejected")
+  })
+})
+
+describe("@nifrajs/node: the handshake runs the route chain", () => {
+  test("a socket registered after a guard answers a handshake without credentials with 401", async () => {
+    const app = server()
+      .use(websocket())
+      .beforeHandle((c) =>
+        c.req.headers.get("authorization") === "Bearer good"
+          ? undefined
+          : status(401, { error: "no" }),
+      )
+      .ws("/socket", {})
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+    expect(await rawUpgradeStatus(running.port, "/socket")).toBe(401)
+    expect(await rawUpgradeStatus(running.port, "/socket", { authorization: "Bearer good" })).toBe(
+      101,
+    )
   })
 })

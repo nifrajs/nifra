@@ -10,7 +10,7 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 
 ## Public entrypoints
 
-`@nifrajs/web-preact` · `@nifrajs/web-preact/await` · `@nifrajs/web-preact/client` · `@nifrajs/web-preact/content` · `@nifrajs/web-preact/fetcher` · `@nifrajs/web-preact/fn` · `@nifrajs/web-preact/i18n` · `@nifrajs/web-preact/image` · `@nifrajs/web-preact/query` · `@nifrajs/web-preact/router`
+`@nifrajs/web-preact` · `@nifrajs/web-preact/await` · `@nifrajs/web-preact/client` · `@nifrajs/web-preact/content` · `@nifrajs/web-preact/fetcher` · `@nifrajs/web-preact/fn` · `@nifrajs/web-preact/i18n` · `@nifrajs/web-preact/image` · `@nifrajs/web-preact/query` · `@nifrajs/web-preact/router` · `@nifrajs/web-preact/server-components` · `@nifrajs/web-preact/server-components/client` · `@nifrajs/web-preact/server-components/outlet`
 
 ## Key exports
 
@@ -18,18 +18,18 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => VNode` · from `@nifrajs/web-preact/content`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode` · from `@nifrajs/web-preact/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("preact").VNode<import("preact").Attribute…` · from `@nifrajs/web-preact/server-components/outlet`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-preact/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-preact/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
+- **preactComponentClient** _(function)_ - `preactComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compon…` · from `@nifrajs/web-preact/server-components/client`
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-preact/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-preact/fetcher`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker` · from `@nifrajs/web-preact/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-preact/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-preact/fetcher`
-- **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]` · from `@nifrajs/web-preact/router`
-- **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-preact/router`
 
-_…and 22 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 26 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

@@ -40,6 +40,11 @@ export interface TracingOptions {
   /** Sets the `service.name` attribute on every span. */
   readonly serviceName?: string
   /**
+   * Report the request's raw path as `url.path`. Default false: a request that matched a route
+   * reports the route template there, since a path segment can hold an email, an id or a token.
+   */
+  readonly rawUrlPath?: boolean
+  /**
    * Set the outbound `traceparent` on the RESPONSE too (handy for browser/client correlation).
    * Default false - most setups only propagate downstream, not back to the caller.
    */
@@ -111,6 +116,7 @@ export function tracing(options: TracingOptions = {}): ContextPlugin<TracingCont
     return typeof shutdown === "function" ? [() => Promise.resolve(shutdown.call(adapter))] : []
   })
   const serviceName = options.serviceName
+  const rawUrlPath = options.rawUrlPath === true
   // A WeakMap so an abandoned request cannot leak its active observation.
   const inFlight = new WeakMap<Request, ActiveObservation>()
 
@@ -132,7 +138,7 @@ export function tracing(options: TracingOptions = {}): ContextPlugin<TracingCont
             "http.request.method": method,
             ...(method === "_OTHER" ? { "http.request.method_original": c.req.method } : {}),
             ...(route === undefined ? {} : { "http.route": route }),
-            "url.path": path,
+            "url.path": rawUrlPath || route === undefined ? path : route,
             ...(serviceName === undefined ? {} : { "service.name": serviceName }),
           },
         })

@@ -57,6 +57,9 @@ export class FileSessionStore implements SessionStore {
   private readonly maxEntries: number
   private readonly maxBytes: number
   private readonly sequences = new Map<string, number>()
+  // Entries and bytes in each session file this store has written, so an append under the caps
+  // needs no read of the log to know it.
+  private readonly tallies = new Map<string, { entries: number; bytes: number }>()
   private readonly locks = new Map<string, Promise<void>>()
 
   constructor(options: FileSessionStoreOptions) {
@@ -109,14 +112,21 @@ export class FileSessionStore implements SessionStore {
       if (Buffer.byteLength(line, "utf8") > this.maxEntryBytes)
         throw new RangeError("session store: event exceeds maxEntryBytes")
       const path = this.pathFor(sessionId)
+      const tally = await this.tallyOf(sessionId)
       const file = await openSessionFile(path, O_APPEND | O_CREAT | O_WRONLY, 0o600)
       try {
         await file.writeFile(`${line}\n`, "utf8")
+      } catch (error) {
+        this.tallies.delete(sessionId)
+        throw error
       } finally {
         await file.close()
       }
+      tally.entries += 1
+      tally.bytes += Buffer.byteLength(line, "utf8") + 1
       this.sequences.set(sessionId, nextSeq)
-      await this.compactIfNeeded(sessionId)
+      if (tally.entries > this.maxEntries || tally.bytes > this.maxBytes)
+        await this.compact(sessionId, tally)
       return entry
     })
   }
@@ -173,6 +183,7 @@ export class FileSessionStore implements SessionStore {
         mode: 0o600,
       })
       this.sequences.set(targetSessionId, Math.max(0, lines.length - 1))
+      this.tallies.delete(targetSessionId)
       return targetSessionId
     })
   }
@@ -188,40 +199,63 @@ export class FileSessionStore implements SessionStore {
     return (entries.at(-1)?.seq ?? -1) + 1
   }
 
-  private async compactIfNeeded(sessionId: string): Promise<void> {
+  /** The session file's tally, read once: its size, and how many entries its bounded tail holds. */
+  private async tallyOf(sessionId: string): Promise<{ entries: number; bytes: number }> {
+    const cached = this.tallies.get(sessionId)
+    if (cached !== undefined) return cached
+    const tally = { entries: 0, bytes: 0 }
     const path = this.pathFor(sessionId)
-    const file = await openSessionFile(path, O_RDONLY)
-    let size: number
     try {
-      size = (await file.stat()).size
-    } finally {
-      await file.close()
-    }
-    if (size <= this.maxBytes) {
-      const recent = parseSessionEntries(
-        await this.readTailText(path, this.maxEntries + 1, this.maxBytes),
+      const file = await openSessionFile(path, O_RDONLY)
+      try {
+        tally.bytes = (await file.stat()).size
+      } finally {
+        await file.close()
+      }
+      tally.entries = parseSessionEntries(
+        await this.readTailText(path, this.maxEntries + 1, this.maxBytes + this.maxEntryBytes),
         sessionId,
-      )
-      if (recent.length <= this.maxEntries) return
+      ).length
+    } catch (error) {
+      if (!isNotFound(error)) throw error
     }
+    this.tallies.set(sessionId, tally)
+    return tally
+  }
+
+  /**
+   * Rewrite the log down to a low-water mark below both caps, so the next rewrite is a quarter of the
+   * caps of appends away rather than the very next append.
+   */
+  private async compact(
+    sessionId: string,
+    tally: { entries: number; bytes: number },
+  ): Promise<void> {
+    const path = this.pathFor(sessionId)
     // The tail read is bounded by the retention cap plus one maximum-sized line. This keeps
     // compaction memory bounded even if a pre-existing log is already oversized.
     const recent = parseSessionEntries(
       await this.readTailText(path, this.maxEntries + 1, this.maxBytes + this.maxEntryBytes),
       sessionId,
     )
-    const retained = retainEntries(recent, this.maxEntries, this.maxBytes)
+    const retained = retainEntries(
+      recent,
+      Math.max(1, Math.floor((this.maxEntries * 3) / 4)),
+      Math.max(Math.floor((this.maxBytes * 3) / 4), this.maxEntryBytes + 1),
+    )
     if (retained.length === 0) return
     const content = `${retained.map((entry) => JSON.stringify(entry)).join("\n")}\n`
-    if (Buffer.byteLength(content, "utf8") >= size && size <= this.maxBytes) return
     const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
     await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 })
     try {
       await rename(temporary, path)
     } catch (error) {
       await unlink(temporary).catch(() => {})
+      this.tallies.delete(sessionId)
       throw error
     }
+    tally.entries = retained.length
+    tally.bytes = Buffer.byteLength(content, "utf8")
     this.sequences.set(sessionId, retained.at(-1)!.seq)
   }
 
@@ -237,17 +271,19 @@ export class FileSessionStore implements SessionStore {
       let remaining = Math.min(size, maxBytes)
       const chunks: Buffer[] = []
       const chunkBytes = 64 * 1024
+      let newlines = 0
       while (remaining > 0) {
         const take = Math.min(remaining, chunkBytes)
         end -= take
         const bytes = Buffer.allocUnsafe(take)
         const result = await file.read(bytes, 0, take, end)
-        chunks.unshift(bytes.subarray(0, result.bytesRead))
+        const chunk = bytes.subarray(0, result.bytesRead)
+        chunks.unshift(chunk)
         remaining -= result.bytesRead
-        const text = Buffer.concat(chunks).toString("utf8")
-        const lines = text.split("\n")
-        const completeLines = end > 0 ? lines.length - 1 : lines.length
-        if (completeLines >= minimumLines || end === 0 || result.bytesRead === 0) return text
+        for (let at = chunk.indexOf(10); at !== -1; at = chunk.indexOf(10, at + 1)) newlines++
+        // Before the start of the file the first line may be partial, so it does not count.
+        const completeLines = end > 0 ? newlines : newlines + 1
+        if (completeLines >= minimumLines || end === 0 || result.bytesRead === 0) break
       }
       return Buffer.concat(chunks).toString("utf8")
     } finally {
@@ -309,7 +345,11 @@ export interface ContextWindowOptions {
   readonly summarize?: (records: readonly ContextRecord[], maxChars: number) => string
 }
 
-/** In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. */
+/**
+ * In-memory prompt window with automatic, deterministic compaction and a hard size ceiling. Pinned
+ * and authoritative records survive compaction, newest first, within half of `maxTokens`; older ones
+ * are folded into the summary like any other record. The session store keeps every one of them.
+ */
 export class ContextWindow {
   private readonly maxTokens: number
   private readonly keepRecent: number
@@ -361,19 +401,21 @@ export class ContextWindow {
     if (this.records.length <= this.keepRecent) return { before, after: before, removed: 0, reason }
     // A compacted summary is replaceable context, not authoritative evidence. Keeping old pinned
     // summaries in `protectedRecords` would make every threshold compaction grow the live window.
-    const protectedRecords = this.records.filter(
-      (record) =>
-        record.kind !== "memory.summary" &&
-        (record.pinned === true || isAuthoritative(record.kind)),
+    const protectedRecords = newestWithin(
+      this.records.filter(
+        (record) =>
+          record.kind !== "memory.summary" &&
+          (record.pinned === true || isAuthoritative(record.kind)),
+      ),
+      Math.floor(this.maxTokens / 2),
     )
     const recent = this.records.slice(-this.keepRecent)
     const retained = new Set([...protectedRecords, ...recent])
     const omitted = this.records.filter((record) => !retained.has(record))
     if (omitted.length === 0) return { before, after: before, removed: 0, reason }
-    const summary = this.summarizeRecord(omitted, this.maxSummaryChars).slice(
-      0,
-      this.maxSummaryChars,
-    )
+    // A summary longer than the window it lives in would defeat the window.
+    const summaryChars = Math.min(this.maxSummaryChars, this.maxTokens)
+    const summary = this.summarizeRecord(omitted, summaryChars).slice(0, summaryChars)
     this.records = [
       ...protectedRecords,
       { kind: "memory.summary", content: summary, pinned: true },
@@ -456,6 +498,33 @@ function isSessionLogEntry(value: unknown, sessionId: string): value is SessionL
   )
 }
 
+/**
+ * A row `migrateLegacySession` wrote: the same identity and order, with the event type as `code` and
+ * no payload. Read as an entry of that type, so a host pointed at a migrated directory keeps the
+ * history and continues its sequence.
+ */
+function evidenceEntry(value: unknown, sessionId: string): SessionLogEntry | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+  const field = (key: string): unknown => Reflect.get(value, key)
+  const seq = field("seq")
+  const at = field("at")
+  const code = field("code")
+  if (
+    field("version") !== 1 ||
+    field("sessionId") !== sessionId ||
+    typeof seq !== "number" ||
+    !Number.isSafeInteger(seq) ||
+    typeof at !== "number" ||
+    typeof code !== "string" ||
+    field("count") !== 1 ||
+    typeof field("digest") !== "string" ||
+    "type" in value
+  )
+    return undefined
+  const entry = { version: 1, sessionId, seq, at, type: code } as const
+  return field("pinned") === true ? { ...entry, pinned: true } : entry
+}
+
 function parseSessionEntries(text: string, sessionId: string): SessionLogEntry[] {
   const entries: SessionLogEntry[] = []
   for (const line of text.split("\n")) {
@@ -463,6 +532,10 @@ function parseSessionEntries(text: string, sessionId: string): SessionLogEntry[]
     try {
       const value: unknown = JSON.parse(line)
       if (isSessionLogEntry(value, sessionId)) entries.push(Object.freeze(value))
+      else {
+        const migrated = evidenceEntry(value, sessionId)
+        if (migrated !== undefined) entries.push(Object.freeze(migrated))
+      }
     } catch {
       // A tail read can begin in the middle of an old line. Invalid records are ignored so a
       // damaged/partially rotated log cannot turn every history request into an unbounded retry.
@@ -515,6 +588,19 @@ function estimateTokens(records: readonly ContextRecord[]): number {
   return Math.ceil(
     records.reduce((total, record) => total + record.kind.length + record.content.length, 0) / 4,
   )
+}
+
+/** The newest `records` whose estimated tokens fit `budget`, in their original order; at least one. */
+function newestWithin(records: readonly ContextRecord[], budget: number): ContextRecord[] {
+  const kept: ContextRecord[] = []
+  let tokens = 0
+  for (let index = records.length - 1; index >= 0; index--) {
+    const record = records[index]!
+    tokens += estimateTokens([record])
+    if (tokens > budget && kept.length > 0) break
+    kept.unshift(record)
+  }
+  return kept
 }
 
 function isAuthoritative(kind: string): boolean {

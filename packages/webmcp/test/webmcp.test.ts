@@ -250,6 +250,51 @@ describe("WebMCP projection", () => {
     ).resolves.toEqual({ value })
   })
 
+  test("the host's cancellation signal reaches the executor", async () => {
+    const started = Promise.withResolvers<void>()
+    let seen: AbortSignal | undefined
+    const capability = defineAgentCapability({
+      name: "cart.slow",
+      description: "Wait until cancelled.",
+      input: t.object({}),
+      output: t.object({ ok: t.boolean() }),
+      execute: (_input, ctx) => {
+        seen = ctx.signal
+        started.resolve()
+        return new Promise<{ ok: boolean }>((_resolve, reject) => {
+          ctx.signal.addEventListener("abort", () => reject(ctx.signal.reason))
+        })
+      },
+    })
+    const host = new AbortController()
+    const pending = toWebMcpTool(capability).execute({}, { signal: host.signal })
+    await started.promise
+    host.abort()
+    expect(seen?.aborted).toBe(true)
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      outcome: "failed",
+      error: { code: "cancelled" },
+    })
+  })
+
+  test("a call the host already cancelled never runs", async () => {
+    let ran = false
+    const capability = defineAgentCapability({
+      name: "cart.never",
+      description: "Must not run.",
+      input: t.object({}),
+      output: t.object({ ok: t.boolean() }),
+      execute: () => {
+        ran = true
+        return { ok: true }
+      },
+    })
+    const result = await toWebMcpTool(capability).execute({}, { signal: AbortSignal.abort() })
+    expect(ran).toBe(false)
+    expect(result).toMatchObject({ ok: false, error: { code: "cancelled" } })
+  })
+
   test("contains page-local authorization failures", async () => {
     const capability = defineAgentCapability({
       name: "cart.guard",

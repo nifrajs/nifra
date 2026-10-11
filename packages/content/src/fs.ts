@@ -3,7 +3,8 @@
  * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno); for the edge, bake the
  * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) - tracked as a follow-up.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import type { Stats } from "node:fs"
+import { readdir, readFile, stat as statPath } from "node:fs/promises"
 import { resolve, sep } from "node:path"
 import { type Entry, type InferSchema, parseEntry, type StandardSchemaV1 } from "./index.ts"
 
@@ -21,7 +22,8 @@ export interface Collection<Frontmatter> {
   /** Every entry in the directory (unordered - sort/filter in your loader). Throws if any file's
    * frontmatter is invalid. */
   all(): Promise<Array<Entry<Frontmatter>>>
-  /** One entry by slug (filename without extension), or `null` if not found. */
+  /** One entry by slug (filename without extension), or `null` if not found. Throws, as `all()`
+   * does, if the file's frontmatter is invalid. */
   get(slug: string): Promise<Entry<Frontmatter> | null>
 }
 
@@ -87,7 +89,7 @@ export function defineCollection<S extends StandardSchemaV1>(
     const cached = fileCache.get(path)
     if (cached?.stamp === stamp) return cached.entry
     const entry = await parseEntry({
-      raw: readFileSync(path, "utf8"),
+      raw: await readFile(path, "utf8"),
       slug,
       schema: config.schema,
     })
@@ -95,19 +97,21 @@ export function defineCollection<S extends StandardSchemaV1>(
     return entry
   }
 
-  const listFiles = (): FileRecord[] =>
-    readdirSync(root)
-      .filter(matches)
-      .sort()
-      .map((file) => {
+  // Async throughout: a collection read on a long-lived server must not block its event loop.
+  const listFiles = async (): Promise<FileRecord[]> => {
+    const files = (await readdir(root)).filter(matches).sort()
+    return Promise.all(
+      files.map(async (file) => {
         const path = resolve(root, file)
-        const stat = statSync(path)
+        const stat = await statPath(path)
         return { file, path, stamp: `${stat.mtimeMs}:${stat.size}` }
-      })
+      }),
+    )
+  }
 
   return {
     async all() {
-      const files = listFiles()
+      const files = await listFiles()
       const fingerprint = files.map((file) => `${file.file}\0${file.stamp}`).join("\0")
       if (collectionCache?.fingerprint === fingerprint) return [...collectionCache.entries]
 
@@ -126,13 +130,15 @@ export function defineCollection<S extends StandardSchemaV1>(
       for (const ext of extensions) {
         const file = resolve(root, `${slug}${ext}`)
         if (!insideRoot(root, file)) return null
+        let stat: Stats
         try {
-          const stat = statSync(file)
-          if (!stat.isFile()) continue
-          return await readEntry(file, slug, `${stat.mtimeMs}:${stat.size}`)
+          stat = await statPath(file)
         } catch {
-          // Not this extension or unreadable; try the next configured extension.
+          continue // Not this extension; try the next configured one.
         }
+        if (!stat.isFile()) continue
+        // Outside the try: a file that exists but fails to parse is an error, not a missing entry.
+        return await readEntry(file, slug, `${stat.mtimeMs}:${stat.size}`)
       }
       return null
     },

@@ -109,8 +109,12 @@ export interface ServerOptions {
    * Default 30_000; applies only when `acceptInboundDeadlines` is enabled and the header is present.
    */
   readonly maxInboundDeadlineMs?: number
-  /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
-  readonly gracefulSignals?: boolean
+  /**
+   * When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false.
+   * `{ drainMs }` sets how long in-flight requests get to finish before the stop forces them closed
+   * (default 10_000) - keep it under the platform's kill grace period (`docker stop` waits 10 s).
+   */
+  readonly gracefulSignals?: boolean | { readonly drainMs?: number }
   /**
    * Capacity-admission gate (see {@link AdmissionController}). Bounds concurrent in-flight work so a
    * healthy instance sheds load (`429` + `Retry-After`) instead of accepting more than it can finish.
@@ -196,9 +200,29 @@ export interface MountOptions<Env = unknown> {
    * Why this child is not analyzed, for a handler whose effects nifra cannot follow (a closure from
    * another package). Capability assurance lists a mount with a reason as a known gap; a mount
    * without one fails it, since its routes are invisible. A nifra `server()` belongs in `merge()`,
-   * where its routes are analyzed.
+   * where its routes are analyzed. Pass an {@link OpaqueMountDeclaration} to also state the routes
+   * the child serves.
    */
-  readonly opaque?: string
+  readonly opaque?: string | OpaqueMountDeclaration
+}
+
+/**
+ * An opaque mount's reason plus the routes it serves. Assurance lists those routes as declared, not
+ * analyzed: their capabilities are the mount's word, checked against the policy but never proven.
+ */
+export interface OpaqueMountDeclaration {
+  /** Why the child is not analyzed. A blank reason leaves the mount undeclared. */
+  readonly reason: string
+  readonly routes?: readonly DeclaredMountRoute[]
+}
+
+/** One route an opaque mount serves, as the app states it. */
+export interface DeclaredMountRoute {
+  readonly method: string
+  /** The request path, from the app root, under the mount's prefix (`/api/auth/sign-in`). */
+  readonly path: string
+  /** Capability ids the route exercises. */
+  readonly capabilities?: readonly string[]
 }
 
 /** Options for a legacy fetch-handler mount. */
@@ -210,7 +234,7 @@ export interface MountFetchOptions {
   /** For safe replayable methods only, try the next matching legacy mount when it returns 404. */
   readonly fallbackOn?: 404
   /** Why this handler is not analyzed - see {@link MountOptions.opaque}. */
-  readonly opaque?: string
+  readonly opaque?: string | OpaqueMountDeclaration
 }
 
 /** A callback awaited after the Bun server has drained and stopped. */

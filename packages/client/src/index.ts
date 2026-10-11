@@ -27,6 +27,7 @@ export type {
   ActionArgs,
   ActionData,
   ApiProxy,
+  InputOf,
   LoaderArgs,
   LoaderData,
   LoaderResponseControls,
@@ -34,7 +35,9 @@ export type {
   Register,
   RegisteredBackend,
   RegisteredEnv,
+  RouteActionReturn,
   RouteLoaderArgs,
+  RouteLoaderReturn,
   SearchSchemaOf,
 } from "./routes.ts"
 export type {

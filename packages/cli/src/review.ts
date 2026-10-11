@@ -16,7 +16,7 @@ import type {
 import type { CheckResult } from "./check.ts"
 import type { CommandCtx, CommandSpec } from "./command-catalog.ts"
 import type { Diagnostic } from "./diagnostics.ts"
-import { toSarifLog } from "./diagnostics.ts"
+import { diagnosticCompatibilityOf, toSarifLog } from "./diagnostics.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { LEGACY_RULE_CODES } from "./rules/legacy.ts"
 
@@ -110,7 +110,8 @@ const CHECK_SOURCES: Readonly<Record<ReviewCheckId, ReviewEvidenceSource>> = {
 
 const ALLOWED_FIXES = new Set<ReviewFixRecipeId>(["manifest.sync", "workspace-dist.rebuild"])
 
-const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
+/** The review check each built-in code reports under; a code missing here would read as configuration. */
+export const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C001": "typecheck",
   "NF-C002": "typed-client",
   "NF-C003": "typed-client",
@@ -134,17 +135,40 @@ const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C021": "route-boundary",
   "NF-C022": "route-boundary",
   "NF-C023": "route-boundary",
+  "NF-C024": "route-boundary",
+  "NF-C025": "route-boundary",
+  "NF-C026": "route-boundary",
+  "NF-C027": "route-boundary",
+  "NF-C028": "server-boundary",
+  "NF-C029": "security",
+  "NF-C030": "security",
+  "NF-C031": "security",
+  "NF-C032": "security",
+  "NF-C033": "security",
+  "NF-C034": "route-boundary",
+  "NF-C035": "route-boundary",
+  "NF-C036": "route-boundary",
+  "NF-C037": "configuration",
+  "NF-C038": "configuration",
+  "NF-C039": "contract-witness",
+  "NF-C040": "route-boundary",
   "NF-D001": "dependency",
+  "NF-D002": "dependency",
   "NF-A001": "route-assurance",
   "NF-H001": "hydration",
   "NF-H002": "hydration",
   "NF-H003": "hydration",
   "NF-H004": "hydration",
   "NF-K001": "contract-witness",
+  "NF-S001": "security",
+  "NF-S002": "security",
+  "NF-S003": "security",
+  "NF-S004": "security",
+  "NF-S005": "security",
+  "NF-S006": "security",
+  "NF-S007": "security",
+  "NF-S008": "security",
 }
-
-for (const code of ["NF-S001", "NF-S002", "NF-S003", "NF-S004", "NF-S005", "NF-S006", "NF-S007"])
-  (CHECK_CODES as Record<string, ReviewCheckId>)[code] = "security"
 
 const REVIEW_INPUT_SCHEMA = {
   type: "object",
@@ -613,17 +637,22 @@ async function composeCollectedReport(
   }
 
   const changedPaths = new Set(scope.changedPaths)
+  // A server-only chain is in scope when any file on it changed: a new import in a shared module
+  // reaches the browser through a route the diff never touched.
+  const inScope = (candidate: CandidateFinding): boolean =>
+    candidate.location === undefined ||
+    changedPaths.has(candidate.location.path) ||
+    (diagnosticCompatibilityOf(candidate.diagnostic)?.modules ?? []).some((module) => {
+      const path = normalizedLocation(cwd, module, undefined)?.path
+      return path !== undefined && changedPaths.has(path)
+    })
   const retainedByCheck = new Map<ReviewCheckId, CandidateFinding[]>()
   let totalOutOfScope = 0
   let typeErrorOutOfScope = false
   for (const id of CHECK_IDS) {
     const retained: CandidateFinding[] = []
     for (const candidate of candidatesByCheck.get(id) ?? []) {
-      if (
-        scope.kind === "diff" &&
-        candidate.location !== undefined &&
-        !changedPaths.has(candidate.location.path)
-      ) {
+      if (scope.kind === "diff" && !inScope(candidate)) {
         totalOutOfScope += 1
         if (id === "typecheck" && candidate.severity === "error") typeErrorOutOfScope = true
       } else retained.push(candidate)

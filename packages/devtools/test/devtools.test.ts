@@ -166,6 +166,81 @@ describe("devtools server middleware", () => {
     )
   })
 
+  test("bounds unread connection bytes and releases its slot when live events overflow", async () => {
+    const app = server()
+      .use(devtools({ enabled: true, maxEvents: 3, maxConnections: 1, maxPendingBytes: 1024 }))
+      .get("/ping", () => "ok")
+    const response = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    for (let index = 0; index < 20; index++) await app.fetch(new Request("http://localhost/ping"))
+
+    const reader = response.body!.getReader()
+    let bytes = 0
+    let queuedEvents = 0
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      bytes += chunk.value.byteLength
+      queuedEvents++
+    }
+    expect(bytes).toBeLessThanOrEqual(1024)
+    expect(queuedEvents).toBeGreaterThan(0)
+    expect(queuedEvents).toBeLessThan(20)
+
+    const snapshot = await app.fetch(new Request("http://localhost/_nifra/devtools/state"))
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This response comes from the local DevTools fixture's /state endpoint, which emits the known { events } envelope.
+    expect(((await snapshot.json()) as { events: unknown[] }).events).toHaveLength(3)
+    const reconnected = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    expect(reconnected.status).toBe(200)
+    await reconnected.body?.cancel()
+  })
+
+  test("initial history sends the newest suffix that fits without closing the connection", async () => {
+    const app = server()
+      .use(devtools({ enabled: true, maxEvents: 20, maxConnections: 1, maxPendingBytes: 1024 }))
+      .get("/ping/:id", () => "ok")
+    for (let index = 0; index < 20; index++)
+      await app.fetch(new Request(`http://localhost/ping/${index}`))
+    const response = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    const reader = response.body!.getReader()
+    let text = ""
+    while (!text.includes('"path":"/ping/19"')) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      text += new TextDecoder().decode(chunk.value)
+    }
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(1024)
+    expect(text).not.toContain('"path":"/ping/0"')
+    expect(text).toContain('"path":"/ping/19"')
+    expect((await app.fetch(new Request("http://localhost/_nifra/devtools"))).status).toBe(503)
+    await reader.cancel()
+  })
+
+  test("an oversized event closes a viewer without queuing the frame", async () => {
+    const app = server()
+      .use(devtools({ enabled: true, maxConnections: 1, maxPendingBytes: 1024 }))
+      .get("/ping/:id", () => "ok")
+    const response = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    await app.fetch(new Request(`http://localhost/ping/${"x".repeat(2_000)}`))
+    expect((await response.body!.getReader().read()).done).toBe(true)
+    const reconnected = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    expect(reconnected.status).toBe(200)
+    await reconnected.body?.cancel()
+  })
+
+  test("keep-alive frames obey the pending budget too", async () => {
+    const app = server().use(devtools({ enabled: true, maxPendingBytes: 8, pingIntervalMs: 2 }))
+    const response = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    await Bun.sleep(30)
+    const reader = response.body!.getReader()
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(": ping\n\n")
+    expect((await reader.read()).done).toBe(true)
+  })
+
+  test("rejects non-finite and fractional pending byte budgets", () => {
+    for (const maxPendingBytes of [0, -1, 0.5, Number.NaN, Infinity])
+      expect(() => devtools({ maxPendingBytes })).toThrow(/positive safe integer/)
+  })
+
   test("uses the socket peer for loopback access when the platform supplies one", async () => {
     const app = server().use(devtools({ enabled: true }))
     const remoteWithForgedHost = await app.fetch(new Request("http://localhost/_nifra/devtools"), {

@@ -1,17 +1,22 @@
 import { fileURLToPath } from "node:url"
 import {
+  AGENT_MAX_PAYLOAD_STRING,
   type AgentBackend,
   type AgentBackendInfo,
   type AgentEvent,
   type AgentEventStream,
   type AgentSessionSnapshot,
   agentError,
+  boundAgentText,
+  boundAgentValue,
   type CreateSessionInput,
   createAgentEventStream,
   isAgentEvent,
   type ReloadResult,
   type SendMessageInput,
+  splitAgentText,
 } from "@nifrajs/agent-protocol"
+import { writeRpc } from "./rpc-write.ts"
 
 export interface PiBackendOptions {
   /** Defaults to `pi`, resolved through PATH. */
@@ -54,6 +59,8 @@ interface PiSession {
   active: AgentEventStream | undefined
   seq: number
   turnId: string | undefined
+  /** Pi ends a turn whose model call failed with an ordinary `agent_end`; the error is on its last message. */
+  modelError: string | undefined
   turnAbortCleanup: (() => void) | undefined
   reloadRequested: boolean
   reloadRevision: number
@@ -92,6 +99,8 @@ const DEFAULT_MAX_MESSAGE_CHARS = 64 * 1024
 const MAX_MESSAGE_CHARS = 4 * 1024 * 1024
 const MAX_EVENT_QUEUE_SIZE = 65_536
 const MAX_PENDING_APPROVALS = 128
+// Pi's extension UI methods that block the extension until an `extension_ui_response` arrives.
+const PI_DIALOG_METHODS: ReadonlySet<unknown> = new Set(["select", "confirm", "input", "editor"])
 
 /**
  * Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.
@@ -178,6 +187,7 @@ export class PiBackend implements AgentBackend {
       active: undefined,
       seq: 0,
       turnId: undefined,
+      modelError: undefined,
       turnAbortCleanup: undefined,
       reloadRequested: false,
       reloadRevision: 0,
@@ -205,12 +215,13 @@ export class PiBackend implements AgentBackend {
     session.active = stream
     const turnId = crypto.randomUUID()
     session.turnId = turnId
+    session.modelError = undefined
     session.reloadRequested = false
     this.updateSnapshot(session, "running")
     this.emit(session, {
       type: "turn.started",
       turnId: session.turnId,
-      prompt: input.message,
+      prompt: boundAgentText(input.message),
     })
     if (input.signal !== undefined) {
       const externalSignal = input.signal
@@ -231,13 +242,14 @@ export class PiBackend implements AgentBackend {
     }
     // An already-aborted signal is settled above. Do not write a prompt after that cancellation.
     if (session.active !== stream || session.turnId !== turnId) return stream
-    try {
-      writeRpc(session, { type: "prompt", message: input.message })
-    } catch (error) {
-      stream.fail(error)
-      this.clearTurn(session, stream, turnId)
-      this.updateSnapshot(session, "failed")
-    }
+    void writeRpc(session.process.stdin, { type: "prompt", message: input.message }).catch(
+      (error) => {
+        if (session.active !== stream || session.turnId !== turnId) return
+        stream.fail(error)
+        this.clearTurn(session, stream, turnId)
+        this.updateSnapshot(session, "failed")
+      },
+    )
     return stream
   }
 
@@ -305,12 +317,14 @@ export class PiBackend implements AgentBackend {
     const stream = createAgentEventStream(this.options.maxEventQueueSize ?? 256)
     session.active = stream
     session.turnId = crypto.randomUUID()
+    session.modelError = undefined
     session.reloadRequested = true
     this.updateSnapshot(session, "running")
     this.emit(session, { type: "turn.started", turnId: session.turnId, prompt: "/reload" })
     try {
-      if (this.options.reloadCommand === "rpc") writeRpc(session, { type: "reload" })
-      else writeRpc(session, { type: "prompt", message: "/reload" })
+      if (this.options.reloadCommand === "rpc")
+        await writeRpc(session.process.stdin, { type: "reload" })
+      else await writeRpc(session.process.stdin, { type: "prompt", message: "/reload" })
     } catch (error) {
       stream.fail(error)
       session.active = undefined
@@ -362,7 +376,7 @@ export class PiBackend implements AgentBackend {
     const pending = session.approvals.get(approvalId)
     if (pending === undefined) return undefined
     session.approvals.delete(approvalId)
-    writeRpc(session, {
+    await writeRpc(session.process.stdin, {
       type: "extension_ui_response",
       id: approvalId,
       ...(pending.method === "confirm"
@@ -479,17 +493,13 @@ export class PiBackend implements AgentBackend {
   }
 
   private consumeText(session: PiSession, text: string): void {
-    session.buffer += text
-    if (Buffer.byteLength(session.buffer, "utf8") > this.maxRecordBytes) {
-      session.buffer = ""
-      this.failActive(session, agentError("PI_PROTOCOL", "Pi emitted an oversized JSONL record"))
-      return
-    }
+    const buffered = session.buffer + text
+    let start = 0
     for (;;) {
-      const newline = session.buffer.indexOf("\n")
-      if (newline === -1) return
-      let line = session.buffer.slice(0, newline)
-      session.buffer = session.buffer.slice(newline + 1)
+      const newline = buffered.indexOf("\n", start)
+      if (newline === -1) break
+      let line = buffered.slice(start, newline)
+      start = newline + 1
       if (line.endsWith("\r")) line = line.slice(0, -1)
       if (line.length === 0) continue
       if (Buffer.byteLength(line, "utf8") > this.maxRecordBytes) {
@@ -508,6 +518,13 @@ export class PiBackend implements AgentBackend {
         continue
       }
       this.consumeRecord(session, value as PiRpcRecord)
+    }
+    // The cap is per record: complete lines were each measured above, and what remains is the one
+    // record still arriving.
+    session.buffer = buffered.slice(start)
+    if (Buffer.byteLength(session.buffer, "utf8") > this.maxRecordBytes) {
+      session.buffer = ""
+      this.failActive(session, agentError("PI_PROTOCOL", "Pi emitted an oversized JSONL record"))
     }
   }
 
@@ -563,6 +580,26 @@ export class PiBackend implements AgentBackend {
       }
       return
     }
+    // Only a `confirm` inside a turn becomes an approval. Any other dialog is cancelled at once, or
+    // the extension waits on an answer nobody can give; notify, setStatus and the like expect none.
+    if (
+      record.type === "extension_ui_request" &&
+      PI_DIALOG_METHODS.has(record.method) &&
+      (record.method !== "confirm" || session.active === undefined) &&
+      boundedPiToken(record.id)
+    ) {
+      const active = session.active
+      const turnId = session.turnId
+      void writeRpc(session.process.stdin, {
+        type: "extension_ui_response",
+        id: record.id,
+        cancelled: true,
+      }).catch(() => {
+        if (session.active === active && session.turnId === turnId)
+          this.failActive(session, agentError("PI_IO", "Pi could not receive the dialog response"))
+      })
+      return
+    }
     const active = session.active
     if (active === undefined) return
     const turnId = session.turnId ?? "unknown"
@@ -589,34 +626,50 @@ export class PiBackend implements AgentBackend {
       case "message_update": {
         const delta = record.assistantMessageEvent
         if (isRecord(delta) && delta.type === "text_delta" && typeof delta.delta === "string") {
-          this.emit(session, { type: "assistant.delta", turnId, text: delta.delta })
+          for (const text of splitAgentText(delta.delta))
+            this.emit(session, { type: "assistant.delta", turnId, text })
         }
         return
       }
       case "message_end": {
         const message = record.message
         const text = assistantText(message)
-        if (text.length > 0) this.emit(session, { type: "assistant.message", turnId, text })
+        if (text.length > 0)
+          for (const piece of splitAgentText(text))
+            this.emit(session, { type: "assistant.message", turnId, text: piece })
+        if (isRecord(message) && message.role === "assistant")
+          session.modelError =
+            message.stopReason === "error" ? modelErrorText(message.errorMessage) : undefined
         return
       }
       case "tool_execution_start":
-        if (typeof record.toolCallId === "string" && typeof record.toolName === "string")
-          this.emit(session, {
+        if (typeof record.toolCallId === "string" && typeof record.toolName === "string") {
+          const started: ToolStartedPayload = {
             type: "tool.started",
             turnId,
             callId: record.toolCallId,
             name: record.toolName,
-            input: record.args,
-          })
+          }
+          const input = boundAgentValue(record.args)
+          if (input !== undefined) started.input = input
+          this.emit(session, started)
+        }
         return
       case "tool_execution_update": {
         const text = resultText(record.partialResult)
         if (typeof record.toolCallId === "string" && text.length > 0)
-          this.emit(session, { type: "tool.delta", turnId, callId: record.toolCallId, text })
+          for (const piece of splitAgentText(text))
+            this.emit(session, {
+              type: "tool.delta",
+              turnId,
+              callId: record.toolCallId,
+              text: piece,
+            })
         return
       }
       case "tool_execution_end": {
         const result = isRecord(record.result) ? record.result : undefined
+        const text = resultText(result)
         if (typeof record.toolCallId === "string" && typeof record.toolName === "string")
           this.emit(session, {
             type: "tool.completed",
@@ -624,9 +677,11 @@ export class PiBackend implements AgentBackend {
             callId: record.toolCallId,
             name: record.toolName,
             ok: record.isError !== true,
-            ...(result === undefined ? {} : { output: resultText(result) }),
+            ...(result === undefined
+              ? {}
+              : { output: boundAgentText(text, AGENT_MAX_PAYLOAD_STRING) }),
             ...(record.isError === true
-              ? { error: agentError("PI_TOOL_FAILED", resultText(result) || "Pi tool failed") }
+              ? { error: agentError("PI_TOOL_FAILED", boundAgentText(text || "Pi tool failed")) }
               : {}),
           })
         return
@@ -659,10 +714,12 @@ export class PiBackend implements AgentBackend {
         })
         return
       case "agent_settled":
-        this.finishTurn(session)
+        this.endTurn(session)
         return
       case "agent_end":
-        this.finishTurn(session)
+        // Pi runs the turn again after a retryable error and ends that run with its own agent_end.
+        if (record.willRetry === true) return
+        this.endTurn(session)
         return
       case "extension_reloaded": {
         const result = reloadInfo(record.data ?? record)
@@ -757,6 +814,11 @@ export class PiBackend implements AgentBackend {
     session.reloadRequested = false
   }
 
+  private endTurn(session: PiSession): void {
+    if (session.modelError === undefined) this.finishTurn(session)
+    else this.failActive(session, agentError("PI_MODEL_FAILED", session.modelError))
+  }
+
   private finishTurn(session: PiSession): void {
     const active = session.active
     if (active === undefined) return
@@ -784,16 +846,16 @@ export class PiBackend implements AgentBackend {
     const turnId = session.turnId
     const stopReason = boundedPiText(reason, 512) || "cancelled"
     this.clearTurnSignal(session)
-    try {
-      if (!session.closed) writeRpc(session, { type: "abort" })
-    } catch {
-      // The process may have exited while a request was being cancelled. The protocol still needs
-      // to settle the caller and remove the stale signal listener.
-    }
+    const writing = session.closed
+      ? Promise.resolve()
+      : writeRpc(session.process.stdin, { type: "abort" })
     this.updateSnapshot(session, "stopped")
     this.emit(session, { type: "session.stopped", reason: stopReason })
     active?.complete()
     this.clearTurn(session, active, turnId)
+    // Settle the caller synchronously before waiting for a buffered abort: an already-aborted
+    // request must never send a prompt. An exited process may refuse the abort without undoing it.
+    await writing.catch(() => undefined)
   }
 
   private clearTurnSignal(session: PiSession): void {
@@ -809,6 +871,8 @@ export class PiBackend implements AgentBackend {
     if (stream !== undefined && session.active !== stream) return
     if (turnId !== undefined && session.turnId !== turnId) return
     this.clearTurnSignal(session)
+    // An approval belongs to its turn; an answer after the turn ended must not reach Pi.
+    session.approvals.clear()
     if (stream === undefined || session.active === stream) session.active = undefined
     if (turnId === undefined || session.turnId === turnId) session.turnId = undefined
   }
@@ -819,14 +883,6 @@ function removeActiveTurn(
 ): Omit<AgentSessionSnapshot, "activeTurnId"> {
   const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = snapshot
   return withoutActiveTurn
-}
-
-function writeRpc(session: PiSession, value: Record<string, unknown>): void {
-  const stdin = session.process.stdin
-  if (stdin === undefined || stdin === null || typeof stdin === "number")
-    throw new Error("pi backend: Pi stdin is unavailable")
-  stdin.write(`${JSON.stringify(value)}\n`)
-  stdin.flush()
 }
 
 // The model-provider credentials Pi's providers read from the environment. Pi cannot reach a model
@@ -944,6 +1000,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
+interface ToolStartedPayload {
+  type: "tool.started"
+  turnId: string
+  callId: string
+  name: string
+  input?: unknown
+}
+
 function assistantText(value: unknown): string {
   if (!isRecord(value) || value.role !== "assistant") return ""
   const content = value.content
@@ -976,10 +1040,28 @@ function boundedPiToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
 }
 
+// A provider's error can echo a credential back; the turn's error keeps the reason, not the key.
+const CREDENTIAL_PATTERNS: readonly RegExp[] = [
+  /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi,
+  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  /\bsk-[A-Za-z0-9_-]{8,}/g,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+]
+
+function modelErrorText(value: unknown): string {
+  if (typeof value !== "string") return "Pi's model call failed"
+  let text = value
+  for (const pattern of CREDENTIAL_PATTERNS) text = text.replace(pattern, "[REDACTED]")
+  return boundedPiText(text, 1_024) || "Pi's model call failed"
+}
+
 function boundedPiText(value: unknown, maxChars: number): string {
   if (typeof value !== "string") return ""
-  if (value.length <= maxChars) return value
-  return `${value.slice(0, Math.max(0, maxChars - 1))}…`
+  const text = value.replaceAll("\0", "\uFFFD")
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, Math.max(0, maxChars - 1))}…`
 }
 
 interface PiReloadInfo {

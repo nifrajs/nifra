@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server, status } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
@@ -114,6 +114,66 @@ Deno.test("stop() force-closes a handler that outlives the drain deadline", asyn
   assert(elapsed < 1000, `stop should force-close near its deadline, took ${elapsed}ms`)
 })
 
+Deno.test("stop() force-closes a streamed body that outlives the drain deadline", async () => {
+  const encoder = new TextEncoder()
+  const app = {
+    fetch: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("first chunk\n"))
+          },
+        }),
+      ),
+  }
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const res = await fetch(`http://127.0.0.1:${running.port}/stream`)
+  const reader = res.body?.getReader()
+  await reader?.read()
+  const before = performance.now()
+  await running.stop({ drainMs: 10 })
+  const elapsed = performance.now() - before
+  await reader?.cancel().catch(() => {})
+  assert(
+    elapsed < 1000,
+    `stop should force-close a live stream near its deadline, took ${elapsed}ms`,
+  )
+})
+
+Deno.test("stop() lets a streamed body that ends within the deadline finish", async () => {
+  const encoder = new TextEncoder()
+  let finish: (() => void) | undefined
+  const app = {
+    fetch: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("first,"))
+            finish = () => {
+              controller.enqueue(encoder.encode("last"))
+              controller.close()
+            }
+          },
+        }),
+      ),
+  }
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const res = await fetch(`http://127.0.0.1:${running.port}/stream`)
+  const reader = res.body?.getReader()
+  const first = await reader?.read()
+  const stopped = running.stop({ drainMs: 5000 })
+  finish?.()
+  const decoder = new TextDecoder()
+  let body = decoder.decode(first?.value)
+  for (;;) {
+    const chunk = await reader?.read()
+    if (chunk === undefined || chunk.done) break
+    body += decoder.decode(chunk.value)
+  }
+  await stopped
+  assertEquals(body, "first,last")
+})
+
 Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", async () => {
   const app = server({ requestTimeoutMs: 40 }).get("/slow", async (c) => {
     // Respect the abort signal so the handler's timer clears on timeout - otherwise
@@ -211,6 +271,27 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
     assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/health`)).json(), {
       ok: true,
     })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a socket registered after a guard refuses a handshake without credentials", async () => {
+  const app = server()
+    .use(websocket())
+    .beforeHandle((c) =>
+      c.req.headers.get("authorization") === "Bearer good"
+        ? undefined
+        : status(401, { error: "no" }),
+    )
+    .ws("/socket", {})
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    assertEquals(await rawUpgradeStatus(running.port, "/socket"), 401)
+    assertEquals(
+      await rawUpgradeStatus(running.port, "/socket", { authorization: "Bearer good" }),
+      101,
+    )
   } finally {
     await running.stop({ drainMs: 0 })
   }

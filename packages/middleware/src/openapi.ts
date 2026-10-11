@@ -11,7 +11,12 @@ export interface RouteLike {
   // `| undefined` (not just `?`) so a core `RouteDescriptor` - whose `schema` is a *required*
   // `RouteSchema | undefined` - is assignable under `exactOptionalPropertyTypes`.
   readonly schema?:
-    | { readonly body?: unknown; readonly query?: unknown; readonly response?: unknown }
+    | {
+        readonly body?: unknown
+        readonly query?: unknown
+        readonly response?: unknown
+        readonly sse?: unknown
+      }
     | undefined
 }
 
@@ -45,6 +50,8 @@ export interface OpenApiUiOptions {
 }
 
 export interface OpenApiOptions {
+  /** The OpenAPI version to declare. `"3.2.0"` describes each SSE event with the standard `itemSchema`. */
+  readonly openapiVersion?: "3.1.0" | "3.2.0"
   readonly info?: OpenApiInfo
   readonly servers?: readonly OpenApiServer[]
   /** Tag definitions (top-level `tags`). Reference them from an operation via `operations`. */
@@ -91,6 +98,7 @@ export function buildOpenApiDocument(
   // and the shim only satisfies it structurally.
   const appShim = { routes: () => included } as unknown as Parameters<typeof toOpenAPI>[0]
   return toOpenAPI(appShim, {
+    ...(options.openapiVersion !== undefined ? { openapiVersion: options.openapiVersion } : {}),
     title: options.info?.title ?? "nifra API",
     version: options.info?.version ?? "0.0.0",
     ...(options.info?.description !== undefined ? { description: options.info.description } : {}),
@@ -103,6 +111,9 @@ export function buildOpenApiDocument(
 }
 
 const SCALAR_CDN = "https://cdn.jsdelivr.net/npm/@scalar/api-reference"
+
+// Named per call, so a second, differently configured instance applies instead of being deduped.
+let instances = 0
 
 /**
  * Minimal HTML that mounts the Scalar API reference against a spec URL. The interpolated values are
@@ -149,7 +160,7 @@ export function openapi(options: OpenApiOptions = {}): IdentityPlugin {
   let uiCached: string | undefined
   // A router plugin: it serves the spec (and optionally the UI page) as a side effect and returns the
   // app type-unchanged, so every route declared after `.use(openapi())` keeps its types.
-  return defineRouterPlugin("openapi", (app) => {
+  return defineRouterPlugin(`openapi#${++instances}`, (app) => {
     // Capture `app` (the same mutable builder every later `.get()`/`.post()` registers on) and read its
     // routes lazily, at request time - so all routes exist regardless of where the plugin sits.
     app.register("GET", docPath, undefined, () => {

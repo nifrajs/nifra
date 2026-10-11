@@ -68,3 +68,44 @@ test("scans safely, writes only with --write semantics, and skips generated dire
   expect(written.written).toEqual(["src/card.tsx"])
   expect(readFileSync(join(root, "src/card.tsx"), "utf8")).toContain("nifraStylex.props")
 })
+
+test("a className in a template literal, string, comment, regex or JSX text is not an attribute", () => {
+  const source = [
+    'const html = `<div className="flex">${`<p className="p-4">`}</div>`',
+    "const quoted = '<div className=\"flex\">'",
+    '// <div className="flex">',
+    '/* <div className="flex"> */',
+    'const pattern = /<div className="flex">/g',
+    "export const Page = () => (",
+    "  <>",
+    '    <p>Don\'t write className="flex" here</p>',
+    '    <section data-x={html.length > 1 ? "a>b" : `c`} className="p-4">',
+    '      {quoted && <span className="flex" />}',
+    "    </section>",
+    "  </>",
+    ")",
+    "",
+  ].join("\n")
+  const result = migrateTailwindSource(source, "src/page.tsx")
+  expect(result.replacements).toBe(2)
+  const lines = result.source.split("\n")
+  for (const kept of source.split("\n").slice(0, 5)) expect(lines).toContain(kept)
+  expect(lines).toContain('    <p>Don\'t write className="flex" here</p>')
+  expect(result.source).toContain('data-x={html.length > 1 ? "a>b" : `c`} {...nifraStylex.props(')
+  expect(result.source).toContain("{quoted && <span {...nifraStylex.props(")
+})
+
+test("a type parameter list is not an element, and a .ts module holds no JSX", () => {
+  const generic = [
+    "const first = <T,>(items: T[]) => items[0]",
+    "const keep = <T extends object>(value: T) => value",
+    "const ratio = (a: number, b: number) => a / b < 1",
+    'export const Box = () => <div className="flex" />',
+    "",
+  ].join("\n")
+  const tsx = migrateTailwindSource(generic, "src/box.tsx")
+  expect(tsx.replacements).toBe(1)
+  expect(tsx.source).toContain("<div {...nifraStylex.props(")
+  const plain = 'const x = <Tag>value\nconst y = "<div className=\\"flex\\">"\n'
+  expect(migrateTailwindSource(plain, "src/cast.ts").changed).toBe(false)
+})

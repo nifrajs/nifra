@@ -250,10 +250,14 @@ export default defineAssuranceConfig({
     rules: [
       { name: "health", match: { paths: ["/health"] }, require: [],
         forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
-      { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+      // Every method but these, so a custom one such as PURGE is a mutation too.
+      { name: "mutation", match: { exceptMethods: ["GET", "HEAD", "OPTIONS", "WS"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF,
           NIFRA_ASSURANCE.BODY_BOUNDED] },
       { name: "read", match: { methods: ["GET", "HEAD"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      // WebSocket routes reflect under the pseudo-method "WS".
+      { name: "socket", match: { methods: ["WS"] },
         require: [NIFRA_ASSURANCE.AUTHENTICATED] },
     ],
   },
@@ -361,7 +365,7 @@ export default function Security() {
         Express, and Elysia, see <a href="/docs/security-comparison">security posture, compared</a>.
       </p>
 
-      <h2>Responses that cannot leak more than they declare</h2>
+      <h2 id="response-contract">Responses that cannot leak more than they declare</h2>
       <p>
         A <code>response</code> schema is a <strong>lower</strong> bound: it says &ldquo;at least these
         fields&rdquo;, never &ldquo;only these&rdquo;. A handler returning a database row that satisfies
@@ -378,8 +382,10 @@ export default function Security() {
         serves the payload <strong>unchanged</strong> - so turning it on in staging can never be the
         thing that broke production. <code>&quot;enforce&quot;</code> serializes the validated value
         instead of the raw result. Both cover a returned value, a <code>status(...)</code> result and
-        a <code>c.json(...)</code> reply alike; only a hand-built <code>Response</code> (a redirect, a
-        stream) passes unchecked. Install it before the routes it should cover: like{" "}
+        a <code>c.json(...)</code> reply alike, whether the handler returns or throws it, a hook
+        returns it early, or <code>onError</code> answers with it; only a hand-built{" "}
+        <code>Response</code> (a redirect, a stream) passes unchecked. Install it before the routes it
+        should cover: like{" "}
         <code>idempotency()</code>, the decision is made per route at registration.
       </p>
       <p>
@@ -640,7 +646,9 @@ export default function Security() {
         <code>crypto.subtle.verify</code>, so a wrong signature can't be discovered byte-by-byte through
         timing. Presets cover <b>Stripe</b> (parses <code>t=…,v1=…</code> and enforces a 5-minute replay
         window on the signed timestamp) and <b>GitHub</b> (<code>sha256=…</code>); the <code>generic</code>{" "}
-        preset takes an explicit header, encoding, and prefix for anything else. Pass an array of secrets to
+        preset takes an explicit header, encoding (<code>"hex"</code>, <code>"base64"</code> or{" "}
+        <code>"base64url"</code>, padded or not), and prefix for anything else. A signature that does not
+        decode is refused as <code>malformed_signature</code>, never thrown. Pass an array of secrets to
         accept either during a key rotation.
       </p>
 
@@ -729,6 +737,14 @@ export default function Security() {
         inside <code>app.group("/admin", ...)</code> - and each header it sets replaces the app&apos;s
         value on the group&apos;s routes only.
       </p>
+      <p>
+        A fixed <code>Content-Security-Policy</code> here cannot allow nifra&apos;s inline scripts by
+        nonce. For a strict <code>script-src</code> on web pages, give <code>createWebApp</code> a{" "}
+        <code>csp</code> from <code>createCspPolicy</code>: it allows the framework&apos;s constant
+        scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
+        same header and stays cacheable under <code>withISR</code> or a CDN. See{" "}
+        <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
+      </p>
 
       <h2>Route assurance - prove every route is guarded</h2>
       <p>
@@ -743,6 +759,15 @@ export default function Security() {
         while authentication and other order-scoped hooks cover only routes registered after them.
         Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
         runs only through reflection or <code>nifra assure</code>, so requests pay no assurance cost.
+      </p>
+      <p>
+        WebSocket routes are reflected under the pseudo-method <code>"WS"</code>, so a policy classifies
+        every socket too. A handshake runs the auth guards registered before the socket and the
+        app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
+        It never claims evidence whose enforcement its message handlers bypass, such as a durable
+        command journal. A socket declares its effects with{" "}
+        <code>app.ws(path, {"{ capabilities }"})</code>, and capability assurance checks them against
+        the module that registers it.
       </p>
 
       <h2>Effect assurance - declared capability versus provenance</h2>
@@ -767,7 +792,11 @@ export default function Security() {
         digest, and are consumed atomically once. The effect journal marks execution before the provider
         call, so a crash after an external commit remains <code>ambiguous</code> for reconciliation instead
         of being retried blindly. Typed sagas persist compensation arguments separately from the sealed
-        token-only ledger and compensate committed steps in reverse order with retry/backoff state.
+        token-only ledger and compensate committed steps in reverse order with retry/backoff state. One{" "}
+        <code>resume</code> or <code>compensate</code> call owns a saga at a time through a lease every
+        transition renews (<code>leaseMs</code>, default 5 minutes): a second call meanwhile throws{" "}
+        <code>SagaConcurrencyError</code> and changes nothing, and a call that died is taken over once its
+        lease lapses.
       </p>
       <CodeBlock code={DURABLE_EFFECTS} />
 

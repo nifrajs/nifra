@@ -46,6 +46,8 @@
       "!**/node_modules",
       "!**/.claude",
       "!.planning",
+      "!.nifra-components-fixtures",
+      "!packages/web-svelte/src/server-components/ServerComponent.svelte.d.ts",
       "!**/.playwright-cli",
       "!bench/.published",
       "!**/output",

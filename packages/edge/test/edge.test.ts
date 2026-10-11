@@ -119,6 +119,19 @@ test("parity: 404 not-found envelope matches the full Server", async () => {
   expect(await wire(await edgeApp().fetch(req()))).toEqual(await wire(await coreApp().fetch(req())))
 })
 
+test("parity: a handler that returns nothing answers an empty 204", async () => {
+  const req = () => new Request("https://x.test/void", { method: "POST" })
+  const edge = await server()
+    .post("/void", () => {})
+    .fetch(req())
+  const core = await coreServer()
+    .post("/void", () => {})
+    .fetch(req())
+  expect(edge.status).toBe(204)
+  expect(edge.headers.get("content-type")).toBe(core.headers.get("content-type"))
+  expect(await wire(edge)).toEqual(await wire(core))
+})
+
 test("parity: 405 method-not-allowed + Allow header matches", async () => {
   const req = () => new Request("https://x.test/users/1", { method: "DELETE" })
   const e = await wire(await edgeApp().fetch(req()))
@@ -523,4 +536,57 @@ test("a constrained param is typed by its bare name", async () => {
   expect(await (await edge.fetch(new Request("https://x.test/users/7"))).json()).toEqual({
     id: "7",
   })
+})
+
+test("a route with no body schema holds direct reads of c.request to maxBodyBytes, as core does", async () => {
+  const read = async (c: { request: Request }) => ({ length: (await c.request.text()).length })
+  const apps = [
+    server({ maxBodyBytes: 64 })
+      .post("/raw", read)
+      .post("/ignore", () => ({ ok: true })),
+    coreServer({ maxBodyBytes: 64 })
+      .post("/raw", (c) => read({ request: c.req }))
+      .post("/ignore", () => ({ ok: true })),
+  ]
+  const stream = (size: number) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let sent = 0; sent < size; sent += 16) controller.enqueue(new Uint8Array(16))
+        controller.close()
+      },
+    })
+  const cases: ReadonlyArray<readonly [string, () => RequestInit]> = [
+    ["/raw", () => ({ body: "x".repeat(64) })],
+    ["/raw", () => ({ body: "x".repeat(65) })],
+    [
+      "/raw",
+      () => {
+        const init: RequestInit & { duplex: "half" } = { body: stream(128), duplex: "half" }
+        return init
+      },
+    ],
+    ["/raw", () => ({ body: "x", headers: { "content-length": "1e3" } })],
+    ["/ignore", () => ({ body: "x".repeat(1000) })],
+  ]
+  const answers = await Promise.all(
+    apps.map(async (app) => {
+      const out: string[] = []
+      for (const [path, init] of cases) {
+        const res = await app.fetch(
+          new Request(`http://edge${path}`, { method: "POST", ...init() }),
+        )
+        out.push(`${res.status} ${await res.text()}`)
+      }
+      return out
+    }),
+  )
+  const [edge, core] = answers
+  expect(edge).toEqual(core)
+  expect(edge).toEqual([
+    '200 {"length":64}',
+    '413 {"ok":false,"error":"payload_too_large"}',
+    '413 {"ok":false,"error":"payload_too_large"}',
+    '400 {"ok":false,"error":"invalid_content_length"}',
+    '200 {"ok":true}',
+  ])
 })

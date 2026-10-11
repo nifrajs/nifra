@@ -30,8 +30,8 @@ describe("generateServiceWorker", () => {
   })
 
   test("the cache name carries the build id, so a deploy cannot be pinned", () => {
-    expect(generateServiceWorker(manifest, { buildId: "v1" })).toContain('"nifra-v1"')
-    expect(generateServiceWorker(manifest, { buildId: "v2" })).toContain('"nifra-v2"')
+    expect(generateServiceWorker(manifest, { buildId: "v1" })).toContain('const OWNED = "nifra:"')
+    expect(generateServiceWorker(manifest, { buildId: "v2" })).toContain('OWNED + "v2"')
   })
 
   describe("what it refuses to do", () => {
@@ -54,12 +54,6 @@ describe("generateServiceWorker", () => {
       expect(sw).toContain("response.ok")
       expect(sw).toContain('response.type === "basic"')
       expect(sw).toContain("no-store")
-    })
-
-    test("deletes every older cache on activate", () => {
-      expect(generateServiceWorker(manifest, { buildId: "v1" })).toContain(
-        "keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))",
-      )
     })
 
     test("without an offline page, a failed navigation is left to fail", () => {
@@ -129,9 +123,17 @@ describe("the generated worker, executed", () => {
   /** Never defaults to the real `fetch`: a test that can reach the network can pass without the code. */
   const OFFLINE_FETCH = (): Promise<Response> => Promise.reject(new Error("offline"))
 
-  const boot = (sw: string, fetchImpl: typeof fetch = OFFLINE_FETCH as never): Scope => {
+  const boot = (
+    sw: string,
+    fetchImpl: (request: Request) => Promise<Response> = OFFLINE_FETCH,
+  ): Scope => {
     const listeners = new Map<string, (event: never) => void>()
     const store = new Map<string, Response>()
+    const foreign = new Map<string, Response>([
+      ["/api/me", new Response("another visitor's profile")],
+      ["/assets/entry-abc123.js", new Response("another app's script")],
+      ["/offline", new Response("another app's offline page")],
+    ])
     const deleted: string[] = []
     const scope: Scope = { listeners, store, deleted, claimed: false }
     const names = new Set<string>()
@@ -147,14 +149,23 @@ describe("the generated worker, executed", () => {
     })
     const caches = {
       open: async (name: string) => cacheFor(name),
-      keys: async () => [...names, "nifra-old"],
+      keys: async () => [
+        ...names,
+        "nifra:v0",
+        "nifra-old",
+        "nifra-admin:v0",
+        "another-app-offline",
+        "user-data",
+      ],
       delete: async (name: string) => {
         deleted.push(name)
         return true
       },
-      match: async (key: Request | string) => {
+      // Without `cacheName`, CacheStorage.match answers from every cache on the origin.
+      match: async (key: Request | string, options?: { cacheName?: string }) => {
         const path = typeof key === "string" ? key : new URL(key.url).pathname
-        return store.get(path)
+        if (options?.cacheName !== undefined && !names.has(options.cacheName)) return undefined
+        return store.get(path) ?? (options?.cacheName === undefined ? foreign.get(path) : undefined)
       },
     }
     const self = {
@@ -216,8 +227,15 @@ describe("the generated worker, executed", () => {
     expect(scope.store.has("/assets/entry-abc123.js")).toBe(true)
     expect(scope.store.has("/offline")).toBe(true)
     await run(scope, "activate", {})
-    expect(scope.deleted).toEqual(["nifra-old"])
+    expect(scope.deleted).toEqual(["nifra:v0"])
     expect(scope.claimed).toBe(true)
+  })
+
+  test("activate leaves caches outside its namespace alone", async () => {
+    const scope = boot(generateServiceWorker(manifest, { buildId: "v1", cacheName: "nifra-admin" }))
+    await run(scope, "install", {})
+    await run(scope, "activate", {})
+    expect(scope.deleted).toEqual(["nifra-admin:v0"])
   })
 
   test("serves a precached asset from cache", async () => {
@@ -271,6 +289,23 @@ describe("the generated worker, executed", () => {
     // served the page rendered for another.
     expect(scope.store.size).toBe(before)
     expect(scope.store.has("/dashboard")).toBe(false)
+  })
+
+  test("another cache on the origin is never read, and an unlisted GET goes to the network", async () => {
+    const online = (request: Request) =>
+      Promise.resolve(new Response(`network:${new URL(request.url).pathname}`))
+    const scope = boot(SW, online)
+    // Not installed yet: this build's cache is empty, while another cache holds the same paths.
+    const api = await run(scope, "fetch", { request: new Request("https://app.test/api/me") })
+    expect(api).toBeUndefined()
+    const asset = await run(scope, "fetch", {
+      request: new Request("https://app.test/assets/entry-abc123.js"),
+    })
+    expect(await asset?.text()).toBe("network:/assets/entry-abc123.js")
+    const offline = await run(boot(SW), "fetch", {
+      request: navigation("https://app.test/dashboard"),
+    })
+    expect(offline?.type).toBe("error")
   })
 
   test("a POST is passed through untouched", async () => {

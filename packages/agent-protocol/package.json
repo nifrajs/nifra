@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/agent-protocol",
-  "version": "4.0.2",
+  "version": "5.0.0",
   "description": "Small backend-neutral session and event protocol for Nifra coding agents.",
   "keywords": [
     "bun",
@@ -22,6 +22,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./conformance": {
+      "bun": "./src/conformance.ts",
+      "types": "./dist/conformance.d.ts",
+      "default": "./dist/conformance.js"
     }
   },
   "files": [

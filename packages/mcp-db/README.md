@@ -98,8 +98,8 @@ Each layer refuses on its own, in this order:
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`
-writes the SQL for a read-only role (`pg_read_all_data` on 14+, or `GRANT SELECT` per schema with a
-`REVOKE` for each excluded table and its partitions) without running it.
+writes the SQL for a read-only role (`GRANT SELECT` on each allowed schema, with a `REVOKE` for each
+excluded table and its partitions) without running it.
 
 The live tests run against a throwaway server: set `NIFRA_TEST_POSTGRES_URL` to its superuser URL.
 

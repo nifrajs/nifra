@@ -3,9 +3,12 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
+import { type BackendEvidenceProvider, NIFRA_BACKEND_EVIDENCE } from "@nifrajs/core/mount"
 import { compileRoutePattern, type RoutePatternSegment } from "@nifrajs/core/pattern"
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+const RESERVED_CLIENT_SEGMENT = /^(?:get|post|put|patch|delete|head|options)$/i
+const RESERVED_EXACT_SEGMENTS = new Set(["subscribe", "ws", "index", "then"])
 
 /** The subset of JSON Schema fields {@link tsTypeOf} reads to render a TypeScript type string. */
 interface JsonSchemaNode {
@@ -93,7 +96,13 @@ function clientCall(method: string, path: string, schema: unknown): string {
   if (segs.length === 0) chain += ".index"
   else
     for (const seg of segs) {
-      chain += paramCall(seg) ?? (IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`)
+      chain +=
+        paramCall(seg) ??
+        (RESERVED_CLIENT_SEGMENT.test(seg) || RESERVED_EXACT_SEGMENTS.has(seg)
+          ? `(${JSON.stringify(seg)})`
+          : IDENT.test(seg)
+            ? `.${seg}`
+            : `[${JSON.stringify(seg)}]`)
     }
   const isBodyVerb = verb === "post" || verb === "put" || verb === "patch"
   let call: string
@@ -101,10 +110,25 @@ function clientCall(method: string, path: string, schema: unknown): string {
     const bodyArg = s?.body ? "body" : s?.query ? "undefined" : ""
     const opts = s?.query ? (bodyArg ? ", { query }" : "{ query }") : ""
     call = `.${verb}(${bodyArg}${opts})`
+  } else if (verb === "delete") {
+    const fields = [...(s?.body ? ["body"] : []), ...(s?.query ? ["query"] : [])]
+    call = `.delete(${fields.length === 0 ? "" : `{ ${fields.join(", ")} }`})`
   } else {
     call = `.${verb}(${s?.query ? "{ query }" : ""})`
   }
   return `await ${chain}${call}`
+}
+
+async function backendEvidence(backend: unknown): Promise<ProjectEvidenceSnapshot> {
+  if (backend !== null && (typeof backend === "object" || typeof backend === "function")) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Object/function check allows reading the optional symbol-keyed provider without touching the client path proxy.
+    const provider = (backend as { readonly [NIFRA_BACKEND_EVIDENCE]?: unknown })[
+      NIFRA_BACKEND_EVIDENCE
+    ]
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: A callable at NIFRA_BACKEND_EVIDENCE implements the framework's trusted evidence-provider seam.
+    if (typeof provider === "function") return (provider as BackendEvidenceProvider).call(backend)
+  }
+  return snapshotProjectEvidence(backend)
 }
 
 /** Read the project's `AGENTS.md`, or `""` if there isn't one (or we're on an edge runtime with no
@@ -134,6 +158,8 @@ export async function generateLlmsTxt(
     readonly includeLocalGuidelines?: boolean
     /** Reuse the project's canonical route-evidence pass when one is already available. */
     readonly evidence?: ProjectEvidenceSnapshot
+    /** The mount prefix a visitor's URL carries but the backend's own routes do not (`apiStrip`). */
+    readonly apiPathPrefix?: string
   } = {},
 ): Promise<string> {
   let output = ""
@@ -160,14 +186,17 @@ export async function generateLlmsTxt(
   // 3. API Routes
   output += `## API Routes\n\n`
   const apiRoutes = reflectedRoutesFromEvidence(
-    options.evidence ?? snapshotProjectEvidence(backend),
+    options.evidence ?? (await backendEvidence(backend)),
   )
 
   if (apiRoutes.length === 0) {
     output += `No API routes registered.\n`
   } else {
+    const prefix = options.apiPathPrefix ?? ""
     for (const route of apiRoutes) {
-      output += `- **${route.method}** \`${route.path}\`\n`
+      // The stripped backend's root is the bare prefix, as the mount matches it.
+      const path = prefix !== "" && route.path === "/" ? prefix : prefix + route.path
+      output += `- **${route.method}** \`${path}\`\n`
       if (full) {
         output += `  - Client Call: \`${clientCall(route.method, route.path, route.schema)}\`\n`
         const s = route.schema

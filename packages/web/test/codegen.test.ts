@@ -20,6 +20,19 @@ import {
 
 const importer = (file: string) => async (): Promise<RouteModule> => ({ default: file })
 
+test("generated route IDs are inert string literals, including status-page loading", () => {
+  const name = `quote'"${String.fromCharCode(0x2028)}.tsx`
+  const manifest = buildManifest(["_layout.tsx", "_404.tsx", name], importer)
+  const code = generateClientEntry(manifest, {
+    clientModule: "@nifrajs/web-react/client",
+    resolve: (file) => `/routes/${file}`,
+  })
+  expect(code).toContain("\\u2028")
+  expect(code).not.toContain(String.fromCharCode(0x2028))
+  expect(code).toContain('withRootLayout("_404", page)')
+  expect(ts.transpileModule(code, { reportDiagnostics: true }).diagnostics ?? []).toEqual([])
+})
+
 test("generateClientEntry emits lazy code-split loaders + router wiring + patterns", () => {
   const m = buildManifest(
     ["_layout.tsx", "index.tsx", "users/[id].tsx", "_404.tsx", "_410.tsx"],
@@ -32,7 +45,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain(
     // `/client`, not the root: the root drags the server graph into the browser (see
     // client-graph-boundary.test.ts).
-    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
+    'import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"',
   )
   expect(code).toContain(
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
@@ -48,8 +61,13 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('import("/routes/_layout.tsx")')
   expect(code).toContain('"index": () => Promise.all([')
   expect(code).toContain('"users/[id]": () => Promise.all([')
-  expect(code).toContain('"_404": () => Promise.all([')
-  expect(code).toContain('"_410": () => Promise.all([')
+  // A status page loads first; the root layout follows unless it exports `inLayouts = false`.
+  expect(code).toContain(
+    '"_404": () => import("/routes/_404.tsx").then((page) => withRootLayout("_404", page))',
+  )
+  expect(code).toContain(
+    '"_410": () => import("/routes/_410.tsx").then((page) => withRootLayout("_410", page))',
+  )
   // loadModule caches the component chain + the chain's meta list (layouts→page) per route, so a
   // soft-nav merges the layout chain's head with the page's (matching the SSR <head>) - #3.
   expect(code).toContain("const loadModule = async (id) =>")
@@ -69,7 +87,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("createMatcher(patterns)(location.pathname)")
   expect(code).toContain('const statusRoutes = {"404":"_404","410":"_410"}')
   expect(code).toContain(
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, layoutStatusRoutes, searchClientKeys, routeHooks })",
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
@@ -87,14 +105,15 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
+  // A layout's function meta reads its own loader data; the page's (last) reads the page's.
   expect(code).toContain(
-    "applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
+    "applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)))",
   )
   // Item 1: the client passes `origin: location.origin` into MetaArgs. It equals the SSR-side
   // `URL(req.url).origin`, so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
   expect(code).toContain("const nonce = currentDocumentNonce()")
   expect(code).toContain(
-    "const args = { data: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
+    "const args = { data: s.data, pageData: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
   )
   // Initial data is mapped through `mapDeferred` so `{__nifra_deferred: id}` placeholders become the
   // registry's promises (a no-op for non-deferred pages).

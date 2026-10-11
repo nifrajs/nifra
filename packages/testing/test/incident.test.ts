@@ -126,6 +126,30 @@ describe("replayIncident / assertIncidentReplays", () => {
     )
   })
 
+  test("replays a repeated query parameter and a text body exactly as captured", async () => {
+    const exact = {
+      fetch: async (request: Request) => {
+        const q = new URL(request.url).searchParams.getAll("q")
+        const text = await request.text()
+        const ok = q.join(",") === "first,second" && text === "raw text"
+        return new Response(null, { status: ok ? 200 : 400 })
+      },
+    }
+    const original = () =>
+      new Request(`${ORIGIN}/search?q=first&q=second`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "raw text",
+      })
+    const capsule = await captureIncident(original(), await exact.fetch(original()))
+    expect(capsule.request.queryPairs).toEqual([
+      ["q", "first"],
+      ["q", "second"],
+    ])
+    expect(capsule.request.bodyEncoding).toBe("text")
+    expect(await replayIncident(exact, capsule)).toMatchObject({ reproduced: true, status: 200 })
+  })
+
   test("catches a response-shape regression even when status matches", async () => {
     const capsule = await captureIncident(
       { method: "GET", path: "/ping" },
@@ -159,6 +183,63 @@ describe("generateRegressionTest", () => {
     expect(code).toContain("reproduces status 200")
   })
 
+  test("query values, header values and the note are redacted unless allow-listed", async () => {
+    const capsule = await captureIncident(
+      new Request("http://x/reset?token=SYNTHETIC_TOKEN_ONLY&page=2", {
+        headers: { authorization: "Bearer SYNTHETIC_BEARER", "content-type": "text/plain" },
+      }),
+      { status: 400 },
+      { headerAllowList: ["authorization", "content-type"], note: "user SYNTHETIC_NOTE" },
+    )
+    const code = generateRegressionTest(capsule, { allowQuery: ["page"] })
+    expect(code).toContain("SANITIZE BEFORE COMMITTING")
+    for (const secret of ["SYNTHETIC_TOKEN_ONLY", "SYNTHETIC_BEARER", "SYNTHETIC_NOTE"]) {
+      expect(code).not.toContain(secret)
+    }
+    expect(code).toContain('"page": "2"')
+    expect(code).toContain('"content-type": "text/plain"')
+    expect(code).toContain("Review the request path")
+
+    const kept = generateRegressionTest(capsule, {
+      allowQuery: ["token", "page"],
+      allowHeaders: ["Authorization", "content-type"],
+      keepNote: true,
+    })
+    expect(kept).toContain("SYNTHETIC_TOKEN_ONLY")
+    expect(kept).toContain("SYNTHETIC_BEARER")
+    expect(kept).toContain("SYNTHETIC_NOTE")
+    expect(kept).not.toContain("SANITIZE BEFORE COMMITTING")
+  })
+
+  test("repeated query values are redacted in their pairs too", async () => {
+    const capsule = await captureIncident(
+      new Request(`${ORIGIN}/ping?token=SECRET_ONE&token=SECRET_TWO`),
+      { status: 200 },
+    )
+    const emitted = generateRegressionTest(capsule)
+    expect(emitted).not.toContain("SECRET_ONE")
+    expect(emitted).not.toContain("SECRET_TWO")
+  })
+
+  test("a body that keeps numbers or keys verbatim carries a review banner", async () => {
+    const capsule = await captureIncident(
+      new Request(`${ORIGIN}/pay`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ card: 4111111111111111, "alice@example.com": true }),
+      }),
+      { status: 500 },
+    )
+    const code = generateRegressionTest(capsule)
+    expect(code).toContain("REVIEW BEFORE COMMITTING")
+    expect(code).not.toContain("SANITIZE BEFORE COMMITTING")
+    const strings = await captureIncident(
+      new Request(`${ORIGIN}/pay`, { method: "POST", body: JSON.stringify(["only", "strings"]) }),
+      { status: 500 },
+    )
+    expect(generateRegressionTest(strings)).not.toContain("REVIEW BEFORE COMMITTING")
+  })
+
   test("allow-list keeps a safe value verbatim and drops the banner when nothing was redacted", async () => {
     const capsule = await captureIncident(
       { method: "GET", path: "/ping" },
@@ -167,5 +248,37 @@ describe("generateRegressionTest", () => {
     const code = generateRegressionTest(capsule) // GET, no body → nothing to redact
     expect(code).not.toContain("SANITIZE BEFORE COMMITTING")
     expect(code).not.toContain("<redacted>")
+  })
+})
+
+describe("generateRegressionTest emits captured values only as data", () => {
+  const hostilePath = '/x", () => {}); globalThis.__pwned = 1; describe("y'
+
+  test("a hostile path or status stays inside one string literal", async () => {
+    const capsule = await captureIncident(
+      { method: "GET", path: hostilePath },
+      { status: 500 },
+      { id: "inc_1", capturedAt: "t" },
+    )
+    const source = generateRegressionTest(capsule)
+    const describeLine = source.split("\n").find((line) => line.startsWith("describe("))
+    const title = describeLine?.slice("describe(".length, -", () => {".length)
+    expect(JSON.parse(title ?? "null")).toBe(`regression: GET ${hostilePath}`)
+    const itLine = source.split("\n").find((line) => line.trimStart().startsWith("it("))
+    expect(itLine?.trim()).toBe('it("reproduces status 500", async () => {')
+  })
+
+  test("the import path is a string literal and the export must be an identifier", async () => {
+    const capsule = await captureIncident(
+      { method: "GET", path: "/" },
+      { status: 200 },
+      { id: "inc_2", capturedAt: "t" },
+    )
+    expect(generateRegressionTest(capsule, { importPath: '../app"; import "evil' })).toContain(
+      'from "../app\\"; import \\"evil"',
+    )
+    expect(() => generateRegressionTest(capsule, { appExport: "app } from 'x'; //" })).toThrow(
+      TypeError,
+    )
   })
 })

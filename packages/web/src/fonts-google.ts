@@ -113,6 +113,10 @@ const DEFAULT_MAX_FONT_BYTES = 5 * 1024 * 1024
 const MAX_CSS_BYTES = 512 * 1024
 const MAX_TEXT_LEN = 2048
 
+/** A face's weight as Google writes it: `400`, a variable `100 900`, or a keyword. It lands in the
+ * written file's name, so anything else (a tampered `400/../..`) is refused. */
+const FACE_WEIGHT = /^(?:\d{1,4}(?: \d{1,4})?|normal|bold)$/
+
 const VALID_DISPLAY: ReadonlySet<string> = new Set([
   "auto",
   "block",
@@ -417,6 +421,12 @@ export async function loadGoogleFont(
     if (!isAllowedFontUrl(source.url)) {
       throw new Error(
         `loadGoogleFont: refusing to download a font from a non-Google host (${hostOf(source.url)}); ` +
+          "the stylesheet may be tampered with",
+      )
+    }
+    if (!FACE_WEIGHT.test(face.weight)) {
+      throw new Error(
+        `loadGoogleFont: refusing an unexpected font-weight ${JSON.stringify(face.weight.slice(0, 40))}; ` +
           "the stylesheet may be tampered with",
       )
     }

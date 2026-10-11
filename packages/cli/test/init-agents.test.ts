@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -13,7 +14,7 @@ import {
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { MCP_CLI_VERSION } from "create-nifra/agent-files"
+import { MCP_CLI_VERSION } from "../src/agent-files.ts"
 import {
   collectStaleMcpPins,
   type InitAgentsResult,
@@ -165,15 +166,33 @@ describe("initAgents - --force", () => {
 // those names redirects the write to wherever it points - outside the root, with the running user's
 // privileges - and `--force` is exactly the flag that would follow it.
 describe("initAgents - symlink guards", () => {
-  test("refuses to write through a symlinked file, even with --force", async () => {
+  test("leaves a symlinked file alone, even with --force, and writes the rest", async () => {
     const dir = await freshDir()
     const outside = await freshDir()
     const victim = join(outside, "victim.md")
     await writeFile(victim, "untouched\n")
     await symlink(victim, join(dir, "CLAUDE.md"))
 
-    await expect(initAgents(dir, { force: true })).rejects.toThrow(/non-regular file/)
+    const result = await initAgents(dir, { force: true })
+    expect(result.files.find((file) => file.path === "CLAUDE.md")).toEqual({
+      path: "CLAUDE.md",
+      action: "skipped",
+      note: "not a regular file - left alone",
+    })
+    expect(result.files.find((file) => file.path === "AGENTS.md")?.action).toBe("wrote")
+    expect(existsSync(join(dir, ".mcp.json"))).toBe(true)
     expect(await readFile(victim, "utf8")).toBe("untouched\n")
+  })
+
+  test("a CLAUDE.md symlinked to AGENTS.md is kept as the alias it is", async () => {
+    const dir = await freshDir()
+    await writeFile(join(dir, "AGENTS.md"), "# Notes\n")
+    await symlink("AGENTS.md", join(dir, "CLAUDE.md"))
+
+    const result = await initAgents(dir)
+    expect(result.files.find((file) => file.path === "CLAUDE.md")?.action).toBe("skipped")
+    expect(result.files.find((file) => file.path === "AGENTS.md")?.action).toBe("appended")
+    expect((await lstat(join(dir, "CLAUDE.md"))).isSymbolicLink()).toBe(true)
   })
 
   test("refuses to write through a symlinked parent directory", async () => {
@@ -185,7 +204,7 @@ describe("initAgents - symlink guards", () => {
     expect(existsSync(join(outside, "mcp.json"))).toBe(false)
   })
 
-  test("refuses to append to a symlinked AGENTS.md", async () => {
+  test("never appends to a symlinked AGENTS.md", async () => {
     const dir = await freshDir()
     const outside = await freshDir()
     const victim = join(outside, "notes.md")
@@ -193,7 +212,8 @@ describe("initAgents - symlink guards", () => {
     // CLAUDE.md is written before AGENTS.md, so only AGENTS.md is symlinked here.
     await symlink(victim, join(dir, "AGENTS.md"))
 
-    await expect(initAgents(dir)).rejects.toThrow(/non-regular file/)
+    const result = await initAgents(dir)
+    expect(result.files.find((file) => file.path === "AGENTS.md")?.action).toBe("skipped")
     expect(await readFile(victim, "utf8")).toBe("untouched\n")
   })
 
@@ -617,5 +637,24 @@ describe("CLI dispatch (subprocess)", () => {
       `Launch \`bunx @nifrajs/cli@${MCP_CLI_VERSION} mcp\`.\n`,
     )
     expect(existsSync(join(dir, ".mcp.json"))).toBe(false)
+  })
+})
+
+describe("agent-files copy", () => {
+  test("is byte-identical to create-nifra's, so a retrofit writes what a scaffold writes", async () => {
+    const here = resolve(import.meta.dir, "../src/agent-files.ts")
+    const canonical = resolve(import.meta.dir, "../../create-nifra/src/agent-files.ts")
+    const [copy, source] = await Promise.all([Bun.file(here).text(), Bun.file(canonical).text()])
+    if (copy !== source)
+      throw new Error(
+        "packages/cli/src/agent-files.ts differs from packages/create-nifra/src/agent-files.ts - edit one, then copy it over the other",
+      )
+  })
+
+  test("@nifrajs/cli does not depend on create-nifra at runtime", async () => {
+    const manifest: { dependencies?: Record<string, string> } = await Bun.file(
+      resolve(import.meta.dir, "../package.json"),
+    ).json()
+    expect(Object.keys(manifest.dependencies ?? {})).not.toContain("create-nifra")
   })
 })

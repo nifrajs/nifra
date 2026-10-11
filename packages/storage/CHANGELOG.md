@@ -1,5 +1,15 @@
 # @nifrajs/storage
 
+## 5.0.0
+
+### Minor Changes
+
+- 77a46ce: `FileStorage` now writes each object whole: the data is staged in `<root>.nifra-state` and renamed into place, so a reader never sees a truncated or half-written object and a failed write keeps the previous one. Sidecars for content type and metadata moved to `<root>.nifra-state/metadata`, where they mirror the object paths; a key `a` and a key `a.json/x` can now both carry metadata. Sidecars an earlier version wrote in `<root>.nifra-metadata` are still read, and the next `put` or `delete` of that key removes them.
+
+### Patch Changes
+
+- 08f6940: `FileStorage.list()` now starts below the directories its `prefix` names and stops once it has `limit` keys, walking entries in key order. It used to read the whole tree, then sort and filter, for every call.
+
 ## 4.0.2
 
 ## 4.0.1

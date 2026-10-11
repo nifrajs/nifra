@@ -58,6 +58,11 @@ export type WorkflowStep =
 
 export interface WorkflowRunnerOptions {
   readonly signal?: AbortSignal
+  /**
+   * The map steps read and write through `values` and `set`. Pass one map to several runners to
+   * carry values from one run into the next. Default: a fresh map per runner.
+   */
+  readonly values?: Map<string, unknown>
   readonly maxSteps?: number
   readonly maxDepth?: number
   readonly onEvent?: (event: WorkflowEvent) => void | PromiseLike<void>
@@ -89,7 +94,7 @@ export class WorkflowRunner {
   private readonly options: Required<Pick<WorkflowRunnerOptions, "maxSteps" | "maxDepth">> &
     WorkflowRunnerOptions
   private readonly signal: AbortSignal
-  private readonly values = new Map<string, unknown>()
+  private readonly values: Map<string, unknown>
   private readonly completed: string[] = []
   private steps = 0
 
@@ -100,6 +105,7 @@ export class WorkflowRunner {
       maxDepth: options.maxDepth ?? 8,
     }
     this.signal = options.signal ?? new AbortController().signal
+    this.values = options.values ?? new Map()
     if (!Number.isSafeInteger(this.options.maxSteps) || this.options.maxSteps < 1)
       throw new RangeError("workflow: maxSteps must be positive")
     if (!Number.isSafeInteger(this.options.maxDepth) || this.options.maxDepth < 1)

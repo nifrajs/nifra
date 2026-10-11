@@ -6,7 +6,8 @@
  */
 
 import { readFileSync, realpathSync } from "node:fs"
-import { dirname, isAbsolute, join, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, posix, resolve, sep } from "node:path"
+import { isServerPackageSpecifier } from "@nifrajs/web/zones"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
@@ -17,18 +18,42 @@ import {
   type TypeScriptApi,
   type TypeScriptSourceIndex,
 } from "./internal/typescript-import.ts"
-import { commentBlockMarkerReason } from "./rules/comment-markers.ts"
+import { commentBlockExpectation } from "./rules/comment-markers.ts"
 
 export interface SourceFinding {
   readonly file: string
   readonly line: number
   readonly snippet: string
 }
+/** An interpolated-SQL site, with the reason a `nifra-expect NF-C006: <reason>` comment gives for it. */
+export interface SqlFinding extends SourceFinding {
+  readonly expected?: string
+}
 /** A server-only-import finding, carrying the offending module specifier on top of the base location so
  * the diagnostic can show the import chain `routeFile → specifier` (the direct edge the regex scan sees). */
 export interface ServerImportFinding extends SourceFinding {
   /** The server-only module specifier the route top-level-imports (e.g. `pg`, `node:fs`, `../db`). */
   readonly specifier: string
+}
+/** A hand-rolled call to the app's own API, with the `// nifra-expect NF-C002` comment covering it. */
+export interface TypedClientFinding extends SourceFinding {
+  /** Present when such a comment covers the call. `reason` is `undefined` when it gives none after
+   * its colon, and then it silences nothing. */
+  readonly expected?: { readonly reason: string | undefined }
+}
+
+/** What marks a hand-rolled own-API call as intended: a streamed POST, a foreign handler's endpoint,
+ * a static file. Only the code form; a reason after the colon is required. */
+const TYPED_CLIENT_EXPECTATION = ["NF-C002"]
+
+function typedClientFinding(
+  file: string,
+  lines: readonly string[],
+  line: number,
+): TypedClientFinding {
+  const finding = { file, line, snippet: (lines[line - 1] ?? "").trim() }
+  const expected = commentBlockExpectation(lines, line, TYPED_CLIENT_EXPECTATION)
+  return expected === undefined ? finding : { ...finding, expected }
 }
 
 // `fetch( <ws> ('|"|`) / (not /)` - a string/template arg starting with a single `/` is a relative URL,
@@ -38,6 +63,7 @@ export interface ServerImportFinding extends SourceFinding {
 const GLOBAL_FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const HTTP_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+const SOCKET_VERB: ReadonlySet<string> = new Set(["WS"])
 export const SIMPLE_REWRITE_METHODS = new Set(["GET", "DELETE", "HEAD", "OPTIONS"])
 
 // Don't scan deps, build output, or generated client entries. `dist(-<runtime>)?` also covers
@@ -82,10 +108,57 @@ function isBackendModule(file: string): boolean {
   )
 }
 
-// Module specifiers that must never be VALUE-imported into a route module: node:/bun: builtins, common
-// DB drivers/ORМ server entrypoints, and the conventional `./db` module the scaffold generates.
-const SERVER_ONLY =
-  /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b|^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
+// Node builtins that have no browser counterpart, imported bare. Bare `events`, `buffer`, `path`, `util`
+// and the like stay out: each also names an npm polyfill a browser bundle may legitimately carry.
+const SERVER_BUILTINS: ReadonlySet<string> = new Set([
+  "async_hooks",
+  "child_process",
+  "cluster",
+  "crypto",
+  "dgram",
+  "diagnostics_channel",
+  "dns",
+  "dns/promises",
+  "fs",
+  "fs/promises",
+  "http",
+  "http2",
+  "https",
+  "inspector",
+  "module",
+  "net",
+  "os",
+  "perf_hooks",
+  "readline",
+  "readline/promises",
+  "repl",
+  "tls",
+  "trace_events",
+  "tty",
+  "v8",
+  "vm",
+  "wasi",
+  "worker_threads",
+])
+// The conventional `./db` module the scaffold generates.
+const DB_MODULE = /^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
+
+/**
+ * Whether a specifier names server-only code by name, so the chain ends there: a `node:`/`bun:`
+ * module, a bare builtin with no browser counterpart, or a package the browser build refuses
+ * (`SERVER_PACKAGES` and the driver entries of `@nifrajs/web/zones`).
+ */
+function isServerOnlySink(specifier: string): boolean {
+  return (
+    /^(?:node:|bun:)/.test(specifier) ||
+    SERVER_BUILTINS.has(specifier) ||
+    isServerPackageSpecifier(specifier)
+  )
+}
+
+/** A specifier no route module may value-import: a {@link isServerOnlySink} name, or the `./db` module. */
+const isServerOnly = (specifier: string): boolean =>
+  isServerOnlySink(specifier) || DB_MODULE.test(specifier)
 
 // A static, non-type import with a string specifier, or a re-export (`export … from "x"`), which
 // pulls its module into the bundle the same way. `import type …` and `export type …` are erased at
@@ -103,6 +176,10 @@ const DYNAMIC_IMPORT = /(?<![\w$.])import\s*\(\s*(["'`])([^"'`$\\\r\n]+)\1\s*[,)
 // Without a parser: `typeof import("x")` and `import("x").Name` are type positions, erased at build.
 // A runtime `import("x")` is a promise, so the only members read straight off it are its methods.
 const TYPE_QUERY_BEFORE = /\btypeof\s*$/
+// `require("x")` and `import x = require("x")` pull a module into a bundle as `import` does; the
+// `import type x = require("x")` form is erased.
+const REQUIRE_CALL = /(?<![\w$.])require\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*\)/g
+const TYPE_ALIAS_BEFORE = /\bimport\s+type\s+[\w$]+\s*=\s*$/
 const TYPE_QUALIFIER_AFTER = /^\s*\.\s*(?!(?:then|catch|finally)\b)[A-Za-z_$]/
 
 const ROUTE_REGISTRATION_DQ = /\.([A-Za-z]+)\s*\(\s*"((?:\\.|[^"\\])*)"/g
@@ -121,6 +198,17 @@ export interface StaticRouteFinding extends SourceFinding {
   readonly method: string
   readonly path: string
 }
+
+/** A route registration whose path argument the static scan cannot read, with that argument's text. */
+export interface UnresolvedRoutePathFinding extends SourceFinding {
+  readonly method: string
+  readonly expression: string
+}
+
+// `.get(NAME, …)` or `` .get(`…`, …) ``: a path that is not a quoted literal. The comma is required:
+// a registration always has a handler after its path, while `map.get(key)` has nothing.
+const ROUTE_ARGUMENT = /\.([A-Za-z]+)\s*\(\s*([A-Za-z_$][\w$]*|`(?:\\.|[^`\\])*`)\s*,/g
+const NAMED_IMPORTS = /(?<![\w$.])import\s*\{([^}]*)\}\s*from\s*(["'])([^"'\r\n]+)\2/g
 
 interface SimpleFetchCall {
   readonly path: string
@@ -279,13 +367,14 @@ function scanRoutePattern(
   code: string,
   pattern: RegExp,
   facts?: SourceFacts,
+  verbs: ReadonlySet<string> = HTTP_VERBS,
 ): StaticRouteFinding[] {
   const out: StaticRouteFinding[] = []
   const lines = content.split("\n")
   pattern.lastIndex = 0
   for (let m = pattern.exec(code); m !== null; m = pattern.exec(code)) {
     const method = (m[1] ?? "").toUpperCase()
-    if (!HTTP_VERBS.has(method)) continue
+    if (!verbs.has(method)) continue
     const path = parseQuotedLiteral(
       `${pattern === ROUTE_REGISTRATION_DQ ? '"' : "'"}${m[2] ?? ""}${pattern === ROUTE_REGISTRATION_DQ ? '"' : "'"}`,
     )
@@ -306,25 +395,94 @@ function scanRoutePattern(
   return out
 }
 
+// Punctuators after which a `/` opens a regex literal rather than dividing. A `)` `]` or `}` is read
+// as the end of an operand, so `/` after it divides - the rare statement-leading regex after a block
+// is the cost of not tracking parser context.
+const REGEX_AFTER = new Set([
+  "(",
+  ",",
+  "=",
+  ":",
+  "[",
+  "!",
+  "&",
+  "|",
+  "?",
+  "{",
+  ";",
+  "+",
+  "-",
+  "*",
+  "%",
+  "<",
+  ">",
+  "~",
+  "^",
+])
+const REGEX_AFTER_WORD = new Set([
+  "return",
+  "typeof",
+  "case",
+  "do",
+  "else",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "yield",
+  "await",
+  "instanceof",
+])
+const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]/.test(c)
+
+/** Where a regex literal opened by the `/` at `i` ends (after its flags), or `undefined` when the
+ * literal does not close on its line - then the slash was division after all. */
+function regexLiteralEnd(src: string, i: number): number | undefined {
+  const n = src.length
+  let j = i + 1
+  let inClass = false
+  while (j < n) {
+    const c = src[j]
+    if (c === "\n" || c === "\r") return undefined
+    if (c === "\\") {
+      j += 2
+      continue
+    }
+    if (inClass) {
+      if (c === "]") inClass = false
+    } else if (c === "[") {
+      inClass = true
+    } else if (c === "/") {
+      break
+    }
+    j++
+  }
+  if (j >= n) return undefined
+  j++
+  while (j < n && isWordChar(src[j])) j++
+  return j
+}
+
 /**
- * Blank, with spaces (newlines preserved, so every byte offset - and line number - is unchanged):
- *   - `//` line comments and block comments;
- *   - the CONTENTS of backtick template literals - code-as-text (doc `CodeBlock` examples, code
- *     generators), never a real statement to lint.
- * Single/double-quoted strings are KEPT (a real import/Response specifier lives in one). A small
- * char-state machine, not a full lexer: it doesn't model regex literals, so a regex containing a quote
- * could mis-skip - in practice the constructs these scanners look for sit before any such regex.
- * Shared by the source scanners here and by `nifra doctor` ({@link ./doctor.ts}).
+ * Blank comments, template-literal contents and regex-literal contents (and, with `quoted: "blank"`,
+ * single/double-quoted strings and every delimiter) while preserving every offset and newline.
+ * A small lexer, not a parser: a `/` opens a regex where an operand may start - after a punctuator,
+ * an operator keyword, or at the start of the file - so a quote inside a regex no longer derails
+ * the string state that follows.
  */
-export function stripComments(src: string): string {
+function maskSource(src: string, quoted: "keep" | "blank"): string {
   const out = src.split("")
   const n = src.length
-  let i = 0
   const blank = (a: number, b: number): void => {
     for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " "
   }
+  // The last significant code token: a punctuator character, or a whole identifier/keyword.
+  let previous = ""
+  let i = 0
   while (i < n) {
-    const c = src[i]
+    const c = src.charAt(i)
     const d = src[i + 1]
     if (c === "/" && d === "/") {
       let j = i + 2
@@ -343,62 +501,66 @@ export function stripComments(src: string): string {
         if (src[j] === "\\") j++
         j++
       }
-      blank(i + 1, j) // keep the backticks, blank the code-as-text inside
+      if (quoted === "keep")
+        blank(i + 1, j) // keep the backticks, blank the code-as-text inside
+      else blank(i, Math.min(j + 1, n))
       i = j + 1
+      previous = "`"
     } else if (c === "'" || c === '"') {
       let j = i + 1
       while (j < n && src[j] !== c) {
         if (src[j] === "\\") j++ // skip the escaped char
         j++
       }
+      if (quoted === "blank") blank(i, Math.min(j + 1, n))
       i = j + 1
+      previous = c
+    } else if (
+      c === "/" &&
+      (previous === "" || REGEX_AFTER.has(previous) || REGEX_AFTER_WORD.has(previous))
+    ) {
+      const end = regexLiteralEnd(src, i)
+      if (end === undefined) {
+        previous = c
+        i++
+      } else {
+        if (quoted === "keep") blank(i + 1, end)
+        else blank(i, end)
+        previous = "/regex"
+        i = end
+      }
+    } else if (isWordChar(c)) {
+      let j = i + 1
+      while (j < n && isWordChar(src[j])) j++
+      previous = src.slice(i, j)
+      i = j
     } else {
+      if (!/\s/.test(c)) previous = c
       i++
     }
   }
   return out.join("")
 }
 
-/** Blank comments and every quoted/template literal while preserving offsets. Unlike
+/**
+ * Blank, with spaces (newlines preserved, so every byte offset - and line number - is unchanged):
+ *   - `//` line comments and block comments;
+ *   - the CONTENTS of backtick template literals - code-as-text (doc `CodeBlock` examples, code
+ *     generators), never a real statement to lint.
+ * Single/double-quoted strings are KEPT (a real import/Response specifier lives in one); a regex
+ * literal keeps its slashes and loses its contents, so a quote inside one cannot open a string.
+ * Shared by the source scanners here and by `nifra doctor` ({@link ./doctor.ts}).
+ */
+export function stripComments(src: string): string {
+  return maskSource(src, "keep")
+}
+
+/** Blank comments and every quoted/template/regex literal while preserving offsets. Unlike
  * {@link stripComments}, this is a code-position mask: scanners use it to find a call expression in
  * executable code, then inspect the original source for the call's literal argument. That prevents
  * documentation strings such as `const example = 'client("/")'` from becoming diagnostics. */
 export function codePositionMask(src: string): string {
-  const out = src.split("")
-  const n = src.length
-  let i = 0
-  const blank = (a: number, b: number): void => {
-    for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " "
-  }
-  while (i < n) {
-    const c = src[i]
-    const d = src[i + 1]
-    if (c === "/" && d === "/") {
-      let j = i + 2
-      while (j < n && src[j] !== "\n") j++
-      blank(i, j)
-      i = j
-    } else if (c === "/" && d === "*") {
-      let j = i + 2
-      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j++
-      j = Math.min(j + 2, n)
-      blank(i, j)
-      i = j
-    } else if (c === "'" || c === '"' || c === "`") {
-      const quote = c
-      let j = i + 1
-      while (j < n && src[j] !== quote) {
-        if (src[j] === "\\") j++
-        j++
-      }
-      j = Math.min(j + 1, n)
-      blank(i, j)
-      i = j
-    } else {
-      i++
-    }
-  }
-  return out.join("")
+  return maskSource(src, "blank")
 }
 
 const firstArgumentIndex = (content: string, callEnd: number): number => {
@@ -502,8 +664,8 @@ export function scanFetchText(
   file: string,
   content: string,
   externalMounts: readonly string[] = [],
-): SourceFinding[] {
-  const out: SourceFinding[] = []
+): TypedClientFinding[] {
+  const out: TypedClientFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
   GLOBAL_FETCH_CALL.lastIndex = 0
@@ -516,8 +678,7 @@ export function scanFetchText(
     if (hasLiteralNifraDataHeader(content, openParen)) continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
-    const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+    out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
   }
   return out
 }
@@ -540,8 +701,8 @@ export function scanStreamText(
   file: string,
   content: string,
   externalMounts: readonly string[] = [],
-): SourceFinding[] {
-  const out: SourceFinding[] = []
+): TypedClientFinding[] {
+  const out: TypedClientFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
   STREAM_CONSTRUCT.lastIndex = 0
@@ -552,8 +713,7 @@ export function scanStreamText(
     if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
-    const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+    out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
   }
   return out
 }
@@ -563,6 +723,8 @@ export function scanStaticRouteText(
   file: string,
   content: string,
   facts?: SourceFacts,
+  /** Project files by forward-slash relative path, to resolve a path constant imported from one. */
+  project?: ReadonlyMap<string, string>,
 ): StaticRouteFinding[] {
   const code = stripComments(content)
   if (!isPotentialBackendSource(code)) return []
@@ -570,6 +732,201 @@ export function scanStaticRouteText(
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
     ...(code.includes(METHODS_SUBPATH) ? scanMethodRoutes(file, content, code, facts) : []),
+    ...scanRouteArguments(file, content, facts, project).routes,
+  ].sort(bySite)
+}
+
+/** A module-level `const`: its value when the initializer is one string literal, else `undefined`. */
+interface ModuleConstant {
+  readonly exported: boolean
+  readonly value: string | undefined
+}
+
+/** The end of the quoted literal opening `text`, or -1 when it does not close on this line. */
+function literalEnd(text: string): number {
+  const quote = text[0]
+  for (let i = 1; i < text.length; i++) {
+    if (text[i] === "\\") i++
+    else if (text[i] === quote) return i + 1
+  }
+  return -1
+}
+
+/** The index after the whitespace run at `from`. */
+function skipSpace(text: string, from: number): number {
+  let i = from
+  while (i < text.length && (text[i] === " " || text[i] === "\t")) i++
+  return i
+}
+
+/**
+ * Read `[export ]const NAME[: T] = <init>` written at column 0, so a function-local `const`, which is
+ * indented, never stands in for a module-level one. The shape is read from the comment-stripped
+ * line; the literal itself from the source line, since stripping blanks template contents.
+ */
+function moduleConstantOn(code: string, source: string): [string, ModuleConstant] | undefined {
+  const exported = code.startsWith("export ")
+  let i = exported ? skipSpace(code, 7) : 0
+  if (!code.startsWith("const ", i)) return undefined
+  i = skipSpace(code, i + 6)
+  const name = /^[A-Za-z_$][\w$]*/.exec(code.slice(i))?.[0]
+  if (name === undefined) return undefined
+  i = skipSpace(code, i + name.length)
+  if (code[i] === ":") i = code.indexOf("=", i)
+  if (i === -1 || code[i] !== "=" || code[i + 1] === "=") return undefined
+  i = skipSpace(code, i + 1)
+  const opener = code[i]
+  const end = opener === '"' || opener === "'" || opener === "`" ? literalEnd(source.slice(i)) : -1
+  const tail = end === -1 ? undefined : code.slice(i + end).trim()
+  const literal = source.slice(i, i + end)
+  const value =
+    tail === undefined || !["", ";", "as const", "as const;"].includes(tail)
+      ? undefined
+      : opener === "`"
+        ? /[$\\]/.test(literal)
+          ? undefined
+          : literal.slice(1, -1)
+        : parseQuotedLiteral(literal)
+  return [name, { exported, value }]
+}
+
+function moduleConstants(code: string, source: string): ReadonlyMap<string, ModuleConstant> {
+  const constants = new Map<string, ModuleConstant>()
+  const sourceLines = source.split("\n")
+  code.split("\n").forEach((line, index) => {
+    const constant = moduleConstantOn(line, sourceLines[index] ?? "")
+    if (constant !== undefined) constants.set(constant[0], constant[1])
+  })
+  return constants
+}
+
+/** Local name → the export it imports and from where, for value imports only. */
+function namedImports(
+  code: string,
+): ReadonlyMap<string, { readonly specifier: string; readonly name: string }> {
+  const imports = new Map<string, { readonly specifier: string; readonly name: string }>()
+  NAMED_IMPORTS.lastIndex = 0
+  for (let m = NAMED_IMPORTS.exec(code); m !== null; m = NAMED_IMPORTS.exec(code)) {
+    if (/\btype\s*$/.test(code.slice(Math.max(0, m.index - 12), m.index + 6))) continue
+    for (const element of (m[1] ?? "").split(",")) {
+      const parts = element.trim().split(/\s+/)
+      if (parts[0] === "type" || parts[0] === undefined || parts[0] === "") continue
+      const local = parts[1] === "as" ? parts[2] : parts[0]
+      if (local !== undefined) imports.set(local, { specifier: m[3] ?? "", name: parts[0] })
+    }
+  }
+  return imports
+}
+
+/** The project file a relative import names, tried the way a TypeScript-aware bundler resolves it. */
+function projectModule(
+  project: ReadonlyMap<string, string>,
+  fromFile: string,
+  specifier: string,
+): string | undefined {
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) return undefined
+  const base = posix.normalize(posix.join(posix.dirname(fromFile.replaceAll("\\", "/")), specifier))
+  const stem = base.replace(/\.(?:m?js|jsx)$/, "")
+  return [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${base}/index.ts`].find((candidate) =>
+    project.has(candidate),
+  )
+}
+
+/**
+ * Route registrations whose path is a name or a template rather than a quoted literal. A name bound
+ * to a module-level string `const`, here or imported from a project file, and a template with no
+ * substitution resolve to routes; any other template, and a module-level or imported name nifra
+ * cannot read, is unresolved. A name bound anywhere else (a parameter, a local) is not reported:
+ * nothing marks such a call as a route rather than a `map.get(key, fallback)`.
+ */
+function scanRouteArguments(
+  file: string,
+  content: string,
+  facts: SourceFacts | undefined,
+  project: ReadonlyMap<string, string> | undefined,
+  verbs: ReadonlySet<string> = HTTP_VERBS,
+): { routes: StaticRouteFinding[]; unresolved: UnresolvedRoutePathFinding[] } {
+  const routes: StaticRouteFinding[] = []
+  const unresolved: UnresolvedRoutePathFinding[] = []
+  const code = stripComments(content)
+  if (!isPotentialBackendSource(code)) return { routes, unresolved }
+  const lines = content.split("\n")
+  const constants = moduleConstants(code, content)
+  const imports = namedImports(code)
+  const importedFiles = new Map<string, ReadonlyMap<string, ModuleConstant>>()
+  const imported = (specifier: string, name: string): ModuleConstant | undefined => {
+    const target = project === undefined ? undefined : projectModule(project, file, specifier)
+    if (target === undefined) return undefined
+    let found = importedFiles.get(target)
+    if (found === undefined) {
+      const text = project?.get(target) ?? ""
+      found = moduleConstants(stripComments(text), text)
+      importedFiles.set(target, found)
+    }
+    const constant = found.get(name)
+    return constant?.exported === true ? constant : undefined
+  }
+  ROUTE_ARGUMENT.lastIndex = 0
+  for (let m = ROUTE_ARGUMENT.exec(code); m !== null; m = ROUTE_ARGUMENT.exec(code)) {
+    const method = (m[1] ?? "").toUpperCase()
+    if (!verbs.has(method)) continue
+    const at = m.index + m[0].lastIndexOf(m[2] ?? "")
+    const argument = content.slice(at, at + (m[2] ?? "").length)
+    let path: string | undefined
+    if (argument.startsWith("`")) {
+      path = /[$\\]/.test(argument) ? undefined : argument.slice(1, -1)
+    } else {
+      const binding = imports.get(argument)
+      const constant =
+        binding === undefined ? constants.get(argument) : imported(binding.specifier, binding.name)
+      if (binding === undefined && constant === undefined) continue
+      path = constant?.value
+    }
+    // A name that reads as something other than a path (`settings.get(KEY, fallback)`) is no route.
+    if (path !== undefined && (!path.startsWith("/") || path.startsWith("//"))) continue
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      if (
+        source !== undefined &&
+        facts.isRouteArgumentAt(source, m.index, method, argument) !== true
+      )
+        continue
+    }
+    const line = lineAt(content, m.index)
+    const snippet = (lines[line - 1] ?? "").trim()
+    if (path !== undefined) routes.push({ file, line, snippet, method, path })
+    else unresolved.push({ file, line, snippet, method, expression: argument.slice(0, 120) })
+  }
+  return { routes, unresolved }
+}
+
+/** Route registrations whose path the static scan cannot resolve - see {@link scanRouteArguments}. */
+export function scanUnresolvedRoutePaths(
+  file: string,
+  content: string,
+  project?: ReadonlyMap<string, string>,
+  facts?: SourceFacts,
+): UnresolvedRoutePathFinding[] {
+  return [
+    ...scanRouteArguments(file, content, facts, project).unresolved,
+    ...scanRouteArguments(file, content, facts, project, SOCKET_VERB).unresolved,
+  ].sort(bySite)
+}
+
+/** `app.ws("/path", ...)` registrations, as routes under the pseudo-method `"WS"` reflection uses. */
+export function scanStaticSocketText(
+  file: string,
+  content: string,
+  facts?: SourceFacts,
+  /** Project files by forward-slash relative path, to resolve a path constant imported from one. */
+  project?: ReadonlyMap<string, string>,
+): StaticRouteFinding[] {
+  const code = stripComments(content)
+  if (!isPotentialBackendSource(code)) return []
+  return [
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts, SOCKET_VERB),
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts, SOCKET_VERB),
+    ...scanRouteArguments(file, content, facts, project, SOCKET_VERB).routes,
   ].sort(bySite)
 }
 
@@ -660,6 +1017,25 @@ const SQL_METHODS = new Set([
 const SQL_KEYWORD =
   /\b(select|insert\s+into|update|delete\s+from|drop\s+table|create\s+table|alter\s+table|truncate|from|where|values|set|join|union)\b/i
 const ALWAYS_UNSAFE = new Set(["unsafe", "$queryRawUnsafe", "$executeRawUnsafe", "raw"])
+/** Driver calls that take a statement under names that are everyday words elsewhere (`map.get`,
+ * `client.get("/users/update")`): node-sqlite3's `all`/`get`/`each` and pg-promise's result-shaping
+ * calls. One of these, and any bare call, is judged by whether its text starts like a statement. */
+const DRIVER_READ_METHODS = new Set([
+  "all",
+  "get",
+  "each",
+  "any",
+  "one",
+  "none",
+  "many",
+  "oneOrNone",
+  "manyOrNone",
+  "result",
+  "multi",
+  "multiResult",
+])
+const STATEMENT_START =
+  /^\s*\(?\s*(?:select|insert|update|delete|with|replace|merge|create|drop|alter|truncate|pragma)\s/i
 
 interface SqlExpressionShape {
   readonly staticText: string
@@ -952,11 +1328,12 @@ const CONST_RESOLUTION_DEPTH = 5
  * data. Pure syntax, no type checker - the same honest limit the rule already documents. What
  * resolves: string/number literals, no-substitution templates, templates whose every span resolves,
  * ternaries with both branches resolvable (BOTH branch texts are returned, so a hostile keyword in
- * either still feeds the keyword scan), `as`/`satisfies` wrappers, a module-scope `const` whose
- * initializer resolves (recursively, depth-capped), and - when `scope.imports` is configured - such a
- * `const` imported by name from another in-project module. Everything else - `let`, a parameter, a
- * call, a member access, a shadowed name, a bare-specifier import - stays unresolved and the
- * interpolation is flagged exactly as before.
+ * either still feeds the keyword scan), `as`/`satisfies` wrappers, a `const` whose initializer
+ * resolves (the nearest binding: function or block scope, then module scope; recursively,
+ * depth-capped), `.join(sep?)` over an array {@link staticArrayItems} proves, and - when
+ * `scope.imports` is configured - a module `const` imported by name from another in-project module.
+ * Everything else - `let`, a parameter, any other call, a member access, a shadowed name, a
+ * bare-specifier import - stays unresolved and the interpolation is flagged exactly as before.
  */
 function resolveStaticSqlText(
   ts: TypeScriptApi,
@@ -976,7 +1353,9 @@ function resolveStaticSqlText(
   if (ts.isTemplateExpression(node)) {
     let text = node.head.text
     for (const span of node.templateSpans) {
-      const part = resolveStaticSqlText(ts, span.expression, scope, depth + 1)
+      const part =
+        placeholderNumber(ts, text, span.expression, depth) ??
+        resolveStaticSqlText(ts, span.expression, scope, depth + 1)
       if (part === undefined) return undefined
       text += part + span.literal.text
     }
@@ -988,7 +1367,11 @@ function resolveStaticSqlText(
     if (whenTrue === undefined || whenFalse === undefined) return undefined
     return `${whenTrue} ${whenFalse}`
   }
+  if (ts.isCallExpression(node)) return resolveStaticJoin(ts, node, scope, depth)
   if (ts.isIdentifier(node)) {
+    const local = localConstInitializer(ts, node)
+    if (local === "shadow") return undefined
+    if (local !== undefined) return resolveStaticSqlText(ts, local, scope, depth + 1)
     const initializer = scope.module.consts.get(node.text)
     const edge = initializer === undefined ? scope.module.imports.get(node.text) : undefined
     // Membership first: `isShadowedAt` walks a subtree, and most identifiers in a query are neither a
@@ -1017,6 +1400,478 @@ function resolveStaticSqlText(
   return undefined
 }
 
+/**
+ * The initializer of the `const` a function or block scope binds `node` to, `"shadow"` when the
+ * nearest such binding is anything else (a parameter, `let`, `var`, destructuring), or `undefined`
+ * when no scope below the module binds it - the module-scope lookup applies then.
+ */
+function localConstInitializer(
+  ts: TypeScriptApi,
+  node: TSApi.Identifier,
+): TSApi.Expression | "shadow" | undefined {
+  const source = node.getSourceFile()
+  for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
+    if (ts.isSourceFile(scope)) return undefined
+    const binding = directBinding(ts, source, scope, node.text)
+    if (binding === "shadow") return "shadow"
+    if (binding !== undefined) return binding.constant ? binding.initializer : "shadow"
+  }
+  return undefined
+}
+
+const unwrapExpression = (ts: TypeScriptApi, node: TSApi.Expression): TSApi.Expression => {
+  let current = node
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression
+  }
+  return current
+}
+
+/** `Object.freeze([...])` with `Object` unshadowed: the one array form no later code can change. */
+function frozenArrayLiteral(
+  ts: TypeScriptApi,
+  node: TSApi.Expression,
+): TSApi.ArrayLiteralExpression | undefined {
+  const call = unwrapExpression(ts, node)
+  if (!ts.isCallExpression(call) || call.arguments.length !== 1) return undefined
+  const callee = call.expression
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    callee.name.text !== "freeze" ||
+    !ts.isIdentifier(callee.expression) ||
+    callee.expression.text !== "Object" ||
+    isShadowedAt(ts, callee.expression, "Object")
+  ) {
+    return undefined
+  }
+  const array = unwrapExpression(ts, call.arguments[0]!)
+  return ts.isArrayLiteralExpression(array) ? array : undefined
+}
+
+const ARRAY_READS: ReadonlySet<string> = new Set(["join", "includes", "indexOf"])
+
+/**
+ * Whether every use of `name` in `source` other than its declaration is a call of `.join(`,
+ * `.includes(` or `.indexOf(`, or a `.length` read: then nothing pushes to, sorts, exports or hands
+ * away the array, so it still holds its literal elements. With `pushed`, a `.push(...)` is accepted
+ * too and its arguments collected, for the caller to prove (the `where.push(...)` builder). A
+ * same-named binding elsewhere only adds uses, so the answer can only err toward refusing.
+ */
+function onlyReadsArray(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+  name: string,
+  declaration: TSApi.Node,
+  pushed?: TSApi.Expression[],
+): boolean {
+  let ok = true
+  const visit = (node: TSApi.Node): void => {
+    if (!ok) return
+    if (ts.isIdentifier(node) && node.text === name && node !== declaration) {
+      const access = node.parent
+      const call =
+        ts.isPropertyAccessExpression(access) &&
+        access.expression === node &&
+        ts.isCallExpression(access.parent) &&
+        access.parent.expression === access
+          ? access.parent
+          : undefined
+      if (
+        pushed !== undefined &&
+        call !== undefined &&
+        ts.isPropertyAccessExpression(access) &&
+        access.name.text === "push"
+      ) {
+        if (call.arguments.some((argument) => ts.isSpreadElement(argument))) ok = false
+        else pushed.push(...call.arguments)
+        // An argument can mention the array again; those uses are checked as well.
+        for (const argument of call.arguments) visit(argument)
+        return
+      }
+      const read =
+        ts.isPropertyAccessExpression(access) &&
+        access.expression === node &&
+        (access.name.text === "length"
+          ? !isWrittenTo(ts, access)
+          : ARRAY_READS.has(access.name.text) && call !== undefined)
+      if (!read) ok = false
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return ok
+}
+
+/** `node` as the target of an assignment, `++`/`--`, or `delete`. */
+function isWrittenTo(ts: TypeScriptApi, node: TSApi.Node): boolean {
+  const parent = node.parent
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.left === node &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return true
+  }
+  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+    return (
+      parent.operator === ts.SyntaxKind.PlusPlusToken ||
+      parent.operator === ts.SyntaxKind.MinusMinusToken
+    )
+  }
+  return ts.isDeleteExpression(parent)
+}
+
+/**
+ * The element texts of an array `receiver` names, when the array provably still holds them: an
+ * inline literal, `Object.freeze([...])` anywhere it is bound or imported from, or a `const` array
+ * literal bound in this file, not exported, and only ever read ({@link onlyReadsArray}). `as const`
+ * is type-only and proves nothing.
+ */
+function staticArrayItems(
+  ts: TypeScriptApi,
+  receiver: TSApi.Expression,
+  scope: SqlScope,
+  depth: number,
+): readonly string[] | undefined {
+  const node = unwrapExpression(ts, receiver)
+  let array = ts.isArrayLiteralExpression(node) ? node : frozenArrayLiteral(ts, node)
+  let itemScope = scope
+  const pushed: TSApi.Expression[] = []
+  if (array === undefined && ts.isIdentifier(node)) {
+    const local = localConstInitializer(ts, node)
+    if (local === "shadow") return undefined
+    let initializer = local
+    let exported = false
+    if (initializer === undefined && !isShadowedAt(ts, node, node.text)) {
+      initializer = scope.module.consts.get(node.text)
+      exported = [...scope.module.localExports.values()].includes(node.text)
+      const edge = initializer === undefined ? scope.module.imports.get(node.text) : undefined
+      if (edge !== undefined && scope.imports !== undefined) {
+        const target = loadSqlModuleScope(ts, scope.imports, scope.module.id, edge.specifier)
+        const found =
+          target === undefined
+            ? undefined
+            : resolveExportedConst(ts, scope.imports, target, edge.exported, 1, new Set())
+        if (found === undefined) return undefined
+        // Another module's array is accepted only frozen: its own file may mutate it.
+        array = frozenArrayLiteral(ts, found.expression)
+        itemScope = { module: found.scope, imports: scope.imports }
+      }
+    }
+    if (array === undefined && initializer !== undefined) {
+      array = frozenArrayLiteral(ts, initializer)
+      const literal = unwrapExpression(ts, initializer)
+      if (
+        array === undefined &&
+        !exported &&
+        ts.isArrayLiteralExpression(literal) &&
+        ts.isVariableDeclaration(initializer.parent) &&
+        onlyReadsArray(ts, node.getSourceFile(), node.text, initializer.parent.name, pushed)
+      ) {
+        array = literal
+      }
+    }
+  }
+  if (array === undefined) return undefined
+  const items: string[] = []
+  // What the array may hold: its literal elements, and anything pushed onto it in any order.
+  for (const element of [...array.elements, ...pushed]) {
+    if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return undefined
+    const text = resolveStaticSqlText(ts, element, itemScope, depth + 1)
+    if (text === undefined) return undefined
+    items.push(text)
+  }
+  return items
+}
+
+/** `items.join(sep?)` over a {@link staticArrayItems} array with a literal or absent separator. */
+function resolveStaticJoin(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+  scope: SqlScope,
+  depth: number,
+): string | undefined {
+  const callee = call.expression
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    callee.questionDotToken !== undefined ||
+    callee.name.text !== "join" ||
+    call.arguments.length > 1
+  ) {
+    return undefined
+  }
+  const separatorArg = call.arguments[0]
+  const separator =
+    separatorArg === undefined
+      ? ","
+      : ts.isStringLiteral(separatorArg) || ts.isNoSubstitutionTemplateLiteral(separatorArg)
+        ? separatorArg.text
+        : undefined
+  if (separator === undefined) return undefined
+  const items =
+    staticArrayItems(ts, callee.expression, scope, depth + 1) ??
+    mappedItem(ts, callee.expression, scope, depth + 1)
+  return items?.join(separator)
+}
+
+/**
+ * `xs.map(fn)`, `xs.flatMap(fn)` or `Array.from(src, fn)` whose callback returns text that resolves
+ * for every element - `(_, i) => \`($${i * 2 + 1}, $${i * 2 + 2})\``, the batch `VALUES` idiom. How
+ * many items there are is runtime data, what each one says is not, so one item stands for all.
+ */
+function mappedItem(
+  ts: TypeScriptApi,
+  receiver: TSApi.Expression,
+  scope: SqlScope,
+  depth: number,
+): readonly string[] | undefined {
+  const call = unwrapExpression(ts, receiver)
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression))
+    return undefined
+  // Only these return what the callback returns; `filter` and the rest hand back the elements.
+  const method = call.expression.name.text
+  const argument = indexCallbackArgument(ts, call)
+  if (argument === undefined || !(method === "map" || method === "flatMap" || argument === 1))
+    return undefined
+  const fn = call.arguments[argument]
+  if (fn === undefined || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) return undefined
+  const only =
+    ts.isBlock(fn.body) && fn.body.statements.length === 1 ? fn.body.statements[0] : undefined
+  const body = ts.isBlock(fn.body)
+    ? only !== undefined && ts.isReturnStatement(only)
+      ? only.expression
+      : undefined
+    : fn.body
+  const text = body === undefined ? undefined : resolveStaticSqlText(ts, body, scope, depth + 1)
+  return text === undefined ? undefined : [text]
+}
+
+/** Array methods whose callback receives the element's index, and where in the callback it is. */
+const INDEX_PARAMETER: ReadonlyMap<string, number> = new Map([
+  ["map", 1],
+  ["flatMap", 1],
+  ["forEach", 1],
+  ["filter", 1],
+  ["some", 1],
+  ["every", 1],
+  ["find", 1],
+  ["findIndex", 1],
+  ["reduce", 2],
+  ["reduceRight", 2],
+])
+
+/** Which argument of `call` is a callback handed an array index: the first for `xs.map(fn)` and its
+ * kin, the second for an unshadowed `Array.from(src, fn)`. */
+function indexCallbackArgument(ts: TypeScriptApi, call: TSApi.CallExpression): number | undefined {
+  const callee = call.expression
+  if (!ts.isPropertyAccessExpression(callee) || callee.questionDotToken !== undefined)
+    return undefined
+  if (INDEX_PARAMETER.has(callee.name.text)) return 0
+  return callee.name.text === "from" &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Array" &&
+    !isShadowedAt(ts, callee.expression, "Array")
+    ? 1
+    : undefined
+}
+
+/**
+ * `"1"` for a span written right after a `$` whose expression provably evaluates to a number: a
+ * Postgres placeholder index (`$${i + 1}`), which binds a parameter and can carry no SQL. Any string
+ * there could, so anything not proved numeric stays unresolved.
+ */
+function placeholderNumber(
+  ts: TypeScriptApi,
+  before: string,
+  node: TSApi.Expression,
+  depth: number,
+): string | undefined {
+  return before.endsWith("$") && isNumericExpression(ts, node, depth) ? "1" : undefined
+}
+
+const NUMERIC_OPERATORS = (ts: TypeScriptApi): ReadonlySet<TSApi.SyntaxKind> =>
+  new Set([
+    ts.SyntaxKind.MinusToken,
+    ts.SyntaxKind.AsteriskToken,
+    ts.SyntaxKind.AsteriskAsteriskToken,
+    ts.SyntaxKind.SlashToken,
+    ts.SyntaxKind.PercentToken,
+    ts.SyntaxKind.AmpersandToken,
+    ts.SyntaxKind.BarToken,
+    ts.SyntaxKind.CaretToken,
+    ts.SyntaxKind.LessThanLessThanToken,
+    ts.SyntaxKind.GreaterThanGreaterThanToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ])
+const NUMBER_FUNCTIONS: ReadonlySet<string> = new Set(["Number", "parseInt", "parseFloat"])
+
+/**
+ * Whether an expression evaluates to a number whatever its inputs hold. Every arithmetic operator but
+ * `+` converts its operands, so `i * 2` is a number even if `i` were a string; `+` is one only when
+ * both sides are. A name proves it when it is a callback's array index, or a `const`, never-reassigned
+ * `let` or `for` counter bound to a number and only ever updated by arithmetic. Also `xs.push(...)`
+ * (the new length), `Number`/`parseInt`/`parseFloat`/`Math.*` calls, and `.length` of an array a
+ * nearby binding builds from a literal. A type annotation proves nothing: it does not run.
+ */
+function isNumericExpression(ts: TypeScriptApi, node: TSApi.Expression, depth: number): boolean {
+  if (depth > CONST_RESOLUTION_DEPTH) return false
+  const expression = unwrapExpression(ts, node)
+  if (ts.isNumericLiteral(expression)) return true
+  if (ts.isPrefixUnaryExpression(expression))
+    return expression.operator !== ts.SyntaxKind.ExclamationToken
+  if (ts.isPostfixUnaryExpression(expression)) return true
+  if (ts.isBinaryExpression(expression)) {
+    const operator = expression.operatorToken.kind
+    if (operator === ts.SyntaxKind.PlusToken) {
+      return (
+        isNumericExpression(ts, expression.left, depth + 1) &&
+        isNumericExpression(ts, expression.right, depth + 1)
+      )
+    }
+    return NUMERIC_OPERATORS(ts).has(operator)
+  }
+  if (ts.isIdentifier(expression)) return isNumericName(ts, expression, depth)
+  if (ts.isCallExpression(expression)) {
+    const callee = expression.expression
+    if (ts.isIdentifier(callee))
+      return NUMBER_FUNCTIONS.has(callee.text) && !isShadowedAt(ts, callee, callee.text)
+    if (!ts.isPropertyAccessExpression(callee) || callee.questionDotToken !== undefined)
+      return false
+    if (callee.name.text === "push") return true
+    return (
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Math" &&
+      !isShadowedAt(ts, callee.expression, "Math")
+    )
+  }
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "length" &&
+    ts.isIdentifier(expression.expression)
+  ) {
+    const binding = nameBinding(ts, expression.expression)
+    return (
+      binding.kind === "value" &&
+      ts.isArrayLiteralExpression(unwrapExpression(ts, binding.initializer))
+    )
+  }
+  return false
+}
+
+/** How the nearest scope binds a name: a readable value ({@link directBinding}), a parameter, a `let`
+ * counter a `for` statement declares and updates, or nothing this walk can read. */
+type NameBinding =
+  | { readonly kind: "value"; readonly initializer: TSApi.Expression }
+  | {
+      readonly kind: "parameter"
+      readonly fn: TSApi.SignatureDeclaration
+      readonly position: number
+    }
+  | { readonly kind: "counter"; readonly initializer: TSApi.Expression }
+  | { readonly kind: "unknown" }
+
+function nameBinding(ts: TypeScriptApi, node: TSApi.Identifier): NameBinding {
+  const source = node.getSourceFile()
+  for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
+    if (ts.isFunctionLike(scope)) {
+      const position = scope.parameters.findIndex((p) => bindingNameCovers(ts, p.name, node.text))
+      if (position !== -1) {
+        return ts.isIdentifier(scope.parameters[position]?.name ?? node)
+          ? { kind: "parameter", fn: scope, position }
+          : { kind: "unknown" }
+      }
+    }
+    const binding = directBinding(ts, source, scope, node.text)
+    if (binding === "shadow") {
+      // `for (let i = 0; ...; i++)`: the one reassigned `let` worth reading, checked by the caller.
+      const list = ts.isForStatement(scope) ? scope.initializer : undefined
+      const declaration =
+        list !== undefined && ts.isVariableDeclarationList(list)
+          ? list.declarations.find((d) => ts.isIdentifier(d.name) && d.name.text === node.text)
+          : undefined
+      return declaration?.initializer === undefined
+        ? { kind: "unknown" }
+        : { kind: "counter", initializer: declaration.initializer }
+    }
+    if (binding !== undefined) return { kind: "value", initializer: binding.initializer }
+    if (ts.isSourceFile(scope)) break
+  }
+  return { kind: "unknown" }
+}
+
+function isNumericName(ts: TypeScriptApi, node: TSApi.Identifier, depth: number): boolean {
+  const source = node.getSourceFile()
+  const binding = nameBinding(ts, node)
+  if (binding.kind === "value") return isNumericExpression(ts, binding.initializer, depth + 1)
+  if (binding.kind === "counter") {
+    return (
+      isNumericExpression(ts, binding.initializer, depth + 1) &&
+      onlyNumericWrites(ts, source, node.text, depth)
+    )
+  }
+  if (binding.kind !== "parameter") return false
+  // An array callback's index parameter, never reassigned.
+  const call = binding.fn.parent
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false
+  const argument = indexCallbackArgument(ts, call)
+  const position = argument === 1 ? 1 : INDEX_PARAMETER.get(call.expression.name.text)
+  return (
+    argument !== undefined &&
+    call.arguments[argument] === binding.fn &&
+    binding.position === position &&
+    !isReassignedInFile(ts, source, node.text)
+  )
+}
+
+/** Compound assignments that always store a number. */
+const NUMERIC_ASSIGNMENTS = (ts: TypeScriptApi): ReadonlySet<TSApi.SyntaxKind> =>
+  new Set([
+    ts.SyntaxKind.MinusEqualsToken,
+    ts.SyntaxKind.AsteriskEqualsToken,
+    ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+    ts.SyntaxKind.SlashEqualsToken,
+    ts.SyntaxKind.PercentEqualsToken,
+    ts.SyntaxKind.AmpersandEqualsToken,
+    ts.SyntaxKind.BarEqualsToken,
+    ts.SyntaxKind.CaretEqualsToken,
+    ts.SyntaxKind.LessThanLessThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ])
+
+/** Every write to `name` in the file is `++`/`--`, or an assignment that stores a number. */
+function onlyNumericWrites(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+  name: string,
+  depth: number,
+): boolean {
+  let ok = true
+  const visit = (node: TSApi.Node): void => {
+    if (!ok) return
+    if (ts.isIdentifier(node) && node.text === name && isWrittenTo(ts, node)) {
+      const parent = node.parent
+      if (ts.isBinaryExpression(parent)) {
+        const operator = parent.operatorToken.kind
+        ok =
+          operator === ts.SyntaxKind.EqualsToken || operator === ts.SyntaxKind.PlusEqualsToken
+            ? isNumericExpression(ts, parent.right, depth + 1)
+            : NUMERIC_ASSIGNMENTS(ts).has(operator)
+      } else ok = !ts.isDeleteExpression(parent)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return ok
+}
+
 /** A template's contribution to the shape: resolved span texts fold into `staticText` (so the
  * keyword scan still sees what a `const` carries); any unresolvable span keeps it `dynamic`. */
 function templateShape(
@@ -1028,7 +1883,10 @@ function templateShape(
   let dynamic = false
   for (const span of template.templateSpans) {
     const resolved =
-      scope === undefined ? undefined : resolveStaticSqlText(ts, span.expression, scope, 0)
+      scope === undefined
+        ? undefined
+        : (placeholderNumber(ts, staticText, span.expression, 0) ??
+          resolveStaticSqlText(ts, span.expression, scope, 0))
     if (resolved === undefined) dynamic = true
     else staticText += resolved
     staticText += span.literal.text
@@ -1040,7 +1898,9 @@ function templateShape(
  * whole file never reassigns. `"shadow"` marks a nearer binding of the name we can NOT read through (a
  * parameter, `var`, destructured, uninitialized, reassigned `let`) - it stops the outward walk so a
  * farther, resolvable const of the same name is never read in its place. */
-type ResolvableBinding = { readonly initializer: TSApi.Expression } | "shadow"
+type ResolvableBinding =
+  | { readonly initializer: TSApi.Expression; readonly constant: boolean }
+  | "shadow"
 
 /** Whether `name` is written to anywhere in the file - a plain, compound, or `++`/`--` assignment to a
  * bare identifier of that name. A `let` that is is over-cautiously refused (it might be reassigned from
@@ -1109,33 +1969,15 @@ function directBinding(
     const declared = scope.variableDeclaration
     if (declared !== undefined && bindingNameCovers(ts, declared.name, name)) return "shadow"
   }
-  const statements: readonly TSApi.Statement[] | undefined = ts.isSourceFile(scope)
-    ? scope.statements
-    : ts.isBlock(scope) || ts.isModuleBlock(scope)
-      ? scope.statements
-      : ts.isCaseClause(scope) || ts.isDefaultClause(scope)
-        ? scope.statements
-        : undefined
-  const lists: TSApi.VariableDeclarationList[] = []
-  if (statements !== undefined) {
-    for (const statement of statements) {
-      if (ts.isVariableStatement(statement)) lists.push(statement.declarationList)
-      if (
-        (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
-        statement.name?.text === name
-      ) {
-        return "shadow"
-      }
+  for (const statement of scopeStatements(ts, scope) ?? []) {
+    if (
+      (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+      statement.name?.text === name
+    ) {
+      return "shadow"
     }
   }
-  if (
-    (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
-    scope.initializer !== undefined &&
-    ts.isVariableDeclarationList(scope.initializer)
-  ) {
-    lists.push(scope.initializer)
-  }
-  for (const list of lists) {
+  for (const list of scopeDeclarationLists(ts, scope)) {
     for (const declaration of list.declarations) {
       if (!bindingNameCovers(ts, declaration.name, name)) continue
       // A destructured or uninitialized binding, or a `var` (hoisting + reassignment risk), is not a
@@ -1144,57 +1986,306 @@ function directBinding(
         return "shadow"
       const isConst = (list.flags & ts.NodeFlags.Const) !== 0
       const isLet = (list.flags & ts.NodeFlags.Let) !== 0
-      if (isConst) return { initializer: declaration.initializer }
+      if (isConst) return { initializer: declaration.initializer, constant: true }
       if (isLet && !isReassignedInFile(ts, source, name))
-        return { initializer: declaration.initializer }
+        return { initializer: declaration.initializer, constant: false }
       return "shadow"
     }
   }
   return undefined
 }
 
+function scopeStatements(
+  ts: TypeScriptApi,
+  scope: TSApi.Node,
+): readonly TSApi.Statement[] | undefined {
+  return ts.isSourceFile(scope) ||
+    ts.isBlock(scope) ||
+    ts.isModuleBlock(scope) ||
+    ts.isCaseClause(scope) ||
+    ts.isDefaultClause(scope)
+    ? scope.statements
+    : undefined
+}
+
+/** The `var`/`let`/`const` lists a scope node declares directly: its statements' and a `for` head's. */
+function scopeDeclarationLists(
+  ts: TypeScriptApi,
+  scope: TSApi.Node,
+): TSApi.VariableDeclarationList[] {
+  const lists: TSApi.VariableDeclarationList[] = []
+  for (const statement of scopeStatements(ts, scope) ?? []) {
+    if (ts.isVariableStatement(statement)) lists.push(statement.declarationList)
+  }
+  if (
+    (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
+    scope.initializer !== undefined &&
+    ts.isVariableDeclarationList(scope.initializer)
+  ) {
+    lists.push(scope.initializer)
+  }
+  return lists
+}
+
+/** The `var` or `let` a scope declares `name` with by a plain identifier, if any. */
+function mutableDeclaration(
+  ts: TypeScriptApi,
+  scope: TSApi.Node,
+  name: string,
+): TSApi.VariableDeclaration | undefined {
+  for (const list of scopeDeclarationLists(ts, scope)) {
+    if ((list.flags & ts.NodeFlags.Const) !== 0) continue
+    for (const declaration of list.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) return declaration
+    }
+  }
+  return undefined
+}
+
+interface SqlWrite {
+  readonly value: TSApi.Expression
+  /** `+=`: the value is glued onto what the variable already holds. */
+  readonly appends: boolean
+}
+
 /**
- * Resolve a query-call ARGUMENT identifier to the expression it was initialized from, so a statement
- * parked in a variable is scanned as if it had been written inline at the call. This is the counterpart
- * to {@link resolveStaticSqlText}: that folds a const's text INTO a template's shape; this unfolds the
- * whole statement back out of the variable it was lifted into. Without it, ANY interpolated-SQL finding
- * could be silenced, invisibly, by hoisting the statement to `const q = …` first.
+ * Every value a statement variable may hold where the query reads it, so a statement parked in a
+ * variable is scanned as if it had been written inline at the call. This is the counterpart to
+ * {@link resolveStaticSqlText}: that folds a const's text INTO a template's shape; this unfolds the
+ * statement back out of the variable it was lifted into. Without it, ANY interpolated-SQL finding
+ * could be silenced, invisibly, by hoisting the statement to `const q = …` first, or by building it
+ * in steps (`let q = "SELECT …"; q += …`).
  *
  * Same-file only. Nearest enclosing declaration wins, so a shadowing local is read and never a
- * same-named module const. Reads through a `const`, or a `let` the file never reassigns, at function or
- * module scope; transitive through an identifier-valued initializer; depth-capped. A parameter, an
- * imported or destructured binding, a reassigned `let`, a `var`, or a name with no same-file
- * declaration returns `undefined` - which leaves the argument scanned as itself (unflagged unless it is
- * a module const that resolves to static text: exactly the pre-feature behavior).
+ * same-named module const. A `const`, or a `let` the file never reassigns, holds its initializer. A
+ * `var` or reassigned `let` holds its initializer and every value assigned to the name anywhere in
+ * the function (or module) that declares it: over-collected rather than scope-simulated, which only
+ * ever adds a value to check. `key` names the binding, so a value that reads the variable it is
+ * assigned to is recognised. A parameter, an imported or destructured binding, or a name with no
+ * same-file declaration returns `undefined` - which leaves the argument scanned as itself.
  */
-function resolveArgumentInitializer(
+function variableWrites(
   ts: TypeScriptApi,
   node: TSApi.Identifier,
-  depth: number,
-): TSApi.Expression | undefined {
-  if (depth > CONST_RESOLUTION_DEPTH) return undefined
+): { readonly key: TSApi.Node; readonly writes: readonly SqlWrite[] } | undefined {
   const source = node.getSourceFile()
   const name = node.text
   for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
     const binding = directBinding(ts, source, scope, name)
-    if (binding === "shadow") return undefined
+    if (binding === "shadow") {
+      const declaration = mutableDeclaration(ts, scope, name)
+      if (declaration === undefined) return undefined
+      let owner: TSApi.Node = declaration
+      while (!ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent
+      const writes = writesTo(ts, owner, name)
+      return {
+        key: declaration,
+        writes:
+          declaration.initializer === undefined
+            ? writes
+            : [{ value: declaration.initializer, appends: false }, ...writes],
+      }
+    }
     if (binding !== undefined) {
-      let init = binding.initializer
-      while (ts.isParenthesizedExpression(init)) init = init.expression
-      return ts.isIdentifier(init) ? resolveArgumentInitializer(ts, init, depth + 1) : init
+      return { key: binding.initializer, writes: [{ value: binding.initializer, appends: false }] }
     }
     if (ts.isSourceFile(scope)) break
   }
   return undefined
 }
 
-/** Describe only the first argument's syntax; comments/strings elsewhere cannot influence the result. */
+/** The values assigned to `name` under `root`. A numeric compound assignment stores no text. */
+function writesTo(ts: TypeScriptApi, root: TSApi.Node, name: string): SqlWrite[] {
+  const writes: SqlWrite[] = []
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isIdentifier(node) && node.text === name) {
+      const parent = node.parent
+      if (ts.isBinaryExpression(parent) && parent.left === node) {
+        const operator = parent.operatorToken.kind
+        if (operator === ts.SyntaxKind.PlusEqualsToken) {
+          writes.push({ value: parent.right, appends: true })
+        } else if (
+          operator === ts.SyntaxKind.EqualsToken ||
+          operator === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+          operator === ts.SyntaxKind.BarBarEqualsToken ||
+          operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken
+        ) {
+          writes.push({ value: parent.right, appends: false })
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+  return writes
+}
+
+function mentionsName(ts: TypeScriptApi, node: TSApi.Node, name: string): boolean {
+  if (ts.isIdentifier(node)) return node.text === name
+  return ts.forEachChild(node, (child) => mentionsName(ts, child, name) || undefined) === true
+}
+
+const UNKNOWN_SQL: SqlExpressionShape = {
+  staticText: "",
+  dynamic: true,
+  concatenated: false,
+  literal: false,
+  parameterizedTag: false,
+}
+
+function textShape(text: string): SqlExpressionShape {
+  return {
+    staticText: text,
+    dynamic: false,
+    concatenated: false,
+    literal: true,
+    parameterizedTag: false,
+  }
+}
+
+function joinShapes(shapes: readonly SqlExpressionShape[]): SqlExpressionShape {
+  return {
+    staticText: shapes.map((shape) => shape.staticText).join(""),
+    // As with `+`: text glued onto a binding tag's output un-parameterizes it.
+    dynamic: shapes.some((shape) => shape.dynamic || shape.parameterizedTag),
+    concatenated: true,
+    literal: false,
+    parameterizedTag: false,
+  }
+}
+
+/** Orders a variable's candidate statements by how surely {@link scanInterpolatedSql} would flag
+ * them: dynamic SQL text, then dynamic glued text, then any dynamic text; outside a binding tag
+ * before inside one. */
+function sqlRisk(shape: SqlExpressionShape): number {
+  const dynamic = !shape.dynamic
+    ? 0
+    : SQL_KEYWORD.test(shape.staticText) || STATEMENT_START.test(shape.staticText)
+      ? 3
+      : shape.concatenated
+        ? 2
+        : 1
+  return dynamic * 2 + (shape.parameterizedTag ? 0 : 1)
+}
+
+/**
+ * The riskiest statement a variable may hold. Each value that replaces the text is one candidate.
+ * The values that build on it (`+=`, or `q = q + more`) are glued onto every replacing value at
+ * once, as a builder that takes each branch would, so a static `SELECT … WHERE 1=1` followed by an
+ * interpolated `AND …` reads as the one statement it becomes.
+ */
+function writtenShape(
+  ts: TypeScriptApi,
+  name: string,
+  writes: readonly SqlWrite[],
+  scope: SqlScope | undefined,
+  trail: readonly TSApi.Node[],
+): SqlExpressionShape {
+  const replacing: SqlExpressionShape[] = []
+  const building: SqlExpressionShape[] = []
+  for (const write of writes) {
+    const shape = sqlExpressionShape(ts, write.value, scope, trail)
+    if (write.appends || mentionsName(ts, write.value, name)) building.push(shape)
+    else replacing.push(shape)
+  }
+  const candidates =
+    building.length === 0 ? replacing : [...replacing, joinShapes([...replacing, ...building])]
+  let worst: SqlExpressionShape | undefined
+  for (const candidate of candidates) {
+    if (worst === undefined || sqlRisk(candidate) > sqlRisk(worst)) worst = candidate
+  }
+  return worst ?? UNKNOWN_SQL
+}
+
+const TEXT_METHODS = new Set([
+  "toString",
+  "valueOf",
+  "trim",
+  "trimStart",
+  "trimEnd",
+  "toLowerCase",
+  "toUpperCase",
+])
+
+/** The value a text-preserving call returns: `String(x)`, `x.toString()`, `x.trim()`. */
+function passedThrough(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+): TSApi.Expression | undefined {
+  const callee = call.expression
+  if (ts.isIdentifier(callee) && callee.text === "String" && call.arguments.length === 1) {
+    return call.arguments[0]
+  }
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    TEXT_METHODS.has(callee.name.text) &&
+    call.arguments.length === 0
+  ) {
+    return callee.expression
+  }
+  return undefined
+}
+
+/** The parts `[a, b].join(sep)` and `a.concat(b)` glue together, a separator as its text. */
+function joinedParts(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+): readonly (TSApi.Expression | string)[] | undefined {
+  const callee = call.expression
+  if (!ts.isPropertyAccessExpression(callee)) return undefined
+  if (callee.name.text === "concat") return [callee.expression, ...call.arguments]
+  const items = unwrapExpression(ts, callee.expression)
+  if (callee.name.text !== "join" || !ts.isArrayLiteralExpression(items)) return undefined
+  const separator = call.arguments[0]
+  const glue: TSApi.Expression | string =
+    separator === undefined ? "," : ts.isStringLiteralLike(separator) ? separator.text : separator
+  const parts: (TSApi.Expression | string)[] = []
+  items.elements.forEach((element, index) => {
+    if (index > 0) parts.push(glue)
+    if (ts.isSpreadElement(element)) parts.push(element.expression)
+    else if (!ts.isOmittedExpression(element)) parts.push(element)
+  })
+  return parts
+}
+
+/** Whether the `sql` a tag names is a function this file defines (`const sql = (s, ...v) => …`),
+ * which is plain interpolation whatever its name. A parameter, an import, or a driver instance
+ * (`const sql = postgres(url)`) keeps the name's trust. */
+function definesSqlFunction(ts: TypeScriptApi, tag: TSApi.Identifier): boolean {
+  for (let scope: TSApi.Node | undefined = tag.parent; scope !== undefined; scope = scope.parent) {
+    if (
+      ts.isFunctionLike(scope) &&
+      scope.parameters.some((parameter) => bindingNameCovers(ts, parameter.name, tag.text))
+    ) {
+      return false
+    }
+    for (const statement of scopeStatements(ts, scope) ?? []) {
+      if (ts.isFunctionDeclaration(statement) && statement.name?.text === tag.text) return true
+    }
+    for (const list of scopeDeclarationLists(ts, scope)) {
+      for (const declaration of list.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.name.text !== tag.text) continue
+        const value =
+          declaration.initializer === undefined
+            ? undefined
+            : unwrapExpression(ts, declaration.initializer)
+        return value !== undefined && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))
+      }
+    }
+  }
+  return false
+}
+
+/** Describe only the statement's syntax; comments/strings elsewhere cannot influence the result.
+ * `trail` holds the variables being read through, innermost last. */
 function sqlExpressionShape(
   ts: TypeScriptApi,
-  node: TSApi.Expression,
+  expression: TSApi.Expression,
   scope?: SqlScope,
+  trail: readonly TSApi.Node[] = [],
 ): SqlExpressionShape {
-  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression, scope)
+  let node = unwrapExpression(ts, expression)
+  while (ts.isNonNullExpression(node)) node = unwrapExpression(ts, node.expression)
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return {
       staticText: node.text,
@@ -1207,7 +2298,7 @@ function sqlExpressionShape(
   if (ts.isTaggedTemplateExpression(node)) {
     const tag = node.tag
     const parameterizedTag =
-      (ts.isIdentifier(tag) && tag.text === "sql") ||
+      (ts.isIdentifier(tag) && tag.text === "sql" && !definesSqlFunction(ts, tag)) ||
       (ts.isPropertyAccessExpression(tag) && tag.getText() === "Prisma.sql")
     const template = node.template
     const templated = ts.isTemplateExpression(template)
@@ -1217,8 +2308,9 @@ function sqlExpressionShape(
     // Only the ecosystem's binding tags are trusted, by NAME - which is the honest limit of a scanner
     // that reads syntax and runs no type checker. `sql` is what postgres.js, drizzle, slonik and Bun's
     // own driver all call theirs, and `Prisma.sql` is Prisma's; taking those at their word is a
-    // deliberate trade, and it is worth stating what it costs: a no-op function named `sql` in the
-    // same file is trusted too, so this rule finds mistakes, not an adversary who reads it first.
+    // deliberate trade, and it is worth stating what it costs: a `sql` this file defines as a
+    // function is read as the interpolation it is, but one imported from anywhere is trusted, so
+    // this rule finds mistakes, not an adversary who reads it first.
     //
     // Trusting anything else widens that for no gain. This list briefly also held `sqlIdentifiers`,
     // a name invented for Nifra's own adapters - a second forgeable name that no user has a
@@ -1240,14 +2332,17 @@ function sqlExpressionShape(
     return {
       staticText: templated.staticText,
       dynamic: templated.dynamic,
-      concatenated: false,
+      // `${a} ${b}` writes no text of its own; it only glues values together.
+      concatenated: [node.head, ...node.templateSpans.map((span) => span.literal)].every(
+        (part) => part.text.trim() === "",
+      ),
       literal: false,
       parameterizedTag: false,
     }
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = sqlExpressionShape(ts, node.left, scope)
-    const right = sqlExpressionShape(ts, node.right, scope)
+    const left = sqlExpressionShape(ts, node.left, scope, trail)
+    const right = sqlExpressionShape(ts, node.right, scope, trail)
     return {
       staticText: left.staticText + right.staticText,
       // A resolved const operand is static text, not a dynamic part - so the old `!literal` test
@@ -1276,55 +2371,163 @@ function sqlExpressionShape(
       }
     }
   }
-  // A bare name that did not resolve to compile-time text. If it is a same-file binding we can prove
-  // holds one expression, scan THAT expression's shape - so a statement hoisted into `const q = …` is
+  if (ts.isCallExpression(node)) {
+    const inner = passedThrough(ts, node)
+    if (inner !== undefined)
+      return { ...sqlExpressionShape(ts, inner, scope, trail), literal: false }
+    const parts = joinedParts(ts, node)
+    if (parts !== undefined) {
+      return joinShapes(
+        parts.map((part) =>
+          typeof part === "string" ? textShape(part) : sqlExpressionShape(ts, part, scope, trail),
+        ),
+      )
+    }
+  }
+  // A bare name that did not resolve to compile-time text. If it is a same-file binding, scan the
+  // shapes of what it may hold - so a statement hoisted into `const q = …` or built up in a `let` is
   // read exactly as if it were written inline at the call, closing the "extract a variable to launder
   // the finding" hole. `literal` is forced false: the value arrived through a variable, which is the
   // property the `unsafe`/`$queryRawUnsafe` hatch rule keys on.
   if (ts.isIdentifier(node)) {
-    const initializer = resolveArgumentInitializer(ts, node, 0)
-    if (initializer !== undefined) {
-      return { ...sqlExpressionShape(ts, initializer, scope), literal: false }
+    const read = variableWrites(ts, node)
+    // Read inside one of its own writes (`q = q + more`), the variable is the text the other writes
+    // already account for.
+    if (read !== undefined && trail.includes(read.key)) return { ...textShape(""), literal: false }
+    if (read !== undefined && trail.length <= CONST_RESOLUTION_DEPTH) {
+      const written = writtenShape(ts, node.text, read.writes, scope, [...trail, read.key])
+      return { ...written, literal: false }
     }
   }
-  return {
-    staticText: "",
-    dynamic: true,
-    concatenated: false,
-    literal: false,
-    parameterizedTag: false,
-  }
+  return UNKNOWN_SQL
 }
 
-function sqlMethod(
-  ts: TypeScriptApi,
-  call: TSApi.CallExpression,
-): { method: string; receiver: string } | undefined {
-  if (ts.isPropertyAccessExpression(call.expression)) {
-    const method = call.expression.name.text
-    return SQL_METHODS.has(method)
-      ? { method, receiver: call.expression.expression.getText() }
+interface SqlSink {
+  readonly method: string
+  /** `undefined` for a bare call: `const { query } = db` and then `query(…)`. */
+  readonly receiver: string | undefined
+}
+
+function sqlMethod(ts: TypeScriptApi, call: TSApi.CallExpression): SqlSink | undefined {
+  const sink = (method: string, receiver: TSApi.Expression | undefined): SqlSink | undefined =>
+    SQL_METHODS.has(method) || DRIVER_READ_METHODS.has(method)
+      ? { method, receiver: receiver?.getText() }
       : undefined
-  }
-  if (
-    ts.isElementAccessExpression(call.expression) &&
-    call.expression.argumentExpression !== undefined &&
-    ts.isStringLiteral(call.expression.argumentExpression)
-  ) {
-    const method = call.expression.argumentExpression.text
-    return SQL_METHODS.has(method)
-      ? { method, receiver: call.expression.expression.getText() }
-      : undefined
+  const callee = call.expression
+  if (ts.isIdentifier(callee)) return sink(callee.text, undefined)
+  if (ts.isPropertyAccessExpression(callee)) return sink(callee.name.text, callee.expression)
+  if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+    return sink(callee.argumentExpression.text, callee.expression)
   }
   return undefined
 }
 
 const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
 
-/** The opt-out pragma that silences one interpolated-SQL finding. Written `// nifra-expect sql-dynamic:
- * <reason>` on the flagged line or in the comment block directly above it; the reason after the colon
- * is mandatory (see {@link commentBlockMarkerReason}). Scoped to the single statement it sits on. */
-const SQL_DYNAMIC_PRAGMA = "nifra-expect sql-dynamic"
+/** Whether a statement is SQL assembled from runtime values, judged by where it is sent. */
+function isAssembledSql(sink: SqlSink, shape: SqlExpressionShape): boolean {
+  if (!shape.dynamic) return false
+  if (sink.receiver === undefined || DRIVER_READ_METHODS.has(sink.method)) {
+    return STATEMENT_START.test(shape.staticText)
+  }
+  return (
+    SQL_KEYWORD.test(shape.staticText) || (shape.concatenated && SQL_RECEIVER.test(sink.receiver))
+  )
+}
+
+/** The statement a call passes: the argument itself, or the `text`/`sql` of a config object
+ * (`{ text, values }` in pg, `{ sql, values }` in mysql2). */
+function statementArgument(
+  ts: TypeScriptApi,
+  argument: TSApi.Expression,
+): TSApi.Expression | undefined {
+  const node = unwrapExpression(ts, argument)
+  if (!ts.isObjectLiteralExpression(node)) return argument
+  for (const property of node.properties) {
+    if (ts.isShorthandPropertyAssignment(property) && STATEMENT_KEYS.has(property.name.text)) {
+      return property.name
+    }
+    if (
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      STATEMENT_KEYS.has(property.name.text)
+    ) {
+      return property.initializer
+    }
+  }
+  return undefined
+}
+
+const STATEMENT_KEYS = new Set(["text", "sql"])
+
+interface StatementHelper {
+  readonly position: number
+  readonly sink: SqlSink
+}
+
+/** Same-file functions that send one of their parameters as a statement - `run(db, q)` calling
+ * `db.query(q)` - by name, with the parameter's position and the sink it reaches. A call to one is
+ * scanned as a call to that sink. One level deep. */
+function statementHelpers(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+): ReadonlyMap<string, StatementHelper> {
+  const helpers = new Map<string, StatementHelper>()
+  const visit = (node: TSApi.Node): void => {
+    const sink = ts.isCallExpression(node) ? sqlMethod(ts, node) : undefined
+    const passed = sink !== undefined && ts.isCallExpression(node) ? node.arguments[0] : undefined
+    const argument = passed === undefined ? undefined : statementArgument(ts, passed)
+    const statement = argument === undefined ? undefined : unwrapExpression(ts, argument)
+    if (sink !== undefined && statement !== undefined && ts.isIdentifier(statement)) {
+      const binding = nameBinding(ts, statement)
+      const name = binding.kind === "parameter" ? functionName(ts, binding.fn) : undefined
+      if (binding.kind === "parameter" && name !== undefined && !helpers.has(name)) {
+        helpers.set(name, { position: binding.position, sink })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return helpers
+}
+
+function functionName(ts: TypeScriptApi, fn: TSApi.SignatureDeclaration): string | undefined {
+  if (ts.isFunctionDeclaration(fn)) return fn.name?.text
+  if (
+    (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) &&
+    ts.isVariableDeclaration(fn.parent) &&
+    ts.isIdentifier(fn.parent.name)
+  ) {
+    return fn.parent.name.text
+  }
+  return undefined
+}
+
+/** `content` with every string, template and regex literal blanked, line breaks kept. */
+function literalsBlanked(ts: TypeScriptApi, source: TSApi.SourceFile, content: string): string {
+  const out = content.split("")
+  const visit = (node: TSApi.Node): void => {
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node) ||
+      ts.isRegularExpressionLiteral(node) ||
+      ts.isJsxText(node)
+    ) {
+      for (let i = node.getStart(source); i < node.end; i++) if (out[i] !== "\n") out[i] = " "
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return out.join("")
+}
+
+/** What silences one interpolated-SQL finding: `// nifra-expect NF-C006: <reason>` (or the
+ * `sql-dynamic` slug) on the flagged line or in the comment block directly above it. The reason after
+ * the colon is mandatory (see {@link commentBlockExpectation}). Scoped to the single statement it sits on. */
+const SQL_DYNAMIC_EXPECTATION = ["NF-C006", "sql-dynamic"]
 
 /**
  * Scan one file's text for SQL assembled by interpolation. Pure + line-accurate.
@@ -1339,7 +2542,17 @@ export function scanInterpolatedSql(
   ts: TypeScriptApi,
   imports?: SqlImports,
 ): SourceFinding[] {
-  const out: SourceFinding[] = []
+  return scanSqlSites(file, content, ts, imports).filter((site) => site.expected === undefined)
+}
+
+/** {@link scanInterpolatedSql}, keeping the sites an expectation comment silences, with its reason. */
+export function scanSqlSites(
+  file: string,
+  content: string,
+  ts: TypeScriptApi,
+  imports?: SqlImports,
+): SqlFinding[] {
+  const out: SqlFinding[] = []
   const lines = content.split("\n")
   // Malformed source is already a typecheck failure. Do not turn parser recovery nodes into a second,
   // misleading SQL diagnostic (notably an unterminated template recovered as an interpolation).
@@ -1349,27 +2562,37 @@ export function scanInterpolatedSql(
   // text cannot carry request data, so the shared-projection idiom (`const COLS = "id, name"` …
   // `${COLS}`) stays quiet while mutable, parameter, shadowed, and unprovable names flag as before.
   const scope: SqlScope = { module: sqlModuleScope(ts, file, source), imports }
+  const helpers = statementHelpers(ts, source)
+  // A marker counts only in a comment: one inside a string the call passes is data, not a reason.
+  let markerLines: readonly string[] | undefined
   const visit = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
-      const sink = sqlMethod(ts, node)
-      const argument = node.arguments[0]
+      const helper = ts.isIdentifier(node.expression)
+        ? helpers.get(node.expression.text)
+        : undefined
+      const sink = helper?.sink ?? sqlMethod(ts, node)
+      const passed = node.arguments[helper?.position ?? 0]
+      const argument = passed === undefined ? undefined : statementArgument(ts, passed)
       if (sink !== undefined && argument !== undefined) {
         const shape = sqlExpressionShape(ts, argument, scope)
+        // A helper's own hatch call already answers for passing it a variable.
         const unsafeEscape =
-          ALWAYS_UNSAFE.has(sink.method) && !shape.literal && !shape.parameterizedTag
-        const assembledSql =
-          shape.dynamic &&
-          (SQL_KEYWORD.test(shape.staticText) ||
-            (shape.concatenated && SQL_RECEIVER.test(sink.receiver)))
-        if (unsafeEscape || assembledSql) {
+          helper === undefined &&
+          sink.receiver !== undefined &&
+          ALWAYS_UNSAFE.has(sink.method) &&
+          !shape.literal &&
+          !shape.parameterizedTag
+        if (unsafeEscape || isAssembledSql(sink, shape)) {
           const index = node.getStart(source)
           const line = source.getLineAndCharacterOfPosition(index).line + 1
-          // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (batch VALUES placeholder
-          // generation, an allowlisted identifier). The reason is mandatory: a bare `// nifra-expect
-          // sql-dynamic` with no reason after the colon does NOT silence, so the hatch always leaves a
+          // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (an allowlisted identifier,
+          // placeholders numbered from data the scan cannot prove numeric). The reason is mandatory: a bare `// nifra-expect
+          // NF-C006` with no reason after the colon does NOT silence, so the hatch always leaves a
           // greppable audit trail instead of becoming a second laundering trick.
-          const silenced = commentBlockMarkerReason(lines, line, SQL_DYNAMIC_PRAGMA) !== undefined
-          if (!silenced) out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+          markerLines ??= literalsBlanked(ts, source, content).split("\n")
+          const reason = commentBlockExpectation(markerLines, line, SQL_DYNAMIC_EXPECTATION)?.reason
+          const site = { file, line, snippet: (lines[line - 1] ?? "").trim() }
+          out.push(reason === undefined ? site : { ...site, expected: reason })
         }
       }
     }
@@ -1656,7 +2879,7 @@ export function scanServerOnlyImports(
   // Inline `import { type X } from "…"` is erased just like `import type` and is not an edge; a parse
   // failure keeps the lexical edge so the security rule fails closed.
   for (const { specifier, index } of importEdges(content, facts, file)) {
-    if (!SERVER_ONLY.test(specifier)) continue
+    if (!isServerOnly(specifier)) continue
     const line = lineAt(content, index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), specifier })
   }
@@ -1673,23 +2896,24 @@ export function scanServerOnlyImports(
 // that can't be precisely resolved (a bare pkg, a tsconfig path alias) falls back to the direct edge.
 // ---------------------------------------------------------------------------------------------------
 
-// Server-only specifiers that are TERMINAL sinks - a bare `node:`/`bun:` builtin or a known server-only
-// npm package. These are never local source we can walk into, so the chain ends here. (Same vocabulary
-// as SERVER_ONLY, minus the relative `../db` arm - a relative `db` module IS local source we resolve.)
-const SERVER_ONLY_SINK =
-  /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b/
 // The retired `*.server` convention. Builds refuse such a module in browser code rather than empty it.
 const LEGACY_SERVER_FILE = /\.server(\.[cm]?[jt]sx?)?$/
 // The explicit poison-import marker (`@nifrajs/web/backend-only`, or its retired `server-only` name) - a
 // module opting into the client-leak guard. A resolved file carrying this side-effect import is a sink.
-const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|server)-only["']/
-// Depth/visited caps keep the walk linear + cycle-safe. A route's server-only dependency sits within a
-// few hops in practice; the bound stops a pathological graph from blowing up the per-file scan.
-const TRANSITIVE_MAX_DEPTH = 8
-const TRANSITIVE_MAX_VISITED = 200
+const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|server)-only["']/g
 
-/** A relative module specifier (`./x`, `../y`) - the only kind we resolve + walk into (a bare specifier
- * is either a sink we recognise by name or a third-party dep we don't follow into node_modules). */
+/** Whether `content` imports the backend-only marker in code. A mention in a comment or a string,
+ * such as a note on how to opt in, marks nothing. */
+function hasBackendOnlyMarker(content: string): boolean {
+  if (!content.includes("-only")) return false
+  const positions = codePositionMask(content)
+  for (const match of content.matchAll(BACKEND_ONLY_MARKER_IMPORT)) {
+    if (positions[match.index] !== " ") return true
+  }
+  return false
+}
+
+/** A relative module specifier (`./x`, `../y`) - the only kind the SQL import lookup follows. */
 const isRelativeSpecifier = (spec: string): boolean =>
   spec.startsWith("./") || spec.startsWith("../")
 
@@ -1761,19 +2985,39 @@ function dynamicImportEdges(
   return edges
 }
 
-/** Every import a module's runtime code makes - static and literal dynamic - in source order. Pure. */
+/** The literal `require("x")` calls in executable code. Pure. */
+function requireEdges(
+  content: string,
+  positions: string,
+): Array<{ specifier: string; index: number }> {
+  const edges: Array<{ specifier: string; index: number }> = []
+  const re = new RegExp(REQUIRE_CALL.source, REQUIRE_CALL.flags)
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    if (positions[m.index] === " ") continue // inside a comment or a string
+    const specifier = m[2]
+    if (specifier === undefined) continue
+    if (TYPE_ALIAS_BEFORE.test(content.slice(Math.max(0, m.index - 80), m.index))) continue
+    edges.push({ specifier, index: m.index })
+  }
+  return edges
+}
+
+/** Every import a module's runtime code makes - static, literal dynamic and `require` - in source
+ * order. Pure. */
 function importEdges(
   content: string,
   facts?: SourceFacts,
   file?: string,
 ): Array<{ specifier: string; index: number }> {
-  // Without an `import(` there is nothing for the dynamic pass to find; skip its regex.
   const positions = codePositionMask(content)
   const edges = staticImportEdges(content, facts, file, positions)
-  if (!content.includes("import(") && !/import\s+\(/.test(content)) return edges
-  return [...edges, ...dynamicImportEdges(content, facts, file, positions)].sort(
-    (a, b) => a.index - b.index,
-  )
+  // Without an `import(` or a `require` there is nothing for the other passes to find; skip them.
+  const dynamic = content.includes("import(") || /import\s+\(/.test(content)
+  const required = content.includes("require")
+  if (!dynamic && !required) return edges
+  if (dynamic) edges.push(...dynamicImportEdges(content, facts, file, positions))
+  if (required) edges.push(...requireEdges(content, positions))
+  return edges.sort((a, b) => a.index - b.index)
 }
 
 /** The runtime imports of a module with the line each sits on, in source order. Pure. */
@@ -1796,7 +3040,7 @@ export function parseImports(content: string, facts?: SourceFacts, file?: string
  * server-only package), or `undefined` if it isn't a by-name sink. Pure - the label is the specifier
  * itself (it's already the actionable name). */
 export function directSinkSpecifier(spec: string): string | undefined {
-  return SERVER_ONLY_SINK.test(spec) ? spec : undefined
+  return isServerOnlySink(spec) ? spec : undefined
 }
 
 /** One transitive server-only finding: the route module, the route's offending top-level import (the
@@ -1805,28 +3049,150 @@ export interface TransitiveServerImportFinding extends ServerImportFinding {
   /** `[routeFile, ...as-written specifiers…, sink]` - the shortest path the walk found. Length 2 means
    * the route imports the sink directly (same as the regex scan's direct edge). */
   readonly chain: readonly string[]
+  /** The project files the chain runs through, as `resolve` named them: the route, each module the
+   * walk entered, and the sink when it is a project file. A change to any of them can make the chain. */
+  readonly modules: readonly string[]
   /** True when a precise transitive resolve wasn't possible for the first hop (a bare pkg / path alias),
    * so the chain is the honest direct edge rather than a fabricated deeper path. */
   readonly fallback: boolean
 }
 
-/** A resolver from `(fromFile, specifier)` to an absolute module path, or `undefined` when it can't be
- * resolved precisely (bare pkg, path alias, missing file). Abstracted so the BFS is unit-testable with a
- * fake graph (no real fs). The production resolver wraps `Bun.resolveSync`. */
+/** A resolver from `(fromFile, specifier)` to a project module path, or `undefined` when it names no
+ * project file (a package, a missing file). Abstracted so the BFS is unit-testable with a fake graph (no
+ * real fs). The production resolver follows relative paths, tsconfig `paths` and package.json `imports`. */
 export type ModuleResolver = (fromFile: string, specifier: string) => string | undefined
 /** Reads a resolved module's source, or `undefined` if unreadable. Abstracted for the same reason. */
 export type ModuleReader = (absPath: string) => string | undefined
 
+/** What a server-only chain search reads the project through. */
+export interface ServerOnlyChainSource {
+  readonly resolve: ModuleResolver
+  readonly read: ModuleReader
+  readonly facts?: SourceFacts | undefined
+  readonly componentReceipts?: ReadonlySet<string>
+  /** Whether a bare specifier `resolve` leaves unanswered names an installed package that declares
+   * `"nifra": { "environment": "backend" }`, which the browser build refuses. */
+  readonly backendPackage?: (fromFile: string, specifier: string) => boolean
+}
+
+/** A chain from a module to a sink: `[start, ...as-written specifiers, sink]`, and the project files
+ * it runs through (see {@link TransitiveServerImportFinding.modules}). */
+interface ChainWalk {
+  readonly chain: readonly string[]
+  readonly modules: readonly string[]
+}
+
+/** The chain searches of one check, sharing what they learn about each module. */
+interface ChainGraph {
+  /** The shortest chain from `start` to a sink. */
+  walk(start: string, content: string): ChainWalk | undefined
+  read(abs: string): string | undefined
+  resolve(from: string, specifier: string): string | undefined
+  backendPackage(from: string, specifier: string): boolean
+  readonly componentReceipts: ReadonlySet<string>
+  readonly facts: SourceFacts | undefined
+}
+
 /**
- * BFS the LOCAL module graph from a route file for the SHORTEST import chain that reaches a server-only
- * sink, returning `[routeFile, …as-written specifiers…, sink]` or `undefined` if none is reachable. A
- * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when it's a RELATIVE specifier
- * that `resolve` maps to a readable local file (so the walk never descends into node_modules or chases an
- * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
- * `server-only`-marked dependency terminates the chain; a `*.server` dependency is never entered, since
- * the client build empties it. Bounded by depth + a visited set, so
- * it's linear and cycle-free. `routeFile`/`routeContent` seed the walk; `resolve`/`read` supply the graph
- * - pure given those, so it's unit-testable with a fake graph.
+ * Every module is read, parsed and resolved at most once, and the chain from a module is searched at
+ * most once, however many routes reach it: per-route searches repeated all of that for every route
+ * that shared a module, which made a check quadratic in the size of a shared graph.
+ */
+function chainGraph(source: ServerOnlyChainSource): ChainGraph {
+  const { facts } = source
+  const componentReceipts = source.componentReceipts ?? new Set<string>()
+  const contents = new Map<string, string | undefined>()
+  const imports = new Map<string, readonly string[]>()
+  const resolutions = new Map<string, string | undefined>()
+  const walks = new Map<string, ChainWalk | undefined>()
+  const packages = new Map<string, boolean>()
+  const read = (abs: string): string | undefined => {
+    if (!contents.has(abs)) contents.set(abs, source.read(abs))
+    return contents.get(abs)
+  }
+  const resolve = (from: string, specifier: string): string | undefined => {
+    const key = `${from}\0${specifier}`
+    if (!resolutions.has(key)) resolutions.set(key, source.resolve(from, specifier))
+    return resolutions.get(key)
+  }
+  const backendPackage = (from: string, specifier: string): boolean => {
+    if (source.backendPackage === undefined || /^[./#]/.test(specifier)) return false
+    const key = `${from}\0${specifier}`
+    let found = packages.get(key)
+    if (found === undefined) {
+      found = source.backendPackage(from, specifier)
+      packages.set(key, found)
+    }
+    return found
+  }
+  const importsOf = (abs: string, content: string): readonly string[] => {
+    let found = imports.get(abs)
+    if (found === undefined) {
+      found = parseImports(content, facts, abs)
+      imports.set(abs, found)
+    }
+    return found
+  }
+  /**
+   * Breadth-first, so the first sink found is the nearest. A node's edges are its static and literal
+   * dynamic imports; an edge is followed only into a project file `resolve` names, an alias included,
+   * never into node_modules. A by-name sink import (`node:fs`, `postgres`), backend code, or a module
+   * importing the `backend-only` marker ends the chain; a `*.fn.ts` module ships as its stub and is not
+   * entered. The visited set keeps it cycle-free; there is no depth or size cap to cut a chain short.
+   */
+  const search = (start: string, startContent: string): ChainWalk | undefined => {
+    interface Node extends ChainWalk {
+      readonly abs: string
+      readonly content: string
+    }
+    const seen = new Set<string>([start])
+    let frontier: Node[] = [{ abs: start, content: startContent, chain: [start], modules: [start] }]
+    while (frontier.length > 0) {
+      const next: Node[] = []
+      for (const node of frontier) {
+        const { chain, modules } = node
+        for (const spec of importsOf(node.abs, node.content)) {
+          const sink = directSinkSpecifier(spec)
+          if (sink !== undefined) return { chain: [...chain, sink], modules }
+          const abs = resolve(node.abs, spec)
+          if (abs === undefined) {
+            if (backendPackage(node.abs, spec)) return { chain: [...chain, spec], modules }
+            continue
+          }
+          if (seen.has(abs)) continue
+          if (componentReceipts.has(abs)) continue
+          if (isBackendModule(abs)) return { chain: [...chain, spec], modules: [...modules, abs] }
+          if (SERVER_FN_FILE.test(abs)) continue
+          const content = read(abs)
+          if (content === undefined) continue
+          if (hasBackendOnlyMarker(content)) {
+            return { chain: [...chain, spec], modules: [...modules, abs] }
+          }
+          seen.add(abs)
+          next.push({ abs, content, chain: [...chain, spec], modules: [...modules, abs] })
+        }
+      }
+      frontier = next
+    }
+    return undefined
+  }
+  return {
+    walk(start, content) {
+      if (!walks.has(start)) walks.set(start, search(start, content))
+      return walks.get(start)
+    },
+    read,
+    resolve,
+    backendPackage,
+    componentReceipts,
+    facts,
+  }
+}
+
+/**
+ * The shortest import chain from `routeFile` to a server-only sink, `[routeFile, ...as-written
+ * specifiers, sink]`, or `undefined` when none is reachable. Pure given `resolve`/`read`, so a fake
+ * graph tests it.
  */
 export function walkServerOnlyChain(
   routeFile: string,
@@ -1834,49 +3200,25 @@ export function walkServerOnlyChain(
   resolve: ModuleResolver,
   read: ModuleReader,
   facts?: SourceFacts,
+  componentReceipts: ReadonlySet<string> = new Set(),
 ): readonly string[] | undefined {
-  // Frontier nodes carry the absolute file to inspect, the source to scan, the display chain so far
-  // (route + the as-written specifier of each hop), and the file the imports resolve relative to.
-  interface Node {
-    readonly abs: string
-    readonly content: string
-    readonly chain: readonly string[]
-    readonly depth: number
-  }
-  const seen = new Set<string>([routeFile])
-  let frontier: Node[] = [{ abs: routeFile, content: routeContent, chain: [routeFile], depth: 0 }]
-  let visited = 0
-  while (frontier.length > 0) {
-    const next: Node[] = []
-    for (const node of frontier) {
-      if (node.depth >= TRANSITIVE_MAX_DEPTH) continue
-      for (const spec of parseImports(node.content, facts, node.abs)) {
-        // (a) A by-name sink (builtin / known server-only pkg) → the chain ends here (shortest first,
-        // since BFS reaches the nearest sink before any deeper one).
-        const sink = directSinkSpecifier(spec)
-        if (sink !== undefined) return [...node.chain, sink]
-        // (b) Only relative specifiers are local source we resolve + walk into. A bare third-party
-        // specifier that isn't a known sink is a leaf - don't follow it into node_modules.
-        if (!isRelativeSpecifier(spec)) continue
-        const abs = resolve(node.abs, spec)
-        if (abs === undefined || seen.has(abs)) continue
-        // (c) Backend code is a sink: the browser build refuses it. A `*.fn.ts` module ships as its
-        // generated stub, so its imports never reach the browser and the walk does not enter it.
-        if (isBackendModule(abs)) return [...node.chain, spec]
-        if (SERVER_FN_FILE.test(abs)) continue
-        const content = read(abs)
-        if (content === undefined) continue // unreadable → can't walk; treat as a leaf
-        // (d) A resolved module that opts into the `backend-only` marker is a sink too.
-        if (BACKEND_ONLY_MARKER_IMPORT.test(content)) return [...node.chain, spec]
-        if (visited >= TRANSITIVE_MAX_VISITED) continue
-        visited++
-        seen.add(abs)
-        next.push({ abs, content, chain: [...node.chain, spec], depth: node.depth + 1 })
-      }
-    }
-    frontier = next
-  }
-  return undefined
+  return chainGraph({
+    resolve,
+    read,
+    facts,
+    componentReceipts,
+  }).walk(routeFile, routeContent)?.chain
+}
+
+/**
+ * The server-only chain finder for one check: called per browser module, it returns that module's
+ * findings, reusing every module and chain an earlier call already searched.
+ */
+export function createServerOnlyChains(
+  source: ServerOnlyChainSource,
+): (file: string, content: string, browserRoot?: boolean) => TransitiveServerImportFinding[] {
+  const graph = chainGraph(source)
+  return (file, content, browserRoot = false) => serverOnlyChains(graph, file, content, browserRoot)
 }
 
 /**
@@ -1885,7 +3227,9 @@ export function walkServerOnlyChain(
  * finding carries the full chain; otherwise - when the first hop is itself a direct by-name sink the
  * regex scan already flags, or when a relative import can't be resolved - it falls back to the DIRECT
  * edge (`fallback: true`), never a fabricated chain. Returns one finding per offending top-level import,
- * de-duplicated to the shortest chain per first-hop specifier. Non-route files yield `[]`.
+ * de-duplicated to the shortest chain per first-hop specifier. A file that is not browser source
+ * yields `[]`, unless `browserRoot` says the browser bundle loads it anyway (an app's `clientModule`).
+ * One check should use {@link createServerOnlyChains}, which shares the work across modules.
  */
 export function resolveServerOnlyChains(
   file: string,
@@ -1893,71 +3237,76 @@ export function resolveServerOnlyChains(
   resolve: ModuleResolver,
   read: ModuleReader,
   facts?: SourceFacts,
+  componentReceipts: ReadonlySet<string> = new Set(),
+  browserRoot = false,
 ): TransitiveServerImportFinding[] {
-  if (!isBrowserSource(file)) return []
+  return createServerOnlyChains({
+    resolve,
+    read,
+    facts,
+    componentReceipts,
+  })(file, content, browserRoot)
+}
+
+function serverOnlyChains(
+  graph: ChainGraph,
+  file: string,
+  content: string,
+  browserRoot: boolean,
+): TransitiveServerImportFinding[] {
+  if (!browserRoot && !isBrowserSource(file)) return []
   const lines = content.split("\n")
   const out: TransitiveServerImportFinding[] = []
   const flaggedSpecifiers = new Set<string>()
-  // Collect the route's import edges up front (fresh-regex scan) so the per-edge logic below can call
-  // the REENTRANT transitive walk without corrupting a shared regex's `lastIndex` (the walk also scans
-  // imports). Driving `STATIC_IMPORT.exec` here directly would restart this loop forever.
-  for (const { specifier, index } of importEdges(content, facts, file)) {
+  for (const { specifier, index } of importEdges(content, graph.facts, file)) {
     if (flaggedSpecifiers.has(specifier)) continue
     const line = lineAt(content, index)
     const snippet = (lines[line - 1] ?? "").trim()
-    // (1) A direct by-name sink (`node:fs`, `postgres`) - the route imports it itself; chain is the
-    // direct edge. (Length-2 chain == the regex scan's existing `[route, specifier]`.)
-    if (directSinkSpecifier(specifier) !== undefined) {
+    const flag = (
+      chain: readonly string[],
+      fallback: boolean,
+      modules: readonly string[] = [file],
+    ): void => {
       flaggedSpecifiers.add(specifier)
-      out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
+      out.push({ file, line, snippet, specifier, chain, modules, fallback })
+    }
+    // (1) A direct by-name sink (`node:fs`, `postgres`): the route imports it itself.
+    if (directSinkSpecifier(specifier) !== undefined) {
+      flag([file, specifier], false)
       continue
     }
-    // (2) A relative local import - try the transitive walk from the resolved dependency. If it reaches
-    // a sink, emit the full chain rooted at THIS route's import line.
-    if (isRelativeSpecifier(specifier)) {
-      const abs = resolve(file, specifier)
-      if (abs === undefined) {
-        // Unresolvable relative import. If it's the known server-only `../db` convention the regex scan
-        // flags directly, fall back to the direct edge (precise resolve impossible - say so via
-        // `fallback`). Any other unresolvable relative import we can't assert is server-only - skip it.
-        if (SERVER_ONLY.test(specifier)) {
-          flaggedSpecifiers.add(specifier)
-          out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
-        }
-        continue
-      }
-      // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
-      if (isBackendModule(abs)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
-      if (SERVER_FN_FILE.test(abs)) continue
-      const depContent = read(abs)
-      if (depContent === undefined) continue
-      if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
-      // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
-      const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts)
-      if (subChain !== undefined) {
-        flaggedSpecifiers.add(specifier)
-        // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the
-        // route's as-written specifier so the chain reads `routes/x → ../data → ../db → node:crypto`.
-        const chain = [file, specifier, ...subChain.slice(1)]
-        out.push({ file, line, snippet, specifier, chain, fallback: false })
-        continue
-      }
-      // (3) The relative `../db`-style convention the regex scan flags directly, but where the walk
-      // found no deeper sink (e.g. the file wasn't readable past the first hop) - fall back to the
-      // direct edge so we still surface the known-server-only convention rather than going silent.
-      if (SERVER_ONLY.test(specifier)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
-      }
+    // (2) A project import, relative or through an alias: walk from the resolved dependency and, if
+    // it reaches a sink, report the full chain rooted at THIS route's import line.
+    const abs = graph.resolve(file, specifier)
+    if (abs === undefined) {
+      // An installed package that declares itself backend is a sink. Any other name no project file
+      // answers to can't be called server-only, except the `../db` convention, reported as the direct
+      // edge with `fallback` saying the resolve was impossible.
+      if (graph.backendPackage(file, specifier)) flag([file, specifier], false)
+      else if (isServerOnly(specifier)) flag([file, specifier], true)
+      continue
     }
+    if (graph.componentReceipts.has(abs)) continue
+    // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
+    if (isBackendModule(abs)) {
+      flag([file, specifier], false, [file, abs])
+      continue
+    }
+    if (SERVER_FN_FILE.test(abs)) continue
+    const depContent = graph.read(abs)
+    if (depContent === undefined) continue
+    if (hasBackendOnlyMarker(depContent)) {
+      flag([file, specifier], false, [file, abs])
+      continue
+    }
+    const sub = graph.walk(abs, depContent)
+    if (sub !== undefined) {
+      // `sub` starts at the resolved dependency; the route names it by its as-written specifier.
+      flag([file, specifier, ...sub.chain.slice(1)], false, [file, ...sub.modules])
+      continue
+    }
+    // (3) The `../db` convention with no deeper sink found: still surface the direct edge.
+    if (isServerOnly(specifier)) flag([file, specifier], true)
   }
   return out
 }
@@ -1990,23 +3339,19 @@ export function scanResponseRoutes(
       if (source !== undefined && facts.isResponseSyntaxAt(source, m.index) !== true) continue
     }
     const line = lineAt(content, m.index)
-    // A `// nifra-expect raw-response` pragma marks an intentional raw Response (a file/redirect that can't
-    // be a typed route), silencing this advisory. Honor it on the return line itself, OR on the line above
-    // ONLY when that line is a standalone comment - so a TRAILING pragma on one route's return line can't
-    // leak down and suppress the very next route's genuine advisory. `stripComments` blanks the pragma in
-    // `code` (so it never affects the match); the raw `lines` still carry it.
-    const thisLine = lines[line - 1] ?? ""
-    const aboveLine = lines[line - 2] ?? ""
-    const aboveSuppresses =
-      aboveLine.trimStart().startsWith("//") && aboveLine.includes(RAW_RESPONSE_PRAGMA)
-    if (thisLine.includes(RAW_RESPONSE_PRAGMA) || aboveSuppresses) continue
-    out.push({ file, line, snippet: thisLine.trim() })
+    // A `// nifra-expect NF-C007` comment (or the `raw-response` slug) marks an intentional raw Response
+    // (a file/redirect that can't be a typed route), silencing this advisory with or without a reason.
+    // It counts on the return line or in the comment block directly above, so a TRAILING comment on one
+    // route's return line can't leak down onto the next route. `stripComments` blanks it in `code` (so it
+    // never affects the match); the raw `lines` still carry it.
+    if (commentBlockExpectation(lines, line, RAW_RESPONSE_EXPECTATION) !== undefined) continue
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
   return out
 }
 
-/** The opt-out pragma that suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
-const RAW_RESPONSE_PRAGMA = "nifra-expect raw-response"
+/** What suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
+const RAW_RESPONSE_EXPECTATION = ["NF-C007", "raw-response"]
 
 /** Walk the project's `.ts`/`.tsx` source (skipping deps and build output), calling `visit` per file.
  * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`.
@@ -2054,22 +3399,69 @@ export async function walkSource(
     readonly includeTests?: boolean
     /** Additional project-relative paths to exclude from this scan. */
     readonly ignore?: (relativePath: string) => boolean
+    /**
+     * Also visit the other files a build loads: every `.jsx`, `.svelte` and `.vue` file, and `.js`
+     * files in a zone. A `.svelte`/`.vue` file is visited as {@link componentScripts}.
+     */
+    readonly scripts?: boolean
   } = {},
 ): Promise<void> {
   const skip = opts.includeTests === true ? IGNORED_DIR : IGNORED
+  const pattern =
+    opts.scripts === true
+      ? "**/*.{ts,tsx,mts,cts,jsx,js,mjs,cjs,svelte,vue}"
+      : "**/*.{ts,tsx,mts,cts}"
   // List candidates first (cheap - no reads), drop the built-in ignores, then exclude gitignored paths in
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
-  for await (const rawRel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
+  for await (const rawRel of new Glob(pattern).scan({ cwd, dot: false })) {
     const rel = normalizeProjectPath(rawRel)
+    // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
+    if (PLAIN_SCRIPT_FILE.test(rel) && !ZONED_PATH.test(rel)) continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
   // Glob order is the filesystem's, so findings would come out in a different order on each platform.
   for (const rel of rels.sort(codeUnitOrder)) {
     if (ignored.has(rel)) continue
-    visit(rel, await Bun.file(join(cwd, rel)).text())
+    const text = await Bun.file(join(cwd, rel)).text()
+    visit(rel, COMPONENT_FILE.test(rel) ? componentScripts(text) : text)
   }
+}
+
+const PLAIN_SCRIPT_FILE = /\.[cm]?js$/
+const ZONED_PATH =
+  /(^|\/)(?:routes|frontend|shared|backend)\/|\.(?:frontend|shared|backend|fn)\.[^/]+$/
+/** A single-file component: its `<script>` blocks are the code a build compiles. */
+export const COMPONENT_FILE = /\.(?:svelte|vue)$/
+
+/**
+ * A `.svelte` or `.vue` file as the source scanners read it: the text of its `<script>` blocks where
+ * they stand, and every other character blanked to a space with line breaks kept, so a finding's line
+ * and column are the file's own. An unclosed `<script>` runs to the end of the file. Pure.
+ */
+export function componentScripts(text: string): string {
+  const blank = (part: string): string => part.replace(/[^\n]/g, " ")
+  let out = ""
+  let at = 0
+  for (;;) {
+    const open = text.indexOf("<script", at)
+    if (open === -1) break
+    const close = text.indexOf(">", open)
+    if (close === -1) break
+    // `<scripts>` or `<script-x>` is another element.
+    if (!/[\s>]/.test(text[open + 7] ?? "")) {
+      out += blank(text.slice(at, close + 1))
+      at = close + 1
+      continue
+    }
+    const end = text.indexOf("</script", close + 1)
+    const stop = end === -1 ? text.length : end
+    out += blank(text.slice(at, close + 1)) + text.slice(close + 1, stop)
+    at = stop
+    if (end === -1) break
+  }
+  return out + blank(text.slice(at))
 }
 
 const bySite = (a: SourceFinding, b: SourceFinding): number =>

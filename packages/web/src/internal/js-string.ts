@@ -12,7 +12,12 @@ const LINE_SEPARATOR = String.fromCharCode(0x2028)
 const PARAGRAPH_SEPARATOR = String.fromCharCode(0x2029)
 
 export function jsStringLiteral(value: string): string {
-  return JSON.stringify(value)
+  return jsValueLiteral(value)
+}
+
+/** A JSON value embedded in generated source, with the same script-boundary protection. */
+export function jsValueLiteral(value: unknown): string {
+  return (JSON.stringify(value) ?? "undefined")
     .replaceAll("<", "\\u003C")
     .replaceAll(LINE_SEPARATOR, "\\u2028")
     .replaceAll(PARAGRAPH_SEPARATOR, "\\u2029")

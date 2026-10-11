@@ -40,6 +40,12 @@ export type PluginsField =
  * don't).
  */
 export interface NifraFramework {
+  /** Optional coordinated Vite 8 component graph. Tooling stays in nifra.config.ts. */
+  readonly componentPipeline?: Omit<
+    import("@nifrajs/web/server-components/build").ComponentPipelineOptions,
+    "root" | "outDir" | "port" | "plugins"
+  >
+  readonly serverComponents?: CreateWebAppOptions["serverComponents"]
   /** The render adapter, e.g. `reactAdapter` from `@nifrajs/web-react`. */
   readonly adapter: unknown
   /** The client runtime module providing `mountRouter`, e.g. `"@nifrajs/web-react/client"`. */
@@ -72,8 +78,11 @@ export interface NifraFramework {
    * targets use the socket peer either way. */
   readonly clientIp?: "platform"
   /** `nifra dev` settings. `indicator: false` turns the in-page issues badge off for every run
-   * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`. */
-  readonly dev?: { readonly indicator?: boolean }
+   * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`.
+   * `allowedHosts` lists host names the Bun dev server answers besides loopback ones; it refuses
+   * every other `Host` so a DNS-rebound page cannot read it. The Vite pipeline uses Vite's own
+   * `server.allowedHosts`. */
+  readonly dev?: { readonly indicator?: boolean; readonly allowedHosts?: readonly string[] }
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
@@ -85,9 +94,9 @@ export interface NifraFramework {
   readonly cssCodeSplit?: boolean
   /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
   readonly cssLoading?: CssLoadingMode
-  /** Path `backend/app.ts`'s backend is served at (default `"/api"`; `""` turns the mount off). A
-   * page file under it can never render, so the app refuses to start and `nifra build` refuses to
-   * build.
+  /** Path `backend/app.ts`'s backend is served at over HTTP, such as `"/api"`; unset or `""`, it is
+   * not mounted. A page file under it can never render, so the app refuses to start and `nifra build`
+   * refuses to build.
    *
    * The fields from here down reach the generated server entry, so like `use` they MUST be exported
    * from `backend/framework.ts` (re-export them from `nifra.config.ts` when both exist). */
@@ -106,7 +115,14 @@ export interface NifraFramework {
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
  * entry, in one list so every command that builds the app forwards the same set. */
-export const FRAMEWORK_WEB_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export const FRAMEWORK_WEB_OPTIONS = [
+  "apiPrefix",
+  "apiStrip",
+  "mounts",
+  "csp",
+  "nonce",
+  "serverComponents",
+] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
 /** Refuse a forwarded field of the wrong shape at load, naming the field, rather than letting it fail
@@ -114,6 +130,24 @@ export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: string): void {
   const wrong = (field: string, expected: string): never => {
     throw new Error(`[nifra] ${configFile}: \`${field}\` must be ${expected}.`)
+  }
+  if (fw.componentPipeline !== undefined) {
+    const pipeline = fw.componentPipeline
+    if (
+      typeof pipeline !== "object" ||
+      pipeline === null ||
+      !["react", "vue", "svelte", "solid", "preact"].includes(pipeline.adapter) ||
+      typeof pipeline.entries !== "object" ||
+      pipeline.entries === null ||
+      typeof pipeline.entries.client !== "string" ||
+      typeof pipeline.entries.ssr !== "string" ||
+      (pipeline.adapter === "react" && typeof pipeline.entries.rsc !== "string") ||
+      (pipeline.adapter !== "react" && pipeline.entries.rsc !== undefined)
+    )
+      wrong(
+        "componentPipeline",
+        "an adapter plus existing client/ssr entries and a React-only rsc entry",
+      )
   }
   if (fw.apiPrefix !== undefined && typeof fw.apiPrefix !== "string") {
     wrong("apiPrefix", 'a path string such as "/api", or "" to turn the backend mount off')
@@ -143,6 +177,13 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
     const indicator: unknown = Reflect.get(fw.dev, "indicator")
     if (indicator !== undefined && typeof indicator !== "boolean")
       wrong("dev.indicator", "a boolean")
+    const allowedHosts: unknown = Reflect.get(fw.dev, "allowedHosts")
+    if (
+      allowedHosts !== undefined &&
+      (!Array.isArray(allowedHosts) ||
+        allowedHosts.some((host) => typeof host !== "string" || host.trim() === ""))
+    )
+      wrong("dev.allowedHosts", 'an array of host names such as ["app.test"]')
   }
 }
 
@@ -196,6 +237,23 @@ export interface LoadedApp {
   readonly resolvedPlugins: ResolvedPlugins
   /** The `backend` export from `backend/app.ts`, or `undefined` if there's no `backend/app.ts`. */
   readonly backend: unknown
+}
+
+/** An API-only app as the backend readers see it: `backend/app.ts` and no web config. */
+export interface BackendOnlyApp {
+  readonly cwd: string
+  readonly backend: unknown
+  readonly framework?: undefined
+}
+
+/** What the backend readers (routes, context, hooks, OpenAPI, the app's MCP surface) load. */
+export type IntrospectedApp = LoadedApp | BackendOnlyApp
+
+/** How a command reaches the app. The MCP server hands out one whose calls both refuse. */
+export interface AppLoader {
+  (outDirName?: string): Promise<LoadedApp>
+  /** The whole app with a web config, else `backend/app.ts` alone. */
+  readonly backend: () => Promise<IntrospectedApp>
 }
 
 export interface LoadAppOptions {
@@ -258,22 +316,24 @@ const isAdapter = (v: unknown): boolean => typeof v === "object" && v !== null
 const importWithQuery = (path: string, query: string | undefined): Promise<unknown> =>
   import(query === undefined || query === "" ? path : `${path}?${query}`)
 
+/** Whether `cwd` has a web config file, the one thing that makes it more than its backend. */
+export const hasAppConfig = (cwd: string): boolean =>
+  existsSync(resolve(cwd, CONFIG_FILE)) || existsSync(resolve(cwd, FRAMEWORK_FILE))
+
 /**
- * What reads only the backend (`nifra openapi`): the whole app when it has a web config, else
- * `backend/app.ts` alone, so an API-only app needs no adapter to describe its routes.
+ * What reads only the backend: the whole app when it has a web config, else `backend/app.ts`
+ * alone, so an API-only app needs no adapter for its routes, context, hooks or OpenAPI document.
  */
 export async function loadBackendApp(
   cwd: string,
   options: LoadAppOptions = {},
-): Promise<Pick<LoadedApp, "cwd" | "backend">> {
-  if (existsSync(resolve(cwd, CONFIG_FILE)) || existsSync(resolve(cwd, FRAMEWORK_FILE))) {
-    return loadApp(cwd, "dist", options)
-  }
+): Promise<IntrospectedApp> {
+  if (hasAppConfig(cwd)) return loadApp(cwd, "dist", options)
   assertCurrentLayout(cwd)
   const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) {
     throw new Error(
-      `[nifra] no ${BACKEND_APP_FILE} in ${cwd}: the OpenAPI document describes its routes`,
+      `[nifra] no ${CONFIG_FILE}, ${FRAMEWORK_FILE} or ${BACKEND_APP_FILE} in ${cwd}: a web app needs its config, an API-only app its ${BACKEND_APP_FILE}`,
     )
   }
   const backend = (
@@ -303,7 +363,11 @@ export async function loadApp(
         "      nifra is zero-config but needs one of them exporting at least:\n" +
         "        export const adapter = reactAdapter            // from @nifrajs/web-react\n" +
         '        export const clientModule = "@nifrajs/web-react/client"\n' +
-        "      (create-nifra scaffolds this for you.)",
+        "      (create-nifra scaffolds this for you.)" +
+        (existsSync(resolve(cwd, BACKEND_APP_FILE))
+          ? `\n      With ${BACKEND_APP_FILE} and no web config this is an API-only app: \`nifra routes\`,\n` +
+            "      `nifra context`, `nifra openapi` and `nifra mcp` read its backend; pages need the config."
+          : ""),
     )
   }
   if (!existsSync(resolve(cwd, "routes"))) {

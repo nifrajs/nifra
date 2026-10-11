@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-react",
-  "version": "4.0.2",
+  "version": "5.0.0",
   "description": "React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babel).",
   "keywords": [
     "bun",
@@ -80,6 +80,46 @@
       "bun": "./src/fn.ts",
       "types": "./dist/fn.d.ts",
       "default": "./dist/fn.js"
+    },
+    "./server-components/guard": {
+      "bun": "./src/server-components/guard.ts",
+      "types": "./dist/server-components/guard.d.ts",
+      "default": "./dist/server-components/guard.js"
+    },
+    "./server-components/jsx-runtime": {
+      "bun": "./src/server-components/jsx-runtime.ts",
+      "types": "./dist/server-components/jsx-runtime.d.ts",
+      "default": "./dist/server-components/jsx-runtime.js"
+    },
+    "./server-components/jsx-dev-runtime": {
+      "bun": "./src/server-components/jsx-dev-runtime.ts",
+      "types": "./dist/server-components/jsx-dev-runtime.d.ts",
+      "default": "./dist/server-components/jsx-dev-runtime.js"
+    },
+    "./server-components": {
+      "bun": "./src/server-components/server.ts",
+      "types": "./dist/server-components/server.d.ts",
+      "default": "./dist/server-components/server.js"
+    },
+    "./server-components/rsc": {
+      "bun": "./src/server-components/rsc.ts",
+      "types": "./dist/server-components/rsc.d.ts",
+      "default": "./dist/server-components/rsc.js"
+    },
+    "./server-components/client": {
+      "bun": "./src/server-components/client.ts",
+      "types": "./dist/server-components/client.d.ts",
+      "default": "./dist/server-components/client.js"
+    },
+    "./server-components/outlet": {
+      "bun": "./src/server-components/outlet.ts",
+      "types": "./dist/server-components/outlet.d.ts",
+      "default": "./dist/server-components/outlet.js"
+    },
+    "./server-components/nested": {
+      "bun": "./src/server-components/nested.ts",
+      "types": "./dist/server-components/nested.d.ts",
+      "default": "./dist/server-components/nested.js"
     }
   },
   "files": [
@@ -99,17 +139,23 @@
     "@nifrajs/authjs": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
-    "@nifrajs/web": "workspace:*"
+    "@nifrajs/web": "workspace:*",
+    "@nifrajs/schema": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@vitejs/plugin-rsc": "0.5.35",
+    "react-server-dom-webpack": "19.2.8"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@vitejs/plugin-rsc": "0.5.35",
+    "react-server-dom-webpack": "19.2.8",
+    "vite": "8.2.1"
   },
   "repository": {
     "type": "git",
@@ -119,5 +165,13 @@
   "bugs": {
     "url": "https://github.com/nifrajs/nifra/issues"
   },
-  "homepage": "https://github.com/nifrajs/nifra#readme"
+  "homepage": "https://github.com/nifrajs/nifra#readme",
+  "peerDependenciesMeta": {
+    "@vitejs/plugin-rsc": {
+      "optional": true
+    },
+    "react-server-dom-webpack": {
+      "optional": true
+    }
+  }
 }

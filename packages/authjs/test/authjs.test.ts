@@ -328,6 +328,25 @@ describe("origin, proxy, and guard configuration", () => {
     expect(plain.headers.get("location") ?? "").toMatch(/^http:\/\/internal\.test\/api\/auth\//)
   })
 
+  test("unauthenticated sets the guard's denial", async () => {
+    let thrown: unknown
+    try {
+      await requireAuthUser(req("/guarded"), config, {
+        unauthenticated: { status: 403, body: { error: "login_required" } },
+      })
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).not.toBeInstanceOf(Response)
+    expect(Reflect.get(Object(thrown), "plain")).toEqual({
+      status: 403,
+      body: { error: "login_required" },
+    })
+    await expect(
+      requireAuthUser(req("/guarded"), config, { unauthenticated: { status: 302 } }),
+    ).rejects.toThrow(/400-599/)
+  })
+
   test("a guard refuses a redirect that would leave this origin", async () => {
     await expect(
       requireAuthUser(req("/guarded"), config, { redirectTo: "https://evil.example/login" }),

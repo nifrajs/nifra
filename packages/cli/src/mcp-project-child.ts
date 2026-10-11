@@ -67,7 +67,7 @@ export async function answerProjectRequest(
     }
     const loadAppCached = createCachedAppLoader(cwd)
     const backend = (): Promise<unknown> =>
-      loadAppCached().then(
+      loadAppCached.backend().then(
         (app) => app.backend,
         () => undefined,
       )

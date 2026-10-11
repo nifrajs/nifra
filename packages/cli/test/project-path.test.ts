@@ -67,6 +67,26 @@ describe("project-scoped diagnostic paths", () => {
     expect(await readFile(join(root, "security.ts"), "utf8")).toContain("timingSafeEqual")
   })
 
+  test("rewrites the confirmation compares check reports, and only those", async () => {
+    const compare = "if (password !== confirmPassword) return false\n"
+    const api = await project()
+    await mkdir(join(api, "routes"))
+    await writeFile(join(api, "routes", "signup.ts"), compare)
+    expect(await applyDiagnosticRecipe(api, diagnostic("routes/signup.ts"))).toEqual([
+      "routes/signup.ts",
+    ])
+    expect(await readFile(join(api, "routes", "signup.ts"), "utf8")).toContain(
+      "!nifraTimingSafeEqual(password, confirmPassword)",
+    )
+
+    const web = await project()
+    await writeFile(join(web, "nifra.config.ts"), "export default {}\n")
+    await mkdir(join(web, "frontend"))
+    await writeFile(join(web, "frontend", "Signup.tsx"), compare)
+    expect(await applyDiagnosticRecipe(web, diagnostic("frontend/Signup.tsx"))).toEqual([])
+    expect(await readFile(join(web, "frontend", "Signup.tsx"), "utf8")).toBe(compare)
+  })
+
   test("fixes every secret comparison in a file whatever line a later diagnostic names", async () => {
     const root = await project()
     const source = [

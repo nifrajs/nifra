@@ -125,7 +125,11 @@ export function rawExchange(
 }
 
 /** The status a WebSocket handshake sent to `target`, byte for byte, is answered with. */
-export function rawUpgradeStatus(port: number, target: string): Promise<number> {
+export function rawUpgradeStatus(
+  port: number,
+  target: string,
+  headers: Readonly<Record<string, string>> = {},
+): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     let head = ""
@@ -138,6 +142,7 @@ export function rawUpgradeStatus(port: number, target: string): Promise<number> 
           "Upgrade: websocket",
           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
           "Sec-WebSocket-Version: 13",
+          ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
           "",
           "",
         ].join("\r\n"),

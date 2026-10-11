@@ -10,6 +10,7 @@
  * evidence only, and the file store persists exactly the content-free record it parsed.
  */
 
+import { createHash } from "node:crypto"
 import { appendFile } from "node:fs/promises"
 import type { ArtifactRef, RunEvidence } from "@nifrajs/agent-protocol"
 import { assertEvidenceSize, parseRunEvidence } from "@nifrajs/agent-protocol"
@@ -41,12 +42,10 @@ export interface EvidenceStore {
 }
 
 const DEFAULT_MAX_LIVE = 1024
-const encoder = new TextEncoder()
 
-async function sha256Bytes(text: string): Promise<Uint8Array> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(text))
-  return new Uint8Array(digest)
-}
+// Synchronous: `crypto.subtle` hands every record to a worker thread and back, which on a loaded
+// machine made a 10k-record run take seconds.
+const sha256Bytes = (text: string): Uint8Array => createHash("sha256").update(text).digest()
 
 /**
  * The identity of one record for the terminal digest: node outcome only. `seq`, `durationMs`, and
@@ -97,7 +96,7 @@ class EvidenceAccumulator {
     } else this.failedCount++
     if (record.artifacts !== undefined)
       for (const ref of record.artifacts) this.artifactRefs.push(ref)
-    const hash = await sha256Bytes(digestKey(record))
+    const hash = sha256Bytes(digestKey(record))
     let carry = 0
     for (let i = 31; i >= 0; i--) {
       const sum = (this.acc[i] as number) + (hash[i] as number) + carry

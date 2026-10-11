@@ -1,5 +1,71 @@
 # @nifrajs/otel
 
+## 5.0.0
+
+### Major Changes
+
+- 2f09afb: `tracing()` now reports a matched request's route template as `url.path` (for example `/users/:id`), so an email, an id or a token in a path segment no longer reaches the trace backend. Pass `rawUrlPath: true` to report the raw path as before. Requests that match no route still report their raw path. DevTools installs its own tracing with `rawUrlPath: true`, so its local request log is unchanged.
+
+### Minor Changes
+
+- 9de83f4: `otlpExporter` sends one export at a time; spans that end meanwhile wait in the `maxQueue`-bounded queue instead of each opening another POST. A new `timeoutMs` option (default 30000) aborts and reports an export that takes too long. `flush()` resolves once every span queued before the call was sent, failed or dropped, and `shutdown()` waits for the export in flight.
+- fc1a30e: `metrics()` takes an `authorize(req)` option that gates the scrape endpoint; a refused scrape answers 401 with an empty body. Without it the endpoint stays public, which the option's documentation now states.
+
+### Patch Changes
+
+- Updated dependencies [a0a02f4]
+- Updated dependencies [0aed425]
+- Updated dependencies [eaf030b]
+- Updated dependencies [7de0397]
+- Updated dependencies [4199ff3]
+- Updated dependencies [90d9ee6]
+- Updated dependencies [364a234]
+- Updated dependencies [c06cba5]
+- Updated dependencies [f4d3852]
+- Updated dependencies [4a82ae0]
+- Updated dependencies [0ff867a]
+- Updated dependencies [e7391bf]
+- Updated dependencies [0b80a59]
+- Updated dependencies [c64db12]
+- Updated dependencies [3753104]
+- Updated dependencies [4b3b1fa]
+- Updated dependencies [3562557]
+- Updated dependencies [53087f3]
+- Updated dependencies [2def6c7]
+- Updated dependencies [b5b5bc3]
+- Updated dependencies [22e1777]
+- Updated dependencies [3a483cd]
+- Updated dependencies [35f52c7]
+- Updated dependencies [343cb81]
+- Updated dependencies [d91fd44]
+- Updated dependencies [b13e071]
+- Updated dependencies [077657f]
+- Updated dependencies [a5963cb]
+- Updated dependencies [05aac0e]
+- Updated dependencies [1a6616f]
+- Updated dependencies [7775c2b]
+- Updated dependencies [846e2f6]
+- Updated dependencies [aadd9fc]
+- Updated dependencies [ea16748]
+- Updated dependencies [fc0284a]
+- Updated dependencies [5b22f4d]
+- Updated dependencies [1b94593]
+- Updated dependencies [9f58295]
+- Updated dependencies [b9608ac]
+- Updated dependencies [7a165de]
+- Updated dependencies [4064f36]
+- Updated dependencies [48aad8c]
+- Updated dependencies [41050ed]
+- Updated dependencies [fc837cb]
+- Updated dependencies [b80ce77]
+- Updated dependencies [9b1acc9]
+- Updated dependencies [740109f]
+- Updated dependencies [e0a25fe]
+- Updated dependencies [3630b6e]
+- Updated dependencies [1290c6d]
+- Updated dependencies [d0a7d58]
+  - @nifrajs/core@5.0.0
+
 ## 4.0.2
 
 ## 4.0.1

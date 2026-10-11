@@ -5,6 +5,7 @@ import {
   type RouterState,
   type Submission,
 } from "../src/index.ts"
+import { redirectOf } from "../src/router.ts"
 
 describe("createMatcher", () => {
   const match = createMatcher([
@@ -31,6 +32,22 @@ describe("createMatcher", () => {
       routeId: "post",
       params: { year: "2026", slug: "hello" },
     })
+  })
+  test("a route named with spaces or non-ASCII matches the path a browser requests", () => {
+    const named = createMatcher([
+      { routeId: "cafe", pattern: "/café" },
+      { routeId: "space", pattern: "/a b" },
+      { routeId: "uber", pattern: "/über/:id" },
+      // Decomposed, as some file systems store a name: the browser requests the composed form.
+      { routeId: "nfd", pattern: "/re\u0301sume\u0301" },
+    ])
+    expect(named(new URL("http://x/café").pathname)).toEqual({ routeId: "cafe", params: {} })
+    expect(named(new URL("http://x/a b").pathname)).toEqual({ routeId: "space", params: {} })
+    expect(named(new URL("http://x/über/7").pathname)).toEqual({
+      routeId: "uber",
+      params: { id: "7" },
+    })
+    expect(named(new URL("http://x/résumé").pathname)).toEqual({ routeId: "nfd", params: {} })
   })
   test("decodes percent-encoded params", () => {
     expect(match("/users/a%20b")).toEqual({ routeId: "user", params: { id: "a b" } })
@@ -1039,14 +1056,30 @@ describe("createClientRouter", () => {
 
   test("a failed submit clears pending and rethrows", async () => {
     const realFetch = globalThis.fetch
-    globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
-      new Response("nope", { status: 500 })) as typeof fetch
+    globalThis.fetch = (async (_url: string, _init?: RequestInit): Promise<Response> => {
+      throw new TypeError("offline")
+    }) as typeof fetch
     const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
     try {
-      await expect(r.submit("/", new URLSearchParams())).rejects.toThrow(/500/)
+      await expect(r.submit("/", new URLSearchParams())).rejects.toThrow(/offline/)
       expect(r.snapshot().pending).toBe(false)
     } finally {
       globalThis.fetch = realFetch
+    }
+  })
+
+  test("a non-2xx answer names the page to load: the action may have run before it failed", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("nope", { status: 500 }),
+    )
+    const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+    try {
+      const failure = await r.submit("/", new URLSearchParams()).catch((e: unknown) => e)
+      expect(redirectOf(failure)).toBe("/")
+      expect(failure instanceof Error ? String(failure.cause) : "").toMatch(/500/)
+      expect(r.snapshot().pending).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
     }
   })
 
@@ -1104,7 +1137,7 @@ describe("createClientRouter", () => {
     const fd = new FormData()
     fd.set("text", "b")
     try {
-      await expect(r.submit("/users/7", fd)).rejects.toThrow(/500/)
+      await expect(r.submit("/users/7", fd)).rejects.toThrow(/redirected to \/users\/7/)
     } finally {
       globalThis.fetch = realFetch
     }

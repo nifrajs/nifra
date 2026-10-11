@@ -138,6 +138,9 @@ export interface SagaRecord {
   readonly createdAt: number
   readonly updatedAt: number
   readonly version: number
+  /** The `resume`/`compensate` call that owns the saga while `leaseUntil` is in the future. */
+  readonly owner?: string
+  readonly leaseUntil?: number
 }
 
 export interface SagaStore {

@@ -83,6 +83,6 @@ export function formatShadowedPages(pages: readonly ShadowedPage[]): string {
   return (
     `${pages.length === 1 ? "1 page route" : `${pages.length} page routes`} can never render: a mount answers every request under its path before page routing, and its 404 is final.\n` +
     `${lines.join("\n")}\n` +
-    'Move each file out of the mounted path, or serve that URL from the mounted app. The backend\'s mount path is `apiPrefix` (default "/api"; export it from framework.ts, or set it to "" to turn the mount off).'
+    "Move each file out of the mounted path, or serve that URL from the mounted app. The backend's mount path is the `apiPrefix` exported from framework.ts; without one the backend is not mounted."
   )
 }

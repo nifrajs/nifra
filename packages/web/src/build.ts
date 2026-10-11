@@ -1,3 +1,7 @@
+import { publicEnvDefines } from "./internal/public-env.ts"
+
+export { publicEnvDefines } from "./internal/public-env.ts"
+
 /**
  * `@nifrajs/web/build` - the production build (Bun-only, build-time). `buildClient` codegens + bundles
  * the client entry (content-hashed, code-split); `buildServer` codegens the static-import server
@@ -9,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import {
   dirname,
+  isAbsolute,
   join,
   basename as pathBasename,
   posix,
@@ -25,6 +30,7 @@ import {
   aggregateSizeReport,
   type BuildManifest,
   type BuildTarget,
+  type BuildTargetPlan,
   type Bundler,
   type ChunkSize,
   detectNodeBuiltinsInClient,
@@ -44,6 +50,8 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { assertDisposableDir } from "./internal/disposable-dir.ts"
+import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
 import {
   assertDevelopmentProductionParity,
@@ -106,7 +114,14 @@ const entryName = (file: string): string => {
  * `fromBunMetafile`; this smaller view is only for the per-route stylesheet map. */
 interface BunMetafile {
   readonly outputs?: Readonly<
-    Record<string, { readonly entryPoint?: string; readonly cssBundle?: string }>
+    Record<
+      string,
+      {
+        readonly entryPoint?: string
+        readonly cssBundle?: string
+        readonly inputs?: Readonly<Record<string, unknown>>
+      }
+    >
   >
 }
 
@@ -180,20 +195,6 @@ export interface BuildClientOptions {
  * define resolves it to `undefined` in the client bundle. An empty `prefix` exposes nothing (the
  * opt-out). Pure + exported so the prefix/redaction contract is unit-testable without a real build.
  */
-export function publicEnvDefines(
-  prefix: string,
-  env: Readonly<Record<string, string | undefined>>,
-): Record<string, string> {
-  const defines: Record<string, string> = {}
-  if (prefix === "") return defines // opt-out: bake in nothing
-  for (const [name, value] of Object.entries(env)) {
-    // Skip `undefined` (a deleted/unset key can still enumerate) so we never bake in `"undefined"`.
-    if (name.startsWith(prefix) && value !== undefined) {
-      defines[`process.env.${name}`] = JSON.stringify(value)
-    }
-  }
-  return defines
-}
 
 /**
  * Cloudflare Pages rejects a `_routes.json` with more than 100 include+exclude rules combined, or any
@@ -629,21 +630,27 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const renamed = sanitizeOutputNames(outputs)
   const toUrl = (path: string): string =>
     `${publicPath}${renamed.get(basename(path)) ?? basename(path)}`
-  // Entry-point outputs come back in entrypoint order: [bootstrap, ...routeFiles]. Map each route file
-  // to its chunk URL by that order (guarded against drift), then a route's chunks = its layout chain +
-  // own file.
+  // Each entry's chunk is the output the metafile names that entry's source for. The position among the
+  // entry-point outputs ([bootstrap, ...routeFiles]) is only the fallback, for an entry the metafile
+  // does not name by path (a `resolve` that returns a bare specifier). A route's chunks = its layout
+  // chain + own file.
   const entryPoints = outputs.filter((o) => o.kind === "entry-point")
-  const bootstrap = entryPoints[0]
-  if (bootstrap === undefined) throw new Error("[nifra/web] build produced no entry-point output")
   if (entryPoints.length !== routeFiles.length + 1) {
     throw new Error(
       `[nifra/web] expected ${routeFiles.length + 1} entry-point outputs (bootstrap + ${routeFiles.length} routes), got ${entryPoints.length}`,
     )
   }
+  const bySource = entryChunks(clientMeta?.outputs ?? {}, cwd)
+  const chunkOf = (source: string, position: number): string | undefined => {
+    const path = bySource.get(resolvePath(source)) ?? entryPoints[position]?.path
+    return path === undefined ? undefined : toUrl(path)
+  }
+  const entryUrl = chunkOf(entryFile, 0)
+  if (entryUrl === undefined) throw new Error("[nifra/web] build produced no entry-point output")
   const fileToChunk = new Map<string, string>()
   routeFiles.forEach((file, i) => {
-    const out = entryPoints[i + 1] // in range - length checked above
-    if (out !== undefined) fileToChunk.set(file, toUrl(out.path))
+    const url = chunkOf(resolve(file), i + 1)
+    if (url !== undefined) fileToChunk.set(file, url)
   })
   const chunksFor = (chainFiles: readonly string[]): string[] =>
     chainFiles.map((f) => fileToChunk.get(f)).filter((u): u is string => u !== undefined)
@@ -684,15 +691,30 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // links only its layout chain + own CSS (deduped); an empty array means the page needs no CSS at all.
   // Absent (→ aggregate fallback) only if Bun emits no metafile/cssBundle - never silently incomplete.
   const cssByEntry = new Map<string, string>()
+  const bootstrapEntry = resolvePath(entryFile)
+  let bootstrapSources: readonly string[] = []
+  const routeSources = new Set<string>()
   for (const out of Object.values(clientMeta?.outputs ?? {})) {
     if (out.entryPoint !== undefined && out.cssBundle !== undefined) {
-      cssByEntry.set(resolvePath(cwd, out.entryPoint), toUrl(out.cssBundle))
+      const entry = resolvePath(cwd, out.entryPoint)
+      cssByEntry.set(entry, toUrl(out.cssBundle))
+      const sources = Object.keys(clientMeta?.outputs?.[out.cssBundle]?.inputs ?? {})
+      if (entry === bootstrapEntry) bootstrapSources = sources
+      else for (const source of sources) routeSources.add(source)
     }
   }
+  // A stylesheet the client module imports is bundled only into the bootstrap's CSS, which also holds
+  // every route's (the bootstrap imports each route lazily). When it carries CSS no route entry owns,
+  // every page links that bundle first, the whole-app stylesheet before any route-scoped one, as a
+  // Vite page links the bootstrap's; otherwise the page renders without it.
+  const leadingCss = bootstrapSources.some((source) => !routeSources.has(source))
+    ? cssByEntry.get(bootstrapEntry)
+    : undefined
   const stylesFor = (chainFiles: readonly string[]): readonly string[] => {
     const urls = chainFiles
       .map((f) => (f ? cssByEntry.get(resolvePath(resolve(f))) : undefined))
       .filter((u): u is string => u !== undefined)
+    if (leadingCss !== undefined) urls.unshift(leadingCss)
     return [...new Set(urls)]
   }
   const routeStyles: Record<string, readonly string[]> = {}
@@ -700,7 +722,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // route entry (StyleX's atomic CSS is one example). In that shape there is no useful per-route map:
   // emitting `routeId: []` would suppress the aggregate `styles` fallback in `createWebApp` and render
   // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
-  const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== resolvePath(entryFile))
+  const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== bootstrapEntry)
   if (css.length > 0 && routeCssEntries.length > 0) {
     // A `_loading` page can show on a navigation from ANY page, and a document links only its own
     // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
@@ -729,7 +751,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const manifest: BuildManifest = {
-    entry: toUrl(bootstrap.path),
+    entry: entryUrl,
     assets: outputs.map((o) => toUrl(o.path)),
     routes,
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
@@ -1009,11 +1031,22 @@ function withEmittedImports(
   return { ...graph, chunks }
 }
 
-/** Refusals the bundler stopped on before it produced a graph, so without import chains. */
+/**
+ * Refusals the bundler stopped on before it produced a graph, so without import chains. Files sharing
+ * one reason share one line: with no chain to tell them apart, 50 lines would say one thing 50 times.
+ */
 function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string): string {
-  const lines = [...refused].map(([file, reason]) => {
+  const byReason = new Map<string, string[]>()
+  for (const [file, reason] of refused) {
     const rel = relative(root, file).replaceAll("\\", "/")
-    return `  - ${rel.startsWith("..") ? file : rel}: ${reason}`
+    const shown = rel.startsWith("..") ? file : rel
+    const files = byReason.get(reason)
+    if (files === undefined) byReason.set(reason, [shown])
+    else files.push(shown)
+  }
+  const lines = [...byReason].map(([reason, files]) => {
+    const more = files.length > 5 ? ` and ${files.length - 5} more` : ""
+    return `  - ${files.slice(0, 5).join(", ")}${more}: ${reason}`
   })
   return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
 }
@@ -1247,6 +1280,9 @@ export function generateServerEntry(options: {
   readonly title?: string
   /** Encoded root-relative public file paths copied into the deploy directory. */
   readonly publicFiles?: readonly string[]
+  /** URL paths of the content-hashed client outputs (the build manifest's `assets`). When given, a
+   * self-hosted entry caches only these immutably; otherwise every file under `/assets/` is. */
+  readonly hashedFiles?: readonly string[]
   /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
 }): string {
@@ -1258,6 +1294,7 @@ export function generateServerEntry(options: {
     optionImports = {},
     title = "nifra",
     publicFiles = [],
+    hashedFiles,
     clientIp,
   } = options
   if (clientIp !== undefined && clientIp !== "platform") {
@@ -1355,6 +1392,9 @@ export function generateServerEntry(options: {
     "// The client bundle and public files live next to this entry; serve only manifest-approved paths.",
     'const STATIC_ROOT = new URL("./", import.meta.url)',
     `const PUBLIC_FILES = new Set(${JSON.stringify(publicFiles)})`,
+    ...(hashedFiles !== undefined
+      ? [`const HASHED_FILES = new Set(${JSON.stringify(hashedFiles)})`]
+      : []),
     "const staticPath = (pathname: string): string | undefined => {",
     "  if (PUBLIC_FILES.has(pathname)) return '.' + pathname",
     '  if (!pathname.startsWith("/assets/")) return undefined',
@@ -1371,7 +1411,7 @@ export function generateServerEntry(options: {
     `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
     "const staticHeaders = (pathname: string): Record<string, string> => ({",
     '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
-    `  "cache-control": pathname.startsWith("/assets/") ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
+    `  "cache-control": ${hashedFiles !== undefined ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
     '  "x-content-type-options": "nosniff",',
     "})",
   )
@@ -1467,10 +1507,12 @@ async function measureOutputs(paths: readonly string[]): Promise<ChunkSize[]> {
 export interface BuildTargetOptions {
   /** The `routes/` directory to discover (absolute path). */
   readonly routesDir: string
-  /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */
+  /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated, so the
+   * build refuses one that is a filesystem root or is or contains the routes directory, the public
+   * directory, an absolute entry module, or the working directory. */
   readonly outDir: string
   /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the
-   * server bundle, cleaned up after. Absolute path. */
+   * server bundle, cleaned up after. Absolute path. Checked the same way as `outDir`. */
   readonly workDir: string
   /** The adapter's client runtime module (exports `mountRouter`), e.g. `"@nifrajs/web-react/client"`. */
   readonly clientModule: string
@@ -1597,6 +1639,26 @@ export const bunBundler: Bundler = {
     }),
 }
 
+/** Refuse a public file that shares a path with a file the target writes into the same directory: the
+ * build overwrites it, and the server would then answer that public path with its own bundle. */
+function assertNoPublicCollision(
+  plan: BuildTargetPlan,
+  publicFiles: readonly string[],
+  outDir: string,
+): void {
+  if (plan.kind !== "server" || plan.staticDir !== "") return
+  const owned = [`/${plan.outputFile}`]
+  if (plan.target === "cloudflare") owned.push("/_routes.json")
+  // Compared case-insensitively: on a case-insensitive filesystem `Server.js` is the same file.
+  const clashes = publicFiles.filter((file) => owned.includes(file.toLowerCase()))
+  if (clashes.length > 0) {
+    throw new Error(
+      `[nifra/web] public file(s) ${clashes.join(", ")} would be overwritten by the ${plan.target} ` +
+        `build's own output in ${outDir}. Rename or move them out of the public directory.`,
+    )
+  }
+}
+
 /** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */
 export async function buildTarget(
   target: BuildTarget,
@@ -1622,6 +1684,20 @@ export async function buildTargetWith(
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
   const targetPlan = planBuildTarget(parseBuildTarget(target), outDir)
+  const sources = [
+    routesDir,
+    process.cwd(),
+    resolvePath(
+      typeof options.publicDir === "string"
+        ? options.publicDir
+        : join(dirname(routesDir), "public"),
+    ),
+    ...[options.adapterImport, options.backendImport, options.useImport].filter(
+      (file): file is string => file !== undefined && isAbsolute(file),
+    ),
+  ]
+  assertDisposableDir("outDir", outDir, sources)
+  assertDisposableDir("workDir", workDir, sources)
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
@@ -1672,6 +1748,7 @@ export async function buildTargetWith(
     publicDir !== undefined && existsSync(publicDir)
       ? await copyPublicDir(publicDir, staticRoot)
       : []
+  assertNoPublicCollision(targetPlan, publicFiles, outDir)
   if (publicFiles.length > 0) {
     client = { ...client, publicFiles }
   }
@@ -1734,6 +1811,7 @@ export async function buildTargetWith(
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
+      hashedFiles: client.assets,
       ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
     }),
   )

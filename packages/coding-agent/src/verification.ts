@@ -1,5 +1,7 @@
+import { accessSync, constants, statSync } from "node:fs"
+import { isAbsolute, resolve } from "node:path"
 import { publicErrorDetails } from "./errors.ts"
-import { readBoundedText } from "./process.ts"
+import { type BoundedProcessResult, runBoundedProcess } from "./process.ts"
 
 export interface VerificationResult {
   readonly name: "check" | "assure" | "test"
@@ -9,6 +11,8 @@ export interface VerificationResult {
   readonly output?: string
   readonly error?: string
   readonly stack?: string
+  /** The gate's command was not found or cannot run, so nothing was checked; never a repair task. */
+  readonly unavailable?: true
 }
 
 export interface VerificationRepairTask {
@@ -27,7 +31,7 @@ export function createVerificationRepairTask(
   result: VerificationResult,
   cwd: string,
 ): VerificationRepairTask | undefined {
-  if (result.ok) return undefined
+  if (result.ok || result.unavailable === true) return undefined
   return Object.freeze({
     id: `verification-${result.name}-${Date.now().toString(36)}`,
     verification: result.name,
@@ -108,56 +112,35 @@ export async function runNifraReview(options: ReviewOptions): Promise<ReviewExec
   const args = ["review", "--json"]
   if (options.strict === true) args.push("--strict")
   if (options.diff !== undefined) args.push("--diff", options.diff)
-  let proc: ReturnType<typeof Bun.spawn>
+  const maxOutputBytes = options.maxOutputBytes ?? 1_048_576
+  let run: BoundedProcessResult
   try {
-    proc = Bun.spawn([command, ...commandArgs, ...args], {
+    run = await runBoundedProcess([command, ...commandArgs, ...args], {
       cwd: options.cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
       env: safeEnv(options.env),
+      timeoutMs: options.timeoutMs ?? 120_000,
+      maxStdoutBytes: maxOutputBytes,
+      maxStderrBytes: maxOutputBytes,
     })
   } catch {
     return { name: "review", ok: false, status: null, errorCode: "spawn-failed" }
   }
-  const timeoutMs = options.timeoutMs ?? 120_000
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
+  const { stdout, stderr, status } = run
+  if (run.timedOut) return { name: "review", ok: false, status, errorCode: "timeout" }
+  if (stdout.truncated || stderr.truncated)
+    return { name: "review", ok: false, status, errorCode: "output-truncated" }
   try {
-    const [stdout, stderr, status] = await Promise.all([
-      readBoundedText(proc.stdout, options.maxOutputBytes ?? 1_048_576),
-      readBoundedText(proc.stderr, options.maxOutputBytes ?? 1_048_576),
-      proc.exited,
-    ])
-    void stderr
-    if (timedOut) return { name: "review", ok: false, status, errorCode: "timeout" }
-    if (stdout.truncated || stderr.truncated)
-      return { name: "review", ok: false, status, errorCode: "output-truncated" }
-    try {
-      const raw = JSON.parse(stdout.text) as unknown
-      const { parseReviewReport } = await import("@nifrajs/agent-review")
-      const report = await parseReviewReport(raw)
-      return {
-        name: "review",
-        ok: status === 0 && report.ok,
-        status,
-        report,
-      }
-    } catch {
-      return { name: "review", ok: false, status, errorCode: "invalid-report" }
-    }
-  } catch {
+    const raw = JSON.parse(stdout.text) as unknown
+    const { parseReviewReport } = await import("@nifrajs/agent-review")
+    const report = await parseReviewReport(raw)
     return {
       name: "review",
-      ok: false,
-      status: null,
-      errorCode: timedOut ? "timeout" : "spawn-failed",
+      ok: status === 0 && report.ok,
+      status,
+      report,
     }
-  } finally {
-    clearTimeout(timer)
+  } catch {
+    return { name: "review", ok: false, status, errorCode: "invalid-report" }
   }
 }
 
@@ -173,25 +156,19 @@ export async function runNifraVerification(
   const command = options.command ?? (name === "test" ? process.execPath : "nifra")
   const commandArgs = options.commandArgs ?? []
   const args = name === "test" ? ["test"] : [name, "--json"]
-  const proc = Bun.spawn([command, ...commandArgs, ...args], {
-    cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: safeEnv(options.env),
-  })
   const timeoutMs = options.timeoutMs ?? 120_000
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
   try {
-    const [stdout, stderr, status] = await Promise.all([
-      readBoundedText(proc.stdout, options.maxOutputBytes ?? 1_048_576),
-      readBoundedText(proc.stderr, options.maxOutputBytes ?? 1_048_576),
-      proc.exited,
-    ])
+    const maxOutputBytes = options.maxOutputBytes ?? 1_048_576
+    const { stdout, stderr, status, timedOut } = await runBoundedProcess(
+      [command, ...commandArgs, ...args],
+      {
+        cwd: options.cwd,
+        env: safeEnv(options.env),
+        timeoutMs,
+        maxStdoutBytes: maxOutputBytes,
+        maxStderrBytes: maxOutputBytes,
+      },
+    )
     const output = stdout.text || stderr.text
     let report: unknown
     try {
@@ -208,6 +185,14 @@ export async function runNifraVerification(
       ...(timedOut ? { error: `nifra ${name} timed out after ${timeoutMs}ms` } : {}),
     }
   } catch (error) {
+    if (commandMissing(error, options.cwd))
+      return {
+        name,
+        ok: false,
+        status: null,
+        unavailable: true,
+        error: `${command} is not installed or cannot run, so ${name} did not run`,
+      }
     const details = publicErrorDetails(
       error,
       "verification failed",
@@ -220,8 +205,37 @@ export async function runNifraVerification(
       error: details.message,
       ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
-  } finally {
-    clearTimeout(timer)
+  }
+}
+
+/**
+ * Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs
+ * on the Bun this agent runs on, so it is always available unless `command` replaces it.
+ */
+export function isVerificationAvailable(
+  name: "check" | "assure" | "test",
+  options: Pick<VerificationOptions, "cwd" | "command" | "env">,
+): boolean {
+  const command = options.command ?? (name === "test" ? process.execPath : "nifra")
+  if (!command.includes("/") && !(process.platform === "win32" && command.includes("\\")))
+    return Bun.which(command, { PATH: safeEnv(options.env).PATH ?? "" }) !== null
+  try {
+    accessSync(isAbsolute(command) ? command : resolve(options.cwd, command), constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Bun reports a missing executable and a missing cwd alike (ENOENT), so the cwd decides which.
+function commandMissing(error: unknown, cwd: string): boolean {
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined
+  if (code !== "ENOENT" && code !== "EACCES") return false
+  try {
+    return statSync(cwd).isDirectory()
+  } catch {
+    return false
   }
 }
 

@@ -112,6 +112,8 @@ test("native mounted proxy keeps Node streams and proxy security behavior on Nod
       "x-request-leak": "secret",
       "proxy-authorization": "Basic secret",
       "x-forwarded-for": "198.51.100.1",
+      "x-forwarded-port": "12345",
+      "x-forwarded-prefix": "/fake",
     },
     body: '{"name":"Ada"}',
   })
@@ -122,6 +124,8 @@ test("native mounted proxy keeps Node streams and proxy security behavior on Nod
   assert.equal(lastUpstream?.headers["x-request-leak"], undefined)
   assert.equal(lastUpstream?.headers["proxy-authorization"], undefined)
   assert.equal(lastUpstream?.headers["x-forwarded-for"], undefined)
+  assert.equal(lastUpstream?.headers["x-forwarded-port"], undefined)
+  assert.equal(lastUpstream?.headers["x-forwarded-prefix"], undefined)
   assert.equal(response.headers["x-response-leak"], undefined)
   assert.deepEqual(response.headers["set-cookie"], ["a=1; Path=/", "b=2; Path=/"])
 })

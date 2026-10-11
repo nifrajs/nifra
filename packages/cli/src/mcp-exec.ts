@@ -8,7 +8,7 @@
 
 import { type Dirent, realpathSync } from "node:fs"
 import { readdir, stat } from "node:fs/promises"
-import { relative, resolve } from "node:path"
+import { isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import {
@@ -24,7 +24,7 @@ import {
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { LoadAppOptions, LoadedApp } from "./load.ts"
+import type { AppLoader, IntrospectedApp, LoadAppOptions, LoadedApp } from "./load.ts"
 import {
   type CommandMcpToolOptions,
   dirError,
@@ -36,7 +36,9 @@ import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
+  OWN_PROCESS_GROUP,
   readBoundedStream,
+  signalProcessGroup,
   timeoutMessage,
   validateLocalPort,
 } from "./mcp-io.ts"
@@ -46,20 +48,29 @@ import { loadTypesCorpus } from "./types-search.ts"
 
 const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
 
+type GatePaths = Pick<typeof import("node:path"), "isAbsolute" | "relative" | "resolve">
+
 /** The files a stack the caller supplies may show a codeframe from: project source, never a dotfile
- * or anything under a dot directory (`.env`, `.git/`, `.nifra/`). */
-function explainSourceGate(root: string): (file: string) => boolean {
+ * or anything under a dot directory (`.env`, `.git/`, `.nifra/`), and never a file outside the root -
+ * which on Windows includes one on another drive, where `relative` answers with an absolute path. */
+export function explainSourceGate(
+  root: string,
+  paths: GatePaths = { isAbsolute, relative, resolve },
+): (file: string) => boolean {
   // The codeframe reads a native realpath, which expands a Windows short name (`RUNNER~1`); the root
   // has to be spelled the same way or every file looks like it sits outside it.
-  let base = resolve(root)
+  let base = paths.resolve(root)
   try {
     base = realpathSync.native(base)
   } catch {}
-  return (file) =>
-    CODEFRAME_SOURCE.test(file) &&
-    !relative(base, file)
-      .split(/[\\/]/)
-      .some((segment) => segment.startsWith("."))
+  return (file) => {
+    const inside = paths.relative(base, file)
+    return (
+      CODEFRAME_SOURCE.test(file) &&
+      !paths.isAbsolute(inside) &&
+      !inside.split(/[\\/]/).some((segment) => segment.startsWith("."))
+    )
+  }
 }
 
 /** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
@@ -74,7 +85,16 @@ export function toMcpTool(
   const entry = "run" in source ? undefined : source
   const { cwd } = options
   const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
-  const pathFields = ["config", "out", "lockfile", "before", "after", "baseline", "file"] as const
+  const pathFields = [
+    "config",
+    "out",
+    "lockfile",
+    "before",
+    "after",
+    "baseline",
+    "file",
+    "since",
+  ] as const
   const catalogEntry = entry ?? toCommandCatalogEntry(spec)
   return {
     name: commandMcpName(catalogEntry.name),
@@ -143,7 +163,7 @@ export function toMcpTool(
 
 export function catalogProjectTools(
   cwd: string,
-  loadAppCached: () => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: AppLoader = createCachedAppLoader(cwd),
 ): McpTool[] {
   return commandCatalog
     .filter((entry) => entry.transports.includes("mcp"))
@@ -156,11 +176,11 @@ export function catalogProjectTools(
 
 export function projectTools(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: AppLoader = createCachedAppLoader(cwd),
 ): McpTool[] {
   const warmRun = createWarmHandler("mcp-run", cwd, "run")
   const warmRender = createWarmHandler("mcp-render", cwd, "render")
-  const catalogTools = catalogProjectTools(cwd, () => loadAppCached())
+  const catalogTools = catalogProjectTools(cwd, loadAppCached)
   const legacyTools: McpTool[] = [
     {
       name: "nifra_verify",
@@ -692,12 +712,13 @@ export async function spawnChild(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    detached: OWN_PROCESS_GROUP,
   })
   let killed = false
   const kill = (): void => {
     if (killed) return
     killed = true
-    proc.kill()
+    signalProcessGroup(proc, "SIGTERM")
   }
   const abort = (): void => kill()
   signal?.addEventListener("abort", abort, { once: true })
@@ -791,6 +812,16 @@ type PipeSubprocess = ReturnType<typeof Bun.spawn> & {
   readonly stderr: ReadableStream<Uint8Array>
 }
 
+const liveWarmWorkers = new Set<WarmWorker>()
+let warmWorkersClosed = false
+
+/** Stop every warm worker and start no more, once the MCP client has closed stdin. A live worker
+ * holds the process open, so the server would otherwise never exit. */
+export function closeWarmWorkers(): void {
+  warmWorkersClosed = true
+  for (const worker of liveWarmWorkers) worker.stop()
+}
+
 /** A persistent `mcp-run`/`mcp-render` `--worker` subprocess: the backend/web app is loaded ONCE and
  * reused across newline-delimited `{ id, input }` requests, replying `{ id, output }`. The same machinery
  * powers both `nifra_run warm` and `nifra_render warm` - `child` selects which engine, `label` shapes the
@@ -827,10 +858,12 @@ export class WarmWorker {
       stdout: "pipe",
       stderr: "pipe",
     }) as PipeSubprocess
+    liveWarmWorkers.add(this)
     void this.readStdout()
     void this.readStderr()
     void this.proc.exited.then((code) => {
       this.closed = true
+      liveWarmWorkers.delete(this)
       const err = new Error(
         `warm ${this.label} worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,
       )
@@ -1025,8 +1058,10 @@ export function createWarmHandler(
   label: string,
 ): (input: unknown, signal?: AbortSignal) => Promise<string> {
   let worker: WarmWorker | undefined
+  const shuttingDown = `${label} cancelled: the MCP server is shutting down.`
   return async (input, signal) => {
     const fingerprint = await warmRunFingerprint(cwd)
+    if (warmWorkersClosed) return shuttingDown
     let current = worker
     if (current === undefined || current.fingerprint !== fingerprint) {
       current?.stop()
@@ -1044,6 +1079,7 @@ export function createWarmHandler(
         const reason = cancellationSuffix(signal)
         return `${label} cancelled${reason}.`
       }
+      if (warmWorkersClosed) return shuttingDown
       return spawnChild(child, cwd, input, label, signal)
     }
   }
@@ -1146,7 +1182,7 @@ export async function appFingerprint(cwd: string): Promise<string> {
 export function createCachedAppLoader(
   cwd: string,
   options: CachedAppLoaderOptions = {},
-): (outDirName?: string) => Promise<LoadedApp> {
+): AppLoader {
   const loadAppCached =
     options.loadApp ??
     (async (root: string, outDirName?: string, loadOptions?: LoadAppOptions) => {
@@ -1162,7 +1198,7 @@ export function createCachedAppLoader(
       }
     | undefined
 
-  return async (outDirName = "dist") => {
+  const whole = async (outDirName = "dist"): Promise<LoadedApp> => {
     const nextFingerprint = await fingerprint(cwd)
     if (
       cached !== undefined &&
@@ -1177,4 +1213,11 @@ export function createCachedAppLoader(
     cached = { outDirName, fingerprint: nextFingerprint, app }
     return app
   }
+  const backend = async (): Promise<IntrospectedApp> => {
+    const { hasAppConfig, loadBackendApp } = await import("./load.ts")
+    if (hasAppConfig(cwd)) return whole()
+    // The fingerprint names backend/app.ts, so an edit loads a fresh module and no edit reuses it.
+    return loadBackendApp(cwd, { importQuery: cacheToken(await fingerprint(cwd)) })
+  }
+  return Object.assign(whole, { backend })
 }

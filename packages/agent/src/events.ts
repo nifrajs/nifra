@@ -4,6 +4,8 @@ import type { AgentStepEvidence, AgentTelemetryPort } from "./index.ts"
 export interface AgentEvidenceStreamOptions {
   /** Maximum number of produced evidence items waiting for a consumer. Default 1024. */
   readonly maxQueueSize?: number
+  /** Called once when the consumer stops reading through `return()`, so a producer can drop it. */
+  readonly onReturn?: () => void
 }
 
 /**
@@ -35,6 +37,7 @@ export function createAgentEvidenceStream(
   const waiters: Array<(result: IteratorResult<AgentStepEvidence>) => void> = []
   let completed = false
   let dropped = 0
+  let onReturn = options.onReturn
 
   const finishWaiters = (): void => {
     if (!completed || queue.length > 0) return
@@ -75,6 +78,9 @@ export function createAgentEvidenceStream(
       queue.length = 0
       completed = true
       finishWaiters()
+      const notify = onReturn
+      onReturn = undefined
+      notify?.()
       return Promise.resolve({ done: true, value: undefined })
     },
     [Symbol.asyncIterator]() {
@@ -146,6 +152,11 @@ export interface MemoryAgentEvidenceLogOptions {
    * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.
    */
   readonly maxTurns?: number
+  /**
+   * Maximum live replays attached to one running turn. One more ends the oldest live view, which then
+   * waits for the result without further steps. Default 64.
+   */
+  readonly maxSubscribers?: number
 }
 
 interface MemoryTurnRecord {
@@ -168,6 +179,9 @@ export function createMemoryAgentEvidenceLog(
   const maxTurns = options.maxTurns ?? 256
   if (!Number.isSafeInteger(maxTurns) || maxTurns < 1)
     throw new RangeError("agent evidence log: maxTurns must be a positive safe integer")
+  const maxSubscribers = options.maxSubscribers ?? 64
+  if (!Number.isSafeInteger(maxSubscribers) || maxSubscribers < 1)
+    throw new RangeError("agent evidence log: maxSubscribers must be a positive safe integer")
   const turns = new Map<string, MemoryTurnRecord>()
 
   const deferred = (record: MemoryTurnRecord): void => {
@@ -236,7 +250,14 @@ export function createMemoryAgentEvidenceLog(
       if (turn.finished) return { evidence, live: undefined, result: turn.resultPromise }
       // Snapshot and subscribe in the same synchronous step, so no evidence item can land between
       // the filtered history and the live stream.
-      const live = createAgentEvidenceStream()
+      const live = createAgentEvidenceStream({ onReturn: () => turn.subscribers.delete(live) })
+      if (turn.subscribers.size >= maxSubscribers) {
+        const [oldest] = turn.subscribers
+        if (oldest !== undefined) {
+          turn.subscribers.delete(oldest)
+          oldest.complete()
+        }
+      }
       turn.subscribers.add(live)
       return { evidence, live, result: turn.resultPromise }
     },

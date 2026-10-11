@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { realpathSync } from "node:fs"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, join, resolve } from "node:path"
+import { basename, join, resolve, win32 } from "node:path"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 import { mcp } from "@nifrajs/core/mcp"
@@ -26,7 +26,7 @@ import {
   validateLocalPort,
   WarmWorker,
 } from "../src/mcp.ts"
-import { catalogProjectTools } from "../src/mcp-exec.ts"
+import { catalogProjectTools, explainSourceGate } from "../src/mcp-exec.ts"
 import { joinHeadTail, readHeadTail } from "../src/mcp-io.ts"
 import {
   createMcpProtocolState,
@@ -723,9 +723,10 @@ describe("monorepo detection + tool namespacing", () => {
   })
 
   test("projectTools names are prefixed nifra_<app>_ after namespacing", () => {
-    const fakeLoader = async (): Promise<LoadedApp> => {
+    const refuse = async (): Promise<never> => {
       throw new Error("should not load")
     }
+    const fakeLoader = Object.assign(refuse, { backend: refuse })
     const rawTools = projectTools("/fake", fakeLoader)
     const rawNames = rawTools.map((t) => t.name)
     // Simulate what namespaceForApp does (inline, since it's private)
@@ -851,9 +852,10 @@ describe("monorepo detection + tool namespacing", () => {
   })
 
   test("projectFeatures resource URIs are prefixed after namespacing", () => {
-    const fakeLoader = async (): Promise<LoadedApp> => {
+    const refuse = async (): Promise<never> => {
       throw new Error("should not load")
     }
+    const fakeLoader = Object.assign(refuse, { backend: refuse })
     const features = projectFeatures("/fake", fakeLoader)
     const namespaced = (features.resources ?? []).map((r) => ({
       ...r,
@@ -1287,4 +1289,13 @@ describe("runMcpServer starts on a project it cannot load", () => {
 
     await rm(dir, { recursive: true, force: true })
   }, 30_000)
+})
+
+test("the explain codeframe gate holds a stack to the project, across drives too", () => {
+  const gate = explainSourceGate("C:\\app", win32)
+  expect(gate("C:\\app\\src\\page.tsx")).toBe(true)
+  expect(gate("C:\\app\\.env.ts")).toBe(false)
+  expect(gate("C:\\other\\page.tsx")).toBe(false)
+  expect(gate("D:\\secrets\\keys.ts")).toBe(false)
+  expect(gate("C:\\app\\notes.txt")).toBe(false)
 })

@@ -46,7 +46,8 @@
  *     `status: "cancelled"` entry without an explicit approval resumes as a denial. The runtime
  *     keeps state token-only, so a suspended tool's input must be replayed in
  *     `continuation.input`. A resume that fails validation is ignored and the POST starts a
- *     fresh run.
+ *     fresh run. Return `resumeApproval: "port"` from `ports` when the client must not approve
+ *     its own tool calls.
  * - Agent input is `forwardedProps.input` when present, otherwise the content of the last
  *   `role: "user"` message.
  * - With an `evidenceLog` configured, evidence-derived frames carry SSE `id: <seq>` and a dropped
@@ -301,7 +302,22 @@ function sseResponse(
     async start(controller) {
       const deliver = sseSender(controller, maxOutputBytes)
       const send: SseSend = (event, id) => {
-        if (!detached) deliver(event, id)
+        if (detached) return
+        try {
+          deliver(event, id)
+        } catch (error) {
+          if (!(error instanceof SseOutputLimitError)) throw error
+          // The budget belongs to this viewer, not to the logged run's authoritative result.
+          detached = true
+          disconnect?.abort()
+          if (log === undefined) void stream.return?.()
+          try {
+            deliver({ type: "RUN_ERROR", message: "output_limit", timestamp: Date.now() })
+          } catch {
+            // A fully exhausted budget cannot carry an error frame; closing still releases the view.
+          }
+          controller.close()
+        }
       }
       const projector = createDeltaProjector(send, identity.turnId)
       const run = start(stream, projector.sink, disconnect?.signal)
@@ -313,30 +329,38 @@ function sseResponse(
           () => {},
         )
         .finally(() => stream.complete())
-      send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
-      send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
       let announced = state.announced
-      if (announced)
-        send({ type: "STATE_SNAPSHOT", snapshot: state.channel.snapshot(), timestamp: Date.now() })
-      // A first patch on an unseeded document announces the whole document instead of a delta
-      // against a base the client never saw.
-      const unsubscribe = state.channel.subscribe((ops) => {
-        if (!announced) {
-          announced = true
+      let unsubscribe = () => {}
+      try {
+        send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
+        send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
+        if (announced)
           send({
             type: "STATE_SNAPSHOT",
             snapshot: state.channel.snapshot(),
             timestamp: Date.now(),
           })
-          return
-        }
-        send({ type: "STATE_DELTA", delta: ops, timestamp: Date.now() })
-      })
-      try {
+        if (detached && log === undefined) return
+        // A first patch on an unseeded document announces the whole document instead of a delta
+        // against a base the client never saw.
+        unsubscribe = state.channel.subscribe((ops) => {
+          if (!announced) {
+            announced = true
+            send({
+              type: "STATE_SNAPSHOT",
+              snapshot: state.channel.snapshot(),
+              timestamp: Date.now(),
+            })
+            return
+          }
+          send({ type: "STATE_DELTA", delta: ops, timestamp: Date.now() })
+        })
         for await (const evidence of stream) {
           const openToolCallId = projector.adopt(evidence)
           sendEvidence(send, evidence, identity.turnId, withIds, openToolCallId)
+          if (detached && log === undefined) return
         }
+        if (detached && log === undefined) return
         const { streamedText, usage } = projector.finish()
         const events = terminalEvents(identity, await run, snapshotMessages, usage)
         // Store the terminal events before delivering them, so a client that misses them can
@@ -374,6 +398,7 @@ function sseResponse(
     cancel() {
       detached = true
       disconnect?.abort()
+      if (log === undefined) void stream.return?.()
     },
   })
   return sseHeaders(body)
@@ -384,12 +409,16 @@ function sseReplayResponse(
   replay: AgentEvidenceReplay,
   maxOutputBytes: number,
 ): Response {
+  let detached = false
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller, maxOutputBytes)
-      send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
-      send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
+      const deliver = sseSender(controller, maxOutputBytes)
+      const send: SseSend = (event, id) => {
+        if (!detached) deliver(event, id)
+      }
       try {
+        send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
+        send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
         for (const evidence of replay.evidence) sendEvidence(send, evidence, identity.turnId, true)
         if (replay.live !== undefined)
           for await (const evidence of replay.live)
@@ -407,8 +436,14 @@ function sseReplayResponse(
           // The output budget itself may be exhausted; the stream still closes below.
         }
       } finally {
-        controller.close()
+        if (!detached) void replay.live?.return?.()
+        if (!detached) controller.close()
       }
+    },
+    cancel() {
+      detached = true
+      // Only this view detaches; the logged run keeps recording for the next reconnect.
+      void replay.live?.return?.()
     },
   })
   return sseHeaders(body)

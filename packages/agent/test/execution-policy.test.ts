@@ -45,25 +45,42 @@ describe("local execution policy adapter", () => {
     expect(result.timedOut).toBe(true)
   })
 
-  test("escalates to SIGKILL when a timed-out process ignores SIGTERM", async () => {
-    const adapter = createLocalProcessAdapter()
-    const result = await adapter.run({
-      command: process.execPath,
-      args: ["-e", 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 30000)'],
-      policy: {
-        filesystem: "cwd",
-        network: "allow",
-        timeMs: 50,
-        capabilityCeiling: ["process.run"],
-      },
-    })
-    expect(result.ok).toBe(false)
-    expect(result.timedOut).toBe(true)
-    // POSIX exposes the escalation signal. On Windows taskkill ends the tree, and the child-process
-    // layer reports SIGTERM on some runs and no signal on others; timeout and completion are the
-    // portable contract there.
-    if (process.platform === "win32") expect([undefined, "SIGTERM"]).toContain(result.signal)
-    else expect(result.signal).toBe("SIGKILL")
+  test("escalates to SIGKILL when a stopped process ignores SIGTERM", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-exec-ignore-"))
+    const ready = join(dir, "ready")
+    // The run is stopped only once the child has said its handler is in place: a SIGTERM that lands
+    // during its startup would end it by default and never reach the escalation. Timeout and cancel
+    // stop a run through the same path.
+    const script = [
+      'process.on("SIGTERM", () => {})',
+      `require("node:fs").writeFileSync(${JSON.stringify(ready)}, "1")`,
+      "setTimeout(() => {}, 30000)",
+    ].join("\n")
+    const controller = new AbortController()
+    try {
+      const running = createLocalProcessAdapter().run({
+        command: process.execPath,
+        args: ["-e", script],
+        signal: controller.signal,
+        policy: {
+          filesystem: "cwd",
+          network: "allow",
+          timeMs: 30_000,
+          capabilityCeiling: ["process.run"],
+        },
+      })
+      while (!(await Bun.file(ready).exists())) await Bun.sleep(10)
+      controller.abort()
+      const result = await running
+      expect({ ok: result.ok, cancelled: result.cancelled }).toEqual({ ok: false, cancelled: true })
+      // POSIX exposes the escalation signal. On Windows taskkill ends the tree, and the child-process
+      // layer reports SIGTERM on some runs and no signal on others; completion is the portable
+      // contract there.
+      if (process.platform === "win32") expect([undefined, "SIGTERM"]).toContain(result.signal)
+      else expect(result.signal).toBe("SIGKILL")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   }, 10_000)
 
   const policy = (timeMs: number) => ({
@@ -125,6 +142,49 @@ describe("local execution policy adapter", () => {
   )
 
   test.skipIf(process.platform === "win32")(
+    "a cancelled run stops waiting on a process that left the group but holds the pipes",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-exec-cancel-"))
+      const pidFile = join(dir, "pid")
+      const script = [
+        'const { spawn } = require("node:child_process")',
+        'const { writeFileSync } = require("node:fs")',
+        'const options = { detached: true, stdio: ["ignore", "inherit", "inherit"] }',
+        'const escaped = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], options)',
+        `writeFileSync(${JSON.stringify(pidFile)}, String(escaped.pid))`,
+        "setTimeout(() => {}, 30000)",
+      ].join("\n")
+      const controller = new AbortController()
+      let escaped = 0
+      try {
+        const running = createLocalProcessAdapter().run({
+          command: process.execPath,
+          args: ["-e", script],
+          signal: controller.signal,
+          policy: policy(30_000),
+        })
+        // Cancel only once the escaped process holds the pipes, so the run cannot end on its own close.
+        while (escaped === 0) {
+          const text = (await Bun.file(pidFile).exists()) ? await Bun.file(pidFile).text() : ""
+          escaped = Number(text.trim())
+          if (escaped === 0) await Bun.sleep(10)
+        }
+        controller.abort()
+        const result = await running
+        expect({ ok: result.ok, cancelled: result.cancelled, timedOut: result.timedOut }).toEqual({
+          ok: false,
+          cancelled: true,
+          timedOut: false,
+        })
+      } finally {
+        if (escaped > 0) process.kill(escaped, "SIGKILL")
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    10_000,
+  )
+
+  test.skipIf(process.platform === "win32")(
     "a host that exits mid-run takes the run's process group with it",
     async () => {
       const dir = await mkdtemp(join(tmpdir(), "nifra-exec-exit-"))
@@ -170,7 +230,8 @@ describe("local execution policy adapter", () => {
     const calls: unknown[] = []
     windowsTreeKill(4242, (command, args, options) => {
       calls.push([command, args, options])
-      return { on: () => undefined }
+      // A taskkill that fails to start reports through "error"; the tree kill must swallow it.
+      return { on: (_event: "error", listener: () => void) => listener() }
     })
     expect(calls).toEqual([
       ["taskkill", ["/pid", "4242", "/T", "/F"], { stdio: "ignore", windowsHide: true }],

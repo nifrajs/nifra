@@ -64,7 +64,8 @@ pass the request's bindings: `defineEnv(shape, { source: env })`.
 ## Secret safety
 
 Error messages name the offending variable and the reason - **never its value** (it may be a
-secret). `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
+secret). A BYO validator such as valibot may quote the value in its message; `defineEnv` replaces
+it with `<redacted>`. `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
 
 ## For AI agents
 

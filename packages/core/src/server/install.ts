@@ -25,6 +25,9 @@ export const INSTALL_SSE: unique symbol = Symbol.for("@nifrajs/core/install-sse"
 /** @internal Install the Node-direct renderer on a server (called by the `nodeDirect()` plugin). */
 export const INSTALL_NODE_DIRECT: unique symbol = Symbol.for("@nifrajs/core/install-node-direct")
 
+/** @internal Log an error an adapter caught past `fetch`, through the app's own logger. */
+export const REPORT_ERROR: unique symbol = Symbol.for("@nifrajs/core/report-error")
+
 /** @internal Install the not-found lane on a server (called by the `notFound()` plugin). */
 export const INSTALL_NOT_FOUND: unique symbol = Symbol.for("@nifrajs/core/install-not-found")
 

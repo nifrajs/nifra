@@ -48,7 +48,7 @@ await $`mkdir -p ${consumer}`.quiet()
 
 try {
   // ── Wiring guard. This script builds the package itself, so it would stay green even if the
-  // release pipeline stopped building it - and `changeset:publish` runs only the ROOT `build`.
+  // release pipeline stopped building it - and `release:build` runs only the ROOT `build`.
   // Assert the package is still in that fan-out, or a release could ship an empty `dist/`.
   const rootBuild = (
     JSON.parse(await Bun.file("package.json").text()) as { scripts: Record<string, string> }

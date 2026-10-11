@@ -121,7 +121,7 @@ test("npm publishes through trusted publishing, and only a proven release holds 
   expect(workflowText("release.yml")).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|_authToken/)
   const jobs = workflowJobs("release.yml")
   const { publish } = jobs
-  expect(publish?.needs).toBe("prove-release")
+  expect(publish?.needs).toEqual(["prove-release", "build-release"])
   expect(publish?.if).toBe("needs.prove-release.outputs.is_release == 'true'")
   expect(publish?.environment).toBe("npm-publish")
   expect(publish?.permissions).toEqual({ contents: "read", "id-token": "write" })
@@ -160,6 +160,32 @@ test("the job that can publish runs no install script and nothing after the publ
       "Probe production site",
     ]),
   )
+})
+
+test("the job that can publish runs no build tooling and publishes what the build job uploaded", () => {
+  const { publish, "build-release": build } = workflowJobs("release.yml")
+  const { scripts } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))
+  const runs = (publish?.steps ?? []).map((step) => step.run ?? "").join("\n")
+  for (const script of [runs, scripts["changeset:publish"]]) {
+    expect(script).not.toMatch(/\bbuild\b|gen:llms|\btsc\b|\bvite\b/)
+  }
+  const publishStep = publish?.steps?.find((step) => step.name === "Publish versioned packages")
+  expect(publishStep?.env?.NPM_CONFIG_IGNORE_SCRIPTS).toBe("true")
+
+  expect(build?.permissions).toEqual({ contents: "read" })
+  expect(build?.if).toBe(publish?.if)
+  expect(build?.steps?.some((step) => step.run?.trim() === "bun run release:build")).toBe(true)
+  expect(scripts["release:build"]).toBe("bun run build && bun run gen:llms")
+  const upload = build?.steps?.find((step) => step.uses?.startsWith("actions/upload-artifact@"))
+  const download = publish?.steps?.find((step) =>
+    step.uses?.startsWith("actions/download-artifact@"),
+  )
+  expect(download?.with?.name).toBe(upload?.with?.name ?? "missing upload")
+  const names = publish?.steps?.map((step) => step.name) ?? []
+  expect(names.indexOf(download?.name)).toBeGreaterThan(
+    names.indexOf("Validate the merged release artifact"),
+  )
+  expect(names.indexOf(download?.name)).toBeLessThan(names.indexOf("Publish versioned packages"))
 })
 
 test.skipIf(process.platform === "win32")(

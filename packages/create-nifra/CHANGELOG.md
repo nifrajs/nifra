@@ -1,5 +1,41 @@
 # create-nifra
 
+## 5.0.0
+
+### Minor Changes
+
+- b70b18a: The generated `./+types/<name>` module declares `Route.Loader` and `Route.Action`. Annotate a
+  route's loader, `export const loader: Route.Loader = async ({ params, api }) => ...`, and what it
+  returns is checked against `loaderOutput` at compile time. A field of the wrong type, a `defer(...)`
+  whose value does not match its `t.deferred(...)` field, or any data from a loader with no
+  `loaderOutput` is a type error. A redirect, a `Response` and returning nothing stay allowed.
+  `Route.Action` does the same against `actionOutput`, `revalidate(paths, data)` included. A field the
+  schema does not declare is not a type error, because the output guard drops it.
+
+  `@nifrajs/client` exports the types behind them: `InputOf<Module, Name>` (what a route module's
+  output schema accepts), `RouteLoaderReturn<Module>` and `RouteActionReturn<Module>`.
+
+  `nifra scaffold` and the `create-nifra` starters write the annotation. `nifra schemas` reports a
+  generated schema over an annotated loader or action as unchecked (NF-C033 warns), because the
+  annotation, not the body, is then the function's return type.
+
+### Patch Changes
+
+- 817492d: fix(cli): `@nifrajs/cli` no longer depends on `create-nifra`. It ships its own copy of the agent-file generators, so installing the CLI pulls in only `@nifrajs/*` packages and a scoped release-age exclusion covers the whole tree.
+- 4c07ca7: The next steps printed after `--db` now match the scripts each preset writes: Prisma and Kysely apps are told to run `bun run db:migrate` only, since they have no `db:generate` step to run first.
+- d192f10: fix(create-nifra): `bun run start` on a new site boots the built app instead of exiting. A `nifra build` output runs as production, where the starter's in-memory rate-limit store refuses to start unless `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`. The bun, node and deno `start` scripts now set it, as the Cloudflare one already did, because a local run is a single process. A `--docker` scaffold's `deploy` script sets it for the one container it runs. The image itself does not, so a deployed replica set still needs a shared store or an explicit opt-in.
+- c021dc8: A `site` or `isr` scaffold created with `--db` now passes `tsc`. Its database modules import each other as `./schema.ts`, which the generated `tsconfig.json` refused with TS5097. That tsconfig now sets `allowImportingTsExtensions`, as the `api` and `batteries` templates already did.
+- 2aacb5c: The ISR starter no longer ships `REVALIDATE_SECRET = "dev-secret"` as a `[vars]` entry in `wrangler.toml`, which `wrangler deploy` published as the production purge token. The deployed Worker now answers 404 on `/__nifra/revalidate` until `bunx wrangler secret put REVALIDATE_SECRET` sets a real one; `bun run dev` passes the local value with `--var`. An app scaffolded earlier should delete that `[vars]` entry and set the secret.
+- d3e79c4: A layout's `meta` receives its own loader data as `data`, the value its component renders, or `null` when the layout has no loader, and the page's data as `pageData`. A layout that loads the locale sets `<html lang>` from its data, and a client navigation keeps it, since the soft-navigation head resolves each layout's `meta` with the same data the server used. A page's `meta` is unchanged and also receives `pageData`. `resolveChainMeta` from `@nifrajs/web/client` resolves a route's `meta` chain this way. Generated route types add `Route.MetaArgs`, typed with the module's own loader data.
+
+  Upgrading: a layout `meta` that read the page's data as `data` reads `pageData` now. `nifra check` reports a layout with no loader whose `meta` reads `data` (NF-C040), and the 5.0.0 upgrade notes name the change.
+
+- 15a3a66: Root status pages (`_404.tsx`, `_<status>.tsx`) and `_error.tsx` render inside the layouts above them with their loader data, and the server puts a status page's `meta` in the head. For an unmatched URL the root middleware and layout loaders run first; otherwise the page reuses the layout data the request already loaded. When those layouts cannot render it (a loader throws, a gate or the middleware refuses) a root status page renders alone and is not hydrated, and an `_error` renders inside its layouts without their data, with the same status. A page rendered with layout data is `private, no-store`, and a client navigation that lands on one loads the URL as a document. `export const inLayouts = false` renders a page the 4.x way and runs no layout loader for it.
+
+  `createClientRouter` takes `layoutStatusRoutes`: status route ids whose page renders inside layouts, which a soft navigation loads as a document.
+
+  `nifra check` reports a root status page that imports the root layout to wrap itself, since it now renders that layout twice (NF-C034, warning). The site templates' `_404` pages no longer wrap the layout.
+
 ## 4.0.2
 
 ## 4.0.1

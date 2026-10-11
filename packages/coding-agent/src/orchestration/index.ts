@@ -104,6 +104,7 @@ export {
   type RunResult,
   type RunState,
   type RunStatus,
+  type StepFailure,
   type SubmitOptions,
 } from "./host.ts"
 export {

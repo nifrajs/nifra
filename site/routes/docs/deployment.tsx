@@ -198,6 +198,11 @@ export default function Deployment() {
           from cache forever is correct by construction. Unhashed URLs are left to the network.
         </li>
         <li>
+          <b>Only the build's own URLs are answered, from the build's own cache.</b> Any other request,
+          an API call included, goes to the network untouched, and a cache the page or another app
+          stored on the origin is never read.
+        </li>
+        <li>
           <b>Documents are never cached.</b> Only navigations that FAIL are answered, and only with the
           offline page you nominate - which must be static and user-independent, since every visitor
           gets the same bytes. Caching HTML is how a worker serves one signed-in user the page rendered
@@ -208,8 +213,9 @@ export default function Deployment() {
           straight to the network.
         </li>
         <li>
-          <b>The cache name carries the build id</b>, and activation deletes every older cache - so a
-          stale worker cannot pin an old build indefinitely.
+          <b>The cache name carries the build id</b>, and activation deletes every older cache named{" "}
+          <code>&lt;cacheName&gt;:&lt;buildId&gt;</code> - so a stale worker cannot pin an old build
+          indefinitely, and the origin's other caches are left alone.
         </li>
       </ul>
       <p>
@@ -258,6 +264,15 @@ export default function Deployment() {
         content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
         untouched: <code>serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})</code>.
         On Cloudflare/Vercel the platform serves assets, so you don't need it there.
+      </p>
+      <p>
+        Every file under the mount is cached as immutable by default. If the directory also holds
+        files that keep their name across deploys, pass the build manifest's <code>assets</code> as{" "}
+        <code>hashedFiles</code>: only those URL paths stay immutable, and every other file is sent
+        with its validators so the browser revalidates it. The server that{" "}
+        <code>nifra build --target bun</code> or <code>node</code> generates does this already. It
+        caches only the client build's own content-hashed outputs as immutable. A file copied from{" "}
+        <code>public/</code>, even under <code>public/assets/</code>, gets a one-day policy.
       </p>
 
       <h2>HTTPS without a proxy</h2>

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { appendFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { appendFile, mkdir, mkdtemp, open, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -7,10 +8,14 @@ import {
   parseSessionEvidenceRecord,
   SessionMigrationError,
 } from "../src/session-migration.ts"
+import { FileSessionStore } from "../src/sessions.ts"
 
 const roots: string[] = []
+const closers: (() => Promise<void>)[] = []
 
 afterEach(async () => {
+  // Runs even after a timeout, so a FIFO writer left open cannot keep the run alive.
+  while (closers.length > 0) await closers.pop()!()
   while (roots.length > 0) await rm(roots.pop()!, { recursive: true, force: true })
 })
 
@@ -29,6 +34,26 @@ async function fixture(): Promise<{ source: string; target: string }> {
 }
 
 describe("legacy FileSessionStore evidence migration", () => {
+  // A FIFO whose writer never closes has no end: only a read that stops at the cap can return.
+  test.skipIf(process.platform === "win32")(
+    "an oversized source is refused without reading it to the end",
+    async () => {
+      const { source, target } = await fixture()
+      const fifo = join(source, "endless.jsonl")
+      expect(spawnSync("mkfifo", [fifo]).status).toBe(0)
+      const migrating = migrateLegacySession({
+        sourceRoot: source,
+        targetRoot: target,
+        sessionId: "endless",
+        maxSourceBytes: 1_024,
+      })
+      const writer = await open(fifo, "w")
+      closers.push(() => writer.close())
+      await writer.write(Buffer.alloc(4_096, 0x20))
+      await expect(migrating).rejects.toMatchObject({ code: "source_too_large" })
+    },
+  )
+
   test("preserves identity, ordering, timestamps, counts, and digest without payload content", async () => {
     const { source, target } = await fixture()
     const report = await migrateLegacySession({
@@ -54,6 +79,20 @@ describe("legacy FileSessionStore evidence migration", () => {
     expect(records[1]?.code).toMatch(/^legacy\.unknown\.[0-9a-f]{16}$/)
     expect(report.counts["session.started"]).toBe(1)
     expect(report.digest).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  test("FileSessionStore reads a migrated target and continues its sequence", async () => {
+    const { source, target } = await fixture()
+    await migrateLegacySession({ sourceRoot: source, targetRoot: target, sessionId: "session-1" })
+    const store = new FileSessionStore({ root: target })
+    const entries = await store.read("session-1")
+    expect(entries.map((entry) => [entry.seq, entry.at, entry.type, entry.pinned])).toEqual([
+      [0, 100, "session.started", undefined],
+      [1, 101, expect.stringMatching(/^legacy\.unknown\./), true],
+    ])
+    expect(entries.some((entry) => "payload" in entry)).toBe(false)
+    expect((await store.append("session-1", "turn.started", { turnId: "t2" })).seq).toBe(2)
+    expect((await store.read("session-1")).map((entry) => entry.seq)).toEqual([0, 1, 2])
   })
 
   test("rejects an existing target and leaves the legacy source byte-identical", async () => {

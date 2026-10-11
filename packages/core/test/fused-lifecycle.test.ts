@@ -164,6 +164,57 @@ describe("fused lifecycle lanes", () => {
     })
   })
 
+  test("overlapping fused continuations retain each request's context", async () => {
+    const firstBefore = Promise.withResolvers<void>()
+    const secondAfter = Promise.withResolvers<void>()
+    const resumeFirst = Promise.withResolvers<void>()
+    const resumeSecond = Promise.withResolvers<void>()
+    const app = server()
+      .derive(async (c) => {
+        await Promise.resolve()
+        return { owner: c.params.id ?? "missing" }
+      })
+      .beforeHandle(async (c) => {
+        if (c.owner === "first") {
+          firstBefore.resolve()
+          await resumeFirst.promise
+        }
+        c.set.headers["x-before-owner"] = c.owner
+      })
+      .afterHandle(async (result, c) => {
+        if (c.owner === "second") {
+          secondAfter.resolve()
+          await resumeSecond.promise
+        }
+        c.set.headers["x-after-owner"] = c.owner
+        return { result, owner: c.owner }
+      })
+      .get("/overlap/:id", async (c) => {
+        await Promise.resolve()
+        return { id: c.params.id, owner: c.owner }
+      })
+
+    const first = app.fetch(request("/overlap/first"))
+    const second = app.fetch(request("/overlap/second"))
+    await Promise.all([firstBefore.promise, secondAfter.promise])
+    resumeFirst.resolve()
+    const firstResponse = await first
+    expect(await firstResponse.json()).toEqual({
+      result: { id: "first", owner: "first" },
+      owner: "first",
+    })
+    expect(firstResponse.headers.get("x-before-owner")).toBe("first")
+    expect(firstResponse.headers.get("x-after-owner")).toBe("first")
+    resumeSecond.resolve()
+    const secondResponse = await second
+    expect(await secondResponse.json()).toEqual({
+      result: { id: "second", owner: "second" },
+      owner: "second",
+    })
+    expect(secondResponse.headers.get("x-before-owner")).toBe("second")
+    expect(secondResponse.headers.get("x-after-owner")).toBe("second")
+  })
+
   test("fused lifecycle errors still become the flat internal-error response", async () => {
     const deriveError = server({ logger: silentLogger })
       .derive(() => {

@@ -47,6 +47,30 @@ describe("context assembler", () => {
     expect(result.items.map((item) => item.source)).toEqual(["memory", "retrieval"])
   })
 
+  test("counts each candidate in the order it is returned", () => {
+    // An order-sensitive counter: the two items cost 3 in source order and 2 in priority order.
+    const result = assembleContext(
+      [
+        { id: "a", kind: "test", content: "A", priority: 1 },
+        { id: "b", kind: "test", content: "B", priority: 2 },
+      ],
+      { budget: { maxTokens: 2 }, tokenCounter: (text) => (text === "A\n\nB" ? 3 : 1) },
+    )
+    expect(result.tokens).toBeLessThanOrEqual(2)
+    expect(result.includedIds).toEqual(["b"])
+    expect(result.omittedIds).toEqual(["a"])
+  })
+
+  test("fails closed when a counter scores the final text over budget", () => {
+    let calls = 0
+    expect(() =>
+      assembleContext([{ id: "a", kind: "test", content: "A" }], {
+        budget: { maxTokens: 2 },
+        tokenCounter: () => (++calls === 1 ? 1 : 5),
+      }),
+    ).toThrow(ContextBudgetError)
+  })
+
   test("fails closed when required context cannot fit", () => {
     expect(() =>
       assembleContext(

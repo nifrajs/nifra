@@ -11,6 +11,7 @@ import {
   inspectBuildFreshness,
   queryImpact,
   recordProof,
+  type WorkGraphEdge,
   type WorkGraphSourceFile,
 } from "../src/work-graph.ts"
 
@@ -136,6 +137,26 @@ describe("verification work graph", () => {
     expect(queryImpact(result.graph, ["backend/app.ts"]).impactedRoutes).toEqual(["POST /orders"])
     expect(queryImpact(result.graph, ["backend/db.ts"]).impactedRoutes).toEqual(["POST /orders"])
     expect(queryImpact(result.graph, ["shared/schema.ts"]).impactedRoutes).toEqual(["POST /orders"])
+  })
+
+  test("an impact query reads the edge list once, however many nodes the walk visits", async () => {
+    class CountedEdges extends Array<WorkGraphEdge> {
+      reads = 0
+      override [Symbol.iterator](): ArrayIterator<WorkGraphEdge> {
+        this.reads += 1
+        return super[Symbol.iterator]()
+      }
+    }
+    const result = await buildProjectWorkGraph(
+      { source: backend, files, freshness: { ok: true } },
+      { changedFiles: [] },
+    )
+    const edges = new CountedEdges()
+    for (const edge of result.graph.edges) edges.push(edge)
+    const impact = queryImpact({ ...result.graph, edges }, ["backend/app.ts"])
+    expect(impact.impactedRoutes).toEqual(["POST /orders"])
+    expect(impact.impactedNodes.length).toBeGreaterThan(2)
+    expect(edges.reads).toBe(1)
   })
 
   test("an app file the graph does not model still needs proof", async () => {

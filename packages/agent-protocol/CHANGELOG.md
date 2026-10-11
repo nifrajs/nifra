@@ -1,5 +1,21 @@
 # @nifrajs/agent-protocol
 
+## 5.0.0
+
+### Minor Changes
+
+- 36bdc71: `@nifrajs/agent-protocol/conformance` exports `checkAgentBackend`, which drives an `AgentBackend` through the scenarios a host relies on (session snapshot, a valid turn that completes, a refused second message, cancel, approvals allowed, denied, unknown and cancelled, a closed session) and returns a report of passed, failed, and skipped checks. `AgentBackend.resolveApproval` now documents its result: a boolean once the backend took the answer, `undefined` when it does not know the approval. `PiBackend` forgets a turn's pending approvals when the turn ends, so an answer after a cancel returns `undefined` instead of reaching Pi.
+- 6b0db44: feat(agent-protocol): `splitAgentText`, `boundAgentText`, and `boundAgentValue` keep a backend's events inside the protocol's bounds, with `AGENT_MAX_EVENT_TEXT` (256 KiB) and `AGENT_MAX_PAYLOAD_STRING` (64 KiB) naming them. `splitAgentText` turns a long reply into consecutive pieces that each fit an event and join back to the text; `boundAgentText` cuts one field with a marker; `boundAgentValue` makes a display copy of a tool's input or output (strings cut with a marker, arrays, keys, depth, and nodes kept within the limits, a `__proto__` key kept as an own entry). All three replace NUL, which `isAgentEvent` refuses, with U+FFFD and never cut between the halves of a surrogate pair.
+- a3b3c51: Backends can send their own events. A `type` of `x-<vendor>.<name>` (lowercase, at most 64 characters) with an optional `turnId` and a bounded `data` value is now a valid `AgentEvent` (`AgentExtensionEvent`, `isAgentExtensionEventType`). Before, `isAgentEvent` refused every type the protocol did not define, so a vendor frame such as Codex's plan or a reviewer notice failed the whole turn. `CodingAgentHost` passes extension events through, records only their type and turn as evidence, and takes `extensionEvents: { "x-codex.plan": (event) => boolean }` to check the types it knows; a refused one fails the turn like a malformed event. `@nifrajs/agent-app`'s `toEventView` projects one to `ExtensionEventView` (type, turn, `hasData`, never the data). An exhaustive `switch` over `event.type` now needs a `default` branch for extension events.
+
+  `agentEventProblem(value)` says why an event is invalid, naming the field and the limit it broke but never its content, and the host's `BACKEND_PROTOCOL` failure now carries it: `backend emitted an invalid agent event: turn.started.prompt is longer than 262144 characters` instead of the bare first half.
+
+- b435f13: Three events join the protocol: `reasoning.delta` (`turnId`, optional `itemId`, `text`), `plan.updated` (`turnId`, optional `callId` and `explanation`, and `entries` of `content` up to 4096 characters, `status` `pending` | `in_progress` | `completed`, optional `priority`; each event is the whole plan), and `context.usage` (`usedTokens`, optional `windowTokens`, `inputTokens`, `outputTokens`, `cachedInputTokens`, `reasoningTokens`, `estimated`). The plan entry shape is ACP's. `NifraBackend`'s model port can stream `{ type: "reasoning_delta", text, itemId? }` and `{ type: "usage", usedTokens, ... }` chunks, which become those events; a count that is not a non-negative integer is dropped. `CodingAgentHost` keeps only counts as evidence (a plan's entry and completed counts, never its text), and `toEventView` projects them to `ReasoningDeltaView`, `PlanUpdatedView`, and `ContextUsageView` (with `fill` when the window is known). An exhaustive `switch` over `event.type` needs the three new cases.
+
+### Patch Changes
+
+- 343bae0: `createAgentEventStream` now drops the oldest `assistant.delta` or `tool.delta` when a slow consumer fills the queue, and drops a lifecycle event such as `tool.started` only once no delta is left. A host that records session evidence from a backend's live stream keeps its tool and turn events.
+
 ## 4.0.2
 
 ## 4.0.1

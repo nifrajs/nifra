@@ -13,6 +13,7 @@ import {
   createDurableEffectJournal,
   createSagaEngine,
   type DurableEffectRecord,
+  type DurableEffectStore,
   defineSaga,
   MemoryApprovalStore,
   MemoryDurableEffectStore,
@@ -22,9 +23,11 @@ import {
   reconcileSagas,
   reconcileSagasPage,
   SagaAmbiguousStepError,
+  SagaConcurrencyError,
   type SagaRecord,
   SagaResolutionError,
   type SagaStepRecord,
+  type SagaStore,
 } from "../src/durable-execution.ts"
 import { durableApprovalProtocol } from "../src/internal/durable-approval-protocol.ts"
 import { durableEffectProtocol } from "../src/internal/durable-effect-protocol.ts"
@@ -332,13 +335,13 @@ describe("durable journal and saga reconciliation", () => {
     await journal.intent({ effectId: "effect_ambiguous", capability: "payments.charge" })
     await journal.executing("effect_ambiguous")
     expect(await reconcileEffects(store, { staleBefore: 10 })).toEqual([
-      { effectId: "effect_incomplete", capability: "db.write", state: "incomplete", updatedAt: 10 },
       {
         effectId: "effect_ambiguous",
         capability: "payments.charge",
         state: "ambiguous",
         updatedAt: 10,
       },
+      { effectId: "effect_incomplete", capability: "db.write", state: "incomplete", updatedAt: 10 },
     ])
   })
 
@@ -358,6 +361,52 @@ describe("durable journal and saga reconciliation", () => {
     })
     expect(second.findings.map((finding) => finding.effectId)).toEqual(["effect_2"])
     expect(second.cursor).toBeUndefined()
+  })
+
+  test("a record reconciled between pages moves no other record past the cursor", async () => {
+    const indexed = new MemoryDurableEffectStore()
+    const listed = new MemoryDurableEffectStore()
+    // `list` alone, so reconciliation falls back to scanning the listed records.
+    const listOnly: DurableEffectStore = {
+      create: (record) => listed.create(record),
+      get: (effectId) => listed.get(effectId),
+      transition: (input) => listed.transition(input),
+      list: () => listed.list(),
+    }
+    for (const store of [indexed, listOnly]) {
+      for (let i = 0; i < 25; i++) {
+        await store.create({
+          effectId: `e${i}`,
+          capability: "pay.send",
+          state: "admission",
+          createdAt: 1,
+          updatedAt: 1,
+          version: 1,
+        })
+      }
+      const handled = new Set<string>()
+      let cursor: string | undefined
+      for (let pages = 0; pages < 10; pages++) {
+        const page =
+          cursor === undefined
+            ? await reconcileEffectsPage(store, { staleBefore: 10, limit: 10 })
+            : await reconcileEffectsPage(store, { staleBefore: 10, limit: 10, cursor })
+        for (const finding of page.findings) {
+          handled.add(finding.effectId)
+          await store.transition({
+            effectId: finding.effectId,
+            version: 1,
+            from: "admission",
+            to: "failed",
+            updatedAt: 5,
+            errorCode: "reconciled",
+          })
+        }
+        cursor = page.cursor
+        if (cursor === undefined) break
+      }
+      expect(handled.size).toBe(25)
+    }
   })
 
   test("indexed effect scans remain correct after terminal state transitions", async () => {
@@ -750,5 +799,143 @@ describe("durable journal and saga reconciliation", () => {
       "abort",
     )
     expect((await store.get("saga_exhausted"))?.state).toBe("manual-review")
+  })
+})
+
+// A saga is owned by one resume/compensate call at a time. Two overlapping calls used to run the
+// same steps, and the one that lost a write compensated the other's committed work.
+describe("saga ownership", () => {
+  const twoSteps = (log: string[], gate?: Promise<void>) =>
+    defineSaga<Record<string, never>, { a: unknown; b: unknown }>({
+      name: "order",
+      async run(saga) {
+        await saga.step("a", {}, async () => {
+          log.push("exec a")
+          await gate
+          return 1
+        })
+        await saga.step("b", {}, async () => {
+          log.push("exec b")
+          return 2
+        })
+      },
+      compensators: {
+        a: async () => {
+          log.push("compensate a")
+        },
+        b: async () => {
+          log.push("compensate b")
+        },
+      },
+    })
+  const running = (sagaId: string, extra: Partial<SagaRecord> = {}): SagaRecord => ({
+    sagaId,
+    definition: "order",
+    state: "running",
+    input: {},
+    steps: [],
+    createdAt: 1,
+    updatedAt: 1,
+    version: 1,
+    ...extra,
+  })
+
+  test("a second resume while the first runs changes nothing and compensates nothing", async () => {
+    const log: string[] = []
+    let open = () => {}
+    const gate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    const store = new MemorySagaStore()
+    store.create(running("s1"))
+    const engine = createSagaEngine({ store, allowMemoryStore: true })
+    const first = engine.resume(twoSteps(log, gate), "s1")
+    await Promise.resolve()
+    await expect(engine.resume(twoSteps(log), "s1")).rejects.toBeInstanceOf(SagaConcurrencyError)
+    open()
+    expect((await first).state).toBe("completed")
+    expect(log).toEqual(["exec a", "exec b"])
+    expect(store.get("s1")?.owner).toBeUndefined()
+  })
+
+  test("overlapping resumes on a store with latency each run every step once", async () => {
+    let overlapped = 0
+    for (let seed = 1; seed <= 40; seed++) {
+      const log: string[] = []
+      const memory = new MemorySagaStore()
+      let x = seed
+      const pause = async () => {
+        x = (x * 1103515245 + 12345) & 0x7fffffff
+        for (let turns = x % 4; turns > 0; turns--) await Promise.resolve()
+      }
+      const store: SagaStore = {
+        durability: "durable",
+        create: (record) => pause().then(() => memory.create(record)),
+        get: (sagaId) => pause().then(() => memory.get(sagaId)),
+        compareAndSet: (input) => pause().then(() => memory.compareAndSet(input)),
+      }
+      memory.create(running("s1"))
+      const engine = createSagaEngine({ store })
+      const settled = await Promise.allSettled([
+        engine.resume(twoSteps(log), "s1"),
+        pause().then(() => engine.resume(twoSteps(log), "s1")),
+      ])
+      if (settled.some((result) => result.status === "rejected")) overlapped++
+      expect(settled.some((result) => result.status === "fulfilled")).toBe(true)
+      expect(
+        settled.every(
+          (result) =>
+            result.status === "fulfilled" || result.reason instanceof SagaConcurrencyError,
+        ),
+      ).toBe(true)
+      expect(log).toEqual(["exec a", "exec b"])
+      expect(memory.get("s1")?.state).toBe("completed")
+    }
+    expect(overlapped).toBeGreaterThan(0)
+  })
+
+  test("a lapsed lease is taken over; a step it left executing goes to review", async () => {
+    let clock = 10_000
+    const store = new MemorySagaStore()
+    const executing: SagaStepRecord = {
+      name: "a",
+      effectId: crypto.randomUUID(),
+      compensationEffectId: crypto.randomUUID(),
+      state: "executing",
+      compensationArgs: {},
+      attempts: 0,
+    }
+    store.create(running("s1", { steps: [executing], owner: "dead-run", leaseUntil: 20_000 }))
+    const engine = createSagaEngine({ store, allowMemoryStore: true, now: () => clock })
+    await expect(engine.resume(twoSteps([]), "s1")).rejects.toBeInstanceOf(SagaConcurrencyError)
+    expect(store.get("s1")?.version).toBe(1)
+    clock = 20_001
+    await expect(engine.resume(twoSteps([]), "s1")).rejects.toBeInstanceOf(SagaAmbiguousStepError)
+    expect(store.get("s1")).toMatchObject({ state: "manual-review" })
+    expect(store.get("s1")?.owner).toBeUndefined()
+  })
+
+  test("a run aborted between steps releases the saga for an immediate retry", async () => {
+    const log: string[] = []
+    const store = new MemorySagaStore()
+    store.create(running("s1"))
+    const engine = createSagaEngine({ store, allowMemoryStore: true })
+    const controller = new AbortController()
+    const aborting = defineSaga<Record<string, never>, { a: unknown; b: unknown }>({
+      name: "order",
+      async run(saga) {
+        await saga.step("a", {}, async () => {
+          log.push("exec a")
+          controller.abort(new Error("stop"))
+          return 1
+        })
+        await saga.step("b", {}, async () => 2)
+      },
+      compensators: { a: async () => {}, b: async () => {} },
+    })
+    await expect(engine.resume(aborting, "s1", { signal: controller.signal })).rejects.toThrow(
+      "stop",
+    )
+    expect(store.get("s1")?.owner).toBeUndefined()
   })
 })

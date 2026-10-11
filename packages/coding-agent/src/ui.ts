@@ -91,47 +91,105 @@ export class UiExtensionHost {
   }
 }
 
+const UI_SLOTS: ReadonlySet<unknown> = new Set([
+  "sidebar",
+  "main",
+  "timeline",
+  "diff",
+  "workflow",
+  "status",
+])
+const UI_TONES: ReadonlySet<unknown> = new Set(["neutral", "positive", "warning", "danger"])
+const UI_DENSITIES: ReadonlySet<unknown> = new Set(["compact", "comfortable"])
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] }
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+const matches = (pattern: RegExp, value: unknown): value is string =>
+  typeof value === "string" && pattern.test(value)
+const isSlot = (value: unknown): value is UiExtensionSlot => UI_SLOTS.has(value)
+const isTone = (value: unknown): value is NonNullable<UiStatusWidget["tone"]> => UI_TONES.has(value)
+const isDensity = (value: unknown): value is NonNullable<UiThemeDescriptor["density"]> =>
+  UI_DENSITIES.has(value)
+
+// Manifests come from extension code, often parsed JSON: every field is type-checked, and only the
+// known fields are copied into the frozen result.
 function validateManifests(
-  manifests: readonly UiExtensionManifest[],
+  manifests: unknown,
   options: UiExtensionHostOptions & { readonly maxExtensions: number },
 ): readonly UiExtensionManifest[] {
+  if (!Array.isArray(manifests)) throw new Error("UI extension manifests must be an array")
   if (manifests.length > options.maxExtensions) throw new Error("ui extension limit exceeded")
   const trusted = new Set(options.trustedCapabilities ?? [])
   const ids = new Set<string>()
   return Object.freeze(
-    manifests.map((manifest) => {
-      if (!/^[a-z][a-z0-9._:-]{0,63}$/.test(manifest.id))
-        throw new Error(`invalid UI extension id: ${manifest.id}`)
-      if (!/^[a-zA-Z0-9._:-]{1,64}$/.test(manifest.revision))
-        throw new Error(`invalid UI extension revision: ${manifest.id}`)
-      if (!manifest.label || manifest.label.length > 120)
-        throw new Error(`invalid UI extension label: ${manifest.id}`)
-      if (manifest.theme !== undefined) {
-        if (!/^[a-z][a-z0-9._-]{0,31}$/.test(manifest.theme.name))
-          throw new Error(`invalid UI theme: ${manifest.id}`)
-        if (manifest.theme.accent !== undefined && !/^#[0-9a-fA-F]{6}$/.test(manifest.theme.accent))
-          throw new Error(`invalid UI theme accent: ${manifest.id}`)
+    manifests.map((manifest: unknown): UiExtensionManifest => {
+      if (!isRecord(manifest) || !matches(/^[a-z][a-z0-9._:-]{0,63}$/, manifest.id))
+        throw new Error("invalid UI extension id")
+      const id = manifest.id
+      const revision = manifest.revision
+      if (!matches(/^[a-zA-Z0-9._:-]{1,64}$/, revision))
+        throw new Error(`invalid UI extension revision: ${id}`)
+      const slot = manifest.slot
+      if (!isSlot(slot)) throw new Error(`invalid UI extension slot: ${id}`)
+      const label = manifest.label
+      if (typeof label !== "string" || label.length === 0 || label.length > 120)
+        throw new Error(`invalid UI extension label: ${id}`)
+      const capabilities = manifest.capabilities ?? []
+      if (
+        !Array.isArray(capabilities) ||
+        !capabilities.every((capability): capability is string => typeof capability === "string")
+      )
+        throw new Error(`invalid UI extension capabilities: ${id}`)
+      const result: Mutable<UiExtensionManifest> = {
+        id,
+        revision,
+        slot,
+        label,
+        capabilities: Object.freeze([...capabilities]),
       }
-      if (manifest.status !== undefined) {
-        if (!manifest.status.text || manifest.status.text.length > 160)
-          throw new Error(`invalid UI status widget: ${manifest.id}`)
-        if (
-          manifest.status.tone !== undefined &&
-          !["neutral", "positive", "warning", "danger"].includes(manifest.status.tone)
-        )
-          throw new Error(`invalid UI status tone: ${manifest.id}`)
-      }
-      if (ids.has(manifest.id)) throw new Error(`duplicate UI extension: ${manifest.id}`)
-      ids.add(manifest.id)
-      const denied = (manifest.capabilities ?? []).find((capability) => !trusted.has(capability))
+      if (manifest.theme !== undefined) result.theme = uiTheme(manifest.theme, id)
+      if (manifest.status !== undefined) result.status = uiStatus(manifest.status, id)
+      if (ids.has(id)) throw new Error(`duplicate UI extension: ${id}`)
+      ids.add(id)
+      const denied = capabilities.find((capability) => !trusted.has(capability))
       if (denied !== undefined)
-        throw new Error(`UI extension ${manifest.id} requires untrusted capability: ${denied}`)
-      return Object.freeze({
-        ...manifest,
-        capabilities: Object.freeze([...(manifest.capabilities ?? [])]),
-        ...(manifest.theme === undefined ? {} : { theme: Object.freeze({ ...manifest.theme }) }),
-        ...(manifest.status === undefined ? {} : { status: Object.freeze({ ...manifest.status }) }),
-      })
+        throw new Error(`UI extension ${id} requires untrusted capability: ${denied}`)
+      return Object.freeze(result)
     }),
   )
+}
+
+function uiTheme(value: unknown, id: string): UiThemeDescriptor {
+  if (!isRecord(value) || !matches(/^[a-z][a-z0-9._-]{0,31}$/, value.name))
+    throw new Error(`invalid UI theme: ${id}`)
+  const theme: Mutable<UiThemeDescriptor> = { name: value.name }
+  const { accent, density } = value
+  if (accent !== undefined) {
+    if (!matches(/^#[0-9a-fA-F]{6}$/, accent)) throw new Error(`invalid UI theme accent: ${id}`)
+    theme.accent = accent
+  }
+  if (density !== undefined) {
+    if (!isDensity(density)) throw new Error(`invalid UI theme density: ${id}`)
+    theme.density = density
+  }
+  return Object.freeze(theme)
+}
+
+function uiStatus(value: unknown, id: string): UiStatusWidget {
+  if (
+    !isRecord(value) ||
+    typeof value.text !== "string" ||
+    value.text.length === 0 ||
+    value.text.length > 160
+  )
+    throw new Error(`invalid UI status widget: ${id}`)
+  const status: Mutable<UiStatusWidget> = { text: value.text }
+  const tone = value.tone
+  if (tone !== undefined) {
+    if (!isTone(tone)) throw new Error(`invalid UI status tone: ${id}`)
+    status.tone = tone
+  }
+  return Object.freeze(status)
 }

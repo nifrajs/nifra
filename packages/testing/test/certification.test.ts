@@ -4,6 +4,7 @@ import { MemoryJobStore } from "../../jobs/src/memory-store.ts"
 import { MemoryStorage } from "../../storage/src/memory.ts"
 import {
   assertAdapterCertification,
+  type CertifiableCacheEntry,
   type CertifiableDomainEvent,
   cacheStoreCertificationProfile,
   certifyAdapter,
@@ -110,6 +111,36 @@ describe("portable adapter certification", () => {
     expect(first.capabilities.every((capability) => capability.status === "passed")).toBe(true)
   })
 
+  test("the optional fenced-write capability passes MemoryCache and fails a store without it", async () => {
+    const profile = cacheStoreCertificationProfile({ fencing: true })
+    expect(profile.capabilities).toContain("fenced-write")
+    const fenced = await certifyAdapter({
+      profile,
+      adapterId: "memory-cache",
+      createAdapter: () => new MemoryCache({ now: () => 100 }),
+    })
+    expect(fenced.ok).toBe(true)
+    const unfenced = await certifyAdapter({
+      profile,
+      adapterId: "unfenced-cache",
+      createAdapter: () => {
+        const memory = new MemoryCache({ now: () => 100 })
+        return {
+          get: (key: string) => memory.get(key),
+          set: (key: string, entry: CertifiableCacheEntry, tags: readonly string[]) =>
+            memory.set(key, entry, tags),
+          delete: (key: string) => memory.delete(key),
+          invalidateTag: (tag: string) => memory.invalidateTag(tag),
+          clear: () => memory.clear(),
+        }
+      },
+    })
+    expect(unfenced.ok).toBe(false)
+    expect(
+      unfenced.capabilities.find((capability) => capability.capability === "fenced-write")?.status,
+    ).toBe("failed")
+  })
+
   test("fails closed without serializing adapter error messages", async () => {
     const report = await certifyAdapter({
       profile: cacheStoreCertificationProfile(),
@@ -185,6 +216,49 @@ describe("portable adapter certification", () => {
     })
     expect(storage.ok).toBe(true)
     expect(jobs.ok).toBe(true)
+  })
+
+  test("a store that honors expiry on the wall clock passes; shared leases and unsafe keys fail", async () => {
+    const wallClock = await certifyAdapter({
+      profile: cacheStoreCertificationProfile(),
+      adapterId: "wall-clock-cache",
+      createAdapter: () => new MemoryCache({ now: () => Date.now() }),
+    })
+    expect(wallClock.ok).toBe(true)
+
+    // Every worker that asks is handed the same job: a lease that hides nothing.
+    const sharing = await certifyAdapter({
+      profile: jobStoreCertificationProfile(),
+      adapterId: "sharing-jobs",
+      createAdapter: () => {
+        const store = new MemoryJobStore()
+        const lease = store.lease.bind(store)
+        store.lease = (now, limit) => lease(now, limit, 0)
+        return store
+      },
+    })
+    expect(sharing.checks.filter((check) => !check.ok).map((check) => check.id)).toEqual([
+      "lease-exclusive",
+    ])
+
+    class TraversingStorage extends MemoryStorage {
+      // Writes `../x` as `x`: the key escapes its namespace instead of being refused.
+      override put(
+        key: string,
+        data: Parameters<MemoryStorage["put"]>[1],
+        options?: Parameters<MemoryStorage["put"]>[2],
+      ) {
+        return super.put(key.replace(/^(?:\.\.\/)+/, ""), data, options)
+      }
+    }
+    const traversing = await certifyAdapter({
+      profile: storageAdapterCertificationProfile(),
+      adapterId: "traversing-storage",
+      createAdapter: () => new TraversingStorage(),
+    })
+    expect(traversing.checks.filter((check) => !check.ok).map((check) => check.id)).toEqual([
+      "unsafe-keys",
+    ])
   })
 
   test("traceparent round-trip is an optional job-store capability, failed by a store that drops it", async () => {

@@ -29,7 +29,23 @@ exports[`verification golden output: nifra check full assurance project: --json 
   "ok": true,
   "typecheck": "skipped",
   "typecheckNote": "no tsconfig.json",
-  "diagnostics": []
+  "diagnostics": [],
+  "hooks": {
+    "complete": true,
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/pay",
+        "hooks": []
+      }
+    ],
+    "unmatched": [
+      {
+        "prefix": "/",
+        "hooks": []
+      }
+    ]
+  }
 }"
 `;
 
@@ -62,14 +78,14 @@ exports[`verification golden output: nifra check dirty project: human report wit
 
 ⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✗ hand-rolled fetch()/EventSource/WebSocket to your own API: 1
-    routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift
+    routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment
       fix: Replace own-API fetch with the typed nifra client
       - Call \`nifra_routes\` or read \`nifra://routes\` for the exact typed-client call form.
       - Create \`const api = client<typeof app>(baseUrl)\` from \`@nifrajs/client\`.
       - Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`.
 ✓ client("…") missing its <typeof app> type argument: none
 ✗ backend code in browser code: 1
-    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too
+    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too. If this project serves no pages, declare it in package.json: "nifra": { "kind": "api" }
       fix: Move server-only code behind the route's backend half
       - Remove the import of "../db" from this module: it is browser code, bundled for the browser.
       - Do the backend work in the route's backend half (\`x.backend.ts\` - its \`loader\` or \`action\`) and pass the result as loader data, or call a server function (\`*.fn.ts\`).
@@ -103,8 +119,8 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 3,
-      "message": "const res = await fetch(\\"/notes\\") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
-      "fix": "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
+      "message": "const res = await fetch(\\"/notes\\") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment",
+      "fix": "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment",
       "suggestion": {
         "kind": "manual",
         "title": "Replace own-API fetch with the typed nifra client",
@@ -120,7 +136,7 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 1,
-      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too",
+      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too. If this project serves no pages, declare it in package.json: \\"nifra\\": { \\"kind\\": \\"api\\" }",
       "fix": "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too",
       "chain": [
         "routes/notes.tsx",

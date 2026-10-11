@@ -329,19 +329,25 @@ export interface CursorOptions {
 }
 
 /**
+ * The caller's query as a subquery whose rows also carry the result's column names: Bun returns array
+ * rows without names, and object rows lose a duplicated name. The first column is a JSON array of the
+ * names. It is also what the scope check plans: a plan over one relation leaves its column names
+ * unqualified (`password_hash`, not `users.password_hash`), and the subquery makes every one qualified.
+ */
+const withColumnNames = (sql: string): string =>
+  `SELECT (SELECT json_agg(nifra_k)::text FROM json_object_keys(row_to_json(nifra_q)) AS nifra_k) AS nifra_columns, nifra_q.* FROM (\n${sql}\n) AS nifra_q`
+
+/**
  * Declare the caller's query as a NO SCROLL cursor (the server accepts only SELECT/VALUES there and
- * refuses a data-modifying WITH), check the plan's relations, then FETCH at most `maxRows + 1` rows.
- *
- * The query is wrapped as a subquery so each row also carries the result's column names: Bun returns
- * array rows without names, and object rows lose a duplicated name. The wrapper's first column is a
- * JSON array of the names, read from the first row.
+ * refuses a data-modifying WITH), check the plan's relations, then FETCH at most `maxRows + 1` rows,
+ * the column names read from the first row (see {@link withColumnNames}).
  */
 export async function fetchThroughCursor(
   connection: PgConnection,
   sql: string,
   options: CursorOptions,
 ): Promise<{ readonly columns: string[]; readonly rows: unknown[][] } | DbRefusal> {
-  const wrapped = `SELECT (SELECT json_agg(nifra_k)::text FROM json_object_keys(row_to_json(nifra_q)) AS nifra_k) AS nifra_columns, nifra_q.* FROM (\n${sql}\n) AS nifra_q`
+  const wrapped = withColumnNames(sql)
   await extended(connection, `DECLARE nifra_c NO SCROLL CURSOR FOR ${wrapped}`)
   const plan = planDocument(await extended(connection, `EXPLAIN (VERBOSE, FORMAT JSON) ${wrapped}`))
   const refusal = await options.scope(connection, planReads(plan))
@@ -368,8 +374,8 @@ export interface ExplainOptions {
 
 /**
  * Plan the caller's query. The cursor declaration runs first purely as the statement gate (then is
- * closed), the VERBOSE plan feeds the scope check, and the returned plan is plain `FORMAT JSON` -
- * with `analyze`, executed inside the same read-only transaction and timeout.
+ * closed), the VERBOSE plan of {@link withColumnNames} feeds the scope check, and the returned plan
+ * is plain `FORMAT JSON` - with `analyze`, executed inside the same read-only transaction and timeout.
  */
 export async function explainThroughServer(
   connection: PgConnection,
@@ -378,7 +384,9 @@ export async function explainThroughServer(
 ): Promise<{ readonly plan: unknown } | DbRefusal> {
   await extended(connection, `DECLARE nifra_c NO SCROLL CURSOR FOR ${sql}`)
   await connection.unsafe("CLOSE nifra_c")
-  const verbose = planDocument(await extended(connection, `EXPLAIN (VERBOSE, FORMAT JSON) ${sql}`))
+  const verbose = planDocument(
+    await extended(connection, `EXPLAIN (VERBOSE, FORMAT JSON) ${withColumnNames(sql)}`),
+  )
   const refusal = await options.scope(connection, planReads(verbose))
   if (refusal !== undefined) return refusal
   const mode = options.analyze ? "ANALYZE, FORMAT JSON" : "FORMAT JSON"

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { connect } from "node:net"
 import { join } from "node:path"
 import {
   buildFailureDetail,
@@ -187,6 +188,15 @@ test("route additions and removals regenerate the Bun client entry without resta
     await Bun.sleep(100)
   }
   expect(readFileSync(entry, "utf8")).not.toContain("routes/about.tsx")
+
+  const contact = join(routesDir, "contact.tsx")
+  writeFileSync(contact, "export default function Contact() { return null }\n")
+  for (let i = 0; i < 40 && !readFileSync(entry, "utf8").includes("routes/contact.tsx"); i++) {
+    await Bun.sleep(100)
+  }
+  const finalEntry = readFileSync(entry, "utf8")
+  expect(finalEntry).toContain("routes/contact.tsx")
+  expect(finalEntry).not.toContain("routes/about.tsx")
 })
 
 test("a failing app render returns the dev error overlay, not a bare 500", async () => {
@@ -382,4 +392,42 @@ test("an overlay failure is recorded once, as an ssr error tied to its request",
   expect(errors[0]?.category).toBe("ssr")
   expect(errors[0]?.requestId).toBe(res.headers.get(DEV_REQUEST_ID_HEADER) ?? "")
   expect(errors[0]?.diagnostic.message).toContain("render exploded")
+})
+
+/** One raw GET with the given Host header; resolves to the status code. */
+const statusForHost = (port: number, host: string): Promise<number> =>
+  new Promise((resolve, reject) => {
+    let raw = ""
+    const socket = connect(port, "127.0.0.1", () =>
+      socket.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
+    )
+    socket.on("data", (chunk) => {
+      raw += chunk
+    })
+    socket.on("end", () => resolve(Number(raw.slice(9, 12))))
+    socket.on("error", reject)
+  })
+
+test("the dev server answers loopback hosts and allowedHosts only", async () => {
+  server = await createDevServer({
+    routesDir,
+    outDir: join(projectRoot, "dist"),
+    clientModule,
+    port: 0,
+    guardLeaks: false,
+    record: false,
+    allowedHosts: ["App.Test"],
+    createApp: () => ({ fetch: () => new Response("page") }),
+  })
+  const port = server.port
+  for (const host of [
+    `localhost:${port}`,
+    `127.0.0.1:${port}`,
+    `[::1]:${port}`,
+    `web.localhost:${port}`,
+    `app.test:${port}`,
+  ])
+    expect(await statusForHost(port, host)).toBe(200)
+  for (const host of [`evil.example:${port}`, "attacker.test", `127.0.0.1.evil.example:${port}`])
+    expect(await statusForHost(port, host)).toBe(403)
 })

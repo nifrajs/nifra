@@ -148,7 +148,7 @@ test("tracked requests get an id header, a trace, and tag what they log", async 
     expect.objectContaining({
       requestId,
       method: "POST",
-      path: "/orders?page=2",
+      path: "/orders?page=[redacted]",
       status: 201,
       bytes: 7,
       isr: "MISS",

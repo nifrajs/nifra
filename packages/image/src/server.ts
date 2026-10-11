@@ -11,8 +11,7 @@
  * from `@nifrajs/image` instead. The dependency-free core (`@nifrajs/image`) never imports this module.
  */
 
-import { constants as FS } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { resolve as resolvePath, sep } from "node:path"
 
 import {
@@ -22,6 +21,7 @@ import {
   type OutputFormat,
 } from "./backend.ts"
 
+import { openResolved } from "./open-resolved.ts"
 import { verifyImageParams } from "./sign.ts"
 
 // The codec seam + every official backend (Bun/sharp/WASM) live in the edge-safe `./backend.ts`
@@ -335,8 +335,9 @@ async function fetchRemote(
     timedOut = true
     controller.abort()
   }, cfg.fetchTimeoutMs)
+  let res: Response | undefined
   try {
-    const res = await cfg.fetchImpl(url, {
+    res = await cfg.fetchImpl(url, {
       redirect: "error", // a redirect could bounce to a disallowed origin - refuse it.
       signal: controller.signal,
       headers: { Accept: "image/*" },
@@ -355,6 +356,10 @@ async function fetchRemote(
   } finally {
     clearTimeout(timer)
     requestSignal.removeEventListener("abort", onRequestAbort)
+    // A rejection before the body was read (status, declared size, cancellation) leaves the
+    // exchange open; cancel what is left and abort the fetch so it ends with the admission slot.
+    if (res !== undefined && !res.bodyUsed) res.body?.cancel().catch(() => {})
+    controller.abort()
   }
 }
 
@@ -374,7 +379,8 @@ async function readLocal(
     return { ok: false, status: 403, code: "source_not_allowed" }
   }
   // Resolve containment, then open that verified name exactly once. Reopening `resolved` after these
-  // checks would let a writable source tree swap a symlink between verification and read.
+  // checks would let a writable source tree swap a symlink between verification and read, and
+  // openResolved refuses the name once any component of it became one.
   let real: string
   try {
     real = await realpath(resolved)
@@ -385,9 +391,9 @@ async function readLocal(
   } catch {
     return { ok: false, status: 404, code: "source_not_found" }
   }
-  let handle: Awaited<ReturnType<typeof open>> | undefined
+  let handle: Awaited<ReturnType<typeof openResolved>> | undefined
   try {
-    handle = await open(real, FS.O_RDONLY | FS.O_NOFOLLOW)
+    handle = await openResolved(real)
     const info = await handle.stat()
     if (!info.isFile()) return { ok: false, status: 404, code: "source_not_found" }
     if (info.size > cfg.maxSourceBytes) {
@@ -430,15 +436,19 @@ async function readBoundedBytes(res: Response, limit: number): Promise<Uint8Arra
   }
   const chunks: Uint8Array[] = []
   let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > limit) {
-      await reader.cancel()
-      return null
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > limit) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
     }
-    chunks.push(value)
+  } finally {
+    reader.releaseLock()
   }
   const out = new Uint8Array(total)
   let offset = 0

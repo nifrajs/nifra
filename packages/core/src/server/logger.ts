@@ -57,7 +57,9 @@ export interface RedactOptions {
 export const commonSecretPatterns: ReadonlyArray<RegExp> = [
   /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, // Authorization: Bearer <token>
   /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, // JWT (header.payload.signature)
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, // email
+  // Email. The lookbehind starts a match only where a run of address characters starts; `\b` would
+  // restart inside `a.a.a.` at every `a` and rescan the run each time, quadratic in its length.
+  /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
   /\b[sprk]k_(?:live|test)_[A-Za-z0-9]{8,}/g, // Stripe-style secret/restricted keys
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub personal/OAuth/refresh tokens
   /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id

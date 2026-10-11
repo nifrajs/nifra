@@ -180,6 +180,83 @@ describe("agent turns", () => {
     expect(executedEffectId).toBe(requestedEffectId)
   })
 
+  test("resumeApproval port keeps the approval port authoritative over the caller's decision", async () => {
+    let executions = 0
+    const asked: Array<{ readonly granted: boolean } | undefined> = []
+    const tool = defineTool({
+      name: "reference.approve",
+      description: "Run an approved reference action.",
+      input: t.object({ value: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "reference.approve",
+      approval: { kind: "required" },
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const portWith = (verdict: "pending" | "denied" | "approved") => ({
+      request: ({
+        effectId,
+        callerDecision,
+      }: {
+        readonly effectId: string
+        readonly callerDecision?: { readonly granted: boolean }
+      }) => {
+        asked.push(callerDecision)
+        if (verdict === "pending") return { status: "pending" as const, effectId }
+        if (verdict === "denied") return { status: "denied" as const, reason: "not reviewed" }
+        return { status: "approved" as const, approval: { granted: true } }
+      },
+    })
+    const first = await turn(
+      definition(tool),
+      createAgentState("approval-authority"),
+      { value: { prompt: "approve" } },
+      {
+        model: sequenceModel([{ kind: "tool", name: "reference.approve", input: { value: "x" } }], {
+          count: 0,
+        }),
+        capabilities: ["reference.approve"],
+        approval: portWith("pending"),
+        resumeApproval: "port",
+        clock: () => 1,
+      },
+    )
+    expect(first.status).toBe("suspended")
+    if (first.status !== "suspended") return
+    const resumeWith = (port: { readonly approval?: ReturnType<typeof portWith> }) =>
+      turn(
+        definition(tool),
+        first.state,
+        {
+          value: { prompt: "approve" },
+          resume: { continuation: first.pending, approval: { granted: true } },
+        },
+        {
+          model: sequenceModel([], { count: 0 }),
+          capabilities: ["reference.approve"],
+          ...port,
+          resumeApproval: "port",
+          clock: () => 2,
+        },
+      )
+
+    // The caller approving its own call is passed along, but the port's denial stands.
+    const denied = await resumeWith({ approval: portWith("denied") })
+    expect(denied.status).toBe("continue")
+    if (denied.status === "continue") expect(denied.toolResult.ok).toBe(false)
+    expect(executions).toBe(0)
+    expect(asked.at(-1)).toEqual({ granted: true })
+
+    // With no port to ask, the caller's decision alone approves nothing.
+    expect((await resumeWith({})).status).toBe("suspended")
+    expect(executions).toBe(0)
+
+    expect((await resumeWith({ approval: portWith("approved") })).status).toBe("continue")
+    expect(executions).toBe(1)
+  })
+
   test("retries a model suspension from its saved token-only state", async () => {
     let calls = 0
     const state = new MemoryAgentStateStore()
@@ -463,6 +540,49 @@ describe("agent turns", () => {
     expect(
       result.evidence.some((item) => item.kind === "model" && item.code === "model_failed"),
     ).toBe(true)
+  })
+
+  test("echoing a model suspension's continuation retries the model step", async () => {
+    const store = new MemoryAgentStateStore()
+    let calls = 0
+    const ports = {
+      model: {
+        complete: () => {
+          calls += 1
+          if (calls === 1) throw new Error("provider unavailable")
+          return { kind: "output" as const, value: { answer: "ok" } }
+        },
+      },
+      capabilities: [],
+      state: store,
+      clock: () => 1,
+    }
+    const first = await turn(
+      definition(),
+      createAgentState("model-retry"),
+      { value: { prompt: "hello" } },
+      ports,
+    )
+    if (first.status !== "suspended") throw new Error("expected a suspension")
+    await expect(
+      resumeAgent(
+        definition(),
+        "model-retry",
+        {
+          value: { prompt: "hello" },
+          resume: { continuation: { ...first.pending, effectId: "another" } },
+        },
+        ports,
+      ),
+    ).rejects.toBeInstanceOf(AgentResumeMismatchError)
+    const resumed = await resumeAgent(
+      definition(),
+      "model-retry",
+      { value: { prompt: "hello" }, resume: { continuation: first.pending } },
+      ports,
+    )
+    expect(resumed.status).toBe("completed")
+    expect(calls).toBe(2)
   })
 
   test("bounds a loop that never reaches its goal", async () => {

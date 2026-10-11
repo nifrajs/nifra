@@ -16,6 +16,7 @@ import type { RouteEntry } from "../src/manifest.ts"
 const join2 = (...parts: string[]): string => parts.join("")
 const STRIPE = join2("sk_", "live_", "4eC39HqLyjWDarjtT1zdp7dc")
 const AWS = join2("AKIA", "IOSFODNN7EXAMPLE")
+const KEY = join2("c0ffee1234567890", "deadbeefcafebabe12345678")
 const GITHUB = join2("ghp_", "16C7e42F292c6912E7710c838347Ae178B4a")
 const PEM = join2(
   "-----BEGIN ",
@@ -139,10 +140,90 @@ describe("assigned secrets", () => {
   })
 
   test("a long unbroken word run, such as inlined base64, scans in linear time", () => {
-    const text = `${"a".repeat(100_000)} x; const apiKey = "Zq8mW2vX9pLr4TbN7yKc3HdF"`
-    const started = performance.now()
-    expect(rules(source(text))).toEqual(['assigned-secret: literal assigned to "apiKey"'])
-    expect(performance.now() - started).toBeLessThan(1000)
+    for (const run of ["a".repeat(100_000), `"${"a-".repeat(50_000)}"`, "a-".repeat(50_000)]) {
+      const text = `${run} x; const apiKey = "Zq8mW2vX9pLr4TbN7yKc3HdF"`
+      const started = performance.now()
+      expect(rules(source(text))).toEqual(['assigned-secret: literal assigned to "apiKey"'])
+      expect(performance.now() - started).toBeLessThan(1000)
+    }
+  })
+
+  test("a quoted header name may carry hyphens", () => {
+    expect(rules(source(`fetch(url, { headers: { "x-api-key": "${KEY}" } })`))).toEqual([
+      'assigned-secret: literal assigned to "x-api-key"',
+    ])
+    expect(rules(source(`const headers = { 'x-auth-token': '${KEY}' }`))).toEqual([
+      'assigned-secret: literal assigned to "x-auth-token"',
+    ])
+    expect(rules(source(`const headers = { "X-Signing-Key": "${KEY}" }`))).toEqual([
+      'assigned-secret: literal assigned to "X-Signing-Key"',
+    ])
+    expect(rules(source(`const SIGNING_KEY = "${KEY}"`))).toEqual([
+      'assigned-secret: literal assigned to "SIGNING_KEY"',
+    ])
+  })
+
+  test("a hyphenated name is not a target when unquoted, half-quoted or a ternary branch", () => {
+    for (const text of [
+      `const headers = { "x-api-key": "${join2("AIza", "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY")}" }`,
+      `const headers = { "x-api-key": "${join2("pk_", "live_", "51H8xQ2Lk3Jd9aZ")}" }`,
+      'const headers = { "x-api-key": "<your-api-key-here>" }',
+      'const headers = { "x-api-key": "xxxxxxxxxxxxxxxxxxxx" }',
+      `const header = mode ? "x-api-key" : "${KEY}"`,
+      `const headers = { 'x-api-key": "${KEY}" }`,
+      `const hint = { "paste x-api-key": "${KEY}" }`,
+    ]) {
+      expect(source(text)).toEqual([])
+    }
+  })
+
+  test("a header set by a call or written as a pair", () => {
+    for (const [text, name] of [
+      [`headers.set("x-api-key", "${KEY}")`, "x-api-key"],
+      [`init.headers?.append('x-auth-token', '${KEY}')`, "x-auth-token"],
+      [`new Headers([["accept", "application/json"], ["x-api-key", "${KEY}"]])`, "x-api-key"],
+      [`new Map([ [ "apiKey" , "${KEY}" ] ])`, "apiKey"],
+      [`cookies.set("session_token", "${KEY}", { secure: true })`, "session_token"],
+      ['request.headers.set("Authorization", "Bearer Zq8mW2vX9pLr4TbN7yKc3HdF")', "Authorization"],
+    ] as const) {
+      expect(rules(source(text))).toEqual([`assigned-secret: literal assigned to "${name}"`])
+    }
+    for (const text of [
+      'const pair = ["password", "passwordConfirmation"]',
+      'const rename = new Map([["refresh_token", "refresh_token_expiry"]])',
+      'const required = ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]',
+      `const fields = ["email", "token", "${KEY}"]`,
+      `log("x-api-key", "${KEY}")`,
+      `headers.reset("x-api-key", "${KEY}")`,
+      `headers.set("x-request-id", "${KEY}")`,
+      'headers.set("x-api-key", "<your-api-key-here>")',
+      `new Headers([["x-api-key", "${join2("AIza", "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY")}"]])`,
+    ]) {
+      expect(source(text)).toEqual([])
+    }
+  })
+
+  test("an Authorization literal carrying a Bearer token or a Basic password", () => {
+    const token = "Zq8mW2vX9pLr4TbN7yKc3HdF"
+    const [bearer] = source(`const headers = { Authorization: "Bearer ${token}" }`)
+    expect(bearer).toMatchObject({
+      what: 'literal assigned to "Authorization"',
+      preview: "Zq8m... (24 chars)",
+    })
+    expect(
+      rules(source(`const headers = { "authorization": "Basic ${btoa("app:Xk29vLq8Rt")}" }`)),
+    ).toEqual(['assigned-secret: literal assigned to "authorization"'])
+    for (const text of [
+      'const headers = { Authorization: "Bearer <your-access-token>" }',
+      'const headers = { Authorization: "Bearer xxxxxxxxxxxxxxxxxxxx" }',
+      'const headers = { authorization: "Bearer definitely-wrong" }',
+      `const headers = { Authorization: "Basic ${btoa("user:password")}" }`,
+      `const headers = { Authorization: "Basic ${btoa("admin:admin")}" }`,
+      `const headers = { Authorization: "${token}" }`,
+      'const hint = { authorization: "Required on every request" }',
+    ]) {
+      expect(source(text)).toEqual([])
+    }
   })
 })
 
@@ -335,6 +416,28 @@ describe("client builds", () => {
       { rule: "key-format", file: "frontend/pay.ts", reason: "test fixture" },
     ]
     await buildClient(options({ secretExemptions: exemptions }))
+  })
+
+  test("Bun: a hyphenated header key in a shared module fails the build", async () => {
+    write(
+      "shared/billing.ts",
+      [
+        "export const charge = (body: string) =>",
+        '  fetch("/api/charge", {',
+        '    method: "POST",',
+        `    headers: { "x-api-key": "${KEY}" },`,
+        "    body,",
+        "  })",
+        "",
+      ].join("\n"),
+    )
+    write(
+      "routes/index.tsx",
+      'import { charge } from "../shared/billing.ts"\nexport default () => charge\n',
+    )
+    expect(await failure(() => buildClient(options()))).toContain(
+      'shared/billing.ts:4 literal assigned to "x-api-key" [assigned-secret]',
+    )
   })
 
   test("Bun: a public/ file and a define both count", async () => {

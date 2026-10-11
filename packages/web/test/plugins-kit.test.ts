@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import {
@@ -115,7 +117,7 @@ describe("reproduciblePath", () => {
   test("anchors on the file's nearest package.json (package-root-relative), forward-slashed", () => {
     // packages/web HAS a package.json → the path is relative to packages/web, NOT the cwd/repo root.
     const abs = WEB_SOURCE_FILE
-    expect(reproduciblePath(abs)).toBe("src/x.module.css")
+    expect(reproduciblePath(abs)).toBe("@nifrajs/web/src/x.module.css")
     expect(reproduciblePath(abs)).toBe(reproduciblePath(abs)) // deterministic
   })
 
@@ -129,6 +131,25 @@ describe("reproduciblePath", () => {
       expect(reproduciblePath(abs)).toBe(fromRepoRoot) // cwd changed, result unchanged
     } finally {
       process.chdir(cwd)
+    }
+  })
+
+  test("the same file in two workspace packages gets two paths; an unnamed package, its relative one", () => {
+    const root = mkdtempSync(join(tmpdir(), "nifra-reproducible-"))
+    try {
+      for (const [dir, manifest] of [
+        ["ui", { name: "ui" }],
+        ["app", { name: "app" }],
+        ["bare", { private: true }],
+      ] as const) {
+        mkdirSync(join(root, dir, "src"), { recursive: true })
+        writeFileSync(join(root, dir, "package.json"), JSON.stringify(manifest))
+      }
+      expect(
+        ["ui", "app", "bare"].map((dir) => reproduciblePath(join(root, dir, "src", "Card.vue"))),
+      ).toEqual(["ui/src/Card.vue", "app/src/Card.vue", "src/Card.vue"])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 

@@ -118,6 +118,11 @@ terminal events - the run is never re-executed. A disconnected run keeps going a
 real terminal events for that reconnect. Without an `evidenceLog` nothing can rejoin a dropped
 stream, so the disconnect aborts `ports.signal` and the turn suspends as `cancelled`.
 
+Exceeding `maxOutputBytes` detaches the viewer in the same way, including an oversized initial state
+snapshot. The response closes immediately, with an `output_limit` error frame when the remaining
+budget permits it. Without a log the turn is aborted; with a log it continues recording its real
+terminal result for reconnect rather than storing the viewer's output-limit error as the run result.
+
 ```ts
 import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
 

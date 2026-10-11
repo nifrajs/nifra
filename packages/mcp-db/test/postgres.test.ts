@@ -690,6 +690,50 @@ describe("query layers over a scripted client", () => {
       "NIFRA_DB_TABLE_EXCLUDED",
     )
   })
+
+  test("explain refuses a masked column the plan uses, analyzed or not, before planning it", async () => {
+    const reads = {
+      rows: [
+        {
+          "QUERY PLAN": [
+            {
+              Plan: {
+                "Node Type": "Seq Scan",
+                "Relation Name": "users",
+                Schema: "public",
+                Alias: "users",
+                Output: ["users.id"],
+                Filter: "((users.password_hash)::text ~~ 'h%'::text)",
+              },
+            },
+          ],
+        },
+      ],
+    }
+    for (const analyze of [false, true]) {
+      const { client, log } = fakeClient([
+        [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        [/^EXPLAIN \(VERBOSE/, reads],
+        [/WITH RECURSIVE planned/, { rows: [] }],
+        [
+          /pg_catalog\.pg_attribute/,
+          {
+            rows: [
+              { schema: "public", name: "users", column: "id" },
+              { schema: "public", name: "users", column: "password_hash" },
+            ],
+          },
+        ],
+      ])
+      const explained = await explainPostgres(
+        client,
+        "SELECT id FROM users WHERE password_hash LIKE 'h%'",
+        { ...QUERY, analyze, redaction: { column: (name) => name === "password_hash" } },
+      )
+      expect(code(explained)).toBe("NIFRA_DB_COLUMN_REFUSED")
+      expect(log.some((line) => /^EXPLAIN \((ANALYZE, )?FORMAT JSON\)/.test(line))).toBe(false)
+    }
+  })
 })
 
 describe("schema and role SQL over a scripted client", () => {
@@ -837,19 +881,19 @@ describe("schema and role SQL over a scripted client", () => {
       ],
     ])
 
-  test("Postgres 14+ with nothing excluded grants pg_read_all_data", async () => {
+  test("Postgres 14+ with nothing excluded grants the allowed schemas only, never pg_read_all_data", async () => {
     const sql = await postgresRoleSql(roleClient(160002).client, { timeoutMs: 1000 })
     if (isDbRefusal(sql)) throw new Error(sql.message)
-    expect(sql).toMatchObject({
-      role: "nifra_dev_reader",
-      database: 'app"db',
-      serverVersionNum: 160002,
-    })
+    expect(sql.role).toBe("nifra_dev_reader")
+    expect(sql.database).toBe('app"db')
+    expect(sql.serverVersionNum).toBe(160002)
     expect(sql.statements.filter((line) => !line.startsWith("--"))).toEqual([
       'CREATE ROLE "nifra_dev_reader" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;',
       'ALTER ROLE "nifra_dev_reader" SET default_transaction_read_only = on;',
       'GRANT CONNECT ON DATABASE "app""db" TO "nifra_dev_reader";',
-      'GRANT pg_read_all_data TO "nifra_dev_reader";',
+      'GRANT USAGE ON SCHEMA "public" TO "nifra_dev_reader";',
+      'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "nifra_dev_reader";',
+      'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" GRANT SELECT ON TABLES TO "nifra_dev_reader";',
     ])
   })
 

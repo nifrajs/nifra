@@ -5,7 +5,7 @@ import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { SINGLE_COPY_REGISTER_SPECIFIER } from "@nifrajs/core/single-copy"
 import type { CapabilityProjectReport } from "../capabilities-tool.ts"
-import type { SourceFinding, StaticRouteFinding } from "../check-scan.ts"
+import type { SourceFinding, StaticRouteFinding, TypedClientFinding } from "../check-scan.ts"
 import {
   IDENT,
   movedExportSites,
@@ -22,7 +22,11 @@ import {
 } from "../diagnostics.ts"
 import type { DuplicateInstallFinding } from "../doctor.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { createWebAppProbe, withApiKindHint } from "../internal/nifra-project.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
+import { zoneFolderOf } from "../typecheck-coverage.ts"
+import { versionDriftMessage } from "../version-drift.ts"
+import { MISSING_EXPECTATION_REASON } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /** Legacy rule name → stable NF- code. Exported so `nifra.check.json` rule overrides can be keyed
@@ -89,13 +93,13 @@ export const LEGACY_RULE_ORDER: readonly string[] = Object.freeze([
 ])
 
 const FETCH_HINT =
-  "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift"
+  "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a `// nifra-expect NF-C002: <reason>` comment"
 const STREAM_HINT =
-  "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift"
+  "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift; for a stream no typed client covers, add a `// nifra-expect NF-C002: <reason>` comment"
 const SERVER_IMPORT_HINT =
   "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too"
 const RESPONSE_ROUTE_HINT =
-  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
+  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect NF-C007: <reason>` comment to mark it and silence this"
 const PIPELINE_DOC_HINT =
   "nifra runs one bundler per phase - `vitePlugins` feed Vite, `clientPlugins`/`serverPlugins` feed Bun, and the file `nifra build` imports the adapter from is bundled into the server. See the Gotchas section of the Dev & HMR guide."
 const UNDECLARED_DEP_HINT =
@@ -124,6 +128,7 @@ interface LegacyFields {
   readonly message: string
   readonly evidence?: readonly string[]
   readonly chain?: readonly string[]
+  readonly modules?: readonly string[]
   readonly fix?: string
   /** A recipe for this one finding, when the rule's findings are not all mechanically fixable. */
   readonly recipe?: Diagnostic["fix"]
@@ -163,6 +168,7 @@ function legacyDiagnostic(rule: string, fields: LegacyFields): Diagnostic {
     ...(fields.fix === undefined ? {} : { fix: fields.fix }),
     ...(fields.suggestion === undefined ? {} : { suggestion: fields.suggestion }),
     ...(fields.chain === undefined ? {} : { chain: fields.chain }),
+    ...(fields.modules === undefined ? {} : { modules: fields.modules }),
     ...(fields.includeCode === true ? { includeCode: true } : {}),
   }
   return diagnosticWithCompatibility(canonical, compatibility)
@@ -312,7 +318,7 @@ function responseRouteSuggestion(): DiagnosticSuggestion {
     steps: [
       "Prefer returning a plain object from JSON routes; nifra serializes it for you.",
       "For a stream, use a typed SSE route - `app.sse(...)` (or `sse(c, run)` from `@nifrajs/core/server`) - which keeps typed events instead of collapsing the client to `data: never`.",
-      "If this route must return a raw Response (redirect, file), declare an explicit response schema, or add a `// nifra-expect raw-response` comment above the return to mark it intentional and silence this advisory.",
+      "If this route must return a raw Response (redirect, file), declare an explicit response schema, or add a `// nifra-expect NF-C007: <reason>` comment above the return to mark it intentional and silence this advisory.",
     ],
   }
 }
@@ -378,8 +384,71 @@ const typecheckRule: CheckRule = {
         )
       }
     }
+    findings.push(...outsideProgramFindings(tc.outsideProgram ?? []))
     return findings
   },
+}
+
+/** One finding per zone folder: the fix (tsconfig `include`) is per folder, not per file. */
+function outsideProgramFindings(files: readonly string[]): Diagnostic[] {
+  const byFolder = new Map<string, { readonly first: string; readonly group: string[] }>()
+  for (const file of files) {
+    const folder = zoneFolderOf(file) ?? file
+    const entry = byFolder.get(folder)
+    if (entry === undefined) byFolder.set(folder, { first: file, group: [file] })
+    else entry.group.push(file)
+  }
+  return [...byFolder].map(([folder, { first, group }]) => {
+    const shown = group.slice(0, 3).join(", ")
+    const more = group.length > 3 ? ` and ${group.length - 3} more` : ""
+    return legacyDiagnostic("typecheck", {
+      severity: "error",
+      file: first,
+      message: `${group.length} file(s) under ${folder}/ are outside tsc's program, so the typecheck passed without reading them: ${shown}${more}`,
+      evidence: group,
+      fix: `Add "${folder}" to tsconfig.json "include" (or list the files), then run \`nifra check\` again`,
+      suggestion: {
+        kind: "manual",
+        title: "Bring the folder into the TypeScript program",
+        steps: [
+          `Add "${folder}" to the "include" array in tsconfig.json.`,
+          'Files kept out on purpose: name them in the tsconfig "exclude", or under "typecheck": { "ignore": [...] } in nifra.check.json.',
+          "Run `nifra check` again; the newly checked files may report type errors.",
+        ],
+      },
+    })
+  })
+}
+
+/**
+ * One NF-C002 finding. A `// nifra-expect NF-C002: <reason>` comment keeps it in the report as `info`,
+ * carrying the comment as evidence; the same comment without a reason silences nothing.
+ */
+function typedClientDiagnostic(
+  finding: TypedClientFinding,
+  hint: string,
+  kind: string,
+  suggestion: DiagnosticSuggestion,
+): Diagnostic {
+  const reason = finding.expected?.reason
+  if (reason !== undefined) {
+    return legacyDiagnostic("typed-client", {
+      severity: "info",
+      file: finding.file,
+      line: finding.line,
+      message: `${finding.snippet} - ${kind} is expected here`,
+      evidence: [`nifra-expect NF-C002: ${reason}`],
+    })
+  }
+  const unreasoned = finding.expected === undefined ? "" : `; ${MISSING_EXPECTATION_REASON}`
+  return legacyDiagnostic("typed-client", {
+    severity: "error",
+    file: finding.file,
+    line: finding.line,
+    message: `${finding.snippet} - ${hint}${unreasoned}`,
+    fix: hint,
+    suggestion,
+  })
 }
 
 const typedClientRule: CheckRule = {
@@ -387,26 +456,21 @@ const typedClientRule: CheckRule = {
   title: TITLES["typed-client"]!,
   async scan(ctx) {
     const routes = staticRouteMap(ctx.project.routes)
-    const fetchFindings = [...ctx.project.sourceFindings.fetches].sort(bySite).map((finding) =>
-      legacyDiagnostic("typed-client", {
-        severity: "error",
-        file: finding.file,
-        line: finding.line,
-        message: `${finding.snippet} - ${FETCH_HINT}`,
-        fix: FETCH_HINT,
-        suggestion: ownFetchSuggestion(finding, routes),
-      }),
-    )
-    const streamFindings = [...ctx.project.sourceFindings.streams].sort(bySite).map((finding) =>
-      legacyDiagnostic("typed-client", {
-        severity: "error",
-        file: finding.file,
-        line: finding.line,
-        message: `${finding.snippet} - ${STREAM_HINT}`,
-        fix: STREAM_HINT,
-        suggestion: ownStreamSuggestion(),
-      }),
-    )
+    const fetchFindings = [...ctx.project.sourceFindings.fetches]
+      .sort(bySite)
+      .map((finding) =>
+        typedClientDiagnostic(
+          finding,
+          FETCH_HINT,
+          "own-API fetch",
+          ownFetchSuggestion(finding, routes),
+        ),
+      )
+    const streamFindings = [...ctx.project.sourceFindings.streams]
+      .sort(bySite)
+      .map((finding) =>
+        typedClientDiagnostic(finding, STREAM_HINT, "own-API stream", ownStreamSuggestion()),
+      )
     return [...fetchFindings, ...streamFindings].sort(
       (a, b) => codeUnitOrder(a.file ?? "", b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
@@ -468,19 +532,31 @@ const serverOnlyImportRule: CheckRule = {
   code: LEGACY_RULE_CODES["server-only-import"]!,
   title: TITLES["server-only-import"]!,
   async scan(ctx) {
-    return [...ctx.project.importGraph].sort(bySite).map((finding) => {
+    const inWebApp = createWebAppProbe(ctx.root)
+    const findings: Diagnostic[] = []
+    // No component module got a receipt, so each is judged as an ordinary import: say why.
+    const components = ctx.project.check.componentCheckUnsupported
+    if (components !== undefined)
+      findings.push(unsupportedTypeScriptDiagnostic(components.version, components.message))
+    for (const finding of [...ctx.project.importGraph].sort(bySite)) {
       const chain = finding.chain
       const sink = chain[chain.length - 1] ?? finding.specifier
-      return legacyDiagnostic("server-only-import", {
+      const dir = finding.file.slice(0, Math.max(finding.file.lastIndexOf("/"), 0))
+      const found = legacyDiagnostic("server-only-import", {
         severity: "error",
         file: finding.file,
         line: finding.line,
-        message: `${finding.snippet} - server-only "${sink}" reaches the browser bundle via ${chain.join(" → ")}${finding.fallback ? " (direct edge - couldn't resolve the transitive chain precisely)" : ""}; ${SERVER_IMPORT_HINT}`,
+        message: (inWebApp(dir) ? (text: string) => text : withApiKindHint)(
+          `${finding.snippet} - server-only "${sink}" reaches the browser bundle via ${chain.join(" → ")}${finding.fallback ? " (direct edge - couldn't resolve the transitive chain precisely)" : ""}; ${SERVER_IMPORT_HINT}`,
+        ),
         fix: SERVER_IMPORT_HINT,
         chain,
+        modules: finding.modules,
         suggestion: serverImportSuggestion(finding.specifier, chain, finding.fallback),
       })
-    })
+      findings.push(found)
+    }
+    return findings
   },
 }
 
@@ -507,6 +583,18 @@ const interpolatedSqlRule: CheckRule = {
       )
     }
     for (const finding of [...ctx.project.sourceFindings.interpolatedSql].sort(bySite)) {
+      if (finding.expected !== undefined) {
+        findings.push(
+          legacyDiagnostic("interpolated-sql", {
+            severity: "info",
+            file: finding.file,
+            line: finding.line,
+            message: `${finding.snippet} - interpolated SQL is expected here`,
+            evidence: [`nifra-expect NF-C006: ${finding.expected}`],
+          }),
+        )
+        continue
+      }
       findings.push(
         legacyDiagnostic("interpolated-sql", {
           severity: "error",
@@ -522,7 +610,7 @@ const interpolatedSqlRule: CheckRule = {
               "Pass the value as an argument alongside the statement, so the driver binds it.",
               `Or switch to the driver's tagged template (sql\`… ${SQL_INTERPOLATION_EXAMPLE} …\`): the tag receives substitutions separately and binds them.`,
               "An identifier that genuinely cannot be bound (a table or column name) must be checked against an allowlist you control, never taken from the request.",
-              "If the statement is dynamic but every value is already bound (generating `($1),($2),…` for a batch insert), mark it with a `// nifra-expect sql-dynamic: <reason>` comment on the line above - the reason is required.",
+              "If the statement is dynamic but every value is already bound (generating `($1),($2),…` for a batch insert), mark it with a `// nifra-expect NF-C006: <reason>` comment on the line above - the reason is required.",
             ],
           },
         }),
@@ -556,29 +644,59 @@ function copyLines(finding: DuplicateInstallFinding): string[] {
   )
 }
 
-function duplicateSuggestion(finding: DuplicateInstallFinding): DiagnosticSuggestion {
-  const lines = copyLines(finding)
+/** One fix for duplicates that share a cause and topology, so a linked sibling repository that
+ * duplicates every package reads as one finding instead of one paragraph per package. */
+function duplicateSuggestion(group: readonly DuplicateInstallFinding[]): DiagnosticSuggestion {
+  const names = group.map((finding) => `"${finding.package}"`).join(", ")
   return {
     kind: "manual",
-    title: `Resolve ${finding.package} to one loaded copy`,
+    title:
+      group.length === 1
+        ? `Resolve ${group[0]?.package} to one loaded copy`
+        : `Resolve each of ${group.length} packages to one loaded copy`,
     diff: [
       "package.json:",
-      `  "nifra": { "singleCopy": ["${finding.package}"] }`,
+      `  "nifra": { "singleCopy": [${names}] }`,
       "bunfig.toml:",
       `  preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`,
       "  [test]",
       `  preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`,
     ].join("\n"),
     steps: [
-      ...lines.map((line) => `Copy: ${line}`),
-      ...(finding.provenance === undefined
-        ? []
-        : [`Planted links: ${finding.provenance} Try this before the fixes below.`]),
+      ...group.flatMap(copyLines).map((line) => `Copy: ${line}`),
+      ...group.flatMap((finding) =>
+        finding.provenance === undefined
+          ? []
+          : [
+              `Planted links${group.length === 1 ? "" : ` (${finding.package})`}: ${finding.provenance} Try this before the fixes below.`,
+            ],
+      ),
       "Fix 1 - deduplicate: align workspace dependency and peer ranges on one compatible version, remove stale nested installs, and reinstall from the workspace root so every importer resolves one physical copy.",
-      `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${finding.cause === "version-skew" ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
+      `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${group.some((finding) => finding.cause === "version-skew") ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
       "Re-run `nifra check`; the gate stays failing until one fix lands.",
     ],
   }
+}
+
+function duplicateDiagnostic(group: readonly DuplicateInstallFinding[]): Diagnostic | undefined {
+  const first = group[0]
+  if (first === undefined) return undefined
+  const context = `${first.topology === undefined ? "" : `. Topology: ${first.topology}`}${first.scope === undefined ? "" : `. Scope: ${first.scope}`}`
+  const skew = first.cause === "version-skew"
+  const names = group.map((finding) => finding.package)
+  return legacyDiagnostic("duplicate-install", {
+    severity: "error",
+    message:
+      group.length === 1
+        ? `${first.package} identity preflight found ${first.cause} - ${first.explanation}${context}`
+        : `${group.length} packages share one identity preflight finding, ${first.cause} - ${names.join(", ")} ${skew ? "each resolve to multiple versions and physical paths" : "are each loaded from more than one physical path"}, so module state and symbols are not shared${context}`,
+    fix:
+      group.length === 1 || skew
+        ? first.remediation
+        : `Deduplicate so each resolves to a single physical path, or declare them single-copy: add "nifra": { "singleCopy": [${names.map((name) => `"${name}"`).join(", ")}] } to package.json and preload "${SINGLE_COPY_REGISTER_SPECIFIER}" from bunfig.toml.`,
+    evidence: group.flatMap(copyLines),
+    suggestion: duplicateSuggestion(group),
+  })
 }
 
 const doctorRules: readonly CheckRule[] = Object.freeze([
@@ -610,20 +728,14 @@ const doctorRules: readonly CheckRule[] = Object.freeze([
     async scan(ctx: RuleContext) {
       const doctor = ctx.project.packages.doctor
       if (!doctor.ran) return []
-      const findings: Diagnostic[] = []
+      // Duplicates with one cause and one layout (every package a linked sibling repo installs again)
+      // have one fix, so they are one finding; `identityPreflight` in --json keeps each package.
+      const groups = new Map<string, DuplicateInstallFinding[]>()
       for (const finding of doctor.duplicateInstalls) {
-        const copies = copyLines(finding)
-        findings.push(
-          legacyDiagnostic("duplicate-install", {
-            severity: "error",
-            message: `${finding.package} identity preflight found ${finding.cause} - ${finding.explanation}${finding.topology === undefined ? "" : `. Topology: ${finding.topology}`}${finding.scope === undefined ? "" : `. Scope: ${finding.scope}`}`,
-            fix: finding.remediation,
-            evidence: copies,
-            suggestion: duplicateSuggestion(finding),
-          }),
-        )
+        const key = [finding.cause, finding.topology ?? "", finding.scope ?? ""].join("\0")
+        groups.set(key, [...(groups.get(key) ?? []), finding])
       }
-      return findings
+      return [...groups.values()].flatMap((group) => duplicateDiagnostic(group) ?? [])
     },
   },
   {
@@ -657,6 +769,26 @@ const doctorRules: readonly CheckRule[] = Object.freeze([
     },
   },
 ])
+
+/** Read from the doctor result check already collected; it spawns nothing and edits nothing. */
+const versionDriftRule: CheckRule = {
+  code: "NF-D002",
+  title: "Mixed nifra versions",
+  async scan(ctx) {
+    const drift = ctx.project.packages.doctor.versionDrift
+    if (drift === undefined) return []
+    return [
+      diagnostic({
+        code: "NF-D002",
+        severity: "info",
+        message: versionDriftMessage(drift),
+        evidence: drift.versions.map(({ version }) => version),
+        fix: { recipe: "upgrade.align-versions", command: `nifra upgrade ${drift.highest}` },
+        verify: "nifra doctor",
+      }),
+    ]
+  },
+}
 
 const pipelineRule: CheckRule = {
   code: LEGACY_RULE_CODES.pipeline!,
@@ -995,6 +1127,7 @@ export const legacyRules: readonly CheckRule[] = Object.freeze([
   interpolatedSqlRule,
   responseRouteRule,
   ...doctorRules,
+  versionDriftRule,
   pipelineRule,
   serverManifestRule,
   manifestRule,

@@ -4,11 +4,14 @@ import {
   type AgentBackend,
   type AgentEvent,
   type AgentEventPayload,
+  type AgentExtensionEvent,
   type AgentSessionSnapshot,
   agentError,
+  agentEventProblem,
   type CreateSessionInput,
   type ForkSessionResult,
   isAgentEvent,
+  isAgentExtensionEventType,
   type ReloadResult,
 } from "@nifrajs/agent-protocol"
 import {
@@ -50,19 +53,31 @@ export interface CodingAgentHostOptions {
   >
   /** Retain bounded exception stacks for trusted local diagnostics. */
   readonly exposeErrorStacks?: boolean
+  /**
+   * Checks for a backend's extension events (`x-<vendor>.<name>`), by type. An event whose check
+   * returns false or throws fails the turn like a malformed protocol event; a type with no check
+   * passes through as long as it stays inside the protocol's bounds.
+   */
+  readonly extensionEvents?: Readonly<Record<string, (event: AgentExtensionEvent) => boolean>>
 }
 
 /** Small lifecycle host shared by the CLI, RPC server, and future Workbench. */
 export class CodingAgentHost {
   readonly backend: AgentBackend
   private session: AgentSessionSnapshot | undefined
+  private starting: Promise<AgentSessionSnapshot> | undefined
+  // Bumped by every start and stop: a start that finds it changed was superseded by a stop.
+  private lifecycle = 0
   private readonly sessionStore: SessionStore | undefined
   private readonly context: ContextWindow
   private readonly extensions: ExtensionHost | undefined
   readonly approvals: ApprovalManager
+  /** Approvals {@link resolveApproval} is settling; it forwards those itself, once the broker accepts. */
+  private readonly resolving = new Set<string>()
   private readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
   private readonly maxRepairAttempts: number
   private readonly exposeErrorStacks: boolean
+  private readonly extensionChecks: ReadonlyMap<string, (event: AgentExtensionEvent) => boolean>
   private readonly verification:
     | Pick<VerificationOptions, "command" | "commandArgs" | "timeoutMs" | "maxOutputBytes" | "env">
     | undefined
@@ -72,7 +87,28 @@ export class CodingAgentHost {
     this.sessionStore = options.sessionStore
     this.context = new ContextWindow(options.contextWindow)
     this.extensions = options.extensions
-    this.approvals = new ApprovalManager(options.approvals)
+    const onResolved = options.approvals?.onResolved
+    this.approvals = new ApprovalManager({
+      ...options.approvals,
+      // A denial the broker reaches on its own (timeout, expiry, close) goes to the backend too, or a
+      // backend holding the approval open longer than the host could still act on it.
+      onResolved: async (decision) => {
+        const sessionId = this.session?.id
+        if (!decision.approved && !this.resolving.has(decision.approvalId) && sessionId) {
+          try {
+            await this.backend.resolveApproval?.(
+              sessionId,
+              decision.approvalId,
+              false,
+              decision.reason,
+            )
+          } catch {
+            // The broker's denial stands whether or not the backend still knew the approval.
+          }
+        }
+        await onResolved?.(decision)
+      },
+    })
     this.verifyAfterTurn = Object.freeze([...(options.verifyAfterTurn ?? [])])
     this.maxRepairAttempts = options.maxRepairAttempts ?? 2
     if (
@@ -83,11 +119,39 @@ export class CodingAgentHost {
       throw new RangeError("coding agent: maxRepairAttempts must be between 0 and 8")
     this.exposeErrorStacks = options.exposeErrorStacks === true
     this.verification = options.verification
+    const checks = new Map<string, (event: AgentExtensionEvent) => boolean>()
+    for (const [type, check] of Object.entries(options.extensionEvents ?? {})) {
+      if (!isAgentExtensionEventType(type))
+        throw new TypeError(`coding agent: extension event type must be x-<vendor>.<name>: ${type}`)
+      if (typeof check !== "function")
+        throw new TypeError(`coding agent: the check for ${type} must be a function`)
+      checks.set(type, check)
+    }
+    this.extensionChecks = checks
   }
 
   async start(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
-    if (this.session !== undefined) throw new Error("coding agent: a session is already active")
+    if (this.session !== undefined || this.starting !== undefined)
+      throw new Error("coding agent: a session is already active")
+    const starting = this.startSession(input, ++this.lifecycle)
+    this.starting = starting
+    try {
+      return await starting
+    } finally {
+      if (this.starting === starting) this.starting = undefined
+    }
+  }
+
+  private async startSession(
+    input: CreateSessionInput,
+    generation: number,
+  ): Promise<AgentSessionSnapshot> {
     const created = await this.backend.createSession(input)
+    if (generation !== this.lifecycle) {
+      await this.backend.cancel(created.id, "host stopped").catch(() => {})
+      await this.backend.close(created.id).catch(() => {})
+      throw new Error("coding agent: the host stopped while the session was starting")
+    }
     this.session = created
     try {
       let history: readonly import("./sessions.ts").SessionLogEntry[] = []
@@ -100,6 +164,8 @@ export class CodingAgentHost {
       this.nextSeq = nextSequence(created, history)
       await this.extensions?.reload()
       await this.sessionStore?.append(created.id, "session.started", created)
+      if (generation !== this.lifecycle)
+        throw new Error("coding agent: the host stopped while the session was starting")
       return created
     } catch (error) {
       // Session creation may allocate a process or other external resource. If history, extension
@@ -157,13 +223,11 @@ export class CodingAgentHost {
 
   private acceptBackendEvent(rawEvent: unknown): AgentEvent {
     const session = this.requireSession()
-    if (!isAgentEvent(rawEvent) || rawEvent.sessionId !== session.id) {
-      return this.createEvent({
-        type: "session.failed",
-        error: agentError("BACKEND_PROTOCOL", "backend emitted an invalid agent event"),
-        recoverable: false,
-      })
-    }
+    // agentEventProblem re-walks the event, so it runs only once the event is known to be bad.
+    if (!isAgentEvent(rawEvent))
+      return this.protocolFailure(agentEventProblem(rawEvent) ?? "event is invalid")
+    const problem = this.acceptedEventProblem(rawEvent, session.id)
+    if (problem !== undefined) return this.protocolFailure(problem)
     const event = Object.freeze({
       ...rawEvent,
       sessionId: session.id,
@@ -208,6 +272,28 @@ export class CodingAgentHost {
       updatedAt: event.at,
     })
     return event
+  }
+
+  private protocolFailure(problem: string): AgentEvent {
+    return this.createEvent({
+      type: "session.failed",
+      error: agentError("BACKEND_PROTOCOL", `backend emitted an invalid agent event: ${problem}`),
+      recoverable: false,
+    })
+  }
+
+  private acceptedEventProblem(event: AgentEvent, sessionId: string): string | undefined {
+    if (event.sessionId !== sessionId) return "sessionId is not this session's"
+    if (!isExtensionEvent(event)) return undefined
+    const check = this.extensionChecks.get(event.type)
+    if (check === undefined) return undefined
+    let accepted = false
+    try {
+      accepted = check(event) === true
+    } catch {
+      accepted = false
+    }
+    return accepted ? undefined : `${event.type} failed its registered check`
   }
 
   private async verifyTurn(): Promise<{
@@ -376,6 +462,9 @@ export class CodingAgentHost {
   }
 
   async stop(reason = "stopped"): Promise<void> {
+    // A start still in flight is superseded: wait for it to roll its session back.
+    this.lifecycle++
+    await this.starting?.catch(() => {})
     if (this.session === undefined) return
     const id = this.session.id
     this.session = undefined
@@ -420,10 +509,19 @@ export class CodingAgentHost {
     approved: boolean,
     reason?: string,
   ): Promise<ApprovalDecision | undefined> {
+    // The broker decides first: an approval it no longer holds (unknown, expired, already settled,
+    // or bound to a coordinate) never reaches the backend.
+    this.resolving.add(approvalId)
+    let decision: ApprovalDecision | undefined
+    try {
+      decision = this.approvals.resolve(approvalId, approved, reason)
+    } finally {
+      this.resolving.delete(approvalId)
+    }
+    if (decision === undefined) return undefined
     if (this.session !== undefined && this.backend.resolveApproval !== undefined)
-      await this.backend.resolveApproval(this.session.id, approvalId, approved, reason)
-    const decision = this.approvals.resolve(approvalId, approved, reason)
-    if (decision !== undefined && this.session !== undefined)
+      await this.backend.resolveApproval(this.session.id, approvalId, decision.approved, reason)
+    if (this.session !== undefined)
       await this.sessionStore?.append(this.session.id, "approval.resolved", decision, {
         pinned: true,
       })
@@ -517,8 +615,14 @@ function boundedHostToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
 }
 
+function isExtensionEvent(event: AgentEvent): event is AgentExtensionEvent {
+  return isAgentExtensionEventType(event.type)
+}
+
 /** Default session evidence is content-free; live protocol consumers still receive the full event. */
 function eventEvidence(event: AgentEvent): unknown {
+  // An extension event's data is the backend's own content; evidence keeps only where it belongs.
+  if (isExtensionEvent(event)) return event.turnId === undefined ? {} : { turnId: event.turnId }
   switch (event.type) {
     case "session.started":
     case "session.updated":
@@ -533,7 +637,25 @@ function eventEvidence(event: AgentEvent): unknown {
       return { turnId: event.turnId }
     case "assistant.delta":
     case "assistant.message":
+    case "reasoning.delta":
       return { turnId: event.turnId }
+    case "plan.updated":
+      return {
+        turnId: event.turnId,
+        entries: event.entries.length,
+        completed: event.entries.filter((entry) => entry.status === "completed").length,
+      }
+    case "context.usage": {
+      const {
+        version: _version,
+        sessionId: _sessionId,
+        seq: _seq,
+        at: _at,
+        type: _type,
+        ...counts
+      } = event
+      return counts
+    }
     case "tool.started":
       return { turnId: event.turnId, callId: event.callId, name: event.name }
     case "tool.delta":

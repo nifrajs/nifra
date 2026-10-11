@@ -15,6 +15,21 @@ interface EffectNode {
 
 let currentEffect: EffectNode | undefined
 
+// Collects the disposers of the effects (so also computeds) created while an island's setup and
+// bindings run, so unmounting the island stops them.
+let owner: Array<() => void> | undefined
+
+/** Run `fn` with the disposer of every effect and computed it creates pushed onto `kids`. */
+export function owned<T>(kids: Array<() => void>, fn: () => T): T {
+  const prev = owner
+  owner = kids
+  try {
+    return fn()
+  } finally {
+    owner = prev
+  }
+}
+
 let batchDepth = 0
 const pendingEffects = new Set<EffectNode>()
 
@@ -22,14 +37,6 @@ const pendingEffects = new Set<EffectNode>()
 export type Signal<T> = {
   (): T
   set(next: T | ((prev: T) => T)): void
-}
-
-const scheduleEffect = (e: EffectNode): void => {
-  if (batchDepth > 0) {
-    pendingEffects.add(e)
-  } else {
-    e.run()
-  }
 }
 
 /**
@@ -55,8 +62,12 @@ export function batch<T>(fn: () => T): T {
 
 /** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */
 export function signal<T>(initial: T): Signal<T> {
+  return readable(initial, new Set())
+}
+
+// A signal whose readers are `subs`, so a computed can see whether anything still reads it.
+function readable<T>(initial: T, subs: Set<EffectNode>): Signal<T> {
   let value = initial
-  const subs = new Set<EffectNode>()
   const read = (() => {
     const e = currentEffect
     if (e !== undefined) {
@@ -70,16 +81,44 @@ export function signal<T>(initial: T): Signal<T> {
     if (Object.is(resolved, value)) return
     value = resolved
     // Snapshot: an effect re-run may resubscribe; iterating the live set would loop.
-    for (const e of [...subs]) scheduleEffect(e)
+    for (const e of [...subs]) {
+      if (batchDepth > 0) pendingEffects.add(e)
+      else e.run()
+    }
   }
   return read
 }
 
-/** Derived value, cached into a signal - recomputes when its tracked inputs change. */
-export function computed<T>(fn: () => T): () => T {
-  const out = signal<T>(undefined as T)
-  effect(() => out.set(fn()))
-  return () => out()
+/** A derived value: call it to read (tracking), `.dispose()` to stop recomputing it. */
+export type Computed<T> = {
+  (): T
+  dispose(): void
+}
+
+/**
+ * Derived value, cached into a signal and computed on first read. While an effect (or another
+ * computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next
+ * input change stops it instead of recomputing, so a dropped computed costs nothing; reading it
+ * again starts it afresh. `dispose()` stops it at once.
+ */
+export function computed<T>(fn: () => T): Computed<T> {
+  const subs = new Set<EffectNode>()
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the first read computes it before returning
+  const out = readable<T>(undefined as T, subs)
+  let stop: (() => void) | undefined
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `dispose` is assigned below
+  const read = (() => {
+    stop ??= effect(() => {
+      if (stop === undefined || subs.size > 0) out.set(fn())
+      else read.dispose()
+    })
+    return out()
+  }) as Computed<T>
+  read.dispose = () => {
+    stop?.()
+    stop = undefined
+  }
+  return read
 }
 
 /**
@@ -87,11 +126,15 @@ export function computed<T>(fn: () => T): () => T {
  * re-track on every run, so conditional reads subscribe to exactly the live branch.
  */
 export function effect(fn: () => void): () => void {
+  const stop = (): void => {
+    for (const subs of e.deps) subs.delete(e)
+    e.deps.clear()
+    pendingEffects.delete(e)
+  }
   const e: EffectNode = {
     deps: new Set(),
     run: () => {
-      for (const subs of e.deps) subs.delete(e)
-      e.deps.clear()
+      stop()
       const prev = currentEffect
       currentEffect = e
       try {
@@ -101,10 +144,7 @@ export function effect(fn: () => void): () => void {
       }
     },
   }
+  owner?.push(stop)
   e.run()
-  return () => {
-    for (const subs of e.deps) subs.delete(e)
-    e.deps.clear()
-    pendingEffects.delete(e)
-  }
+  return stop
 }

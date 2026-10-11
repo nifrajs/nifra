@@ -14,7 +14,7 @@
  *   - `SendStreamingMessage` responds `text/event-stream`; each SSE `data:` field is a complete
  *     JSON-RPC response whose result is `{ statusUpdate }` per step-evidence item, then
  *     `{ artifactUpdate }` for a produced output, then a final `{ statusUpdate }` with
- *     `final: true`.
+ *     `final: true`. A client that cancels the body (disconnects) aborts the run's signal.
  *   - `GetTask` projects the stored turn state for a task id (requires `ports.state`).
  *   - Every other spec method returns `UnsupportedOperationError` (-32004): the seam is stateless
  *     per request, so cross-request cancellation and subscription registries belong to the caller.
@@ -22,7 +22,9 @@
  *   `TASK_STATE_INPUT_REQUIRED` whose status message carries the pending continuation in
  *   `metadata`. To resume, send the continuation back via `message.taskId` +
  *   `message.metadata.resume` (`{ continuation, approval? }`); the runtime keeps state token-only,
- *   so a suspended tool's input must be replayed in `continuation.input`.
+ *   so a suspended tool's input must be replayed in `continuation.input`. The resuming peer is
+ *   usually the agent that asked for the tool, so return `resumeApproval: "port"` from `ports` to
+ *   let the approval port, not that peer, decide.
  * - Agent input is `message.metadata.input` when present, otherwise the first `text` part.
  *   Structured output is returned as a `text` part carrying JSON.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards,
@@ -204,7 +206,10 @@ export function mountA2A<
 }
 
 type RpcId = string | number
-type RunStart = (telemetry?: AgentPorts["telemetry"]) => Promise<AgentRunResult<unknown>>
+type RunStart = (
+  telemetry?: AgentPorts["telemetry"],
+  cancel?: AbortSignal,
+) => Promise<AgentRunResult<unknown>>
 
 async function dispatch<
   InputSchema extends StandardSchemaV1,
@@ -231,11 +236,19 @@ async function dispatch<
       const turn = prepareTurn(params)
       if ("error" in turn) return rpcErrorResponse(id, turn.error.code, turn.error.message)
       const basePorts = await options.ports(c)
-      const start: RunStart = (telemetry) => {
+      const start: RunStart = (telemetry, cancel) => {
         // Compose rather than replace: the SSE evidence stream must not displace a telemetry
-        // port the caller injected through `ports`.
+        // port, or a signal, the caller injected through `ports`.
         const combined = combineAgentTelemetry(basePorts.telemetry, telemetry)
-        const ports = combined === undefined ? basePorts : { ...basePorts, telemetry: combined }
+        const signal =
+          cancel === undefined || basePorts.signal === undefined
+            ? (cancel ?? basePorts.signal)
+            : AbortSignal.any([basePorts.signal, cancel])
+        const ports = {
+          ...basePorts,
+          ...(combined === undefined ? {} : { telemetry: combined }),
+          ...(signal === undefined ? {} : { signal }),
+        }
         if (turn.resume !== undefined) {
           return resumeAgent(
             options.agent,
@@ -337,7 +350,13 @@ function streamingResponse(
   maxOutputBytes: number,
 ): Response {
   const stream = createAgentEvidenceStream()
+  // A client that disconnects cancels the body; the run is told through its signal.
+  const cancelled = new AbortController()
   const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled.abort()
+      stream.complete()
+    },
     async start(controller) {
       const encoder = new TextEncoder()
       let emittedBytes = 0
@@ -348,7 +367,7 @@ function streamingResponse(
         emittedBytes += frame.byteLength
         controller.enqueue(frame)
       }
-      const run = start(stream)
+      const run = start(stream, cancelled.signal)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
       // below would hang; the run result (or the error) is still reported in-band after it drains.
       run
@@ -409,7 +428,8 @@ function streamingResponse(
           // The output budget itself may be exhausted; the stream still closes below.
         }
       } finally {
-        controller.close()
+        // Already closed for us when the client cancelled the body.
+        if (!cancelled.signal.aborted) controller.close()
       }
     },
   })

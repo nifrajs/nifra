@@ -33,6 +33,23 @@ const app = server()
   // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
+const TIERS = `import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+// Each request is charged to ONE bucket: the longest matching prefix, else the floor.
+// A tier may sit above the floor - tiers never stack on it.
+const app = server().use(
+  rateLimitTiers({
+    store: new MemoryStore(),
+    floor: { max: 120, windowMs: 60_000 },
+    tiers: [
+      { prefix: "/api/public", max: 600, windowMs: 60_000 },
+      { prefix: "/auth/login", max: 10, windowMs: 60_000 },
+    ],
+    skip: (req) => new URL(req.url).pathname === "/health", // never charged
+  }),
+)`
+
 const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
 import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
@@ -215,6 +232,53 @@ export default function Plugins() {
         error, 404). Hardening middleware uses the same hook model:
       </p>
       <CodeBlock code={MIDDLEWARE} />
+      <p>
+        To refuse a request in <code>onRequest</code>, return the same <code>status()</code> value a
+        route would: <code>return status(401, {"{ error: \"key required\" }"})</code>. It takes the
+        normal response path, so the body is serialized with its content-type, and declared{" "}
+        <code>responseHeaders</code> and every <code>onResponse</code> hook apply to it. A hand-built{" "}
+        <code>Response</code> still works.
+      </p>
+
+      <h3>Which hooks run where</h3>
+      <p>
+        Where a hook is registered decides which requests it sees. <code>nifra routes --hooks</code>{" "}
+        prints, for every backend route and for each prefix's unmatched paths, the hooks that run
+        and the site that registered them (<code>app</code>, <code>group /admin</code>,{" "}
+        <code>merge #1</code>, <code>mount /m</code>), named by plugin where one registered them:
+      </p>
+      <ul>
+        <li>
+          A <b>group</b>'s hooks cover its whole prefix, including that prefix's 404 and 405
+          responses.
+        </li>
+        <li>
+          A <b>merged</b> server's <code>onRequest</code> runs only for its own routes; its
+          response hooks and static headers become app-wide.
+        </li>
+        <li>
+          A <b>mount</b> runs the child's full lifecycle inside the parent's request and response
+          hooks.
+        </li>
+        <li>
+          <code>around</code>, <code>derive</code>, and <code>beforeHandle</code> apply only to
+          routes declared after them.
+        </li>
+        <li>
+          A <b>WebSocket</b> route, listed as <code>WS /path</code>, runs the request hooks, then the
+          authentication stages, <code>derive</code>s, <code>beforeHandle</code>s and{" "}
+          <code>onError</code> declared before it. Its handshake runs no <code>around</code>,{" "}
+          <code>afterHandle</code> or response hooks, but a refused handshake carries the
+          app&rsquo;s <code>responseHeaders()</code>.
+        </li>
+      </ul>
+      <p>
+        <code>nifra routes --hooks --json</code> writes the report; <code>--since &lt;file&gt;</code>{" "}
+        prints what runs differently from a saved one. <code>nifra upgrade --write</code> saves the
+        report before it edits anything and prints the scope diff, and <code>nifra check --json</code>{" "}
+        includes it as <code>hooks</code> when <code>nifra.assurance.ts</code> names a{" "}
+        <code>source</code>. Origins are recorded only outside production builds.
+      </p>
 
       <h2>Header middleware: one portable hook, fast everywhere</h2>
       <p>
@@ -417,6 +481,19 @@ export default function Plugins() {
         is opt-in; <code>combine</code> bundles several middleware into one.
       </p>
       <CodeBlock code={SHAPING} />
+
+      <h2>Rate-limit tiers</h2>
+      <p>
+        A <code>rateLimit()</code> inside a <code>group()</code> still sits under an app-wide one, so a
+        group can only be stricter than the app. <code>rateLimitTiers()</code> is one limiter that
+        charges each request to exactly one bucket - the tier with the longest static{" "}
+        <code>prefix</code> holding the path, else the <code>floor</code> - so a public API can allow
+        more than the floor while a login path allows less. It runs before routing, so 404s, 405s and
+        bodies that fail validation are charged too. Prefixes are checked when the limiter is built
+        (static, no trailing slash, no duplicates), and each tier counts in its own keys, so one store
+        serves them all. <code>skip</code>, on both limiters, leaves a request uncharged.
+      </p>
+      <CodeBlock code={TIERS} />
 
       <h2>Security middleware</h2>
       <p>

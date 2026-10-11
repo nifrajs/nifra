@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentDefinition, AgentModelPort, AgentPorts } from "@nifrajs/agent"
 import { MemoryAgentStateStore } from "@nifrajs/agent"
-import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
+import { type AgentEvidenceLog, createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
 import { defineTool } from "@nifrajs/core/tool-contract"
 import { t } from "@nifrajs/schema"
 import { type AgUIMountableApp, type AgUIRouteContext, mountAgUI } from "../src/index.ts"
@@ -38,6 +38,28 @@ function definition(
     output,
     tools,
   }
+}
+
+/** A log whose live replay views count how often their consumer returned them. */
+function countingLog(): { log: AgentEvidenceLog; returned: () => number } {
+  const base = createMemoryAgentEvidenceLog()
+  let returned = 0
+  const log: AgentEvidenceLog = {
+    ...base,
+    replay: async (turnId, afterSeq) => {
+      const replay = await base.replay(turnId, afterSeq)
+      const live = replay?.live
+      if (live?.return !== undefined) {
+        const stop = live.return.bind(live)
+        live.return = () => {
+          returned++
+          return stop()
+        }
+      }
+      return replay
+    },
+  }
+  return { log, returned: () => returned }
 }
 
 function captureApp(): {
@@ -525,6 +547,38 @@ describe("mountAgUI resumable streams", () => {
     expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
   })
 
+  test("a replay connection that closes detaches its live view, and the run keeps recording", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { log, returned } = countingLog()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports({
+        model: {
+          complete: async () => {
+            await gate
+            return { kind: "output", value: { answer: "late" } }
+          },
+        },
+      }),
+      evidenceLog: log,
+    })
+
+    const first = (await call(replayInput({}))).body!.getReader()
+    await first.read()
+    const watcher = (await call(replayInput({ "last-event-id": "0" }))).body!.getReader()
+    await watcher.read()
+    await watcher.cancel()
+    expect(returned()).toBe(1)
+    release()
+    await first.cancel()
+    const replayed = framed(await (await call(replayInput({ "last-event-id": "0" }))).text())
+    expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
+  })
+
   test("without an evidence log a client disconnect cancels the run", async () => {
     const { app, call } = captureApp()
     let reached!: (signal: AbortSignal) => void
@@ -881,6 +935,222 @@ describe("mountAgUI shared state", () => {
 })
 
 describe("mountAgUI transport limits", () => {
+  test("a state-store outage closes with a sanitized error and settles logged replay", async () => {
+    const { app, call } = captureApp()
+    let saved = 0
+    let modelCalls = 0
+    mountAgUI(app, {
+      agent: definition(),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      ports: ports({
+        state: {
+          load: () => undefined,
+          save: async () => {
+            saved++
+            throw new Error("synthetic storage outage details")
+          },
+        },
+        model: {
+          complete: () => {
+            modelCalls++
+            return { kind: "output", value: { answer: "not committed" } }
+          },
+        },
+      }),
+    })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    expect(list.at(-1)?.type).toBe("RUN_ERROR")
+    expect(list.at(-1)?.message).toBe("run_failed")
+    expect(types(list)).not.toContain("RUN_FINISHED")
+    expect(JSON.stringify(list)).not.toContain("storage outage details")
+    expect(saved).toBe(1)
+    expect(modelCalls).toBe(1)
+
+    const replay = new Request(runInput({ forwardedProps: { input: { prompt: "x" } } }), {
+      headers: { "content-type": "application/json", "last-event-id": "0" },
+    })
+    const replayed = await events(await call(replay))
+    expect(replayed.at(-1)?.type).toBe("RUN_ERROR")
+    expect(replayed.at(-1)?.message).toBe("run_failed")
+    expect(modelCalls).toBe(1)
+  })
+
+  test("a change from provisional tool args to text closes the provisional call exactly once", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports({
+        model: {
+          complete: ({ onDelta }) => {
+            onDelta?.({ kind: "tool-args", name: "reference.echo", argsText: '{"value":' })
+            onDelta?.({ kind: "text", text: "choosing a direct answer instead" })
+            return { kind: "output", value: { answer: "direct" } }
+          },
+        },
+      }),
+    })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const start = list.find((event) => event.type === "TOOL_CALL_START")
+    const ends = list.filter((event) => event.type === "TOOL_CALL_END")
+    expect(start?.toolCallId).toBe("run-1:call:0")
+    expect(ends).toHaveLength(1)
+    expect(ends[0]?.toolCallId).toBe(start?.toolCallId)
+    expect(types(list).indexOf("TOOL_CALL_END")).toBeLessThan(
+      types(list).indexOf("TEXT_MESSAGE_START"),
+    )
+    expect(types(list)).not.toContain("TOOL_CALL_RESULT")
+    expect(list.at(-1)?.type).toBe("RUN_FINISHED")
+    expect(list.at(-1)?.result).toEqual({ answer: "direct" })
+  })
+
+  test("closes an oversized initial snapshot and cancels before starting unlogged model work", async () => {
+    const { app, call } = captureApp()
+    let modelCalls = 0
+    mountAgUI(app, {
+      agent: definition(),
+      maxOutputBytes: 1024,
+      ports: ports({
+        model: {
+          complete: () => {
+            modelCalls++
+            return { kind: "output", value: { answer: "unused" } }
+          },
+        },
+      }),
+    })
+
+    const response = await call(
+      runInput({ state: { draft: "x".repeat(2_000) }, forwardedProps: { input: { prompt: "x" } } }),
+    )
+    const list = await events(response)
+    expect(types(list)).not.toContain("STATE_SNAPSHOT")
+    expect(list.at(-1)?.message).toBe("output_limit")
+    await Bun.sleep(0)
+    expect(modelCalls).toBe(0)
+  })
+
+  test("aborts cooperative unlogged work when a model's state patch exceeds the output cap", async () => {
+    const { app, call } = captureApp()
+    const caller = new AbortController()
+    let modelSignal: AbortSignal | undefined
+    mountAgUI(app, {
+      agent: definition(),
+      maxOutputBytes: 1024,
+      ports: (_context, run) => ({
+        capabilities: [],
+        signal: caller.signal,
+        model: {
+          complete: ({ signal }) => {
+            modelSignal = signal
+            run.sharedState.patch([{ op: "add", path: "/draft", value: "x".repeat(2_000) }])
+            return new Promise((_, reject) => {
+              if (signal.aborted) reject(signal.reason)
+              else signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+            })
+          },
+        },
+      }),
+    })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    expect(list.at(-1)?.message).toBe("output_limit")
+    expect(modelSignal?.aborted).toBe(true)
+    expect(caller.signal.aborted).toBe(false)
+  })
+
+  test("initial output overflow detaches a logged viewer and preserves the real result for replay", async () => {
+    const { app, call } = captureApp()
+    const log = createMemoryAgentEvidenceLog()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reached!: (signal: AbortSignal) => void
+    const started = new Promise<AbortSignal>((resolve) => {
+      reached = resolve
+    })
+    mountAgUI(app, {
+      agent: definition(),
+      maxOutputBytes: 1024,
+      evidenceLog: log,
+      ports: ports({
+        model: {
+          complete: async ({ signal }) => {
+            reached(signal)
+            await gate
+            return { kind: "output", value: { answer: "recorded" } }
+          },
+        },
+      }),
+    })
+
+    const list = await events(
+      await call(
+        runInput({
+          state: { draft: "x".repeat(2_000) },
+          forwardedProps: { input: { prompt: "x" } },
+        }),
+      ),
+    )
+    expect(list.at(-1)?.message).toBe("output_limit")
+    expect((await started).aborted).toBe(false)
+    release()
+    const replay = new Request(runInput({ forwardedProps: { input: { prompt: "x" } } }), {
+      headers: { "content-type": "application/json", "last-event-id": "0" },
+    })
+    const replayed = await events(await call(replay))
+    expect(types(replayed)).not.toContain("RUN_ERROR")
+    expect(replayed.at(-1)?.type).toBe("RUN_FINISHED")
+    expect(replayed.at(-1)?.result).toEqual({ answer: "recorded" })
+  })
+
+  test("an overflowing replay releases its live view while the logged run continues", async () => {
+    const { app, call } = captureApp()
+    const { log, returned } = countingLog()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reached!: () => void
+    const started = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    let modelCalls = 0
+    mountAgUI(app, {
+      agent: definition([echoTool]),
+      maxOutputBytes: 1024,
+      evidenceLog: log,
+      ports: ports({
+        capabilities: ["reference.echo"],
+        model: {
+          complete: async () => {
+            if (++modelCalls <= 4)
+              return { kind: "tool", name: "reference.echo", input: { value: "x" } }
+            reached()
+            await gate
+            return { kind: "output", value: { answer: "recorded" } }
+          },
+        },
+      }),
+    })
+    const first = await call(runInput({ forwardedProps: { input: { prompt: "x" } } }))
+    await started
+    expect((await events(first)).at(-1)?.type).not.toBe("RUN_FINISHED")
+    const replay = new Request(runInput({ forwardedProps: { input: { prompt: "x" } } }), {
+      headers: { "content-type": "application/json", "last-event-id": "0" },
+    })
+    await events(await call(replay))
+    expect(returned()).toBe(1)
+    release()
+    const recorded = await log.replay("run-1", 0)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This fresh in-memory log is written only by the AG-UI fixture's terminal { events } envelope.
+    const terminal = (await recorded?.result) as { events: Record<string, unknown>[] }
+    expect(terminal.events.at(-1)?.type).toBe("RUN_FINISHED")
+    expect(terminal.events.at(-1)?.result).toEqual({ answer: "recorded" })
+  })
+
   test("rejects malformed run identities before invoking the ports factory", async () => {
     const { app, call } = captureApp()
     let portsCalled = false

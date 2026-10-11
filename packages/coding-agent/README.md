@@ -34,6 +34,14 @@ loopback debugger, set `exposeErrorStacks: true` (or pass
 `--expose-error-stacks` to `nifra-agent --rpc`) to include bounded exception
 stacks. This option is rejected for remote binding.
 
+Each `turn.send` SSE frame carries `id: <seq>`. By default a client that disconnects cancels its
+turn. With `resumableTurns: true` the turn keeps running: a client that comes back calls
+`turn.attach` with `{ afterSeq }` (or a `Last-Event-ID` header) to read the frames it missed and
+follow the rest. A cursor older than the held frames (`replayEvents`, default 1024; `replayBytes`,
+default 8 MiB) answers `409 resync_required`, so read `session.events` instead; a second
+`turn.send` while one runs answers `409 turn_running`; and a turn no client has followed for
+`detachedTimeoutMs` (default 2 minutes) is cancelled.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only
@@ -47,7 +55,10 @@ loading code you do not trust.
 an injected model implementation and bounded tools without importing a provider
 SDK. The conversation it sends the model is capped by `maxHistoryChars` (default
 1 MiB): past it, whole earlier turns are dropped, oldest first, and the current
-turn is always sent in full. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+turn is always sent in full. `maxMessageChars` (default 64 KiB) caps the message `send` accepts and
+`maxReplyChars` (default 1 MiB) the model's reply; a reply longer than one event's text arrives as
+consecutive `assistant.message` events, and a tool's event shows a bounded copy of its input while
+the tool runs with all of it. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
 ## At-least-once run dispatch
@@ -69,7 +80,8 @@ Legacy `FileSessionStore` files remain supported for explicit local compatibilit
 `nifra-agent --migrate-session <id> --migrate-from <legacy-dir> --migrate-to <evidence-dir>` to
 create a separately validated, evidence-only target. The source is left untouched and the command
 does not switch an active configuration pointer: after reviewing its report, point the host at the
-new directory yourself. To roll back, point it at the legacy directory again and remove the new
+new directory yourself. `FileSessionStore` reads the migrated rows as content-free entries whose
+type is the stable event code, and new appends continue the sequence. To roll back, point it at the legacy directory again and remove the new
 target; a failed or interrupted migration leaves the active choice unchanged.
 
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus

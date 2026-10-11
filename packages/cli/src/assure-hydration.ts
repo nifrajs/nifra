@@ -11,7 +11,15 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { collectDoctorResult } from "./doctor.ts"
 import { loadApp, resolvePlugins } from "./load.ts"
-import { CHILD_OUTPUT_MAX_BYTES, joinHeadTail, readBoundedStream, readHeadTail } from "./mcp-io.ts"
+import {
+  CHILD_OUTPUT_MAX_BYTES,
+  forwardTerminalSignals,
+  joinHeadTail,
+  OWN_PROCESS_GROUP,
+  readBoundedStream,
+  readHeadTail,
+  signalProcessGroup,
+} from "./mcp-io.ts"
 import { frameworkWebAppOptions } from "./web-app-options.ts"
 
 const HYDRATION_ASSURANCE = Symbol.for("nifra.hydration.assurance")
@@ -634,15 +642,19 @@ export async function runHydrationAssurance(
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      // Its own group, so a stop reaches whatever the project's code started too; a process left
+      // holding the pipes would otherwise keep this run waiting past its timeout.
+      detached: OWN_PROCESS_GROUP,
     },
   )
   let stopped: string | undefined
   const stop = (reason: string): void => {
     stopped ??= reason
-    proc.kill()
+    signalProcessGroup(proc, "SIGTERM")
   }
   const onAbort = (): void => stop("cancelled")
   control.signal?.addEventListener("abort", onAbort, { once: true })
+  const releaseSignals = forwardTerminalSignals(() => stop("interrupted"))
   const timeoutMs = control.timeoutMs ?? HYDRATION_RUN_TIMEOUT_MS
   const timer = setTimeout(() => stop(`timed out after ${timeoutMs} ms`), timeoutMs)
   try {
@@ -673,6 +685,7 @@ export async function runHydrationAssurance(
   } finally {
     clearTimeout(timer)
     control.signal?.removeEventListener("abort", onAbort)
+    releaseSignals()
   }
 }
 

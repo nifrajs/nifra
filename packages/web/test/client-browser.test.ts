@@ -78,6 +78,7 @@ class FakeFormElement extends FakeElement {
   method = "post"
   action = "http://example.test/submit"
   nativeSubmits = 0
+  readonly nativeSubmitters: Array<FakeElement | null> = []
 
   constructor() {
     super("form")
@@ -85,6 +86,27 @@ class FakeFormElement extends FakeElement {
 
   submit(): void {
     this.nativeSubmits++
+  }
+
+  /** Like the browser's: a submit event first, and the native post only if no listener prevents it. */
+  requestSubmit(submitter: FakeElement | null = null): void {
+    const event = fakeEvent(this, submitter)
+    document.emit("submit", event)
+    if (event.defaultPrevented) return
+    this.nativeSubmits++
+    this.nativeSubmitters.push(submitter)
+  }
+}
+
+/** A submit button; `form*` hold what the browser's reflected properties would. */
+class FakeButtonElement extends FakeElement {
+  formMethod = ""
+  formAction = ""
+  formTarget = ""
+
+  constructor(attributes: Record<string, string> = {}) {
+    super("button")
+    for (const [name, value] of Object.entries(attributes)) this.setAttribute(name, value)
   }
 }
 
@@ -172,7 +194,10 @@ beforeAll(() => {
   slot.IntersectionObserver = FakeIntersectionObserver
   slot.HTMLFormElement = FakeFormElement
   slot.FormData = class {
-    constructor(readonly form: FakeFormElement) {}
+    constructor(
+      readonly form: FakeFormElement,
+      readonly submitter: FakeElement | null = null,
+    ) {}
   }
   slot.requestAnimationFrame = (callback: FrameRequestCallback): number => {
     callback(0)
@@ -266,7 +291,10 @@ function resetBrowser(): void {
   slot.scrollY = 34
 }
 
-function fakeEvent(target: FakeElement): Event & {
+function fakeEvent(
+  target: FakeElement,
+  submitter: FakeElement | null = null,
+): Event & {
   defaultPrevented: boolean
   button: number
   metaKey: boolean
@@ -277,6 +305,7 @@ function fakeEvent(target: FakeElement): Event & {
   let prevented = false
   return {
     target,
+    submitter,
     button: 0,
     metaKey: false,
     ctrlKey: false,
@@ -760,6 +789,58 @@ test("form integration intercepts app POSTs, preserves revalidation choice and f
   const getSubmit = fakeEvent(form)
   document.emit("submit", getSubmit)
   expect(getSubmit.defaultPrevented).toBe(false)
+  stop()
+})
+
+test("an enhanced submit goes through its button: name and value, formaction, formmethod, formtarget", async () => {
+  resetBrowser()
+  const submissions: Array<{ readonly path: string; readonly submitter: unknown }> = []
+  let reject: Error | undefined
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: installForms calls only match and submit
+  const router = {
+    match: (path: string) =>
+      path === "/submit" || path === "/other" ? { routeId: "r", params: {} } : null,
+    submit: async (path: string, body: FormData) => {
+      submissions.push({ path, submitter: Reflect.get(body, "submitter") })
+      if (reject !== undefined) throw reject
+    },
+  } as ClientRouter
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+  }
+  const stop = installForms(router)
+  const form = new FakeFormElement()
+
+  // Its name=value is part of the body the router posts.
+  const intent = new FakeButtonElement({ name: "intent", value: "delete" })
+  document.emit("submit", fakeEvent(form, intent))
+  await settle()
+  expect(submissions).toEqual([{ path: "/submit", submitter: intent }])
+
+  const elsewhere = new FakeButtonElement({ formaction: "/other" })
+  elsewhere.formAction = "http://example.test/other"
+  document.emit("submit", fakeEvent(form, elsewhere))
+  await settle()
+  expect(submissions.at(-1)?.path).toBe("/other")
+
+  const viaGet = new FakeButtonElement({ formmethod: "get" })
+  viaGet.formMethod = "get"
+  const getEvent = fakeEvent(form, viaGet)
+  document.emit("submit", getEvent)
+  expect(getEvent.defaultPrevented).toBe(false)
+
+  const newTab = new FakeButtonElement({ formtarget: "_blank" })
+  newTab.formTarget = "_blank"
+  const tabEvent = fakeEvent(form, newTab)
+  document.emit("submit", tabEvent)
+  expect(tabEvent.defaultPrevented).toBe(false)
+
+  // Nothing reached the server: the native post goes through the same button.
+  reject = new Error("offline")
+  document.emit("submit", fakeEvent(form, intent))
+  await settle()
+  expect(form.nativeSubmitters).toEqual([intent])
+  expect(submissions).toHaveLength(3)
   stop()
 })
 

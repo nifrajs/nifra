@@ -50,6 +50,8 @@ export interface CreateMcpServerOptions {
   readonly maxBodyBytes?: number
   /** Max serialized JSON-RPC response or SSE frame size (default 1 MB). */
   readonly maxResponseBytes?: number
+  /** Max bytes an SSE stream queues for a client that is not reading (default 4 MiB). */
+  readonly maxPendingBytes?: number
   /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */
   readonly instructions?: string
   /** Explicitly allow browser clients from any origin. Omit for the secure same-origin default. */
@@ -118,6 +120,7 @@ export function createMcpServer(opts: CreateMcpServerOptions): McpServer {
         ...(opts.health !== undefined ? { health: opts.health } : {}),
         ...(opts.maxBodyBytes !== undefined ? { maxBodyBytes: opts.maxBodyBytes } : {}),
         ...(opts.maxResponseBytes !== undefined ? { maxResponseBytes: opts.maxResponseBytes } : {}),
+        maxPendingBytes: opts.maxPendingBytes,
         ...(opts.allowAnyOrigin === true ? { allowAnyOrigin: true } : {}),
         ...(opts.allowedOrigins !== undefined ? { allowedOrigins: opts.allowedOrigins } : {}),
         ...(opts.allowedHosts !== undefined ? { allowedHosts: opts.allowedHosts } : {}),

@@ -10,7 +10,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 
 ## Public entrypoints
 
-`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router`
+`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
 
 ## Key exports
 
@@ -22,16 +22,17 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => ReactElement` · from `@nifrajs/web-react/image`
 - **Island** _(function)_ - `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode` · from `@nifrajs/web-react/island`
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
+- **NestedServerComponent** _(function)_ - `NestedServerComponent: ({ instance, html, }: { readonly instance: string; readonly html: string; }) => import("react").DOMElement<{ "data-n…` · from `@nifrajs/web-react/server-components/nested`
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
+- **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("react").FunctionComponentElement<{ readon…` · from `@nifrajs/web-react/server-components/outlet`
+- **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRende…` · from `@nifrajs/web-react/server-components/rsc`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-react/client`
-- **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-react/client`
-- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-react/i18n`
-- **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
+- **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined` · from `@nifrajs/web-react/server-components/guard`
 
-_…and 57 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 72 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 
+- Server-component opt-in uses real RSC/Flight with React, React DOM and Flight exactly 19.2.8, Vite 8.2.1 and plugin-rsc 0.5.35. Register server views in the RSC entry; every use-client export needs a closed companion props schema. Native use-server actions are rejected; use validated serverFn.
 - React is **deduped** in both the build and the Vite dev server, so a `file:`-linked package shipping its own React no longer nulls the SSR hook dispatcher (`Invalid hook call` / `resolveDispatcher`). See `/docs/troubleshooting`.
 - A route file that exports `loader`/`action`/`meta` is **not a Fast-Refresh boundary** - keep the view in a child component for state-preserving HMR.

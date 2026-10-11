@@ -6,7 +6,8 @@
  * (`@nifrajs/core/edge-kit`'s {@link readBodyFramed}).
  *
  * Spec: https://graphql.github.io/graphql-over-http/draft/. POST carries `{query, operationName?,
- * variables?, extensions?}` as `application/json`; GET carries them as query-string params and may run
+ * variables?, extensions?}` as `application/json` (any other media type answers 415, so a cross-site
+ * form cannot post a mutation); GET carries them as query-string params and may run
  * **queries only** (never a mutation) so it stays a safe, cacheable idempotent method. Responses use the
  * `application/graphql-response+json` media type with spec status codes by default; set
  * `legacyJsonResponse` for the old always-200 `application/json` shape older clients expect.
@@ -49,6 +50,7 @@ import {
   documentMetrics,
   type GraphqlLimits,
   graphqlLimits,
+  overlapLimitError,
   requestLimitError,
   safeFormattedError,
 } from "./limits.ts"
@@ -84,7 +86,16 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
   readonly maxComplexity?: number
   /** Maximum operation definitions in one document. Default 10. */
   readonly maxOperations?: number
-  /** Maximum asynchronous resolver execution time. Default 10 seconds. */
+  /**
+   * Maximum pairs of fields sharing a response name in one selection set, counted through fragments.
+   * Validation compares every such pair, so this bounds its cost. Default 2,000.
+   */
+  readonly maxFieldOverlaps?: number
+  /**
+   * Maximum asynchronous resolver execution time. Default 10 seconds. The execution's abort signal,
+   * which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline and when the
+   * request itself is aborted.
+   */
   readonly executionTimeoutMs?: number
   /** Prototype-pollution policy for the parsed JSON body. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
@@ -96,8 +107,8 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
    */
   readonly allowedOrigins?: readonly string[]
   /**
-   * Per-request authorization, run after the body parses and before execution. Return `false` to answer
-   * `401` with a GraphQL error envelope and skip execution entirely.
+   * Per-request authorization, run after the origin check and before the body is read or parsed; a
+   * CORS preflight (`OPTIONS`) skips it. Return `false` to answer `401` with a GraphQL error envelope.
    */
   readonly authorize?: (request: Request) => boolean | Promise<boolean>
   /** Emit the legacy always-200 `application/json` response shape instead of `application/graphql-response+json`. */
@@ -195,6 +206,12 @@ function parseVariables(raw: unknown): Record<string, unknown> | null {
   return parsed as Record<string, unknown>
 }
 
+/** `application/json` or a structured `+json` type, parameters ignored. */
+function isJsonMediaType(header: string | null): boolean {
+  const essence = header?.split(";", 1)[0]?.trim().toLowerCase() ?? ""
+  return essence === "application/json" || /^application\/[a-z0-9.+-]+\+json$/.test(essence)
+}
+
 /** Read `{query, operationName, variables}` from a parsed POST body. Throws GraphQLError when malformed. */
 function paramsFromBody(body: unknown): GraphqlParams {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
@@ -247,12 +264,10 @@ async function run<Context, Env>(
     return requestError("", 400, legacy, cors, [gqlErr], opts.formatError)
   }
 
-  const validationErrors = validate(opts.schema, document, specifiedRules)
-  if (validationErrors.length > 0) {
-    return requestError("", 400, legacy, cors, validationErrors, opts.formatError)
-  }
-
-  const documentLimit = documentLimitError(documentMetrics(document), limits)
+  // Every limit runs before validate(): its overlap rule is quadratic, so a small document within the
+  // byte limit can hold the event loop for seconds.
+  const documentLimit =
+    documentLimitError(documentMetrics(document), limits) ?? overlapLimitError(document, limits)
   if (documentLimit !== undefined) {
     return requestError(
       documentLimit,
@@ -262,6 +277,11 @@ async function run<Context, Env>(
       [new GraphQLError(documentLimit)],
       opts.formatError,
     )
+  }
+
+  const validationErrors = validate(opts.schema, document, specifiedRules)
+  if (validationErrors.length > 0) {
+    return requestError("", 400, legacy, cors, validationErrors, opts.formatError)
   }
 
   // GET is idempotent and cacheable, so per the GraphQL-over-HTTP spec it may run queries only.
@@ -295,15 +315,20 @@ async function run<Context, Env>(
 
   let result: ExecutionResult
   try {
-    const execution = execute({
-      schema: opts.schema,
-      document,
-      rootValue: opts.rootValue,
-      contextValue,
-      variableValues: params.variables ?? undefined,
-      operationName: params.operationName ?? undefined,
-    })
-    result = (await withExecutionTimeout(execution, executionTimeoutMs)) as ExecutionResult
+    result = await withExecutionTimeout(
+      (abortSignal) =>
+        execute({
+          schema: opts.schema,
+          document,
+          rootValue: opts.rootValue,
+          contextValue,
+          variableValues: params.variables ?? undefined,
+          operationName: params.operationName ?? undefined,
+          abortSignal,
+        }),
+      request.signal,
+      executionTimeoutMs,
+    )
   } catch (err) {
     const gqlErr =
       err instanceof GraphQLError
@@ -342,11 +367,23 @@ class ExecutionTimeoutError extends Error {
   }
 }
 
-async function withExecutionTimeout<T>(work: T | Promise<T>, timeoutMs: number): Promise<T> {
+/** Run `start` under a deadline. A timeout rejects and aborts the signal resolvers were given. */
+async function withExecutionTimeout<T>(
+  start: (abortSignal: AbortSignal) => T | Promise<T>,
+  outer: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController()
+  const work = start(AbortSignal.any([outer, controller.signal]))
   if (!(work instanceof Promise) || timeoutMs === 0) return work
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new ExecutionTimeoutError()), timeoutMs)
+    timer = setTimeout(() => {
+      const error = new ExecutionTimeoutError()
+      // Rejected first: the abort can reject the work, and the race must settle on the timeout.
+      reject(error)
+      controller.abort(error)
+    }, timeoutMs)
   })
   try {
     return await Promise.race([work, timeout])
@@ -408,6 +445,19 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
       legacy,
       { ...cors, allow: "GET, POST" },
       [new GraphQLError("Only GET and POST are supported.")],
+      options.formatError,
+    )
+  }
+
+  // Checked before the body is read: urlencoded, multipart and text/plain are what a browser sends
+  // cross-site without a preflight, so accepting one would let a form run a mutation with cookies.
+  if (!isJsonMediaType(request.headers.get("content-type"))) {
+    return requestError(
+      "Unsupported media type.",
+      415,
+      legacy,
+      cors,
+      [new GraphQLError("A POST body must be sent as application/json.")],
       options.formatError,
     )
   }

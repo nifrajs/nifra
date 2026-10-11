@@ -3,6 +3,7 @@ import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import {
   decodeBase64,
   guardName,
+  installAuthGuard,
   jsonError,
   type MaybePromise,
   quotedHeaderValue,
@@ -39,9 +40,9 @@ function reject(realm: string): Response {
   return jsonError(401, "unauthorized", { "www-authenticate": challenge(realm) })
 }
 
-function credentials(request: Request): { username: string; password: string } | null {
-  const header = request.headers.get("authorization")
-  if (header?.startsWith("Basic ") !== true) return null
+function credentials(header: string | null): { username: string; password: string } | null {
+  // The auth-scheme is case-insensitive (RFC 9110 section 11.1): `basic` and `BASIC` are Basic too.
+  if (header == null || header.slice(0, 6).toLowerCase() !== "basic ") return null
   const raw = decodeBase64(header.slice(6).trim())
   if (raw === null) return null
   let decoded: string
@@ -89,16 +90,17 @@ export function basicAuth<P>(
       : staticVerifier(options.username, options.password, options.principal ?? options.username)
 
   const plugin = defineIdentityPlugin(guardName("basicAuth"), (app) =>
-    app.beforeHandle(async (c: { readonly req: Request }) => {
-      const parsed = credentials(c.req)
-      const principal =
-        parsed === null ? null : await (await verifyPromise)(parsed.username, parsed.password)
-      if (principal !== null && principal !== undefined) {
-        store.set(c.req, principal)
-        return undefined
-      }
-      return optional ? undefined : reject(realm)
-    }),
+    installAuthGuard(
+      app,
+      "basicAuth",
+      optional,
+      store,
+      async (header) => {
+        const parsed = credentials(header("authorization"))
+        return parsed === null ? null : (await verifyPromise)(parsed.username, parsed.password)
+      },
+      () => reject(realm),
+    ),
   )
   const instrumented = optional
     ? plugin
