@@ -349,19 +349,24 @@ test.skipIf(process.platform === "win32")(
 test("a failed publish is retried from main for a merged release SHA, under the same proofs", () => {
   const release = workflowText("release.yml")
   expect(release).toContain("  workflow_dispatch:\n    inputs:\n      merge_sha:")
-  const { "prove-release": prove, publish, "deploy-site": deploy } = workflowJobs("release.yml")
+  const {
+    "prove-release": prove,
+    "build-release": build,
+    publish,
+    "deploy-site": deploy,
+  } = workflowJobs("release.yml")
   expect(prove?.if).toContain(
     "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
   )
   const proof = prove?.steps?.find((step) => step.name === "Prove this is a merged release PR")?.run
   for (const check of [
-    `compare/\${MERGE_SHA}...main`,
+    `compare/\${PUBLISH_SHA}...main`,
     '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"',
     '.name == "release-verification"',
   ])
     expect(proof).toContain(check)
-  const merge = `\${{ needs.prove-release.outputs.merge_sha }}`
-  for (const job of [publish, deploy])
+  const merge = `\${{ needs.prove-release.outputs.publish_sha }}`
+  for (const job of [build, publish, deploy])
     expect(job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))?.with?.ref).toBe(
       merge,
     )
@@ -371,9 +376,168 @@ test("a failed publish is retried from main for a merged release SHA, under the 
   ).toBe(merge)
   // Every later step reads the validated SHA, not the trigger's.
   expect(release.match(/workflow_run\.head_sha/g)).toHaveLength(1)
+  const checkout = prove?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
+  expect(checkout?.with?.["fetch-depth"]).toBe(0)
+  expect(checkout?.with?.["persist-credentials"]).toBe(false)
 })
 
 const GITHUB_RELEASE = "Publish the version's GitHub release"
+
+test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
+  "release recovery publishes a green descendant without changing the prepared release",
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "release-recovery-"))
+    try {
+      const git = (...args: string[]): string => {
+        const result = Bun.spawnSync(["git", ...args], { cwd: dir })
+        expect(result.exitCode).toBe(0)
+        return result.stdout.toString().trim()
+      }
+      git("init", "-q", "-b", "main")
+      const commit = (path: string, contents: string): string => {
+        mkdirSync(dirname(join(dir, path)), { recursive: true })
+        writeFileSync(join(dir, path), contents)
+        git("add", path)
+        git(
+          "-c",
+          "user.name=Release Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "commit",
+          "-qm",
+          path,
+        )
+        return git("rev-parse", "HEAD")
+      }
+      const base = commit("packages/core/package.json", '{"version":"4.0.2"}')
+      const merge = commit("packages/core/package.json", '{"version":"5.0.0"}')
+      const publish = commit("packages/core/test.ts", "// CI fix\n")
+      const releasePr = {
+        merged_at: "2026-10-11T00:00:00Z",
+        merge_commit_sha: merge,
+        base: { ref: "main", sha: base, repo: { full_name: "nifrajs/nifra" } },
+        head: { ref: "release/v5.0.0", sha: merge, repo: { full_name: "nifrajs/nifra" } },
+      }
+      const releaseCheck = {
+        name: "release-verification",
+        app: { slug: "github-actions" },
+        head_sha: merge,
+        conclusion: "success",
+      }
+      const PATH = fakeBin(dir, {
+        gh: [
+          "#!/bin/sh",
+          'case "$*" in',
+          '  *"/compare/"*) echo "$ON_MAIN" ;;',
+          '  *"/actions/runs?"*) case "$*" in',
+          '    *"head_sha=$EXPECTED_CI_SHA&"*) echo "$CI_GREEN" ;;',
+          "    *) echo false ;;",
+          "  esac ;;",
+          '  *"/pulls"*) echo "$PR_JSON" ;;',
+          '  *"/check-runs"*) echo "$CHECK_JSON" ;;',
+          "  *) exit 1 ;;",
+          "esac",
+          "",
+        ].join("\n"),
+      })
+      const run = (overrides: Record<string, string> = {}) => {
+        const output = join(dir, "outputs")
+        rmSync(output, { force: true })
+        const result = Bun.spawnSync(
+          ["bash", "-c", releaseStep("prove-release", "Prove this is a merged release PR")],
+          {
+            cwd: dir,
+            env: {
+              PATH,
+              GH_TOKEN: "test",
+              REPOSITORY: "nifrajs/nifra",
+              EVENT_NAME: "workflow_dispatch",
+              MERGE_SHA: merge,
+              PUBLISH_SHA: publish,
+              EXPECTED_CI_SHA: publish,
+              GITHUB_OUTPUT: output,
+              ON_MAIN: "ahead",
+              CI_GREEN: "true",
+              PR_JSON: JSON.stringify([releasePr]),
+              CHECK_JSON: JSON.stringify({ check_runs: [releaseCheck] }),
+              ...overrides,
+            },
+          },
+        )
+        return {
+          exitCode: result.exitCode,
+          outputs: Bun.file(output).size ? readFileSync(output, "utf8") : "",
+          error: result.stderr.toString(),
+        }
+      }
+      const recovered = run()
+      expect(recovered.exitCode).toBe(0)
+      expect(recovered.outputs).toContain(`publish_sha=${publish}`)
+      expect(recovered.outputs).toContain(`merge_sha=${merge}`)
+      expect(recovered.outputs).toContain(`release_base_sha=${base}`)
+      expect(run({ CI_GREEN: "false" }).exitCode).toBe(1)
+      expect(run({ ON_MAIN: "diverged" }).exitCode).toBe(1)
+      expect(run({ PUBLISH_SHA: "main" }).exitCode).toBe(1)
+      expect(run({ MERGE_SHA: "main" }).exitCode).toBe(1)
+      expect(run({ CHECK_JSON: '{"check_runs":[]}' }).exitCode).toBe(1)
+      expect(run({ PR_JSON: "[]" }).exitCode).toBe(1)
+      expect(
+        run({ PR_JSON: JSON.stringify([{ ...releasePr, merge_commit_sha: publish }]) }).exitCode,
+      ).toBe(1)
+      expect(run({ PR_JSON: JSON.stringify([{ ...releasePr, merged_at: null }]) }).exitCode).toBe(1)
+      expect(
+        run({
+          PR_JSON: JSON.stringify([{ ...releasePr, base: { ...releasePr.base, ref: "other" } }]),
+        }).exitCode,
+      ).toBe(1)
+      expect(
+        run({
+          PR_JSON: JSON.stringify([
+            { ...releasePr, head: { ...releasePr.head, ref: "codex/fix" } },
+          ]),
+        }).exitCode,
+      ).toBe(1)
+      expect(
+        run({
+          PR_JSON: JSON.stringify([
+            { ...releasePr, head: { ...releasePr.head, repo: { full_name: "fork/nifra" } } },
+          ]),
+        }).exitCode,
+      ).toBe(1)
+      for (const check of [
+        { ...releaseCheck, conclusion: "failure" },
+        { ...releaseCheck, head_sha: publish },
+        { ...releaseCheck, app: { slug: "other-app" } },
+      ])
+        expect(run({ CHECK_JSON: JSON.stringify({ check_runs: [check] }) }).exitCode).toBe(1)
+
+      // The normal retry still requires green CI on the original merge.
+      expect(run({ PUBLISH_SHA: "", EXPECTED_CI_SHA: merge }).exitCode).toBe(0)
+      // Automatic runs cannot turn a CI-fix PR into authorization to publish.
+      const ordinary = run({ EVENT_NAME: "workflow_run", PUBLISH_SHA: "", PR_JSON: "[]" })
+      expect(ordinary.exitCode).toBe(0)
+      expect(ordinary.outputs).toBe("is_release=false\n")
+
+      for (const path of [
+        "packages/core/package.json",
+        "packages/core/CHANGELOG.md",
+        ".changeset/pending.md",
+        "bun.lock",
+        "package.json",
+        "internal/tool/package.json",
+      ]) {
+        git("reset", "--hard", publish)
+        const drift = commit(path, "changed release metadata\n")
+        expect(run({ PUBLISH_SHA: drift, EXPECTED_CI_SHA: drift }).exitCode).toBe(1)
+      }
+      git("checkout", "-q", "-b", "diverged", base)
+      const unrelated = commit("unrelated.txt", "not descended from the release\n")
+      expect(run({ PUBLISH_SHA: unrelated, EXPECTED_CI_SHA: unrelated }).exitCode).toBe(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
 
 test("a published version gets its GitHub release from the only job that may write", () => {
   const jobs = workflowJobs("release.yml")
@@ -386,11 +550,11 @@ test("a published version gets its GitHub release from the only job that may wri
       .map(([id]) => id),
   ).toEqual(["github-release"])
   const checkout = release?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
-  expect(checkout?.with?.ref).toBe(`\${{ needs.prove-release.outputs.merge_sha }}`)
+  expect(checkout?.with?.ref).toBe(`\${{ needs.prove-release.outputs.publish_sha }}`)
   expect(checkout?.with?.["persist-credentials"]).toBe(false)
   expect(release?.steps?.filter((step) => step.run?.includes("install"))).toEqual([])
   expect(release?.steps?.find((step) => step.name === GITHUB_RELEASE)?.env?.MERGE_SHA).toBe(
-    `\${{ needs.prove-release.outputs.merge_sha }}`,
+    `\${{ needs.prove-release.outputs.publish_sha }}`,
   )
 })
 

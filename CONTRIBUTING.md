@@ -168,6 +168,20 @@ Merging a release PR publishes it: `.github/workflows/release.yml` proves the me
   gh workflow run Release --ref main -f merge_sha=<merge commit>
   ```
 
+- If CI failed on the release merge, merge reviewed fixes and wait for successful push CI on the
+  later `main` commit. Recover the prepared release by naming both full 40-character SHAs:
+
+  ```bash
+  gh workflow run Release --ref main \
+    -f merge_sha=<original release merge> \
+    -f publish_sha=<green main commit>
+  ```
+
+  Recovery requires the green commit to descend from the release merge, with unchanged package
+  manifests, changelogs, Changesets, and Bun lockfiles. The original release PR's exact head must
+  still have successful release verification. Build, publish, GitHub tagging, and site deployment
+  use the selected `publish_sha`. Ordinary CI-fix merges do not publish automatically.
+
 - **A prerelease** publishes under its pre tag only. The trusted publishers allow only `npm publish`, so when `latest` should follow, a maintainer moves it with `npm dist-tag add`. Moving it from CI would take **Allow npm dist-tag** on each trusted publisher and npm 11.21.0 or newer in the workflow.
 
 ---
