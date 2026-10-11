@@ -1,4 +1,30 @@
 import assert from "node:assert/strict"
+
+// Renderers may put hydration comments between adjacent text nodes. Walk those separators once;
+// this is an assertion over fixture output, without constructing sanitized HTML or backtracking.
+function assertRevision(html, revision) {
+  let at = html.indexOf("Revision")
+  assert.notEqual(at, -1, "revision heading is present")
+  at += "Revision".length
+  while (at < html.length) {
+    if (/\s/.test(html[at])) {
+      at++
+      continue
+    }
+    if (html.startsWith("<!--", at)) {
+      const end = html.indexOf("-->", at + 4)
+      assert.notEqual(end, -1, "hydration comment is terminated")
+      at = end + 3
+      continue
+    }
+    const expected = String(revision)
+    assert.equal(html.slice(at, at + expected.length), expected)
+    assert.match(html[at + expected.length] ?? "", /[\s<]/)
+    return
+  }
+  assert.fail("revision number is present")
+}
+
 import { readComponentFrames } from "../../../dist/server-components/frames.js"
 
 const origin = process.env.NIFRA_COMPONENT_URL
@@ -47,7 +73,7 @@ assert.equal(refreshed.headers.get("content-type"), "application/vnd.nifra.compo
 const frames = await readComponentFrames(refreshed.body, AbortSignal.timeout(15000))
 assert.equal(frames.value.build, state.build)
 assert.equal(frames.value.records.length, 2)
-assert.match(frames.value.records[0].html, /Revision(?:\s|<!--[\s\S]*?-->)*2/)
+assertRevision(frames.value.records[0].html, 2)
 const userB = await fetch(origin, { headers: { cookie: "fixture-subject=B" } })
 assert.equal(userB.headers.get("cache-control"), "private, no-store")
 const htmlB = await userB.text()
@@ -101,7 +127,7 @@ const progressive = await fetch(origin, {
   body: new URLSearchParams({ fail: "no" }),
 })
 assert.equal(progressive.status, 200)
-assert.match(await progressive.text(), /Revision(?:\s|<!--[\s\S]*?-->)*3/)
+assertRevision(await progressive.text(), 3)
 console.log(
   JSON.stringify({
     adapter: state.adapter,
