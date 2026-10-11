@@ -106,25 +106,34 @@ for (const [name, engine] of Object.entries(engines)) {
     assert.equal(await page.locator("#child-portal").textContent(), "Portal Child 3")
     assert.deepEqual(await page.evaluate(() => window.lifecycle), { mounted: 2, disposed: 0 })
     await page.locator("#nav-next").click()
+    // Revision 2 is already rendered by refresh; wait for the navigation's destination as well.
     await page.waitForFunction(
       () =>
         !window.fixture.router.snapshot().pending &&
-        document.querySelector("#revision")?.textContent === "Revision 2",
-    )
-    await page.locator("#nav-latest").click()
-    await page.waitForFunction(
-      () =>
-        !window.fixture.router.snapshot().pending &&
-        document.querySelector("#revision")?.textContent === "Revision 3",
-    )
-    await page.goBack()
-    await page.waitForFunction(
-      () =>
-        !window.fixture.router.snapshot().pending &&
+        window.fixture.router.snapshot().path === "/?revision=new" &&
         document.querySelector("#revision")?.textContent === "Revision 2",
     )
     assert.equal(await page.locator("#counter").textContent(), "Count 1")
     assert.equal(await page.locator("#child-counter").textContent(), "Count 1")
+    await page.locator("#nav-latest").click()
+    await page.waitForFunction(
+      () =>
+        !window.fixture.router.snapshot().pending &&
+        window.fixture.router.snapshot().path === "/?revision=latest" &&
+        document.querySelector("#revision")?.textContent === "Revision 3",
+    )
+    assert.equal(await page.locator("#counter").textContent(), "Count 1")
+    assert.equal(await page.locator("#child-counter").textContent(), "Count 1")
+    await page.goBack()
+    await page.waitForFunction(
+      () =>
+        !window.fixture.router.snapshot().pending &&
+        window.fixture.router.snapshot().path === "/?revision=new" &&
+        document.querySelector("#revision")?.textContent === "Revision 2",
+    )
+    assert.equal(await page.locator("#counter").textContent(), "Count 1")
+    assert.equal(await page.locator("#child-counter").textContent(), "Count 1")
+    assert.deepEqual(await page.evaluate(() => window.lifecycle), { mounted: 2, disposed: 0 })
     await page.evaluate(() => window.fixture.router.navigate("/"))
     await page.waitForFunction(
       () => document.querySelector("#revision")?.textContent === "Revision 1",
@@ -190,8 +199,11 @@ for (const [name, engine] of Object.entries(engines)) {
     assert.equal(await page.locator("#counter").count(), 0)
     assert.deepEqual(await page.evaluate(() => window.lifecycle), { mounted: 4, disposed: 4 })
     await page.evaluate(() => window.fixture.switchScope())
+    // The router settles before nested hydration; SSR text alone does not prove both roots mounted.
     await page.waitForFunction(
-      () => document.querySelector("#revision")?.textContent === "Revision 3",
+      () =>
+        document.querySelector("#revision")?.textContent === "Revision 3" &&
+        window.lifecycle.mounted >= 6,
     )
     assert.equal(await page.locator("#counter").textContent(), "Count 0")
     assert.equal(await page.locator("#child-counter").textContent(), "Count 0")
