@@ -32,6 +32,8 @@ async function drain(source: AsyncIterable<unknown>) {
 test("a rejected prompt flush fails its turn and cancellation absorbs a closed pipe", async () => {
   const { backend, sink } = await session()
   const error = Object.assign(new Error("broken pipe"), { code: "EPIPE" })
+  // Simulated flush failures must not leave native writes racing child-process teardown on Windows.
+  const writing = spyOn(sink, "write").mockImplementation(() => 0)
   const flushing = spyOn(sink, "flush").mockImplementation(() => Promise.reject(error))
   try {
     await expect(drain(backend.send({ sessionId: "pipe-errors", message: "hello" }))).rejects.toBe(
@@ -42,7 +44,9 @@ test("a rejected prompt flush fails its turn and cancellation absorbs a closed p
     await backend.cancel("pipe-errors")
     await drain(turn)
     expect((await backend.snapshot("pipe-errors")).status).toBe("stopped")
+    expect(flushing).toHaveBeenCalledTimes(3)
   } finally {
+    writing.mockRestore()
     flushing.mockRestore()
     await backend.close("pipe-errors")
   }
@@ -51,14 +55,14 @@ test("a rejected prompt flush fails its turn and cancellation absorbs a closed p
 test("a late prompt flush rejection cannot fail a completed or replacement turn", async () => {
   const { backend, sink } = await session()
   let rejectFlush: (error: Error) => void = () => {}
-  const originalFlush = sink.flush.bind(sink)
+  const writing = spyOn(sink, "write").mockImplementation(() => 0)
   const flushing = spyOn(sink, "flush").mockImplementationOnce(
     () =>
       new Promise<number>((_, reject) => {
         rejectFlush = reject
       }),
   )
-  flushing.mockImplementation(originalFlush)
+  flushing.mockImplementation(() => 0)
   try {
     const previous = backend.send({ sessionId: "pipe-errors", message: "first" })
     await backend.cancel("pipe-errors")
@@ -71,6 +75,7 @@ test("a late prompt flush rejection cannot fail a completed or replacement turn"
     await backend.cancel("pipe-errors")
     await drain(current)
   } finally {
+    writing.mockRestore()
     flushing.mockRestore()
     await backend.close("pipe-errors")
   }
