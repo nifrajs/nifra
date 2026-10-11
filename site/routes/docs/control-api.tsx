@@ -131,7 +131,7 @@ export default function ControlApi() {
 
       <h2>Event streams that resume</h2>
       <p>
-        <code>.sse(path, { sse: schema }, run)</code> declares the type of every event the stream
+        <code>{".sse(path, { sse: schema }, run)"}</code> declares the type of every event the stream
         sends. Give each event an <code>id</code> (here its sequence number). A browser 
         <code>EventSource</code>, or the typed client's <code>subscribe</code>, sends the last id it
         saw as <code>Last-Event-ID</code> when it reconnects, so the handler replays only what the
@@ -149,7 +149,7 @@ export default function ControlApi() {
 
       <h2>Clients in other languages</h2>
       <p>
-        <code>toOpenAPI(app, { openapiVersion: "3.2.0" })</code> from <code>@nifrajs/schema</code> 
+        <code>{"toOpenAPI(app, { openapiVersion: \"3.2.0\" })"}</code> from <code>@nifrajs/schema</code>
         describes each method's request and response, and each typed stream as 
         <code>text/event-stream</code> whose <code>itemSchema</code> is the SSE event: a 
         <code>data</code> field holding JSON that matches the route's event schema, plus 
