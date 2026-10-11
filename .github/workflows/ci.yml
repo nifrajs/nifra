@@ -164,10 +164,16 @@ jobs:
       - run: bun run build
       - name: Install required browser engines
         run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
       - name: All five adapters and every runtime, browser and lifecycle row
         run: bun run check:server-components
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
       - name: Isolated packaged feature consumers
         run: bun run check:server-components:consumers
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
   windows:
     # Windows is the slowest platform job. Run it for main pushes, release PRs, and manual runs so a
