@@ -32,14 +32,11 @@ export function isSameOriginPath(value: string): boolean {
   }
   // `/.//host` and `/a/..//host` (or their `%2e` forms) resolve to the path `//host`, which any
   // relative reference later built from that path - a client router's redirect - reads as a host.
-  if (value.includes(".") || value.includes("%")) {
-    try {
-      if (new URL(value, "http://n.invalid").pathname.startsWith("//")) return false
-    } catch {
-      return false
-    }
-  }
-  return true
+  // A path-absolute reference against a valid base always parses, so this cannot throw.
+  return (
+    !(value.includes(".") || value.includes("%")) ||
+    !new URL(value, "http://n.invalid").pathname.startsWith("//")
+  )
 }
 
 /**
