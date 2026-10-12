@@ -115,7 +115,7 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
       proc.kill("SIGKILL")
       await proc.exited.catch(() => 0)
     }
-    rmSync(profile, { recursive: true, force: true })
+    await removeProfile(profile)
   }
   try {
     const endpoint = await devtoolsEndpoint(proc.stderr)
@@ -257,4 +257,20 @@ async function devtoolsEndpoint(stderr: ReadableStream<Uint8Array>): Promise<str
     }
   }
   throw new Error(`headless Chrome never reported a DevTools endpoint:\n${text}`)
+}
+
+/** On Windows, Chrome's child processes can hold the profile for a moment after the browser exits. */
+async function removeProfile(profile: string): Promise<void> {
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    try {
+      rmSync(profile, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = error instanceof Error ? Reflect.get(error, "code") : undefined
+      const held = code === "EBUSY" || code === "EPERM" || code === "EACCES" || code === "ENOTEMPTY"
+      if (!held || Date.now() >= deadline) throw error
+      await Bun.sleep(100)
+    }
+  }
 }

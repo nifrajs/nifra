@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -16,6 +16,9 @@ import {
  */
 
 const fixture = async (): Promise<string> => await mkdtemp(join(tmpdir(), "changeset-coverage-"))
+
+// A git-fixture test spawns a dozen git processes, which takes seconds on a Windows runner.
+setDefaultTimeout(30_000)
 
 const git = (root: string, ...args: string[]): string => {
   const proc = Bun.spawnSync(
