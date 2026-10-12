@@ -836,7 +836,8 @@ test("in development, an ordinary layout loader that refuses access is warned ab
     expect(warn).toHaveBeenCalledTimes(2)
   } finally {
     warn.mockRestore()
-    process.env.NODE_ENV = previous
+    if (previous === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previous
   }
 })
 
