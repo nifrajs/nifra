@@ -21855,7 +21855,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function revalidateEndpoint(options: RevalidateEndpointOptions): (req: Request, platform?: ISRPlatform) => Promise<Response>;",
-    "doc": "/**\n * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path\n * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either\n * `?path=/blog/x`, `?tag=products`, a JSON `{ \"path\": \"/blog/x\" }` / `{ \"tag\": \"products\" }` body, or a\n * batch `{ \"paths\": [...], \"tags\": [...] }` of at most 100 paths and 32 tags.\n * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;\n * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.\n * `app.post(\"/__nifra/revalidate\", (c) => handler(c.req))`.\n */"
+    "doc": "/**\n * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path\n * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either\n * `?path=/blog/x`, `?tag=products`, a JSON `{ \"path\": \"/blog/x\" }` / `{ \"tag\": \"products\" }` body, or a\n * batch `{ \"paths\": [...], \"tags\": [...] }` of at most 100 paths and 32 tags.\n * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;\n * a JSON body over 1 MiB → `413`; non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.\n * `app.post(\"/__nifra/revalidate\", (c) => handler(c.req))`.\n */"
   },
   {
     "name": "rewriteSsrImports",

@@ -38,13 +38,14 @@ export const explainBindFailure = (err: unknown, port: number): Error =>
 
 /** The bits of a Node server {@link listenOrExplain} touches - structural, so a test can fake it. */
 export interface ListenTarget {
-  listen(port: number, cb: () => void): void
+  listen(port: number, hostname: string, cb: () => void): void
   once(event: "error", cb: (err: unknown) => void): void
   removeListener(event: "error", cb: (err: unknown) => void): void
 }
 
 /**
  * `listen`, but a bind failure becomes a readable nifra error instead of Node's raw internal throw.
+ * The hostname is required: omitting it binds every interface, and a dev server is local-only.
  *
  * Without an `error` listener attached, Node throws from deep inside `node:events`, the new process dies
  * in the background, and nothing connects that death to the stale page in front of you.
@@ -52,7 +53,7 @@ export interface ListenTarget {
 export function listenOrExplain(
   server: ListenTarget,
   port: number,
-  hostname?: string,
+  hostname: string,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const onError = (err: unknown): void => reject(explainBindFailure(err, port))
@@ -63,13 +64,6 @@ export function listenOrExplain(
       server.removeListener("error", onError)
       resolve()
     }
-    if (hostname === undefined) server.listen(port, onListening)
-    else {
-      ;(
-        server as ListenTarget & {
-          listen(port: number, hostname: string, cb: () => void): void
-        }
-      ).listen(port, hostname, onListening)
-    }
+    server.listen(port, hostname, onListening)
   })
 }

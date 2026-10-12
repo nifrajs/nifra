@@ -11,7 +11,8 @@ describe("request deadline admission", () => {
     let remaining = 0
     let deadline = 0
     const before = Date.now()
-    const app = server({ requestTimeoutMs: 200 }).get("/budget", (c) => {
+    // A minute, not a few hundred ms: a loaded host can stall that long before the handler runs.
+    const app = server({ requestTimeoutMs: 60_000 }).get("/budget", (c) => {
       sameSignal = c.budget.signal === c.signal
       remaining = c.budget.remaining()
       deadline = c.budget.deadline
@@ -20,9 +21,9 @@ describe("request deadline admission", () => {
     expect((await app.fetch(new Request("http://test/budget"))).status).toBe(200)
     expect(sameSignal).toBe(true)
     expect(remaining).toBeGreaterThan(0)
-    expect(remaining).toBeLessThanOrEqual(200)
-    expect(deadline).toBeGreaterThanOrEqual(before + 150)
-    expect(deadline).toBeLessThanOrEqual(Date.now() + 200)
+    expect(remaining).toBeLessThanOrEqual(60_000)
+    expect(deadline).toBeGreaterThanOrEqual(before + 59_950)
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 60_000)
   })
 
   test("no configured or inbound deadline preserves the unbounded path", async () => {

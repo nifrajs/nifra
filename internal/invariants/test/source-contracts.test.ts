@@ -1,6 +1,6 @@
 /**
- * Patterns behind fixed defects, held out of shipped source. Each rule names the defect class it
- * keeps out. A file may use a pattern only as many times as its entry says, with the reason it is
+ * Patterns behind fixed defects, held out of shipped source, and timing patterns behind flaky
+ * tests, held out of the suites. Each rule names the defect class it keeps out. A file may use a pattern only as many times as its entry says, with the reason it is
  * safe there: a new use anywhere, or one more in an allowed file, fails until someone reviews it,
  * and an entry whose uses are gone fails until it is removed.
  */
@@ -20,6 +20,12 @@ interface Rule {
 }
 
 const SHIPPED = ["packages/*/src/**/*.{ts,tsx,mts}"]
+const TESTS = [
+  "packages/*/test/**/*.{ts,tsx}",
+  "packages/*/test-node/**/*.ts",
+  "scripts/**/*.test.ts",
+  "internal/*/test/**/*.ts",
+]
 
 const RULES: readonly Rule[] = [
   {
@@ -124,10 +130,6 @@ const RULES: readonly Rule[] = [
         count: 1,
         reason: "the bounded body reader itself, past its length check",
       },
-      "packages/web/src/isr.ts": {
-        count: 1,
-        reason: "after the timing-safe purge token check",
-      },
       "packages/testing/src/certification.ts": { count: 1, reason: "test tooling" },
       "packages/testing/src/contract-lab.ts": { count: 1, reason: "test tooling" },
       "packages/create-nifra/src/agents.ts": { count: 1, reason: "prose in generated guidance" },
@@ -145,6 +147,21 @@ const RULES: readonly Rule[] = [
     why: "eval and new Function run data as code",
     pattern: /(?<![.\w])eval\(|\bnew Function\(/g,
     scope: SHIPPED,
+    allowed: {},
+  },
+  {
+    id: "wall-clock-deadline",
+    why: "a test deadline a few ms past Date.now() expired on a loaded host before the code ran; inject the clock",
+    pattern: /Date\.now\(\)\s*\+\s*\d{1,3}\b/g,
+    scope: TESTS,
+    allowed: {},
+  },
+  {
+    id: "sub-second-elapsed-bound",
+    why: "an elapsed-time bound under a second failed on a loaded host with no regression; grow the input until the slow version takes seconds",
+    pattern:
+      /(?:performance|Date)\.now\(\)\s*-\s*[\w.]+\)\s*\.toBeLessThan(?:OrEqual)?\(\s*\d{1,3}\s*\)/g,
+    scope: TESTS,
     allowed: {},
   },
 ]
@@ -181,6 +198,9 @@ test("every rule matches what it is meant to match", () => {
     "unbounded-body-read": "  const body = await c.req.json()",
     "shell-spawn": "spawn(cmd, { shell: true })",
     "dynamic-code": "const f = new Function(src)",
+    // Split so this file's own source does not match the rules it declares.
+    "wall-clock-deadline": `{ deadlineAt: Date.now()${" + 5"} }`,
+    "sub-second-elapsed-bound": `expect(performance.now() - started)${".toBeLessThan(200)"}`,
   }
   for (const rule of RULES) {
     const sample = samples[rule.id] ?? ""
@@ -191,4 +211,8 @@ test("every rule matches what it is meant to match", () => {
   }
   expect("Bun.serve({ hostname: '127.0.0.1', port })".match(RULES[3]?.pattern ?? /$^/)).toBeNull()
   expect(" * the handler's `c.req.json()` reads".match(RULES[4]?.pattern ?? /$^/)).toBeNull()
+  expect("Date.now() + 60_000".match(RULES[7]?.pattern ?? /$^/)).toBeNull()
+  expect(
+    "(performance.now() - started).toBeLessThan(1_000)".match(RULES[8]?.pattern ?? /$^/),
+  ).toBeNull()
 })

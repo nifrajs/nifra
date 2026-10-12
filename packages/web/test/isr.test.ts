@@ -907,6 +907,33 @@ describe("revalidateEndpoint (on-demand purge)", () => {
     expect(await store.get(pageKey("/p"))).toBeUndefined()
   })
 
+  test("a purge body past 1 MiB is 413 before it is buffered, and purges nothing", async () => {
+    const store = new MemoryCacheStore()
+    await seed(store)
+    const handler = revalidateEndpoint({ store, secret: "s3cret" })
+    const chunk = new Uint8Array(64 * 1024).fill(0x20)
+    let pulled = 0
+    // No content-length: the cap has to hold while the body streams, 4 MiB on offer.
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++
+        if (pulled > 64) controller.close()
+        else controller.enqueue(chunk)
+      },
+    })
+    const res = await handler(
+      new Request("http://x/__nifra/revalidate", {
+        method: "POST",
+        headers: { "x-nifra-revalidate-token": "s3cret", "content-type": "application/json" },
+        body,
+      }),
+    )
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ ok: false, error: "body_too_large" })
+    expect(pulled).toBeLessThanOrEqual(18)
+    expect(await store.get(pageKey("/p"))).toBeDefined()
+  })
+
   test("a wrong or missing token is 401 (and doesn't purge)", async () => {
     const store = new MemoryCacheStore()
     await seed(store)

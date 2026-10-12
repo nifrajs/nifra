@@ -145,7 +145,9 @@ backend is loader-only; `nifra check` reports that as NF-C035, and `nifra fix --
   assurance is configured, this also fails on raw effect-import bypasses and declaration/evidence drift.
 - For a release-equivalent repository gate, run **`bun run check:release`**: it builds first, then runs
   the normal check, the explicit **`bun run check:corpus`** (LLM/docs/cards/Node contract), the
-  core hot-path performance gate, publish-consumer matrix, and coverage ratchet.
+  core hot-path performance gate, publish-consumer matrix, and coverage ratchet. With
+  `RELEASE_MODE=1` it first refuses a working tree that differs from HEAD, so a release run verifies
+  the commit and nothing beside it.
 - If the project has `nifra.assurance.ts`, also run **`nifra assure`** (`--json` in CI). It fails closed
   when a route is unclassified or lacks/forbids the enforcement evidence required by its first policy rule.
 - If that config declares `capabilities`, commit the output of **`nifra capabilities snapshot`** and run

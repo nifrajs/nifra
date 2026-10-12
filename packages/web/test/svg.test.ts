@@ -45,9 +45,11 @@ describe("stripSvgPreamble", () => {
   })
 
   test("adversarial marker runs stay fast (linear scan, no backtracking)", () => {
+    // A lazy-regex scan takes ~10 s on this input and the linear one well under a millisecond, so the
+    // bound holds on a loaded host and still catches the quadratic rewrite.
     const start = performance.now()
-    stripSvgPreamble(`${"<?".repeat(20_000)}<svg/>`)
-    expect(performance.now() - start).toBeLessThan(200)
+    stripSvgPreamble(`${"<?".repeat(100_000)}<svg/>`)
+    expect(performance.now() - start).toBeLessThan(1_000)
   })
 })
 

@@ -7,6 +7,7 @@
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
 import { isAuthenticatedRequest, writableResponse } from "@nifrajs/core/server"
+import { readBoundedBytes, TransportCodecError } from "@nifrajs/core/transport-codec"
 import { isDraftEnabled } from "./draft.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
@@ -1139,6 +1140,8 @@ export interface CdnPurgeTarget {
 /** Most paths and tags one revalidation request may name, so a leaked token cannot fan out. */
 export const MAX_REVALIDATE_PATHS = 100
 export const MAX_REVALIDATE_TAGS = MAX_ISR_TAGS
+// Room for a full batch of long paths; a purge body past it is refused before it is buffered.
+const MAX_REVALIDATE_BODY_BYTES = 1024 * 1024
 
 export interface RevalidateEndpointOptions {
   readonly store: CacheStore
@@ -1180,7 +1183,7 @@ const stringList = (value: unknown): string[] | null | undefined => {
  * `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a
  * batch `{ "paths": [...], "tags": [...] }` of at most 100 paths and 32 tags.
  * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;
- * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.
+ * a JSON body over 1 MiB → `413`; non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.
  * `app.post("/__nifra/revalidate", (c) => handler(c.req))`.
  */
 export function revalidateEndpoint(
@@ -1205,7 +1208,15 @@ export function revalidateEndpoint(
     let tag = url.searchParams.get("tag")
     let batch: { paths: string[]; tags: string[] } | undefined
     if (path === null && tag === null) {
-      const body: unknown = await req.json().catch(() => null)
+      let body: unknown = null
+      try {
+        const bytes = await readBoundedBytes(new Response(req.body, { headers: req.headers }), {
+          maxBytes: MAX_REVALIDATE_BODY_BYTES,
+        })
+        body = JSON.parse(new TextDecoder().decode(bytes))
+      } catch (error) {
+        if (error instanceof TransportCodecError) return jsonError(413, "body_too_large")
+      }
       if (typeof body === "object" && body !== null) {
         const candidate = body as { path?: unknown; tag?: unknown; paths?: unknown; tags?: unknown }
         if (candidate.paths !== undefined || candidate.tags !== undefined) {

@@ -8,11 +8,11 @@ import { listenOrExplain, portInUseMessage } from "../src/dev-port.ts"
 
 test("EADDRINUSE rejects with the named nifra explanation (not Node's internal throw)", async () => {
   const holder = createServer(() => {})
-  await new Promise<void>((done) => holder.listen(0, done))
+  await new Promise<void>((done) => holder.listen(0, "127.0.0.1", done))
   const port = (holder.address() as { port: number }).port
   try {
     const second = createServer(() => {})
-    const promise = listenOrExplain(second, port)
+    const promise = listenOrExplain(second, port, "127.0.0.1")
     await expect(promise).rejects.toThrow(`port ${port} is already in use`)
     // The stale-output cause is spelled out - that sentence is the whole point of the guard.
     await expect(promise).rejects.toThrow(/PREVIOUS build/)
@@ -25,9 +25,11 @@ test("EADDRINUSE rejects with the named nifra explanation (not Node's internal t
   }
 })
 
-test("a free port resolves and leaves no lingering error listener", async () => {
+test("a free port resolves on the given hostname and leaves no lingering error listener", async () => {
   const server = createServer(() => {})
-  await listenOrExplain(server, 0)
+  await listenOrExplain(server, 0, "127.0.0.1")
+  const bound = server.address()
+  expect(typeof bound === "object" && bound !== null ? bound.address : bound).toBe("127.0.0.1")
   // The guard must be detached after a successful bind: still attached, it would swallow a later server
   // error into an already-settled promise instead of surfacing it.
   expect(server.listenerCount("error")).toBe(0)
@@ -36,7 +38,7 @@ test("a free port resolves and leaves no lingering error listener", async () => 
 
 test("a non-EADDRINUSE bind failure passes through unchanged (no misleading port advice)", async () => {
   const fake = {
-    listen(_port: number, _cb: () => void) {
+    listen(_port: number, _hostname: string, _cb: () => void) {
       queueMicrotask(() =>
         this.handler?.(Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })),
       )
@@ -49,14 +51,14 @@ test("a non-EADDRINUSE bind failure passes through unchanged (no misleading port
       this.handler = undefined
     },
   }
-  const promise = listenOrExplain(fake, 3000)
+  const promise = listenOrExplain(fake, 3000, "127.0.0.1")
   await expect(promise).rejects.toThrow(/EACCES/)
   await expect(promise).rejects.not.toThrow(/already in use/)
 })
 
 test("a non-Error rejection value is still surfaced as an Error", async () => {
   const fake = {
-    listen(_port: number, _cb: () => void) {
+    listen(_port: number, _hostname: string, _cb: () => void) {
       queueMicrotask(() => this.handler?.("socket exploded"))
     },
     handler: undefined as ((err: unknown) => void) | undefined,
@@ -67,7 +69,7 @@ test("a non-Error rejection value is still surfaced as an Error", async () => {
       this.handler = undefined
     },
   }
-  await expect(listenOrExplain(fake, 3000)).rejects.toThrow("socket exploded")
+  await expect(listenOrExplain(fake, 3000, "127.0.0.1")).rejects.toThrow("socket exploded")
 })
 
 test("portInUseMessage names the port and offers the next one", () => {
