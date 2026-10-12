@@ -30,7 +30,10 @@ export function Island({ id, props, strategy = "load", children }: IslandProps):
     "nifra-island",
     {
       "data-id": id,
-      "data-strategy": strategy,
+      // The runtime reads a media strategy as two attributes; React drops an object-valued one.
+      ...(typeof strategy === "string"
+        ? { "data-strategy": strategy }
+        : { "data-strategy": "media", "data-media": strategy.media }),
       // Omit `data-props` entirely when there are no props (keeps markup minimal + parse a no-op).
       ...(props === undefined ? {} : { "data-props": JSON.stringify(props) }),
     },

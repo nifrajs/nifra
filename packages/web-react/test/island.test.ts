@@ -26,6 +26,14 @@ describe("<Island> marker", () => {
     expect(html).not.toContain("data-props")
   })
 
+  test("a media strategy renders the media marker the islands runtime reads", () => {
+    const html = renderToString(
+      createElement(Island, { id: "x", strategy: { media: "(min-width: 800px)" } }, "hi"),
+    )
+    expect(html).toContain('data-strategy="media"')
+    expect(html).toContain('data-media="(min-width: 800px)"')
+  })
+
   test("props can't break out of the attribute (React escapes the value)", () => {
     const html = renderToString(
       createElement(Island, {
