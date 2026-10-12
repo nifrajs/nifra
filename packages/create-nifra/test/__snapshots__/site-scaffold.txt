@@ -133,6 +133,11 @@ import { reactAdapter } from "@nifrajs/web-react"
 
 export const adapter = reactAdapter
 
+// Where backend/app.ts is served over HTTP. "" keeps it loader-only: loaders and actions call it
+// in-process. Set "/api" to serve it to the browser too, and re-export it from nifra.config.ts, which
+// `nifra dev` loads: `export { adapter, apiPrefix } from "./backend/framework"`.
+export const apiPrefix = ""
+
 ===== site-react :: nifra.config.ts
 // The nifra CLI's config - read by `nifra dev|build|start`. Separate from `backend/framework.ts`
 // (which the generated server entry imports, so it must stay edge-bundlable): THIS file is imported only
@@ -361,6 +366,11 @@ import { preactAdapter } from "@nifrajs/web-preact"
 
 export const adapter = preactAdapter
 
+// Where backend/app.ts is served over HTTP. "" keeps it loader-only: loaders and actions call it
+// in-process. Set "/api" to serve it to the browser too, and re-export it from nifra.config.ts, which
+// `nifra dev` loads: `export { adapter, apiPrefix } from "./backend/framework"`.
+export const apiPrefix = ""
+
 ===== site-preact :: nifra.config.ts
 // The nifra CLI's config - read by `nifra dev|build|start`. Separate from `backend/framework.ts`
 // (which the generated server entry imports, so it must stay edge-bundlable): THIS file is imported only
@@ -584,6 +594,11 @@ export namespace Route {
 import { solidAdapter } from "@nifrajs/web-solid"
 
 export const adapter = solidAdapter
+
+// Where backend/app.ts is served over HTTP. "" keeps it loader-only: loaders and actions call it
+// in-process. Set "/api" to serve it to the browser too, and re-export it from nifra.config.ts, which
+// `nifra dev` loads: `export { adapter, apiPrefix } from "./backend/framework"`.
+export const apiPrefix = ""
 
 ===== site-solid :: nifra.config.ts
 // The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
@@ -813,6 +828,11 @@ import { svelteAdapter } from "@nifrajs/web-svelte"
 
 export const adapter = svelteAdapter
 
+// Where backend/app.ts is served over HTTP. "" keeps it loader-only: loaders and actions call it
+// in-process. Set "/api" to serve it to the browser too, and re-export it from nifra.config.ts, which
+// `nifra dev` loads: `export { adapter, apiPrefix } from "./backend/framework"`.
+export const apiPrefix = ""
+
 ===== site-svelte :: nifra.config.ts
 // The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
 // Bun), so it can eagerly import the Vite plugin + the Svelte compiler - keeping them OUT of the edge
@@ -1038,6 +1058,11 @@ export namespace Route {
 import { vueAdapter } from "@nifrajs/web-vue"
 
 export const adapter = vueAdapter
+
+// Where backend/app.ts is served over HTTP. "" keeps it loader-only: loaders and actions call it
+// in-process. Set "/api" to serve it to the browser too, and re-export it from nifra.config.ts, which
+// `nifra dev` loads: `export { adapter, apiPrefix } from "./backend/framework"`.
+export const apiPrefix = ""
 
 ===== site-vue :: nifra.config.ts
 // The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
