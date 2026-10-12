@@ -18,21 +18,22 @@ export interface ContentionArgs {
 }
 
 export function parseContentionArgs(argv: readonly string[], cores: number): ContentionArgs {
-  const split = argv.indexOf("--")
-  if (split === -1 || split === argv.length - 1)
-    throw new Error("usage: cpu-contention.ts [--per-core <n>] [--threads <n>] -- <command>")
   let threads = cores * DEFAULT_PER_CORE
-  const options = argv.slice(0, split)
-  for (let index = 0; index < options.length; index += 2) {
-    const flag = options[index]
-    const value = Number(options[index + 1])
+  let index = 0
+  for (; index < argv.length && argv[index]!.startsWith("--") && argv[index] !== "--"; index += 2) {
+    const flag = argv[index]
+    const value = Number(argv[index + 1])
+    if (flag !== "--per-core" && flag !== "--threads") throw new Error(`unknown option ${flag}`)
     if (!Number.isSafeInteger(value) || value < 1)
-      throw new Error(`${flag} takes a positive integer, saw ${options[index + 1]}`)
-    if (flag === "--per-core") threads = cores * value
-    else if (flag === "--threads") threads = value
-    else throw new Error(`unknown option ${flag}`)
+      throw new Error(`${flag} takes a positive integer, saw ${argv[index + 1]}`)
+    threads = flag === "--per-core" ? cores * value : value
   }
-  return { threads, command: argv.slice(split + 1) }
+  // Bun drops a `--` that directly follows the script path, so the separator is optional.
+  if (argv[index] === "--") index++
+  const command = argv.slice(index)
+  if (command.length === 0)
+    throw new Error("usage: cpu-contention.ts [--per-core <n>] [--threads <n>] [--] <command>")
+  return { threads, command }
 }
 
 if (!isMainThread) {
