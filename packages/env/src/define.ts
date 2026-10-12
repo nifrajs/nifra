@@ -14,6 +14,8 @@ export interface DefineEnvOptions {
   readonly source?: Record<string, string | undefined>
 }
 
+const WITHHELD = "is invalid (the validator's message is withheld, since it may quote the value)"
+
 /**
  * Validate the environment against a schema and return a **frozen, typed** object - or throw at
  * startup listing **every** problem at once (not just the first), so a misconfigured deploy fails
@@ -33,10 +35,11 @@ export interface DefineEnvOptions {
  * // ENV.PORT: number, ENV.NODE_ENV: "development" | "production" | "test", … all validated.
  * ```
  *
- * Errors name the offending variable and the reason - never its value (it may be a secret); a BYO
- * validator's message that quotes the value gets `<redacted>` in its place. BYO
- * validators (`t`, zod, valibot) work too; only the `env.*` helpers coerce from strings, so a plain
- * `t.number()` would see the raw string - use `env.number()` for coercion.
+ * Errors name the offending variable and the reason - never its value (it may be a secret). BYO
+ * validators (`t`, zod, valibot) work too, but their messages may quote the value, so a set value
+ * they refuse is reported as invalid without their words; an unset one shows their message. Only the
+ * `env.*` helpers coerce from strings, so a plain `t.number()` would see the raw string - use
+ * `env.number()` for coercion.
  */
 export function defineEnv<S extends EnvShape>(shape: S, options?: DefineEnvOptions): EnvResult<S> {
   const source =
@@ -59,12 +62,13 @@ export function defineEnv<S extends EnvShape>(shape: S, options?: DefineEnvOptio
     }
     if (result.issues !== undefined) {
       const raw = source[key]
-      // Only the `env.*` helpers promise value-free messages; valibot and hand-rolled validators
-      // quote the value, which may be a secret.
-      const foreign = schema["~standard"].vendor !== "nifra-env" && raw !== undefined && raw !== ""
-      for (const i of result.issues) {
-        problems.push(`  ${key}: ${foreign ? i.message.replaceAll(raw, "<redacted>") : i.message}`)
+      // Only the `env.*` helpers promise value-free messages. Another validator may quote the value
+      // escaped, truncated or transformed, past any search-and-replace, so its words are not shown.
+      if (schema["~standard"].vendor !== "nifra-env" && raw !== undefined && raw !== "") {
+        problems.push(`  ${key}: ${WITHHELD}`)
+        continue
       }
+      for (const i of result.issues) problems.push(`  ${key}: ${i.message}`)
     } else {
       out[key] = result.value
     }
