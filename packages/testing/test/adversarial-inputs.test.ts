@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { explainAutoReflectJsonSchema } from "@nifrajs/mock"
 import { t } from "@nifrajs/schema"
@@ -110,14 +110,20 @@ describe("params and headers witnesses", () => {
 })
 
 describe("the zod bridge says why a schema stayed opaque", () => {
+  const fake = {
+    "~standard": {
+      version: 1 as const,
+      vendor: "zod",
+      validate: (value: unknown) => ({ value }),
+    },
+  }
+  // The first probe cold-loads zod's CJS build, which has passed the 5s test default on a loaded
+  // Windows runner; the probe is cached per cwd, so the test itself never pays it.
+  beforeAll(() => {
+    explainAutoReflectJsonSchema(fake)
+  }, 30_000)
+
   test("a zod-tagged schema the converter cannot read names the reason in the gap", async () => {
-    const fake = {
-      "~standard": {
-        version: 1 as const,
-        vendor: "zod",
-        validate: (value: unknown) => ({ value }),
-      },
-    }
     expect(explainAutoReflectJsonSchema(fake)).toStartWith("zod's toJSONSchema threw")
     expect(explainAutoReflectJsonSchema({ "~standard": { vendor: "valibot" } })).toBeUndefined()
     const app = server().post("/z", { body: fake }, () => ({ ok: true }))
