@@ -199,8 +199,10 @@ export interface CreateWebAppOptions<Env = unknown> {
    * team - unreleased feature names, internal hostnames, and "don't touch X yet" notes live there
    * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */
   readonly publishLocalGuidelines?: boolean
-  /** Serve `/llms.txt` and `/llms-full.txt` (default `true`): the page routes, and the backend routes
-   * when the backend is mounted over HTTP at {@link apiPrefix}. `false` registers neither path. */
+  /** Serve `/llms.txt` and `/llms-full.txt`: the page routes, and the backend routes when the backend
+   * is mounted over HTTP at {@link apiPrefix}, with their request and response schemas in the full
+   * text. **Off by default**: both are public and unauthenticated, and they list every route, admin
+   * and internal ones included. Turn it on for an app whose whole surface you would publish. */
   readonly llmsTxt?: boolean
   /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or
    * the build's `prerendered.json`). A route mapped to `"404"` rejects any path NOT in
@@ -475,7 +477,7 @@ export function createWebApp<Env = unknown>(
   // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
   // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An
   // app route at either path takes precedence, and each text is built once per app.
-  if (options.llmsTxt !== false) {
+  if (options.llmsTxt === true) {
     const llmsOptions = {
       includeLocalGuidelines: options.publishLocalGuidelines === true,
       apiPathPrefix: apiStrip ? mountPathPrefix(apiPrefix) : "",
