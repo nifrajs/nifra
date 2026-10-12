@@ -4058,7 +4058,7 @@
     "kind": "interface",
     "package": "@nifrajs/cron",
     "signature": "export interface CronFields {\n    readonly minute: ReadonlySet<number>;\n    readonly hour: ReadonlySet<number>;\n    readonly dom: ReadonlySet<number>;\n    readonly month: ReadonlySet<number>;\n    readonly dow: ReadonlySet<number>;\n    readonly domRestricted: boolean;\n    readonly dowRestricted: boolean;\n}",
-    "doc": "/** A parsed expression: one allowed-values Set per field, + whether dom/dow were restricted (for\n * the standard OR rule). */"
+    "doc": "/** A parsed expression: one allowed-values Set per field, + whether dom/dow were restricted (for\n * the standard OR rule). A field led by a star, a star-step included, is not restricted. */"
   },
   {
     "name": "CronHandler",
@@ -19976,7 +19976,7 @@
     "kind": "function",
     "package": "@nifrajs/cron",
     "signature": "export declare function matches(fields: CronFields, date: Date): boolean;",
-    "doc": "/**\n * Does `date` (in its LOCAL time - cron is local-time by convention) match the fields, to the\n * minute? Day-of-month and day-of-week follow the standard OR rule: when BOTH are restricted, a\n * match on EITHER is a match; when only one is restricted, only that one must match.\n */"
+    "doc": "/**\n * Does `date` (in its LOCAL time - cron is local-time by convention) match the fields, to the\n * minute? Day-of-month and day-of-week follow the standard OR rule: when BOTH are restricted, a\n * match on EITHER is a match; otherwise both must match (a bare `*` matches every day).\n */"
   },
   {
     "name": "matchesAssuranceSelector",

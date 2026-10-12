@@ -6,7 +6,7 @@
  */
 
 /** A parsed expression: one allowed-values Set per field, + whether dom/dow were restricted (for
- * the standard OR rule). */
+ * the standard OR rule). A field led by a star, a star-step included, is not restricted. */
 export interface CronFields {
   readonly minute: ReadonlySet<number>
   readonly hour: ReadonlySet<number>
@@ -30,13 +30,16 @@ const MACROS: Record<string, string> = {
 interface Range {
   readonly min: number
   readonly max: number
+  /** Where `*` and a bare `n/step` stop, when that is short of `max`. */
+  readonly last?: number
 }
 const RANGES: readonly [keyof Omit<CronFields, "domRestricted" | "dowRestricted">, Range][] = [
   ["minute", { min: 0, max: 59 }],
   ["hour", { min: 0, max: 23 }],
   ["dom", { min: 1, max: 31 }],
   ["month", { min: 1, max: 12 }],
-  ["dow", { min: 0, max: 6 }],
+  // 7 is Sunday as well as 0. Stars and bare steps still stop at 6, so `1/2` keeps meaning 1,3,5.
+  ["dow", { min: 0, max: 7, last: 6 }],
 ]
 
 const CRON_TERM = /^(?:\*|(\d{1,2})(?:-(\d{1,2}))?)(?:\/(\d{1,2}))?$/
@@ -44,7 +47,7 @@ const CRON_TERM = /^(?:\*|(\d{1,2})(?:-(\d{1,2}))?)(?:\/(\d{1,2}))?$/
 /** Parse one field into the set of allowed values, validating against the field's range. */
 function parseField(
   raw: string,
-  { min, max }: Range,
+  { min, max, last = max }: Range,
   fieldName: string,
   expr: string,
 ): Set<number> {
@@ -61,7 +64,13 @@ function parseField(
     const lo = start === undefined ? min : Number(start)
     // A bare `n/step` runs from n to the field's end, as `*/step` runs from its start.
     const hi =
-      end !== undefined ? Number(end) : start === undefined || stepText !== undefined ? max : lo
+      end !== undefined
+        ? Number(end)
+        : start === undefined
+          ? last
+          : stepText !== undefined
+            ? Math.max(lo, last)
+            : lo
     if (lo < min || hi > max || lo > hi) {
       throw new CronError(
         `out-of-range value "${part}" in ${fieldName} field (${min}-${max})`,
@@ -92,22 +101,24 @@ export function parseCron(expression: string): CronFields {
   const [minute, hour, dom, month, dow] = RANGES.map(([name, range], i) =>
     parseField(parts[i] as string, range, name, expression),
   ) as [Set<number>, Set<number>, Set<number>, Set<number>, Set<number>]
+  if (dow.delete(7)) dow.add(0)
   return {
     minute,
     hour,
     dom,
     month,
     dow,
-    // "restricted" = the raw field wasn't a bare `*` (controls the dom/dow OR rule in `matches`).
-    domRestricted: (parts[2] as string) !== "*",
-    dowRestricted: (parts[4] as string) !== "*",
+    // A field led by `*` is unrestricted for the OR rule in `matches`, as in Vixie cron and its
+    // descendants: `*/2 * 1` is an odd day that is a Monday, not either one.
+    domRestricted: !(parts[2] as string).startsWith("*"),
+    dowRestricted: !(parts[4] as string).startsWith("*"),
   }
 }
 
 /**
  * Does `date` (in its LOCAL time - cron is local-time by convention) match the fields, to the
  * minute? Day-of-month and day-of-week follow the standard OR rule: when BOTH are restricted, a
- * match on EITHER is a match; when only one is restricted, only that one must match.
+ * match on EITHER is a match; otherwise both must match (a bare `*` matches every day).
  */
 export function matches(fields: CronFields, date: Date): boolean {
   if (!fields.minute.has(date.getMinutes())) return false
@@ -116,9 +127,7 @@ export function matches(fields: CronFields, date: Date): boolean {
   const domOk = fields.dom.has(date.getDate())
   const dowOk = fields.dow.has(date.getDay())
   if (fields.domRestricted && fields.dowRestricted) return domOk || dowOk
-  if (fields.domRestricted) return domOk
-  if (fields.dowRestricted) return dowOk
-  return true
+  return domOk && dowOk
 }
 
 /**

@@ -14154,8 +14154,11 @@ cron.stop()            // graceful - in-flight handlers finish
 
 Macros: `@hourly` `@daily` (`@midnight`) `@weekly` `@monthly` `@yearly` (`@annually`).
 
+Day-of-week runs 0-6 from Sunday, and 7 is Sunday too.
+
 Day-of-month + day-of-week follow the **standard OR rule**: when both are restricted, a match on
-either fires the job.
+either fires the job. A field that starts with `*` is not restricted, a step like `*/2` included,
+so `0 0 */2 * 1` fires on an odd day that is also a Monday, as in Vixie cron.
 
 ## Guarantees
 
