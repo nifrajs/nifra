@@ -367,6 +367,8 @@ interface MigrateInput {
   readonly from?: "tailwind" | undefined
   readonly to?: "stylex" | undefined
   readonly write?: boolean | undefined
+  /** `migrate layout`: list the folders modules would leave in package.json zones instead. */
+  readonly zones?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -752,13 +754,14 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
     from: { type: "string", enum: ["tailwind"] },
     to: { type: "string", enum: ["stylex"] },
     write: { type: "boolean" },
+    zones: { type: "boolean" },
     json: { type: "boolean" },
     dir: { type: "string" },
   }),
   (value) => {
     const raw = withDir(record(value))
     const flags = {
-      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...parseBooleanFlags(raw, ["write", "zones", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
     const kind = optionalString(raw.kind, "kind")
@@ -767,6 +770,7 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
         throw new TypeError("the migration must be `layout` (or --from tailwind --to stylex)")
       return { kind, ...flags }
     }
+    if (raw.zones === true) throw new TypeError("--zones applies to `migrate layout` only")
     const from = optionalString(raw.from, "from")
     const to = optionalString(raw.to, "to")
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
@@ -1512,6 +1516,7 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       { name: "from", field: "from", type: "string" },
       { name: "to", field: "to", type: "string" },
       { name: "write", field: "write", type: "boolean" },
+      { name: "zones", field: "zones", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
       { name: "dir", field: "dir", type: "string" },
     ],
@@ -1521,7 +1526,8 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
     const write = value.write === undefined ? {} : { write: value.write }
     if (value.kind === "layout") {
       const { migrateLayout } = await import("./migrate-layout.ts")
-      return { kind: "layout" as const, ...(await migrateLayout(dir, write)) }
+      const options = { ...write, zones: value.zones === true }
+      return { kind: "layout" as const, ...(await migrateLayout(dir, options)) }
     }
     const { migrateTailwindToStylex } = await import("./stylex-migrate.ts")
     return migrateTailwindToStylex(dir, write)

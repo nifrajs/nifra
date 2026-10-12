@@ -6336,7 +6336,7 @@ _No named exports (side-effect entrypoint)._
 - **isServerPackageSpecifier** _(function)_ - `isServerPackageSpecifier: (specifier: string) => boolean`
   Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry.
 - **parseZoneConfig** _(function)_ - `parseZoneConfig: (value: unknown, source: string) => ZoneConfig`
-  Validate a `zones` setting. `source` names where it came from in the error. Folders are plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a pattern can never match less than its author meant without saying so.
+  Validate a `zones` setting. `source` names where it came from in the error. Folders and files are plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a pattern can never match less than its author meant without saying so. One path under two sides is re…
 - **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`
   The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
 - **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`

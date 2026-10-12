@@ -16172,7 +16172,7 @@
     "name": "ZoneConfig",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ZoneConfig {\n    /**\n     * The side of a package that does not declare one in its own package.json, by name: exact\n     * (`\"@shop/db\"`) or a trailing-`*` prefix (`\"@shop/*\"`). The exact name wins over a prefix, the\n     * longest prefix over a shorter one, and a package's own declaration over all of them.\n     */\n    readonly packages?: Readonly<Record<string, PackageEnvironment>>;\n    /** App-relative folders holding backend code, beside `backend/` (`\"migrations\"`). */\n    readonly backend?: readonly string[];\n    /** App-relative folders holding frontend code, beside `frontend/`. */\n    readonly frontend?: readonly string[];\n    /** App-relative folders holding code both sides import, beside `shared/`. */\n    readonly shared?: readonly string[];\n}",
+    "signature": "export interface ZoneConfig {\n    /**\n     * The side of a package that does not declare one in its own package.json, by name: exact\n     * (`\"@shop/db\"`) or a trailing-`*` prefix (`\"@shop/*\"`). The exact name wins over a prefix, the\n     * longest prefix over a shorter one, and a package's own declaration over all of them.\n     */\n    readonly packages?: Readonly<Record<string, PackageEnvironment>>;\n    /**\n     * App-relative folders or files holding backend code, beside `backend/` (`\"migrations\"`). A path\n     * listed inside another one's folder overrides it: the most specific entry wins.\n     */\n    readonly backend?: readonly string[];\n    /** App-relative folders or files holding frontend code, beside `frontend/`. */\n    readonly frontend?: readonly string[];\n    /** App-relative folders or files holding code both sides import, beside `shared/`. */\n    readonly shared?: readonly string[];\n}",
     "doc": "/**\n * App-side zone settings, read from `\"nifra\": { \"zones\": ... }` in the app's package.json so every\n * build, dev server, `nifra check` and the editor plugin see the same ones without running app code.\n */"
   },
   {
@@ -20849,7 +20849,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function parseZoneConfig(value: unknown, source: string): ZoneConfig;",
-    "doc": "/**\n * Validate a `zones` setting. `source` names where it came from in the error. Folders are plain\n * app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a\n * pattern can never match less than its author meant without saying so.\n */"
+    "doc": "/**\n * Validate a `zones` setting. `source` names where it came from in the error. Folders and files are\n * plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so\n * a pattern can never match less than its author meant without saying so. One path under two sides\n * is refused; a path nested in another's folder is not, since the most specific one decides.\n */"
   },
   {
     "name": "pathTag",

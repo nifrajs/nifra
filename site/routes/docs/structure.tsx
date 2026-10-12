@@ -74,7 +74,8 @@ const ZONES_SETTING = `{
   "nifra": {
     "zones": {
       "packages": { "@shop/*": "library", "@shop/db": "backend" },
-      "backend": ["migrations"]
+      "backend": ["migrations", "src/ui/mailer.ts"],
+      "frontend": ["src/ui"]
     }
   }
 }`
@@ -188,9 +189,11 @@ export default function Structure() {
       <p>
         <code>packages</code> gives a side to a package that does not declare one, by exact name or
         by a prefix ending in <code>*</code>; a package's own declaration always wins.{" "}
-        <code>backend</code>, <code>frontend</code> and <code>shared</code> list app folders that
-        count as that zone folder. Builds, dev servers, <code>nifra check</code> and the editor
-        plugin all read this setting.
+        <code>backend</code>, <code>frontend</code> and <code>shared</code> list app folders, or
+        single files, that count as that zone. A path inside another's folder overrides it, so the
+        most specific entry decides: above, <code>src/ui/mailer.ts</code> is backend code in a
+        frontend folder. One path listed under two sides is refused. Builds, dev servers,{" "}
+        <code>nifra check</code> and the editor plugin all read this setting.
       </p>
       <p>
         A project that serves no pages has no browser, so the zones do not apply to it. Declare that

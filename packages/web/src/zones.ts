@@ -163,11 +163,14 @@ export interface ZoneConfig {
    * longest prefix over a shorter one, and a package's own declaration over all of them.
    */
   readonly packages?: Readonly<Record<string, PackageEnvironment>>
-  /** App-relative folders holding backend code, beside `backend/` (`"migrations"`). */
+  /**
+   * App-relative folders or files holding backend code, beside `backend/` (`"migrations"`). A path
+   * listed inside another one's folder overrides it: the most specific entry wins.
+   */
   readonly backend?: readonly string[]
-  /** App-relative folders holding frontend code, beside `frontend/`. */
+  /** App-relative folders or files holding frontend code, beside `frontend/`. */
   readonly frontend?: readonly string[]
-  /** App-relative folders holding code both sides import, beside `shared/`. */
+  /** App-relative folders or files holding code both sides import, beside `shared/`. */
   readonly shared?: readonly string[]
 }
 
@@ -201,9 +204,10 @@ const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined
     : undefined
 
 /**
- * Validate a `zones` setting. `source` names where it came from in the error. Folders are plain
- * app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so a
- * pattern can never match less than its author meant without saying so.
+ * Validate a `zones` setting. `source` names where it came from in the error. Folders and files are
+ * plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so
+ * a pattern can never match less than its author meant without saying so. One path under two sides
+ * is refused; a path nested in another's folder is not, since the most specific one decides.
  */
 export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
   const fail = (message: string): never => {
@@ -240,7 +244,7 @@ export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
     if (raw === undefined) continue
     const entries: readonly unknown[] = Array.isArray(raw)
       ? raw
-      : fail(`"${side}" must be an array of app-relative folders`)
+      : fail(`"${side}" must be an array of app-relative folders or files`)
     const folders: string[] = []
     for (const entry of entries) {
       const folder = (typeof entry === "string" ? entry : fail(`"${side}" must hold strings`))
@@ -250,18 +254,15 @@ export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
         .replace(/\/+$/, "")
       const top = folder.split("/")[0] ?? ""
       if (folder === "" || folder.startsWith("/") || /^[a-z]:/i.test(folder))
-        fail(`"${side}" entry "${entry}" must be a folder relative to the app`)
+        fail(`"${side}" entry "${entry}" must be a folder or file relative to the app`)
       if (folder.split("/").includes("..")) fail(`"${side}" entry "${entry}" may not contain ".."`)
       if (/[*?[\]{}!]/.test(folder))
-        fail(`"${side}" entry "${entry}" must be a plain folder path (a trailing "/**" is allowed)`)
+        fail(`"${side}" entry "${entry}" must be a plain path (a trailing "/**" is allowed)`)
       if (RESERVED_FOLDERS.has(top) || top.startsWith(".nifra"))
         fail(`"${side}" entry "${entry}" is inside ${top}/, which already has its own rules`)
-      for (const [other, otherSide] of owner) {
-        const nested =
-          other === folder || other.startsWith(`${folder}/`) || folder.startsWith(`${other}/`)
-        if (nested && otherSide !== side)
-          fail(`"${folder}" (${side}) overlaps "${other}" (${otherSide}); a folder has one side`)
-      }
+      const other = owner.get(folder)
+      if (other !== undefined && other !== side)
+        fail(`"${folder}" is listed as both ${other} and ${side}; a path has one side`)
       owner.set(folder, side)
       folders.push(folder)
     }
@@ -406,11 +407,12 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
   const configuredFolders: Array<readonly [string, "backend" | "frontend" | "shared"]> = []
   for (const side of FOLDER_SIDES)
     for (const folder of zones[side] ?? []) configuredFolders.push([folder, side])
-  const folderSide = (rel: string): "backend" | "frontend" | "shared" | undefined => {
-    for (const [folder, side] of configuredFolders)
-      if (rel === folder || rel.startsWith(`${folder}/`)) return side
-    return undefined
-  }
+  // Longest first, so the most specific entry covering a file decides its side.
+  configuredFolders.sort(([a], [b]) => b.length - a.length)
+  const configuredPath = (
+    rel: string,
+  ): readonly [string, "backend" | "frontend" | "shared"] | undefined =>
+    configuredFolders.find(([folder]) => rel === folder || rel.startsWith(`${folder}/`))
   const cache = new Map<string, Classification>()
   const packages = new Map<string, PackageInfo | null>()
 
@@ -585,13 +587,20 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
         if (suffix === "shared") return { zone: "shared" }
         return { zone: "route-frontend" }
       }
-      const folder = ZONE_FOLDERS[top] ?? folderSide(rel)
+      const configured = ZONE_FOLDERS[top] === undefined ? configuredPath(rel) : undefined
+      const folder = ZONE_FOLDERS[top] ?? configured?.[1]
       if (folder !== undefined) {
         if (suffix === undefined || suffix === folder) return { zone: folder }
         if (suffix === "fn" && folder === "backend") return { zone: "fn" }
+        const where =
+          configured === undefined
+            ? `sits in ${top}/`
+            : configured[0] === rel
+              ? `is listed as ${folder} in "nifra.zones"`
+              : `sits in ${configured[0]}/, which "nifra.zones" lists as ${folder},`
         return {
           zone: "error",
-          reason: `"${rel}" sits in ${top}/ but its ".${suffix}" suffix says otherwise. A file belongs to one side: move it, or drop the suffix`,
+          reason: `"${rel}" ${where} but its ".${suffix}" suffix says otherwise. A file belongs to one side: move it, or drop the suffix`,
         }
       }
       if (suffix !== undefined) return { zone: suffix === "fn" ? "fn" : suffix }

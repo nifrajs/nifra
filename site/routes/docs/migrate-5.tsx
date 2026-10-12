@@ -99,6 +99,13 @@ export default function Migrate5() {
       </p>
       <CodeBlock code={ZONES} lang="json" />
       <p>
+        <code>nifra migrate layout --zones</code> writes those entries for you: every module the
+        layout would move stays where it is, and <code>package.json</code> lists the widest folder
+        whose files all belong to one side, or the file itself where its folder holds both. Route
+        files are still split and the root entries still move. A path nested in another's folder
+        overrides it, so a backend file can sit in a frontend folder without moving.
+      </p>
+      <p>
         The command exits <code>0</code> when nothing needs a decision. A step with a known command,
         such as drafting an output schema for a backend half it did not write, is listed under{" "}
         <code>next</code> and in <code>followUps</code> with <code>--json</code>, and does not fail it.

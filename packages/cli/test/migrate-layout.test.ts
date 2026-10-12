@@ -2,6 +2,7 @@ import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { createZoneClassifier } from "@nifrajs/web/zones"
 import * as ts from "typescript"
 import { middlewareSource, migrateLayout, splitRouteSource } from "../src/migrate-layout.ts"
 import {
@@ -449,6 +450,83 @@ describe("migrateLayout", () => {
       "src/ui/button.tsx",
     ])
     expect(result.issues[1]?.reason).toContain('"src/ui/disk.ts" stays in src/ui/')
+  })
+
+  test("--zones lists the folders modules would leave in package.json, and moves none of them", async () => {
+    const dir = app({
+      "package.json": `${JSON.stringify({ name: "app", nifra: { zones: { backend: ["jobs"] } } }, null, 2)}\n`,
+      "nifra.config.ts":
+        'export const adapter = {}\nexport const clientModule = "@nifrajs/web-react/client"\n',
+      "routes/index.tsx": [
+        'import { Button } from "../lib/ui/button.tsx"',
+        'import { format } from "../lib/format.ts"',
+        'import { query } from "../lib/db/query.ts"',
+        'import { tick } from "../tools.ts"',
+        "export async function loader() { return { rows: query(format(tick())) } }",
+        "export default () => Button(format(1))",
+        "",
+      ].join("\n"),
+      "lib/ui/button.tsx":
+        'import labels from "./labels.json"\nexport const Button = (s: string) => `${labels.ok} ${s}`\n',
+      "lib/ui/labels.json": '{ "ok": "Fine" }\n',
+      "lib/ui/card.tsx": "export const Card = () => null\n",
+      "lib/db/query.ts": "export const query = (s: string) => [s]\n",
+      "lib/format.ts": "export const format = (n: number) => String(n)\n",
+      "lib/format.test.ts": 'import { format } from "./format.ts"\nformat(1)\n',
+      "tools.ts": "export const tick = () => 1\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, zones: true, write: true })
+    expect(result.moves).toEqual([])
+    expect(result.issues).toEqual([])
+    expect(result.splits.map((split) => split.backend)).toEqual(["routes/index.backend.ts"])
+    expect(result.tooling.filter((edit) => edit.file === "package.json")).toEqual([
+      { file: "package.json", change: '"nifra.zones" lists "lib/db" as backend' },
+      { file: "package.json", change: '"nifra.zones" lists "lib/format.ts" as shared' },
+      { file: "package.json", change: '"nifra.zones" lists "lib/ui" as frontend' },
+      { file: "package.json", change: '"nifra.zones" lists "tools.ts" as backend' },
+    ])
+    expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).nifra.zones).toEqual({
+      backend: ["jobs", "lib/db", "tools.ts"],
+      frontend: ["lib/ui"],
+      shared: ["lib/format.ts"],
+    })
+    // The files stay, and every tool that zones a file now agrees with the plan.
+    const zones = createZoneClassifier({ appRoot: dir })
+    for (const [file, zone] of [
+      ["lib/ui/card.tsx", "frontend"],
+      ["lib/ui/labels.json", "frontend"],
+      ["lib/db/query.ts", "backend"],
+      ["lib/format.ts", "shared"],
+      ["tools.ts", "backend"],
+    ] as const) {
+      expect(existsSync(join(dir, file))).toBe(true)
+      expect(zones.classify(join(dir, file)).zone).toBe(zone)
+    }
+    expect(readFileSync(join(dir, "routes/index.backend.ts"), "utf8")).toContain(
+      '"../lib/db/query.ts"',
+    )
+
+    const again = await migrateLayout(dir, { typescript: ts, zones: true })
+    expect(again.moves).toEqual([])
+    expect(again.tooling.filter((edit) => edit.file === "package.json")).toEqual([])
+  })
+
+  test("--zones lists a file on its own where its folder holds another side", async () => {
+    const dir = app({
+      "package.json": '{ "name": "app" }\n',
+      "nifra.config.ts":
+        'export const adapter = {}\nexport const clientModule = "@nifrajs/web-react/client"\n',
+      "routes/index.tsx": 'import { a } from "../src/a.ts"\nexport default () => a\n',
+      "src/a.ts": "export const a = 1\n",
+      "src/disk.ts": 'import { readFileSync } from "node:fs"\nexport const disk = readFileSync\n',
+      "src/pkg/package.json": '{ "name": "pkg" }\n',
+      "src/pkg/ui/b.ts": "export const b = 2\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, zones: true })
+    expect(result.tooling.filter((edit) => edit.file === "package.json")).toEqual([
+      { file: "package.json", change: '"nifra.zones" lists "src/a.ts" as frontend' },
+    ])
+    expect(readFileSync(join(dir, "package.json"), "utf8")).toBe('{ "name": "app" }\n')
   })
 
   test("a backend half the run did not write is a follow-up, not an issue", async () => {

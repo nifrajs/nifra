@@ -126,6 +126,9 @@ Usage:
                                          one left. Exits 1 while current-code errors are open.
   nifra logs    [--since <n>] [--level <l>] [--grep <s>]  The dev server's console, server and
                                          browser, each line tagged with its request.
+  nifra explain [<message>] [--stack <s>] [--name <n>]  A structured diagnostic for an error: its
+                                         code, the frame in your source, and the cause and fix when
+                                         nifra knows them. No message: the dev server's latest error.
   nifra cdn-check <url>                  Check a deployed page behind a CDN: served from cache, no
                                          internal or CDN-only headers reaching the visitor, and soft
                                          navigations get page data, not the cached document. Exits 1
@@ -273,20 +276,23 @@ Usage:
                                          this CLI prints the command for that release's CLI. Fail-closed
                                          on an unknown version or a rollback (--allow-downgrade
                                          overrides). Deterministic + idempotent.
-  nifra migrate layout [--write] [--json]
+  nifra migrate layout [--write] [--zones] [--json]
                                          Move an app onto the frontend/backend split: split each route
                                          into x.tsx + x.backend.ts, fold _middleware.ts into
                                          _layout.backend.ts, move backend.ts/framework.ts under backend/,
-                                         and zone the other modules into frontend/, backend/ or shared/.
-                                         Dry-run by default; --write applies.
+                                         and zone the other modules into frontend/, backend/ or shared/
+                                         (--zones keeps them in place and lists them in package.json
+                                         "nifra.zones"). Dry-run by default; --write applies.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
                                          by backend/app.ts. dev, build and check refresh them too;
                                          --check fails when one is stale.
-  nifra schemas [--write] [--json]       Draft loaderOutput/actionOutput from each loader's and
+  nifra schemas [--write] [--check] [--json]
+                                         Draft loaderOutput/actionOutput from each loader's and
                                          action's return type for review; --write adds the missing
                                          ones (marked nifra:generated) and refreshes generated ones.
-                                         Lists the returned fields a hand-written schema drops.
+                                         Lists the returned fields a hand-written schema drops;
+                                         --check fails on a missing, stale or any-typed one.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-

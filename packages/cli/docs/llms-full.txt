@@ -10634,6 +10634,12 @@ like the default folders.
 
 ```
 
+`nifra migrate layout --zones` writes those entries for you: every module the
+layout would move stays where it is, and `package.json` lists the widest folder
+whose files all belong to one side, or the file itself where its folder holds both. Route
+files are still split and the root entries still move. A path nested in another's folder
+overrides it, so a backend file can sit in a frontend folder without moving.
+
 The command exits `0` when nothing needs a decision. A step with a known command,
 such as drafting an output schema for a backend half it did not write, is listed under
 `next` and in `followUps` with `--json`, and does not fail it.
@@ -11676,7 +11682,8 @@ where it is, or a family of workspace packages, needs no edit of its own:
   "nifra": {
     "zones": {
       "packages": { "@shop/*": "library", "@shop/db": "backend" },
-      "backend": ["migrations"]
+      "backend": ["migrations", "src/ui/mailer.ts"],
+      "frontend": ["src/ui"]
     }
   }
 }
@@ -11684,9 +11691,11 @@ where it is, or a family of workspace packages, needs no edit of its own:
 
 `packages` gives a side to a package that does not declare one, by exact name or
 by a prefix ending in `*`; a package's own declaration always wins.
-`backend`, `frontend` and `shared` list app folders that
-count as that zone folder. Builds, dev servers, `nifra check` and the editor
-plugin all read this setting.
+`backend`, `frontend` and `shared` list app folders, or
+single files, that count as that zone. A path inside another's folder overrides it, so the
+most specific entry decides: above, `src/ui/mailer.ts` is backend code in a
+frontend folder. One path listed under two sides is refused. Builds, dev servers,
+`nifra check` and the editor plugin all read this setting.
 
 A project that serves no pages has no browser, so the zones do not apply to it. Declare that
 in its `package.json` with `{'"nifra": { "kind": "api" }'}`:

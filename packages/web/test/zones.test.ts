@@ -251,6 +251,41 @@ describe("app zone settings", () => {
     expect(zoneOf("migrations/001-init.ts").zone).toBe("error")
   })
 
+  test("a path inside another's folder overrides it, and a single file can be listed", () => {
+    write("app/deck/server/mail.ts")
+    write("app/deck/server/views/Preview.tsx")
+    write("app/deck/server/mail.frontend.ts")
+    write("app/deck/Panel.tsx")
+    write("app/deck/env.ts")
+    write("app/deck/env.tsx")
+    write("app/deck/env.shared.ts")
+    write("app/tools/seed.ts")
+    const classifier = configured({
+      frontend: ["deck", "deck/server/views"],
+      backend: ["deck/server", "tools/seed.ts"],
+      shared: ["deck/env.ts"],
+    })
+    expect(classifier.classify(join(app, "deck/Panel.tsx")).zone).toBe("frontend")
+    expect(classifier.classify(join(app, "deck/server/mail.ts")).zone).toBe("backend")
+    expect(classifier.classify(join(app, "deck/server/views/Preview.tsx")).zone).toBe("frontend")
+    expect(classifier.classify(join(app, "deck/env.ts")).zone).toBe("shared")
+    expect(classifier.classify(join(app, "tools/seed.ts")).zone).toBe("backend")
+    // A listed file is not a folder: its name is no prefix for a sibling.
+    expect(classifier.classify(join(app, "deck/env.tsx")).zone).toBe("frontend")
+    const misplaced = configured({ backend: ["deck/env.shared.ts"] }).classify(
+      join(app, "deck/env.shared.ts"),
+    )
+    expect(misplaced.zone === "error" && misplaced.reason).toContain(
+      'is listed as backend in "nifra.zones"',
+    )
+    const against = configured({ frontend: ["deck"], backend: ["deck/server"] }).classify(
+      join(app, "deck/server/mail.frontend.ts"),
+    )
+    expect(against.zone === "error" && against.reason).toContain(
+      'sits in deck/server/, which "nifra.zones" lists as backend,',
+    )
+  })
+
   test("the app's package.json is read when no setting is passed", () => {
     const own = join(root, "own-config")
     mkdirSync(join(own, "jobs"), { recursive: true })
@@ -270,11 +305,11 @@ describe("app zone settings", () => {
     [{ packages: { "@ws/*": "server" } }, "must be one of frontend, backend, shared, library"],
     [{ packages: { "a*b": "backend" } }, 'may use "*" only at its end'],
     [{ backend: "migrations" }, "must be an array"],
-    [{ backend: ["migrations/*.ts"] }, "must be a plain folder path"],
+    [{ backend: ["migrations/*.ts"] }, "must be a plain path"],
     [{ backend: ["../outside"] }, 'may not contain ".."'],
-    [{ backend: ["/abs"] }, "must be a folder relative to the app"],
+    [{ backend: ["/abs"] }, "must be a folder or file relative to the app"],
     [{ shared: ["backend/util"] }, "inside backend/"],
-    [{ backend: ["jobs"], frontend: ["jobs/ui"] }, "a folder has one side"],
+    [{ backend: ["jobs"], frontend: ["./jobs/"] }, "listed as both backend and frontend"],
   ] as const)("refuses %j", (zones, message) => {
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(ZoneConfigError)
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(message)

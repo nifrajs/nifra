@@ -80,6 +80,8 @@ const TOOLING_FILE =
 const SELF_LOCATION = /\bimport\.meta\.(?:dirname|dir|filename|url)\b|\b__(?:dirname|filename)\b/
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage", ".git", ".vite", "public"])
 const ZONE_DIRS = new Set(["frontend", "backend", "shared", "routes", "public"])
+type FolderSide = "frontend" | "backend" | "shared"
+const FOLDER_SIDES: readonly FolderSide[] = ["frontend", "backend", "shared"]
 /** Data other tools may read by path too; reported, never moved. Images and fonts still move. */
 const DATA_FILE = /\.(?:json|jsonc|json5|ndjson|ya?ml|toml|csv|tsv|txt|xml|sql)$/
 /** Test-runner calls that name a module by path, as an import does. */
@@ -154,6 +156,12 @@ export interface LayoutMigrationResult {
 
 export interface LayoutMigrationOptions {
   readonly write?: boolean
+  /**
+   * Leave the modules the layout would move into `frontend/`, `backend/` or `shared/` where they are,
+   * and list them in the app's `"nifra": { "zones": ... }` instead: the widest folder whose files all
+   * belong to one side, else the file itself. Route splits and the root entry moves still happen.
+   */
+  readonly zones?: boolean
   /** Inject the TypeScript compiler (tests); defaults to the CLI's own. */
   readonly typescript?: typeof TS
 }
@@ -2276,7 +2284,9 @@ export async function migrateLayout(
       })
     }
   }
-  const zoneOf = (file: string): "frontend" | "backend" | "shared" =>
+  /** With `zones`, the files that stay where they are and the side package.json gives them. */
+  const inPlace = new Map<string, FolderSide>()
+  const zoneOf = (file: string): FolderSide =>
     browser.has(file) && server.has(file) ? "shared" : browser.has(file) ? "frontend" : "backend"
   for (const file of api ? [] : files) {
     if (
@@ -2293,6 +2303,10 @@ export async function migrateLayout(
       if (ZONE_DIRS.has(top) || (!browser.has(file) && !server.has(file))) continue
     } else if (!browser.has(file) && !appServer.has(file)) continue
     const zone = zoneOf(file)
+    if (DATA_FILE.test(file) && options.zones === true) {
+      inPlace.set(file, zone)
+      continue
+    }
     if (DATA_FILE.test(file)) {
       const folder = file.includes("/") ? posix.dirname(file) : undefined
       issues.push({
@@ -2339,6 +2353,15 @@ export async function migrateLayout(
     if (zone !== "backend" && /from\s+["'](?:node:|bun:)/.test(next.get(file) ?? "")) continue
     moveMap.set(file, `${zone}/${file}`)
   }
+  if (options.zones === true) {
+    for (const [from, to] of moveMap) {
+      const side = FOLDER_SIDES.find((side) => to === `${side}/${from}`)
+      if (side === undefined) continue
+      inPlace.set(from, side)
+      moveMap.delete(from)
+    }
+  }
+  const declared = zoneDeclarations(inPlace, files, (file) => next.get(file), inConfiguredFolder)
   const claimed = new Map<string, string>()
   for (const [from, to] of moveMap) {
     const holder = claimed.get(to) ?? (known.has(to) && !moveMap.has(to) ? to : undefined)
@@ -2399,13 +2422,19 @@ export async function migrateLayout(
       claimed.set(to, from)
     }
   }
-  for (const [from, to] of moveMap) {
+  for (const [from, to] of [
+    ...moveMap,
+    ...[...inPlace].map(([file, side]) => [file, side] as const),
+  ]) {
     // A test is never bundled, so its own server imports decide nothing.
     if (isTestFile(from)) continue
-    if (to.startsWith("shared/") && /from\s+["'](?:node:|bun:)/.test(next.get(from) ?? "")) {
+    if (
+      (to === "shared" || to.startsWith("shared/")) &&
+      /from\s+["'](?:node:|bun:)/.test(next.get(from) ?? "")
+    ) {
       issues.push({
         file: from,
-        reason: `both halves import it at runtime, but it uses a server built-in; split it before moving to ${to}`,
+        reason: `both halves import it at runtime, but it uses a server built-in; split it before ${to === "shared" ? "zoning it shared" : `moving to ${to}`}`,
       })
     }
   }
@@ -2765,6 +2794,15 @@ export async function migrateLayout(
         file,
         change: 'export const apiPrefix = "/api", the mount 4.x made by default',
       })
+    }
+  }
+  if (declared.size > 0) {
+    const zoned = declareZones(ts, root, declared)
+    if (zoned.issue !== undefined) issues.push({ file: "package.json", reason: zoned.issue })
+    if (zoned.text !== undefined) {
+      toolingWrites.set("package.json", zoned.text)
+      for (const [path, side] of declared)
+        tooling.push({ file: "package.json", change: `"nifra.zones" lists "${path}" as ${side}` })
     }
   }
   // `nifra check` reads the declaration statically; without it, a later routes/ or config would zone the app.
@@ -3186,6 +3224,111 @@ function insertProperty(
   }
   const indent = /^[ \t]*/.exec(text.slice(text.lastIndexOf("\n", start) + 1, start))?.[0] ?? ""
   return `${text.slice(0, last.end)},\n${indent}${entry}${text.slice(last.end)}`
+}
+
+/**
+ * The `nifra.zones` entries that keep `inPlace` files where they are: for each, the widest folder
+ * above it whose zoned files all take its side (a nested package stops the climb), else the file
+ * itself. A file another side's suffix or a server built-in claims counts against a folder.
+ */
+function zoneDeclarations(
+  inPlace: ReadonlyMap<string, FolderSide>,
+  files: readonly string[],
+  text: (file: string) => string | undefined,
+  configured: (file: string) => boolean,
+): Map<string, FolderSide> {
+  const sides = new Map<string, Set<string>>()
+  const packages = new Set<string>()
+  for (const file of files) {
+    const top = file.split("/")[0] ?? ""
+    if (!file.includes("/") || ZONE_DIRS.has(top)) continue
+    if (posix.basename(file) === "package.json") {
+      for (let dir = posix.dirname(file); dir !== "."; dir = posix.dirname(dir)) packages.add(dir)
+      continue
+    }
+    // A configured path is more specific than any folder above it, so it never counts against one.
+    if (isTestFile(file) || file.endsWith(".d.ts") || configured(file)) continue
+    const suffix = /\.(frontend|backend|shared|fn)\.[cm]?[jt]sx?$/.exec(file)?.[1]
+    const side =
+      inPlace.get(file) ??
+      (suffix === "fn" ? "backend" : suffix) ??
+      (SOURCE_FILE.test(file) && /from\s+["'](?:node:|bun:)/.test(text(file) ?? "")
+        ? "backend"
+        : undefined)
+    if (side === undefined) continue
+    for (let dir = posix.dirname(file); dir !== "."; dir = posix.dirname(dir))
+      sides.set(dir, (sides.get(dir) ?? new Set<string>()).add(side))
+  }
+  const declared = new Map<string, FolderSide>()
+  for (const [file, side] of [...inPlace].sort(([a], [b]) => codeUnitOrder(a, b))) {
+    const parts = file.split("/")
+    let path = file
+    for (let depth = 1; depth < parts.length; depth++) {
+      const dir = parts.slice(0, depth).join("/")
+      const found = sides.get(dir)
+      if (!packages.has(dir) && found?.size === 1 && found.has(side)) {
+        path = dir
+        break
+      }
+    }
+    declared.set(path, side)
+  }
+  return declared
+}
+
+/** The app's package.json with `paths` added to `"nifra": { "zones": ... }`, editing only where they go. */
+function declareZones(
+  ts: typeof TS,
+  root: string,
+  paths: ReadonlyMap<string, FolderSide>,
+): { text?: string; issue?: string } {
+  const listed = (side: FolderSide): string[] =>
+    [...paths].flatMap(([path, of]) => (of === side ? [path] : []))
+  const setting = `{ ${FOLDER_SIDES.filter((side) => listed(side).length > 0)
+    .map((side) => `"${side}": ${JSON.stringify(listed(side))}`)
+    .join(", ")} }`
+  const path = join(root, "package.json")
+  if (!existsSync(path))
+    return { issue: `there is none in the app; declare "nifra": { "zones": ${setting} } in it` }
+  let text = readFileSync(path, "utf8")
+  // Parsed again for each edit: an edit moves every offset after it.
+  const find = (keys: readonly string[]) => {
+    const source = ts.parseJsonText(path, text)
+    let node: TS.Expression | undefined = source.statements[0]?.expression
+    for (const key of keys)
+      node =
+        node !== undefined && ts.isObjectLiteralExpression(node)
+          ? jsonProperty(ts, node, key)?.initializer
+          : undefined
+    return { source, node }
+  }
+  const top = find([])
+  if (top.node === undefined || !ts.isObjectLiteralExpression(top.node))
+    return { issue: `is not a JSON object; add "nifra": { "zones": ${setting} } to it by hand` }
+  const nifra = find(["nifra"])
+  if (nifra.node === undefined)
+    return { text: insertProperty(top.source, text, top.node, `"nifra": { "zones": ${setting} }`) }
+  if (!ts.isObjectLiteralExpression(nifra.node))
+    return { issue: `"nifra" is not an object; add "zones": ${setting} to it by hand` }
+  const zones = find(["nifra", "zones"])
+  if (zones.node === undefined)
+    return { text: insertProperty(nifra.source, text, nifra.node, `"zones": ${setting}`) }
+  for (const side of FOLDER_SIDES) {
+    const add = listed(side)
+    if (add.length === 0) continue
+    const { source, node } = find(["nifra", "zones"])
+    if (node === undefined || !ts.isObjectLiteralExpression(node))
+      return { issue: `"nifra.zones" is not an object; add ${setting} to it by hand` }
+    const array = jsonProperty(ts, node, side)?.initializer
+    if (array === undefined)
+      text = insertProperty(source, text, node, `"${side}": ${JSON.stringify(add)}`)
+    else if (ts.isArrayLiteralExpression(array)) text = appendToArray(source, text, array, add)
+    else
+      return {
+        issue: `"nifra.zones.${side}" is not an array; add ${JSON.stringify(add)} to it by hand`,
+      }
+  }
+  return { text }
 }
 
 /** The app's package.json with `"nifra": { "kind": "api" }` added, editing only where it goes. */
