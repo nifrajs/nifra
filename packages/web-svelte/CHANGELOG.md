@@ -1,5 +1,29 @@
 # @nifrajs/web-svelte
 
+## 5.1.0
+
+### Patch Changes
+
+- 6594e19: `<svelte:head>` and Vue's `<Teleport>` are server-rendered. Both were dropped from the HTML, so a `noindex` robots tag, a canonical link or a teleported dialog appeared only after hydration, and never with JavaScript off.
+  
+  - `@nifrajs/web-svelte` puts what `<svelte:head>` renders at the end of the document's `<head>`.
+  - `@nifrajs/web-vue` puts each teleport's content as the first children of its target, where Vue's hydration reads it. `body` content goes first in `<body>`. An `#id` target the app renders empty receives the content, and one the app does not render gets a container before the app root. Any other selector, a target with children of its own, and a page that uses `defer()` keep rendering teleports on the client, now with a development warning.
+  - `@nifrajs/web`: a render adapter that sets `documentParts` is passed `options.parts` and adds `head` and `body` markup there. An adapter without it is unchanged.
+- Updated dependencies [78b2a04]
+- Updated dependencies [638efe5]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [5372e3a]
+- Updated dependencies [b276c67]
+- Updated dependencies [29d6649]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [72e1b4b]
+- Updated dependencies [7bb8a67]
+- Updated dependencies [513ec28]
+  - @nifrajs/web@5.1.0
+  - @nifrajs/core@5.1.0
+  - @nifrajs/i18n@5.1.0
+  - @nifrajs/image@5.1.0
+
 ## 5.0.0
 
 ### Minor Changes

@@ -138,7 +138,9 @@ export default function Data() {
         under the line was edited (reformatting it is not an edit); delete the line to own the
         schema by hand. A hand-written schema is never rewritten: the report lists the
         returned fields it drops, by path. Nothing is derived at request time - the schema in the
-        file is the one the guard enforces.
+        file is the one the guard enforces. <code>nifra fix --code NF-C030</code> writes the same
+        draft for one flagged route, and <code>nifra migrate layout</code> drafts one for each
+        route it splits whose loader or action returns data without a schema.
       </p>
       <p>
         A field named like a credential (<code>password</code>, <code>token</code>,{" "}
@@ -160,6 +162,19 @@ export default function Data() {
       </p>
       <CodeBlock code={ACTION} lang="ts" />
       <CodeBlock code={FORM} />
+      <p>
+        A form can post to another site and the browser sends that site's cookies with it, so an action
+        refuses a POST whose <code>Origin</code> is another site's with 403, before middleware, gates or
+        the action run. A request without an <code>Origin</code>, such as one from a server, passes, and
+        so does a form on the app's own page sent under <code>Referrer-Policy: no-referrer</code>, which
+        arrives as <code>Origin: null</code> with <code>Sec-Fetch-Site: same-origin</code>.
+        Same-origin is judged from the request URL's host, so a proxy in front must forward the{" "}
+        <code>Host</code> header. A route that takes posts from elsewhere, such as an identity
+        provider's <code>form_post</code> callback, exports <code>allowedOrigins</code> from its backend
+        file: an array of exact origins, or a function that receives the origin (<code>null</code> when
+        absent). It checks where the browser says the request comes from, not who sent it, so keep the
+        action's own authentication.
+      </p>
 
       <h2>Layout loaders on navigation</h2>
       <p>
@@ -168,7 +183,11 @@ export default function Data() {
         browser already holds that data, so the loader runs again only when a param the layout owns
         changes (<code>org</code> for <code>orgs/[org]/_layout.tsx</code>) or the query changes. After
         an action, every loader runs. A layout that exports <code>gate = true</code> runs on every
-        request; a layout loader without it is not an authorization boundary. A{" "}
+        request; a layout loader without it is not an authorization boundary: a client navigation can
+        skip it, and an action below it runs without it. Put a check that refuses access in a gate or
+        in middleware. In development, nifra warns the first time a layout loader without{" "}
+        <code>gate</code> refuses a request with a redirect, a <code>Response</code>, or a 401 or 403,
+        and <code>nifra check</code> reports one whose loader refuses in its own body (NF-C042). A{" "}
         <code>_layout.backend.ts</code> that exports <code>middleware</code> guards a directory, with
         or without a layout component - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>

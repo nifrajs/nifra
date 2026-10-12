@@ -53,7 +53,8 @@ export type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | 
 export type Backoff = (attempt: number) => number
 
 export interface RetryPolicy {
-  /** Total attempts before dead-lettering (incl. the first). Default 3. `1` = no retries. */
+  /** Total attempts before dead-lettering (incl. the first): a whole number, below 1 counting as 1.
+   * Default 3. `1` = no retries. `define` throws a `RangeError` on `NaN`, `Infinity` or a fraction. */
   readonly attempts: number
   /** Delay before each retry. Default {@link exponentialBackoff}. */
   readonly backoff?: Backoff
@@ -69,7 +70,7 @@ export interface JobDefinition<Payload> {
   /**
    * Fail an attempt that has not settled after this many ms: it is retried or dead-lettered like a
    * throw, its worker slot frees, and `ctx.signal` aborts. A handler that ignores the signal keeps
-   * running unobserved. Keep it below the worker's `leaseMs`, after which the job can be leased again.
+   * running unobserved. It must be below the worker's `leaseMs`: `start()` throws otherwise.
    */
   readonly timeoutMs?: number
 }
@@ -169,6 +170,12 @@ export interface StoredJob {
    * persist it still runs every job; only the link between the producer's and the run's spans is lost.
    */
   readonly traceparent?: string
+  /**
+   * This lease's token, new on every `lease`. The queue hands it back to `complete`, `retry`,
+   * `deadLetter` and `renew`, so a store can ignore a call from a worker whose lease ran out and
+   * was taken by another. A store without tokens leaves it unset.
+   */
+  readonly lease?: string
 }
 
 export interface JobCounts {
@@ -196,12 +203,19 @@ export interface JobStore {
   }): string | Promise<string>
   /** Atomically claim up to `limit` jobs due at/before `now`, hiding them for `leaseMs`. */
   lease(now: number, limit: number, leaseMs: number): StoredJob[] | Promise<StoredJob[]>
-  /** A job finished successfully - remove it. */
-  complete(id: string): void | Promise<void>
+  /** A job finished successfully - remove it. `lease` is the {@link StoredJob.lease} it ran under:
+   * a store that issues tokens ignores a call whose token is no longer the job's current one. */
+  complete(id: string, lease?: string): void | Promise<void>
   /** A job failed but has attempts left - bump its attempt count and reschedule for `runAt`. */
-  retry(id: string, runAt: number): void | Promise<void>
+  retry(id: string, runAt: number, lease?: string): void | Promise<void>
   /** A job exhausted its attempts - move it to the dead-letter set with the last error. */
-  deadLetter(id: string, error: string): void | Promise<void>
+  deadLetter(id: string, error: string, lease?: string): void | Promise<void>
+  /**
+   * Optional: keep a leased job hidden until `until`. The queue calls it about three times per
+   * `leaseMs` while the handler runs, so a long job is not leased again mid-run. Without it a job
+   * that outruns `leaseMs` can be delivered to another worker while the first still runs.
+   */
+  renew?(id: string, until: number, lease?: string): void | Promise<void>
   /** Snapshot counts (observability + tests). */
   counts(): JobCounts | Promise<JobCounts>
 }

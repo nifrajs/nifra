@@ -2,10 +2,24 @@ import {
   type DocumentNode,
   type GraphQLError,
   Kind,
+  NoSchemaIntrospectionCustomRule,
   type SelectionNode,
   type SelectionSetNode,
+  specifiedRules,
+  type ValidationRule,
   visit,
 } from "graphql"
+
+const RULES_WITHOUT_INTROSPECTION: readonly ValidationRule[] = [
+  ...specifiedRules,
+  NoSchemaIntrospectionCustomRule,
+]
+
+/** The rules a transport validates with: graphql's own, plus a refusal of `__schema` and `__type`
+ * fields when `introspection` is `false`. */
+export function validationRules(introspection: boolean | undefined): readonly ValidationRule[] {
+  return introspection === false ? RULES_WITHOUT_INTROSPECTION : specifiedRules
+}
 
 export const DEFAULT_GRAPHQL_LIMITS = Object.freeze({
   maxQueryBytes: 64 * 1024,

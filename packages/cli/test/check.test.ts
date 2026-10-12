@@ -83,9 +83,9 @@ describe("release verification", () => {
       "build",
       "lint",
       "typecheck",
-      "tests",
-      "cli-isolation",
       "coverage",
+      "rest-tests",
+      "cli-isolation",
       "corpus",
       "sitemap",
       "docs",
@@ -119,7 +119,7 @@ describe("release verification", () => {
     expect(renderVerificationPlan("release")).toContain("7. corpus: bun run check:corpus")
     expect(Object.isFrozen(release)).toBe(true)
     expect(release.find((gate) => gate.id === "core-performance")?.workflowRequired).toBe(false)
-    expect(release.find((gate) => gate.id === "tests")?.workflowRequired).toBe(true)
+    expect(release.find((gate) => gate.id === "rest-tests")?.workflowRequired).toBe(true)
     expect(omittedVerificationGateIds()).toContain("core-performance")
     expect(omittedVerificationGateIds()).not.toContain("public-manifest")
     expect(release.find((gate) => gate.id === "sitemap")?.workflowRequired).toBe(true)
@@ -215,6 +215,51 @@ describe("release verification", () => {
         runCommand: async () => ({ exitCode: 0 }),
       })
       expect(nothing.ok).toBe(false)
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("the repository's own gate fails a gate whose script is gone instead of dropping it", async () => {
+    const root = createFixtureRoot("verify-required")
+    try {
+      await Bun.write(
+        join(root, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["*"], scripts: { lint: "true" } }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }))
+      const calls: string[] = []
+      const result = await collectReleaseVerification(project, {
+        requireScripts: true,
+        runCommand: async (spec) => {
+          calls.push(spec.args.join(" "))
+          return { exitCode: 0 }
+        },
+      })
+      expect(calls).toEqual(["run lint"])
+      expect(result.ok).toBe(false)
+      const typecheck = result.gates.find((gate) => gate.id === "typecheck")
+      expect(typecheck?.status).toBe("fail")
+      expect(typecheck?.message).toBe("`typecheck` is not a script in package.json")
+      expect(result.gates.at(-1)?.status).toBe("skipped")
+      expect(renderReleaseVerification(result)).toContain("fix: Declare the `typecheck` script")
+
+      // `bun run verify` and `check:release` start the runner as a script: that entry requires them.
+      const entry = Bun.spawn(
+        [process.execPath, join(import.meta.dir, "../src/release-verification.ts"), "--json"],
+        {
+          cwd: project,
+          env: { ...process.env, NIFRA_VERIFY_GATE: undefined },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [stdout, exit] = await Promise.all([new Response(entry.stdout).text(), entry.exited])
+      expect(exit).toBe(1)
+      const reported: unknown = JSON.parse(stdout)
+      expect(reported).toHaveProperty("gates.1.id", "typecheck")
+      expect(reported).toHaveProperty("gates.1.status", "fail")
     } finally {
       removeFixtureRoot(root)
     }
@@ -792,9 +837,11 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     expect(result.typecheck).toBe("skipped")
     expect(result.diagnostics.map((d) => d.rule).sort()).toEqual([
       "server-only-import",
+      "typecheck",
       "typed-client",
     ])
-    expect(result.diagnostics.every((d) => d.file === "routes/notes.tsx")).toBe(true)
+    const lints = result.diagnostics.filter((d) => d.rule !== "typecheck")
+    expect(lints.every((d) => d.file === "routes/notes.tsx")).toBe(true)
     const fetchDiag = result.diagnostics.find((d) => d.rule === "typed-client")
     expect(fetchDiag?.suggestion?.kind).toBe("manual")
     expect(fetchDiag?.suggestion?.steps?.join("\n")).toContain("nifra_routes")
@@ -820,7 +867,7 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
         'export const a = () => fetch("/auth/session")',
       ].join("\n"),
     )
-    const expected = await collectCheckResult(dir)
+    const expected = await collectCheckResult(dir, { lintsOnly: true })
     const info = expected.diagnostics.find((d) => d.rule === "typed-client")
     expect(expected.ok).toBe(true)
     expect(info?.severity).toBe("info")
@@ -831,7 +878,7 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       join(dir, "routes", "chat.tsx"),
       ["// nifra-expect NF-C002", 'export const a = () => fetch("/auth/session")'].join("\n"),
     )
-    const unreasoned = await collectCheckResult(dir)
+    const unreasoned = await collectCheckResult(dir, { lintsOnly: true })
     const error = unreasoned.diagnostics.find((d) => d.rule === "typed-client")
     expect(unreasoned.ok).toBe(false)
     expect(error?.severity).toBe("error")
@@ -1232,7 +1279,7 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
       join(dir, "backend.ts"),
       backend('.get("/a", () => Response.json({ ok: true }))'),
     )
-    const result = await collectCheckResult(dir)
+    const result = await collectCheckResult(dir, { lintsOnly: true })
     const warns = result.diagnostics.filter((d) => d.rule === "response-route")
     expect(warns).toHaveLength(1)
     expect(warns[0]?.severity).toBe("warning")
@@ -1320,12 +1367,12 @@ describe("nifra.check.json - external-mount allowlist", () => {
       'export const signIn = () => fetch("/auth/sign-in/email", { method: "POST" })',
     )
     // Without the allowlist: the typed-client rule fails the gate.
-    const before = await collectCheckResult(dir)
+    const before = await collectCheckResult(dir, { lintsOnly: true })
     expect(before.diagnostics.some((d) => d.rule === "typed-client")).toBe(true)
     expect(before.ok).toBe(false)
     // Declare the mount as intentional external → the finding disappears and the mounts are echoed.
     await writeFile(join(dir, "nifra.check.json"), JSON.stringify({ externalMounts: ["/auth/**"] }))
-    const after = await collectCheckResult(dir)
+    const after = await collectCheckResult(dir, { lintsOnly: true })
     expect(after.diagnostics.some((d) => d.rule === "typed-client")).toBe(false)
     expect(after.externalMounts).toEqual(["/auth"])
     expect(after.ok).toBe(true)
@@ -2967,6 +3014,37 @@ describe("typecheck gate - project TypeScript resolution", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("TypeScript sources with no tsconfig.json → failing diagnostic, never a silent skip", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "backend"), { recursive: true })
+    await writeFile(join(dir, "backend", "app.ts"), 'export const port: number = "not a number"\n')
+    await writeFile(join(dir, "backend", "env.d.ts"), "declare const APP: string\n")
+    const result = await collectCheckResult(dir)
+    expect(result.typecheck).toBe("skipped")
+    expect(result.typecheckNote).toBe("no tsconfig.json")
+    const tc = result.diagnostics.filter((d) => d.rule === "typecheck")
+    expect(tc).toHaveLength(1)
+    expect(tc[0]?.severity).toBe("error")
+    expect(tc[0]?.file).toBe("tsconfig.json")
+    expect(tc[0]?.message).toBe(
+      "1 TypeScript file(s) but no tsconfig.json in this directory - the typecheck gate did NOT run",
+    )
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a project with no TypeScript sources needs no tsconfig.json", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "backend"), { recursive: true })
+    await writeFile(join(dir, "backend", "app.js"), "export const port = 3000\n")
+    await writeFile(join(dir, "backend", "env.d.ts"), "declare const APP: string\n")
+    const result = await collectCheckResult(dir)
+    expect(result.typecheck).toBe("skipped")
+    expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toEqual([])
+    expect(result.ok).toBe(true)
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("typescript hoisted to a PARENT directory is found (monorepo package cwd)", async () => {
     // The literal join(cwd, "node_modules", …) probe this pins down used to skip the gate whenever
     // check ran from a workspace package dir with TypeScript hoisted to the workspace root.
@@ -3259,6 +3337,45 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     expect(found[2]).toContain(
       "shared/ui.ts (shared code) imports frontend/theme.ts (frontend code)",
     )
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an all-type inline import is an edge only where the compiler keeps it", async () => {
+    const files = {
+      "frontend/theme.ts": 'export type Theme = "dark"\nexport const theme: Theme = "dark"\n',
+      "backend/report.ts":
+        'import { type Theme } from "../frontend/theme"\nexport const report: Theme = "dark"\n',
+      "backend/mixed.ts":
+        'import { type Theme, theme } from "../frontend/theme"\nexport const mixed: Theme = theme\n',
+      "backend/empty.ts": 'import {} from "../frontend/theme"\nexport const empty = 1\n',
+    }
+    const erased = await project({ ...files, "tsconfig.json": '{ "compilerOptions": {} }' })
+    expect((await findings(erased, "NF-C028")).map((f) => f.split(" ")[0])).toEqual([
+      "backend/empty.ts:1",
+      "backend/mixed.ts:1",
+    ])
+    const kept = await project({
+      ...files,
+      "tsconfig.json": '{ "compilerOptions": { "verbatimModuleSyntax": true } }',
+    })
+    expect((await findings(kept, "NF-C028")).map((f) => f.split(" ")[0])).toEqual([
+      "backend/empty.ts:1",
+      "backend/mixed.ts:1",
+      "backend/report.ts:1",
+    ])
+    await rm(erased, { recursive: true, force: true })
+    await rm(kept, { recursive: true, force: true })
+  })
+
+  test("a default import beside type-only names still reaches server code", async () => {
+    const dir = await project({
+      "backend/db.ts":
+        'import { Database } from "bun:sqlite"\nexport type Row = { id: number }\nexport default new Database("app.db")\n',
+      "routes/index.tsx":
+        'import db, { type Row } from "../backend/db"\nexport default () => String(db) as unknown as Row\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.filter((d) => d.rule === "server-only-import")).not.toEqual([])
     await rm(dir, { recursive: true, force: true })
   })
 

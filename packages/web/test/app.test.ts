@@ -1101,6 +1101,17 @@ test("redirect() rejects paths a URL parser resolves off-origin [AUDIT Sec-4]", 
   expect(redirect("/%5Cevil.example").plain?.headers?.location).toBe("/%5Cevil.example")
 })
 
+test("redirect() rejects a path whose dot segments resolve it to //host", () => {
+  // Same-origin as a Location, but the resolved path `//evil.example/x` is protocol-relative to any
+  // client that builds a URL from it.
+  for (const bad of ["/.//evil.example/x", "/a/..//evil.example/x", "/%2e//evil.example/x"]) {
+    expect(() => redirect(bad)).toThrow(/same-origin/)
+    expect(new URL(bad, "https://app.example").pathname).toBe("//evil.example/x")
+  }
+  for (const ok of ["/a/../b", "/./x", "/x.y/z", "/a%2Fb"])
+    expect(redirect(ok).plain?.headers?.location).toBe(ok)
+})
+
 // --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---
 
 // A backend with real routes under /api/* - the same shape an app feeds via `inProcessClient(backend)`.
@@ -1500,6 +1511,7 @@ test("serves both generated machine-readable guidance routes", async () => {
     adapter: stub,
     manifest: fullManifest(),
     clientEntry: "/c.js",
+    llmsTxt: true,
     publishLocalGuidelines: true,
   })
   const short = await app.fetch(new Request("http://x/llms.txt"))
@@ -1520,6 +1532,7 @@ test("llms.txt lists backend routes only when the backend is served over HTTP", 
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api,
+    llmsTxt: true,
   })
   expect(await (await mounted.fetch(new Request("http://x/llms.txt"))).text()).toContain(
     "/internal/admin/impersonate",
@@ -1529,6 +1542,7 @@ test("llms.txt lists backend routes only when the backend is served over HTTP", 
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api,
+    llmsTxt: true,
     apiPrefix: "",
   })
   const text = await (await inProcess.fetch(new Request("http://x/llms-full.txt"))).text()
@@ -1548,6 +1562,7 @@ test("llms.txt lists a stripped backend's routes at the URL a visitor calls", as
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api,
+    llmsTxt: true,
   })
   const text = await (await app.fetch(new Request("http://x/llms-full.txt"))).text()
   expect(text).toContain("- **POST** `/api/v1/forms`")
@@ -1570,6 +1585,7 @@ test("llms.txt reads inProcessClient evidence and publishes only the HTTP-mounte
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api,
+    llmsTxt: true,
   })
   expect((await app.fetch(new Request("http://x/api/v1/forms", { method: "POST" }))).status).toBe(
     401,
@@ -1584,22 +1600,31 @@ test("llms.txt reads inProcessClient evidence and publishes only the HTTP-mounte
     manifest: fullManifest(),
     clientEntry: "/c.js",
     api,
+    llmsTxt: true,
   })
   const privateText = await (await loaderOnly.fetch(new Request("http://x/llms-full.txt"))).text()
   expect(privateText).toContain("No API routes registered.")
   expect(privateText).not.toContain("/v1/forms")
 })
 
-test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt page wins", async () => {
-  const off = createWebApp({
-    adapter: stub,
-    manifest: fullManifest(),
-    clientEntry: "/c.js",
-    llmsTxt: false,
-  })
-  expect(
-    (await off.fetch(new Request("http://x/llms.txt"))).headers.get("content-type"),
-  ).not.toContain("text/plain")
+test("neither guidance route is served unless llmsTxt is on, and an app's own /llms.txt page wins", async () => {
+  const backend = server().post("/internal/admin/impersonate", () => ({ ok: true }))
+  const api = Object.assign(backend, inProcessBridge(backend))
+  for (const options of [{}, { llmsTxt: false }]) {
+    const off = createWebApp({
+      apiPrefix: "/api",
+      adapter: stub,
+      manifest: fullManifest(),
+      clientEntry: "/c.js",
+      api,
+      ...options,
+    })
+    for (const path of ["/llms.txt", "/llms-full.txt"]) {
+      const res = await off.fetch(new Request(`http://x${path}`))
+      expect(res.headers.get("content-type")).not.toContain("text/plain")
+      expect(await res.text()).not.toContain("impersonate")
+    }
+  }
   const own: Manifest = {
     ...fullManifest(),
     routes: [
@@ -1613,7 +1638,7 @@ test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt p
       },
     ],
   }
-  const app = createWebApp({ adapter: stub, manifest: own, clientEntry: "/c.js" })
+  const app = createWebApp({ adapter: stub, manifest: own, clientEntry: "/c.js", llmsTxt: true })
   const res = await app.fetch(new Request("http://x/llms.txt"))
   expect(res.headers.get("content-type")).toContain("text/html")
 })

@@ -17,7 +17,7 @@ import { cdnCheckSpec } from "./cdn-check.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
 import { dbAuditSpec, dbQuerySpec, dbRoleSpec, dbSchemaSpec } from "./db-tool.ts"
-import { errorsSpec, logsSpec } from "./dev-feed-tool.ts"
+import { errorsSpec, explainSpec, logsSpec } from "./dev-feed-tool.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
@@ -367,6 +367,8 @@ interface MigrateInput {
   readonly from?: "tailwind" | undefined
   readonly to?: "stylex" | undefined
   readonly write?: boolean | undefined
+  /** `migrate layout`: list the folders modules would leave in package.json zones instead. */
+  readonly zones?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -395,6 +397,7 @@ interface TypesInput {
 
 interface SchemasInput {
   readonly write?: boolean | undefined
+  readonly check?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -486,6 +489,8 @@ interface FixCommandOutput {
   /** Recipes that refused, with the reason. A recipe that cannot act says so here instead of
    * aborting the run or - worse - reporting nothing at all. */
   readonly failed: readonly { readonly code: string; readonly reason: string }[]
+  /** Findings whose recipe runs only when its code is named, because its change needs review. */
+  readonly skipped: readonly { readonly code: string; readonly reason: string }[]
   readonly diagnostics: readonly unknown[]
 }
 type MigrateCommandOutput =
@@ -751,13 +756,14 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
     from: { type: "string", enum: ["tailwind"] },
     to: { type: "string", enum: ["stylex"] },
     write: { type: "boolean" },
+    zones: { type: "boolean" },
     json: { type: "boolean" },
     dir: { type: "string" },
   }),
   (value) => {
     const raw = withDir(record(value))
     const flags = {
-      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...parseBooleanFlags(raw, ["write", "zones", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
     const kind = optionalString(raw.kind, "kind")
@@ -766,6 +772,7 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
         throw new TypeError("the migration must be `layout` (or --from tailwind --to stylex)")
       return { kind, ...flags }
     }
+    if (raw.zones === true) throw new TypeError("--zones applies to `migrate layout` only")
     const from = optionalString(raw.from, "from")
     const to = optionalString(raw.to, "to")
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
@@ -799,11 +806,16 @@ const TYPES_SCHEMA = input<TypesInput>(
 )
 
 const SCHEMAS_SCHEMA = input<SchemasInput>(
-  objectSchema({ write: { type: "boolean" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  objectSchema({
+    write: { type: "boolean" },
+    check: { type: "boolean" },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
   (value) => {
     const raw = withDir(record(value))
     return {
-      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...parseBooleanFlags(raw, ["write", "check", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1418,6 +1430,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
       ok: { type: "boolean" },
       changed: { type: "array" },
       failed: { type: "array" },
+      skipped: { type: "array" },
       diagnostics: { type: "array" },
     },
     required: ["ok", "diagnostics"],
@@ -1432,25 +1445,37 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
   },
   async run(value, ctx) {
     const { collectCheckResult } = await import("./check.ts")
-    const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
+    const { applyDiagnosticRecipe, getFixRecipe } = await import("./fix-recipes.ts")
     const result = await collectCheckResult(ctx.cwd, {
       lintsOnly: true,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     })
     const changed: string[] = []
     const failed: { code: string; reason: string }[] = []
-    for (const diagnostic of result.structuredDiagnostics ?? [])
-      if (value.code === undefined || diagnostic.code === value.code)
-        // One recipe that cannot act must not cancel the others, and must not pass silently either:
-        // record why and keep going, so a run over many diagnostics still reports every outcome.
-        try {
-          changed.push(...(await applyDiagnosticRecipe(ctx.cwd, diagnostic)))
-        } catch (error) {
-          failed.push({
+    const skipped: { code: string; reason: string }[] = []
+    for (const diagnostic of result.structuredDiagnostics ?? []) {
+      if (value.code !== undefined && diagnostic.code !== value.code) continue
+      const recipe =
+        diagnostic.fix?.recipe === undefined ? undefined : getFixRecipe(diagnostic.fix.recipe)
+      if (value.code === undefined && recipe?.onlyWhenNamed === true) {
+        if (!skipped.some((entry) => entry.code === diagnostic.code))
+          skipped.push({
             code: diagnostic.code,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: `${recipe.description} Review the finding, then run \`nifra fix --code ${diagnostic.code}\`.`,
           })
-        }
+        continue
+      }
+      // One recipe that cannot act must not cancel the others, and must not pass silently either:
+      // record why and keep going, so a run over many diagnostics still reports every outcome.
+      try {
+        changed.push(...(await applyDiagnosticRecipe(ctx.cwd, diagnostic)))
+      } catch (error) {
+        failed.push({
+          code: diagnostic.code,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
     const final = await collectCheckResult(ctx.cwd, {
       lintsOnly: true,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
@@ -1459,6 +1484,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
       ok: final.ok,
       changed,
       failed,
+      skipped,
       diagnostics: final.structuredDiagnostics ?? final.diagnostics,
     }
   },
@@ -1466,6 +1492,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
     out.ok ? "✓ fixes applied" : "✖ unresolved diagnostics remain",
     ...out.changed.map((file) => `  changed ${file}`),
     ...out.failed.map((f) => `  could not fix ${f.code}: ${f.reason}`),
+    ...out.skipped.map((s) => `  needs review ${s.code}: ${s.reason}`),
     ...out.diagnostics.map((d) => `  ${String((d as { code?: unknown }).code ?? "diagnostic")}`),
   ],
   success: (out) => out.ok,
@@ -1493,6 +1520,7 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       moves: { type: "array" },
       rewritten: { type: "array" },
       tooling: { type: "array" },
+      followUps: { type: "array" },
       mode: { type: "string" },
     },
     required: ["ok", "write", "issues"],
@@ -1505,6 +1533,7 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       { name: "from", field: "from", type: "string" },
       { name: "to", field: "to", type: "string" },
       { name: "write", field: "write", type: "boolean" },
+      { name: "zones", field: "zones", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
       { name: "dir", field: "dir", type: "string" },
     ],
@@ -1514,7 +1543,8 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
     const write = value.write === undefined ? {} : { write: value.write }
     if (value.kind === "layout") {
       const { migrateLayout } = await import("./migrate-layout.ts")
-      return { kind: "layout" as const, ...(await migrateLayout(dir, write)) }
+      const options = { ...write, zones: value.zones === true }
+      return { kind: "layout" as const, ...(await migrateLayout(dir, options)) }
     }
     const { migrateTailwindToStylex } = await import("./stylex-migrate.ts")
     return migrateTailwindToStylex(dir, write)
@@ -1526,12 +1556,22 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
           ? `✓ ${out.mode === "api" ? "API-only app" : `${out.splits.length} route file${out.splits.length === 1 ? "" : "s"} split`}, ${out.moves.length} file${out.moves.length === 1 ? "" : "s"} moved`
           : `⚠ ${out.issues.length} issue${out.issues.length === 1 ? "" : "s"} need a decision; everything else is planned`,
         ...out.splits.map(
-          (split) => `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})`,
+          (split) =>
+            `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})${split.shared === undefined ? "" : `, shared data → ${split.shared}`}`,
         ),
         ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
         ...out.rewritten.map((file) => `  edit  ${file} (imports)`),
         ...out.tooling.map((edit) => `  edit  ${edit.file} (${edit.change})`),
+        ...out.schemas
+          .filter((entry) => entry.reason === undefined)
+          .map(
+            (entry) =>
+              `  draft ${entry.file} ${entry.schema} - review what it lets the browser see${entry.omitted === undefined ? "" : `; leaves out ${entry.omitted.join(", ")}`}${entry.open === undefined ? "" : `; admits any value at ${entry.open.join(", ")}, typed any or unknown`}`,
+          ),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
+        ...out.followUps.map(
+          (step) => `  next  ${step.file}: ${step.reason} - \`${step.command}\``,
+        ),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]
     }
@@ -1683,18 +1723,22 @@ const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
   argv: {
     flags: [
       { name: "write", field: "write", type: "boolean" },
+      { name: "check", field: "check", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
       { name: "dir", field: "dir", type: "string" },
     ],
   },
   async run(value, ctx) {
     const { outputSchemas } = await import("./output-schemas.ts")
-    return outputSchemas(resolve(ctx.cwd, value.dir ?? "."), { write: value.write === true })
+    return outputSchemas(resolve(ctx.cwd, value.dir ?? "."), {
+      write: value.write === true,
+      check: value.check === true,
+    })
   },
   render: (out) => {
     const shown = out.entries.filter(
       (entry) =>
-        entry.status !== "current" &&
+        (entry.status !== "current" || entry.open !== undefined) &&
         entry.status !== "no-data" &&
         (entry.status !== "declared" || entry.dropped.length > 0),
     )
@@ -1709,8 +1753,19 @@ const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
             ? "edited by hand under its nifra:generated line"
             : entry.dropped.length > 0
               ? `drops ${entry.dropped.join(", ")}`
-              : undefined)
-        return `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`
+              : entry.omitted !== undefined
+                ? `leaves out ${entry.omitted.join(", ")}`
+                : undefined)
+        const open =
+          entry.open === undefined
+            ? []
+            : [
+                `      admits any value at ${entry.open.join(", ")}: the type there is any or unknown, so the output guard drops nothing below it`,
+              ]
+        return [
+          `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`,
+          ...open,
+        ].join("\n")
       }),
       ...(out.write || !out.entries.some((e) => e.status === "missing" || e.status === "stale")
         ? []
@@ -2020,6 +2075,7 @@ export const commandSpecs = Object.freeze([
   portSpec,
   i18nSpec,
   errorsSpec,
+  explainSpec,
   logsSpec,
   cdnCheckSpec,
   dbSchemaSpec,

@@ -6,7 +6,7 @@
  * `.svelte` files, so this adapter ships a build plugin at `@nifrajs/web-svelte/plugin` (like
  * `@nifrajs/web-solid/plugin`) - there is no callable-component runtime.
  */
-import type { RenderAdapter, RenderProps } from "@nifrajs/web"
+import type { RenderAdapter, RenderProps, RenderStreamOptions } from "@nifrajs/web"
 import { ssrModuleLoader } from "@nifrajs/web"
 import type { Component } from "svelte"
 import { render as runtimeRender } from "svelte/server"
@@ -91,31 +91,41 @@ function oneChunk(html: string): ReadableStream<Uint8Array> {
   })
 }
 
+/** The body of one render; what `<svelte:head>` rendered goes into the document's `<head>`. */
+function bodyOf(
+  Chain: Component<ChainProps>,
+  props: ChainProps,
+  options?: RenderStreamOptions,
+): string {
+  const out = render(Chain, { props })
+  if (options?.parts !== undefined) options.parts.head += out.head
+  return out.body
+}
+
 /** The Svelte server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const svelteAdapter: RenderAdapter = {
+  documentParts: true,
   // Svelte SSR is already synchronous + string-based, so this is the native shape: `renderToString`
   // returns the body directly (renderPage buffers it on the non-deferred fast path), and
   // `renderToStream` wraps the same string in a one-chunk stream for the deferred path. No streaming
   // renderer to skip here - but going straight to a string avoids the per-request stream allocation.
   // The seam allows `string | Promise<string>`, so the first render can resolve `Chain` while every
   // render after it stays a plain synchronous call - see `loadChain`.
-  renderToString(chain, props) {
+  renderToString(chain, props, options) {
     const Chain = loadChain()
     const props$ = { chain, props, layoutData: props.layoutData }
     return Chain instanceof Promise
-      ? Chain.then((C) => render(C, { props: props$ }).body)
-      : render(Chain, { props: props$ }).body
+      ? Chain.then((C) => bodyOf(C, props$, options))
+      : bodyOf(Chain, props$, options)
   },
-  renderToStream(chain, props) {
+  renderToStream(chain, props, options) {
     // `Chain` folds the layout chain (page innermost gets `props`; layouts wrap via their `children`
-    // snippet). Svelte's `render` returns { head, body }; the body goes into #root. (Svelte's dynamic
-    // `head` - from <svelte:head> - isn't surfaced through the seam's static `hydrationHead`; nifra's
-    // own meta/head API manages the document head instead.)
+    // snippet). Svelte's `render` returns { head, body }; the body goes into #root.
     const Chain = loadChain()
     const props$ = { chain, props, layoutData: props.layoutData }
     return Chain instanceof Promise
-      ? Chain.then((C) => oneChunk(render(C, { props: props$ }).body))
-      : oneChunk(render(Chain, { props: props$ }).body)
+      ? Chain.then((C) => oneChunk(bodyOf(C, props$, options)))
+      : oneChunk(bodyOf(Chain, props$, options))
   },
   // Svelte's client `hydrate` reconciles against the existing DOM; no per-document bootstrap script is
   // needed (contrast Solid's generateHydrationScript) - the seam allows the empty string.

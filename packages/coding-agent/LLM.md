@@ -15,7 +15,7 @@ Standalone, extensible Nifra coding-agent host and CLI.
 ## Key exports
 
 - **admitCapability** _(function)_ - `admitCapability: (policy: HostPolicy, descriptor: CapabilityDescriptor) => Admission` · from `@nifrajs/coding-agent/orchestration`
-- **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent) => ApprovalRequest` · from `@nifrajs/coding-agent`
+- **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent, timeoutMs?: ApprovalTimeout) => ApprovalRequest` · from `@nifrajs/coding-agent`
 - **approvalResolvedEvent** _(function)_ - `approvalResolvedEvent: (sessionId: string, seq: number, decision: ApprovalDecision, turnId?: string) => AgentApprovalResolvedEvent` · from `@nifrajs/coding-agent`
 - **assertAdmitted** _(function)_ - `assertAdmitted: (policy: HostPolicy, descriptor: CapabilityDescriptor) => void` · from `@nifrajs/coding-agent/orchestration`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void` · from `@nifrajs/coding-agent/orchestration`
@@ -29,7 +29,7 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **createMemoryRunDispatchStore** _(function)_ - `createMemoryRunDispatchStore: (options?: { readonly now?: () => number; }) => RunDispatchStore & { readonly jobs: JobStore; deadLetters(): …` · from `@nifrajs/coding-agent/orchestration`
 - **createNativeGatewayModelPort** _(function)_ - `createNativeGatewayModelPort: (options: NativeGatewayModelPortOptions) => NativeModelPort` · from `@nifrajs/coding-agent`
 
-_…and 240 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 242 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

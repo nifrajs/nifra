@@ -62,10 +62,24 @@ export interface UIMatch {
   readonly handle: unknown
 }
 
+/**
+ * Markup a render produced for outside the app root, which an adapter that sets
+ * {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render
+ * settles: `renderToString` resolving, or `renderToStream` returning its stream.
+ */
+export interface DocumentParts {
+  /** Placed at the end of `<head>`. Svelte's `<svelte:head>` lands here. */
+  head: string
+  /** Placed first in `<body>`, before the app root. Vue's `<Teleport to="body">` lands here. */
+  body: string
+}
+
 /** Per-document options for {@link RenderAdapter.renderToStream}. */
 export interface RenderStreamOptions {
   /** The document's CSP nonce, for every executable `<script>` the framework streams. */
   readonly nonce?: string
+  /** Present only for an adapter that sets {@link RenderAdapter.documentParts}. */
+  readonly parts?: DocumentParts
 }
 
 /**
@@ -84,10 +98,22 @@ export interface RenderAdapter {
     props: RenderProps,
     options?: RenderStreamOptions,
   ): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
-  /** Render the chain to a complete HTML string when no content is deferred. */
-  renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>
+  /**
+   * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the
+   * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data).
+   */
+  renderToString?(
+    chain: readonly unknown[],
+    props: RenderProps,
+    options?: RenderStreamOptions,
+  ): string | Promise<string>
   /** Per-document bootstrap markup injected into `<head>` for client hydration. */
   hydrationHead(nonce?: string): string
+  /**
+   * Set when a render can produce markup that belongs outside the app root. Every render is then
+   * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.
+   */
+  readonly documentParts?: boolean
 }
 
 /** Loads a module through the dev server's module graph rather than the runtime's resolver. */

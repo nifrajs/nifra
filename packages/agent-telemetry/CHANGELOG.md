@@ -1,5 +1,12 @@
 # @nifrajs/agent-telemetry
 
+## 5.1.0
+
+### Patch Changes
+
+- abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- @nifrajs/otel@5.1.0
+
 ## 5.0.0
 
 ### Patch Changes

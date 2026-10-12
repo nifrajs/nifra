@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.",
   "keywords": [
     "bun",
@@ -41,6 +41,11 @@
       "bun": "./src/client.ts",
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
+    },
+    "./seo": {
+      "bun": "./src/seo.ts",
+      "types": "./dist/seo.d.ts",
+      "default": "./dist/seo.js"
     },
     "./vitals": {
       "bun": "./src/vitals.ts",

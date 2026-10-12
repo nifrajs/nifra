@@ -104,6 +104,13 @@ export interface JwksOptions {
    * Default 30 s.
    */
   readonly cooldownMs?: number
+  /**
+   * Least time (ms) between fetches after one that failed or returned no keys. Inside it a request
+   * that needs the set gets that outcome again at once (the same error, or no key) instead of
+   * waiting up to `timeoutMs` on a fetch of its own, so an identity provider outage does not hold
+   * every request. Default 5 s; `0` fetches again for every such request.
+   */
+  readonly failureCooldownMs?: number
 }
 
 const HASH: Record<JwtAlgorithm, "SHA-256" | "SHA-384" | "SHA-512"> = {
@@ -450,8 +457,11 @@ export function jwks(options: JwksOptions): JwtKeyResolver {
   const timeoutMs = options.timeoutMs ?? 5_000
   const maxBytes = options.maxBytes ?? 65_536
   const cooldownMs = options.cooldownMs ?? 30_000
+  const failureCooldownMs = options.failureCooldownMs ?? 5_000
   if (!Number.isFinite(cooldownMs) || cooldownMs < 0)
     throw new Error("jwks: cooldownMs must be non-negative")
+  if (!Number.isFinite(failureCooldownMs) || failureCooldownMs < 0)
+    throw new Error("jwks: failureCooldownMs must be non-negative")
   if (!Number.isFinite(cacheMs) || cacheMs < 0)
     throw new Error("jwks: cacheMs must be non-negative")
   if (!Number.isFinite(staleMs) || staleMs < 0)
@@ -465,16 +475,28 @@ export function jwks(options: JwksOptions): JwtKeyResolver {
   let cachedAt = 0
   let refreshedAt = Number.NEGATIVE_INFINITY
   let pending: Promise<readonly JwkKey[]> | undefined
+  // When the last fetch failed or returned no keys, and its error (none for an empty set).
+  let failedAt = Number.NEGATIVE_INFINITY
+  let failure: { readonly error: unknown } | undefined
 
   const refresh = (): Promise<readonly JwkKey[]> => {
     if (pending === undefined) {
       refreshedAt = Date.now()
       pending = fetchJwks({ url, fetch: fetcher, timeoutMs, maxBytes })
-        .then((keys) => {
-          cached = keys
-          cachedAt = Date.now()
-          return keys
-        })
+        .then(
+          (keys) => {
+            cached = keys
+            cachedAt = Date.now()
+            failedAt = keys.length === 0 ? cachedAt : Number.NEGATIVE_INFINITY
+            failure = undefined
+            return keys
+          },
+          (error: unknown) => {
+            failedAt = Date.now()
+            failure = { error }
+            throw error
+          },
+        )
         .finally(() => {
           pending = undefined
         })
@@ -482,12 +504,18 @@ export function jwks(options: JwksOptions): JwtKeyResolver {
     return pending
   }
 
+  const coolingDown = (): boolean =>
+    pending === undefined && Date.now() - failedAt < failureCooldownMs
+
   const load = (): Promise<readonly JwkKey[]> => {
     const age = Date.now() - cachedAt
     if (cached.length > 0 && age < cacheMs) return Promise.resolve(cached)
     if (cached.length > 0 && age < cacheMs + staleMs) {
-      refresh().catch(() => {})
+      if (!coolingDown()) refresh().catch(() => {})
       return Promise.resolve(cached)
+    }
+    if (coolingDown()) {
+      return failure === undefined ? Promise.resolve(cached) : Promise.reject(failure.error)
     }
     return refresh()
   }
@@ -501,7 +529,9 @@ export function jwks(options: JwksOptions): JwtKeyResolver {
     const found = find(await load())
     if (found !== undefined) return found
     // A kid the set lacks may be a key the provider just rotated in.
-    if (pending === undefined && Date.now() - refreshedAt < cooldownMs) return undefined
+    if (coolingDown() || (pending === undefined && Date.now() - refreshedAt < cooldownMs)) {
+      return undefined
+    }
     try {
       return find(await refresh())
     } catch {

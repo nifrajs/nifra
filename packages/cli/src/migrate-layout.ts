@@ -12,16 +12,18 @@
  *      the server side -> `backend/`, both -> `shared/`. Imports through tsconfig `paths`/`baseUrl` and
  *      package.json `imports` count as the bundler reads them;
  *   5. rewrites every import in the app to the new locations (test-runner mocks included), an alias
- *      through the same alias, the config's `clientModule` and `componentPipeline.entries` paths,
- *      `@nifrajs/web/server-only` to `@nifrajs/web/backend-only`, and `ServerOnly` to `BackendOnly`;
+ *      through the same alias when one of its targets covers the new place and as a relative path
+ *      otherwise, each checked to resolve to its target after the moves; the config's `clientModule`
+ *      and `componentPipeline.entries` paths; `@nifrajs/web/server-only` to
+ *      `@nifrajs/web/backend-only`; and `ServerOnly` to `BackendOnly`;
  *   6. adds the zone folders moved TypeScript lands in to tsconfig `include`, and `.nifra/` to
  *      `.gitignore`.
  *
  * Data files (JSON, YAML, CSV, ...) and folders the app zones in package.json stay where they are.
  *
  * It is a dry run unless `write` is set, and it reports what it could not decide (a frontend that uses
- * a moved name at runtime, a helper both halves need, a loader with no output schema, an alias no
- * target covers after a move, a specifier that names nothing) instead of guessing.
+ * a moved name at runtime, a helper both halves need, a loader with no output schema, an import no
+ * specifier reaches after the moves, a specifier that names nothing) instead of guessing.
  */
 import {
   existsSync,
@@ -42,10 +44,13 @@ import { parseZoneConfig, type ZoneConfig } from "@nifrajs/web/zones"
 import type * as TS from "typescript"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE, retiredRootFiles } from "./app-files.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { configPathReader, type StaticConfigPath } from "./internal/config-paths.ts"
 import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
-import { createSpecifierResolver } from "./internal/project-specifiers.ts"
+import { createSpecifierResolver, isFile } from "./internal/project-specifiers.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
+import { type OutputSchemaEntry, planOutputSchemas } from "./output-schemas.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
+import { apiPrefixFix } from "./rules/pages.ts"
 
 /** Exports only the server or the build reads: `@nifrajs/web`'s route-pair contract. */
 const BACKEND_EXPORTS = BACKEND_ROUTE_EXPORTS
@@ -75,6 +80,8 @@ const TOOLING_FILE =
 const SELF_LOCATION = /\bimport\.meta\.(?:dirname|dir|filename|url)\b|\b__(?:dirname|filename)\b/
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage", ".git", ".vite", "public"])
 const ZONE_DIRS = new Set(["frontend", "backend", "shared", "routes", "public"])
+type FolderSide = "frontend" | "backend" | "shared"
+const FOLDER_SIDES: readonly FolderSide[] = ["frontend", "backend", "shared"]
 /** Data other tools may read by path too; reported, never moved. Images and fonts still move. */
 const DATA_FILE = /\.(?:json|jsonc|json5|ndjson|ya?ml|toml|csv|tsv|txt|xml|sql)$/
 /** Test-runner calls that name a module by path, as an import does. */
@@ -91,13 +98,34 @@ const MOCK_CALLS: ReadonlySet<string> = new Set([
   "jest.unstable_mockModule",
 ])
 const TAILWIND_CONFIG = /^tailwind\.config\.[cm]?[jt]s$/
+/** What a `x.test.ts` beside `x.<ext>` tests. */
+const SUBJECT_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".svelte",
+  ".vue",
+]
 
 export interface LayoutMigrationIssue {
   readonly file: string
   readonly reason: string
 }
 
+/** A step left for after the migration that a command takes: it needs no decision, so `ok` ignores it. */
+export interface LayoutMigrationFollowUp {
+  readonly file: string
+  readonly reason: string
+  readonly command: string
+}
+
 export interface LayoutMigrationResult {
+  /** No issue needs a decision; follow-ups may remain. */
   readonly ok: boolean
   readonly write: boolean
   /** `"api"` for an app that serves no pages: only its backend entry moves, nothing is split or zoned. */
@@ -107,6 +135,8 @@ export interface LayoutMigrationResult {
     readonly file: string
     readonly backend: string
     readonly moved: readonly string[]
+    /** The module beside the route both halves import constant data from, when the split made one. */
+    readonly shared?: string
   }>
   /** Files that moved, app-relative. */
   readonly moves: ReadonlyArray<{ readonly from: string; readonly to: string }>
@@ -114,11 +144,24 @@ export interface LayoutMigrationResult {
   readonly rewritten: readonly string[]
   /** Tooling config the migration updated so it still covers what moved. */
   readonly tooling: ReadonlyArray<{ readonly file: string; readonly change: string }>
+  /**
+   * Output schemas drafted for the backend halves the split wrote, from their return types:
+   * `missing` in a dry run, `generated` once written. Each is a draft the author reviews.
+   */
+  readonly schemas: readonly OutputSchemaEntry[]
   readonly issues: readonly LayoutMigrationIssue[]
+  /** Commands to run after the migration, each with what it settles. */
+  readonly followUps: readonly LayoutMigrationFollowUp[]
 }
 
 export interface LayoutMigrationOptions {
   readonly write?: boolean
+  /**
+   * Leave the modules the layout would move into `frontend/`, `backend/` or `shared/` where they are,
+   * and list them in the app's `"nifra": { "zones": ... }` instead: the widest folder whose files all
+   * belong to one side, else the file itself. Route splits and the root entry moves still happen.
+   */
+  readonly zones?: boolean
   /** Inject the TypeScript compiler (tests); defaults to the CLI's own. */
   readonly typescript?: typeof TS
 }
@@ -127,6 +170,15 @@ export interface LayoutMigrationOptions {
 type Files = Map<string, string>
 
 const toPosix = (path: string): string => path.replaceAll("\\", "/")
+
+/** A specifier without its `?query` or `#hash`; a leading `#` names a package.json import. Cut by
+ * index, since `/[?#].*$/` retries from every `#` and is quadratic on a long run of them. */
+const withoutQuery = (specifier: string): string => {
+  const query = specifier.indexOf("?", 1)
+  const hash = specifier.indexOf("#", 1)
+  const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
+  return cut === -1 ? specifier : specifier.slice(0, cut)
+}
 
 /** Every first-party file under `root`, app-relative and posix. */
 function listFiles(root: string): string[] {
@@ -156,12 +208,29 @@ interface StatementInfo {
   readonly exports: ReadonlyMap<string, readonly string[]>
   readonly valueRefs: ReadonlySet<string>
   readonly typeRefs: ReadonlySet<string>
+  /** A local `export { a, b as c }`: each entry, which the reachability of its own half follows. */
+  readonly listed: ReadonlyArray<ListedExport>
+}
+
+interface ListedExport {
+  readonly exported: string
+  readonly local: string
+  /** `export type { X }` or `export { type X }`: a read in a type position. */
+  readonly type: boolean
+}
+
+/** The names one half reads, by position. */
+interface Uses {
+  readonly value: ReadonlySet<string>
+  readonly type: ReadonlySet<string>
 }
 
 export interface SplitResult {
   readonly frontend: string
   /** `undefined` when the file exports nothing for the server. */
   readonly backend: string | undefined
+  /** The module beside the route that holds constant data both halves import, when there is any. */
+  readonly shared?: string
   readonly moved: readonly string[]
   readonly issues: readonly string[]
 }
@@ -247,6 +316,7 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
   return sf.statements.map((node) => {
     const declares = new Set<string>()
     const exports = new Map<string, string[]>()
+    const listed: ListedExport[] = []
     const exported = hasModifier(ts, node, ts.SyntaxKind.ExportKeyword)
     const isDefault = hasModifier(ts, node, ts.SyntaxKind.DefaultKeyword)
     const addExport = (local: string, as: string): void => {
@@ -286,10 +356,10 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
       ts.isNamedExports(node.exportClause)
     ) {
       for (const el of node.exportClause.elements) {
-        addExport(
-          node.moduleSpecifier ? `\0${el.name.text}` : (el.propertyName ?? el.name).text,
-          el.name.text,
-        )
+        const local = (el.propertyName ?? el.name).text
+        addExport(node.moduleSpecifier ? `\0${el.name.text}` : local, el.name.text)
+        if (node.moduleSpecifier === undefined)
+          listed.push({ exported: el.name.text, local, type: node.isTypeOnly || el.isTypeOnly })
       }
     }
     const refs = ts.isImportDeclaration(node)
@@ -306,34 +376,72 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
       exports,
       valueRefs: refs.value,
       typeRefs: refs.type,
+      listed,
     }
   })
 }
 
-/** Rebuild an import keeping only the bindings `keep` names. `undefined` when none remain. */
+/**
+ * Rebuild an import keeping only the bindings `uses` names; `undefined` when none remain. Bindings
+ * read only in types become `import type`, so no bundler loads the module for them: always in a
+ * `fresh` module, and in the page only where the split narrowed the import.
+ */
 function filterImport(
   ts: typeof TS,
   sf: TS.SourceFile,
   node: TS.ImportDeclaration,
-  keep: (name: string) => boolean,
+  uses: Uses,
+  fresh: boolean,
 ): string | undefined {
   const clause = node.importClause
   const spec = node.moduleSpecifier.getText(sf)
   const attributes = node.attributes ? ` ${node.attributes.getText(sf)}` : ""
   if (clause === undefined) return node.getFullText(sf)
-  const parts: string[] = []
-  if (clause.name && keep(clause.name.text)) parts.push(clause.name.text)
-  const bindings = clause.namedBindings
-  if (bindings && ts.isNamespaceImport(bindings) && keep(bindings.name.text))
-    parts.push(`* as ${bindings.name.text}`)
-  if (bindings && ts.isNamedImports(bindings)) {
-    const named = bindings.elements.filter((el) => keep(el.name.text)).map((el) => el.getText(sf))
-    if (named.length > 0) parts.push(`{ ${named.join(", ")} }`)
+  interface Part {
+    readonly text: string
+    /** Without an inline `type`, for an `import type`. */
+    readonly bare: string
+    readonly typeOnly: boolean
   }
-  if (parts.length === 0) return undefined
-  const typeOnly = clause.isTypeOnly ? "type " : ""
+  const heads: Part[] = []
+  const named: Part[] = []
+  let total = 0
+  const add = (into: Part[], name: string, text: string, bare: string): void => {
+    total++
+    if (uses.value.has(name) || uses.type.has(name))
+      into.push({ text, bare, typeOnly: !uses.value.has(name) })
+  }
+  if (clause.name) add(heads, clause.name.text, clause.name.text, clause.name.text)
+  const bindings = clause.namedBindings
+  if (bindings && ts.isNamespaceImport(bindings)) {
+    const text = `* as ${bindings.name.text}`
+    add(heads, bindings.name.text, text, text)
+  }
+  if (bindings && ts.isNamedImports(bindings)) {
+    for (const el of bindings.elements) {
+      const renamed = el.propertyName ? `${el.propertyName.getText(sf)} as ` : ""
+      add(named, el.name.text, el.getText(sf), `${renamed}${el.name.text}`)
+    }
+  }
+  const kept = [...heads, ...named]
+  if (kept.length === 0) return undefined
   const leading = node.getFullText(sf).slice(0, node.getStart(sf) - node.getFullStart())
-  return `${leading}import ${typeOnly}${parts.join(", ")} from ${spec}${attributes}${terminatorOf(sf, node)}`
+  const statement = (typeOnly: boolean, body: string): string =>
+    `import ${typeOnly ? "type " : ""}${body} from ${spec}${attributes}${terminatorOf(sf, node)}`
+  const list = (parts: readonly Part[], text: (part: Part) => string): string[] =>
+    parts.length === 0 ? [] : [`{ ${parts.map(text).join(", ")} }`]
+  if (
+    !clause.isTypeOnly &&
+    node.attributes === undefined &&
+    (fresh || kept.length < total) &&
+    kept.every((part) => part.typeOnly)
+  ) {
+    // `import type` takes one default, namespace or list, so each goes in its own statement.
+    const bodies = [...heads.map((part) => part.bare), ...list(named, (part) => part.bare)]
+    return `${leading}${bodies.map((body) => statement(true, body)).join("\n")}`
+  }
+  const body = [...heads.map((part) => part.text), ...list(named, (part) => part.text)]
+  return `${leading}${statement(clause.isTypeOnly, body.join(", "))}`
 }
 
 /** The `;` a statement was written with, so a rebuilt one keeps the file's style. */
@@ -363,6 +471,126 @@ const joinStatements = (texts: readonly string[]): string => {
   return body.endsWith("\n") ? body : `${body}\n`
 }
 
+/** Options for {@link splitRouteSource}. */
+export interface SplitOptions {
+  /**
+   * The file name of a module beside the route (`index.shared.ts`) to hold constant data both halves
+   * read, which each half then imports. Without it, that data is copied into each half.
+   */
+  readonly sharedFile?: string
+}
+
+const PURE_OBJECT_CALLS = new Set(["keys", "values", "entries", "freeze", "fromEntries"])
+
+/**
+ * Whether `node` builds constant data: literals, arrays and objects of it, operators over it,
+ * `Object.keys`-style reads, and the file's own top-level names, which go into `reads`. `undefined`
+ * when it is data; else the import it reads, or `""` for anything else (a call, a function, a global).
+ */
+function dataBlocker(
+  ts: typeof TS,
+  node: TS.Node,
+  isLocal: (name: string) => boolean,
+  reads: Set<string>,
+): string | undefined {
+  const data = (n: TS.Node): string | undefined => {
+    if (
+      ts.isStringLiteral(n) ||
+      ts.isNumericLiteral(n) ||
+      ts.isBigIntLiteral(n) ||
+      ts.isNoSubstitutionTemplateLiteral(n) ||
+      n.kind === ts.SyntaxKind.TrueKeyword ||
+      n.kind === ts.SyntaxKind.FalseKeyword ||
+      n.kind === ts.SyntaxKind.NullKeyword
+    )
+      return undefined
+    if (ts.isIdentifier(n)) {
+      if (isLocal(n.text)) {
+        reads.add(n.text)
+        return undefined
+      }
+      return n.text === "undefined" ? undefined : n.text
+    }
+    const every = (nodes: readonly TS.Node[]): string | undefined => {
+      for (const child of nodes) {
+        const blocker = data(child)
+        if (blocker !== undefined) return blocker
+      }
+      return undefined
+    }
+    if (ts.isTemplateExpression(n)) return every(n.templateSpans.map((span) => span.expression))
+    if (ts.isPrefixUnaryExpression(n))
+      return n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken
+        ? ""
+        : data(n.operand)
+    if (ts.isBinaryExpression(n)) {
+      const operator = n.operatorToken.kind
+      const assigns =
+        operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment
+      if (
+        assigns ||
+        operator === ts.SyntaxKind.CommaToken ||
+        operator === ts.SyntaxKind.InKeyword ||
+        operator === ts.SyntaxKind.InstanceOfKeyword
+      )
+        return ""
+      return every([n.left, n.right])
+    }
+    if (ts.isConditionalExpression(n)) return every([n.condition, n.whenTrue, n.whenFalse])
+    if (ts.isArrayLiteralExpression(n))
+      return every(
+        n.elements.flatMap((element) =>
+          ts.isOmittedExpression(element)
+            ? []
+            : [ts.isSpreadElement(element) ? element.expression : element],
+        ),
+      )
+    if (ts.isObjectLiteralExpression(n)) {
+      for (const property of n.properties) {
+        const blocker = ts.isPropertyAssignment(property)
+          ? ((ts.isComputedPropertyName(property.name)
+              ? data(property.name.expression)
+              : undefined) ?? data(property.initializer))
+          : ts.isShorthandPropertyAssignment(property)
+            ? property.objectAssignmentInitializer === undefined
+              ? data(property.name)
+              : ""
+            : ts.isSpreadAssignment(property)
+              ? data(property.expression)
+              : ""
+        if (blocker !== undefined) return blocker
+      }
+      return undefined
+    }
+    if (
+      ts.isParenthesizedExpression(n) ||
+      ts.isAsExpression(n) ||
+      ts.isSatisfiesExpression(n) ||
+      ts.isNonNullExpression(n) ||
+      ts.isTypeAssertionExpression(n)
+    )
+      return data(n.expression)
+    if (ts.isPropertyAccessExpression(n))
+      return ts.isPrivateIdentifier(n.name) ? "" : data(n.expression)
+    if (ts.isElementAccessExpression(n)) return every([n.expression, n.argumentExpression])
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression
+      const objectRead =
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Object" &&
+        !isLocal("Object") &&
+        PURE_OBJECT_CALLS.has(callee.name.text) &&
+        n.questionDotToken === undefined &&
+        n.typeArguments === undefined
+      return objectRead ? every(n.arguments) : ""
+    }
+    return ""
+  }
+  return data(node)
+}
+
 /**
  * Split one route module's source into its frontend and backend halves. `backendSpecifier` is how the
  * frontend refers to the backend half in an `import type` (`./index.backend.ts`).
@@ -372,6 +600,7 @@ export function splitRouteSource(
   source: string,
   fileName: string,
   backendSpecifier: string,
+  options: SplitOptions = {},
 ): SplitResult {
   const kind = fileName.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind)
@@ -384,70 +613,177 @@ export function splitRouteSource(
   if (moved.length === 0) return { frontend: source, backend: undefined, moved: [], issues: [] }
 
   const declaredBy = new Map<string, StatementInfo>()
+  const importedBy = new Map<string, StatementInfo>()
   for (const info of statements) {
-    if (ts.isImportDeclaration(info.node)) continue
-    for (const name of info.declares) declaredBy.set(name, info)
+    const into = ts.isImportDeclaration(info.node) ? importedBy : declaredBy
+    for (const name of info.declares) into.set(name, info)
   }
-
-  // The backend half: its export statements plus every top-level declaration they reach.
-  const backendSet = new Set<StatementInfo>()
-  const queue: StatementInfo[] = statements.filter(isBackendStatement)
-  for (const info of queue) backendSet.add(info)
-  while (queue.length > 0) {
-    const info = queue.pop() as StatementInfo
-    for (const name of [...info.valueRefs, ...info.typeRefs]) {
-      const target = declaredBy.get(name)
-      if (target !== undefined && !backendSet.has(target)) {
-        backendSet.add(target)
-        queue.push(target)
-      }
-    }
-    // An exported-name statement (`export { loader }`) reaches the declaration it names.
-    for (const local of info.exports.keys()) {
-      const target = declaredBy.get(local)
-      if (target !== undefined && !backendSet.has(target)) {
-        backendSet.add(target)
-        queue.push(target)
-      }
+  const isTypeDeclaration = (info: StatementInfo): boolean =>
+    ts.isInterfaceDeclaration(info.node) || ts.isTypeAliasDeclaration(info.node)
+  /** What `info` reads for one half: an export list reads only the locals it exports there. */
+  const readsFor = (info: StatementInfo, backend: boolean): Uses => {
+    if (info.listed.length === 0) return { value: info.valueRefs, type: info.typeRefs }
+    const mine = info.listed.filter((entry) => BACKEND_EXPORTS.has(entry.exported) === backend)
+    return {
+      value: new Set(mine.filter((entry) => !entry.type).map((entry) => entry.local)),
+      type: new Set(mine.filter((entry) => entry.type).map((entry) => entry.local)),
     }
   }
-
-  // The frontend half: everything that is not a backend export statement, minus declarations that only
-  // the backend half needs.
   const movedLocals = new Set<string>()
   for (const info of statements) {
     for (const [local, names] of info.exports)
       if (names.some((name) => BACKEND_EXPORTS.has(name))) movedLocals.add(local)
   }
-  const frontendCandidates = statements.filter((info) => !ts.isImportDeclaration(info.node))
-  const frontendKeep = new Set<StatementInfo>()
-  const seed = frontendCandidates.filter(
-    (info) =>
-      !backendSet.has(info) ||
-      (!isBackendStatement(info) && exportsOf(info).length > 0) ||
-      // a statement with no declaration (a side effect) stays where it ran
-      (info.declares.size === 0 && info.exports.size === 0),
-  )
-  const fqueue = [...seed]
-  for (const info of fqueue) frontendKeep.add(info)
-  while (fqueue.length > 0) {
-    const info = fqueue.pop() as StatementInfo
-    for (const name of info.valueRefs) {
-      if (movedLocals.has(name) && !info.declares.has(name)) continue
+
+  /** Each half's statements. What `shared` holds, both import, so neither half keeps a copy. */
+  const partition = (
+    shared: ReadonlySet<StatementInfo>,
+  ): { backendSet: Set<StatementInfo>; frontendKeep: Set<StatementInfo> } => {
+    const local = (name: string): StatementInfo | undefined => {
       const target = declaredBy.get(name)
-      if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
-        frontendKeep.add(target)
-        fqueue.push(target)
+      return target === undefined || shared.has(target) ? undefined : target
+    }
+    // The backend half: its export statements plus every top-level declaration they reach.
+    const backendSet = new Set<StatementInfo>()
+    const queue: StatementInfo[] = statements.filter(isBackendStatement)
+    for (const info of queue) backendSet.add(info)
+    while (queue.length > 0) {
+      const info = queue.pop() as StatementInfo
+      const reads = readsFor(info, true)
+      for (const name of [...reads.value, ...reads.type]) {
+        const target = local(name)
+        if (target !== undefined && !backendSet.has(target)) {
+          backendSet.add(target)
+          queue.push(target)
+        }
       }
     }
-    for (const name of info.typeRefs) {
-      if (movedLocals.has(name)) continue
-      const target = declaredBy.get(name)
-      if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
-        frontendKeep.add(target)
-        fqueue.push(target)
+
+    // The frontend half: everything that is not a backend export statement, minus declarations that
+    // only the backend half needs. An export list that also names backend exports keeps the rest.
+    const frontendKeep = new Set<StatementInfo>()
+    const seed = statements.filter(
+      (info) =>
+        !ts.isImportDeclaration(info.node) &&
+        !shared.has(info) &&
+        (!backendSet.has(info) ||
+          exportsOf(info).some((name) => !BACKEND_EXPORTS.has(name)) ||
+          // a statement with no declaration (a side effect) stays where it ran
+          (info.declares.size === 0 && info.exports.size === 0)),
+    )
+    const fqueue = [...seed]
+    for (const info of fqueue) frontendKeep.add(info)
+    while (fqueue.length > 0) {
+      const info = fqueue.pop() as StatementInfo
+      const reads = readsFor(info, false)
+      for (const name of reads.value) {
+        if (movedLocals.has(name) && !info.declares.has(name)) continue
+        const target = local(name)
+        if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
+          frontendKeep.add(target)
+          fqueue.push(target)
+        }
+      }
+      for (const name of reads.type) {
+        if (movedLocals.has(name)) continue
+        const target = local(name)
+        if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
+          frontendKeep.add(target)
+          fqueue.push(target)
+        }
       }
     }
+    return { backendSet, frontendKeep }
+  }
+  let { backendSet, frontendKeep } = partition(new Set())
+  const copies = (): StatementInfo[] =>
+    [...frontendKeep].filter(
+      (info) =>
+        backendSet.has(info) &&
+        !isBackendStatement(info) &&
+        info.declares.size > 0 &&
+        !isTypeDeclaration(info),
+    )
+
+  // Constant data both halves read moves to a module beside the route, with the declarations it
+  // needs: one definition, which neither half's bundle can drift from.
+  const shared = new Set<StatementInfo>()
+  const sharedTypes = new Set<StatementInfo>()
+  const sharedImports = new Set<string>()
+  const unshared = new Map<StatementInfo, string>()
+  if (options.sharedFile !== undefined) {
+    interface Closure {
+      readonly values: Set<StatementInfo>
+      readonly types: Set<StatementInfo>
+      readonly imports: Set<string>
+    }
+    /** Why `info` cannot move to the shared module, or `undefined` once it and what it needs are in `closure`. */
+    const gather = (info: StatementInfo, closure: Closure): string | undefined => {
+      if (closure.values.has(info) || shared.has(info)) return undefined
+      const node = info.node
+      const reads = new Set<string>()
+      let blocker: string | undefined = ""
+      if (
+        !isBackendStatement(info) &&
+        ts.isVariableStatement(node) &&
+        (node.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+        !hasModifier(ts, node, ts.SyntaxKind.DeclareKeyword)
+      ) {
+        blocker = undefined
+        for (const declaration of node.declarationList.declarations) {
+          blocker =
+            ts.isIdentifier(declaration.name) && declaration.initializer !== undefined
+              ? dataBlocker(ts, declaration.initializer, (name) => declaredBy.has(name), reads)
+              : ""
+          if (blocker !== undefined) break
+        }
+      }
+      if (blocker !== undefined)
+        return blocker !== "" && importedBy.has(blocker)
+          ? `it reads the import "${blocker}"`
+          : "it is not constant data"
+      closure.values.add(info)
+      for (const name of reads) {
+        const target = declaredBy.get(name)
+        const why = target === undefined ? undefined : gather(target, closure)
+        if (why !== undefined) return `it reads "${name}", which ${why.slice(3)}`
+      }
+      for (const name of info.typeRefs) {
+        const why = gatherType(name, closure)
+        if (why !== undefined) return why
+      }
+      return undefined
+    }
+    const gatherType = (name: string, closure: Closure): string | undefined => {
+      const local = declaredBy.get(name)
+      if (local === undefined) {
+        if (importedBy.has(name)) closure.imports.add(name)
+        return undefined
+      }
+      if (!isTypeDeclaration(local)) {
+        const why = gather(local, closure)
+        return why === undefined ? undefined : `its type reads "${name}", which ${why.slice(3)}`
+      }
+      if (closure.types.has(local) || sharedTypes.has(local)) return undefined
+      closure.types.add(local)
+      for (const ref of [...local.typeRefs, ...local.valueRefs]) {
+        const why = gatherType(ref, closure)
+        if (why !== undefined) return why
+      }
+      return undefined
+    }
+    for (const info of copies()) {
+      const closure: Closure = { values: new Set(), types: new Set(), imports: new Set() }
+      const why = gather(info, closure)
+      if (why !== undefined) {
+        unshared.set(info, why)
+        continue
+      }
+      for (const value of closure.values) shared.add(value)
+      for (const type of closure.types) sharedTypes.add(type)
+      for (const name of closure.imports) sharedImports.add(name)
+    }
+    if (shared.size > 0) ({ backendSet, frontendKeep } = partition(shared))
   }
 
   // A moved name the frontend still mentions: in a type it becomes `import type`; at runtime it is an
@@ -455,44 +791,88 @@ export function splitRouteSource(
   const typeImports = new Set<string>()
   for (const info of frontendKeep) {
     if (isBackendStatement(info)) continue
+    const reads = readsFor(info, false)
     for (const name of movedLocals) {
       if (info.declares.has(name)) continue
-      if (info.valueRefs.has(name))
+      if (reads.value.has(name))
         issues.push(`the frontend uses "${name}" at runtime, but it runs on the server only`)
-      if (info.typeRefs.has(name) || info.valueRefs.has(name)) typeImports.add(name)
+      if (reads.type.has(name) || reads.value.has(name)) typeImports.add(name)
     }
   }
-  for (const info of frontendKeep) {
-    if (!backendSet.has(info) || isBackendStatement(info) || info.declares.size === 0) continue
-    const values = [...info.declares].filter(
-      () => !ts.isInterfaceDeclaration(info.node) && !ts.isTypeAliasDeclaration(info.node),
+  for (const info of copies()) {
+    const why = unshared.get(info)
+    issues.push(
+      `"${[...info.declares].join(", ")}" is needed by both halves and was copied into each${why === undefined ? "" : `, since ${why}`}; consider moving it to shared/`,
     )
-    if (values.length > 0)
-      issues.push(
-        `"${values.join(", ")}" is needed by both halves and was copied into each; consider moving it to shared/`,
-      )
   }
 
-  const used = (infos: Iterable<StatementInfo>): Set<string> => {
-    const names = new Set<string>()
-    for (const info of infos)
-      for (const name of [...info.valueRefs, ...info.typeRefs]) names.add(name)
-    return names
+  const uses = (infos: Iterable<StatementInfo>, backend: boolean): Uses => {
+    const value = new Set<string>()
+    const type = new Set<string>()
+    for (const info of infos) {
+      const reads = readsFor(info, backend)
+      for (const name of reads.value) value.add(name)
+      for (const name of reads.type) type.add(name)
+    }
+    return { value, type }
   }
-  const backendUses = used(backendSet)
-  const frontendUses = used([...frontendKeep].filter((info) => !isBackendStatement(info)))
+  const backendUses = uses(backendSet, true)
+  const frontendUses = uses(frontendKeep, false)
+
+  const semi = statements.some((info) => terminatorOf(sf, info.node) !== "") ? ";" : ""
+  // The imports the split writes quote the way the file's own imports do.
+  const firstImport = statements.find((info) => ts.isImportDeclaration(info.node))?.node
+  const quote =
+    firstImport !== undefined && ts.isImportDeclaration(firstImport)
+      ? (firstImport.moduleSpecifier.getText(sf)[0] ?? '"')
+      : '"'
+  const sharedNames = [...shared].flatMap((info) => [...info.declares])
+  const sharedSpecifier = (() => {
+    const file = options.sharedFile ?? ""
+    // The halves name the module the way the route names its other relative imports.
+    const relative = statements.flatMap((info) =>
+      ts.isImportDeclaration(info.node) &&
+      ts.isStringLiteral(info.node.moduleSpecifier) &&
+      info.node.moduleSpecifier.text.startsWith(".")
+        ? [info.node.moduleSpecifier.text]
+        : [],
+    )
+    const extension = relative
+      .map((specifier) => /\.(ts|tsx|js|jsx)$/.exec(specifier)?.[1])
+      .find((found) => found !== undefined)
+    const suffix = extension === undefined ? "" : extension.startsWith("t") ? ".ts" : ".js"
+    return `./${file.replace(/\.ts$/, "")}${suffix}`
+  })()
+  const sharedImport = (half: Uses): string[] => {
+    const names = sharedNames
+      .filter((name) => half.value.has(name) || half.type.has(name))
+      .sort(codeUnitOrder)
+    if (names.length === 0) return []
+    const typeOnly = names.every((name) => !half.value.has(name))
+    return [
+      `\nimport ${typeOnly ? "type " : ""}{ ${names.join(", ")} } from ${quote}${sharedSpecifier}${quote}${semi}`,
+    ]
+  }
+  // The page still exports what it exported, now from the shared module.
+  const reexported = [...shared].flatMap((info) =>
+    [...info.exports].flatMap(([local, names]) =>
+      names.map((name) => (name === local ? local : `${local} as ${name}`)),
+    ),
+  )
 
   const backendTexts: string[] = []
   const frontendTexts: string[] = []
   let afterImports = 0
+  let backendAfterImports = 0
   for (const info of statements) {
     const node = info.node
     if (ts.isImportDeclaration(node)) {
-      const back = filterImport(ts, sf, node, (name) => backendUses.has(name))
+      const back = filterImport(ts, sf, node, backendUses, true)
       if (back !== undefined) backendTexts.push(node.importClause ? back : "")
-      const front = filterImport(ts, sf, node, (name) => frontendUses.has(name))
+      const front = filterImport(ts, sf, node, frontendUses, false)
       if (front !== undefined) frontendTexts.push(front)
       afterImports = frontendTexts.length
+      backendAfterImports = backendTexts.length
       continue
     }
     if (isBackendStatement(info)) {
@@ -518,14 +898,17 @@ export function splitRouteSource(
     if (frontendKeep.has(info)) frontendTexts.push(info.text)
   }
   // After the other imports: the nearest relative path sorts last.
-  if (typeImports.size > 0) {
-    const semi = statements.some((info) => terminatorOf(sf, info.node) !== "") ? ";" : ""
-    frontendTexts.splice(
-      afterImports,
-      0,
-      `\nimport type { ${[...typeImports].sort().join(", ")} } from "${backendSpecifier}"${semi}`,
+  const frontendImports = sharedImport(frontendUses)
+  if (reexported.length > 0)
+    frontendImports.push(
+      `\nexport { ${reexported.join(", ")} } from ${quote}${sharedSpecifier}${quote}${semi}`,
     )
-  }
+  if (typeImports.size > 0)
+    frontendImports.push(
+      `\nimport type { ${[...typeImports].sort().join(", ")} } from ${quote}${backendSpecifier}${quote}${semi}`,
+    )
+  frontendTexts.splice(afterImports, 0, ...frontendImports)
+  backendTexts.splice(backendAfterImports, 0, ...sharedImport(backendUses))
   // A JSX pragma counts only in the file's leading comments, and the backend half has no JSX.
   const pragmas = (ts.getLeadingCommentRanges(source, 0) ?? [])
     .map((range) => source.slice(range.pos, range.end))
@@ -536,12 +919,34 @@ export function splitRouteSource(
       text,
     )
   const frontend = lift(joinStatements(frontendTexts))
-  return {
+  let sharedText: string | undefined
+  if (shared.size > 0) {
+    const texts: string[] = []
+    const typeUses: Uses = { value: new Set(), type: sharedImports }
+    for (const info of statements) {
+      if (ts.isImportDeclaration(info.node)) {
+        const kept = filterImport(ts, sf, info.node, typeUses, true)
+        if (kept !== undefined && info.node.importClause !== undefined) texts.push(kept)
+      } else if (shared.has(info) || sharedTypes.has(info)) {
+        texts.push(withExport(ts, sf, info))
+      }
+    }
+    sharedText = lift(joinStatements(texts))
+  }
+  const result: SplitResult = {
     frontend: pragmas.length > 0 ? `${pragmas.join("\n")}\n${frontend}` : frontend,
     backend: lift(joinStatements(backendTexts)),
     moved: [...new Set(moved)].sort(),
     issues,
   }
+  return sharedText === undefined ? result : { ...result, shared: sharedText }
+}
+
+/** A declaration the shared module holds is exported, so either half can import it. */
+function withExport(ts: typeof TS, sf: TS.SourceFile, info: StatementInfo): string {
+  if (hasModifier(ts, info.node, ts.SyntaxKind.ExportKeyword)) return info.text
+  const at = info.node.getStart(sf) - info.node.getFullStart()
+  return `${info.text.slice(0, at)}export ${info.text.slice(at)}`
 }
 
 /** A helper the backend half copies keeps its declaration; an `export` on it would add a backend export. */
@@ -736,7 +1141,7 @@ function resolveIn(
   specifier: string,
 ): string | undefined {
   if (!specifier.startsWith(".")) return undefined
-  const clean = specifier.replace(/[?#].*$/, "")
+  const clean = withoutQuery(specifier)
   const base = posix.normalize(posix.join(posix.dirname(from), clean))
   const candidates = [
     base,
@@ -806,15 +1211,24 @@ function rebaseOwnPaths(
     const quote = node.getText(sf)[0] ?? '"'
     return `${quote}${value}${quote}`
   }
-  // The path `relative` names from the module's old folder, named from its new folder.
-  const rebased = (relative: string): string => {
-    const target = locate(posix.normalize(posix.join(posix.dirname(from), relative)))
+  // The path `relative` names from the module's old folder, named from its new folder; `undefined`
+  // when neither moved, so a module that stays keeps its spelling.
+  const rebased = (relative: string): string | undefined => {
+    const before = posix.normalize(posix.join(posix.dirname(from), relative))
+    const target = locate(before)
+    if (from === to && target === before) return undefined
     const next = posix.relative(posix.dirname(to), target) || "."
     return relative.endsWith("/") && next !== "." ? `${next}/` : next
   }
-  const follow = (anchor: TS.Node, start: number, end: number, replacement: string): void => {
+  const follow = (
+    anchor: TS.Node,
+    start: number,
+    end: number,
+    replacement: string | undefined,
+  ): void => {
     followed.push([anchor.getStart(sf), anchor.getEnd()])
-    if (text.slice(start, end) !== replacement) edits.push({ start, end, text: replacement })
+    if (replacement !== undefined && text.slice(start, end) !== replacement)
+      edits.push({ start, end, text: replacement })
   }
 
   const visit = (node: TS.Node): void => {
@@ -832,8 +1246,12 @@ function rebaseOwnPaths(
         !(callee.endsWith("resolve") && parts.some((part) => part.text.startsWith("/")))
       ) {
         const next = rebased(posix.join(...parts.map((part) => part.text)))
-        const segments = parts.length === 1 ? [next] : next.split("/").filter((s) => s !== "")
-        const replacement = segments.map((segment) => quoted(first, segment)).join(", ")
+        const replacement =
+          next === undefined
+            ? undefined
+            : (parts.length === 1 ? [next] : next.split("/").filter((s) => s !== ""))
+                .map((segment) => quoted(first, segment))
+                .join(", ")
         follow(dir, first.getStart(sf), last.getEnd(), replacement)
         return
       }
@@ -850,7 +1268,7 @@ function rebaseOwnPaths(
         node.left,
         node.right.getStart(sf),
         node.right.getEnd(),
-        quoted(node.right, `/${next}`),
+        next === undefined ? undefined : quoted(node.right, `/${next}`),
       )
       return
     }
@@ -858,7 +1276,8 @@ function rebaseOwnPaths(
       const span = node.templateSpans[0]
       if (span !== undefined && isOwnDir(span.expression) && span.literal.text.startsWith("/")) {
         const next = rebased(span.literal.text.slice(1) || ".")
-        const replacement = `\`\${${span.expression.getText(sf)}}/${next}\``
+        const replacement =
+          next === undefined ? undefined : `\`\${${span.expression.getText(sf)}}/${next}\``
         follow(span.expression, node.getStart(sf), node.getEnd(), replacement)
         return
       }
@@ -872,7 +1291,8 @@ function rebaseOwnPaths(
       const path = node.arguments[0]
       if (isLiteral(path) && !/^(?:\/|[a-z][a-z\d+.-]*:)/i.test(path.text)) {
         const next = rebased(path.text)
-        const replacement = quoted(path, next.startsWith("..") ? next : `./${next}`)
+        const replacement =
+          next === undefined ? undefined : quoted(path, next.startsWith("..") ? next : `./${next}`)
         follow(node.arguments[1], path.getStart(sf), path.getEnd(), replacement)
         return
       }
@@ -898,7 +1318,7 @@ function respecify(
   newFrom: string,
   newTarget: string,
 ): string {
-  const query = /[?#].*$/.exec(original)?.[0] ?? ""
+  const query = original.slice(withoutQuery(original).length)
   const clean = original.slice(0, original.length - query.length)
   let target = newTarget
   const writtenExt = extname(clean)
@@ -928,16 +1348,16 @@ function rebase(specifier: string, from: string, newFrom: string): string | unde
 }
 
 /** A split route as an importer sees it: the names that left it, and how this importer spells the
- * backend half they went to (`undefined` when an alias cannot name it). */
+ * backend half they went to. */
 interface SplitTarget {
   readonly backend: string
   readonly moved: ReadonlySet<string>
-  readonly specifier: string | undefined
+  readonly specifier: string
 }
 
 /** `specifier` re-pointed from a split route to its backend half, in the author's extension style. */
 function backendSpecifier(specifier: string, route: string, backend: string, from: string): string {
-  const query = /[?#].*$/.exec(specifier)?.[0] ?? ""
+  const query = specifier.slice(withoutQuery(specifier).length)
   const written = extname(specifier.slice(0, specifier.length - query.length))
   const stem = backend.slice(0, -extname(backend).length)
   const target =
@@ -953,8 +1373,7 @@ function backendSpecifier(specifier: string, route: string, backend: string, fro
 /**
  * Point an importer's named imports of a split route's moved exports (`loader`, `action`, ...) at the
  * backend half, splitting a statement that also names what stayed. What cannot be rewritten (a
- * namespace or dynamic import that reads a moved name, `export *`, an alias with no target there) is
- * returned as an issue.
+ * namespace or dynamic import that reads a moved name, `export *`) is returned as an issue.
  */
 function redirectMovedImports(
   ts: typeof TS,
@@ -1010,12 +1429,6 @@ function redirectMovedImports(
         split.moved.has((el.propertyName ?? el.name).text)
       const moved = elements.filter(isMoved)
       if (moved.length === 0) return
-      if (split.specifier === undefined) {
-        issues.push(
-          `imports ${quoted(moved.map((el) => (el.propertyName ?? el.name).text))} from "${from}", but they moved to "${split.backend}" and no target of that alias covers it; point the import there by hand`,
-        )
-        return
-      }
       redirects.push({
         names: moved.map((el) => (el.propertyName ?? el.name).text),
         from,
@@ -1049,14 +1462,29 @@ function redirectMovedImports(
       node.arguments[0] !== undefined &&
       ts.isStringLiteralLike(node.arguments[0])
     ) {
-      const from = node.arguments[0].text
+      const literal = node.arguments[0]
+      const from = literal.text
       const split = splitOf(from)
       const reads =
         split === undefined ? [] : mentioned(split, (name) => new RegExp(`\\b${name}\\b`))
-      if (split !== undefined && reads.length > 0)
-        issues.push(
-          `loads "${from}" with import() and mentions ${quoted(reads)}, which moved to "${split.backend}"; load the backend half for them by hand`,
-        )
+      if (split !== undefined && reads.length > 0) {
+        const names = dynamicReads(ts, sf, node)
+        if (
+          names !== undefined &&
+          names.length > 0 &&
+          names.every((name) => split.moved.has(name))
+        ) {
+          edits.push({
+            start: literal.getStart(sf) + 1,
+            end: literal.getEnd() - 1,
+            text: split.specifier,
+          })
+          redirects.push({ names, from, to: split.specifier })
+        } else
+          issues.push(
+            `loads "${from}" with import() and mentions ${quoted(reads)}, which moved to "${split.backend}"; load the backend half for them by hand`,
+          )
+      }
     }
     ts.forEachChild(node, visit)
   }
@@ -1065,6 +1493,193 @@ function redirectMovedImports(
   for (const edit of edits.sort((a, b) => b.start - a.start))
     out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
   return { text: out, issues, redirects }
+}
+
+/**
+ * The exports code reads from what `import()` loads: off the awaited module (`(await import(x)).a`),
+ * through a destructuring, or through a variable used only as `mod.a`. `undefined` when the module
+ * goes anywhere else, so its reads cannot be listed.
+ */
+function dynamicReads(
+  ts: typeof TS,
+  sf: TS.SourceFile,
+  call: TS.CallExpression,
+): string[] | undefined {
+  let node: TS.Node = call
+  if (!ts.isAwaitExpression(node.parent)) return undefined
+  node = node.parent
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent
+  const parent = node.parent
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === node) return [parent.name.text]
+  if (!ts.isVariableDeclaration(parent) || parent.initializer !== node) return undefined
+  const binding = parent.name
+  if (ts.isObjectBindingPattern(binding)) {
+    const names: string[] = []
+    for (const element of binding.elements) {
+      const key = element.propertyName ?? element.name
+      if (
+        element.dotDotDotToken !== undefined ||
+        !(ts.isIdentifier(key) || ts.isStringLiteral(key))
+      )
+        return undefined
+      names.push(key.text)
+    }
+    return names
+  }
+  if (!ts.isIdentifier(binding)) return undefined
+  const names = new Set<string>()
+  let escapes = false
+  const visit = (current: TS.Node): void => {
+    if (ts.isIdentifier(current) && current.text === binding.text && current !== binding) {
+      const owner = current.parent
+      if (ts.isPropertyAccessExpression(owner) && owner.expression === current)
+        names.add(owner.name.text)
+      else if (
+        !(
+          (ts.isPropertyAccessExpression(owner) ||
+            ts.isPropertyAssignment(owner) ||
+            ts.isPropertyDeclaration(owner) ||
+            ts.isMethodDeclaration(owner)) &&
+          owner.name === current
+        )
+      )
+        escapes = true
+    }
+    ts.forEachChild(current, visit)
+  }
+  visit(sf)
+  return escapes ? undefined : [...names].sort(codeUnitOrder)
+}
+
+/** A `workspaces` glob as a matcher over package-relative folder paths. */
+function workspacePattern(glob: string): RegExp {
+  const source = glob
+    .replace(/^\.\//, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .map((segment) =>
+      segment === "**"
+        ? "(?:[^/]+/)*?[^/]*"
+        : segment.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", "[^/]*"),
+    )
+    .join("/")
+  return new RegExp(`^${source}$`)
+}
+
+/**
+ * The workspace an app belongs to: the nearest folder above it whose package.json declares
+ * `workspaces` that include the app, and the package folders those globs (less any `!` exclusion)
+ * name, other than the app and any folder that holds it. `undefined` outside one.
+ */
+function workspaceSiblings(root: string): readonly string[] | undefined {
+  for (let dir = dirname(root), depth = 0; depth < 8; dir = dirname(dir), depth += 1) {
+    let declared: unknown
+    try {
+      declared = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).workspaces
+    } catch {
+      declared = undefined
+    }
+    const listed = Array.isArray(declared)
+      ? declared
+      : typeof declared === "object" && declared !== null
+        ? Reflect.get(declared, "packages")
+        : undefined
+    if (Array.isArray(listed)) {
+      const globs = listed.filter((glob): glob is string => typeof glob === "string")
+      const include = globs.filter((glob) => !glob.startsWith("!")).map(workspacePattern)
+      const exclude = globs
+        .filter((glob) => glob.startsWith("!"))
+        .map((glob) => workspacePattern(glob.slice(1)))
+      const member = (rel: string): boolean =>
+        include.some((pattern) => pattern.test(rel)) &&
+        !exclude.some((pattern) => pattern.test(rel))
+      // The nearest declaration decides, as package managers read it.
+      if (!member(toPosix(relative(dir, root)))) return undefined
+      const packages: string[] = []
+      const walk = (folder: string, depth: number): void => {
+        for (const entry of readdirSync(folder, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.name.startsWith(".") || SKIP_DIRS.has(entry.name))
+            continue
+          const full = join(folder, entry.name)
+          const rel = toPosix(relative(dir, full))
+          if (exclude.some((pattern) => pattern.test(rel))) continue
+          if (member(rel) && existsSync(join(full, "package.json"))) {
+            const inside = toPosix(relative(full, root))
+            if (inside.startsWith("../") || isAbsolute(inside)) packages.push(full)
+            continue
+          }
+          if (depth < 4) walk(full, depth + 1)
+        }
+      }
+      walk(dir, 0)
+      return packages.sort()
+    }
+    if (dirname(dir) === dir) return undefined
+  }
+  return undefined
+}
+
+/**
+ * Where code in a workspace sibling names an app file that moves: a relative import into the app, or
+ * the file's path in a string or command (`bun -e 'import("./src/x.ts")'` with the app as its working
+ * directory). Only files that mention the app's folder or package name are read further, and a path
+ * the sibling's own package holds is its own file. Report-only: the migration never edits a sibling.
+ */
+function siblingReferences(
+  ts: typeof TS,
+  root: string,
+  pkg: string,
+  file: string,
+  text: string,
+  moves: ReadonlyMap<string, string>,
+  known: ReadonlySet<string>,
+  ownName: string | undefined,
+): Array<{ readonly from: string; readonly to: string; readonly line: number }> {
+  const abs = join(pkg, file)
+  // A process started in the app (`cwd: \`${repo}apps/web\``) reads its paths from the app root.
+  const runsInApp = new RegExp(
+    `\\bcwd\\s*:[^,\\n]*\\b${escapeRegExp(posix.basename(toPosix(root)))}\\b`,
+  ).test(text)
+  const found = new Map<string, { from: string; to: string; line: number }>()
+  const report = (from: string, index: number): void => {
+    const to = moves.get(from)
+    if (to === undefined || found.has(from)) return
+    found.set(from, { from, to, line: text.slice(0, index).split("\n").length })
+  }
+  if (/\.(?:[cm]?[jt]sx?)$/.test(file)) {
+    for (const { specifier } of importsOf(ts, file, text)) {
+      const clean = withoutQuery(specifier)
+      const inApp = clean.startsWith(".")
+        ? toPosix(relative(root, resolve(dirname(abs), clean)))
+        : ownName !== undefined && clean.startsWith(`${ownName}/`)
+          ? clean.slice(ownName.length + 1)
+          : undefined
+      if (inApp === undefined || inApp.startsWith("../") || isAbsolute(inApp)) continue
+      const target = resolveIn(known, "index.ts", `./${inApp}`)
+      if (target !== undefined) report(target, text.indexOf(specifier))
+    }
+  }
+  for (const from of moves.keys()) {
+    const stem = SOURCE_FILE.test(from)
+      ? from.slice(0, from.length - extname(from).length)
+      : undefined
+    const pattern = new RegExp(
+      `(?<![\\w.-])(?:\\./)?(?:${escapeRegExp(from)}(?![\\w])${stem === undefined ? "" : `|${escapeRegExp(stem)}(?=["'\`])`})`,
+      "g",
+    )
+    for (const match of text.matchAll(pattern)) {
+      // `packages/x/src/a.ts` names another package's `src/a.ts`; only a prefix that reaches the
+      // app counts, and a path the sibling holds itself is its own.
+      const prefix = /(?:[\w.@-]+\/)+$/.exec(text.slice(0, match.index))?.[0] ?? ""
+      const bases = prefix === "" ? [] : [dirname(abs), pkg, dirname(pkg), dirname(dirname(pkg))]
+      if (prefix !== "" && !bases.some((base) => resolve(base, prefix) === root)) continue
+      const own = existsSync(join(pkg, from)) || existsSync(join(dirname(abs), from))
+      if (prefix === "" && own && !runsInApp) continue
+      report(from, match.index)
+      break
+    }
+  }
+  return [...found.values()]
 }
 
 /** The package folder an app without its own package.json sits in (`--dir src`), at most two levels
@@ -1219,18 +1834,14 @@ function renameRetiredTypes(ts: typeof TS, file: string, text: string): string {
 /** The config files the loader reads, old layout included; a path field may live in any of them. */
 const CONFIG_FILES = ["nifra.config.ts", "framework.ts", "backend/framework.ts"]
 
-interface ConfigEntry {
+interface ConfigEntry extends StaticConfigPath {
   /** `clientModule`, or `componentPipeline.entries.<name>`. */
   readonly field: string
   readonly role: "frontend" | "backend"
-  readonly value: string
-  /** The literal's text, quotes excluded: [start, end). */
-  readonly start: number
-  readonly end: number
 }
 
 /**
- * The module paths a config exports as string literals: `clientModule` and the component pipeline's
+ * The module paths a config exports, read statically: `clientModule` and the component pipeline's
  * `entries`. The browser loads `clientModule` and `entries.client`; `ssr` and `rsc` run on the server.
  */
 function configEntries(ts: typeof TS, file: string, text: string): ConfigEntry[] {
@@ -1246,17 +1857,11 @@ function configEntries(ts: typeof TS, file: string, text: string): ConfigEntry[]
       current = current.expression
     return current
   }
+  const read = configPathReader(ts, sf)
   const out: ConfigEntry[] = []
   const literal = (field: string, role: ConfigEntry["role"], node: TS.Expression | undefined) => {
-    const value = bare(node)
-    if (value === undefined || !ts.isStringLiteralLike(value)) return
-    out.push({
-      field,
-      role,
-      value: value.text,
-      start: value.getStart(sf) + 1,
-      end: value.getEnd() - 1,
-    })
+    const path = read(node)
+    if (path !== undefined) out.push({ ...path, field, role })
   }
   for (const statement of sf.statements) {
     if (
@@ -1386,7 +1991,7 @@ export async function migrateLayout(
       original.set(file, readFileSync(join(root, file), "utf8"))
   }
   const issues: LayoutMigrationIssue[] = []
-  const splits: Array<{ file: string; backend: string; moved: string[] }> = []
+  const splits: Array<{ file: string; backend: string; moved: string[]; shared?: string }> = []
   /** The app after the migration: new path -> text. */
   const next: Files = new Map(original)
   /** Old path -> new path, for every file that moves. */
@@ -1409,13 +2014,25 @@ export async function migrateLayout(
     if (!ROUTE_FILE.test(file)) continue
     const backendFile = file.replace(ROUTE_FILE, ".backend.ts")
     const specifier = `./${posix.basename(backendFile)}`
+    const sharedFile = file.replace(ROUTE_FILE, ".shared.ts")
+    // A taken name leaves data both halves read copied into each, as reported.
+    const splitOptions: SplitOptions =
+      next.has(sharedFile) || existsSync(join(root, sharedFile))
+        ? {}
+        : { sharedFile: posix.basename(sharedFile) }
     let result: SplitResult
     if (/\.(?:svelte|vue)$/.test(file)) {
       const blocks = scriptBlocks(text)
       const block =
         blocks.find((b) => b.module) ?? blocks.find((b) => !b.setup && file.endsWith(".vue"))
       if (block === undefined) continue
-      const inner = splitRouteSource(ts, text.slice(block.start, block.end), "block.ts", specifier)
+      const inner = splitRouteSource(
+        ts,
+        text.slice(block.start, block.end),
+        "block.ts",
+        specifier,
+        splitOptions,
+      )
       result = {
         ...inner,
         frontend: `${text.slice(0, block.start)}\n${inner.frontend}${text.slice(block.end)}`,
@@ -1433,7 +2050,7 @@ export async function migrateLayout(
       }
       continue
     } else {
-      result = splitRouteSource(ts, text, file, specifier)
+      result = splitRouteSource(ts, text, file, specifier, splitOptions)
     }
     if (result.backend === undefined) continue
     next.set(file, result.frontend)
@@ -1441,7 +2058,12 @@ export async function migrateLayout(
       backendFile,
       mergeModules(ts, backendHalves.get(backendFile) ?? "", result.backend),
     )
-    splits.push({ file, backend: backendFile, moved: [...result.moved] })
+    if (result.shared === undefined)
+      splits.push({ file, backend: backendFile, moved: [...result.moved] })
+    else {
+      next.set(sharedFile, result.shared)
+      splits.push({ file, backend: backendFile, moved: [...result.moved], shared: sharedFile })
+    }
     for (const reason of result.issues) issues.push({ file, reason })
   }
   for (const [file, text] of backendHalves) {
@@ -1453,7 +2075,11 @@ export async function migrateLayout(
   for (const [from, to] of Object.entries(rootMoves)) if (next.has(from)) moveMap.set(from, to)
   // Assets (images, fonts) resolve too, so they move with the modules that import them.
   const known = new Set([...next.keys(), ...everyFile])
-  const resolver = createSpecifierResolver()
+  const knownPaths = new Set([...known].map((file) => join(root, file)))
+  // Route halves the split creates resolve before they are written.
+  const resolver = createSpecifierResolver({
+    moduleExists: (path) => knownPaths.has(path) || isFile(path),
+  })
   const realRoot = (() => {
     try {
       return realpathSync(root)
@@ -1461,14 +2087,21 @@ export async function migrateLayout(
       return root
     }
   })()
+  /** An app file as the migration names it, from a path the resolver found (real, or as planned). */
+  const appFile = (path: string | undefined): string | undefined => {
+    if (path === undefined) return undefined
+    for (const base of [realRoot, root]) {
+      const rel = toPosix(relative(base, path))
+      if (!rel.startsWith("../") && !isAbsolute(rel)) return rel
+    }
+    return undefined
+  }
   /** A non-relative specifier the app's tsconfig `paths`/`baseUrl` or package.json `imports` maps to
-   * one of its files, read from disk as the bundler reads it. */
+   * one of its files, as the bundler reads it. */
   const viaAlias = (file: string, specifier: string): string | undefined => {
     if (specifier.startsWith(".") || isAbsolute(specifier)) return undefined
-    const found = resolver(join(root, file), specifier)
-    if (found === undefined) return undefined
-    const rel = toPosix(relative(realRoot, found))
-    return rel.startsWith("../") || isAbsolute(rel) || !known.has(rel) ? undefined : rel
+    const rel = appFile(resolver(join(root, file), withoutQuery(specifier)))
+    return rel === undefined || !known.has(rel) ? undefined : rel
   }
   const resolveAny = (file: string, specifier: string): string | undefined =>
     resolveIn(known, file, specifier) ?? viaAlias(file, specifier)
@@ -1485,7 +2118,7 @@ export async function migrateLayout(
    * scheme the bundler owns, the app's own package name, or a package installed at or above it. */
   const external = (specifier: string): boolean => {
     if (/^[a-z][a-z\d+.-]*:/i.test(specifier) || specifier === "bun") return true
-    const name = packageName(specifier.replace(/[?#].*$/, ""))
+    const name = packageName(withoutQuery(specifier))
     if (builtinModules.includes(name) || name === ownName) return true
     let found = installed.get(name)
     if (found === undefined) {
@@ -1518,9 +2151,10 @@ export async function migrateLayout(
       const split = route === undefined ? undefined : splitRoutes.get(route)
       if (route === undefined || split === undefined) return undefined
       const inBase = (path: string): string => toPosix(relative(base, join(root, path)))
+      const relativePath = backendSpecifier(specifier, inBase(route), inBase(split.backend), file)
       const respelled = specifier.startsWith(".")
-        ? backendSpecifier(specifier, inBase(route), inBase(split.backend), file)
-        : resolver.respell(join(base, file), specifier, join(root, split.backend))
+        ? relativePath
+        : (resolver.respell(join(base, file), specifier, join(root, split.backend)) ?? relativePath)
       return { backend: split.backend, moved: split.moved, specifier: respelled }
     }
   const redirectedFiles = new Set<string>()
@@ -1574,8 +2208,12 @@ export async function migrateLayout(
     configEntries(ts, file, next.get(file) ?? "").map((entry) => ({
       ...entry,
       file,
-      // Relative to the app root, as the loader reads it, whichever config file holds it.
-      target: resolveAny("nifra.config.ts", entry.value),
+      // A string is read from the app root, whichever config file holds it; a joined path from the
+      // config's own folder.
+      target:
+        entry.base === "app"
+          ? resolveAny("nifra.config.ts", entry.path)
+          : resolveIn(known, file, entry.path.startsWith("../") ? entry.path : `./${entry.path}`),
     })),
   )
   const entryTargets = (role: ConfigEntry["role"]): Set<string> =>
@@ -1589,7 +2227,8 @@ export async function migrateLayout(
   const files = [...new Set([...next.keys(), ...everyFile.filter((f) => !original.has(f))])]
   const frontendRoots = [
     ...files.filter(
-      (f) => f.startsWith("routes/") && ROUTE_FILE.test(f) && !f.includes(".backend."),
+      (f) =>
+        f.startsWith("routes/") && ROUTE_FILE.test(f) && !f.includes(".backend.") && !isTestFile(f),
     ),
     ...browserEntries,
   ]
@@ -1645,7 +2284,9 @@ export async function migrateLayout(
       })
     }
   }
-  const zoneOf = (file: string): "frontend" | "backend" | "shared" =>
+  /** With `zones`, the files that stay where they are and the side package.json gives them. */
+  const inPlace = new Map<string, FolderSide>()
+  const zoneOf = (file: string): FolderSide =>
     browser.has(file) && server.has(file) ? "shared" : browser.has(file) ? "frontend" : "backend"
   for (const file of api ? [] : files) {
     if (
@@ -1662,6 +2303,10 @@ export async function migrateLayout(
       if (ZONE_DIRS.has(top) || (!browser.has(file) && !server.has(file))) continue
     } else if (!browser.has(file) && !appServer.has(file)) continue
     const zone = zoneOf(file)
+    if (DATA_FILE.test(file) && options.zones === true) {
+      inPlace.set(file, zone)
+      continue
+    }
     if (DATA_FILE.test(file)) {
       const folder = file.includes("/") ? posix.dirname(file) : undefined
       issues.push({
@@ -1672,6 +2317,51 @@ export async function migrateLayout(
     }
     moveMap.set(file, `${zone}/${file}`)
   }
+  // A folder whose reached files all move into one zone takes its other files along: a file nothing
+  // imports at runtime (a component not used yet, an asset) has no zone of its own, and leaving it
+  // behind splits the folder for every tool that lists it. Server built-ins never go to the browser.
+  const zonesUnder = new Map<string, Set<string>>()
+  for (const [from, to] of moveMap) {
+    if (isTestFile(from)) continue
+    for (let dir = posix.dirname(from); dir !== "."; dir = posix.dirname(dir)) {
+      zonesUnder.set(dir, (zonesUnder.get(dir) ?? new Set<string>()).add(to.split("/")[0] ?? ""))
+    }
+  }
+  for (const file of api ? [] : files) {
+    if (moveMap.has(file) || browser.has(file) || server.has(file)) continue
+    if (ZONE_DIRS.has(file.split("/")[0] ?? "") || inConfiguredFolder(file)) continue
+    // A test and its snapshot follow their subject below.
+    if (
+      isTestFile(file) ||
+      file.endsWith(".snap") ||
+      file.endsWith(".d.ts") ||
+      DATA_FILE.test(file)
+    )
+      continue
+    let zones: ReadonlySet<string> | undefined
+    for (
+      let dir = posix.dirname(file);
+      dir !== "." && zones === undefined;
+      dir = posix.dirname(dir)
+    ) {
+      // A nested package is its own install, never part of the app's folder.
+      if (existsSync(join(root, dir, "package.json"))) break
+      zones = zonesUnder.get(dir)
+    }
+    const [zone] = zones?.size === 1 ? zones : []
+    if (zone === undefined) continue
+    if (zone !== "backend" && /from\s+["'](?:node:|bun:)/.test(next.get(file) ?? "")) continue
+    moveMap.set(file, `${zone}/${file}`)
+  }
+  if (options.zones === true) {
+    for (const [from, to] of moveMap) {
+      const side = FOLDER_SIDES.find((side) => to === `${side}/${from}`)
+      if (side === undefined) continue
+      inPlace.set(from, side)
+      moveMap.delete(from)
+    }
+  }
+  const declared = zoneDeclarations(inPlace, files, (file) => next.get(file), inConfiguredFolder)
   const claimed = new Map<string, string>()
   for (const [from, to] of moveMap) {
     const holder = claimed.get(to) ?? (known.has(to) && !moveMap.has(to) ? to : undefined)
@@ -1685,32 +2375,120 @@ export async function migrateLayout(
     })
     moveMap.delete(from)
   }
-  for (const [from, to] of moveMap) {
-    if (to.startsWith("shared/") && /from\s+["'](?:node:|bun:)/.test(next.get(from) ?? "")) {
+  const newPath = (file: string): string => moveMap.get(file) ?? file
+  // A test beside its subject (`x.test.ts` by `x.ts`, or in a `__tests__/` under its folder) moves
+  // with it, snapshots included, once the subject's place is settled; a test never decides a zone.
+  const present = new Set(files)
+  for (const test of files) {
+    const stem = /^(.+?)\.(?:test|spec)\.[cm]?[jt]sx?$/.exec(posix.basename(test))?.[1]
+    if (stem === undefined || moveMap.has(test) || !next.has(test)) continue
+    const dir = posix.dirname(test)
+    const nested = posix.basename(dir) === "__tests__"
+    const home = nested ? posix.dirname(dir) : dir
+    const subjects = SUBJECT_EXTENSIONS.map((ext) => posix.join(home, `${stem}${ext}`)).filter(
+      (file) => present.has(file) && !isTestFile(file),
+    )
+    const subject = subjects.find((file) => moveMap.has(file))
+    if (subject === undefined) continue
+    if (new Set(subjects.map((file) => posix.dirname(newPath(file)))).size > 1) {
+      issues.push({
+        file: test,
+        reason: `tests ${subjects.map((file) => `"${file}"`).join(" and ")}, which end up in different folders, so it stays here; move it by hand`,
+      })
+      continue
+    }
+    const to = posix.join(
+      posix.dirname(newPath(subject)),
+      nested ? "__tests__" : "",
+      posix.basename(test),
+    )
+    const pairs: Array<readonly [string, string]> = [[test, to]]
+    const snapshot = posix.join(dir, "__snapshots__", `${posix.basename(test)}.snap`)
+    if (present.has(snapshot))
+      pairs.push([
+        snapshot,
+        posix.join(posix.dirname(to), "__snapshots__", posix.basename(snapshot)),
+      ])
+    const taken = pairs.find(([, to]) => claimed.has(to) || (known.has(to) && !moveMap.has(to)))
+    if (taken !== undefined) {
+      issues.push({
+        file: test,
+        reason: `would follow "${subject}" to "${taken[1]}", which already exists or another file moves to; move it by hand`,
+      })
+      continue
+    }
+    for (const [from, to] of pairs) {
+      moveMap.set(from, to)
+      claimed.set(to, from)
+    }
+  }
+  for (const [from, to] of [
+    ...moveMap,
+    ...[...inPlace].map(([file, side]) => [file, side] as const),
+  ]) {
+    // A test is never bundled, so its own server imports decide nothing.
+    if (isTestFile(from)) continue
+    if (
+      (to === "shared" || to.startsWith("shared/")) &&
+      /from\s+["'](?:node:|bun:)/.test(next.get(from) ?? "")
+    ) {
       issues.push({
         file: from,
-        reason: `both halves import it at runtime, but it uses a server built-in; split it before moving to ${to}`,
+        reason: `both halves import it at runtime, but it uses a server built-in; split it before ${to === "shared" ? "zoning it shared" : `moving to ${to}`}`,
       })
     }
   }
 
   // 5. Rewrite imports to the new locations.
-  const newPath = (file: string): string => moveMap.get(file) ?? file
   const final: Files = new Map()
   const rewritten: string[] = []
-  const unspelled = new Set<string>()
-  /** An alias for a target that moves, through the same alias, or an issue when none covers it. */
-  const respellAlias = (file: string, specifier: string, target: string): string | undefined => {
-    if (newPath(target) === target) return undefined
-    const respelled = resolver.respell(join(root, file), specifier, join(root, newPath(target)))
-    if (respelled === undefined && !unspelled.has(`${file}\0${specifier}`)) {
-      unspelled.add(`${file}\0${specifier}`)
-      issues.push({
-        file,
-        reason: `the path alias "${specifier}" names "${target}", which moves to "${newPath(target)}", and no target of that alias covers the new location; point it there by hand`,
-      })
-    }
-    return respelled
+  // The app as the migration leaves it, where every rewritten specifier must reach its target.
+  const planned = new Set(
+    [...known].filter((file) => next.has(file) || !original.has(file)).map(newPath),
+  )
+  const plannedResolver = createSpecifierResolver({
+    moduleExists: (path) => {
+      const file = appFile(path)
+      if (file !== undefined && (planned.has(file) || known.has(file))) return planned.has(file)
+      return isFile(path)
+    },
+  })
+  /** Whether `specifier`, written in `from` after the moves, loads `target` there. */
+  const reaches = (from: string, specifier: string, target: string): boolean =>
+    specifier.startsWith(".")
+      ? resolveIn(planned, from, specifier) === target
+      : appFile(plannedResolver(join(root, from), withoutQuery(specifier))) === target
+  const unreached = new Set<string>()
+  const unreachable = (file: string, specifier: string, target: string, from: string): void => {
+    if (unreached.has(`${file}\0${specifier}`)) return
+    unreached.add(`${file}\0${specifier}`)
+    issues.push({
+      file,
+      reason: `"${specifier}" names "${target}", which moves to "${newPath(target)}", and no specifier the migration can write from "${from}" reaches it there; point it there by hand`,
+    })
+  }
+  /**
+   * How `from` names `target` after the moves, for the alias `specifier` that `file` writes: as written
+   * while it still reaches it, through the same alias when one of its targets covers the new place,
+   * else as a relative path. `undefined` leaves it as written.
+   */
+  const aliasTo = (
+    file: string,
+    specifier: string,
+    target: string,
+    from = newPath(file),
+  ): string | undefined => {
+    const to = newPath(target)
+    if (to === target && from === file) return undefined
+    const written = withoutQuery(specifier)
+    if (reaches(from, written, to)) return undefined
+    const respelled = resolver.respell(join(root, file), written, join(root, to))
+    if (respelled !== undefined && reaches(from, respelled, to))
+      return `${respelled}${specifier.slice(written.length)}`
+    const relativePath = respecify(specifier, target, from, to)
+    if (reaches(from, relativePath, to)) return relativePath
+    unreachable(file, specifier, target, from)
+    return undefined
   }
   for (const [file, text] of next) {
     const imports = rewriteImports(ts, file, text, (specifier) => {
@@ -1719,9 +2497,12 @@ export async function migrateLayout(
       const target = resolveAny(file, specifier)
       // Outside the app (or a skipped dir): the target stays put, so only a moved importer re-bases it.
       if (target === undefined) return rebase(specifier, file, newPath(file))
-      if (!specifier.startsWith(".")) return respellAlias(file, specifier, target)
+      if (!specifier.startsWith(".")) return aliasTo(file, specifier, target)
       if (newPath(target) === target && newPath(file) === file) return undefined
-      return respecify(specifier, target, newPath(file), newPath(target))
+      const relativePath = respecify(specifier, target, newPath(file), newPath(target))
+      if (!reaches(newPath(file), relativePath, newPath(target)))
+        unreachable(file, specifier, target, newPath(file))
+      return relativePath
     })
     const updated = renameRetiredTypes(ts, file, imports)
     final.set(newPath(file), updated)
@@ -1732,19 +2513,21 @@ export async function migrateLayout(
       rewritten.push(file)
   }
 
-  // A config path names its module from the app root, so it follows the module, never the config file.
+  // A config string names its module from the app root, so it follows the module, never the config
+  // file; a path joined onto the config's folder is re-pointed with the module's own paths below.
   for (const configFile of CONFIG_FILES) {
     const at = newPath(configFile)
     const text = final.get(at)
     if (text === undefined || !next.has(configFile)) continue
     const edits: Array<{ start: number; end: number; text: string }> = []
     for (const entry of configEntries(ts, at, text)) {
-      const target = resolveAny("nifra.config.ts", entry.value)
+      if (entry.span === undefined) continue
+      const target = resolveAny("nifra.config.ts", entry.path)
       if (target === undefined || newPath(target) === target) continue
-      const value = entry.value.startsWith(".")
-        ? respecify(entry.value, target, "nifra.config.ts", newPath(target))
-        : respellAlias(configFile, entry.value, target)
-      if (value !== undefined) edits.push({ start: entry.start, end: entry.end, text: value })
+      const value = entry.path.startsWith(".")
+        ? respecify(entry.path, target, "nifra.config.ts", newPath(target))
+        : aliasTo(configFile, entry.path, target, "nifra.config.ts")
+      if (value !== undefined) edits.push({ start: entry.span[0], end: entry.span[1], text: value })
     }
     if (edits.length === 0) continue
     let updated = text
@@ -1774,11 +2557,33 @@ export async function migrateLayout(
     final.set(to, result.text)
     if (result.unfollowed !== undefined) unfollowed.set(to, result.unfollowed)
   }
+  // A module that stays still names files from its own folder (a config's `clientModule` joined onto
+  // `import.meta.dir`): each that moved is re-pointed.
+  const landed = new Set(moveMap.values())
+  for (const [file, text] of final) {
+    if (landed.has(file) || !/\.[cm]?[jt]sx?$/.test(file) || !SELF_LOCATION.test(text)) continue
+    const result = rebaseOwnPaths(ts, file, file, text, (target) =>
+      known.has(target) ? newPath(target) : target,
+    )
+    if (result.text === text) continue
+    final.set(file, result.text)
+    if (original.has(file) && !rewritten.includes(file)) rewritten.push(file)
+  }
 
   // A path in a string or comment is not an import, so nothing above rewrote it: a build script that
   // writes `data/x.json` would keep writing to the old place, and so would a deploy script or
   // `package.json` beside the code.
   const settled = new Set([...known].map(newPath))
+  // A new backend half starts where its route was, so it keeps that route's place in each program.
+  const splitFrom = new Map(
+    splits
+      .filter((split) => !original.has(split.backend))
+      .map((split) => [split.backend, split.file]),
+  )
+  const layout = [...known]
+    .filter((file) => next.has(file) || !original.has(file))
+    .map((file) => ({ from: splitFrom.get(file) ?? file, to: newPath(file) }))
+  const tsconfigs = followTsconfigs(ts, root, moveMap, layout)
   const scanned: Array<readonly [string, string]> = [...final]
   for (const file of everyFile) {
     if (
@@ -1786,7 +2591,10 @@ export async function migrateLayout(
       TOOLING_FILE.test(file) &&
       statSync(join(root, file)).size <= 256_000
     )
-      scanned.push([newPath(file), readFileSync(join(root, file), "utf8")])
+      scanned.push([
+        newPath(file),
+        tsconfigs.files.get(file)?.text ?? readFileSync(join(root, file), "utf8"),
+      ])
   }
   for (const [file, text] of scanned) {
     let live: ReadonlyArray<readonly [number, number]> | undefined
@@ -1845,6 +2653,36 @@ export async function migrateLayout(
     }
   }
 
+  // A workspace sibling is not the migration's to edit either: each file that names a moved app file,
+  // by import or by path, is reported with the line and both paths.
+  const appName = posix.basename(toPosix(root))
+  const mentionsApp = new RegExp(`(?:^|[/'"\`])${escapeRegExp(appName)}(?:[/'"\`]|$)`, "m")
+  for (const sibling of moveMap.size === 0 ? [] : (workspaceSiblings(root) ?? [])) {
+    for (const file of listFiles(sibling)) {
+      if (!/\.[cm]?[jt]sx?$/.test(file) && !TOOLING_FILE.test(file)) continue
+      if (statSync(join(sibling, file)).size > 256_000) continue
+      const text = readFileSync(join(sibling, file), "utf8")
+      if (!mentionsApp.test(text) && (ownName === undefined || !text.includes(`${ownName}/`)))
+        continue
+      const at = toPosix(relative(root, join(sibling, file)))
+      for (const { from, to, line } of siblingReferences(
+        ts,
+        root,
+        sibling,
+        file,
+        text,
+        moveMap,
+        known,
+        ownName,
+      )) {
+        issues.push({
+          file: at,
+          reason: `names "${from}" on line ${line}, and it moves to "${to}" - it is outside the app, so the migration does not rewrite it`,
+        })
+      }
+    }
+  }
+
   // Paths a module finds at run time are not imports either: one built from the module's own location
   // now starts from its new folder, and a folder listed at run time loses whatever moved out of it.
   const leaving = new Map<string, Array<{ from: string; to: string }>>()
@@ -1878,14 +2716,46 @@ export async function migrateLayout(
     })
   }
 
-  // The server refuses data a loader or action returns without an output schema; only the author
-  // knows which fields the browser may see.
+  // The server refuses data a loader or action returns without an output schema. Each half the split
+  // wrote gets a draft from its return type, read from the layout as planned so the dry run shows
+  // what --write adds; only the author knows which fields the browser may see, so it is a draft.
+  const halves = [...new Set(splits.map((split) => split.backend))].filter((file) =>
+    final.has(file),
+  )
+  const unwritten = new Map<string, string>()
+  for (const [file, text] of final) if (original.get(file) !== text) unwritten.set(file, text)
+  const schemaPlan =
+    halves.length === 0
+      ? undefined
+      : await planOutputSchemas(root, halves, (file) => final.get(file), {
+          overlay: unwritten,
+          // What NF-C030 would flag: a schema for data the function returns, not for `return null`.
+          draft: (file, schema) =>
+            missingOutputSchemas(final.get(file) ?? "").some((found) => found.schema === schema),
+        })
+  for (const [file, text] of schemaPlan?.edits ?? []) final.set(file, text)
+  const schemas = (schemaPlan?.entries ?? []).filter((entry) => entry.status === "missing")
+  const followUps: LayoutMigrationFollowUp[] = []
   for (const [file, text] of final) {
     if (!file.startsWith("routes/") || !/\.backend\.[cm]?[jt]s$/.test(file)) continue
     for (const { name, schema } of missingOutputSchemas(text)) {
+      const why = schemaPlan?.entries.find(
+        (entry) => entry.file === file && entry.schema === schema && entry.reason !== undefined,
+      )?.reason
+      const missing = `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request`
+      // A half this run did not write keeps the schema it had: drafting one is the next command, not a
+      // decision the migration left open.
+      if (why === undefined && (schemaPlan === undefined || schemaPlan.warnings.length === 0)) {
+        followUps.push({
+          file,
+          reason: `${missing}; draft it from the ${name}'s return type`,
+          command: "nifra schemas --write",
+        })
+        continue
+      }
       issues.push({
         file,
-        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... }), or run \`nifra schemas --write\` after the migration to draft it from the ${name}'s return type`,
+        reason: `${missing}. Declare what the browser may see: export const ${schema} = t.object({ ... }); no draft was written: ${why ?? schemaPlan?.warnings.join("; ")}`,
       })
     }
   }
@@ -1893,12 +2763,11 @@ export async function migrateLayout(
   // Tooling that lists folders or globs, not files: the import rewrite above never sees it.
   const tooling: Array<{ file: string; change: string }> = []
   const toolingWrites = new Map<string, string>()
-  const tsconfig = coverMovedFiles(ts, root, moves)
-  if (tsconfig?.issue !== undefined) issues.push({ file: "tsconfig.json", reason: tsconfig.issue })
-  if (tsconfig?.text !== undefined) {
-    toolingWrites.set("tsconfig.json", tsconfig.text)
-    tooling.push({ file: "tsconfig.json", change: `include += ${tsconfig.added.join(", ")}` })
+  for (const [file, { text, changes }] of tsconfigs.files) {
+    toolingWrites.set(file, text)
+    for (const change of changes) tooling.push({ file, change })
   }
+  issues.push(...tsconfigs.issues)
   for (const file of everyFile) {
     if (!TAILWIND_CONFIG.test(file)) continue
     const reason = staleContentGlobs(ts, readFileSync(join(root, file), "utf8"), moves)
@@ -1908,6 +2777,33 @@ export async function migrateLayout(
   if (gitignore !== undefined) {
     toolingWrites.set(".gitignore", gitignore)
     tooling.push({ file: ".gitignore", change: "ignore .nifra/ (dev and build state)" })
+  }
+  // A root backend.ts was served at /api by default until 5.0, which mounts it only where apiPrefix says.
+  if (!api && rootMoves["backend.ts"] !== undefined) {
+    const mount = apiPrefixFix({
+      framework: final.get(FRAMEWORK_FILE),
+      config: final.get(CONFIG_FILE),
+    })
+    for (const [file, text] of [
+      [FRAMEWORK_FILE, mount.framework],
+      [CONFIG_FILE, mount.config],
+    ] as const) {
+      if (text === undefined) continue
+      final.set(file, text)
+      tooling.push({
+        file,
+        change: 'export const apiPrefix = "/api", the mount 4.x made by default',
+      })
+    }
+  }
+  if (declared.size > 0) {
+    const zoned = declareZones(ts, root, declared)
+    if (zoned.issue !== undefined) issues.push({ file: "package.json", reason: zoned.issue })
+    if (zoned.text !== undefined) {
+      toolingWrites.set("package.json", zoned.text)
+      for (const [path, side] of declared)
+        tooling.push({ file: "package.json", change: `"nifra.zones" lists "${path}" as ${side}` })
+    }
   }
   // `nifra check` reads the declaration statically; without it, a later routes/ or config would zone the app.
   const kind = api && createKindProbe(root)(root).kind === undefined ? declareApiKind(ts, root) : {}
@@ -1943,12 +2839,55 @@ export async function migrateLayout(
     ok: issues.length === 0,
     write: options.write === true,
     mode,
+    followUps,
     splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
     tooling,
+    schemas: schemas.map((entry) =>
+      options.write === true && entry.reason === undefined
+        ? { ...entry, status: "generated" }
+        : entry,
+    ),
     issues,
   }
+}
+
+/**
+ * Split one route file in place: its server-only exports, and the code only they use, move into its
+ * `x.backend.ts`, created or merged into. Returns the files written, app-relative; nothing for a file
+ * that exports nothing for the server. Refuses, naming why, a split that would need a decision.
+ */
+export async function splitRouteFile(
+  appRoot: string,
+  file: string,
+  options: Pick<LayoutMigrationOptions, "typescript"> = {},
+): Promise<readonly string[]> {
+  if (!/\.[jt]sx$/.test(file)) return []
+  const ts = options.typescript ?? (await importTypeScript())
+  if (ts === undefined)
+    throw new Error("[nifra] splitting a route needs TypeScript: bun add -d typescript")
+  const root = resolve(appRoot)
+  const backendFile = file.replace(ROUTE_FILE, ".backend.ts")
+  const sharedFile = file.replace(ROUTE_FILE, ".shared.ts")
+  const result = splitRouteSource(
+    ts,
+    readFileSync(join(root, file), "utf8"),
+    file,
+    `./${posix.basename(backendFile)}`,
+    existsSync(join(root, sharedFile)) ? {} : { sharedFile: posix.basename(sharedFile) },
+  )
+  if (result.backend === undefined) return []
+  if (result.issues.length > 0) {
+    throw new Error(`[nifra] ${file} was not split: ${result.issues.join("; ")}`)
+  }
+  const backendPath = join(root, backendFile)
+  const existing = existsSync(backendPath) ? readFileSync(backendPath, "utf8") : ""
+  writeFileSync(join(root, file), result.frontend)
+  writeFileSync(backendPath, mergeModules(ts, existing, result.backend))
+  if (result.shared === undefined) return [file, backendFile]
+  writeFileSync(join(root, sharedFile), result.shared)
+  return [file, backendFile, sharedFile]
 }
 
 /** The app's `"nifra": { "zones": ... }`, so folders it already zones are left where they are. */
@@ -1968,53 +2907,271 @@ function appZones(root: string): ZoneConfig {
   return zones === undefined ? {} : parseZoneConfig(zones, manifest)
 }
 
-/** Whether a tsconfig `include` entry takes in `file` (app-relative), the way tsc reads it. */
-function includes(pattern: string, file: string): boolean {
-  let spec = pattern.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "")
-  if (spec === "" || spec === ".") return true
-  if (!/[*?]/.test(spec)) return file === spec || file.startsWith(`${spec}/`)
-  if (spec.endsWith("**")) spec = `${spec}/*`
-  else if (!/[*?.][^/]*$/.test(spec.slice(spec.lastIndexOf("/") + 1))) spec = `${spec}/**/*`
-  return new Bun.Glob(spec).match(file)
+const matchers = new Map<string, (file: string) => boolean>()
+
+/** Whether a tsconfig `include` or `exclude` entry takes in `file` (app-relative), the way tsc reads it. */
+function matches(pattern: string, file: string): boolean {
+  let match = matchers.get(pattern)
+  if (match === undefined) {
+    let spec = pattern.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "")
+    if (spec === "" || spec === ".") match = () => true
+    else if (!/[*?]/.test(spec)) {
+      const folder = `${spec}/`
+      match = (path) => path === spec || path.startsWith(folder)
+    } else {
+      if (spec.endsWith("**")) spec = `${spec}/*`
+      else if (!/[*?.][^/]*$/.test(spec.slice(spec.lastIndexOf("/") + 1))) spec = `${spec}/**/*`
+      const glob = new Bun.Glob(spec)
+      match = (path) => glob.match(path)
+    }
+    matchers.set(pattern, match)
+  }
+  return match(file)
+}
+
+const TSCONFIG = /^tsconfig(?:\.[\w-]+)?\.json$/
+const TS_FILE = /\.(?:[cm]?ts|tsx)$/
+
+interface ProgramLists {
+  readonly include: readonly string[]
+  readonly exclude: readonly string[]
+  readonly files: readonly string[]
+}
+
+const inProgram = (lists: ProgramLists, file: string): boolean =>
+  lists.files.includes(file) ||
+  (lists.include.some((pattern) => matches(pattern, file)) &&
+    !lists.exclude.some((pattern) => matches(pattern, file)))
+
+/** `pattern` under the zone folder `to` landed in, when that reaches `to`; else `to` itself. */
+function twinEntry(pattern: string | undefined, to: string): string {
+  const slash = to.indexOf("/")
+  if (pattern === undefined || slash === -1) return to
+  const bare = pattern.replace(/^\.\//, "")
+  const twin = `${to.slice(0, slash)}/${bare}`
+  if (!matches(twin, to)) return to
+  return bare === pattern ? twin : `./${twin}`
 }
 
 /**
- * Add each zone folder that receives moved TypeScript to tsconfig `include`, editing only that array
- * so comments and layout survive. A tsconfig without `include` (or with only `extends`) is left
- * alone: tsc's default, or the base config, decides, and `nifra check` reports any folder left out.
+ * Keep every TypeScript file in, or out of, each app-root `tsconfig*.json` program as it was. An entry
+ * naming a moved file follows it; a folder or glob that took a moved file in gains its twin under the
+ * zone folder (`src` -> `frontend/src`), and one that kept a file out does the same in `exclude`. So a
+ * test run under its own config's types, or a folder left out on purpose, stays out after the move,
+ * and code the config checked stays checked. An `include` or `exclude` a config inherits is not edited.
  */
-function coverMovedFiles(
+function followTsconfigs(
   ts: typeof TS,
   root: string,
-  moves: ReadonlyArray<{ readonly from: string; readonly to: string }>,
-): { text?: string; added: string[]; issue?: string } | undefined {
-  const path = join(root, "tsconfig.json")
-  if (!existsSync(path)) return undefined
-  const text = readFileSync(path, "utf8")
-  const source = ts.parseJsonText(path, text)
-  const top = source.statements[0]?.expression
-  if (top === undefined || !ts.isObjectLiteralExpression(top))
-    return { added: [], issue: "is not a JSON object; add the zone folders to its include by hand" }
-  const include = jsonProperty(ts, top, "include")
-  if (include === undefined) return undefined
-  const array = include.initializer
-  if (!ts.isArrayLiteralExpression(array))
-    return { added: [], issue: '"include" is not an array; add the zone folders to it by hand' }
-  const patterns = array.elements.filter(ts.isStringLiteral).map((element) => element.text)
-  const added: string[] = []
-  for (const { to } of moves) {
-    if (!/\.(?:[cm]?ts|tsx)$/.test(to) || /\.d\.[cm]?ts$/.test(to)) continue
-    const folder = to.split("/")[0] ?? to
-    if (added.includes(folder) || patterns.some((pattern) => includes(pattern, to))) continue
-    added.push(folder)
+  moves: ReadonlyMap<string, string>,
+  layout: ReadonlyArray<{ readonly from: string; readonly to: string }>,
+): {
+  readonly files: Map<string, { readonly text: string; readonly changes: readonly string[] }>
+  readonly issues: LayoutMigrationIssue[]
+} {
+  const files = new Map<string, { readonly text: string; readonly changes: readonly string[] }>()
+  const issues: LayoutMigrationIssue[] = []
+  const typescript = layout.filter(({ to }) => TS_FILE.test(to))
+  const names = readdirSync(root)
+    .filter((name) => TSCONFIG.test(name) && isFile(join(root, name)))
+    .sort(codeUnitOrder)
+  // Each config's lists before and after the move, for the configs that extend it.
+  const settled = new Map<string, { readonly before: ProgramLists; readonly after: ProgramLists }>()
+  const pending = [...names]
+  for (let progress = true; progress && pending.length > 0; ) {
+    progress = false
+    for (const name of [...pending]) {
+      const text = readFileSync(join(root, name), "utf8")
+      const source = ts.parseJsonText(name, text)
+      const top = source.statements[0]?.expression
+      if (top === undefined || !ts.isObjectLiteralExpression(top)) {
+        pending.splice(pending.indexOf(name), 1)
+        progress = true
+        if (moves.size > 0)
+          issues.push({
+            file: name,
+            reason: "is not a JSON object; keep the moved files in its include and exclude by hand",
+          })
+        continue
+      }
+      const base = jsonProperty(ts, top, "extends")?.initializer
+      let parent: string | undefined
+      if (base !== undefined && ts.isStringLiteral(base) && base.text.startsWith(".")) {
+        const path = posix.normalize(base.text)
+        const file = path.endsWith(".json") ? path : `${path}.json`
+        if (names.includes(file) && file !== name) parent = file
+      }
+      if (parent !== undefined && pending.includes(parent)) continue
+      pending.splice(pending.indexOf(name), 1)
+      progress = true
+      const inherited = parent === undefined ? undefined : settled.get(parent)
+      const extendsOther = base !== undefined && inherited === undefined
+
+      const edits: Array<{ start: number; end: number; text: string }> = []
+      const own = new Map<string, { before: string[]; after: string[] }>()
+      let malformed: string | undefined
+      for (const key of ["include", "exclude", "files"]) {
+        const array = jsonProperty(ts, top, key)?.initializer
+        if (array === undefined) continue
+        if (!ts.isArrayLiteralExpression(array)) {
+          malformed = key
+          continue
+        }
+        const lists: { before: string[]; after: string[] } = { before: [], after: [] }
+        for (const element of array.elements) {
+          if (!ts.isStringLiteral(element)) continue
+          const to = moves.get(posix.normalize(element.text))
+          lists.before.push(element.text)
+          if (to === undefined) {
+            lists.after.push(element.text)
+            continue
+          }
+          const spelled = element.text.startsWith("./") ? `./${to}` : to
+          lists.after.push(spelled)
+          edits.push({
+            start: element.getStart(source) + 1,
+            end: element.getEnd() - 1,
+            text: spelled,
+          })
+        }
+        own.set(key, lists)
+      }
+      let updated = text
+      for (const edit of edits.sort((a, b) => b.start - a.start))
+        updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
+      const changes: string[] = []
+      if (edits.length > 0) changes.push(`${edits.length} file path(s) follow their moved files`)
+
+      const list = (key: "include" | "exclude", when: "before" | "after"): string[] | undefined => {
+        const mine = own.get(key)
+        if (mine !== undefined) return mine[when]
+        if (inherited !== undefined) return [...inherited[when][key]]
+        if (extendsOther) return undefined
+        // tsc's default: everything below the config, unless `files` lists the program.
+        return key === "exclude" ? [] : own.has("files") ? [] : ["**/*"]
+      }
+      const filesOf = (when: "before" | "after"): string[] =>
+        (own.get("files")?.[when] ?? []).map((entry) => posix.normalize(entry))
+      const beforeInclude = list("include", "before")
+      const beforeExclude = list("exclude", "before")
+      const afterInclude = list("include", "after")
+      const afterExclude = list("exclude", "after")
+      if (
+        malformed !== undefined ||
+        beforeInclude === undefined ||
+        beforeExclude === undefined ||
+        afterInclude === undefined ||
+        afterExclude === undefined
+      ) {
+        if (malformed !== undefined && moves.size > 0)
+          issues.push({
+            file: name,
+            reason: `"${malformed}" is not an array; keep the moved files in its program by hand`,
+          })
+        if (edits.length > 0) files.set(name, { text: updated, changes })
+        continue
+      }
+      const before: ProgramLists = {
+        include: beforeInclude,
+        exclude: beforeExclude,
+        files: filesOf("before"),
+      }
+      const after = { include: afterInclude, exclude: afterExclude, files: filesOf("after") }
+      const added: { include: string[]; exclude: string[] } = { include: [], exclude: [] }
+      let stranded: { readonly from: string; readonly to: string; readonly key: string } | undefined
+      let strandedCount = 0
+      const quiet = new Map<string, boolean>()
+      // The whole zone folder is the entry that keeps covering code added there later, but only when
+      // it takes in no file the config left out.
+      const takesInOnlyChecked = (folder: string): boolean => {
+        let safe = quiet.get(folder)
+        if (safe === undefined) {
+          const wider = { ...after, include: [...after.include, folder] }
+          safe = typescript.every(
+            (file) =>
+              !matches(folder, file.to) ||
+              inProgram(before, file.from) ||
+              !inProgram(wider, file.to),
+          )
+          quiet.set(folder, safe)
+        }
+        return safe
+      }
+      for (const { from, to } of typescript) {
+        if (!inProgram(before, from) || inProgram(after, to)) continue
+        if (after.include.some((pattern) => matches(pattern, to))) {
+          // Its new place sits under an `exclude` that did not hold the old one.
+          stranded ??= { from, to, key: "exclude" }
+          strandedCount++
+          continue
+        }
+        const zone = to.includes("/") ? to.slice(0, to.indexOf("/")) : undefined
+        const entry =
+          zone !== undefined && takesInOnlyChecked(zone)
+            ? zone
+            : twinEntry(
+                before.include.find((pattern) => matches(pattern, from)),
+                to,
+              )
+        added.include.push(entry)
+        after.include.push(entry)
+      }
+      for (const { from, to } of typescript) {
+        if (inProgram(before, from) || !inProgram(after, to)) continue
+        let entry = twinEntry(
+          before.exclude.find((pattern) => matches(pattern, from)),
+          to,
+        )
+        // A twin that would also drop a file the config checked is too wide: name the file.
+        if (
+          entry !== to &&
+          typescript.some((other) => matches(entry, other.to) && inProgram(before, other.from))
+        )
+          entry = to
+        added.exclude.push(entry)
+        after.exclude.push(entry)
+      }
+      for (const key of ["include", "exclude"] as const) {
+        const entries = [...new Set(added[key])].sort(codeUnitOrder)
+        if (entries.length === 0) continue
+        const reparsed = ts.parseJsonText(name, updated)
+        const object = reparsed.statements[0]?.expression
+        const array =
+          object !== undefined && ts.isObjectLiteralExpression(object)
+            ? jsonProperty(ts, object, key)?.initializer
+            : undefined
+        if (array === undefined || !ts.isArrayLiteralExpression(array)) {
+          stranded ??= { from: "", to: entries[0] ?? "", key }
+          strandedCount += entries.length
+          continue
+        }
+        updated = appendToArray(reparsed, updated, array, entries)
+        changes.push(`${key} += ${entries.join(", ")}`)
+      }
+      if (stranded !== undefined)
+        issues.push({
+          file: name,
+          reason: `cannot keep ${strandedCount} moved file(s) in or out of its program as before (first: "${stranded.to}"); its "${stranded.key}" is inherited or would hide them, so set it by hand`,
+        })
+      settled.set(name, { before, after })
+      if (changes.length > 0) files.set(name, { text: updated, changes })
+    }
   }
-  if (added.length === 0) return undefined
-  added.sort(codeUnitOrder)
-  const quoted = added.map((folder) => JSON.stringify(folder))
+  return { files, issues }
+}
+
+/** `text` with `entries` appended to `array`: one per line in a multi-line array, else inline. */
+function appendToArray(
+  source: TS.JsonSourceFile,
+  text: string,
+  array: TS.ArrayLiteralExpression,
+  entries: readonly string[],
+): string {
+  const quoted = entries.map((entry) => JSON.stringify(entry))
   const last = array.elements[array.elements.length - 1]
   if (last === undefined) {
     const at = array.getStart(source) + 1
-    return { text: `${text.slice(0, at)}${quoted.join(", ")}${text.slice(at)}`, added }
+    return `${text.slice(0, at)}${quoted.join(", ")}${text.slice(at)}`
   }
   let at = last.end
   const trailing = /^\s*,/.exec(text.slice(at))
@@ -2031,15 +3188,12 @@ function coverMovedFiles(
         trailing !== null
           ? text.slice(0, eol)
           : `${text.slice(0, last.end)},${text.slice(last.end, eol)}`
-      const entries = quoted.join(`,\n${indent}`)
-      return {
-        text: `${head}\n${indent}${entries}${trailing !== null ? "," : ""}${text.slice(eol)}`,
-        added,
-      }
+      const lines = quoted.join(`,\n${indent}`)
+      return `${head}\n${indent}${lines}${trailing !== null ? "," : ""}${text.slice(eol)}`
     }
   }
   const insert = trailing !== null ? ` ${quoted.join(", ")},` : `, ${quoted.join(", ")}`
-  return { text: `${text.slice(0, at)}${insert}${text.slice(at)}`, added }
+  return `${text.slice(0, at)}${insert}${text.slice(at)}`
 }
 
 const jsonProperty = (
@@ -2070,6 +3224,111 @@ function insertProperty(
   }
   const indent = /^[ \t]*/.exec(text.slice(text.lastIndexOf("\n", start) + 1, start))?.[0] ?? ""
   return `${text.slice(0, last.end)},\n${indent}${entry}${text.slice(last.end)}`
+}
+
+/**
+ * The `nifra.zones` entries that keep `inPlace` files where they are: for each, the widest folder
+ * above it whose zoned files all take its side (a nested package stops the climb), else the file
+ * itself. A file another side's suffix or a server built-in claims counts against a folder.
+ */
+function zoneDeclarations(
+  inPlace: ReadonlyMap<string, FolderSide>,
+  files: readonly string[],
+  text: (file: string) => string | undefined,
+  configured: (file: string) => boolean,
+): Map<string, FolderSide> {
+  const sides = new Map<string, Set<string>>()
+  const packages = new Set<string>()
+  for (const file of files) {
+    const top = file.split("/")[0] ?? ""
+    if (!file.includes("/") || ZONE_DIRS.has(top)) continue
+    if (posix.basename(file) === "package.json") {
+      for (let dir = posix.dirname(file); dir !== "."; dir = posix.dirname(dir)) packages.add(dir)
+      continue
+    }
+    // A configured path is more specific than any folder above it, so it never counts against one.
+    if (isTestFile(file) || file.endsWith(".d.ts") || configured(file)) continue
+    const suffix = /\.(frontend|backend|shared|fn)\.[cm]?[jt]sx?$/.exec(file)?.[1]
+    const side =
+      inPlace.get(file) ??
+      (suffix === "fn" ? "backend" : suffix) ??
+      (SOURCE_FILE.test(file) && /from\s+["'](?:node:|bun:)/.test(text(file) ?? "")
+        ? "backend"
+        : undefined)
+    if (side === undefined) continue
+    for (let dir = posix.dirname(file); dir !== "."; dir = posix.dirname(dir))
+      sides.set(dir, (sides.get(dir) ?? new Set<string>()).add(side))
+  }
+  const declared = new Map<string, FolderSide>()
+  for (const [file, side] of [...inPlace].sort(([a], [b]) => codeUnitOrder(a, b))) {
+    const parts = file.split("/")
+    let path = file
+    for (let depth = 1; depth < parts.length; depth++) {
+      const dir = parts.slice(0, depth).join("/")
+      const found = sides.get(dir)
+      if (!packages.has(dir) && found?.size === 1 && found.has(side)) {
+        path = dir
+        break
+      }
+    }
+    declared.set(path, side)
+  }
+  return declared
+}
+
+/** The app's package.json with `paths` added to `"nifra": { "zones": ... }`, editing only where they go. */
+function declareZones(
+  ts: typeof TS,
+  root: string,
+  paths: ReadonlyMap<string, FolderSide>,
+): { text?: string; issue?: string } {
+  const listed = (side: FolderSide): string[] =>
+    [...paths].flatMap(([path, of]) => (of === side ? [path] : []))
+  const setting = `{ ${FOLDER_SIDES.filter((side) => listed(side).length > 0)
+    .map((side) => `"${side}": ${JSON.stringify(listed(side))}`)
+    .join(", ")} }`
+  const path = join(root, "package.json")
+  if (!existsSync(path))
+    return { issue: `there is none in the app; declare "nifra": { "zones": ${setting} } in it` }
+  let text = readFileSync(path, "utf8")
+  // Parsed again for each edit: an edit moves every offset after it.
+  const find = (keys: readonly string[]) => {
+    const source = ts.parseJsonText(path, text)
+    let node: TS.Expression | undefined = source.statements[0]?.expression
+    for (const key of keys)
+      node =
+        node !== undefined && ts.isObjectLiteralExpression(node)
+          ? jsonProperty(ts, node, key)?.initializer
+          : undefined
+    return { source, node }
+  }
+  const top = find([])
+  if (top.node === undefined || !ts.isObjectLiteralExpression(top.node))
+    return { issue: `is not a JSON object; add "nifra": { "zones": ${setting} } to it by hand` }
+  const nifra = find(["nifra"])
+  if (nifra.node === undefined)
+    return { text: insertProperty(top.source, text, top.node, `"nifra": { "zones": ${setting} }`) }
+  if (!ts.isObjectLiteralExpression(nifra.node))
+    return { issue: `"nifra" is not an object; add "zones": ${setting} to it by hand` }
+  const zones = find(["nifra", "zones"])
+  if (zones.node === undefined)
+    return { text: insertProperty(nifra.source, text, nifra.node, `"zones": ${setting}`) }
+  for (const side of FOLDER_SIDES) {
+    const add = listed(side)
+    if (add.length === 0) continue
+    const { source, node } = find(["nifra", "zones"])
+    if (node === undefined || !ts.isObjectLiteralExpression(node))
+      return { issue: `"nifra.zones" is not an object; add ${setting} to it by hand` }
+    const array = jsonProperty(ts, node, side)?.initializer
+    if (array === undefined)
+      text = insertProperty(source, text, node, `"${side}": ${JSON.stringify(add)}`)
+    else if (ts.isArrayLiteralExpression(array)) text = appendToArray(source, text, array, add)
+    else
+      return {
+        issue: `"nifra.zones.${side}" is not an array; add ${JSON.stringify(add)} to it by hand`,
+      }
+  }
+  return { text }
 }
 
 /** The app's package.json with `"nifra": { "kind": "api" }` added, editing only where it goes. */

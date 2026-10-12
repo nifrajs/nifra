@@ -418,11 +418,90 @@ describe("mountAgent evidenceOwner", () => {
     expect(await (await turn("alice")).text()).toContain("for alice")
     // Another caller's reconnect finds no turn; a refused owner stops the request before any replay.
     expect((await turn("bob", "0")).status).toBe(409)
-    expect((await turn(undefined, "0")).status).toBe(400)
+    expect((await turn(undefined, "0")).status).toBe(403)
     // Another caller reusing the id records a turn of its own; the owner's replay is unchanged.
     expect(await (await turn("bob")).text()).toContain("for bob")
     const replay = await (await turn("alice", "0")).text()
     expect(replay).toContain("for alice")
     expect(replay).not.toContain("for bob")
+  })
+})
+
+describe("mountAgent refusals and failures", () => {
+  const challenge = (): Response =>
+    new Response("sign in", { status: 401, headers: { "www-authenticate": "Bearer" } })
+
+  test("a Response thrown from ports answers the request as built", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: () => {
+        throw challenge()
+      },
+    })
+    for (const headers of [{}, { accept: "text/event-stream" }]) {
+      const res = await call(post({ input: { prompt: "hey" } }, headers))
+      expect(res.status).toBe(401)
+      expect(res.headers.get("www-authenticate")).toBe("Bearer")
+    }
+  })
+
+  test("any other throw from ports is a fault for the app, not a bad request", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: () => {
+        throw new Error("store unreachable")
+      },
+    })
+    await expect(call(post({ input: { prompt: "hey" } }))).rejects.toThrow("store unreachable")
+  })
+
+  test("evidenceOwner refuses with 403, or answers with a Response it throws", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(outputModel({ answer: "hi" })),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      evidenceOwner: (c) => {
+        if (c.req.headers.get("x-session") === "expired") throw challenge()
+        throw new Error("unauthenticated")
+      },
+    })
+    const refused = await call(post({ input: { prompt: "hey" } }))
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: "forbidden" })
+    const expired = await call(post({ input: { prompt: "hey" } }, { "x-session": "expired" }))
+    expect(expired.status).toBe(401)
+    expect(expired.headers.get("www-authenticate")).toBe("Bearer")
+  })
+
+  test("a fresh JSON run that throws is run_failed; only a resume is resume_unavailable", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: () => ({
+        model: outputModel({ answer: "hi" }),
+        capabilities: [],
+        state: {
+          load: () => undefined,
+          save: () => {
+            throw new Error("store down")
+          },
+        },
+      }),
+    })
+    const fresh = await call(post({ input: { prompt: "hey" } }))
+    expect(fresh.status).toBe(500)
+    expect(await fresh.json()).toEqual({ error: "run_failed" })
+    const resumed = await call(
+      post({
+        input: { prompt: "hey" },
+        turnId: "t-1",
+        resume: { continuation: { kind: "model", effectId: "e-1" } },
+      }),
+    )
+    expect(resumed.status).toBe(409)
+    expect(await resumed.json()).toEqual({ error: "resume_unavailable" })
   })
 })

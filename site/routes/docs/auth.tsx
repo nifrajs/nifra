@@ -207,6 +207,16 @@ export default function Auth() {
         Stores mirror the ISR discipline: <code>MemorySessionStore</code> is prod-guarded;{" "}
         <code>KVSessionStore</code> is the durable, shared production store.
       </p>
+      <p>
+        The signature covers the cookie name, so two managers that share a secret never read each
+        other's cookies; still, give sessions a secret no other signed value uses. A cookie-mode
+        session lives at most <code>maxAge</code>, whatever expiry its payload names. Upgrading from
+        4.x, whose cookies were signed without the name, signs everyone out unless you pass{" "}
+        <code>acceptLegacyCookies: true</code>: keep it for one <code>maxAge</code> after the upgrade
+        (each such session is re-signed on its next commit), then remove it, since while it is on any
+        session-shaped value the app signs with the same secret through <code>signValue</code> reads
+        as a session.
+      </p>
       <CodeBlock code={SETUP} />
 
       <h2>Log in &amp; out</h2>

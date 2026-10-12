@@ -16,6 +16,7 @@ import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   answerNotFound,
   capBodyBytes,
+  type FormOrigins,
   type NotFoundHandler,
   type NotFoundInput,
   notFoundInput,
@@ -71,6 +72,9 @@ export interface EdgeOptions {
   readonly maxBodyBytes?: number
   /** Prototype-poisoning policy for JSON bodies. Defaults to `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
+  /** Other sites whose HTML forms may post to a body-schema route. A form body whose `Origin` is
+   * another site's, and not listed, is refused with `403`. */
+  readonly formOrigins?: FormOrigins
   /** Answers a request no route matched, in place of the default `404` body. Build it with
    * {@link notFound}: `server({ notFound: notFound(handler) })`. */
   readonly notFound?: EdgeNotFound
@@ -100,11 +104,13 @@ export class EdgeServer {
   readonly #router = new Router<RouteEntry>()
   readonly #maxBodyBytes: number
   readonly #protoPoisoning: ProtoPoisoning
+  readonly #formOrigins: FormOrigins | undefined
   readonly #notFound: EdgeNotFound | undefined
 
   constructor(options: EdgeOptions = {}) {
     this.#maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     this.#protoPoisoning = options.protoPoisoning ?? "reject"
+    this.#formOrigins = options.formOrigins
     this.#notFound = options.notFound
   }
 
@@ -245,6 +251,7 @@ export class EdgeServer {
       render,
       () => render(plainError(400, "invalid_json")),
       bodySchema,
+      this.#formOrigins,
     )
   }
 }

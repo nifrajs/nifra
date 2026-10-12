@@ -13,6 +13,7 @@ import { collectDoctorResult } from "./doctor.ts"
 import { loadApp, resolvePlugins } from "./load.ts"
 import {
   CHILD_OUTPUT_MAX_BYTES,
+  escalatingStop,
   forwardTerminalSignals,
   joinHeadTail,
   OWN_PROCESS_GROUP,
@@ -647,10 +648,11 @@ export async function runHydrationAssurance(
       detached: OWN_PROCESS_GROUP,
     },
   )
+  const stopper = escalatingStop((name) => signalProcessGroup(proc, name))
   let stopped: string | undefined
   const stop = (reason: string): void => {
     stopped ??= reason
-    signalProcessGroup(proc, "SIGTERM")
+    stopper.stop()
   }
   const onAbort = (): void => stop("cancelled")
   control.signal?.addEventListener("abort", onAbort, { once: true })
@@ -684,6 +686,7 @@ export async function runHydrationAssurance(
     return failed(joinHeadTail(stderr).trim() || "no result")
   } finally {
     clearTimeout(timer)
+    stopper.dispose()
     control.signal?.removeEventListener("abort", onAbort)
     releaseSignals()
   }

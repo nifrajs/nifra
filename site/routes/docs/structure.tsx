@@ -53,12 +53,29 @@ export async function loader({ params, api }: Route.LoaderArgs) {
   return res.data
 }`
 
+const ENTRY_SIDES = `{
+  "name": "@shop/payments",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.tsx",
+    "./schema": "./src/schema.ts"
+  },
+  "nifra": {
+    "environment": {
+      ".": "backend",
+      "./react": "frontend",
+      "./schema": "library"
+    }
+  }
+}`
+
 const ZONES_SETTING = `{
   "name": "my-app",
   "nifra": {
     "zones": {
       "packages": { "@shop/*": "library", "@shop/db": "backend" },
-      "backend": ["migrations"]
+      "backend": ["migrations", "src/ui/mailer.ts"],
+      "frontend": ["src/ui"]
     }
   }
 }`
@@ -152,6 +169,19 @@ export default function Structure() {
         A file in no zone is a build error, so nothing is ever classified by accident.
       </p>
       <p>
+        A package whose entries run on different sides gives each export subpath its own:
+      </p>
+      <CodeBlock code={ENTRY_SIDES} lang="json" />
+      <p>
+        An import is judged by the entry it names: the exact subpath first, then the most specific{" "}
+        <code>*</code> pattern. Here a page may import <code>@shop/payments/react</code> but not{" "}
+        <code>@shop/payments</code>, and backend code may not import the React entry, even when two
+        entries are backed by one file. Importing an entry the map leaves out is an error. A file
+        reached by path rather than by entry, through a relative or aliased deep import, takes the
+        side of every mapped entry whose own imports reach it, and a file no mapped entry reaches is
+        an error.
+      </p>
+      <p>
         The app's own <code>package.json</code> can set sides too, so a folder that has to stay
         where it is, or a family of workspace packages, needs no edit of its own:
       </p>
@@ -159,9 +189,11 @@ export default function Structure() {
       <p>
         <code>packages</code> gives a side to a package that does not declare one, by exact name or
         by a prefix ending in <code>*</code>; a package's own declaration always wins.{" "}
-        <code>backend</code>, <code>frontend</code> and <code>shared</code> list app folders that
-        count as that zone folder. Builds, dev servers, <code>nifra check</code> and the editor
-        plugin all read this setting.
+        <code>backend</code>, <code>frontend</code> and <code>shared</code> list app folders, or
+        single files, that count as that zone. A path inside another's folder overrides it, so the
+        most specific entry decides: above, <code>src/ui/mailer.ts</code> is backend code in a
+        frontend folder. One path listed under two sides is refused. Builds, dev servers,{" "}
+        <code>nifra check</code> and the editor plugin all read this setting.
       </p>
       <p>
         A project that serves no pages has no browser, so the zones do not apply to it. Declare that
@@ -258,11 +290,14 @@ export default function Structure() {
         <li>
           <b>Browser code reads only public environment variables</b> - <code>NODE_ENV</code> and
           names with the <code>PUBLIC_</code> prefix. Any other <code>process.env</code> read in a
-          page, <code>frontend/</code> or <code>shared/</code> fails the build.
+          page, <code>frontend/</code> or <code>shared/</code> fails the build, optional access (
+          <code>process.env?.["SECRET"]</code>) included.
         </li>
         <li>
           <b>The build scans what it emits.</b> A client bundle, a public file or a prerendered page
-          that contains what looks like a credential fails the build.
+          that contains what looks like a credential fails the build. A label in a message catalog (
+          <code>{'{ password: "Password" }'}</code>) and a documented placeholder (
+          <code>your-api-key</code>) are text, not credentials.
         </li>
       </ul>
       <p>
@@ -270,14 +305,25 @@ export default function Structure() {
         its source is sent), in both bundlers, for every framework, and in <code>nifra check</code>,
         which follows the imports the bundler follows: relative paths, tsconfig <code>paths</code>{" "}
         and <code>baseUrl</code>, <code>package.json</code> <code>imports</code>, and the{" "}
-        <code>clientModule</code> the browser entry loads. An app on the older layout moves with <code>nifra migrate layout</code>: a dry run that
-        reports every move, then <code>--write</code>. It follows the same imports, rewrites them
-        and test-runner mocks (an alias through the same alias), moves the config's{" "}
-        <code>clientModule</code> and component pipeline entries with their modules, adds the zone
-        folders to tsconfig <code>include</code> and <code>.nifra/</code> to{" "}
-        <code>.gitignore</code>, and leaves data files and folders zoned in{" "}
-        <code>package.json</code> where they are. It reports what still needs a hand, such as an
-        alias with no target that covers a moved file, or a specifier that names nothing installed.
+        <code>clientModule</code> the browser entry loads. An app on the older layout moves with{" "}
+        <code>nifra migrate layout</code>: a dry run that reports every move, then{" "}
+        <code>--write</code>. It follows the same imports, rewrites them and test-runner mocks (an
+        alias through the same alias), and moves the config's <code>clientModule</code>, any module
+        path the config builds from its own folder, and component pipeline entries with their
+        modules. A test moves with the file beside it, snapshots included. Each{" "}
+        <code>tsconfig*.json</code> keeps every file in, or out of, its program as before. It adds{" "}
+        <code>.nifra/</code> to <code>.gitignore</code> and leaves data files and folders zoned in{" "}
+        <code>package.json</code> where they are.
+      </p>
+      <p>
+        A route file that holds server code splits into the page and its{" "}
+        <code>x.backend.ts</code>. Data both halves read moves to <code>x.shared.ts</code> beside
+        them; a value that cannot move is copied into each half and reported. A loader or action
+        that returns data without an output schema gets a draft one, typed from what it returns:
+        review that the browser may see every field it declares. The migration reports what still
+        needs a hand, such as an alias with no target that covers a moved file, a specifier that
+        names nothing installed, or a sibling workspace package that names a moved file. It never
+        edits files outside the app.
       </p>
       <p>
         An API-only app, one that declares <code>{'"nifra": { "kind": "api" }'}</code> or has no web

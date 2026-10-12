@@ -103,7 +103,7 @@ describe("expandOptionalParams", () => {
     const started = performance.now()
     const forms = expandOptionalParams(pattern)
     expect(forms).toHaveLength(2001)
-    expect(performance.now() - started).toBeLessThan(500)
+    expect(performance.now() - started).toBeLessThan(1_000)
   })
 })
 

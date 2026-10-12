@@ -20,8 +20,25 @@ describe("openapi ui (scalar)", () => {
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toContain("text/html")
     expect(body).toContain('<script id="api-reference" data-url="/openapi.json">')
-    expect(body).toContain("@scalar/api-reference")
     expect(body).toContain("<title>My API</title>")
+    // An exact version under a Subresource Integrity hash: a republished file is refused, not run.
+    expect(body).toContain(
+      '<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.1/dist/browser/standalone.js" integrity="sha384-U11tb2XnKvmwt8RlTvnwUnYgrN+ur4Xyh9htLhjajWNR/Oyl5AX5DEz00qRmlrmK" crossorigin="anonymous"></script>',
+    )
+  })
+
+  test("a self-hosted script gets the integrity it is given, or none", async () => {
+    const own = await text(
+      appWith({ ui: { cdn: "/assets/scalar.js", integrity: "sha384-abc" } }),
+      "/reference",
+    )
+    expect(own.body).toContain(
+      '<script src="/assets/scalar.js" integrity="sha384-abc" crossorigin="anonymous"></script>',
+    )
+    const bare = await text(appWith({ ui: { cdn: "/assets/scalar.js" } }), "/reference")
+    expect(bare.body).toContain('<script src="/assets/scalar.js"></script>')
+    const off = await text(appWith({ ui: { integrity: false } }), "/reference")
+    expect(off.body).toContain('@scalar/api-reference@1.72.1/dist/browser/standalone.js"></script>')
   })
 
   test("the spec excludes the UI page itself", async () => {

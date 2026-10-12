@@ -124,6 +124,11 @@ coveragePathIgnorePatterns = [
   # `.nifra-levels-fixtures-2wAq0Q`, `.nifra-verification-golden-xNR6qa`): stub backends at 0-50%
   # function coverage under a directory name that is random per run. Same class as `cli/test/.tmp-*`.
   "**/cli/test/.nifra-*/**",
+  # More fixture roots named at random per run, measured 2026-10-12: each `--update` swapped
+  # `.db-tool-o2qrxx` for `.db-tool-xjJp00` and so on, so the baseline diff carried no information.
+  "**/cli/test/.db-tool-*/**",
+  "**/.nifra-components-fixtures/**",
+  "**/web/test/fixtures/server-components/.hmr-*/**",
   # The create-nifra scaffold templates the scaffold tests load: sample apps (0% function coverage on
   # each template's `backend/` routes, measured 2026-10-04), the same class as `examples/`.
   "**/create-nifra/template/**",

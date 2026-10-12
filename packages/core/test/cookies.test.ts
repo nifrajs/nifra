@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import {
   cookieNamePrefix,
   hasDuplicateCookie,
@@ -183,6 +183,42 @@ describe("__Secure- / __Host- prefix contract (RFC 6265bis)", () => {
 })
 
 describe("signValue / unsignValue", () => {
+  test("imports each secret's key once, however many values it signs and verifies", async () => {
+    const importKey = spyOn(crypto.subtle, "importKey")
+    try {
+      const secret = "imported-once-secret-0123456789abcdef"
+      const other = "imported-once-secret-fedcba9876543210"
+      const signed = await signValue("a", secret)
+      await signValue("b", secret)
+      expect(await unsignValue(signed, secret)).toBe("a")
+      expect(await unsignValue(signed, [other, secret])).toBe("a")
+      expect(await unsignValue(await signValue("c", other), other)).toBe("c")
+      expect(importKey).toHaveBeenCalledTimes(2)
+    } finally {
+      importKey.mockRestore()
+    }
+  })
+
+  test("a failed key import is not remembered, and a full cache starts over", async () => {
+    const realImport = crypto.subtle.importKey.bind(crypto.subtle)
+    const importKey = spyOn(crypto.subtle, "importKey")
+    try {
+      const secret = "import-fails-once-secret-0123456789"
+      importKey.mockImplementationOnce(() => Promise.reject(new Error("no key")))
+      await expect(signValue("a", secret)).rejects.toThrow("no key")
+      importKey.mockImplementation(realImport)
+      expect(await unsignValue(await signValue("a", secret), secret)).toBe("a")
+      expect(importKey).toHaveBeenCalledTimes(2)
+
+      for (let i = 0; i < 64; i++) await signValue("x", `cache-fill-secret-${i}-0123456789abcdef`)
+      importKey.mockClear()
+      await signValue("b", secret)
+      expect(importKey).toHaveBeenCalledTimes(1)
+    } finally {
+      importKey.mockRestore()
+    }
+  })
+
   const secret = "a-secret-at-least-32-bytes-long!!"
 
   test("round-trips a signed value", async () => {

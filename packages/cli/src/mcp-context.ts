@@ -12,6 +12,7 @@ import type { AppLoader } from "./load.ts"
 import { createCachedAppLoader } from "./mcp-exec.ts"
 import { resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpPrompt, McpResource, McpServerFeatures, McpTool } from "./mcp-protocol.ts"
+import { writeTargetOf } from "./project-path.ts"
 
 function openApiFormat(args: Record<string, unknown>): "json" | "yaml" {
   const format = args.format
@@ -186,24 +187,10 @@ export function resolveProjectDir(root: string, dir: string | undefined): string
     const lexical = relative(root, target)
     return lexical === "" || (!lexical.startsWith("..") && !isAbsolute(lexical)) ? target : null
   }
-  let probe = target
-  const missing: string[] = []
-  while (true) {
-    try {
-      const canonicalProbe = realpathSync(probe)
-      const rel = relative(canonicalRoot, canonicalProbe)
-      if (rel.startsWith("..") || isAbsolute(rel)) return null
-      return missing.length === 0 ? canonicalProbe : resolve(canonicalProbe, ...missing.reverse())
-    } catch {
-      const parent = resolve(probe, "..")
-      if (parent === probe) return null
-      // `basename`, not a slice past `parent`: when `parent` is the filesystem root its trailing
-      // separator is part of it, so `parent.length + 1` eats the first character of the segment and
-      // the path gets rebuilt wrong.
-      missing.push(basename(probe))
-      probe = parent
-    }
-  }
+  const canonical = writeTargetOf(target)
+  if (canonical === undefined) return null
+  const rel = relative(canonicalRoot, canonical)
+  return rel.startsWith("..") || isAbsolute(rel) ? null : canonical
 }
 
 /** Consistent error string for a `dir` that escapes the project root. */

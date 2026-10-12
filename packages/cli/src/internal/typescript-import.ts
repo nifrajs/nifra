@@ -323,9 +323,9 @@ function syntaxKinds(module: UnknownRecord, names: readonly string[]): ReadonlyS
 
 function createVirtualFileSystem(
   sourceFiles: ReadonlyMap<string, string>,
-  root: string,
+  roots: readonly string[],
 ): UnknownRecord {
-  const rootPaths = pathVariants(root)
+  const rootPaths = [...new Set(roots.flatMap(pathVariants))]
   const virtualFiles: string[] = []
   const seenFiles = new Set<string>()
   for (const file of sourceFiles.keys()) {
@@ -454,7 +454,9 @@ async function createTypeScript7Session(
 
   const api = new API({
     cwd: sessionRoot,
-    fs: createVirtualFileSystem(files, sessionRoot),
+    // The root as the caller spells it too: a file not yet on disk keeps that spelling (`/var`, not
+    // `/private/var`), and the session reaches it through the caller's config.
+    fs: createVirtualFileSystem(files, [sessionRoot, root]),
   })
   let snapshot: TypeScript7Snapshot | undefined
   let configuredProject: TypeScript7Project | undefined

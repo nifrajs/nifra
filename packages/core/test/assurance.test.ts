@@ -875,6 +875,91 @@ describe("unknown selector keys", () => {
   })
 })
 
+/**
+ * "Every route that declares a response enforces it" used to need a path exemption for each route
+ * without a response schema (no `hasResponse`), and a copy in every first-match rule (no additive
+ * rules). Both are expressible now.
+ */
+describe("hasResponse selector and baseline rules", () => {
+  const CONTRACT = "nifra.response-contract"
+  const app = () =>
+    server()
+      .use(responseContract("enforce"))
+      .get("/typed", { response: responseSchema }, () => ({ id: "1" }))
+      .get("/plain", () => "ok")
+  const unenforced = () =>
+    server()
+      .get("/typed", { response: responseSchema }, () => ({ id: "1" }))
+      .get("/admin/typed", { response: responseSchema }, () => ({ id: "1" }))
+      .get("/plain", () => "ok")
+
+  test("hasResponse selects exactly the routes that declare a response", () => {
+    const report = evaluateRouteAssurance(app(), {
+      rules: [
+        { name: "json", match: { hasResponse: true }, require: [CONTRACT] },
+        { name: "rest", match: { hasResponse: false } },
+      ],
+    })
+    expect(report.ok).toBe(true)
+    expect(report.routes.map((route) => [route.path, route.rule])).toEqual([
+      ["/typed", "json"],
+      ["/plain", "rest"],
+    ])
+  })
+
+  test("a baseline rule holds on every route it matches, whichever rule owns the route", () => {
+    const report = evaluateRouteAssurance(unenforced(), {
+      rules: [
+        { name: "admin", match: { paths: ["/admin/**"] } },
+        { name: "public", match: { paths: ["/**"] } },
+      ],
+      baseline: [{ name: "contracts", match: { hasResponse: true }, require: [CONTRACT] }],
+    })
+    expect(report.ok).toBe(false)
+    expect(
+      report.findings.map((finding) => [finding.path, finding.rule, finding.evidence]),
+    ).toEqual([
+      ["/typed", "contracts", CONTRACT],
+      ["/admin/typed", "contracts", CONTRACT],
+    ])
+    const admin = report.routes.find((route) => route.path === "/admin/typed")
+    expect(admin?.rule).toBe("admin")
+    expect(admin?.missing).toEqual([CONTRACT])
+    expect(
+      evaluateRouteAssurance(app(), {
+        rules: [{ name: "all", match: {} }],
+        baseline: [{ name: "contracts", match: { hasResponse: true }, require: [CONTRACT] }],
+      }).ok,
+    ).toBe(true)
+  })
+
+  test("a baseline rule does not classify a route", () => {
+    const report = evaluateRouteAssurance(app(), {
+      rules: [{ name: "typed", match: { hasResponse: true } }],
+      baseline: [{ name: "contracts", match: {}, forbid: ["nifra.authenticated"] }],
+    })
+    expect(report.findings.map((finding) => finding.code)).toEqual(["unclassified-route"])
+  })
+
+  test("baseline rules are validated like rules and share their names", () => {
+    expect(() =>
+      defineAssurancePolicy({
+        rules: [],
+        baseline: [{ name: "x", match: JSON.parse('{"hasResponse":"yes"}') }],
+      }),
+    ).toThrow(/hasResponse selector must be boolean/)
+    expect(() =>
+      defineAssurancePolicy({
+        rules: [{ name: "same", match: {} }],
+        baseline: [{ name: "same", match: {} }],
+      }),
+    ).toThrow(/duplicate rule name/)
+    expect(() => defineAssurancePolicy({ rules: [], baseline: JSON.parse("{}") })).toThrow(
+      /baseline must be an array/,
+    )
+  })
+})
+
 describe("defineAssuranceConfig invariants", () => {
   const base = { source: server(), policy: { rules: [{ name: "all", match: {}, require: [] }] } }
   const executor = (request: Request) => new Response(request.url)

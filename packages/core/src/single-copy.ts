@@ -55,7 +55,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
-import { dirname, join, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path"
 import type { BunPlugin } from "bun"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
@@ -339,6 +339,26 @@ const installedCopy = (
   }
 }
 
+/** The package a bare specifier names, without its subpath: `@scope/name` or `name`. */
+const packageNameOf = (specifier: string): string =>
+  specifier
+    .split("/")
+    .slice(0, specifier.startsWith("@") ? 2 : 1)
+    .join("/")
+
+/**
+ * Whether Bun's own node_modules walk from `importer` already reaches the app's copy. Bun then keeps
+ * the package's `sideEffects: false` pruning; a path handed back from `onResolve` loses it, so the
+ * bundle reads every module the entry re-exports, `node:` imports included.
+ */
+const reachesAppCopy = (specifier: string, importer: string, root: string): boolean => {
+  if (!isAbsolute(importer)) return false
+  const name = packageNameOf(specifier)
+  const ours = installedCopy(root, name, parse(root).root)
+  if (ours === undefined) return false
+  return installedCopy(dirname(importer), name, parse(importer).root)?.root === ours.root
+}
+
 /** Every `node_modules` from the app root up to (and including) its repository root. */
 const nodeModulesDirs = (root: string): readonly string[] => {
   const boundary = repoBoundary(root)
@@ -353,6 +373,17 @@ const nodeModulesDirs = (root: string): readonly string[] => {
     dir = parent
   }
   return dirs
+}
+
+/** Where a real package folder lives when only its files are links: Bun installs a `file:` folder
+ * dependency as a directory of per-file symlinks, so its imports resolve beside the linked files. */
+const fileLinkedDir = (dir: string): string | undefined => {
+  const manifest = join(dir, "package.json")
+  try {
+    return lstatSync(manifest).isSymbolicLink() ? dirname(realpathOrSelf(manifest)) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -388,9 +419,8 @@ const linkedPackageDirs = (root: string): readonly string[] => {
         } catch {
           continue
         }
-        if (!link.isSymbolicLink()) continue
-        const target = realpathOrSelf(candidate)
-        if (inside(repo, target)) continue
+        const target = link.isSymbolicLink() ? realpathOrSelf(candidate) : fileLinkedDir(candidate)
+        if (target === undefined || inside(repo, target)) continue
         found.add(target)
       }
     }
@@ -550,6 +580,7 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
         if (alternatives.length > 0) {
           const filter = new RegExp(`^(?:${alternatives.join("|")})$`)
           build.onResolve({ filter }, (args) => {
+            if (reachesAppCopy(args.path, args.importer, plan.root)) return undefined
             try {
               return { path: Bun.resolveSync(args.path, plan.root) }
             } catch {

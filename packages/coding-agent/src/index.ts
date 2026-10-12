@@ -1,11 +1,13 @@
 export { PiBackend, type PiBackendOptions } from "@nifrajs/pi"
 export {
+  APPROVAL_NEVER_EXPIRES_AT,
   type ApprovalDecision,
   ApprovalManager,
   type ApprovalManagerOptions,
   type ApprovalMatchRejection,
   type ApprovalMatchResult,
   type ApprovalRequest,
+  type ApprovalTimeout,
   approvalRequestFromEvent,
   approvalResolvedEvent,
 } from "./approvals.ts"

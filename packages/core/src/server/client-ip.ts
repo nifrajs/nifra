@@ -56,7 +56,9 @@ export function resolveClientIp(
   if (trust === undefined) return peer
   if ("header" in trust) return firstHeaderValue(req, trust.header)
 
-  // trustedHops: walk `X-Forwarded-For` (client-most first) plus the socket peer as the closest hop.
+  if (trust.trustedHops === 0) return peer
+  // Hop 0 is the socket peer and hop k the k-th XFF entry from the right, so the caller is read from the
+  // header alone: a peer-less request (Workers, a unix socket) must not shift an attacker's entry in.
   const xff = req.headers.get("x-forwarded-for")
   const forwarded =
     xff === null
@@ -65,8 +67,6 @@ export function resolveClientIp(
           .split(",")
           .map((entry) => entry.trim())
           .filter((entry) => entry !== "")
-  const chain = peer !== undefined ? [...forwarded, peer] : forwarded
-  // The caller sits just left of the `trustedHops` trusted proxies at the tail of the chain.
-  const index = chain.length - 1 - trust.trustedHops
-  return index >= 0 ? chain[index] : undefined
+  const index = forwarded.length - trust.trustedHops
+  return index >= 0 ? forwarded[index] : undefined
 }

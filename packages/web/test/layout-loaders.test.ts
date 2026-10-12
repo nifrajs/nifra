@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import {
   createWebApp,
   defer,
@@ -709,7 +709,11 @@ test("a layout's notFound() on a soft-nav answers with the status, not a documen
 
 // Page loaders treat a returned redirect like a thrown one, so a gate must too: kept as layout data,
 // a returned refusal let the page loader and the action run for the refused visitor.
-const gatedApp = (gateLoader: () => unknown, counts: { page: number; action: number }) =>
+const gatedApp = (
+  gateLoader: () => unknown,
+  counts: { page: number; action: number },
+  gate = true,
+) =>
   createWebApp({
     adapter: stub,
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: the stub adapter renders string defaults, which Manifest's component types cannot express.
@@ -737,7 +741,7 @@ const gatedApp = (gateLoader: () => unknown, counts: { page: number; action: num
       layouts: {
         _layout: {
           file: "_layout.tsx",
-          load: async () => ({ default: "root", gate: true, loader: gateLoader }),
+          load: async () => ({ default: "root", gate, loader: gateLoader }),
         },
       },
       notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
@@ -786,4 +790,64 @@ test("a gate that returns a Response answers with it and runs nothing else", asy
   )
   expect(post.status).toBe(403)
   expect(counts).toEqual({ page: 0, action: 0 })
+})
+
+test("an ordinary layout loader that returns a redirect refuses exactly as one that throws it", async () => {
+  const returning = gatedApp(() => redirect("/login"), { page: 0, action: 0 }, false)
+  const throwing = gatedApp(
+    () => {
+      throw redirect("/login")
+    },
+    { page: 0, action: 0 },
+    false,
+  )
+  const requests = (): Request[] => [
+    new Request("http://x/admin"),
+    new Request("http://x/admin", { headers: { [DATA_HEADER]: "1" } }),
+  ]
+  const fromReturning = await Promise.all(
+    requests().map(async (r) => answer(await returning.fetch(r))),
+  )
+  const fromThrowing = await Promise.all(
+    requests().map(async (r) => answer(await throwing.fetch(r))),
+  )
+  expect(fromReturning).toEqual(fromThrowing)
+  expect(fromReturning[0]).toMatchObject({ status: 303, location: "/login", secret: false })
+  expect(fromReturning[1]).toMatchObject({ redirect: "/login", secret: false })
+})
+
+test("in development, an ordinary layout loader that refuses access is warned about once", async () => {
+  const previous = process.env.NODE_ENV
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    process.env.NODE_ENV = "development"
+    const counts = { page: 0, action: 0 }
+    const ungated = gatedApp(() => redirect("/login"), counts, false)
+    const gated = gatedApp(() => redirect("/login"), counts, true)
+    const missing = gatedApp(() => notFound(), counts, false)
+    const denied = gatedApp(() => new Response("no", { status: 403 }), counts, false)
+    for (const app of [ungated, ungated, gated, missing])
+      await app.fetch(new Request("http://x/admin"))
+    expect(warn).toHaveBeenCalledTimes(1)
+    const message = String(warn.mock.calls[0]?.[0])
+    expect(message).toContain('"_layout.tsx"')
+    expect(message).toContain("gate = true")
+    await denied.fetch(new Request("http://x/admin", { headers: { [DATA_HEADER]: "1" } }))
+    expect(warn).toHaveBeenCalledTimes(2)
+  } finally {
+    warn.mockRestore()
+    if (previous === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previous
+  }
+})
+
+test("outside development, a refusing ordinary layout loader stays quiet", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    const app = gatedApp(() => redirect("/login"), { page: 0, action: 0 }, false)
+    await app.fetch(new Request("http://x/admin"))
+    expect(warn).not.toHaveBeenCalled()
+  } finally {
+    warn.mockRestore()
+  }
 })

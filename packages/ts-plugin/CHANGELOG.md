@@ -1,5 +1,26 @@
 # @nifrajs/ts-plugin
 
+## 5.1.0
+
+### Patch Changes
+
+- abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- 5372e3a: A package's own `"nifra": { "environment": ... }` may give each export entry its own side: `{ ".": "backend", "./react": "frontend", "./schema": "library" }`. An import is judged by the entry it names, the exact subpath first and then the most specific `*` pattern, so two entries backed by one file keep their own sides; importing an entry the map leaves out is an error, as is a key or side the map cannot use. A file reached by path alone, through a relative or aliased deep import, takes the side of every mapped entry that reaches it through the package's own imports under any export condition, and a file no mapped entry reaches is an error. An import that binds only types (`import type`, `export type`, or a `{ }` list of `type` specifiers) grants no ownership, so a backend file a frontend entry only types against stays backend. The Bun and Vite client and server builds, both dev servers, `nifra check` (NF-C028 and NF-C004) and the editor plugin apply the same rules. The Vite builds record the specifier behind each such import, since Rollup keeps only the resolved file. `classify(file, specifier)` on a zone classifier takes the import as written, and `declaredSide(environment, specifier)` reads one declaration. A package-wide string and the app's `"zones": { "packages": ... }` defaults behave as before, and a package's own declaration outranks them. A third-party package's side is read from its root manifest, past a nested `package.json` such as `dist/esm/package.json`.
+- 9cdd956: The editor plugin's zone check now resolves a package.json import such as `#server/db`. It used to cut the specifier at its first `?` or `#`, counting the leading `#`, so TypeScript got an empty specifier and the import was never checked. A query after the name (`#server/db?raw`) is still dropped.
+- 3c747e8: Go-to-definition on a route path compiles and sorts the app's route patterns once per route set instead of on every request. The cache was keyed by the route array, and route discovery returns a new array each time, so it never hit and every cursor move recompiled every route. A route set that changes (a route added, renamed or removed) still compiles afresh.
+- Updated dependencies [78b2a04]
+- Updated dependencies [638efe5]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [5372e3a]
+- Updated dependencies [b276c67]
+- Updated dependencies [29d6649]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [72e1b4b]
+- Updated dependencies [7bb8a67]
+- Updated dependencies [513ec28]
+  - @nifrajs/web@5.1.0
+  - @nifrajs/core@5.1.0
+
 ## 5.0.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { realpathSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs"
+import { basename, join } from "node:path"
 import { buildClient } from "@nifrajs/web/build"
 import * as ts from "typescript"
 import { collectCheckResult } from "../src/check.ts"
@@ -42,7 +42,10 @@ async function buildRefuses(root: string, clientModule: string): Promise<string[
     return []
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    const refused = [...message.matchAll(/^ {2}- ([^:\n]+): /gm)].map((match) => match[1] ?? "")
+    // A file outside the app is named by its absolute path, which starts `C:` on Windows.
+    const refused = [...message.matchAll(/^ {2}- ((?:[A-Za-z]:)?[^:\n]+): /gm)].map(
+      (match) => match[1] ?? "",
+    )
     expect(refused.length).toBeGreaterThan(0)
     return refused.sort()
   }
@@ -142,6 +145,67 @@ describe("NF-C004 follows aliases and the clientModule", () => {
   })
 })
 
+describe("a package that gives each entry its own side", () => {
+  /** An app linked to `split-kit`, whose root and `./react` entry share one file. */
+  function kitApp(files: Record<string, string>): string {
+    const kit = createFixtureProject(parent, "split-kit-")
+    writeAppFile(
+      kit,
+      "package.json",
+      JSON.stringify({
+        name: "split-kit",
+        type: "module",
+        exports: { ".": "./index.ts", "./react": "./index.ts", "./extra": "./extra.ts" },
+        nifra: { environment: { ".": "backend", "./react": "frontend" } },
+      }),
+    )
+    writeAppFile(kit, "index.ts", "export const secret = 1\nexport const view = 2\n")
+    writeAppFile(kit, "extra.ts", "export const extra = 3\n")
+    const root = app(files)
+    mkdirSync(join(root, "node_modules"), { recursive: true })
+    symlinkSync(kit, join(root, "node_modules/split-kit"), "dir")
+    return root
+  }
+
+  test("check and build refuse the same entries", async () => {
+    const root = kitApp({
+      "frontend/client.tsx": "export function mountRouter() {}\n",
+      "routes/index.tsx": 'import { secret } from "split-kit"\nexport default () => secret\n',
+      "routes/extra.tsx": 'import { extra } from "split-kit/extra"\nexport default () => extra\n',
+      "backend/mail.ts": 'import { view } from "split-kit/react"\nexport const mail = view\n',
+    })
+    const findings = (await zoneFindings(root)).map(({ at, message }) => `${at} ${message}`)
+    expect(findings).toHaveLength(2)
+    expect(findings[0]).toContain(
+      "backend/mail.ts:1 backend/mail.ts (backend code) imports split-kit/react (frontend code): backend code may not import frontend code",
+    )
+    expect(findings[1]).toContain(
+      'routes/extra.tsx:1 routes/extra.tsx imports split-kit/extra: "split-kit/extra" names the "./extra" entry of package "split-kit"',
+    )
+    const chains = (await collectCheckResult(root, { lintsOnly: true })).diagnostics
+      .filter((d) => d.rule === "server-only-import")
+      .map((d) => d.chain)
+    expect(chains).toEqual([["routes/index.tsx", "split-kit"]])
+    const refused = await buildRefuses(root, "frontend/client.tsx")
+    expect(refused.map((file) => basename(file))).toEqual(["extra.ts", "index.ts"])
+  })
+
+  test("both pass when each side imports its own entry", async () => {
+    const root = kitApp({
+      "frontend/client.tsx": "export function mountRouter() {}\n",
+      "routes/index.tsx": 'import { view } from "split-kit/react"\nexport default () => view\n',
+      "backend/data.ts": 'import { secret } from "split-kit"\nexport const data = secret\n',
+    })
+    expect(await zoneFindings(root)).toEqual([])
+    expect(
+      (await collectCheckResult(root, { lintsOnly: true })).diagnostics.filter(
+        (d) => d.rule === "server-only-import",
+      ),
+    ).toEqual([])
+    expect(await buildRefuses(root, "frontend/client.tsx")).toEqual([])
+  })
+})
+
 describe("clientModuleRoot", () => {
   test("reads the config the loader reads, and names the file the build loads", () => {
     const root = app({
@@ -168,6 +232,59 @@ describe("clientModuleRoot", () => {
     })
     expect(clientModuleRoot(root, "pkg", resolve)).toBeUndefined()
     expect(clientModuleRoot(root, "missing", resolve)).toBeUndefined()
+  })
+
+  test("with the compiler, a path joined onto the config's folder names its file too", () => {
+    const root = app({
+      "web/nifra.config.ts": [
+        'import { resolve as from } from "node:path"',
+        "",
+        'export const clientModule = from(import.meta.dir, "src/browser-main.tsx")',
+        "",
+      ].join("\n"),
+      "web/src/browser-main.tsx": "export function mountRouter() {}\n",
+      "own/nifra.config.ts": [
+        "const resolve = (...parts: string[]) => parts.join('/')",
+        'export const clientModule = resolve(import.meta.dir, "src/browser-main.tsx")',
+        "",
+      ].join("\n"),
+      "own/src/browser-main.tsx": "export function mountRouter() {}\n",
+      "lit/nifra.config.ts": 'export const clientModule = "./src/browser-main.tsx" as const\n',
+      "lit/src/browser-main.tsx": "export function mountRouter() {}\n",
+    })
+    const resolve = createSpecifierResolver()
+    expect(clientModuleRoot(root, "web", resolve, ts)).toEqual({
+      config: "web/nifra.config.ts",
+      line: 3,
+      specifier: "src/browser-main.tsx",
+      file: join(realpathSync(root), "web/src/browser-main.tsx"),
+    })
+    // Without the compiler only a literal reads; a `resolve` that is not node:path's never does.
+    expect(clientModuleRoot(root, "web", resolve)).toBeUndefined()
+    expect(clientModuleRoot(root, "own", resolve, ts)).toBeUndefined()
+    expect(clientModuleRoot(root, "lit", resolve, ts)?.file).toBe(
+      join(realpathSync(root), "lit/src/browser-main.tsx"),
+    )
+  })
+})
+
+describe("NF-C028 and an anchored clientModule", () => {
+  test("check reads the entry as browser code, as the build does", async () => {
+    const root = app({
+      "nifra.config.ts": [
+        'import { resolve } from "node:path"',
+        'export const clientModule = resolve(import.meta.dir, "src/client.tsx")',
+        "",
+      ].join("\n"),
+      "src/client.tsx":
+        'import { session } from "../backend/session"\nexport function mountRouter() {\n  return session\n}\n',
+      "backend/session.ts": "export const session = 1\n",
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const found = await zoneFindings(root)
+    expect(found.map((f) => f.at)).toEqual(["nifra.config.ts:2"])
+    expect(found[0]?.message).toContain("puts src/client.tsx in the browser bundle")
+    expect(await buildRefuses(root, "src/client.tsx")).toContain("src/client.tsx")
   })
 })
 
@@ -199,5 +316,64 @@ describe("nifra migrate layout", () => {
     ])
     expect(await buildRefuses(root, "frontend/lib/client.tsx")).toEqual([])
     expect(await zoneFindings(root)).toEqual([])
+  })
+
+  test("an alias narrower than the zones is rewritten so check and build accept the result", async () => {
+    const root = app({
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+      "nifra.config.ts": 'export const clientModule = "./src/client.tsx"\n',
+      "src/client.tsx":
+        'import { api } from "@/lib/api"\nexport function mountRouter() {\n  return api\n}\n',
+      "src/lib/api.ts":
+        'import { type Row } from "@/data/rows"\nexport const api: Row = { id: 1 }\n',
+      "src/data/rows.ts":
+        'import { api } from "@/lib/api"\nexport type Row = { id: number }\nexport const rows = [api]\n',
+      "routes/index.tsx": [
+        'import { api } from "@/lib/api"',
+        'import { rows } from "@/data/rows"',
+        "export const loader = () => ({ rows })",
+        "export default () => api.id",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(root, { typescript: ts, write: true })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/client.tsx -> frontend/src/client.tsx",
+      "src/data/rows.ts -> backend/src/data/rows.ts",
+      "src/lib/api.ts -> shared/src/lib/api.ts",
+    ])
+    expect(result.issues.filter((issue) => /alias|reaches/.test(issue.reason))).toEqual([])
+    expect(await buildRefuses(root, "frontend/src/client.tsx")).toEqual([])
+    // The shared module's type-only import of backend code is erased, so it is no zone edge.
+    expect(await zoneFindings(root)).toEqual([])
+  })
+
+  test("a split route's shared data and its backend's type-only reads pass check and build", async () => {
+    const root = app({
+      "nifra.config.ts": 'export const clientModule = "./lib/client.tsx"\n',
+      "lib/client.tsx": "export function mountRouter() {\n  return 1\n}\n",
+      "components/card.tsx":
+        "export type CardProps = { n: number }\nexport const Card = (props: CardProps) => props.n\n",
+      "routes/guides/[slug].tsx": [
+        'import { Card, type CardProps } from "~/components/card"',
+        "const GUIDES = { a: 'A', b: 'B' } as const",
+        "export const GUIDE_KEYS = Object.keys(GUIDES)",
+        "export async function getStaticPaths() {",
+        "  return { paths: GUIDE_KEYS.map((slug) => ({ params: { slug } })), fallback: false }",
+        "}",
+        "export async function loader(): Promise<CardProps> {",
+        "  return { n: GUIDE_KEYS.length }",
+        "}",
+        "export default function Page() { return Card({ n: GUIDE_KEYS.length }) }",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(root, { typescript: ts, write: true })
+    expect(result.splits.map((split) => split.shared)).toEqual(["routes/guides/[slug].shared.ts"])
+    expect(readFileSync(join(root, "routes/guides/[slug].backend.ts"), "utf8")).toContain(
+      'import type { CardProps } from "~/frontend/components/card"',
+    )
+    expect(await zoneFindings(root)).toEqual([])
+    expect(await buildRefuses(root, "frontend/lib/client.tsx")).toEqual([])
   })
 })

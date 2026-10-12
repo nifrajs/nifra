@@ -2,11 +2,12 @@ import { describe, expect, setSystemTime, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AgentBackend } from "@nifrajs/agent-protocol"
+import type { AgentBackend, AgentEvent } from "@nifrajs/agent-protocol"
 import { PiBackend } from "@nifrajs/pi"
+import { APPROVAL_NEVER_EXPIRES_AT } from "../src/approvals.ts"
 import { ExtensionHost } from "../src/extensions.ts"
 import { NifraBackend } from "../src/native.ts"
-import { CodingAgentRpcServer } from "../src/rpc.ts"
+import { CodingAgentRpcServer, type CodingAgentRpcServerOptions } from "../src/rpc.ts"
 import { FileSessionStore } from "../src/sessions.ts"
 
 const fakePi = `
@@ -549,4 +550,147 @@ describe("coding agent RPC", () => {
       await rm(cwd, { recursive: true, force: true })
     }
   })
+})
+
+describe("coding agent RPC approval broker", () => {
+  /** A backend whose one tool waits on an approval; its own approval timeout stays the default. */
+  function approvalBackend() {
+    const executed: unknown[] = []
+    const forwarded: { readonly approvalId: string; readonly approved: boolean }[] = []
+    const backend = new NifraBackend({
+      model: {
+        complete: ({ messages }) =>
+          messages.some((message) => message.role === "tool")
+            ? { type: "text", text: "done" }
+            : { type: "tool", name: "write_file", input: { path: "safe.txt" } },
+      },
+      tools: [
+        {
+          name: "write_file",
+          description: "Write a file in the authorized workspace",
+          capabilities: ["filesystem.write"],
+          requiresApproval: true,
+          execute: (input) => {
+            executed.push(input)
+            return "written"
+          },
+        },
+      ],
+    })
+    const resolve = backend.resolveApproval.bind(backend)
+    backend.resolveApproval = (sessionId, approvalId, approved, reason) => {
+      forwarded.push({ approvalId, approved })
+      return resolve(sessionId, approvalId, approved, reason)
+    }
+    return { backend, executed, forwarded }
+  }
+
+  async function withServer(
+    options: Pick<CodingAgentRpcServerOptions, "approvals">,
+    run: (
+      call: (method: string, params?: unknown) => Promise<Response>,
+      backend: ReturnType<typeof approvalBackend>,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const backend = approvalBackend()
+    const rpc = new CodingAgentRpcServer({
+      cwd: process.cwd(),
+      backend: backend.backend,
+      ...options,
+    })
+    const handle = await rpc.start()
+    const call = (method: string, params?: unknown) =>
+      fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${handle.token}`, "content-type": "application/json" },
+        body: JSON.stringify(params === undefined ? { method } : { method, params }),
+      })
+    try {
+      expect((await call("session.create")).status).toBe(200)
+      await run(call, backend)
+    } finally {
+      await rpc.stop()
+    }
+  }
+
+  async function listedLifetimes(
+    call: (method: string, params?: unknown) => Promise<Response>,
+  ): Promise<{ offered: number; listed: number[]; expiresAt: number[] }> {
+    const offered = await call("approval.request", { action: "deploy", capability: "deploy" })
+    expect(offered.status).toBe(201)
+    const approval: { createdAt: number; expiresAt: number } = await offered.json()
+    const list = await call("approval.list")
+    const { pending }: { pending: { createdAt: number; expiresAt: number }[] } = await list.json()
+    return {
+      offered: approval.expiresAt - approval.createdAt,
+      listed: pending.map((item) => item.expiresAt - item.createdAt),
+      expiresAt: pending.map((item) => item.expiresAt),
+    }
+  }
+
+  test("a server given approvals.timeoutMs reports pending approvals expiring after it", () =>
+    withServer({ approvals: { timeoutMs: 45 * 60_000 } }, async (call) => {
+      const { offered, listed } = await listedLifetimes(call)
+      expect(offered).toBe(45 * 60_000)
+      expect(listed).toEqual([45 * 60_000])
+    }))
+
+  test("the default is still 5 minutes", () =>
+    withServer({}, async (call) => {
+      const { offered, listed } = await listedLifetimes(call)
+      expect(offered).toBe(5 * 60_000)
+      expect(listed).toEqual([5 * 60_000])
+    }))
+
+  test('a server given timeoutMs: "never" reports the never-expires sentinel', () =>
+    withServer({ approvals: { timeoutMs: "never" } }, async (call) => {
+      const { expiresAt } = await listedLifetimes(call)
+      expect(expiresAt).toEqual([APPROVAL_NEVER_EXPIRES_AT])
+    }))
+
+  test("passes maxPending and the hooks through to the broker", async () => {
+    const required: string[] = []
+    await withServer(
+      { approvals: { maxPending: 1, onRequired: (request) => void required.push(request.action) } },
+      async (call) => {
+        expect(
+          (await call("approval.request", { action: "first", capability: "deploy" })).status,
+        ).toBe(201)
+        expect(
+          (await call("approval.request", { action: "second", capability: "deploy" })).status,
+        ).toBe(429)
+        expect(required).toEqual(["first"])
+      },
+    )
+  })
+
+  test("an approval past the configured timeout is denied in the backend", () =>
+    withServer({ approvals: { timeoutMs: 20 } }, async (call, { executed, forwarded }) => {
+      const turn = await call("turn.send", { message: "write the file" })
+      expect(turn.status).toBe(200)
+      const events: AgentEvent[] = (await turn.text())
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => JSON.parse(line.slice("data: ".length)))
+      const required = events.find((event) => event.type === "approval.required")
+      if (required?.type !== "approval.required") throw new Error("no approval was raised")
+
+      expect(forwarded).toEqual([{ approvalId: required.approvalId, approved: false }])
+      expect(
+        events.flatMap((event) =>
+          event.type === "approval.resolved" ? [[event.approved, event.reason]] : [],
+        ),
+      ).toEqual([[false, "approval timed out"]])
+      const completed = events.find((event) => event.type === "tool.completed")
+      expect(completed?.type === "tool.completed" ? completed.error?.code : undefined).toBe(
+        "APPROVAL_DENIED",
+      )
+      expect(executed).toEqual([])
+      const late = await call("approval.resolve", {
+        approvalId: required.approvalId,
+        approved: true,
+      })
+      expect(late.status).toBe(404)
+      expect(executed).toEqual([])
+    }))
 })

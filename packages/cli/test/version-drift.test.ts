@@ -145,3 +145,50 @@ describe("nifra upgrade write scope", () => {
     expect(plan.linkedOutside).toEqual([])
   })
 })
+
+describe("version drift, installs", () => {
+  test("an install nothing declares is not drift; one a declared package depends on is", () => {
+    const root = scratch("nifra-drift-")
+    writeAppFile(root, "package.json", json({ dependencies: { "@nifrajs/web": "5.0.0" } }))
+    writeAppFile(
+      root,
+      "node_modules/@nifrajs/web/package.json",
+      json({ version: "5.0.0", dependencies: { "@nifrajs/core": "5.0.0" } }),
+    )
+    writeAppFile(root, "node_modules/create-nifra/package.json", json({ version: "3.5.0" }))
+    writeAppFile(root, "node_modules/@nifrajs/core/package.json", json({ version: "5.0.0" }))
+    expect(collectVersionDrift(root, "5.0.0")).toBeUndefined()
+    writeAppFile(root, "node_modules/@nifrajs/core/package.json", json({ version: "4.0.2" }))
+    expect(collectVersionDrift(root, "5.0.0")?.versions[0]?.sources).toEqual([
+      "installed @nifrajs/core",
+    ])
+  })
+
+  test("a repository's linked installs read as one phrase per install and version", () => {
+    const root = scratch("nifra-drift-")
+    const outside = scratch("nifra-linked-")
+    const names = ["core", "web", "client", "schema", "cli"]
+    writeAppFile(
+      root,
+      "package.json",
+      json({ dependencies: Object.fromEntries(names.map((n) => [`@nifrajs/${n}`, "5.0.0"])) }),
+    )
+    mkdirSync(join(root, "node_modules/@nifrajs"), { recursive: true })
+    for (const name of names) {
+      writeAppFile(
+        outside,
+        `node_modules/@nifrajs/${name}/package.json`,
+        json({ name: `@nifrajs/${name}`, version: "4.0.2" }),
+      )
+      symlinkSync(
+        join(outside, "node_modules/@nifrajs", name),
+        join(root, "node_modules/@nifrajs", name),
+        "dir",
+      )
+    }
+    const message = versionDriftMessage(collectVersionDrift(root, "5.0.0")!)
+    expect(message).toContain(
+      `It does not edit 5 packages at 4.0.2 under ${realpathSync(outside)} (@nifrajs/cli, @nifrajs/client, @nifrajs/core and 2 more), linked from outside`,
+    )
+  })
+})

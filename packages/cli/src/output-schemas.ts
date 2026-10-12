@@ -267,6 +267,9 @@ async function shapeOf<T>(
     for (const property of properties) {
       if (property.name.startsWith("__@") || (await reader.callable(property.type))) continue
       const shape = await shapeOf(reader, property.type, seen, depth + 1)
+      // `key?: undefined` is how TypeScript lines up a union of object literals: a key the other
+      // members have and this one never sends.
+      if (shape.kind === "undefined" || shape.kind === "never") continue
       const defined = withoutUndefined(shape)
       fields.push({
         name: property.name,
@@ -338,6 +341,58 @@ export function schemaSource(shape: Shape, indent = ""): string {
       })
       return `t.object({\n${lines.join("\n")}\n${indent}})`
     }
+  }
+}
+
+/** The paths a draft of `shape` leaves out: credential-like names, and values that are not JSON. */
+export function omittedPaths(shape: Shape, path = ""): string[] {
+  switch (shape.kind) {
+    case "array":
+      return omittedPaths(shape.items, `${path}[]`)
+    case "tuple":
+      return omittedPaths(unionOf(shape.items), `${path}[]`)
+    case "record":
+      return omittedPaths(shape.values, `${path}{}`)
+    case "deferred":
+      return omittedPaths(shape.value, path)
+    case "union":
+      return [...new Set(shape.members.flatMap((member) => omittedPaths(member, path)))]
+    case "object":
+      return shape.fields.flatMap((field) => {
+        const at = path === "" ? field.name : `${path}.${field.name}`
+        return isSensitiveFieldName(field.name) || field.shape.kind === "opaque"
+          ? [at]
+          : omittedPaths(field.shape, at)
+      })
+    default:
+      return []
+  }
+}
+
+/** The paths a draft of `shape` admits any value at: `any` or `unknown` there, or a type too deep or
+ * recursive to read. The output guard drops nothing below them. */
+export function openPaths(shape: Shape, path = ""): string[] {
+  switch (shape.kind) {
+    case "json":
+      return shape.reason === undefined ? [] : [path === "" ? "(the whole value)" : path]
+    case "array":
+      return openPaths(shape.items, `${path}[]`)
+    case "tuple":
+      return openPaths(unionOf(shape.items), `${path}[]`)
+    case "record":
+      return openPaths(shape.values, `${path}{}`)
+    case "deferred":
+      return openPaths(shape.value, path)
+    case "union":
+      return [...new Set(shape.members.flatMap((member) => openPaths(member, path)))]
+    case "object":
+      return shape.fields.flatMap((field) =>
+        isSensitiveFieldName(field.name) || field.shape.kind === "opaque"
+          ? []
+          : openPaths(field.shape, path === "" ? field.name : `${path}.${field.name}`),
+      )
+    default:
+      return []
   }
 }
 
@@ -430,7 +485,7 @@ function schemaTokens(text: string): string {
 
 function declarationText(schema: OutputExport, fn: RouteFn, body: string): string {
   return [
-    `// ${GENERATED_MARK} ${hashOf(body)} - from the ${fn}'s return type; \`nifra schemas --write\` keeps it current. Delete this line to edit it by hand.`,
+    `// ${GENERATED_MARK} ${hashOf(body)} - drafted from the ${fn}'s return type; review that the browser may see every field it declares. \`nifra schemas --write\` keeps it current; delete this line to edit it by hand.`,
     `export const ${schema} = ${body}`,
   ].join("\n")
 }
@@ -618,7 +673,11 @@ function reader7(semantic: TypeScriptSemanticSession, checker: Checker7): TypeRe
 }
 
 /** Read every listed route function's return type and schema's output type through one program. */
-async function readShapes(root: string, routes: readonly ProbeRoute[]): Promise<ProbeResult> {
+async function readShapes(
+  root: string,
+  routes: readonly ProbeRoute[],
+  sources: ReadonlyMap<string, string>,
+): Promise<ProbeResult> {
   const warnings: string[] = []
   const shapes = new Map<string, Shape>()
   if (routes.length === 0) return { shapes, warnings }
@@ -658,10 +717,14 @@ async function readShapes(root: string, routes: readonly ProbeRoute[]): Promise<
       ),
       "utf8",
     )
+    // The routes and every planned file the caller supplies are read from `sources`, not the disk:
+    // a migration plans against the layout it has not written yet.
     const contents = new Map<string, string>([[probePath, probe]])
-    for (const file of routeFiles) contents.set(file, readFileSync(file, "utf8"))
+    for (const [file, text] of sources) contents.set(join(root, file), text)
+    for (const file of routeFiles)
+      if (!contents.has(file)) contents.set(file, readFileSync(file, "utf8"))
     const loaded = await loadProjectTypeScript(root, undefined, {
-      files: [...routeFiles, probePath],
+      files: [...contents.keys()],
       read: (file) => contents.get(file),
       projectConfig: probeConfigPath,
     })
@@ -704,7 +767,7 @@ async function readShapes(root: string, routes: readonly ProbeRoute[]): Promise<
       skipLibCheck: true,
       allowImportingTsExtensions: true,
     }
-    const program = ts.createProgram([probePath], options, ts.createCompilerHost(options, true))
+    const program = ts.createProgram([probePath], options, overlaidHost(ts, options, contents))
     const source = program.getSourceFile(probePath)
     if (source === undefined) {
       warnings.push("could not create the type probe")
@@ -731,6 +794,43 @@ async function readShapes(root: string, routes: readonly ProbeRoute[]): Promise<
   }
 }
 
+/** A compiler host that reads `contents` (absolute path -> text) before the disk. */
+function overlaidHost(
+  ts: TypeScriptApi,
+  options: TSApi.CompilerOptions,
+  contents: ReadonlyMap<string, string>,
+): TSApi.CompilerHost {
+  const host = ts.createCompilerHost(options, true)
+  const key = (file: string): string => posix(ts.sys.resolvePath(file))
+  const overlay = new Map([...contents].map(([file, text]) => [key(file), text]))
+  const folders = new Set<string>()
+  for (const file of overlay.keys())
+    for (let at = file.lastIndexOf("/"); at > 0; at = file.lastIndexOf("/", at - 1))
+      folders.add(file.slice(0, at))
+  const { fileExists, readFile, getSourceFile, directoryExists } = host
+  return Object.assign(host, {
+    fileExists: (file: string): boolean => overlay.has(key(file)) || fileExists.call(host, file),
+    readFile: (file: string): string | undefined =>
+      overlay.get(key(file)) ?? readFile.call(host, file),
+    directoryExists: (folder: string): boolean =>
+      folders.has(key(folder)) ||
+      (directoryExists === undefined
+        ? ts.sys.directoryExists(folder)
+        : directoryExists.call(host, folder)),
+    getSourceFile: (
+      file: string,
+      language: TSApi.ScriptTarget | TSApi.CreateSourceFileOptions,
+      onError?: (message: string) => void,
+      fresh?: boolean,
+    ): TSApi.SourceFile | undefined => {
+      const text = overlay.get(key(file))
+      return text === undefined
+        ? getSourceFile.call(host, file, language, onError, fresh)
+        : ts.createSourceFile(file, text, language)
+    },
+  })
+}
+
 // ---- planning edits ----------------------------------------------------------------------------
 
 export type OutputSchemaStatus =
@@ -755,6 +855,11 @@ export interface OutputSchemaEntry {
   /** A generated schema whose text was changed under its marker: stale though its route is not. */
   readonly edited?: boolean
   readonly reason?: string
+  /** Returned paths a draft leaves out: credential-like names, and values that are not JSON. */
+  readonly omitted?: readonly string[]
+  /** Returned paths a generated schema admits any value at, because the type there is `any` or
+   * `unknown`: the output guard drops nothing below them until the type says what is sent. */
+  readonly open?: readonly string[]
 }
 
 interface SchemaDeclaration {
@@ -872,18 +977,37 @@ function withSchemaImport(content: string): string | undefined {
     : `${content.slice(0, end)}\n${line}${content.slice(end)}`
 }
 
-interface Plan {
+export interface OutputSchemaPlan {
   readonly entries: OutputSchemaEntry[]
+  /** App-relative file -> its content with the planned schemas written. */
   readonly edits: Map<string, string>
   readonly warnings: readonly string[]
 }
 
-/** What each listed route backend half needs, and the file contents that would apply it. */
-async function plan(
+export interface OutputSchemaPlanOptions {
+  /**
+   * App-relative file -> text the types are read from instead of the disk: a layout planned but not
+   * written yet. The routes' own text comes from `read`.
+   */
+  readonly overlay?: ReadonlyMap<string, string>
+  /**
+   * Only these declarations, and only where none exists: a draft for a missing schema, never a
+   * refresh of a generated one or a change to a hand-written one.
+   */
+  readonly draft?: (file: string, schema: OutputExport) => boolean
+}
+
+/**
+ * What each listed route backend half needs, and the file contents that would apply it. `nifra
+ * schemas`, `nifra migrate layout` and the NF-C030 fix share it, so one return type drafts one schema.
+ */
+export async function planOutputSchemas(
   root: string,
   files: readonly string[],
   read: (file: string) => string | undefined,
-): Promise<Plan> {
+  options: OutputSchemaPlanOptions = {},
+): Promise<OutputSchemaPlan> {
+  const { draft } = options
   const perFile = new Map<string, { content: string; targets: Target[] }>()
   for (const file of files) {
     const content = read(file)
@@ -891,18 +1015,31 @@ async function plan(
     const targets = targetsOf(content)
     if (targets.length > 0) perFile.set(file, { content, targets })
   }
-  const probe: ProbeRoute[] = [...perFile].map(([file, { targets }]) => ({
-    file,
-    fns: targets.map((target) => target.fn),
-    schemas: targets.filter((t) => t.declaration !== undefined).map((t) => t.schema),
-  }))
-  const { shapes, warnings } = await readShapes(root, probe)
+  const chosen = (file: string, target: Target): boolean =>
+    draft === undefined || (draft(file, target.schema) && target.declaration === undefined)
+  const probe: ProbeRoute[] = [...perFile].flatMap(([file, { targets }]) => {
+    const read = targets.filter((target) => chosen(file, target))
+    return read.length === 0
+      ? []
+      : [
+          {
+            file,
+            fns: read.map((target) => target.fn),
+            schemas: read.filter((t) => t.declaration !== undefined).map((t) => t.schema),
+          },
+        ]
+  })
+  const sources = new Map(options.overlay)
+  for (const [file, { content }] of perFile) sources.set(file, content)
+  const { shapes, warnings } = await readShapes(root, probe, sources)
   const entries: OutputSchemaEntry[] = []
   const edits = new Map<string, string>()
   if (warnings.length > 0) return { entries, edits, warnings }
   for (const [file, { content, targets }] of perFile) {
+    const mask = codePositionMask(content)
     const replacements: Array<{ start: number; end: number; text: string; entry: number }> = []
     for (const target of targets) {
+      if (!chosen(file, target)) continue
       const raw = shapes.get(`${file}#${target.fn}`)
       const declared = shapes.get(`${file}#${target.schema}`)
       const { declaration } = target
@@ -912,13 +1049,16 @@ async function plan(
         dropped: readonly string[] = [],
         reason?: string,
         edited = false,
+        omitted: readonly string[] = [],
+        open: readonly string[] = [],
       ): number => {
         const schema = target.schema
         const generated = declaration?.hash !== undefined
         const base: OutputSchemaEntry = { file, line, schema, status, generated, dropped }
         const item: OutputSchemaEntry =
           reason !== undefined ? { ...base, reason } : edited ? { ...base, edited } : base
-        return entries.push(item) - 1
+        const withOmitted = omitted.length === 0 ? item : { ...item, omitted }
+        return entries.push(open.length === 0 ? withOmitted : { ...withOmitted, open }) - 1
       }
       if (target.annotated) {
         // A `Route.Loader` annotation returns the schema's own input type: comparing the two would
@@ -956,8 +1096,19 @@ async function plan(
         continue
       }
       const body = schemaSource(returned)
+      const omitted = omittedPaths(returned)
+      const open = openPaths(returned)
       if (declaration === undefined) {
-        const at = entry("missing")
+        // The name bound any other way (declared, imported) would clash with the one written here.
+        if (new RegExp(`(?<![\\w$.])${target.schema}(?![\\w$])`).test(mask)) {
+          entry(
+            "missing",
+            [],
+            `\`${target.schema}\` already names something in this file, so no draft was written`,
+          )
+          continue
+        }
+        const at = entry("missing", [], undefined, false, omitted, open)
         const written = declarationText(target.schema, target.fn, body)
         const text = target.insertAt === content.length ? `\n${written}\n` : `${written}\n\n`
         replacements.push({ start: target.insertAt, end: target.insertAt, text, entry: at })
@@ -965,11 +1116,11 @@ async function plan(
         declaration.hash === hashOf(body) &&
         schemaTokens(declaration.value) === schemaTokens(body)
       ) {
-        entry("current")
+        entry("current", [], undefined, false, [], open)
       } else {
         // The marker still matches what would be written, so the text under it was edited.
         const edited = declaration.hash === hashOf(body)
-        const at = entry("stale", dropped, undefined, edited)
+        const at = entry("stale", dropped, undefined, edited, omitted, open)
         const text = declarationText(target.schema, target.fn, body)
         replacements.push({ start: declaration.start, end: declaration.end, text, entry: at })
       }
@@ -1024,10 +1175,10 @@ export interface OutputSchemasReport {
  */
 export async function outputSchemas(
   dir: string,
-  options: { readonly write?: boolean } = {},
+  options: { readonly write?: boolean; readonly check?: boolean } = {},
 ): Promise<OutputSchemasReport> {
   const write = options.write === true
-  const { entries, edits, warnings } = await plan(dir, routeBackends(dir), (file) => {
+  const { entries, edits, warnings } = await planOutputSchemas(dir, routeBackends(dir), (file) => {
     try {
       return readFileSync(join(dir, file), "utf8")
     } catch {
@@ -1051,8 +1202,13 @@ export async function outputSchemas(
             : entry,
     )
   }
+  // `check` also fails what a review still owes: a schema not written yet, and one that admits anything.
+  const owed = (entry: OutputSchemaEntry): boolean =>
+    entry.status === "missing" || (entry.open?.length ?? 0) > 0
   return {
-    ok: warnings.length === 0 && !final.some((entry) => entry.status === "stale"),
+    ok:
+      warnings.length === 0 &&
+      !final.some((entry) => entry.status === "stale" || (options.check === true && owed(entry))),
     write,
     entries: final,
     written,
@@ -1075,7 +1231,7 @@ export async function staleGeneratedSchemas(
 }> {
   const marked = files.filter((file) => read(file)?.includes(GENERATED_MARK) === true)
   if (marked.length === 0) return { stale: [], unchecked: [], warnings: [] }
-  const { entries, warnings } = await plan(root, marked, read)
+  const { entries, warnings } = await planOutputSchemas(root, marked, read)
   return {
     stale: entries.filter((entry) => entry.status === "stale"),
     unchecked: entries.filter((entry) => entry.generated && entry.status === "unreadable"),

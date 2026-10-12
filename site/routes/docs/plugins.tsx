@@ -203,6 +203,68 @@ export default function Plugins() {
       </p>
       <CodeBlock code={PLUGIN} />
 
+      <h2 id="parent-use">What a parent&rsquo;s use() covers</h2>
+      <p>
+        A <code>group()</code> scope inherits the parent&rsquo;s chain as it stands at the call. A{" "}
+        <code>merge()</code>d server was compiled on its own, so its routes keep <i>their</i> chain. Only
+        what the parent installed <b>before</b> the <code>group()</code> or <code>merge()</code> counts.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Installed on the parent</th>
+            <th>
+              <code>group()</code> route
+            </th>
+            <th>
+              <code>merge()</code>d route
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code>derive</code>, <code>decorate</code>, <code>authenticate</code>,{" "}
+              <code>beforeHandle</code>, <code>afterHandle</code>, <code>onError</code>,{" "}
+              <code>around</code>, route-scoped assurance
+            </td>
+            <td>yes</td>
+            <td>no - wire it on the merged server</td>
+          </tr>
+          <tr>
+            <td>
+              <code>onRequest</code>, <code>onResponse</code>, <code>responseHeaders</code>
+            </td>
+            <td>yes</td>
+            <td>yes (app-wide)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>responseContract()</code>
+            </td>
+            <td>yes</td>
+            <td>yes, when the route declares a response and its own server installed no contract</td>
+          </tr>
+          <tr>
+            <td>
+              <code>effectLedger()</code>
+            </td>
+            <td>yes</td>
+            <td>yes, when the route declares capabilities and has no ledger of its own</td>
+          </tr>
+          <tr>
+            <td>
+              <code>idempotency()</code>
+            </td>
+            <td>yes</td>
+            <td>
+              the merged server&rsquo;s own - a route declaring <code>idempotency</code> without one is
+              refused at registration
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2>Route/hook plugins: keep types with defineRouterPlugin</h2>
       <p>
         A plugin that registers routes or hooks but adds <b>no context type</b> - e.g. mounting an auth
@@ -425,7 +487,10 @@ export default function Plugins() {
         <code>healthcheck()</code> adds liveness (<code>/health</code>) and readiness (<code>/ready</code>)
         endpoints - apply it <b>before</b> any auth guard so they stay public. <code>openapi()</code>{" "}
         serves an OpenAPI 3.1 document at <code>/openapi.json</code>, generated from your routes - add{" "}
-        <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. Paths,
+        <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. The page
+        loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own
+        copy with <code>ui: {"{ cdn, integrity }"}</code> to keep a third-party origin out of your
+        Content-Security-Policy. Paths,
         methods, and params are introspected; <code>servers</code>, <code>tags</code>,{" "}
         <code>security</code>, and <code>securitySchemes</code> are document options, and{" "}
         <code>operations</code> (keyed by <code>"GET /users/:id"</code>) supplies per-route bodies/security
@@ -453,7 +518,10 @@ export default function Plugins() {
         enforced by default, and claims (<code>iss</code>/<code>aud</code>/<code>nbf</code>) are checked.
         Read the typed claims off the returned plugin - <code>auth.requireClaims(c.req)</code> (throws{" "}
         <code>401</code>) or <code>auth.claims(c.req)</code> (nullable). For rotating keys, pass{" "}
-        <code>key: jwks({`{ url }`})</code> (HTTPS-only, cached, size/time-bounded). <code>basicAuth</code>{" "}
+        <code>key: jwks({`{ url }`})</code> (HTTPS-only, cached, size/time-bounded). A fetch that fails
+        or returns no keys is remembered for <code>failureCooldownMs</code> (default 5 s), so while the
+        identity provider is down a request fails at once instead of waiting on a fetch of its own.{" "}
+        <code>basicAuth</code>{" "}
         compares static credentials in <b>constant time</b> (or takes a <code>verify</code> callback).
       </p>
       <CodeBlock code={JWT_BASIC} />

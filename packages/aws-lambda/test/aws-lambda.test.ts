@@ -21,6 +21,22 @@ const v2Event = (overrides: Partial<LambdaEvent> = {}): LambdaEvent => ({
   ...overrides,
 })
 
+/** A three-chunk body that records whether its reader cancelled it. */
+const tickingSource = (): { stream: ReadableStream<Uint8Array>; cancelled: () => boolean } => {
+  let pulls = 0
+  let cancelled = false
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode("tick"))
+      if (++pulls === 3) controller.close()
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  return { stream, cancelled: () => cancelled }
+}
+
 describe("handle()", () => {
   test("without a domain in the event, a Host that is not a plain authority is not used", async () => {
     const app = server().get("/*", (c) => c.json({ url: c.req.url }))
@@ -190,6 +206,50 @@ describe("handle()", () => {
     expect(result.headers["content-length"]).toBeUndefined()
   })
 
+  test("a HEAD answer keeps its status and headers but carries no body", async () => {
+    const app = server().get("/", (c) => c.json({ hello: "world" }, { headers: { "x-a": "1" } }))
+    const result = await handle(app)(
+      v2Event({ requestContext: { http: { method: "HEAD", sourceIp: "203.0.113.9" } } }),
+    )
+    expect(result.statusCode).toBe(200)
+    expect(result.headers["x-a"]).toBe("1")
+    expect(result.headers["content-type"]).toStartWith("application/json")
+    expect(result.body).toBe("")
+    expect(result.isBase64Encoded).toBe(false)
+  })
+
+  test("a HEAD answer cancels a streaming body instead of reading it", async () => {
+    const source = tickingSource()
+    const app = server().get("/", () => new Response(source.stream))
+    const result = await handle(app)(
+      v2Event({ requestContext: { http: { method: "HEAD", sourceIp: "203.0.113.9" } } }),
+    )
+    expect(result.body).toBe("")
+    expect(source.cancelled()).toBe(true)
+  })
+
+  test("a HEAD answer whose body throws on cancel still answers, with nothing left unhandled", async () => {
+    let cancelled = false
+    const app = server().get(
+      "/",
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled = true
+              throw new Error("source refuses to stop")
+            },
+          }),
+        ),
+    )
+    const result = await handle(app)(
+      v2Event({ requestContext: { http: { method: "HEAD", sourceIp: "203.0.113.9" } } }),
+    )
+    expect(result.statusCode).toBe(200)
+    expect(result.body).toBe("")
+    expect(cancelled).toBe(true)
+  })
+
   test("a broken app collapses to the flat internal_error 500, no event echo", async () => {
     const broken = {
       fetch(): Response {
@@ -315,6 +375,24 @@ describe("streamHandle()", () => {
     )
     expect(captured.metadata?.statusCode).toBe(413)
     expect(ran).toBe(false)
+  })
+
+  test("a HEAD answer streams its metadata and no body chunks", async () => {
+    const captured = mockAwslambda()
+    const source = tickingSource()
+    const app = server().get(
+      "/",
+      () => new Response(source.stream, { status: 203, headers: { "x-a": "1" } }),
+    )
+    await streamHandle(app)(
+      v2Event({ requestContext: { http: { method: "HEAD", sourceIp: "203.0.113.9" } } }),
+      makeStream(captured),
+    )
+    expect(captured.metadata?.statusCode).toBe(203)
+    expect(captured.metadata?.headers["x-a"]).toBe("1")
+    expect(captured.chunks).toEqual([])
+    expect(captured.ended).toBe(true)
+    expect(source.cancelled()).toBe(true)
   })
 
   test("a broken app streams the flat 500", async () => {

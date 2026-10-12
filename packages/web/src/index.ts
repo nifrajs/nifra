@@ -88,12 +88,8 @@ export {
 // `import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"`.
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
 export {
-  canonical,
   gone,
-  jsonLd,
   notFound,
-  type OpenGraphInput,
-  openGraph,
   type RedirectOptions,
   type RenderAssemblyCache,
   type RenderedPage,
@@ -257,6 +253,7 @@ export {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
+  type DocumentParts,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
   type MatchChain,
@@ -298,6 +295,7 @@ export {
 // ctx + `renderPage`) and a client adapter mount call this with the same URL + schema, so the two sides
 // produce the identical value by construction. An adapter's `useSearch` binding reads its result.
 export { type SearchOf, searchOf, searchOfChain, serializeSearch } from "./search.ts"
+export { canonical, jsonLd, type OpenGraphInput, openGraph } from "./seo.ts"
 export {
   type HtmlSanitizer,
   type SanitizedHtml,

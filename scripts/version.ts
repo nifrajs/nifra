@@ -63,6 +63,23 @@ for (const { file, re } of constants) {
   console.log(`✓ ${file} → ${version}`)
 }
 
+// The workbench's native shell declares its own version twice (Tauri config and Cargo manifest), and
+// neither is a package.json, so both trailed the app's package by two majors before this sync.
+{
+  const workbench: unknown = JSON.parse(readFileSync("apps/workbench/package.json", "utf8")).version
+  if (typeof workbench !== "string") throw new Error("apps/workbench/package.json has no version")
+  for (const [file, re] of [
+    ["apps/workbench/src-tauri/tauri.conf.json", /("version":\s*")[^"]+(")/],
+    ["apps/workbench/src-tauri/Cargo.toml", /^(version = ")[^"]+(")/m],
+  ] as const) {
+    const src = readFileSync(file, "utf8")
+    const next = src.replace(re, `$1${workbench}$2`)
+    if (!re.test(src)) throw new Error(`could not find the version in ${file}`)
+    writeFileSync(file, next)
+    console.log(`✓ ${file} → ${workbench}`)
+  }
+}
+
 const CREATE_NIFRA = "packages/create-nifra"
 const CREATE_NIFRA_SRC = `${CREATE_NIFRA}/src`
 

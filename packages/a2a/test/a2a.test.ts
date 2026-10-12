@@ -278,19 +278,40 @@ describe("mountA2A", () => {
     })
   })
 
-  test("suspends for approval as input-required and resumes via message metadata", async () => {
+  /** Suspend `reference.approve` on a pending approval, then resume it with the peer granting it. */
+  async function resumeWithPeerApproval(
+    overrides: Partial<AgentPorts>,
+    portDecision: () => "pending" | "approved",
+    approvalPort = true,
+  ): Promise<{ state: string; executed: number; callerDecisions: unknown[] }> {
     const { app, callPost } = captureApp()
-    const store = new MemoryAgentStateStore()
-    const agent = definition([approvalTool])
+    let executed = 0
+    const tool = defineTool({
+      ...approvalTool,
+      execute: () => {
+        executed += 1
+        return { ok: true }
+      },
+    })
+    const callerDecisions: unknown[] = []
+    const approval: NonNullable<AgentPorts["approval"]> = {
+      request: ({ effectId, callerDecision }) => {
+        if (callerDecision !== undefined) callerDecisions.push(callerDecision)
+        return callerDecision === undefined || portDecision() === "pending"
+          ? { status: "pending", effectId }
+          : { status: "approved", approval: { granted: true } }
+      },
+    }
+    const agentPorts: Partial<AgentPorts> = {
+      model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "approved" }),
+      capabilities: ["reference.approve"],
+      state: new MemoryAgentStateStore(),
+      ...overrides,
+    }
     mountA2A(app, {
-      agent,
+      agent: definition([tool]),
       card: cardInfo,
-      ports: ports({
-        model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "approved" }),
-        capabilities: ["reference.approve"],
-        state: store,
-        approval: { request: ({ effectId }) => ({ status: "pending", effectId }) },
-      }),
+      ports: ports(approvalPort ? { approval, ...agentPorts } : agentPorts),
     })
 
     const first = (await (
@@ -325,7 +346,29 @@ describe("mountA2A", () => {
         ),
       )
     ).json()) as { result: { task: { status: { state: string } } } }
-    expect(resumed.result.task.status.state).toBe("TASK_STATE_COMPLETED")
+    return { state: resumed.result.task.status.state, executed, callerDecisions }
+  }
+
+  test("a resuming peer cannot approve its own tool call: the approval port decides", async () => {
+    const refused = await resumeWithPeerApproval({}, () => "pending")
+    expect(refused).toEqual({
+      state: "TASK_STATE_INPUT_REQUIRED",
+      executed: 0,
+      callerDecisions: [{ granted: true }],
+    })
+
+    const approved = await resumeWithPeerApproval({}, () => "approved")
+    expect(approved.state).toBe("TASK_STATE_COMPLETED")
+    expect(approved.executed).toBe(1)
+  })
+
+  test("a peer's approval stands alone without an approval port only under the caller opt-out", async () => {
+    const noPort = await resumeWithPeerApproval({}, () => "pending", false)
+    expect(noPort.state).toBe("TASK_STATE_INPUT_REQUIRED")
+    expect(noPort.executed).toBe(0)
+
+    const optedOut = await resumeWithPeerApproval({ resumeApproval: "caller" }, () => "pending")
+    expect(optedOut).toEqual({ state: "TASK_STATE_COMPLETED", executed: 1, callerDecisions: [] })
   })
 
   test("a task suspended on a model failure resumes with its echoed continuation", async () => {
@@ -436,6 +479,47 @@ describe("mountA2A", () => {
       id: "big",
       error: { code: A2A_ERROR_CODES.internalError, message: "output_limit" },
     })
+  })
+
+  test("a stream that hits maxOutputBytes stops its run instead of leaving it to spend model calls", async () => {
+    const step = defineTool({
+      name: "step",
+      description: "One step.",
+      input: t.object({ v: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "step",
+      execute: () => ({ ok: true }),
+    })
+    const signals: AbortSignal[] = []
+    const { app, callPost } = captureApp()
+    mountA2A(app, {
+      agent: definition([step]),
+      card: cardInfo,
+      maxOutputBytes: 2048,
+      maxTurns: 200,
+      ports: ports({
+        capabilities: ["step"],
+        model: {
+          complete: (request) => {
+            signals.push(request.signal)
+            return signals.length < 60
+              ? { kind: "tool", name: "step", input: { v: "x".repeat(50) } }
+              : { kind: "output", value: { answer: "done" } }
+          },
+        },
+      }),
+    })
+    const response = await callPost(
+      rpc("SendStreamingMessage", message([], { metadata: { input: { prompt: "p" } } }), "s"),
+    )
+    const sent = frames(await response.text())
+    expect(sent.at(-1)).toEqual({
+      jsonrpc: "2.0",
+      id: "s",
+      error: { code: A2A_ERROR_CODES.internalError, message: "output_limit" },
+    })
+    // The stream closed on the limit, and the run it carried was told to stop at that moment.
+    expect(signals.at(-1)?.aborted).toBe(true)
   })
 
   test("a request the mount cannot complete gets a JSON-RPC error carrying its id", async () => {

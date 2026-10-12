@@ -5,8 +5,10 @@
  *
  *   1. **pin sweep** - set every matching dependency to the target version across the workspace's
  *      package.json files, preserving the caret/tilde/exact style and skipping `workspace:`/`link:` specs.
- *      `overrides`, `resolutions` and `pnpm.overrides` are swept too, since they decide what installs;
- *      a version pinned anywhere else (an MCP config, a Dockerfile, another lockfile) is listed only.
+ *      `overrides`, `resolutions` and `pnpm.overrides` are swept too, since they decide what installs.
+ *      The MCP launch pin in `.mcp.json`, `.cursor/mcp.json`, CLAUDE.md and AGENTS.md moves too, the
+ *      edit `nifra init-agents --sync-mcp` makes; a version pinned anywhere else (a Dockerfile, a CI
+ *      workflow, another lockfile) is listed only.
  *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
@@ -26,6 +28,7 @@
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -45,6 +48,7 @@ import {
   parseHookReport,
   renderHookDiff,
 } from "./hooks-report.ts"
+import { PIN_SITES } from "./init-agents.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
 
@@ -97,6 +101,14 @@ export interface DependencyMoveChange {
   readonly action: "renamed" | "removed"
 }
 
+/** An agent file whose MCP launch pins another `@nifrajs/cli`, re-pinned to the target. */
+export interface AgentPinChange {
+  readonly file: string
+  /** The versions it pinned, in order of appearance. */
+  readonly from: readonly string[]
+  readonly to: string
+}
+
 /** A retired comment in the project, and the line it applied to before the release retired it. */
 export interface RetiredMarkerSite {
   readonly file: string
@@ -110,6 +122,7 @@ export interface RetiredMarkerSite {
 export interface UpgradePlan {
   readonly version: string
   readonly pins: readonly PinChange[]
+  readonly agentPins: readonly AgentPinChange[]
   readonly dependencyMoves: readonly DependencyMoveChange[]
   readonly importMoves: readonly ImportChange[]
   /** Pins refused because the target is BELOW the installed version (a rollback). Empty when allowed. */
@@ -540,7 +553,7 @@ function scan(cwd: string, pattern: string, dot = false): string[] {
 }
 
 // The fixed version group: every package released together at one version.
-const isFixedGroup = (name: string): boolean =>
+export const isFixedGroup = (name: string): boolean =>
   name.startsWith("@nifrajs/") || name === "nifra" || name === "create-nifra"
 
 const groupPins = (version: string): UpgradeRecipe["pins"] => [
@@ -548,6 +561,20 @@ const groupPins = (version: string): UpgradeRecipe["pins"] => [
   { match: "create-nifra", to: version },
   { match: "nifra", to: version },
 ]
+
+/** Every fixed-group package a package.json under `cwd` names, whatever its spec. */
+export function groupDeclaredNames(cwd: string): ReadonlySet<string> {
+  const names = new Set<string>()
+  for (const rel of scan(cwd, "**/package.json")) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(cwd, rel), "utf8")) as Record<string, unknown>
+      for (const { target } of pinEntries(parsed)) if (isFixedGroup(target)) names.add(target)
+    } catch {
+      // Not JSON: it declares nothing.
+    }
+  }
+  return names
+}
 
 /**
  * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
@@ -589,6 +616,7 @@ export interface StrayPin {
 
 const STRAY_PIN_FILES = [
   "**/{.mcp.json,mcp.json}",
+  "**/{AGENTS.md,CLAUDE.md}",
   "**/{Dockerfile,Dockerfile.*,*.Dockerfile,*.dockerfile,Containerfile}",
   "**/{docker-compose,compose}*.{yml,yaml}",
   ".github/workflows/*.{yml,yaml}",
@@ -601,10 +629,16 @@ const GROUP_PIN =
   /(?<![\w.@/-])(@nifrajs\/[a-z0-9._-]+|create-nifra|nifra)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g
 
 /**
- * Fixed-group versions other than `version` pinned where `nifra upgrade` does not edit: MCP configs,
- * container files, CI workflows, and lockfiles besides the workspace's own (which install rewrites).
+ * Fixed-group versions other than `version` pinned where `nifra upgrade` does not edit: MCP configs and
+ * agent guidance beyond the launch pin it moves, container files, CI workflows, and lockfiles besides
+ * the workspace's own (which install rewrites). `planned` holds a file's text after the upgrade's own
+ * edits, so a dry run lists what `--write` would leave.
  */
-export function strayPins(cwd: string, version: string): StrayPin[] {
+export function strayPins(
+  cwd: string,
+  version: string,
+  planned: ReadonlyMap<string, string> = new Map(),
+): StrayPin[] {
   const found: StrayPin[] = []
   const files = new Set(STRAY_PIN_FILES.flatMap((pattern) => scan(cwd, pattern, true)))
   for (const rel of [...files].sort()) {
@@ -613,7 +647,7 @@ export function strayPins(cwd: string, version: string): StrayPin[] {
     let text: string
     try {
       if (statSync(join(cwd, rel)).size > 8_000_000) continue
-      text = readFileSync(join(cwd, rel), "utf8")
+      text = planned.get(rel) ?? readFileSync(join(cwd, rel), "utf8")
     } catch {
       continue
     }
@@ -633,6 +667,43 @@ export function strayPins(cwd: string, version: string): StrayPin[] {
     else for (const match of stale) found.push(site(match, 0))
   }
   return found
+}
+
+/** Whether `rel` is a regular file under `cwd` reached through no symlink: the upgrade's write boundary. */
+function plainFileAt(cwd: string, rel: string): boolean {
+  let path = cwd
+  const parts = rel.split("/")
+  for (const [index, part] of parts.entries()) {
+    path = join(path, part)
+    let stat: ReturnType<typeof lstatSync>
+    try {
+      stat = lstatSync(path)
+    } catch {
+      return false
+    }
+    if (stat.isSymbolicLink()) return false
+    if (index === parts.length - 1 ? !stat.isFile() : !stat.isDirectory()) return false
+  }
+  return true
+}
+
+/**
+ * The MCP launch pin in each agent file at `cwd`, moved to `version`: the files and the edit of
+ * `nifra init-agents --sync-mcp`, so an agent launches the nifra the project installs once it does.
+ */
+function agentPinEdits(
+  cwd: string,
+  version: string,
+): Array<{ readonly change: AgentPinChange; readonly text: string }> {
+  const edits: Array<{ change: AgentPinChange; text: string }> = []
+  for (const site of PIN_SITES) {
+    if (!plainFileAt(cwd, site.path)) continue
+    // latin1 is one char per byte, so every byte outside a pin is written back as it was.
+    const scan = site.repin(readFileSync(join(cwd, site.path), "latin1"), version)
+    if (scan.stale.length === 0) continue
+    edits.push({ change: { file: site.path, from: scan.stale, to: version }, text: scan.text })
+  }
+  return edits
 }
 
 /** An installed fixed-group package, followed to its real location. */
@@ -752,6 +823,8 @@ export function computeUpgrade(
   exact = false,
 ): UpgradePlan {
   const pins: PinChange[] = []
+  const agentPins: AgentPinChange[] = []
+  const planned = new Map<string, string>()
   const dependencyMoves: DependencyMoveChange[] = []
   const importMoves: ImportChange[] = []
   const downgrades: PinChange[] = []
@@ -771,6 +844,12 @@ export function computeUpgrade(
       for (const d of pinned.downgrades) downgrades.push({ file: rel, ...d })
       if (write && pinned.text !== original) writeFileSync(abs, pinned.text)
     }
+  }
+
+  for (const { change, text } of agentPinEdits(cwd, recipe.version)) {
+    agentPins.push(change)
+    planned.set(change.file, text)
+    if (write) writeFileSync(join(cwd, change.file), Buffer.from(text, "latin1"))
   }
 
   if (recipe.importMoves.length > 0) {
@@ -808,12 +887,13 @@ export function computeUpgrade(
   return {
     version: recipe.version,
     pins,
+    agentPins,
     dependencyMoves,
     importMoves,
     downgrades,
     retiredMarkers,
     linkedOutside,
-    strayPins: strayPins(cwd, recipe.version),
+    strayPins: strayPins(cwd, recipe.version, planned),
     notes: recipe.notes ?? [],
   }
 }
@@ -837,6 +917,7 @@ function renderPlan(
   lines.push("")
   if (
     plan.pins.length === 0 &&
+    plan.agentPins.length === 0 &&
     plan.dependencyMoves.length === 0 &&
     plan.importMoves.length === 0 &&
     plan.retiredMarkers.length === 0 &&
@@ -860,6 +941,13 @@ function renderPlan(
   if (plan.pins.length > 0) {
     lines.push(`${verb} ${plan.pins.length} dependency pin(s):`)
     for (const p of plan.pins) lines.push(`  ${p.file}  ${p.name}: ${p.from} → ${p.to}`)
+    lines.push("")
+  }
+  if (plan.agentPins.length > 0) {
+    lines.push(`${verb} ${plan.agentPins.length} MCP launch pin(s):`)
+    for (const p of plan.agentPins)
+      lines.push(`  ${p.file}  @nifrajs/cli: ${p.from.join(", ")} → ${p.to}`)
+    if (write) lines.push("  Restart your agent so it launches the new nifra MCP server.")
     lines.push("")
   }
   if (plan.importMoves.length > 0) {

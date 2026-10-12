@@ -62,6 +62,12 @@ describe("htmlFileFor", () => {
     expect(htmlFileFor("/a/b/c")).toBe("a/b/c/index.html")
     expect(htmlFileFor("/about/")).toBe("about/index.html") // trailing slash trimmed
   })
+
+  test("writes each segment decoded, as a static host looks it up", () => {
+    expect(htmlFileFor("/caf%C3%A9/a%20b")).toBe("café/a b/index.html")
+    // No file name maps back to these, so they stay as written (and prerender skips them).
+    expect(htmlFileFor("/x/a%2Fb/%2E%2E/%E0")).toBe("x/a%2Fb/%2E%2E/%E0/index.html")
+  })
 })
 
 describe("prerenderRoutes", () => {
@@ -249,26 +255,55 @@ describe("prerenderRoutes", () => {
     expect(result.prerendered[0]?.path).toBe("/blog/2026/hello")
   })
 
-  test("dynamic route params are encoded before mapping to output files", async () => {
-    const { app } = fakeApp()
+  test("a dynamic route param is written under the name a static host decodes the URL to", async () => {
+    const { app, urls } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [
+        dynamicRoute("/blog/:slug", async () => ({
+          paths: [{ params: { slug: "café au lait" } }],
+        })),
+      ],
+      outDir: dir,
+    })
+    expect(urls).toEqual(["http://localhost/blog/caf%C3%A9%20au%20lait"])
+    expect(result.prerendered).toEqual([
+      {
+        path: "/blog/caf%C3%A9%20au%20lait",
+        file: "blog/café au lait/index.html",
+        bytes: expect.any(Number),
+        dataFile: "blog/café au lait/_data.json",
+      },
+    ])
+    expect(existsSync(join(dir, "blog/café au lait/index.html"))).toBe(true)
+    expect(existsSync(join(dir, "blog/café au lait/_data.json"))).toBe(true)
+  })
+
+  test("a param that decodes to a separator or a dot segment is skipped, never written", async () => {
+    const { app, urls } = fakeApp()
     const outDir = join(dir, "out")
     const result = await prerenderRoutes({
       app,
       routes: [
         dynamicRoute("/blog/:slug", async () => ({
-          paths: [{ params: { slug: "../../escape hatch" } }],
+          paths: [
+            { params: { slug: "../../escape hatch" } },
+            { params: { slug: ".." } },
+            { params: { slug: "a\\b" } },
+          ],
         })),
       ],
       outDir,
     })
-    expect(result.skipped).toEqual([])
-    expect(result.prerendered[0]).toMatchObject({
-      path: "/blog/..%2F..%2Fescape%20hatch",
-      file: "blog/..%2F..%2Fescape%20hatch/index.html",
-      dataFile: "blog/..%2F..%2Fescape%20hatch/_data.json",
-    })
-    expect(existsSync(join(outDir, "blog/..%2F..%2Fescape%20hatch/index.html"))).toBe(true)
+    expect(urls).toEqual([])
+    expect(result.prerendered).toEqual([])
+    expect(result.skipped.map((s) => s.path)).toEqual([
+      "/blog/..%2F..%2Fescape%20hatch",
+      "/blog/%2E%2E",
+      "/blog/a%5Cb",
+    ])
     expect(existsSync(join(dir, "escape hatch/index.html"))).toBe(false)
+    expect(existsSync(outDir)).toBe(false)
   })
 
   test("unsafe output paths are skipped even if a hand-built manifest supplies one", async () => {

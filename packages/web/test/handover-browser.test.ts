@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { type ChromePage, findChrome, launchChrome } from "../../cli/test/headless-chrome.ts"
+import {
+  CHROME_LAUNCH_TIMEOUT_MS,
+  type ChromePage,
+  findChrome,
+  launchChrome,
+} from "../../cli/test/headless-chrome.ts"
 import {
   buildManifest,
   generateClientEntry,
@@ -22,7 +27,7 @@ let page: ChromePage | undefined
 // Chrome's cold start and shutdown can each pass the 5s default on a loaded Windows runner.
 beforeAll(async () => {
   if (chrome !== undefined) page = await launchChrome(chrome)
-}, 30_000)
+}, CHROME_LAUNCH_TIMEOUT_MS)
 afterAll(async () => {
   await page?.close()
 }, 30_000)

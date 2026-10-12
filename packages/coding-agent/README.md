@@ -42,6 +42,14 @@ default 8 MiB) answers `409 resync_required`, so read `session.events` instead; 
 `turn.send` while one runs answers `409 turn_running`; and a turn no client has followed for
 `detachedTimeoutMs` (default 2 minutes) is cancelled.
 
+An approval, or a coding tool's question to the person, is denied once it has waited 5 minutes.
+Pass `approvals: { timeoutMs }` to `CodingAgentHost` or `CodingAgentRpcServer` for up to 24 h, or
+`timeoutMs: "never"` to keep it until it is answered, cancelled, its turn ends, or the session
+closes; `maxPending` (default 32) still bounds how many can wait. `NifraBackend` has its own
+`approvalTimeoutMs`, taking the same values, and the host denies in the backend whatever its broker
+denies, so the shorter of the two applies. A never-expiring approval reports `expiresAt` as
+`APPROVAL_NEVER_EXPIRES_AT`, which survives JSON and stays later than any `Date.now()`.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only

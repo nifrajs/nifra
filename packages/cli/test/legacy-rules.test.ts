@@ -78,4 +78,27 @@ describe("registry-owned legacy rules", () => {
     expect(finding).toMatchObject({ code: "NF-K001", severity: "info" })
     expect(diagnosticCompatibilityOf(finding!)).toBeUndefined()
   })
+
+  test("a lock whose schemas were all removed reports drift, not a vacuous manifest", async () => {
+    const base = projectFacts("backend.ts", "")
+    const scan = (contracts: typeof base.check.contracts) =>
+      rule("NF-K001").scan({
+        root: ".",
+        sources: base.source,
+        project: { ...base, check: { ...base.check, contracts } },
+      })
+
+    const drifted = await scan({
+      present: true,
+      vacuous: true,
+      diagnostics: [{ route: "POST /users", message: "contract changed for POST /users" }],
+    })
+    expect(drifted.map((finding) => [finding.severity, finding.message])).toEqual([
+      ["error", "contract changed for POST /users"],
+    ])
+
+    const [empty] = await scan({ present: true, vacuous: true, diagnostics: [] })
+    expect(empty).toMatchObject({ code: "NF-K001", severity: "info" })
+    expect(empty?.message).toContain("vacuous")
+  })
 })

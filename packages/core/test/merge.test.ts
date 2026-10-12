@@ -7,6 +7,7 @@ import { idempotency } from "../src/idempotency-plugin.ts"
 import { type Logger, RouteConfigError, server } from "../src/index.ts"
 import { mcp } from "../src/mcp.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseContract } from "../src/server/response-contract-lane.ts"
 import { websocket } from "../src/ws.ts" // ws runtime, for the "merge refuses WebSocket groups" case
 
 describe("merge - domain-group composition", () => {
@@ -262,5 +263,97 @@ describe("merge - domain-group composition", () => {
     const toolRoute = app.routes().find((r) => r.tool?.name === "echo")
     expect(toolRoute).toBeDefined()
     expect(toolRoute?.path).toBe("/_nifra/tool/echo")
+  })
+})
+
+/**
+ * A parent's `.use()` of a registration-time runtime used to reach a `group()` route (the scope
+ * inherits it) but not a `merge()`d one (compiled before it ever met the parent), so the same plugin
+ * enforced one route and let its twin leak. Both runtimes only add a check or a record, so adoption
+ * now recompiles a merged route under them.
+ */
+describe("merge - a parent's response contract and effect ledger", () => {
+  const PublicUser = t.object({ id: t.string(), name: t.string() })
+  const ROW = { id: "u1", name: "Ada", email: "a@b.c", passwordHash: "SECRET" }
+  const silent: Logger = { debug() {}, info() {}, warn() {}, error() {} }
+  const get = (app: { fetch(request: Request): Promise<Response> | Response }, path: string) =>
+    Promise.resolve(app.fetch(new Request(`http://x${path}`)))
+
+  test("a merged route that declares a response is held to the parent's contract", async () => {
+    const child = server({ logger: silent }).get("/me", { response: PublicUser }, () => ROW)
+    const app = server({ logger: silent })
+      .use(responseContract("enforce", { extra: "strip" }))
+      .merge(child)
+    const res = await get(app, "/me")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+    const route = app.routes().find((candidate) => candidate.path === "/me")
+    expect(route?.responseContract).toBe("enforce")
+    expect(route?.assurance?.map((evidence) => evidence.id)).toContain("nifra.response-contract")
+  })
+
+  test("group() and merge() of the same route under the same parent now agree", async () => {
+    const app = server({ logger: silent })
+      .use(responseContract("enforce"))
+      .group("/g", (group) => group.get("/me", { response: PublicUser }, () => ROW))
+      .merge(server({ logger: silent }).get("/m/me", { response: PublicUser }, () => ROW))
+    expect((await get(app, "/g/me")).status).toBe(500)
+    expect((await get(app, "/m/me")).status).toBe(500)
+  })
+
+  test("a merged route keeps a contract its own server installed", async () => {
+    const child = server({ logger: silent })
+      .use(responseContract("warn"))
+      .get("/me", { response: PublicUser }, () => ROW)
+    const app = server({ logger: silent }).use(responseContract("enforce")).merge(child)
+    const res = await get(app, "/me")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(ROW)
+    expect(app.routes().find((candidate) => candidate.path === "/me")?.responseContract).toBe(
+      "warn",
+    )
+  })
+
+  test("a route with no response schema, and a contract installed after the merge, change nothing", async () => {
+    const app = server({ logger: silent })
+      .use(responseContract("enforce"))
+      .merge(server({ logger: silent }).get("/raw", () => ROW))
+    expect(await (await get(app, "/raw")).json()).toEqual(ROW)
+    const late = server({ logger: silent })
+      .merge(server({ logger: silent }).get("/me", { response: PublicUser }, () => ROW))
+      .use(responseContract("enforce"))
+    expect(await (await get(late, "/me")).json()).toEqual(ROW)
+  })
+
+  test("the Bun native lane serves the adopted contract over a real socket", async () => {
+    const app = server({ logger: silent })
+      .use(responseContract("enforce", { extra: "strip" }))
+      .merge(server({ logger: silent }).get("/me", { response: PublicUser }, () => ROW))
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const body = await (await fetch(`http://127.0.0.1:${running.port}/me`)).text()
+      expect(JSON.parse(body)).toEqual({ id: "u1", name: "Ada" })
+      expect(body).not.toContain("SECRET")
+    } finally {
+      await running.stop()
+    }
+  })
+
+  test("a merged capability route records into the parent's effect ledger", async () => {
+    const ledgers: unknown[] = []
+    const child = server({ logger: silent }).post(
+      "/pay",
+      { capabilities: ["payments.charge"] },
+      (c) => {
+        useCapability(c, "payments.charge")
+        return { ok: true }
+      },
+    )
+    const app = server({ logger: silent })
+      .use(effectLedger({ sink: (ledger) => void ledgers.push(ledger) }))
+      .merge(child)
+    const res = await app.fetch(new Request("http://x/pay", { method: "POST" }))
+    expect(res.status).toBe(200)
+    expect(ledgers).toHaveLength(1)
   })
 })

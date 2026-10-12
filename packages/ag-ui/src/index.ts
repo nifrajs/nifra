@@ -141,6 +141,8 @@ export interface MountAgUIOptions<
    * Build the ports for one request - the model, durable state store, approval transport,
    * capabilities, and budgets. Receives the route context so the caller can scope every port to
    * the request subject, and the run context carrying the turn id and the shared UI state channel.
+   * Throw a `Response` (a 401 with its challenge, a 403) to answer the request with it; any other
+   * throw is a fault and reaches the app's error handling.
    */
   readonly ports: (c: AgUIRouteContext, run: AgUIRunContext) => AgentPorts | Promise<AgentPorts>
   /**
@@ -151,7 +153,8 @@ export interface MountAgUIOptions<
   /**
    * Who a turn's recorded events belong to - the caller's user or tenant id. Turns are recorded and
    * replayed under it, so a reconnect or a reused run id from another caller finds nothing of this
-   * caller's turns. It runs before a replay is served; throw to refuse the request.
+   * caller's turns. It runs before a replay is served; throw to refuse the request with
+   * `403 { error: "forbidden" }`, or throw a `Response` to answer with it instead.
    */
   readonly evidenceOwner?: (c: AgUIRouteContext) => string | Promise<string>
   /**
@@ -183,7 +186,7 @@ export function mountAgUI<
       (parsed) => execute(c, parsed, options, runOptions, maxOutputBytes),
       (rejection) => render(rejection),
       () => render(plainError(400, "bad_request")),
-    ).catch(() => render(plainError(400, "bad_request"))),
+    ).catch(passThrownResponse),
   )
 }
 
@@ -212,10 +215,17 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
   const resume = parseResume(forwarded.resume) ?? entry?.resume
-  const log =
-    options.evidenceLog === undefined || options.evidenceOwner === undefined
-      ? options.evidenceLog
-      : scopeAgentEvidenceLog(options.evidenceLog, await options.evidenceOwner(c))
+  let log = options.evidenceLog
+  if (log !== undefined && options.evidenceOwner !== undefined) {
+    let owner: string
+    try {
+      owner = await options.evidenceOwner(c)
+    } catch (err) {
+      if (err instanceof Response) return err
+      return jsonResponse(403, { error: "forbidden" })
+    }
+    log = scopeAgentEvidenceLog(log, owner)
+  }
   const identity: RunIdentity = { threadId, runId, turnId }
 
   // A reconnect replays recorded evidence and rejoins the turn; it never starts a second run.
@@ -929,6 +939,12 @@ function jsonResponse(status: number, body: unknown): Response {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   })
+}
+
+/** A thrown `Response` is the app answering for itself; anything else is a fault for its error lane. */
+function passThrownResponse(err: unknown): Response {
+  if (err instanceof Response) return err
+  throw err
 }
 
 function render(response: Response | ResponseResult): Response {

@@ -1,5 +1,25 @@
 # @nifrajs/web-solid
 
+## 5.1.0
+
+### Patch Changes
+
+- df50368: When a Solid `<ErrorBoundary>` catches during server rendering, or a resource fails, the page no longer ships the error's message and stack in its inline hydration script. On Bun, that also included the server file path. The browser now receives `Error("Internal Server Error")`. In development and test the error keeps its text. That inline script now also carries the document's CSP nonce on pages rendered in one pass: `RenderAdapter.renderToString` receives `{ nonce }` as `renderToStream` already did. Before, a strict CSP blocked the script and hydration did not match the server's markup.
+- Updated dependencies [78b2a04]
+- Updated dependencies [638efe5]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [5372e3a]
+- Updated dependencies [b276c67]
+- Updated dependencies [29d6649]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [72e1b4b]
+- Updated dependencies [7bb8a67]
+- Updated dependencies [513ec28]
+  - @nifrajs/web@5.1.0
+  - @nifrajs/core@5.1.0
+  - @nifrajs/i18n@5.1.0
+  - @nifrajs/image@5.1.0
+
 ## 5.0.0
 
 ### Minor Changes

@@ -32,7 +32,7 @@ import {
   assuranceEvidenceFor,
 } from "../internal/route-assurance.ts"
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
-import { compileRouteOptions } from "../internal/route-compiler.ts"
+import { adoptRouteRuntimes, compileRouteOptions } from "../internal/route-compiler.ts"
 import {
   compileRouteExecutionPlan,
   type FusedBodyRunner,
@@ -74,6 +74,7 @@ import {
 } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import "./core-copies.ts"
+import type { FormOrigins } from "./body-lane.ts"
 import {
   hasLowercaseHeaderKeysMark,
   headerKeysAllLowercase,
@@ -982,6 +983,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     | undefined
   private readonly maxBodyBytes: number
   private readonly protoPoisoning: "reject" | "strip" | "ignore"
+  private readonly formOrigins: FormOrigins | undefined
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
   private readonly wsMaxPayloadBytes: number
@@ -1117,6 +1119,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
     this.protoPoisoning = options.protoPoisoning ?? "reject"
+    this.formOrigins = options.formOrigins
     this.trustBodyFraming = options.trustBodyFraming ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
@@ -2586,6 +2589,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * registered before a `derive`). Fail closed: a path+method collision throws
    * `RouteConfigError` at merge time, and a group with WebSocket routes or mounts is refused
    * (register those on the parent).
+   *
+   * What this server's `.use()`, made BEFORE the merge, covers on a merged route versus a
+   * `group()` route:
+   *
+   *   | installed on this server                   | group() route | merge()d route                 |
+   *   | ------------------------------------------ | ------------- | ------------------------------ |
+   *   | derive/decorate/beforeHandle/afterHandle,  | yes           | no - wire it on the merged     |
+   *   | onError/around, authenticate, route-scoped |               | server                         |
+   *   | assurance                                  |               |                                |
+   *   | onRequest/onResponse/responseHeaders hooks | yes           | yes (app-wide)                 |
+   *   | responseContract()                         | yes           | yes, when the route declares a |
+   *   |                                            |               | response and its own server    |
+   *   |                                            |               | installed no contract          |
+   *   | effectLedger()                             | yes           | yes, when the route declares   |
+   *   |                                            |               | capabilities and has no ledger |
+   *   | idempotency()                              | yes           | the merged server's own; a     |
+   *   |                                            |               | route declaring it without one |
+   *   |                                            |               | is refused at registration     |
+   *
+   * The response contract and the ledger can only add a check or a record, so a merged route is
+   * recompiled under them. A runtime installed AFTER the merge covers neither kind of route.
    */
   merge<R2 extends Registry, Ctx2, HookOutput2>(
     other: Server<R2, Ctx2, HookOutput2>,
@@ -2630,7 +2654,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * The builder receives a scope that INHERITS this server's route chain as it stands at the call
    * (`derive`/`decorate`/`authenticate`/`beforeHandle`/`afterHandle`/`onError`/`around`, assurance,
    * capability interceptors, installed runtimes, applied plugins), exactly as a route declared here
-   * would. A plugin this server already applied is in effect for the group: the group's `use()` of
+   * would. {@link merge} documents how that differs for a merged server. A plugin this server already applied is in effect for the group: the group's `use()` of
    * that same instance does nothing, and its `use()` of another instance under the same name throws a
    * `RouteConfigError` (`PLUGIN_RECONFIGURED`), because that instance could never replace the parent's.
    * A plugin the group applies still shares the parent's copy of a dependency it `use()`s itself.
@@ -2738,7 +2762,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           })
         : (route: CatalogRoute): CatalogRoute => route
     this.catalog.addBatch(
-      sourceRoutes.map((route) => this.bindFusedRuntime(foldedAssurance(route))),
+      sourceRoutes.map((route) =>
+        this.bindFusedRuntime(
+          foldedAssurance(
+            adoptRouteRuntimes(route, this.responseContractRuntime, this.effectLedgerRuntime),
+          ),
+        ),
+      ),
     )
     // Resolved idempotency/ledger route entries carry their own store/sink configuration, while the
     // runtime object supplies the generic execution machinery. If the parent already has a runtime,
@@ -3547,6 +3577,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               pubsub,
               attach: runtime.attach,
               maxPayloadBytes: this.wsMaxPayloadBytes,
+              sender: runtime.sender,
             }
       }
       const wrap = (response: Response | ResponseResult): WebSocketUpgradeOutcome =>
@@ -3659,9 +3690,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (o.kind === "pass")
         return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
       if (o.kind === "reject") return o.response
-      return server.upgrade(req, {
-        data: { handler: o.handler, data: o.data, pubsub: o.pubsub },
-      })
+      // A copy: the Bun socket keeps per-connection state on it, and a hand-built outcome may be shared.
+      return server.upgrade(req, { data: { ...o } })
         ? undefined
         : jsonError(426, "upgrade_required")
     }
@@ -4689,6 +4719,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
         bodySchema,
+        this.formOrigins,
       )
     }
   }
@@ -5103,6 +5134,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (response) => this.wrapWebResponse(response),
         (err) => Promise.resolve(logError(err, ctx)),
         bodySchema,
+        this.formOrigins,
       ) as MaybePromise<Response>
     }
   }
@@ -5534,6 +5566,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
         bodySchema,
+        this.formOrigins,
       )
     }
   }
@@ -6189,6 +6222,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (response) => response,
       (error) => Promise.reject(error),
       bodySchema,
+      this.formOrigins,
     )
   }
 
@@ -6554,7 +6588,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // the parent.
     const nativePubsub =
       this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
-    const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
+    const wsHandlers = wsRuntime?.bunHandlers(
+      this.topics ?? wsRuntime.createTopics(),
+      nativePubsub,
+      this,
+    )
     // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
     // an explicit undefined as a value on some option paths, and omitting is what selects its own
     // defaults, 0.0.0.0 among them.
@@ -6602,8 +6640,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
           websocket: {
             // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
-            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes).
-            maxPayloadLength: this.wsMaxPayloadBytes,
+            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
+            // limit per listener: the largest cap among this app and the apps mounted on it.
+            maxPayloadLength: wsHandlers.maxPayloadLength,
             open: (ws) => wsHandlers.open(ws),
             message: (ws, message) => wsHandlers.message(ws, message),
             close: (ws, code, reason) => wsHandlers.close(ws, code, reason),

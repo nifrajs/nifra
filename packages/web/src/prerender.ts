@@ -9,7 +9,7 @@
  * routes are not supported.
  */
 import { mkdirSync, writeFileSync } from "node:fs"
-import { dirname, resolve, sep } from "node:path"
+import { dirname, join, resolve, sep } from "node:path"
 import { assertNoSecrets, buildEnvironment, type SecretExemption } from "./internal/secret-scan.ts"
 import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
 import { DATA_HEADER, PRERENDERED_GLOBAL, PRERENDERED_LIST_PATH } from "./router.ts"
@@ -70,10 +70,32 @@ function trimTrailingSlashes(path: string): string {
   return path.slice(0, end)
 }
 
-/** Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. */
+/**
+ * One request-path segment as the file name a static host looks up, which is the segment decoded, or
+ * `undefined` when no file name maps back to it: malformed percent-encoding, `.` or `..`, or a decoded
+ * `/`, `\` or NUL.
+ */
+function fileSegment(segment: string): string | undefined {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(segment)
+  } catch {
+    return undefined
+  }
+  if (decoded === "." || decoded === ".." || /[/\\\0]/.test(decoded)) return undefined
+  return decoded
+}
+
+/**
+ * Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. Segments are
+ * written decoded (`/caf%C3%A9` → `café/index.html`) because a static host decodes the request path
+ * before it looks for a file; a segment with no such file name stays as written.
+ */
 export function htmlFileFor(pattern: string): string {
   const trimmed = trimTrailingSlashes(pattern.replace(/^\/+/, ""))
-  return trimmed === "" ? "index.html" : `${trimmed}/index.html`
+  if (trimmed === "") return "index.html"
+  const segments = trimmed.split("/").map((segment) => fileSegment(segment) ?? segment)
+  return `${segments.join("/")}/index.html`
 }
 
 // The handover of a page whose prerendered set is served as a list rather than inlined.
@@ -119,6 +141,16 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
   // static (one path) and dynamic (one path per getStaticPaths entry) routes. A failed render is a skip;
   // a credential in the output fails the whole prerender.
   const renderPath = async (path: string): Promise<void> => {
+    // Refused before rendering: a segment no file name maps back to, or a file outside `outDir`.
+    const file = htmlFileFor(path)
+    const segments = trimTrailingSlashes(path.replace(/^\/+/, "")).split("/")
+    const abs = segments.every((s) => s === "" || fileSegment(s) !== undefined)
+      ? outputPath(outRoot, file)
+      : undefined
+    if (abs === undefined) {
+      skipped.push({ path, reason: "unsafe output path" })
+      return
+    }
     const res = await options.app.fetch(new Request(`${origin}${path}`))
     if (!res.ok) {
       // A failed render is a per-route skip, not a build failure - surfaced for the caller to log.
@@ -127,12 +159,6 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
     }
     const html = await res.text()
     listUrl ??= PRERENDERED_LIST_URL.exec(html)?.[1]
-    const file = htmlFileFor(path)
-    const abs = outputPath(outRoot, file)
-    if (abs === undefined) {
-      skipped.push({ path, reason: "unsafe output path" })
-      return
-    }
     assertClean(file, html)
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, html)
@@ -150,15 +176,10 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       !(dataRes.headers.get("content-type") ?? "").includes("application/x-ndjson")
     ) {
       dataFile = dataFileFor(path)
-      const dataAbs = outputPath(outRoot, dataFile)
-      if (dataAbs === undefined) {
-        await dataRes.body?.cancel()
-        dataFile = undefined
-      } else {
-        const data = await dataRes.text()
-        assertClean(dataFile, data)
-        writeFileSync(dataAbs, data)
-      }
+      const data = await dataRes.text()
+      assertClean(dataFile, data)
+      // Beside `index.html`, so inside `outDir` whenever it is.
+      writeFileSync(join(dirname(abs), "_data.json"), data)
     } else {
       await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) - release the stream
     }

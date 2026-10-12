@@ -7,6 +7,8 @@ import { resolveWorkspaceLinkedPackage } from "./workspace-link.ts"
 export interface FixRecipe {
   readonly id: string
   readonly description: string
+  /** Run only by `nifra fix --code <code>`: the change it makes is a decision a person reviews first. */
+  readonly onlyWhenNamed?: true
   apply(root: string, diagnostic: Diagnostic): Promise<readonly string[]>
   readonly verify: string
 }
@@ -84,22 +86,39 @@ registerFixRecipe({
   description:
     "Serve the backend over HTTP at /api by exporting apiPrefix from the framework config.",
   verify: "nifra check",
-  async apply(root, diagnostic) {
-    if (diagnostic.file === undefined) return []
-    const path = await resolveInsideProject(root, diagnostic.file)
-    if (path === undefined) return []
-    const { withDefaultApiPrefix } = await import("./rules/pages.ts")
-    const file = Bun.file(path)
-    const next = withDefaultApiPrefix((await file.exists()) ? await file.text() : undefined)
-    if (next === undefined) return []
-    await writeFile(path, next, "utf8")
-    return [diagnostic.file]
+  async apply(root) {
+    const { CONFIG_FILE, FRAMEWORK_FILE } = await import("./app-files.ts")
+    const { apiPrefixFix } = await import("./rules/pages.ts")
+    const frameworkPath = await resolveInsideProject(root, FRAMEWORK_FILE)
+    const configPath = await resolveInsideProject(root, CONFIG_FILE)
+    if (frameworkPath === undefined || configPath === undefined) return []
+    const source = async (path: string): Promise<string | undefined> => {
+      const file = Bun.file(path)
+      return (await file.exists()) ? await file.text() : undefined
+    }
+    const next = apiPrefixFix({
+      framework: await source(frameworkPath),
+      config: await source(configPath),
+    })
+    const edits: readonly (readonly [string, string, string | undefined])[] = [
+      [FRAMEWORK_FILE, frameworkPath, next.framework],
+      [CONFIG_FILE, configPath, next.config],
+    ]
+    const changed: string[] = []
+    for (const [file, path, text] of edits) {
+      if (text === undefined) continue
+      await writeFile(path, text, "utf8")
+      changed.push(file)
+    }
+    return changed
   },
 })
 
 registerFixRecipe({
   id: "contracts.snapshot",
   description: "Refresh the opt-in contract lock after reviewing an intentional route change.",
+  // Rewriting the lock accepts whatever the routes changed to, which is the review the lock exists for.
+  onlyWhenNamed: true,
   verify: "nifra contracts check",
   async apply(root) {
     const { snapshotContracts } = await import("./contracts.ts")
@@ -155,6 +174,78 @@ registerFixRecipe({
     if (rewritten === source) return []
     await writeFile(path, rewritten, "utf8")
     return [diagnostic.file]
+  },
+})
+
+registerFixRecipe({
+  id: "route.split",
+  description:
+    "Move a route frontend file's server-only exports, and the code only they use, into its x.backend.ts.",
+  verify: "nifra check",
+  async apply(root, diagnostic) {
+    const file = diagnostic.file
+    if (file === undefined || (await resolveInsideProject(root, file)) === undefined) return []
+    const { splitRouteFile } = await import("./migrate-layout.ts")
+    return splitRouteFile(root, file)
+  },
+})
+
+registerFixRecipe({
+  id: "layout.migrate",
+  description:
+    "Move the app onto the frontend/backend layout, as `nifra migrate layout --write` does.",
+  onlyWhenNamed: true,
+  verify: "nifra check --lints-only",
+  async apply(root) {
+    const { migrateLayout } = await import("./migrate-layout.ts")
+    const result = await migrateLayout(root, { write: true })
+    return [
+      ...new Set([
+        ...result.moves.map((move) => move.to),
+        ...result.splits.flatMap((split) => [split.file, split.backend]),
+        ...result.rewritten,
+        ...result.tooling.map((edit) => edit.file),
+      ]),
+    ].sort()
+  },
+})
+
+registerFixRecipe({
+  id: "schemas.draft",
+  description:
+    "Draft the missing loader or action output schema from the function's return type, for the author to review.",
+  verify: "nifra check --lints-only",
+  async apply(root, diagnostic) {
+    const file = diagnostic.file
+    if (file === undefined) return []
+    const path = await resolveInsideProject(root, file)
+    if (path === undefined) return []
+    const schema = diagnostic.evidence
+      ?.find((line) => line.startsWith("missing: "))
+      ?.slice("missing: ".length)
+    if (schema !== "loaderOutput" && schema !== "actionOutput") return []
+    const { planOutputSchemas } = await import("./output-schemas.ts")
+    const source = await readFile(path, "utf8")
+    // Only this declaration: other schemas in the file, generated or hand-written, stay as they are.
+    const plan = await planOutputSchemas(
+      root,
+      [file],
+      (read) => (read === file ? source : undefined),
+      {
+        draft: (at, name) => at === file && name === schema,
+      },
+    )
+    const blocked =
+      plan.warnings.length > 0
+        ? plan.warnings.join("; ")
+        : plan.entries.find((entry) => entry.schema === schema && entry.reason !== undefined)
+            ?.reason
+    if (blocked !== undefined)
+      throw new Error(`[nifra] no ${schema} was drafted in ${file}: ${blocked}`)
+    const drafted = plan.edits.get(file)
+    if (drafted === undefined) return []
+    await writeFile(path, drafted, "utf8")
+    return [file]
   },
 })
 

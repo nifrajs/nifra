@@ -10,7 +10,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
-import { requestPattern } from "./internal/route-path.ts"
+import { appUrl, requestPattern } from "./internal/route-path.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -429,7 +429,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
     const pathname = cut === -1 ? path : path.slice(0, cut)
     if (prerenderedSetOf(prerendered).has(pathname)) {
-      const staticRes = await fetch(dataUrlFor(pathname), { signal: signal ?? null })
+      const staticRes = await fetch(appUrl(dataUrlFor(pathname)), { signal: signal ?? null })
       if (staticRes.ok) return readResponseData(staticRes, signal)
     }
   }
@@ -438,7 +438,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     headers.set(RETAIN_HEADER, navigation.retain.join(","))
     headers.set(NAV_FROM_HEADER, navigation.from)
   }
-  const res = await fetch(path, { headers, signal: signal ?? null })
+  const res = await fetch(appUrl(path), { headers, signal: signal ?? null })
   const redirectTo = res.headers.get(REDIRECT_HEADER)
   if (redirectTo !== null) throw redirected(redirectTo)
   const status = Number(res.headers.get(STATUS_HEADER))
@@ -943,7 +943,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         fEmit()
         try {
-          const res = await fetch(action, { method: "POST", body, headers: { [DATA_HEADER]: "1" } })
+          const res = await fetch(appUrl(action), {
+            method: "POST",
+            body,
+            headers: { [DATA_HEADER]: "1" },
+          })
           if (!res.ok)
             throw new Error(`[nifra/web] fetcher action failed (${res.status}): ${action}`)
           const actionData = res.status === 204 ? undefined : await readResponseData(res, ac.signal)
@@ -1094,7 +1098,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           state = { ...state, actionData: prepared.optimisticData }
           emit()
         }
-        const res = await fetch(action, {
+        const res = await fetch(appUrl(action), {
           method: "POST",
           body: prepared.body,
           headers: { [DATA_HEADER]: "1" },

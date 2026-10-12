@@ -1175,7 +1175,7 @@
     "packages/web/src/search.ts": 3,
     "packages/web/src/trusted-html.ts": 2,
     "packages/web/src/vite.ts": 5,
-    "packages/web/src/zones.ts": 4,
+    "packages/web/src/zones.ts": 1,
     "packages/web/test/_route-halves.ts": 2,
     "packages/web/test/app.test.ts": 4,
     "packages/web/test/apply-head.test.ts": 5,

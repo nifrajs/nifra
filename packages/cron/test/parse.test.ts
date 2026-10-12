@@ -52,6 +52,33 @@ describe("parseCron - fields", () => {
     expect(matches(f, at(2026, 6, 3, 0, 0))).toBe(false) // neither
   })
 
+  test("a day field led by a star-step is unrestricted, so both day fields must match", () => {
+    const f = parseCron("0 0 */2 * 1") // midnight on an odd day that is also a Monday
+    expect(f.domRestricted).toBe(false)
+    expect(matches(f, at(2026, 6, 15, 0, 0))).toBe(true) // the 15th, a Monday
+    expect(matches(f, at(2026, 6, 8, 0, 0))).toBe(false) // a Monday on an even day
+    expect(matches(f, at(2026, 6, 3, 0, 0))).toBe(false) // an odd day, a Wednesday
+    const g = parseCron("0 0 1 * */2") // the 1st, when it falls on Sun/Tue/Thu/Sat
+    expect(g.dowRestricted).toBe(false)
+    expect(matches(g, at(2026, 9, 1, 0, 0))).toBe(true) // 2026-09-01 is a Tuesday
+    expect(matches(g, at(2026, 6, 1, 0, 0))).toBe(false) // 2026-06-01 is a Monday
+    expect(matches(g, at(2026, 9, 3, 0, 0))).toBe(false) // a Thursday, not the 1st
+    const odd = parseCron("0 0 */2 * *") // neither field restricted, the step still applies
+    expect(matches(odd, at(2026, 6, 3, 0, 0))).toBe(true)
+    expect(matches(odd, at(2026, 6, 8, 0, 0))).toBe(false)
+  })
+
+  test("day-of-week 7 is Sunday", () => {
+    expect([...parseCron("0 0 * * 7").dow]).toEqual([0])
+    expect([...parseCron("0 0 * * 5-7").dow].toSorted((a, b) => a - b)).toEqual([0, 5, 6])
+    expect(matches(parseCron("0 0 * * 7"), at(2026, 6, 14, 0, 0))).toBe(true) // a Sunday
+    // Stars and bare steps still stop at 6, so expressions that parsed before keep their days.
+    expect([...parseCron("0 0 * * *").dow]).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect([...parseCron("0 0 * * 1/2").dow]).toEqual([1, 3, 5])
+    expect([...parseCron("0 0 * * 7/2").dow]).toEqual([0])
+    expect(() => parseCron("0 0 * * 8")).toThrow(/out-of-range/)
+  })
+
   test("rejects malformed expressions", () => {
     expect(() => parseCron("* * *")).toThrow(CronError) // too few fields
     expect(() => parseCron("60 * * * *")).toThrow(/out-of-range/) // minute 60

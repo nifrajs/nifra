@@ -38,6 +38,12 @@ export interface CodingAgentRpcServerOptions {
   readonly verification?: CodingAgentHostOptions["verification"]
   readonly extensionEvents?: CodingAgentHostOptions["extensionEvents"]
   /**
+   * The host's approval broker: how long an approval or a tool's question waits for its answer
+   * (`timeoutMs`, default 5 minutes, or `"never"`), how many may wait (`maxPending`, default 32),
+   * and its `onRequired`/`onResolved` hooks.
+   */
+  readonly approvals?: CodingAgentHostOptions["approvals"]
+  /**
    * Keep a `turn.send` running when its client disconnects, and let a client that comes back read
    * what it missed with `turn.attach` (an `afterSeq` cursor, or `Last-Event-ID`). The newest
    * `replayEvents` frames, up to `replayBytes`, are held (defaults 1024 and 8 MiB); a turn no client
@@ -124,6 +130,7 @@ export class CodingAgentRpcServer {
       ...(options.extensionEvents === undefined
         ? {}
         : { extensionEvents: options.extensionEvents }),
+      ...(options.approvals === undefined ? {} : { approvals: options.approvals }),
     })
     this.resumable = resumableTurnConfig(options.resumableTurns)
     this.token = options.authToken ?? randomAuthToken()

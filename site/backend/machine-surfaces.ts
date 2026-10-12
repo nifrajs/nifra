@@ -4,6 +4,9 @@
  * Keep this deliberately product-focused: nifra.dev is the home of an open-source framework and
  * documentation MCP server, not a hosted customer-data API.
  */
+
+// The registry manifest scripts/version.ts bumps each release, so discovery cannot trail it.
+import registryManifest from "../../server.json" with { type: "json" }
 export const AGENTS_MD = [
   "# Nifra",
   "",
@@ -66,7 +69,7 @@ export const MCP_DISCOVERY = {
   title: "Nifra docs",
   description:
     "Nifra docs, runnable examples, and API types as an MCP server for any AI assistant.",
-  version: "3.5.0",
+  version: registryManifest.version,
   repository: {
     url: "https://github.com/nifrajs/nifra",
     source: "github",

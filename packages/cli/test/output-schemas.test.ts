@@ -1,11 +1,21 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { buildManifest, createWebApp } from "@nifrajs/web"
 import { collectCheckResult } from "../src/check.ts"
+import { applyDiagnosticRecipe } from "../src/fix-recipes.ts"
 import {
   outputSchemas,
+  planOutputSchemas,
   schemaSource,
   staleGeneratedSchemas,
   undeclaredPaths,
@@ -112,6 +122,8 @@ describe("generating a missing schema", () => {
         status: "missing",
         generated: false,
         dropped: [],
+        omitted: ["rows[].passwordHash", "tags"],
+        open: ["meta"],
       },
     ])
     expect(read(root, "routes/feed.backend.ts")).toBe(FEED)
@@ -129,11 +141,23 @@ describe("generating a missing schema", () => {
     expect(text).toContain(
       `export const loaderOutput = ${FEED_SCHEMA}\n\n/** The feed. */\nexport async function loader`,
     )
-    expect(text).toMatch(/\/\/ nifra:generated [0-9a-f]{8} - from the loader's return type;/)
+    expect(text).toMatch(
+      /\/\/ nifra:generated [0-9a-f]{8} - drafted from the loader's return type; review that the browser may see every field it declares\./,
+    )
 
     const again = await outputSchemas(root)
     expect(again.entries.map((e) => e.status)).toEqual(["current"])
     expect(again.ok).toBe(true)
+    // `meta` was drafted from `unknown`: --check and nifra check report the open value.
+    expect((await outputSchemas(root, { check: true })).ok).toBe(false)
+    writeFileSync(join(root, "routes/feed.tsx"), "export default () => null\n")
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    const open = check.diagnostics.filter(
+      (d) => d.code === "NF-C030" && d.message.includes("admits any value"),
+    )
+    expect(open.map((d) => [d.severity, d.line])).toEqual([
+      ["warning", text.split("\n").findIndex((line) => line.includes("meta: t.json()")) + 1],
+    ])
 
     // The written module runs as a route's backend half: the output guard accepts what its loader
     // returns and drops what the schema left out.
@@ -212,6 +236,32 @@ describe("generating a missing schema", () => {
     ])
     expect(report.written).toEqual([])
     expect(read(root, "routes/page.backend.ts")).toBe(source)
+  }, 60_000)
+})
+
+describe("check mode and union drafts", () => {
+  test("--check fails a missing schema; a typed one passes", async () => {
+    const root = project({
+      "routes/me.backend.ts": "export const loader = () => ({ name: 'Ada' })\n",
+    })
+    expect((await outputSchemas(root)).ok).toBe(true)
+    expect((await outputSchemas(root, { check: true })).ok).toBe(false)
+    expect((await outputSchemas(root, { write: true, check: true })).ok).toBe(true)
+  }, 60_000)
+
+  test("a union of object literals drafts each member without the keys it never sends", async () => {
+    const root = project({
+      "routes/pick.backend.ts": [
+        "export const loader = ({ request }: { request: Request }) =>",
+        "  request.url.endsWith('/a') ? { kind: 'a' as const, a: 1 } : { kind: 'b' as const, b: 'x' }",
+        "",
+      ].join("\n"),
+    })
+    await outputSchemas(root, { write: true })
+    const text = read(root, "routes/pick.backend.ts")
+    expect(text).not.toContain("t.optional(t.null())")
+    expect(text).toContain('kind: t.literal("a"),\n  a: t.number(),')
+    expect(text).toContain('kind: t.literal("b"),\n  b: t.string(),')
   }, 60_000)
 })
 
@@ -380,6 +430,92 @@ describe("a hand-written schema", () => {
     expect(report.ok).toBe(true)
     expect(read(root, "routes/me.backend.ts")).toBe(source)
   }, 60_000)
+})
+
+describe("a layout planned but not written", () => {
+  for (const typescript of [undefined, "typescript5", "typescript7"]) {
+    test(`${typescript ?? "the workspace TypeScript"} reads its types from the plan, not the disk`, async () => {
+      // On disk the type has one field; the planned layout moves it and adds a second.
+      const root = project({ "lib/rows.ts": "export interface Row { id: string }\n" }, typescript)
+      const half = [
+        'import type { Row } from "../backend/lib/rows"',
+        "export async function loader(): Promise<{ rows: Row[] }> {",
+        "  return { rows: [] }",
+        "}",
+        "",
+      ].join("\n")
+      const overlay = new Map([
+        ["backend/lib/rows.ts", "export interface Row { id: string; title: string }\n"],
+        ["routes/feed.backend.ts", half],
+      ])
+      const plan = await planOutputSchemas(
+        root,
+        ["routes/feed.backend.ts"],
+        (f) => overlay.get(f),
+        {
+          overlay,
+          draft: () => true,
+        },
+      )
+      expect(plan.warnings).toEqual([])
+      expect(plan.edits.get("routes/feed.backend.ts")).toContain(
+        "  rows: t.array(t.object({\n    id: t.string(),\n    title: t.string(),\n  })),",
+      )
+      expect(existsSync(join(root, "routes"))).toBe(false)
+      expect(existsSync(join(root, "backend"))).toBe(false)
+    }, 60_000)
+  }
+})
+
+describe("the NF-C030 fix", () => {
+  test("drafts the one declaration it names, as nifra schemas does, and leaves the rest", async () => {
+    const stale = [
+      "// nifra:generated 00000000 - an older draft",
+      "export const actionOutput = t.object({ old: t.string() })",
+      "export async function action() { return { ok: true } }",
+      "",
+    ].join("\n")
+    const half = `${FEED.replace('"@nifrajs/web"', '"@nifrajs/web"\nimport { t } from "@nifrajs/schema"')}${stale}`
+    const root = project({
+      "routes/feed.tsx": "export default () => null\n",
+      "routes/feed.backend.ts": half,
+    })
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    const finding = check.structuredDiagnostics?.find(
+      (d) => d.code === "NF-C030" && d.evidence?.includes("missing: loaderOutput") === true,
+    )
+    expect(finding?.fix).toEqual({ recipe: "schemas.draft", command: "nifra fix --code NF-C030" })
+    if (finding === undefined) return
+    expect(await applyDiagnosticRecipe(root, finding)).toEqual(["routes/feed.backend.ts"])
+    const fixed = read(root, "routes/feed.backend.ts")
+    expect(fixed).toContain(stale)
+    expect(fixed.match(/^import \{ t \}/gm)).toHaveLength(1)
+
+    const plain = project({ "routes/feed.backend.ts": FEED })
+    await outputSchemas(plain, { write: true })
+    const draft = /\/\/ nifra:generated [^\n]*\nexport const loaderOutput = [\s\S]*?\n\}\)\n/.exec(
+      read(plain, "routes/feed.backend.ts"),
+    )?.[0]
+    expect(draft).toBeDefined()
+    expect(fixed).toContain(draft ?? "")
+  })
+
+  test("refuses, with the reason, where the name is already bound", async () => {
+    const half = `import { loaderOutput } from "./shapes"\nvoid loaderOutput\n${FEED}`
+    const root = project({
+      "routes/feed.tsx": "export default () => null\n",
+      "routes/feed.backend.ts": half,
+      "routes/shapes.ts": "export const loaderOutput = 1\n",
+    })
+    const finding = (
+      await collectCheckResult(root, { lintsOnly: true })
+    ).structuredDiagnostics?.find((d) => d.code === "NF-C030")
+    if (finding === undefined) throw new Error("expected an NF-C030 finding")
+    await expect(applyDiagnosticRecipe(root, finding)).rejects.toThrow(
+      "no loaderOutput was drafted in routes/feed.backend.ts: `loaderOutput` already names something in this file",
+    )
+    expect(read(root, "routes/feed.backend.ts")).toBe(half)
+  })
 })
 
 describe("shapes", () => {

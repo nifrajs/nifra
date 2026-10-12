@@ -15,6 +15,7 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import type {
   AssuranceReport,
+  AssuredRoute,
   InvariantSetup,
   InvariantSetupResult,
   InvariantsConfig,
@@ -26,6 +27,7 @@ import {
   type ContractTestApp,
   runAdversarialContract,
 } from "@nifrajs/testing"
+import { RESPONSE_CONTRACT_BASELINE_HINT, responseContractGaps } from "./assure.ts"
 import {
   type CapabilityProjectReport,
   diffCapabilitySnapshots,
@@ -310,7 +312,7 @@ const messageOf = (error: unknown): string =>
 
 function finalize(
   statuses: readonly { level: number; name: string; ok: boolean; reasons: string[] }[],
-  routes: readonly { readonly responseContract?: "enforce" | "warn" | "unchecked" }[],
+  routes: readonly AssuredRoute[],
 ): VerificationLevelsResult {
   // Cumulative: the achieved level is the last rung with every rung below it also holding.
   let achieved = -1
@@ -322,6 +324,7 @@ function finalize(
   const enforced = declared.filter((route) => route.responseContract === "enforce").length
   const warnOnly = declared.filter((route) => route.responseContract === "warn").length
   const typedOnly = declared.filter((route) => route.responseContract === "unchecked").length
+  const gaps = responseContractGaps(routes)
   const responseContracts: ResponseContractStatus = {
     declared: declared.length,
     enforced,
@@ -333,14 +336,9 @@ function finalize(
       declared.length === 0
         ? ["no response/error schemas declared"]
         : [
-            ...(typedOnly > 0
-              ? [
-                  `${typedOnly} declared route(s) are typed-only; install responseContract("enforce")`,
-                ]
-              : []),
-            ...(warnOnly > 0
-              ? [`${warnOnly} declared route(s) are warn-only and still send the original payload`]
-              : []),
+            ...(gaps.typedOnlyReason === undefined ? [] : [gaps.typedOnlyReason]),
+            ...(gaps.warnOnlyReason === undefined ? [] : [gaps.warnOnlyReason]),
+            ...(typedOnly + warnOnly > 0 ? [RESPONSE_CONTRACT_BASELINE_HINT] : []),
           ],
   }
   return Object.freeze({

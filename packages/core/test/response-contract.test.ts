@@ -338,6 +338,188 @@ describe("a reply that does not come from the handler's return", () => {
   })
 })
 
+/**
+ * A `t` schema is closed by default, so plain enforcement turns an extra field into a 500. The schema
+ * also carries its JSON Schema, which - unlike Standard Schema - lists the declared keys, so
+ * `extra: "strip"` can project the payload onto them before validating.
+ */
+describe('responseContract: extra "strip"', () => {
+  const strip = (mode: "warn" | "enforce", logger: Logger = silentLogger) =>
+    server({ logger }).use(responseContract(mode, { extra: "strip" }))
+  const fetchJson = async (app: AnyServer, path: string) => {
+    const res = await app.fetch(new Request(`http://t${path}`))
+    return { status: res.status, body: await res.text() }
+  }
+  /** A schema carrying `jsonSchema` whose validator accepts anything, so the projection alone shows. */
+  const passthrough = (jsonSchema: object): StandardSchemaV1 =>
+    Object.assign(
+      {
+        "~standard": {
+          version: 1 as const,
+          vendor: "test",
+          validate: (value: unknown) => ({ value }),
+        },
+      },
+      { jsonSchema },
+    )
+
+  test("a closed t.object serves only its declared fields", async () => {
+    const res = await fetchJson(
+      strip("enforce").get("/me", { response: STRICT }, () => LEAK),
+      "/me",
+    )
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: "u1", name: "Ada" })
+    expect(res.body).not.toContain("SECRET")
+  })
+
+  test("projects nested objects, arrays, records and a nullable union", async () => {
+    const shape = t.object({
+      user: STRICT,
+      list: t.array(STRICT),
+      byId: t.record(STRICT),
+      maybe: t.union([STRICT, t.null()]),
+      none: t.union([STRICT, t.null()]),
+    })
+    const app = strip("enforce").get("/n", { response: shape }, () => ({
+      user: LEAK,
+      list: [LEAK, LEAK],
+      byId: { a: LEAK },
+      maybe: LEAK,
+      none: null,
+      extra: "SECRET",
+    }))
+    const res = await fetchJson(app, "/n")
+    const clean = { id: "u1", name: "Ada" }
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({
+      user: clean,
+      list: [clean, clean],
+      byId: { a: clean },
+      maybe: clean,
+      none: null,
+    })
+  })
+
+  test("a closed record keeps every key its pattern admits", async () => {
+    // Primitive values need no projection; the record still must not collapse to `{}`.
+    const shape = t.object({
+      labels: t.record(t.string(), { additionalProperties: false }),
+      tags: t.record(t.array(t.string()), { additionalProperties: false }),
+      users: t.record(STRICT, { additionalProperties: false }),
+      open: t.record(t.string()),
+    })
+    const app = strip("enforce").get("/r", { response: shape }, () => ({
+      labels: { one: "valid", two: "also-valid" },
+      tags: { x: ["1", "2"] },
+      users: { a: LEAK },
+      open: { k: "v" },
+    }))
+    const res = await fetchJson(app, "/r")
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({
+      labels: { one: "valid", two: "also-valid" },
+      tags: { x: ["1", "2"] },
+      users: { a: { id: "u1", name: "Ada" } },
+      open: { k: "v" },
+    })
+  })
+
+  test("a closed object drops keys no pattern admits and copies a key two patterns match", async () => {
+    const schema = passthrough({
+      type: "object",
+      additionalProperties: false,
+      properties: { id: { type: "string" } },
+      patternProperties: {
+        "^x-": {
+          type: "object",
+          properties: { keep: { type: "string" } },
+          additionalProperties: false,
+        },
+        "^x-both$": { type: "object" },
+      },
+    })
+    const row = { keep: "k", drop: "d" }
+    const outcome = await checkResponseContract(
+      schema,
+      { id: "1", "x-one": row, "x-both": row, other: "gone" },
+      "enforce",
+      { extra: "strip" },
+    )
+    expect(outcome).toEqual({
+      kind: "ok",
+      value: { id: "1", "x-one": { keep: "k" }, "x-both": row },
+    })
+  })
+
+  test("a pattern the engine cannot compile leaves the value to the validator", async () => {
+    const schema = passthrough({
+      type: "object",
+      additionalProperties: false,
+      patternProperties: { "(": { type: "string" } },
+    })
+    const value = { a: "kept", b: "kept" }
+    expect(await checkResponseContract(schema, value, "enforce", { extra: "strip" })).toEqual({
+      kind: "ok",
+      value,
+    })
+  })
+
+  test("an open object keeps its extras but still projects a closed child", async () => {
+    const shape = t.looseObject({ user: STRICT })
+    const app = strip("enforce").get("/o", { response: shape }, () => ({
+      user: LEAK,
+      note: "kept",
+    }))
+    expect(JSON.parse((await fetchJson(app, "/o")).body)).toEqual({
+      user: { id: "u1", name: "Ada" },
+      note: "kept",
+    })
+  })
+
+  test("a union of two object shapes is left to the validator", async () => {
+    // Projecting onto either branch could strip the fields that make the other one match.
+    const other = t.object({ id: t.string(), email: t.string() })
+    const app = strip("enforce").get("/u", { response: t.union([STRICT, other]) }, () => LEAK)
+    expect((await fetchJson(app, "/u")).status).toBe(500)
+  })
+
+  test("a declared getter on a row class is read", async () => {
+    class Row {
+      id = "u1"
+      secret = "SECRET"
+      get name(): string {
+        return "Ada"
+      }
+    }
+    const app = strip("enforce").get("/c", { response: STRICT }, () => new Row())
+    expect(JSON.parse((await fetchJson(app, "/c")).body)).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("warn names the fields strip would drop and serves the payload unchanged", async () => {
+    const { logger, records } = recorder()
+    const res = await fetchJson(
+      strip("warn", logger).get("/me", { response: STRICT }, () => LEAK),
+      "/me",
+    )
+    expect(JSON.parse(res.body)).toEqual(LEAK)
+    const detail = String(records.find((r) => r.message === "response contract")?.detail)
+    expect(detail).toContain("passwordHash, resetToken")
+  })
+
+  test("a schema without jsonSchema keeps its own semantics", async () => {
+    const res = await fetchJson(
+      strip("enforce").get("/z", { response: STRIPPING }, () => LEAK),
+      "/z",
+    )
+    expect(JSON.parse(res.body)).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("an unknown extra mode is refused when the plugin is built", () => {
+    expect(() => responseContract("enforce", JSON.parse('{"extra":"drop"}'))).toThrow(TypeError)
+  })
+})
+
 describe("checkResponseContract", () => {
   test("returns synchronously for a synchronous schema", () => {
     // An app that opts in should not pay a microtask per response for a check with no work to do.

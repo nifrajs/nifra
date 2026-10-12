@@ -152,6 +152,8 @@ export const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C038": "configuration",
   "NF-C039": "contract-witness",
   "NF-C040": "route-boundary",
+  "NF-C041": "route-boundary",
+  "NF-C042": "route-boundary",
   "NF-D001": "dependency",
   "NF-D002": "dependency",
   "NF-A001": "route-assurance",
@@ -456,8 +458,11 @@ async function diffScope(cwd: string, ref: string): Promise<ReviewScope> {
   if (!verified.ok) throw new ReviewInputError("invalid git ref")
   const commit = verified.stdout.trim()
   if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new ReviewInputError("invalid git ref")
+  // `--relative` keeps tracked paths app-relative, like `ls-files` and every finding, when the app is a
+  // subdirectory of the repository; without it no finding in a changed tracked file is in scope.
   const changed = await runGit(cwd, [
     "diff",
+    "--relative",
     "--name-only",
     "-z",
     "--diff-filter=ACDMRTUXB",

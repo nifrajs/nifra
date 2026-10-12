@@ -71,6 +71,26 @@ export default defineAssuranceConfig({
   },
 })`
 
+const CONTRACTS = `// nifra.assurance.ts
+// doc-check: skip - the backend is app-specific
+import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { backend } from "./backend"
+
+export default defineAssuranceConfig({
+  source: backend,
+  policy: {
+    rules: [/* first match owns each route: classify by path, method, capability ... */],
+    // Checked on every route it matches, whichever rule owns the route.
+    baseline: [
+      {
+        name: "response-contract",
+        match: { hasResponse: true },
+        require: [NIFRA_ASSURANCE.RESPONSE_CONTRACT],
+      },
+    ],
+  },
+})`
+
 export default function Verification() {
   return (
     <div className="prose">
@@ -142,6 +162,24 @@ export default function Verification() {
         database or container belongs in your own <code>setup</code>.
       </p>
       <CodeBlock code={FIXTURES} lang="ts" />
+
+      <h2>Response contracts</h2>
+      <p>
+        Next to the ladder, <code>nifra levels</code> counts the routes that declare a{" "}
+        <code>response</code> or <code>errors</code> schema and how each is held at runtime:{" "}
+        <i>enforced</i>, <i>warn-only</i> (checked, original payload still sent) or <i>typed-only</i>{" "}
+        (no <code>responseContract()</code> covers it). A typed-only route is usually registered on a
+        server other than the one the plugin is installed on, or before it; the report names the routes
+        and says which.
+      </p>
+      <p>
+        The count does not fail a level on its own. To make L1 require enforcement, add a{" "}
+        <code>baseline</code> rule selecting <code>hasResponse: true</code>: unlike{" "}
+        <code>rules</code>, where the first match owns a route, a baseline rule is checked on every
+        route it matches, so one entry covers every class. <code>nifra assure --strict</code> also fails
+        while any declared route is typed-only or warn-only.
+      </p>
+      <CodeBlock code={CONTRACTS} lang="ts" />
 
       <h2>For coding agents</h2>
       <p>

@@ -8,6 +8,7 @@ import {
   browserDenial,
   type Classification,
   createZoneClassifier,
+  declaredSide,
   importAllowed,
   importRuleMessage,
   parseZoneConfig,
@@ -250,6 +251,41 @@ describe("app zone settings", () => {
     expect(zoneOf("migrations/001-init.ts").zone).toBe("error")
   })
 
+  test("a path inside another's folder overrides it, and a single file can be listed", () => {
+    write("app/deck/server/mail.ts")
+    write("app/deck/server/views/Preview.tsx")
+    write("app/deck/server/mail.frontend.ts")
+    write("app/deck/Panel.tsx")
+    write("app/deck/env.ts")
+    write("app/deck/env.tsx")
+    write("app/deck/env.shared.ts")
+    write("app/tools/seed.ts")
+    const classifier = configured({
+      frontend: ["deck", "deck/server/views"],
+      backend: ["deck/server", "tools/seed.ts"],
+      shared: ["deck/env.ts"],
+    })
+    expect(classifier.classify(join(app, "deck/Panel.tsx")).zone).toBe("frontend")
+    expect(classifier.classify(join(app, "deck/server/mail.ts")).zone).toBe("backend")
+    expect(classifier.classify(join(app, "deck/server/views/Preview.tsx")).zone).toBe("frontend")
+    expect(classifier.classify(join(app, "deck/env.ts")).zone).toBe("shared")
+    expect(classifier.classify(join(app, "tools/seed.ts")).zone).toBe("backend")
+    // A listed file is not a folder: its name is no prefix for a sibling.
+    expect(classifier.classify(join(app, "deck/env.tsx")).zone).toBe("frontend")
+    const misplaced = configured({ backend: ["deck/env.shared.ts"] }).classify(
+      join(app, "deck/env.shared.ts"),
+    )
+    expect(misplaced.zone === "error" && misplaced.reason).toContain(
+      'is listed as backend in "nifra.zones"',
+    )
+    const against = configured({ frontend: ["deck"], backend: ["deck/server"] }).classify(
+      join(app, "deck/server/mail.frontend.ts"),
+    )
+    expect(against.zone === "error" && against.reason).toContain(
+      'sits in deck/server/, which "nifra.zones" lists as backend,',
+    )
+  })
+
   test("the app's package.json is read when no setting is passed", () => {
     const own = join(root, "own-config")
     mkdirSync(join(own, "jobs"), { recursive: true })
@@ -269,11 +305,11 @@ describe("app zone settings", () => {
     [{ packages: { "@ws/*": "server" } }, "must be one of frontend, backend, shared, library"],
     [{ packages: { "a*b": "backend" } }, 'may use "*" only at its end'],
     [{ backend: "migrations" }, "must be an array"],
-    [{ backend: ["migrations/*.ts"] }, "must be a plain folder path"],
+    [{ backend: ["migrations/*.ts"] }, "must be a plain path"],
     [{ backend: ["../outside"] }, 'may not contain ".."'],
-    [{ backend: ["/abs"] }, "must be a folder relative to the app"],
+    [{ backend: ["/abs"] }, "must be a folder or file relative to the app"],
     [{ shared: ["backend/util"] }, "inside backend/"],
-    [{ backend: ["jobs"], frontend: ["jobs/ui"] }, "a folder has one side"],
+    [{ backend: ["jobs"], frontend: ["./jobs/"] }, "listed as both backend and frontend"],
   ] as const)("refuses %j", (zones, message) => {
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(ZoneConfigError)
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(message)
@@ -343,5 +379,304 @@ describe("importAllowed", () => {
     expect(message).toContain("backend/db.ts")
     expect(message).toContain("*.fn.ts")
     expect(message).toContain("import type")
+  })
+})
+
+describe("per-entry package environments", () => {
+  const json = (value: unknown): string => JSON.stringify(value)
+  write(
+    "packages/split/package.json",
+    json({
+      name: "@ws/split",
+      type: "module",
+      exports: {
+        ".": { browser: "./src/browser.ts", default: "./src/index.ts" },
+        "./react": "./src/react.ts",
+        "./schema": "./src/schema.ts",
+        "./components/*": "./src/components/*.ts",
+        "./extra": "./src/extra.ts",
+      },
+      nifra: {
+        environment: {
+          ".": "backend",
+          "./react": "frontend",
+          "./schema": "library",
+          "./components/*": "frontend",
+          "./components/server-*": "backend",
+        },
+      },
+    }),
+  )
+  write(
+    "packages/split/src/index.ts",
+    'import { db } from "./db.ts"\nexport * from "./util.ts"\nexport const root = db\n',
+  )
+  write("packages/split/src/browser.ts", "export const root = 0\n")
+  write("packages/split/src/db.ts", "export const db = 1\n")
+  write("packages/split/src/util.ts", "export const util = 1\n")
+  write(
+    "packages/split/src/react.ts",
+    '// import { db } from "./db.ts"\nimport { util } from "./util.js"\nexport const lazy = () => import("./lazy.ts")\nexport const view = util\nimport "./styles.css"\nexport const worker = new URL("./worker.ts", import.meta.url)\n',
+  )
+  write("packages/split/src/react.d.ts", "export declare const view: number\n")
+  write("packages/split/src/lazy.ts")
+  write("packages/split/src/worker.ts")
+  write("packages/split/src/styles.css", '@import "./base.css";\n.x { background: url(img.png) }\n')
+  write("packages/split/src/base.css", "/* @import './orphan.css'; */\n")
+  write("packages/split/src/img.png", "")
+  write("packages/split/src/orphan.css", "")
+  write("packages/split/src/schema.ts")
+  write("packages/split/src/components/Button.ts")
+  write("packages/split/src/components/server-Table.ts")
+  write("packages/split/src/extra.ts")
+  write("packages/split/src/orphan.ts")
+  write(
+    "packages/same/package.json",
+    json({
+      name: "@ws/same",
+      exports: { ".": "./index.js", "./react": "./index.js" },
+      nifra: { environment: { ".": "backend", "./react": "frontend" } },
+    }),
+  )
+  write("packages/same/index.js")
+  write(
+    "packages/bad/package.json",
+    json({ name: "@ws/bad", nifra: { environment: { react: "frontend" } } }),
+  )
+  write("packages/bad/index.js")
+  write(
+    "app/node_modules/mapped/package.json",
+    json({
+      name: "mapped",
+      main: "lib/index.js",
+      nifra: { environment: { ".": "library", "./server": "backend" } },
+    }),
+  )
+  write("app/node_modules/mapped/lib/index.js", 'module.exports = require("./shared.js")\n')
+  write("app/node_modules/mapped/lib/shared.js")
+  write("app/node_modules/mapped/server.js", 'require("./lib/secret.js")\n')
+  write("app/node_modules/mapped/lib/secret.js")
+  write(
+    "app/node_modules/nested/package.json",
+    json({ name: "nested", nifra: { environment: "backend" } }),
+  )
+  write("app/node_modules/nested/dist/esm/package.json", json({ type: "module" }))
+  write("app/node_modules/nested/dist/esm/index.js")
+  for (const name of ["split", "same", "bad"])
+    symlinkSync(join(root, "packages", name), join(app, `node_modules/@ws/${name}`))
+
+  const entries = createZoneClassifier({ appRoot: app })
+  const split = (path: string): string => join(app, "node_modules/@ws/split/src", path)
+  const byPath = (path: string): Classification => entries.classify(split(path))
+
+  test("a file takes the side of every mapped entry that reaches it, under any condition", () => {
+    expect(byPath("react.ts")).toEqual({ zone: "frontend" })
+    expect(byPath("lazy.ts")).toEqual({ zone: "frontend" })
+    for (const path of ["worker.ts", "styles.css", "base.css", "img.png"])
+      expect({ path, zone: byPath(path).zone }).toEqual({ path, zone: "frontend" })
+    expect(byPath("orphan.css").zone).toBe("error")
+    expect(byPath("db.ts")).toEqual({ zone: "backend" })
+    expect(byPath("browser.ts")).toEqual({ zone: "backend" })
+    expect(byPath("schema.ts")).toEqual({
+      zone: "library",
+      packageName: "@ws/split",
+      declared: "library",
+    })
+    // The frontend and backend entries both reach it, so either side may load it.
+    expect(byPath("util.ts")).toEqual({
+      zone: "library",
+      packageName: "@ws/split",
+      declared: "library",
+    })
+    expect(byPath("components/Button.ts")).toEqual({ zone: "frontend" })
+    expect(byPath("components/server-Table.ts")).toEqual({ zone: "backend" })
+  })
+
+  test("a file no mapped entry reaches is an error, naming the entries the map leaves out", () => {
+    for (const path of ["orphan.ts", "extra.ts"]) {
+      const result = byPath(path)
+      expect(result.zone).toBe("error")
+      expect(result.zone === "error" && result.reason).toContain(
+        "no mapped entry reaches this file",
+      )
+      expect(result.zone === "error" && result.reason).toContain('the map leaves out "./extra"')
+    }
+  })
+
+  test("an import is decided by the entry it names", () => {
+    const root = entries.classify(split("index.ts"), "@ws/split")
+    expect(root).toEqual({ zone: "backend", packageName: "@ws/split", entry: "." })
+    expect(browserDenial(root)).toBe('package "@ws/split" declares its "." entry backend-only')
+    const react = entries.classify(split("react.ts"), "@ws/split/react")
+    expect(react).toEqual({ zone: "frontend", packageName: "@ws/split", entry: "./react" })
+    expect(browserDenial(react)).toBeUndefined()
+    expect(
+      entries.classify(split("components/Button.ts"), "@ws/split/components/Button").zone,
+    ).toBe("frontend")
+    expect(
+      entries.classify(split("components/server-Table.ts"), "@ws/split/components/server-Table")
+        .zone,
+    ).toBe("backend")
+    expect(entries.classify(split("schema.ts"), "@ws/split/schema")).toEqual({
+      zone: "library",
+      packageName: "@ws/split",
+      declared: "library",
+      entry: "./schema",
+    })
+    // An editor resolves the entry to its declaration file, which is types only.
+    expect(entries.classify(split("react.d.ts"), "@ws/split/react").zone).toBe("frontend")
+  })
+
+  test("an entry the map leaves out is an error when imported", () => {
+    const extra = entries.classify(split("extra.ts"), "@ws/split/extra")
+    expect(extra).toMatchObject({ zone: "error", entry: "./extra" })
+    expect(extra.zone === "error" && extra.reason).toContain(
+      '"@ws/split/extra" names the "./extra" entry of package "@ws/split"',
+    )
+  })
+
+  test("a file the named entry does not reach is judged by its path", () => {
+    // An alias that points the frontend entry's name at backend code.
+    expect(entries.classify(split("db.ts"), "@ws/split/react")).toEqual({ zone: "backend" })
+  })
+
+  test("two entries sharing one file keep their own sides", () => {
+    const file = join(app, "node_modules/@ws/same/index.js")
+    expect(entries.classify(file)).toEqual({
+      zone: "library",
+      packageName: "@ws/same",
+      declared: "library",
+    })
+    expect(entries.classify(file, "@ws/same").zone).toBe("backend")
+    expect(entries.classify(file, "@ws/same/react").zone).toBe("frontend")
+    expect(entries.classify(file, "@ws/same").zone).toBe("backend")
+  })
+
+  test("a third-party package without exports maps main and its subpath files", () => {
+    const mapped = (path: string): string => join(app, "node_modules/mapped", path)
+    expect(entries.classify(mapped("lib/shared.js"))).toMatchObject({ declared: "library" })
+    const server = entries.classify(mapped("server.js"))
+    expect(server).toEqual({
+      zone: "library",
+      packageName: "mapped",
+      modulePath: "mapped/server.js",
+      declared: "backend",
+    })
+    expect(entries.classify(mapped("lib/secret.js"))).toMatchObject({ declared: "backend" })
+    expect(browserDenial(entries.classify(mapped("server.js"), "mapped/server"))).toBe(
+      'package "mapped" declares its "./server" entry backend-only',
+    )
+    expect(entries.classify(mapped("package.json"), "mapped/other")).toMatchObject({
+      zone: "error",
+      entry: "./other",
+    })
+  })
+
+  test("a third-party package is read from its own manifest, past a nested one", () => {
+    expect(entries.classify(join(app, "node_modules/nested/dist/esm/index.js"))).toMatchObject({
+      declared: "backend",
+    })
+  })
+
+  test("an invalid map is an error for the package, naming its manifest and key", () => {
+    const result = entries.classify(join(app, "node_modules/@ws/bad/index.js"))
+    expect(result).toMatchObject({ zone: "error", package: "@ws/bad" })
+    expect(result.zone === "error" && result.reason).toContain(
+      'package.json "nifra.environment": key "react" must be "." or a subpath starting with "./"',
+    )
+  })
+
+  test("a map outranks the app's package defaults", () => {
+    const configured = createZoneClassifier({
+      appRoot: app,
+      zones: parseZoneConfig({ packages: { "@ws/*": "library" } }, "test"),
+    })
+    expect(configured.classify(split("db.ts")).zone).toBe("backend")
+  })
+
+  test.each([
+    ["backend", "pkg", "backend"],
+    [{ ".": "backend", "./react": "frontend" }, "pkg/react", "frontend"],
+    [{ ".": "backend", "./*": "library", "./ui/*": "frontend" }, "pkg/ui/x", "frontend"],
+    [{ ".": "backend" }, "pkg/react", undefined],
+    [{ ".": "backend", "./react": "frontend" }, "pkg/react?raw#x", "frontend"],
+    [{ ".": "backend", "./react": "frontend" }, "pkg/react#x?y", "frontend"],
+    // A long run of `#` before a line break: the query/hash cut takes the first one.
+    [{ ".": "backend", "./react": "frontend" }, `pkg/react${"#".repeat(20_000)}\n`, "frontend"],
+    [{ ".": "server" }, "pkg", undefined],
+    ["server", "pkg", undefined],
+  ] as const)("declaredSide(%j, %s) is %s", (environment, specifier, side) => {
+    expect(declaredSide(environment, specifier)).toBe(side)
+  })
+})
+
+/**
+ * A frontend entry that only types against a backend file must not make it frontend too: the two
+ * owners would read as `library`, and a browser import of the file by path would pass.
+ */
+describe("type-only imports grant no entry ownership", () => {
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "@ws/typed",
+      exports: { ".": "./server.ts", "./browser": "./browser.ts" },
+      nifra: { environment: { ".": "backend", "./browser": "frontend" } },
+    }),
+    "server.ts": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "valueDefault",
+      "sideEffect",
+      "named",
+      "mixed",
+    ]
+      .map((name) => `import "./${name}.ts"`)
+      .join("\n"),
+    "browser.ts": [
+      'import type { A } from "./a.ts"',
+      'import type B from "./b.ts"',
+      'import type * as C from "./c.ts"',
+      'export type { D } from "./d.ts"',
+      'export type * from "./e.ts"',
+      'import { type F, type G as H, } from "./f.ts"',
+      'export { type G } from "./g.ts"',
+      "import type {",
+      "  H,",
+      '} from "./h.ts"',
+      'import type from "./valueDefault.ts"',
+      'import {} from "./sideEffect.ts"',
+      'import { type as named } from "./named.ts"',
+      'import M, { type T } from "./mixed.ts"',
+    ].join("\n"),
+  }
+  for (const [path, text] of Object.entries(files)) write(`packages/typed/${path}`, text)
+  for (const name of ["a", "b", "c", "d", "e", "f", "g", "h"]) write(`packages/typed/${name}.ts`)
+  for (const name of ["valueDefault", "sideEffect", "named", "mixed"])
+    write(`packages/typed/${name}.ts`)
+  const typedApp = join(root, "typed-app")
+  write("typed-app/package.json", JSON.stringify({ name: "typed-app" }))
+  const classifier = createZoneClassifier({ appRoot: typedApp })
+  const zoneOf = (name: string): string =>
+    classifier.classify(join(root, "packages/typed", `${name}.ts`)).zone
+
+  test.each(["a", "b", "c", "d", "e", "f", "g", "h"])("%s.ts stays backend", (name) => {
+    expect(zoneOf(name)).toBe("backend")
+    expect(browserDenial(classifier.classify(join(root, "packages/typed", `${name}.ts`)))).toBe(
+      "it is backend code",
+    )
+  })
+
+  test.each([
+    "valueDefault",
+    "sideEffect",
+    "named",
+    "mixed",
+  ])("%s.ts is loaded at runtime, so both entries own it", (name) => {
+    expect(zoneOf(name)).toBe("library")
   })
 })

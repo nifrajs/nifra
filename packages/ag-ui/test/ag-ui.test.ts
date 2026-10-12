@@ -645,7 +645,7 @@ describe("mountAgUI resumable streams", () => {
     ])
     // Another caller's reconnect finds no turn; a refused owner stops the request before any replay.
     expect((await call(replayInput({ "x-user": "bob", "last-event-id": "0" }))).status).toBe(409)
-    expect((await call(replayInput({ "last-event-id": "0" }))).status).toBe(400)
+    expect((await call(replayInput({ "last-event-id": "0" }))).status).toBe(403)
     // Another caller reusing the run id records a turn of its own; the owner's replay is unchanged.
     expect(await results(await call(replayInput({ "x-user": "bob" })))).toEqual([
       { answer: "for bob" },
@@ -653,6 +653,81 @@ describe("mountAgUI resumable streams", () => {
     expect(
       await results(await call(replayInput({ "x-user": "alice", "last-event-id": "0" }))),
     ).toEqual([{ answer: "for alice" }])
+  })
+})
+
+describe("mountAgUI refusals and failures", () => {
+  const challenge = (): Response =>
+    new Response("sign in", { status: 401, headers: { "www-authenticate": "Bearer" } })
+
+  test("a Response thrown from ports answers the request as built", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: () => {
+        throw challenge()
+      },
+    })
+    const res = await call(runInput({ forwardedProps: { input: { prompt: "x" } } }))
+    expect(res.status).toBe(401)
+    expect(res.headers.get("www-authenticate")).toBe("Bearer")
+  })
+
+  test("any other throw from ports is a fault for the app, not a bad request", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: () => {
+        throw new Error("store unreachable")
+      },
+    })
+    await expect(call(runInput({ forwardedProps: { input: { prompt: "x" } } }))).rejects.toThrow(
+      "store unreachable",
+    )
+  })
+
+  test("a body the run never reads is answered by the shared body lane", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, { agent: definition(), ports: ports() })
+    const post = (headers: Record<string, string>) =>
+      call(
+        new Request("http://local/agui", { method: "POST", headers, body: "threadId=t&runId=r" }),
+      )
+    const unread = await post({ "content-type": "text/plain" })
+    expect(unread.status).toBe(415)
+    expect(await unread.json()).toEqual({ ok: false, error: "unsupported_media_type" })
+    // A form another site posts with the visitor's cookies is refused before it is parsed.
+    const crossSite = await post({
+      "content-type": "application/x-www-form-urlencoded",
+      origin: "https://evil.test",
+    })
+    expect(crossSite.status).toBe(403)
+    expect(await crossSite.json()).toEqual({ ok: false, error: "forbidden_origin" })
+  })
+
+  test("evidenceOwner refuses with 403, or answers with a Response it throws", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports({ model: outputModel({ answer: "hi" }) }),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+      evidenceOwner: (c) => {
+        if (c.req.headers.get("x-session") === "expired") throw challenge()
+        throw new Error("unauthenticated")
+      },
+    })
+    const owned = (headers: Record<string, string>) =>
+      new Request("http://local/agui", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ threadId: "thread-1", runId: "run-1" }),
+      })
+    const refused = await call(owned({}))
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: "forbidden" })
+    const expired = await call(owned({ "x-session": "expired" }))
+    expect(expired.status).toBe(401)
+    expect(expired.headers.get("www-authenticate")).toBe("Bearer")
   })
 })
 

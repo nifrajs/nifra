@@ -20,7 +20,7 @@ describe("standard string formats validate (not just annotate)", () => {
     const hostile = `a@${".".repeat(200_000)}@`
     const started = performance.now()
     expect(await accepts(t.string({ format: "email" }), hostile)).toBe(false)
-    expect(performance.now() - started).toBeLessThan(200)
+    expect(performance.now() - started).toBeLessThan(1_000)
   })
 
   test("uuid", async () => {

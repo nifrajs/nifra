@@ -35,6 +35,7 @@ import {
   NIFRA_ASSURANCE_IDS,
   validEvidenceId,
 } from "./route-assurance.ts"
+import type { CatalogRoute } from "./route-catalog.ts"
 import type {
   RawAfterHandle,
   RawAround,
@@ -43,7 +44,9 @@ import type {
   RawDerive,
   RawErrorHandler,
 } from "./route-execution.ts"
+import { compileRouteExecutionPlan } from "./route-execution.ts"
 import { type RouteLaneSelection, selectRouteLanes } from "./route-lanes.ts"
+import { compileRouteProgram } from "./route-program.ts"
 
 export interface RouteCompilerContext {
   readonly maxBodyBytes: number
@@ -81,6 +84,108 @@ export interface CompiledRouteOptions {
   readonly routeAssurance: readonly AssuranceDeclaration[]
   readonly authStages: readonly RawAuthStage[]
   readonly authenticated: boolean
+}
+
+const RESPONSE_CONTRACT_EVIDENCE: AssuranceDeclaration = Object.freeze({
+  id: NIFRA_ASSURANCE_IDS.RESPONSE_CONTRACT,
+  source: "response-contract",
+  scope: "plugin",
+})
+
+function responseDefinitionOf(
+  schema: RouteSchema | undefined,
+): ResponseContractDefinition | undefined {
+  return schema?.response !== undefined || schema?.errors !== undefined
+    ? {
+        ...(schema.response === undefined ? {} : { response: schema.response }),
+        ...(schema.errors === undefined ? {} : { errors: schema.errors }),
+      }
+    : undefined
+}
+
+/**
+ * Recompile a route another server compiled, under the response contract and effect ledger the
+ * adopting server installed and the route's own server did not. Both only add a check or a record,
+ * so a merged route can never serve more than it did standalone - and without this, the same
+ * `.use()` covered a `group()` route but not a `merge()`d one. A route that already resolved its
+ * own contract or ledger keeps it.
+ */
+export function adoptRouteRuntimes(
+  route: CatalogRoute,
+  responseContractRuntime: ResponseContractRuntime | undefined,
+  effectLedgerRuntime: EffectLedgerRuntime | undefined,
+): CatalogRoute {
+  const { entry, descriptor } = route
+  const definition =
+    entry.responseContract === undefined && responseContractRuntime !== undefined
+      ? responseDefinitionOf(entry.schema)
+      : undefined
+  const ledgered =
+    entry.ledgered ??
+    effectLedgerRuntime?.resolve(descriptor.capabilities ?? [], route.method, route.path)
+  if (definition === undefined && ledgered === entry.ledgered) return route
+  const responseContract =
+    definition === undefined || responseContractRuntime === undefined
+      ? entry.responseContract
+      : { runtime: responseContractRuntime, definition }
+  // Either runtime rules out every fused lane, so the route needs only the generic plan here - and
+  // nothing the source server's validation-error default decided about fusion can matter any more.
+  const lanes = selectRouteLanes({
+    schema: entry.schema,
+    hasAuth: entry.authStages.length > 0,
+    hasIdempotency: entry.idempotent !== undefined,
+    hasLedger: ledgered !== undefined,
+    hasResponseContract: responseContract !== undefined,
+    hasDecorations: entry.hasDecorations,
+    derives: entry.derives.length,
+    beforeHandle: entry.beforeHandle.length,
+    afterHandle: entry.afterHandle.length,
+    onError: entry.onError.length,
+    around: entry.around.length,
+    defaultOnValidationError: false,
+  })
+  const program = compileRouteProgram({
+    schema: entry.schema,
+    handler: entry.handler,
+    derives: entry.derives,
+    authStages: entry.authStages,
+    beforeHandle: entry.beforeHandle,
+    afterHandle: entry.afterHandle,
+    onError: entry.onError,
+    decorations: entry.decorations,
+    hasDecorations: entry.hasDecorations,
+    bodySchema: entry.schema?.body,
+    bodyLimit: entry.bodyLimit,
+    responseContract,
+  })
+  const execution = compileRouteExecutionPlan({
+    lane: lanes.lane,
+    contextless: false,
+    hasAround: entry.around.length > 0,
+    hasLedger: ledgered !== undefined,
+    fusedWeb: undefined,
+    fusedBody: undefined,
+    fusedLane: undefined,
+  })
+  const enforced = definition !== undefined && responseContractRuntime?.mode === "enforce"
+  return {
+    ...route,
+    entry: {
+      ...entry,
+      ledgered,
+      responseContract,
+      lifecycleHookLane: undefined,
+      execution,
+      program,
+    },
+    descriptor:
+      definition === undefined || responseContractRuntime === undefined
+        ? descriptor
+        : { ...descriptor, responseContract: responseContractRuntime.mode },
+    assurance: enforced
+      ? Object.freeze([...route.assurance, RESPONSE_CONTRACT_EVIDENCE])
+      : route.assurance,
+  }
 }
 
 /** Resolve all registration-time policy and lane facts for one route. */
@@ -181,13 +286,7 @@ export function compileRouteOptions(
     context.maxBodyBytes,
   )
   const ledgered = context.effectLedgerRuntime?.resolve(capabilities, method, path)
-  const responseDefinition =
-    schema?.response !== undefined || schema?.errors !== undefined
-      ? {
-          ...(schema.response === undefined ? {} : { response: schema.response }),
-          ...(schema.errors === undefined ? {} : { errors: schema.errors }),
-        }
-      : undefined
+  const responseDefinition = responseDefinitionOf(schema)
   const contracted =
     context.responseContractRuntime !== undefined && responseDefinition !== undefined
       ? { runtime: context.responseContractRuntime, definition: responseDefinition }
@@ -208,15 +307,7 @@ export function compileRouteOptions(
   })
 
   const routeAssurance: AssuranceDeclaration[] = [...context.activeAssurance, ...handlerAssurance]
-  if (contracted?.runtime.mode === "enforce") {
-    routeAssurance.push(
-      Object.freeze({
-        id: NIFRA_ASSURANCE_IDS.RESPONSE_CONTRACT,
-        source: "response-contract",
-        scope: "plugin",
-      }),
-    )
-  }
+  if (contracted?.runtime.mode === "enforce") routeAssurance.push(RESPONSE_CONTRACT_EVIDENCE)
   for (const id of schema?.assurance ?? []) {
     if (!validEvidenceId(id)) {
       throw new Error(

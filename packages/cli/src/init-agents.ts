@@ -258,7 +258,7 @@ function nameMember(
   return { text: rewritten, named }
 }
 
-interface PinScan {
+export interface PinScan {
   /** The input with every stale pin rewritten - every other character untouched. */
   readonly text: string
   /** Pins found, current or stale. */
@@ -302,8 +302,9 @@ function repinRegistry(text: string, target: string, member?: string): PinScan {
   return named ? { ...scan, text: rewritten, named: member } : scan
 }
 
-/** Every file that carries the pin, and the part of it --sync-mcp may rewrite. */
-const PIN_SITES: readonly {
+/** Every file that carries the pin, and the part of it --sync-mcp and `nifra upgrade --write` may
+ * rewrite. */
+export const PIN_SITES: readonly {
   readonly path: string
   readonly repin: (text: string, target: string, member?: string) => PinScan
 }[] = [

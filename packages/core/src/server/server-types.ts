@@ -59,10 +59,18 @@ export interface ServerOptions {
    * `__proto__` key, or a `constructor` carrying a `prototype`, is the payload shape that turns a
    * later innocent merge/assign into prototype pollution. `"reject"` (default) answers the same
    * flat 400 as malformed JSON; `"strip"` removes the offending keys and continues; `"ignore"`
-   * parses as-is (only for routes that never merge body input into other objects). Clean payloads
-   * pay a substring pre-scan only - the deep walk runs solely on suspect text.
+   * parses as-is (only for routes that never merge body input into other objects). Every guarded
+   * payload pays one iterative pass over its parsed object nodes; `"ignore"` skips it.
    */
   readonly protoPoisoning?: "reject" | "strip" | "ignore"
+  /**
+   * Other sites whose HTML forms may post to a body-schema route: exact origins, or a function that
+   * receives the `Origin`. A urlencoded, multipart or `text/plain` body is one a form on any site can
+   * send with the visitor's cookies and no preflight, so one whose `Origin` names another site is
+   * refused with `403` before it is read. Same-origin posts and requests without an `Origin`, such
+   * as server-to-server calls, pass. JSON is not affected: a browser preflights it, so CORS decides.
+   */
+  readonly formOrigins?: ReadonlyArray<string> | ((origin: string) => boolean)
   /**
    * Declare that every `Request` reaching `app.fetch` was framed by a runtime HTTP parser, so its
    * `Content-Length` is an exact transport boundary rather than a hint. Set this ONLY when the
@@ -81,9 +89,12 @@ export interface ServerOptions {
    * untrusted input.
    */
   readonly trustBodyFraming?: boolean
-  /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun - frames over this are rejected
-   * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).
-   * Default: `maxBodyBytes` (1 MB). */
+  /**
+   * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
+   * socket closes with `1009`. Default: `maxBodyBytes` (1 MB). Bun and Node stop buffering at the cap,
+   * so a huge frame is never held in memory; on Bun a mounted app's smaller cap, and on Deno and
+   * Workers every cap, is checked after the runtime has buffered the whole message.
+   */
   readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number

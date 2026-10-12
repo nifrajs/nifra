@@ -109,3 +109,45 @@ test("a type parameter list is not an element, and a .ts module holds no JSX", (
   const plain = 'const x = <Tag>value\nconst y = "<div className=\\"flex\\">"\n'
   expect(migrateTailwindSource(plain, "src/cast.ts").changed).toBe(false)
 })
+
+test("the generated block goes after a directive with a comment above it, never before it", () => {
+  const source = [
+    "// Button - shared UI",
+    '"use client"',
+    'import { useState } from "react"',
+    "",
+    "export function Button() {",
+    "  const [n] = useState(0)",
+    '  return <button className="p-4">{n}</button>',
+    "}",
+    "",
+  ].join("\n")
+  const result = migrateTailwindSource(source, "frontend/Button.tsx")
+  expect(result.changed).toBe(true)
+  expect(
+    result.source.startsWith(
+      '// Button - shared UI\n"use client"\nimport { useState } from "react"\n\nimport * as nifraStylex from "@stylexjs/stylex"\n',
+    ),
+  ).toBe(true)
+})
+
+test("a trailing comment on the last import does not push the generated block past the code", () => {
+  const source = [
+    'import { h } from "preact" // jsx factory',
+    "import {",
+    "  a, // first",
+    '} from "./a" with { type: "json" } /* why */',
+    'export const badge = <span className="p-4">new</span>',
+    "",
+  ].join("\n")
+  const result = migrateTailwindSource(source, "frontend/Card.tsx")
+  expect(result.changed).toBe(true)
+  expect(
+    result.source.startsWith(
+      'import { h } from "preact" // jsx factory\nimport {\n  a, // first\n} from "./a" with { type: "json" } /* why */\nimport * as nifraStylex from "@stylexjs/stylex"\n\nconst nifraStyles = nifraStylex.create(',
+    ),
+  ).toBe(true)
+  expect(result.source.indexOf("const nifraStyles")).toBeLessThan(
+    result.source.indexOf("export const badge"),
+  )
+})

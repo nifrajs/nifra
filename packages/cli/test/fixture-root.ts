@@ -28,3 +28,15 @@ export function writeAppFile(root: string, path: string, content: string): strin
   writeFileSync(file, content)
   return file
 }
+
+/** A minimal tsconfig.json, so `nifra check` typechecks a fixture's TypeScript instead of failing it. */
+export const FIXTURE_TSCONFIG = JSON.stringify({
+  compilerOptions: {
+    module: "preserve",
+    moduleResolution: "bundler",
+    allowImportingTsExtensions: true,
+    noEmit: true,
+    skipLibCheck: true,
+    target: "esnext",
+  },
+})

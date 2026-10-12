@@ -345,6 +345,25 @@ const typecheckRule: CheckRule = {
         }),
       )
     }
+    if (tc.sourcesWithoutTsconfig !== undefined) {
+      findings.push(
+        legacyDiagnostic("typecheck", {
+          severity: "error",
+          file: "tsconfig.json",
+          message: `${tc.sourcesWithoutTsconfig} TypeScript file(s) but no tsconfig.json in this directory - the typecheck gate did NOT run`,
+          fix: "add a tsconfig.json that includes the project's sources",
+          suggestion: {
+            kind: "manual",
+            title: "Add a tsconfig.json so the contract gate can run",
+            steps: [
+              "Create tsconfig.json in the directory `nifra check` runs from, with `include` covering the project's TypeScript sources.",
+              "In a monorepo, run `nifra check` from each app that has its own tsconfig.json.",
+              "Run `nifra_check` again: the typecheck now runs `tsc --noEmit -p tsconfig.json`.",
+            ],
+          },
+        }),
+      )
+    }
     if (tc.ran && !tc.ok) {
       const lines = (tc.output ?? "").split("\n")
       let matched = false
@@ -1083,7 +1102,9 @@ const contractRule: CheckRule = {
         }),
       ]
     }
-    if (contract.vacuous) {
+    // `vacuous` describes the routes as they are now, so it only stands in for drift when the lock has
+    // none: a lock whose schemas were all deleted is drift, not an empty contract.
+    if (contract.vacuous && contract.error === undefined && contract.diagnostics.length === 0) {
       return [
         diagnostic({
           code: LEGACY_RULE_CODES["contract-drift"]!,

@@ -227,6 +227,88 @@ describe("assigned secrets", () => {
   })
 })
 
+describe("message catalogs and placeholders", () => {
+  const scan = (text: string, more: Partial<SecretScanInput> = {}) =>
+    rules(
+      scanForSecrets({
+        ...more,
+        sources: [{ name: "frontend/locales/is.ts", text, firstParty: true }],
+      }),
+    )
+  const prose = Array.from(
+    { length: 10 },
+    (_, i) => `  line${i}: "Vistaðu breytingarnar áður en þú heldur áfram (${i})",`,
+  )
+  const catalog = (...entries: string[]): string =>
+    ["export const messages = {", ...prose, ...entries, "}", ""].join("\n")
+
+  test("a word-cased label in a message catalog names a field, in any language", () => {
+    expect(
+      scan(
+        catalog(
+          '  password: "Lykilorðsverndarstillingar",',
+          '  "vaultPassword": "Eyðublaðalykilorð",',
+          '  settings: { signingSecret: "Undirskriftar-Lykill" },',
+          "  // a comment with a quote ' and a brace {",
+          '  hint: /[/"]{2}/.test("x") ? "já" : "nei",',
+          '  apiToken: "API-Aðgangslyklastjórnun",',
+        ),
+      ),
+    ).toEqual([])
+  })
+
+  test("the label outside a catalog, or among values that are mostly single words, is a finding", () => {
+    const finding = ['assigned-secret: literal assigned to "password"']
+    expect(scan('export const labels = { password: "Lykilorðsverndarstillingar" }\n')).toEqual(
+      finding,
+    )
+    const words = Array.from({ length: 10 }, (_, i) => `  w${i}: "Vista${i}",`)
+    expect(
+      scan(
+        [
+          "export const messages = {",
+          ...words,
+          '  password: "Lykilorðsverndarstillingar",',
+          "}",
+        ].join("\n"),
+      ),
+    ).toEqual(finding)
+    // A catalog nested in a function is not a top-level object, so it is not recognized.
+    expect(
+      scan(
+        `export function messages() {\n  return ${catalog('  password: "Lykilorðsverndarstillingar",')}}\n`,
+      ),
+    ).toEqual(finding)
+  })
+
+  test("a catalog still fails on random data, a key format and a private environment value", () => {
+    expect(scan(catalog('  password: "Zq8mW2vX9pLr4TbN7yKc3HdF",'))).toEqual([
+      'assigned-secret: literal assigned to "password"',
+    ])
+    expect(scan(catalog('  password: "LykilordsVerndarStillingXyZ",'))).toEqual([
+      'assigned-secret: literal assigned to "password"',
+    ])
+    expect(scan(catalog(`  stripe: "${STRIPE}",`))).toEqual(["key-format: Stripe secret key"])
+    expect(
+      scan(catalog('  password: "Lykilorðsverndarstillingar",'), {
+        env: { VAULT_PASSWORD: "Lykilorðsverndarstillingar" },
+      }),
+    ).toEqual(["private-env-value: value of VAULT_PASSWORD"])
+  })
+
+  test("a placeholder segment marks a documentation value; a word that only contains one does not", () => {
+    for (const value of [
+      "your_signing_secret_goes_here",
+      join2("sig_", "generated_on_first_run"),
+      "Sample-Webhook-Secret-Value-0001",
+    ])
+      expect(scan(`export const docs = { secret: "${value}" }\n`)).toEqual([])
+    expect(scan('export const docs = { secret: "yourselfZq8mW2vX9pLr4Tb" }\n')).toEqual([
+      'assigned-secret: literal assigned to "secret"',
+    ])
+  })
+})
+
 describe("private environment values", () => {
   const VALUE = "Hunter2#Correct+Horse-9"
   const env = { DATABASE_PASSWORD: VALUE }

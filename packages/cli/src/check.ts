@@ -19,7 +19,7 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { specifierPackage } from "@nifrajs/web/zones"
+import { declaredSide, specifierPackage } from "@nifrajs/web/zones"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
@@ -33,6 +33,7 @@ import {
 import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { installedManifest } from "./internal/installed-package.ts"
 import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
@@ -95,6 +96,10 @@ interface TypecheckResult {
   /** tsconfig.json exists but no `typescript` install was found walking up from cwd. The contract
    * gate could not run - the caller surfaces this as a FAILING diagnostic, never a silent skip. */
   readonly missingTypeScript?: boolean
+  /** No tsconfig.json at the project root. Fails the check only when TypeScript sources exist. */
+  readonly missingTsconfig?: boolean
+  /** TypeScript sources the scan found with no tsconfig.json to typecheck them. */
+  readonly sourcesWithoutTsconfig?: number
   /** Every file in the compiler's program, absolute. Absent when the compiler listed none. */
   readonly programFiles?: readonly string[]
   /** Zoned TypeScript files outside the program, project-relative: the typecheck never read them. */
@@ -123,7 +128,7 @@ function resolveTscBin(cwd: string): string | undefined {
 async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckResult> {
   const tsconfig = join(cwd, "tsconfig.json")
   if (!(await Bun.file(tsconfig).exists()))
-    return { ran: false, ok: true, note: "no tsconfig.json" }
+    return { ran: false, ok: true, missingTsconfig: true, note: "no tsconfig.json" }
   // Routes import their generated `./+types` modules; bring them up to date before tsc reads them.
   const { refreshRouteTypes } = await import("./route-types.ts")
   refreshRouteTypes(cwd, () => {})
@@ -309,6 +314,16 @@ async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
   }
 }
 
+/** A project whose TypeScript no tsconfig.json covers has no typecheck to pass: the gate fails. */
+function withoutTsconfig(
+  result: TypecheckResult,
+  sourceFiles: ReadonlyArray<{ readonly file: string }>,
+): TypecheckResult {
+  if (result.missingTsconfig !== true) return result
+  const sources = sourceFiles.filter(({ file }) => !/\.d\.[cm]?ts$/.test(file)).length
+  return sources === 0 ? result : { ...result, ok: false, sourcesWithoutTsconfig: sources }
+}
+
 /** Record the zoned files the compiler's program left out, minus the typecheck rule's `ignore` globs. */
 function withProgramCoverage(
   cwd: string,
@@ -376,11 +391,10 @@ async function buildProjectScan(
 
   // tsc compiles TypeScript sources only; the JavaScript and component files the scan reads are no
   // program's to cover.
-  const typecheckResult = withProgramCoverage(
-    cwd,
-    typecheckRun,
-    sourceFiles.filter(({ file }) => /\.[cm]?tsx?$/.test(file)),
-    checkConfig,
+  const typeScriptSources = sourceFiles.filter(({ file }) => /\.[cm]?tsx?$/.test(file))
+  const typecheckResult = withoutTsconfig(
+    withProgramCoverage(cwd, typecheckRun, typeScriptSources, checkConfig),
+    typeScriptSources,
   )
 
   // TypeScript 7's unstable API materializes source files through one project session. Build the
@@ -390,7 +404,24 @@ async function buildProjectScan(
   const loadedTypeScript = await loadProjectTypeScript(cwd, opts.loadTypeScript, source)
   try {
     const sqlCompiler = loadedTypeScript.compiler
-    const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
+    // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
+    // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
+    // The resolver answers with real paths, so the project root is read as one too.
+    const realCwd = (() => {
+      try {
+        return realpathSync(cwd)
+      } catch {
+        return cwd
+      }
+    })()
+    const resolveSpecifier = createSpecifierResolver()
+    const sourceFacts =
+      sqlCompiler === undefined
+        ? undefined
+        : createSourceFacts(sqlCompiler, {
+            keepsTypeOnlyImports: (file) =>
+              resolveSpecifier.keepsTypeOnlyImports(isAbsolute(file) ? file : join(realCwd, file)),
+          })
     const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
     const project = new Map(
       sourceFiles.map(({ file, content }) => [file.replaceAll("\\", "/"), content]),
@@ -403,17 +434,6 @@ async function buildProjectScan(
         interpolatedSql.push(...scanSqlSites(file, content, sqlCompiler, sqlImports))
     }
 
-    // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
-    // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
-    // The resolver answers with real paths, so the project root is read as one too.
-    const realCwd = (() => {
-      try {
-        return realpathSync(cwd)
-      } catch {
-        return cwd
-      }
-    })()
-    const resolveSpecifier = createSpecifierResolver()
     const projectPath = (path: string): string => {
       const rel = relative(realCwd, path).replaceAll("\\", "/")
       return rel.startsWith("../") || isAbsolute(rel) ? path : rel
@@ -439,7 +459,7 @@ async function buildProjectScan(
     // An app's `clientModule` is browser code wherever it lives: the generated client entry imports it.
     const browserRoots = new Set<string>()
     for (const app of appDirs(source.files)) {
-      const entry = clientModuleRoot(cwd, app, resolveSpecifier)
+      const entry = clientModuleRoot(cwd, app, resolveSpecifier, sqlCompiler)
       if (entry === undefined) continue
       const rel = projectPath(entry.file)
       if (isBrowserSource(rel) || browserRoots.has(rel)) continue
@@ -448,28 +468,24 @@ async function buildProjectScan(
       browserRoots.add(rel)
       browserModules.push({ rel, content })
     }
-    // Node's lookup: the nearest `node_modules/<name>` at or above the importing file.
+    // The side the package gives the entry the import names: package-wide, or per entry.
     const backendPackage = (fromFile: string, specifier: string): boolean => {
       const name = specifierPackage(specifier)
       if (name === undefined) return false
-      let dir = dirname(isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile))
-      for (;;) {
-        const manifest = join(dir, "node_modules", name, "package.json")
-        if (existsSync(manifest)) {
-          try {
-            const nifra: unknown = JSON.parse(readFileSync(manifest, "utf8"))?.nifra
-            return (
-              typeof nifra === "object" &&
-              nifra !== null &&
-              Reflect.get(nifra, "environment") === "backend"
-            )
-          } catch {
-            return false
-          }
-        }
-        const parent = dirname(dir)
-        if (parent === dir) return false
-        dir = parent
+      const manifest = installedManifest(
+        isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile),
+        name,
+      )
+      if (manifest === undefined) return false
+      try {
+        const nifra: unknown = JSON.parse(readFileSync(manifest, "utf8"))?.nifra
+        return (
+          typeof nifra === "object" &&
+          nifra !== null &&
+          declaredSide(Reflect.get(nifra, "environment"), specifier) === "backend"
+        )
+      } catch {
+        return false
       }
     }
     const serverOnlyChains = createServerOnlyChains({

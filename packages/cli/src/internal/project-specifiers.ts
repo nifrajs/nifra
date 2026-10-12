@@ -22,6 +22,12 @@ export interface ProjectResolver extends SpecifierResolver {
   readonly respell: (fromFile: string, specifier: string, file: string) => string | undefined
   /** The `paths` patterns of the nearest tsconfig at or above `dir`, after its `extends` chain. */
   readonly pathPatterns: (dir: string) => readonly string[]
+  /**
+   * Whether the compiler settings for `file` keep an import whose named specifiers are all
+   * type-only, as `import {} from "x"` (`verbatimModuleSyntax`). `true` when its tsconfig chain
+   * cannot be read, so a scan that trusts the answer keeps the edge.
+   */
+  readonly keepsTypeOnlyImports: (file: string) => boolean
 }
 
 /** How an alias specifier reached its file: what a rewrite through the same alias has to fit. */
@@ -59,7 +65,18 @@ interface PathsConfig {
   readonly pathsBase: string
   readonly paths: ReadonlyArray<readonly [string, readonly string[]]>
   readonly baseUrl: string | undefined
+  /** The {@link IMPORT_EMIT_OPTIONS} the chain sets, later configs winning; `undefined` when part of
+   * the chain could not be read. */
+  readonly importEmit: Readonly<Record<string, unknown>> | undefined
 }
+
+// The options that decide whether an import left with only type specifiers is emitted. The last two
+// are removed in TypeScript 6 but still read by older compilers and bundlers.
+const IMPORT_EMIT_OPTIONS = [
+  "verbatimModuleSyntax",
+  "importsNotUsedAsValues",
+  "preserveValueImports",
+]
 
 /** JSON with comments and trailing commas, as tsconfig files are written. Throws on anything else. */
 export function parseJsonc(text: string): unknown {
@@ -101,8 +118,14 @@ const record = (value: unknown): Readonly<Record<string, unknown>> | undefined =
     ? Object.fromEntries(Object.entries(value))
     : undefined
 
-const isFile = (path: string): boolean =>
-  statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
+/** Whether `path` is a file. A path through a file (`a.ts/index.ts`) is none, not an error. */
+export const isFile = (path: string): boolean => {
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
+  } catch {
+    return false
+  }
+}
 
 const real = (path: string): string => {
   try {
@@ -113,18 +136,18 @@ const real = (path: string): string => {
 }
 
 /** The file a path names: as written, its source for a `.js` name, with an extension, or an index. */
-function probe(base: string): string | undefined {
-  if (isFile(base)) return base
+function probe(base: string, exists: (path: string) => boolean): string | undefined {
+  if (exists(base)) return base
   const ext = extname(base)
   for (const source of SOURCE_FOR[ext] ?? []) {
     const candidate = `${base.slice(0, -ext.length)}${source}`
-    if (isFile(candidate)) return candidate
+    if (exists(candidate)) return candidate
   }
   for (const extension of EXTENSIONS)
-    if (isFile(`${base}${extension}`)) return `${base}${extension}`
+    if (exists(`${base}${extension}`)) return `${base}${extension}`
   for (const extension of EXTENSIONS) {
     const index = join(base, `index${extension}`)
-    if (isFile(index)) return index
+    if (exists(index)) return index
   }
   return undefined
 }
@@ -164,7 +187,14 @@ function matchPattern(
   return best
 }
 
-export function createSpecifierResolver(): ProjectResolver {
+export interface SpecifierResolverOptions {
+  /** Whether a module file exists, for resolving against a planned layout rather than the disk.
+   * Config files (tsconfig, package.json) are still read from the disk. */
+  readonly moduleExists?: (path: string) => boolean
+}
+
+export function createSpecifierResolver(options: SpecifierResolverOptions = {}): ProjectResolver {
+  const exists = options.moduleExists ?? isFile
   const configs = new Map<string, PathsConfig | undefined>()
   const tsconfigByDir = new Map<string, string | undefined>()
   const manifests = new Map<string, Readonly<Record<string, unknown>> | undefined>()
@@ -209,7 +239,7 @@ export function createSpecifierResolver(): ProjectResolver {
     }
   }
 
-  /** The `paths` and `baseUrl` a config ends up with after its `extends` chain. */
+  /** The `paths`, `baseUrl` and import-emit options a config ends up with after its `extends` chain. */
   const pathsConfig = (
     file: string,
     seen: ReadonlySet<string> = new Set(),
@@ -218,6 +248,7 @@ export function createSpecifierResolver(): ProjectResolver {
     if (seen.has(file) || seen.size >= MAX_EXTENDS) return undefined
     const config = readJsonc(file)
     let inherited: PathsConfig | undefined
+    let importEmit: Record<string, unknown> | undefined = {}
     const extended = config?.extends
     for (const name of typeof extended === "string"
       ? [extended]
@@ -227,15 +258,24 @@ export function createSpecifierResolver(): ProjectResolver {
       if (typeof name !== "string") continue
       const base = extendedConfig(file, name)
       const parent = base === undefined ? undefined : pathsConfig(base, new Set([...seen, file]))
+      importEmit =
+        importEmit === undefined || parent?.importEmit === undefined
+          ? undefined
+          : { ...importEmit, ...parent.importEmit }
       if (parent === undefined) continue
       inherited = {
         paths: parent.paths.length > 0 ? parent.paths : (inherited?.paths ?? []),
         baseUrl: parent.baseUrl ?? inherited?.baseUrl,
         pathsBase:
           parent.paths.length > 0 ? parent.pathsBase : (inherited?.pathsBase ?? parent.pathsBase),
+        importEmit,
       }
     }
     const options = record(config?.compilerOptions)
+    if (importEmit !== undefined) {
+      for (const key of IMPORT_EMIT_OPTIONS)
+        if (options?.[key] !== undefined) importEmit = { ...importEmit, [key]: options[key] }
+    }
     const baseUrl =
       typeof options?.baseUrl === "string"
         ? join(dirname(file), options.baseUrl)
@@ -255,7 +295,7 @@ export function createSpecifierResolver(): ProjectResolver {
           )
     const pathsBase =
       baseUrl ?? (ownPaths === undefined ? (inherited?.pathsBase ?? dirname(file)) : dirname(file))
-    const resolved = config === undefined ? undefined : { paths, baseUrl, pathsBase }
+    const resolved = config === undefined ? undefined : { paths, baseUrl, pathsBase, importEmit }
     configs.set(file, resolved)
     return resolved
   }
@@ -315,7 +355,7 @@ export function createSpecifierResolver(): ProjectResolver {
     if (template === undefined) return undefined
     const base = dirname(manifestPath)
     const written = join(base, template.replaceAll(STAR, match.star ?? ""))
-    const found = probe(written)
+    const found = probe(written, exists)
     return found === undefined
       ? undefined
       : { key: match.pattern, keys, base, templates: [template], written, found }
@@ -335,7 +375,7 @@ export function createSpecifierResolver(): ProjectResolver {
     if (match === undefined) {
       if (config.baseUrl === undefined) return undefined
       const written = join(config.baseUrl, specifier)
-      const found = probe(written)
+      const found = probe(written, exists)
       return found === undefined
         ? undefined
         : { key: undefined, keys, base: config.baseUrl, templates: [STAR], written, found }
@@ -346,7 +386,7 @@ export function createSpecifierResolver(): ProjectResolver {
     )
     for (const target of targets) {
       const written = join(config.pathsBase, target.replaceAll("*", match.star ?? ""))
-      const found = probe(written)
+      const found = probe(written, exists)
       if (found === undefined) continue
       const templates = targets.map((t) => t.replaceAll("*", STAR))
       return { key: match.pattern, keys, base: config.pathsBase, templates, written, found }
@@ -401,7 +441,20 @@ export function createSpecifierResolver(): ProjectResolver {
     return (config?.paths ?? []).map(([pattern]) => pattern)
   }
 
-  return Object.assign(resolve, { respell, pathPatterns })
+  const keepsTypeOnlyImports = (file: string): boolean => {
+    const tsconfig = tsconfigFor(dirname(file))
+    if (tsconfig === undefined) return false
+    const emit = pathsConfig(tsconfig)?.importEmit
+    if (emit === undefined) return true
+    return (
+      emit.verbatimModuleSyntax === true ||
+      emit.preserveValueImports === true ||
+      emit.importsNotUsedAsValues === "preserve" ||
+      emit.importsNotUsedAsValues === "error"
+    )
+  }
+
+  return Object.assign(resolve, { respell, pathPatterns, keepsTypeOnlyImports })
 
   function resolveFrom(fromFile: string, specifier: string): string | undefined {
     let found: string | undefined
@@ -411,8 +464,8 @@ export function createSpecifierResolver(): ProjectResolver {
       specifier === "." ||
       specifier === ".."
     )
-      found = probe(join(dirname(fromFile), specifier))
-    else if (isAbsolute(specifier)) found = probe(specifier)
+      found = probe(join(dirname(fromFile), specifier), exists)
+    else if (isAbsolute(specifier)) found = probe(specifier, exists)
     // A `#` name is a package.json import first; a tsconfig may still map it.
     else if (specifier.startsWith("#"))
       found = viaImports(fromFile, specifier) ?? viaTsconfig(fromFile, specifier)

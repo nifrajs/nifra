@@ -462,6 +462,50 @@ describe("idempotency with a credential outside principalHeaders", () => {
   })
 })
 
+describe("idempotency replays only what current authentication admits", () => {
+  const send = (app: { fetch(req: Request): Response | Promise<Response> }, key: string) =>
+    Promise.resolve(
+      app.fetch(
+        new Request("http://x/protected", {
+          method: "POST",
+          headers: { authorization: "Bearer token-1", "idempotency-key": key },
+        }),
+      ),
+    ).then(
+      async (res) => `${res.status} ${res.headers.get("idempotent-replayed")} ${await res.text()}`,
+    )
+
+  test("a revoked credential's retry gets the auth answer; restored, it replays", async () => {
+    let allowed = true
+    let runs = 0
+    const app = server()
+      .use(idempotency({ store: new MemoryIdempotencyStore() }))
+      .authenticate({
+        id: "bearer",
+        run: () => (allowed ? authenticated("u1") : rejected("forbidden")),
+      })
+      .post("/protected", () => ({ run: ++runs }))
+
+    expect(await send(app, "k1")).toBe('200 null {"run":1}')
+    allowed = false
+    expect(await send(app, "k1")).toStartWith("403 null")
+    allowed = true
+    expect(await send(app, "k1")).toBe('200 true {"run":1}')
+    expect(runs).toBe(1)
+  })
+
+  test("a route declared before the middleware still replays from onRequest", async () => {
+    let runs = 0
+    const app = server({ unusedScopedHooks: "off" })
+      .post("/protected", () => ({ run: ++runs }))
+      .use(idempotency({ store: new MemoryIdempotencyStore() }))
+
+    expect(await send(app, "k1")).toBe('200 null {"run":1}')
+    expect(await send(app, "k1")).toBe('200 true {"run":1}')
+    expect(runs).toBe(1)
+  })
+})
+
 describe("MemoryIdempotencyStore", () => {
   const ORIGINAL = process.env.NODE_ENV
   afterEach(() => {

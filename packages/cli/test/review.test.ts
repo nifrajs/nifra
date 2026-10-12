@@ -17,8 +17,8 @@ import {
 } from "../src/review.ts"
 import { RULE_CODES } from "../src/rules/codes.ts"
 
-async function reviewProject(source = ""): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "nifra-review-"))
+async function reviewProject(source = "", at?: string): Promise<string> {
+  const root = at ?? (await mkdtemp(join(tmpdir(), "nifra-review-")))
   await mkdir(join(root, "node_modules", "typescript", "bin"), { recursive: true })
   await mkdir(join(root, "out"), { recursive: true })
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "review-fixture" }))
@@ -214,6 +214,33 @@ describe("nifra review command contract", () => {
         expect(await chainFinding()).toBe(true)
       } finally {
         await rm(root, { recursive: true, force: true })
+      }
+    },
+    GIT_REVIEW_TIMEOUT_MS,
+  )
+
+  test(
+    "a diff review from an app inside a larger repository scopes by app-relative paths",
+    async () => {
+      const repo = await mkdtemp(join(tmpdir(), "nifra-review-mono-"))
+      try {
+        const app = join(repo, "apps", "web")
+        await mkdir(app, { recursive: true })
+        await reviewProject("export const ready = true\n", app)
+        await writeFile(join(repo, "README.md"), "repo\n")
+        await commitBaseline(repo)
+        await writeFile(join(app, "src", "users.ts"), 'const result = await fetch("/users")\n')
+        await writeFile(join(repo, "README.md"), "changed\n")
+        const report = await runReview({ diff: "HEAD" }, { cwd: app })
+        expect(report.scope.changedPaths).toEqual(["src/users.ts"])
+        expect(
+          report.findings.some(
+            (finding) => finding.code === "NF-C002" && finding.location?.path === "src/users.ts",
+          ),
+        ).toBe(true)
+        expect(report.ok).toBe(false)
+      } finally {
+        await rm(repo, { recursive: true, force: true })
       }
     },
     GIT_REVIEW_TIMEOUT_MS,

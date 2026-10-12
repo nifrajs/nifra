@@ -6,15 +6,12 @@ import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../defer
 import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
 import type {
   Loader as LayoutLoader,
-  LinkDescriptor,
   Meta,
-  MetaDescriptor,
   MetaInput,
   RouteModule,
-  ScriptDescriptor,
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
-import type { MatchChain, RenderAdapter, RenderProps } from "../render-seam.ts"
+import type { DocumentParts, MatchChain, RenderAdapter, RenderProps } from "../render-seam.ts"
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
@@ -201,8 +198,10 @@ export interface RenderPageOptions {
 export interface RenderAssemblyCache {
   /** Shell up to (not including) the deferred-runtime insertion point. */
   shellPre?: string
-  /** Shell from after the deferred-runtime insertion point through the open `#root` container. */
+  /** Shell from after the deferred-runtime insertion point through `<body>`. */
   shellPost?: string
+  /** The open `#root` container. */
+  rootOpen?: string
   /** Tail opener: the handover script open tag + the data member's key. */
   tailPre?: string
   /** Tail from after the per-request handover members (the route id, prerendered paths, the handover
@@ -423,7 +422,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}`
       : ""
     slot.shellPre = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head, nonce)}${styleLinks}${entryPreloads}`
-    slot.shellPost = `${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
+    slot.shellPost = `${islandPreloads}${hydrationHead}</head><body>`
+    slot.rootOpen = `<div id="${escapeAttr(rootId)}"${rootMarker}>`
     // Island bundles load regardless of `hydrate` - a static page (hydrate:false) ships no framework
     // client but can still mount no-framework islands (`@nifrajs/web/islands`).
     let islandTags = ""
@@ -441,7 +441,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // The deferred runtime rides only on a hydrating page (a static page has no client takeover), and
   // only when something actually deferred - matching the pre-cache emission exactly.
   const runtimeSeam = hydrate && allDeferred.length > 0 ? deferredRuntime : ""
-  const shellHtml = `${slot.shellPre}${runtimeSeam}${slot.shellPost}`
+  const shellHtml = `${slot.shellPre}${runtimeSeam}${slot.shellPost}${slot.rootOpen}`
+  const parts: DocumentParts | undefined =
+    adapter.documentParts === true ? { head: "", body: "" } : undefined
+  const shellOf = (): string =>
+    parts === undefined || (parts.head === "" && parts.body === "")
+      ? shellHtml
+      : `${slot.shellPre}${runtimeSeam}${parts.head}${slot.shellPost}${parts.body}${slot.rootOpen}`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -504,13 +510,22 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // gets an automatic Content-Length. A render throw surfaces here exactly as the streaming path's
   // shell-readiness `await` does, so the `_error` boundary still maps it to a status.
   if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
-    const out = adapter.renderToString(chain, renderProps)
+    const out =
+      parts !== undefined
+        ? adapter.renderToString(
+            chain,
+            renderProps,
+            nonce === undefined ? { parts } : { nonce, parts },
+          )
+        : nonce === undefined
+          ? adapter.renderToString(chain, renderProps)
+          : adapter.renderToString(chain, renderProps, { nonce })
     return typeof out === "string"
-      ? new BufferedRenderedPage(shellHtml + out + closeRootHtml + tailHtml, status, headers)
+      ? new BufferedRenderedPage(shellOf() + out + closeRootHtml + tailHtml, status, headers)
       : out.then(
           (bodyHtml) =>
             new BufferedRenderedPage(
-              shellHtml + bodyHtml + closeRootHtml + tailHtml,
+              shellOf() + bodyHtml + closeRootHtml + tailHtml,
               status,
               headers,
             ),
@@ -521,7 +536,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     adapter,
     chain,
     renderProps,
-    shellHtml,
+    shellOf,
+    parts,
     closeRootHtml,
     allDeferred,
     tailHtml,
@@ -536,7 +552,8 @@ async function renderStreamedPage(
   adapter: RenderAdapter,
   chain: readonly unknown[],
   renderProps: RenderProps,
-  shellHtml: string,
+  shellOf: () => string,
+  parts: DocumentParts | undefined,
   closeRootHtml: string,
   allDeferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
   tailHtml: string,
@@ -550,13 +567,20 @@ async function renderStreamedPage(
   // (React: on-shell-ready; Solid: synchronously), so a shell-render throw surfaces before any byte is
   // sent. A *mid*-stream failure errors the body instead.
   const enc = TEXT_ENCODER
-  const shell = enc.encode(shellHtml)
   const closeRoot = enc.encode(closeRootHtml)
   const tail = enc.encode(tailHtml)
   const appStream =
-    nonce === undefined
-      ? await adapter.renderToStream(chain, renderProps)
-      : await adapter.renderToStream(chain, renderProps, { nonce })
+    parts !== undefined
+      ? await adapter.renderToStream(
+          chain,
+          renderProps,
+          nonce === undefined ? { parts } : { nonce, parts },
+        )
+      : nonce === undefined
+        ? await adapter.renderToStream(chain, renderProps)
+        : await adapter.renderToStream(chain, renderProps, { nonce })
+  // After the render: an adapter fills its document parts before handing back the stream.
+  const shell = enc.encode(shellOf())
   const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
   return new Response(body, { status, headers })
 }
@@ -1121,68 +1145,6 @@ function headTags(head: Meta | undefined, documentNonce?: string): string {
     }
   if (cacheable) headTagsCache.set(head, out)
   return out
-}
-
-/**
- * A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search
- * engines which URL is authoritative for a page (deduping query-string / tracking variants).
- *
- * ```ts
- * export const meta = (a) => ({ link: [canonical(`https://site.com/posts/${a.params.slug}`)] })
- * ```
- */
-export function canonical(href: string): LinkDescriptor {
-  return { rel: "canonical", href }
-}
-
-/** Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided
- * ones become tags. `type` defaults to `"website"`. */
-export interface OpenGraphInput {
-  readonly title?: string
-  readonly description?: string
-  /** Absolute URL of the share image (`og:image`). */
-  readonly image?: string
-  /** Canonical URL of the page (`og:url`). */
-  readonly url?: string
-  /** Object type (`og:type`) - `"website"`, `"article"`, … Default `"website"`. */
-  readonly type?: string
-}
-
-/**
- * Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the
- * properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
- *
- * ```ts
- * export const meta = { meta: [...openGraph({ title: "Nifra", image: "https://site.com/og.png" })] }
- * ```
- */
-export function openGraph(input: OpenGraphInput): MetaDescriptor[] {
-  const tags: MetaDescriptor[] = []
-  const add = (property: string, content: string | undefined): void => {
-    if (content !== undefined) tags.push({ property, content })
-  }
-  add("og:title", input.title)
-  add("og:description", input.description)
-  add("og:image", input.image)
-  add("og:url", input.url)
-  // `og:type` always present (the spec's required property) - default "website" when unset.
-  tags.push({ property: "og:type", content: input.type ?? "website" })
-  return tags
-}
-
-/**
- * Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain
- * object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see
- * `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
- *
- * ```ts
- * export const meta = {
- *   script: [jsonLd({ "@context": "https://schema.org", "@type": "Article", headline: "Hi" })],
- * }
- * ```
- */
-export function jsonLd(data: Record<string, unknown>): ScriptDescriptor {
-  return { type: "application/ld+json", content: JSON.stringify(data) }
 }
 
 /**

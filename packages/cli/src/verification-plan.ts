@@ -38,6 +38,11 @@ const GATES = Object.freeze([
   ),
   gate("tests", [["run", "test"]], "Run `bun run test` and fix the first failing test."),
   gate(
+    "rest-tests",
+    [["run", "test:rest"]],
+    "Run `bun run test:rest` and fix the first failing test.",
+  ),
+  gate(
     "docs",
     [["run", "check:docs"]],
     "Run `bun run check:docs` and update the failing documentation example.",
@@ -216,13 +221,15 @@ const DEFAULT_PLAN = Object.freeze([
   "changesets",
 ] as const)
 
+// `coverage` fails on any failing test, so it is the release plan's run of the library suites;
+// `rest-tests` runs the suites it leaves out, and `tests` would only repeat the two.
 const RELEASE_PLAN = Object.freeze([
   "build",
   "lint",
   "typecheck",
-  "tests",
-  "cli-isolation",
   "coverage",
+  "rest-tests",
+  "cli-isolation",
   "corpus",
   "sitemap",
   "docs",

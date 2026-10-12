@@ -1,5 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "plugins": [
     "./scripts/anti-slop/noChainedTypeAssertions.grit",
@@ -88,7 +89,8 @@
       "!**/bench/ssr/**/*/build",
       "!**/next-env.d.ts",
       "!**/bench/ssr/next/tsconfig.json",
-      "!packages/web/test/fixtures/broken.css"
+      "!packages/web/test/fixtures/broken.css",
+      "!packed-files.json"
     ]
   }
 }

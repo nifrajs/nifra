@@ -6,8 +6,9 @@ import {
   assertNoShadowedPages,
   showsIndicator,
 } from "../src/cli.ts"
+import type { Diagnostic } from "../src/diagnostics.ts"
 import { getFixRecipe } from "../src/fix-recipes.ts"
-import { buildRouteTable } from "../src/introspect.ts"
+import { buildRouteTable, unservedRoutesWarning } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { pageRules, readStaticApiPrefix } from "../src/rules/pages.ts"
@@ -73,6 +74,42 @@ describe("loadApp validates the forwarded fields", () => {
       await expect(loadApp(dir)).rejects.toThrow(message)
     })
   }
+
+  test("with both configs, a server option nifra.config.ts leaves unset comes from backend/framework.ts", async () => {
+    const dir = project({
+      "backend/framework.ts": [
+        ...adapterSource,
+        'export const apiPrefix = "/api"',
+        "export const apiStrip = true",
+        "export const use = () => {}",
+      ].join("\n"),
+      "nifra.config.ts": [
+        'export { adapter, clientModule } from "./backend/framework.ts"',
+        "export const apiStrip = false",
+      ].join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const app = await loadApp(dir)
+    expect(app.configPath).toBe(join(dir, "nifra.config.ts"))
+    expect(app.framework.apiPrefix).toBe("/api")
+    expect(app.framework.apiStrip).toBe(false)
+    expect(typeof app.framework.use).toBe("function")
+    expect(frameworkOptionImports(app.framework, join(dir, "backend/framework.ts"))).toEqual({
+      optionImports: {
+        apiPrefix: join(dir, "backend/framework.ts"),
+        apiStrip: join(dir, "backend/framework.ts"),
+      },
+    })
+  })
+
+  test("an option taken from backend/framework.ts is validated there", async () => {
+    const dir = project({
+      "backend/framework.ts": [...adapterSource, "export const apiPrefix = 42"].join("\n"),
+      "nifra.config.ts": 'export { adapter, clientModule } from "./backend/framework.ts"\n',
+      "routes/index.tsx": "export default () => null\n",
+    })
+    await expect(loadApp(dir)).rejects.toThrow("backend/framework.ts: `apiPrefix` must be")
+  })
 
   test("well-formed fields load and reach the framework object", async () => {
     const dir = project({
@@ -367,6 +404,34 @@ describe("nifra routes reads the configured prefix", () => {
     })
     expect(rows).toEqual([{ kind: "api", path: "/x", methods: ["GET"], autoMounted: true }])
   })
+
+  test("a route outside the prefix with apiStrip off is in-process only, and dev and build say so", async () => {
+    const api = [
+      { method: "get", path: "/hello" },
+      { method: "post", path: "/api/items" },
+    ]
+    expect(buildRouteTable({ pages: [], api, apiPrefix: "/api" })).toEqual([
+      { kind: "api", path: "/api/items", methods: ["POST"], autoMounted: true },
+      { kind: "api", path: "/hello", methods: ["GET"], autoMounted: false, inProcessOnly: true },
+    ])
+    expect(buildRouteTable({ pages: [], api })[1]).toEqual({
+      kind: "api",
+      path: "/hello",
+      methods: ["GET"],
+      autoMounted: false,
+    })
+    const { server } = await import("@nifrajs/core")
+    const backend = server()
+      .get("/hello", () => "hi")
+      .group("/api", (api) => api.get("/items", () => []))
+    expect(unservedRoutesWarning({ framework: fw({ apiPrefix: "/api" }), backend })).toContain(
+      "a backend route is served over HTTP nowhere: GET /hello.",
+    )
+    expect(
+      unservedRoutesWarning({ framework: fw({ apiPrefix: "/api", apiStrip: true }), backend }),
+    ).toBeUndefined()
+    expect(unservedRoutesWarning({ framework: fw({ apiPrefix: "" }), backend })).toBeUndefined()
+  })
 })
 
 describe("NF-C034", () => {
@@ -431,7 +496,7 @@ describe("NF-C035", () => {
     const findings = await scan(dir)
     expect(findings.map((finding) => [finding.severity, finding.file, finding.fix])).toEqual([
       [
-        "info",
+        "warn",
         "backend/framework.ts",
         { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
       ],
@@ -465,6 +530,82 @@ describe("NF-C035", () => {
       ).toEqual([])
     }
     expect(await scan(project({ "backend/framework.ts": adapterSource.join("\n") }))).toEqual([])
+  })
+
+  const fix = async (dir: string, finding: Diagnostic | undefined): Promise<readonly string[]> => {
+    const recipe = getFixRecipe("framework.api-prefix")
+    if (recipe === undefined || finding === undefined) throw new Error("no fix recipe")
+    return recipe.apply(dir, finding)
+  }
+
+  test("an apiPrefix only backend/framework.ts sets is the app's, so it is not reported", async () => {
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/api"'].join("\n"),
+          "nifra.config.ts": 'export { adapter } from "./backend/framework"\n',
+        }),
+      ),
+    ).toEqual([])
+  })
+
+  test("both configs without apiPrefix: the fix mounts it in backend/framework.ts alone", async () => {
+    const config = 'export { adapter } from "./backend/framework.ts"'
+    const dir = project({
+      "backend/app.ts": backendSource,
+      "backend/framework.ts": adapterSource.join("\n"),
+      "nifra.config.ts": config,
+    })
+    const findings = await scan(dir)
+    expect(findings.map((finding) => [finding.severity, finding.file])).toEqual([
+      ["warn", "backend/framework.ts"],
+    ])
+    expect(await fix(dir, findings[0])).toEqual(["backend/framework.ts"])
+    expect(readFileSync(join(dir, "nifra.config.ts"), "utf8")).toBe(config)
+    expect(await scan(dir)).toEqual([])
+    expect(await fix(dir, findings[0])).toEqual([])
+  })
+
+  test("nifra.config.ts exporting the same apiPrefix, or both sides loader-only, is not reported", async () => {
+    const framework = [...adapterSource, 'export const apiPrefix = "/api"'].join("\n")
+    for (const config of [
+      'export { adapter, apiPrefix } from "./backend/framework"\n',
+      'export * from "./backend/framework.ts"\n',
+      'export { adapter } from "./backend/framework"\nexport const apiPrefix = "/api"\n',
+    ]) {
+      expect(
+        await scan(
+          project({
+            "backend/app.ts": backendSource,
+            "backend/framework.ts": framework,
+            "nifra.config.ts": config,
+          }),
+        ),
+      ).toEqual([])
+    }
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "backend/framework.ts": [...adapterSource, 'export const apiPrefix = ""'].join("\n"),
+          "nifra.config.ts": 'export { adapter } from "./backend/framework"\n',
+        }),
+      ),
+    ).toEqual([])
+  })
+
+  test("an apiPrefix only nifra.config.ts sets is left to the load error that names it", async () => {
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "backend/framework.ts": adapterSource.join("\n"),
+          "nifra.config.ts":
+            'export { adapter } from "./backend/framework"\nexport const apiPrefix = "/api"\n',
+        }),
+      ),
+    ).toEqual([])
   })
 
   test("an API-only app, with no web config or a nifra.config.ts with no adapter, is not reported", async () => {
@@ -531,6 +672,149 @@ describe("NF-C040", () => {
           "routes/d/_layout.tsx":
             "export const loader = () => ({})\nexport const meta = ({ data }) => data\nexport default () => null\n",
           "routes/index.tsx": "export default () => null\n",
+        }),
+      ),
+    ).toEqual([])
+  })
+})
+
+describe("NF-C041", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C041")
+  }
+
+  test("a server-only export in a page, layout or status page is an error at its line", async () => {
+    const dir = project({
+      "routes/index.tsx": [
+        "export default () => null",
+        "export async function loader() { return { n: 1 } }",
+      ].join("\n"),
+      "routes/_layout.tsx": [
+        "const action = async () => null",
+        "export default ({ children }: { children: unknown }) => children",
+        "export { action }",
+      ].join("\n"),
+      "routes/_404.tsx": "export const revalidate = 60\nexport default () => null\n",
+      "routes/docs/[slug].tsx":
+        "export default () => null\nexport const getStaticPaths = () => []\n",
+    })
+    const findings = await scan(dir)
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.line])).toEqual([
+      ["error", "routes/_404.tsx", 1],
+      ["error", "routes/_layout.tsx", 3],
+      ["error", "routes/docs/[slug].tsx", 2],
+      ["error", "routes/index.tsx", 2],
+    ])
+    expect(findings.at(-1)?.message).toContain('exports "loader", which runs on the server only')
+    expect(findings.at(-1)?.message).toContain("Move it to routes/index.backend.ts")
+  })
+
+  test("the fix moves the export and the code only it uses into the backend half", async () => {
+    const dir = project({
+      "routes/index.tsx": [
+        'import { useLoaderData } from "@nifrajs/web-react"',
+        "const query = () => ({ n: 1 })",
+        "export async function loader() { return query() }",
+        "export default () => useLoaderData()",
+      ].join("\n"),
+      "routes/index.backend.ts": "export const revalidate = 60\n",
+    })
+    const findings = await scan(dir)
+    expect(findings[0]?.fix).toEqual({ recipe: "route.split", command: "nifra fix --code NF-C041" })
+    const recipe = getFixRecipe("route.split")
+    if (recipe === undefined || findings[0] === undefined) throw new Error("no fix recipe")
+    expect(await recipe.apply(dir, findings[0])).toEqual([
+      "routes/index.tsx",
+      "routes/index.backend.ts",
+    ])
+    const frontend = readFileSync(join(dir, "routes/index.tsx"), "utf8")
+    const backend = readFileSync(join(dir, "routes/index.backend.ts"), "utf8")
+    expect(frontend).not.toContain("query")
+    expect(backend).toContain("export const revalidate = 60")
+    expect(backend).toContain("const query = () => ({ n: 1 })")
+    expect(backend).toContain("export async function loader()")
+    expect(await scan(dir)).toEqual([])
+  })
+
+  test("frontend exports, type-only exports and the backend half are not reported", async () => {
+    const dir = project({
+      "routes/index.tsx": [
+        'import type { loader } from "./index.backend.ts"',
+        "export type Data = Awaited<ReturnType<typeof loader>>",
+        "export type { loader as Loader }",
+        "export const meta = () => ({ title: 'x' })",
+        "export const clientLoader = async () => null",
+        "export default () => null",
+      ].join("\n"),
+      "routes/index.backend.ts": "export async function loader() { return null }\n",
+    })
+    expect(await scan(dir)).toEqual([])
+  })
+})
+
+describe("NF-C042", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C042")
+  }
+  const layout = "export default () => null\n"
+
+  test("a layout loader that refuses access without a gate or middleware is reported", async () => {
+    const findings = await scan(
+      project({
+        "routes/admin/_layout.tsx": layout,
+        "routes/admin/_layout.backend.ts": [
+          'import { redirect } from "@nifrajs/web"',
+          "export const loader = ({ request }) => {",
+          '  if (!request.headers.get("cookie")) throw redirect("/login")',
+          "  return { ok: true }",
+          "}",
+          "",
+        ].join("\n"),
+        "routes/billing/_layout.tsx": layout,
+        "routes/billing/_layout.backend.ts":
+          "export async function loader() {\n  throw new Response(null, { status: 401 })\n}\n",
+        "routes/staff/_layout.tsx": layout,
+        "routes/staff/_layout.backend.ts":
+          'import { statusPage } from "@nifrajs/web"\nexport const loader = () => statusPage(403)\n',
+        "routes/index.tsx": layout,
+      }),
+    )
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.line])).toEqual([
+      ["warn", "routes/admin/_layout.backend.ts", 3],
+      ["warn", "routes/billing/_layout.backend.ts", 2],
+      ["warn", "routes/staff/_layout.backend.ts", 2],
+    ])
+    expect(findings[0]?.message).toContain("Export `gate = true`")
+  })
+
+  test("a gate, a middleware, a missing record, or no refusal is not reported", async () => {
+    const refusing = 'export const loader = () => {\n  throw redirect("/login")\n}\n'
+    expect(
+      await scan(
+        project({
+          "routes/a/_layout.tsx": layout,
+          "routes/a/_layout.backend.ts": `export const gate = true\n${refusing}`,
+          "routes/b/_layout.tsx": layout,
+          "routes/b/_layout.backend.ts": `export const middleware = () => undefined\n${refusing}`,
+          "routes/c/_layout.tsx": layout,
+          "routes/c/_layout.backend.ts":
+            "export const loader = ({ params }) => {\n  if (!params.slug) notFound()\n  return statusPage(404)\n}\n",
+          "routes/d/_layout.tsx": layout,
+          "routes/d/_layout.backend.ts":
+            '// throw redirect("/login")\nexport const loader = () => ({ menu: [] })\n',
+          "routes/e/_layout.tsx": layout,
+          "routes/e/_layout.backend.ts": `const guard = () => {\n  throw redirect("/login")\n}\nexport const loader = () => guard()\n`,
+          "routes/index.tsx": layout,
         }),
       ),
     ).toEqual([])

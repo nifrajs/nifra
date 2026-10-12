@@ -1,5 +1,6 @@
 import type { LinkDescriptor, Meta, MetaDescriptor } from "@nifrajs/web"
-import { canonical, fontPreload, jsonLd, openGraph } from "@nifrajs/web"
+import { fontPreload } from "@nifrajs/web"
+import { canonical, jsonLd, openGraph } from "@nifrajs/web/seo"
 import { docsLabel } from "./data/docs-nav"
 import fonts from "./data/fonts.json"
 import { postBySlug } from "./data/posts"

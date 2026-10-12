@@ -676,7 +676,10 @@ export default function Agents() {
         coordinates. Resolve it through the host or RPC with <code>approval.resolve</code>; the backend
         emits <code>approval.resolved</code> and only then executes the tool. Denial, cancellation,
         timeout, and closed sessions all fail closed, and <code>approvalTimeoutMs</code> bounds how long
-        a pending decision can remain open.
+        a pending decision can remain open: 5 minutes by default, at most 24 hours, or{" "}
+        <code>"never"</code> to wait until it is answered, cancelled, its turn ends, or the session
+        closes. The host's broker takes the same values as <code>approvals.timeoutMs</code> on{" "}
+        <code>CodingAgentHost</code> and <code>CodingAgentRpcServer</code>.
       </p>
 
       <h2>Expose the same agent to other clients</h2>
@@ -738,12 +741,13 @@ export default function Agents() {
       </p>
       <p>
         A step that suspends for approval resumes with the decision the caller sends in{" "}
-        <code>resume.approval</code>. Over A2A, or on an AG-UI or <code>mountAgent</code> route that
-        anyone can reach, that caller may be the party asking for the tool. Return{" "}
+        <code>resume.approval</code>. On an AG-UI or <code>mountAgent</code> route that anyone can
+        reach, that caller may be the party asking for the tool. Return{" "}
         <code>resumeApproval: "port"</code> from <code>ports</code> to keep the configured approval
         port authoritative: it is asked again on resume, receives the caller's decision as{" "}
         <code>callerDecision</code>, and its verdict stands. Without a port, such a resume suspends
-        again.
+        again. A2A does this by default, since the resuming peer is the agent that asked for the
+        tool; return <code>resumeApproval: "caller"</code> there only when the peer is the approver.
       </p>
 
       <h2 id="project-code">Where your code and secrets run</h2>
@@ -773,9 +777,11 @@ export default function Agents() {
         <li>
           <strong>No <code>.env</code> in the server.</strong> When Bun loaded <code>.env</code>{" "}
           values into the server at startup, the server hands the session to a copy of itself that
-          loads none, keeping the values from the environment and <code>--env-file</code>. The process
-          the client started stays to forward signals and the exit code: it still holds the values
-          Bun loaded, but runs no project code and reads no messages.
+          loads none, keeping the values from the environment and <code>--env-file</code>. A project
+          that installs another release of <code>@nifrajs/cli</code> gets the session handed to that
+          CLI the same way, with no <code>.env</code> loaded. The process the client started stays to
+          forward signals and the exit code: it still holds the values Bun loaded, but runs no project
+          code and reads no messages.
         </li>
         <li>
           <strong>A process per call has a cost.</strong> A call that loads the app pays one process

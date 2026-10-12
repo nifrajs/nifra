@@ -46,6 +46,7 @@ import {
   formatServerOnlyLeak,
 } from "../build-plan.ts"
 import { isBareNodeBuiltin } from "../internal/node-builtins.ts"
+import { installedManifest } from "../internal/package-entries.ts"
 import { privateEnvCheck } from "../internal/private-env.ts"
 import {
   emittedScanFiles,
@@ -58,6 +59,7 @@ import {
   scanForSecrets,
   textOf,
 } from "../internal/secret-scan.ts"
+import { withoutQuery } from "../internal/without-query.ts"
 import {
   accountEmittedFiles,
   assetDenial,
@@ -75,7 +77,7 @@ import {
   type GraphModule,
   type RollupBundleLike,
 } from "../module-graph.ts"
-import { createZoneClassifier, type ZoneClassifier } from "../zones.ts"
+import { createZoneClassifier, specifierPackage, type ZoneClassifier } from "../zones.ts"
 
 /**
  * The Rollup plugin-context slice this uses: `getModuleInfo` for a module's resolved imports, and `error`
@@ -160,7 +162,78 @@ export interface LeakGuardPlugin {
    * reached the browser.
    */
   leak?: string
+  buildStart(): void
+  /** Ordered first: the bundler's own resolver answers before a plugin listed after it is asked. */
+  readonly resolveId: {
+    readonly order: "pre"
+    handler(
+      this: ResolveContext,
+      source: string,
+      importer: string | undefined,
+      options?: Readonly<Record<string, unknown>>,
+    ): Promise<null>
+  }
   generateBundle(this: RollupPluginContext, options: unknown, bundle: RollupBundleLike): void
+}
+
+/**
+ * Rollup keeps no import's written specifier, yet a package that gives each entry its own side is judged
+ * by the entry an import names, since two entries may share one file. This records the specifier of
+ * each import of such a package by the edge it resolved to, and puts it back on the finished graph.
+ */
+function entrySpecifiers(appRoot: string, options: ServerZoneGuardOptions) {
+  // One edge may carry several specifiers: `pkg` and `pkg/react` can resolve to one shared file.
+  const written = new Map<string, Set<string>>()
+  let classifier: ZoneClassifier | undefined
+  const edge = (from: string, to: string): string =>
+    `${from.replaceAll("\\", "/")}\0${to.replaceAll("\\", "/")}`
+  return {
+    reset(): void {
+      written.clear()
+      classifier = undefined
+    },
+    async resolveId(
+      context: ResolveContext,
+      source: string,
+      importer: string | undefined,
+      resolveOptions: Readonly<Record<string, unknown>> | undefined,
+    ): Promise<null> {
+      const name = specifierPackage(source)
+      const from = importer === undefined ? undefined : withoutQuery(importer)
+      if (name === undefined || importer === undefined || from === undefined || !isAbsolute(from))
+        return null
+      const manifest = installedManifest(dirname(from), name)
+      if (manifest === undefined) return null
+      classifier ??= classifierFor(appRoot, options)
+      if (classifier.classify(manifest, source).entry === undefined) return null
+      const resolved = await context.resolve(source, importer, {
+        ...resolveOptions,
+        skipSelf: true,
+      })
+      if (resolved === null) return null
+      const key = edge(importer, resolved.id)
+      written.set(key, (written.get(key) ?? new Set<string>()).add(source))
+      return null
+    },
+    annotate(graph: ClientModuleGraph): ClientModuleGraph {
+      if (written.size === 0) return graph
+      const modules: Record<string, GraphModule> = {}
+      for (const [id, module] of Object.entries(graph.modules)) {
+        modules[id] = {
+          imports: module.imports.flatMap((im) => {
+            const originals =
+              im.original !== undefined || im.path === undefined
+                ? undefined
+                : written.get(edge(id, im.path))
+            return originals === undefined
+              ? [im]
+              : [...originals].map((original) => ({ ...im, original }))
+          }),
+        }
+      }
+      return { ...graph, modules }
+    },
+  }
 }
 
 const CSS_FILE = /\.(?:css|scss|sass|less|styl)(?:$|\?)/
@@ -175,8 +248,16 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
   const appRoot = resolve(options.appRoot ?? process.cwd())
   const root = resolve(options.root ?? appRoot)
   const outDir = resolve(root, options.outDir ?? "dist")
+  const specifiers = entrySpecifiers(appRoot, options)
   const plugin: LeakGuardPlugin = {
     name: "nifra:leak-guard",
+    buildStart: () => specifiers.reset(),
+    resolveId: {
+      order: "pre",
+      handler(source, importer, resolveOptions) {
+        return specifiers.resolveId(this, source, importer, resolveOptions)
+      },
+    },
     generateBundle(_options, bundle) {
       const classifier = classifierFor(appRoot, options)
       // Resolved import edges per module, straight from Rollup's graph. Dynamic imports count too: a
@@ -186,7 +267,9 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
         if (info === null) return []
         return [...(info.importedIds ?? []), ...(info.dynamicallyImportedIds ?? [])]
       }
-      const graph = completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf)
+      const graph = specifiers.annotate(
+        completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf),
+      )
       const sources = { classifier, sourceOf: rollupModuleSource }
       const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
       const outputs = Object.values(bundle as Readonly<Record<string, RollupOutputLike>>)
@@ -271,8 +354,16 @@ export type ServerZoneGuardOptions = Pick<
  */
 export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakGuardPlugin {
   const appRoot = resolve(options.appRoot ?? process.cwd())
+  const specifiers = entrySpecifiers(appRoot, options)
   const plugin: LeakGuardPlugin = {
     name: "nifra:server-zone-guard",
+    buildStart: () => specifiers.reset(),
+    resolveId: {
+      order: "pre",
+      handler(source, importer, resolveOptions) {
+        return specifiers.resolveId(this, source, importer, resolveOptions)
+      },
+    },
     generateBundle(_options, bundle) {
       const classifier = classifierFor(appRoot, options)
       const importsOf = (id: string): readonly string[] => {
@@ -280,7 +371,9 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
         if (info === null) return []
         return [...(info.importedIds ?? []), ...(info.dynamicallyImportedIds ?? [])]
       }
-      const graph = completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf)
+      const graph = specifiers.annotate(
+        completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf),
+      )
       const leak = formatServerGraphVerdict(
         verifyServerGraph(graph, {
           classifier,
@@ -465,7 +558,6 @@ export interface AssetUrlGuardPlugin {
   ): Promise<null>
 }
 
-const POSTFIX = /[?#].*$/s
 const URL_SCHEME = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 
 /**
@@ -507,7 +599,7 @@ export function viteAssetUrlGuard(options: ServerZoneGuardOptions = {}): AssetUr
     },
     async transform(code, id, transformOptions) {
       if (transformOptions?.ssr === true || !code.includes("import.meta.url")) return null
-      const importer = id.replace(POSTFIX, "")
+      const importer = withoutQuery(id)
       if (!isAbsolute(importer) || importer.includes("/node_modules/") || CSS_FILE.test(importer))
         return null
       let program: unknown
@@ -553,11 +645,11 @@ async function assetUrlFiles(
 ): Promise<string[]> {
   const files = new Set<string>()
   const add = (path: string | undefined): void => {
-    const file = path?.replace(POSTFIX, "")
+    const file = path === undefined ? undefined : withoutQuery(path)
     if (file === undefined || !isAbsolute(file) || file.includes("\0")) return
     if (statSync(file, { throwIfNoEntry: false })?.isFile() === true) files.add(file)
   }
-  if (!url.startsWith("/")) add(resolve(dirname(importer), url.replace(POSTFIX, "")))
+  if (!url.startsWith("/")) add(resolve(dirname(importer), withoutQuery(url)))
   const sources = url.startsWith(".") || url.startsWith("/") ? [url] : [url, `./${url}`]
   for (const source of sources) {
     try {

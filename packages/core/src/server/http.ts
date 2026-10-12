@@ -30,7 +30,13 @@ export function isSameOriginPath(value: string): boolean {
     const code = value.charCodeAt(i)
     if (code === 0x5c /* \ */ || code <= 0x1f || code === 0x7f) return false
   }
-  return true
+  // `/.//host` and `/a/..//host` (or their `%2e` forms) resolve to the path `//host`, which any
+  // relative reference later built from that path - a client router's redirect - reads as a host.
+  // A path-absolute reference against a valid base always parses, so this cannot throw.
+  return (
+    !(value.includes(".") || value.includes("%")) ||
+    !new URL(value, "http://n.invalid").pathname.startsWith("//")
+  )
 }
 
 /**

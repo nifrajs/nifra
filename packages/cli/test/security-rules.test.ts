@@ -188,6 +188,27 @@ describe("built-in security rules", () => {
     ])
   })
 
+  test("NF-S001 counts a result object's false decision and an authenticator's nobody as denials", async () => {
+    const findings = await scan(
+      "backend/results.ts",
+      [
+        "function requireA() { try { check() } catch (e) { return { ok: false, error: String(e) } } }",
+        'function requireB() { try { check() } catch { return { "allowed": false } } }',
+        "function authenticateToken() { try { return read() } catch { return null } }",
+        "function authenticateKey() { try { return read() } catch { return undefined } }",
+        "function authenticateSession() { try { return read() } catch { return } }",
+        "function requireC() { try { check() } catch { return { ok: true } } }",
+        "function requireD() { try { check() } catch { return null } }",
+        "function authenticateUser() { try { return read() } catch { return { id: 'guest' } } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S001:6",
+      "NF-S001:7",
+      "NF-S001:8",
+    ])
+  })
+
   test("NF-S001 knows the names gates go by", async () => {
     const gates = [
       "verifyToken",
@@ -198,8 +219,24 @@ describe("built-in security rules", () => {
       "authenticate",
       "authoriseUser",
       "adminGuard",
+      "checkPermissions",
+      "checkAuthorization",
+      "verifySignatures",
+      "ensureOwnership",
+      "checkUserAccess",
     ]
-    const other = ["ensureDir", "checkHealth", "verifyChecksum", "validateEmail", "Guard"]
+    const other = [
+      "ensureDir",
+      "checkHealth",
+      "verifyChecksum",
+      "validateEmail",
+      "Guard",
+      // The noun ends the gate's name; past it, another word names something else.
+      "validateTokenizer",
+      "checkAccessibility",
+      "validateOriginalUrl",
+      "checkUsers",
+    ]
     const findings = await scan(
       "backend/names.ts",
       [...gates, ...other]
@@ -492,6 +529,46 @@ describe("NF-S002 precision", () => {
         ].join("\n"),
       ),
     ).toEqual([1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15])
+  })
+})
+
+describe("NF-S001 severity by file role", () => {
+  const gate = (hatch = "") =>
+    `function canEdit() {\n  try {\n    check()\n  ${hatch}} catch {\n    toast("not allowed")\n  }\n}\n`
+  const finding = async (file: string, root: string, hatch?: string) =>
+    (await scan(file, gate(hatch), root)).find((f) => f.code === "NF-S001")
+
+  test("the same fail-open catch is advisory in a web app's browser code and fails everywhere else", async () => {
+    const root = webApp()
+    for (const file of ["routes/settings.tsx", "frontend/pages/Developers.tsx"]) {
+      const found = await finding(file, root)
+      expect(found?.severity).toBe("warn")
+      expect(found?.evidence).toContain("browser code: the server's own gate decides")
+    }
+    for (const file of [
+      "backend/admin.ts",
+      "routes/settings.backend.ts",
+      "shared/guard.ts",
+      "lib/guard.ts",
+    ])
+      expect((await finding(file, root))?.severity).toBe("error")
+    const api = project({ "package.json": manifest({ "@nifrajs/core": "5.0.0" }) })
+    expect((await finding("routes/settings.tsx", api))?.severity).toBe("error")
+  })
+
+  test("a reasoned nifra-expect is info everywhere; the retired marker silences nothing", async () => {
+    const root = webApp()
+    const reviewed =
+      "// nifra-expect NF-S001: the toast is the whole effect; the API checks again\n  "
+    for (const file of ["routes/settings.tsx", "backend/admin.ts"])
+      expect((await finding(file, root, reviewed))?.severity).toBe("info")
+    const retired = await finding(
+      "routes/settings.tsx",
+      root,
+      "// @nifra-gate-reviewed: reviewed\n  ",
+    )
+    expect(retired?.severity).toBe("warn")
+    expect(retired?.message).toContain("// nifra-expect NF-S001: <reason>")
   })
 })
 

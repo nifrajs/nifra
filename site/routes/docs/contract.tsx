@@ -252,9 +252,11 @@ export const handler = withISR(app, {
 })`
 
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
-// with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) are public
-// exports of @nifrajs/web; \`origin\` is a MetaArgs field beside data, pageData and params.
-import { canonical, jsonLd, openGraph, type MetaArgs } from "@nifrajs/web"
+// with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) come from
+// @nifrajs/web/seo, which imports nothing at runtime, so the page's browser bundle takes only them;
+// \`origin\` is a MetaArgs field beside data, pageData and params.
+import type { MetaArgs } from "@nifrajs/web"
+import { canonical, jsonLd, openGraph } from "@nifrajs/web/seo"
 
 // CAVEAT: meta() runs in BOTH SSR and client navigation, so it has NO server env - never read
 // \`process.env\` or the request here. The framework injects \`origin\` (the site's scheme+host, e.g.
@@ -535,7 +537,9 @@ export default function Contract() {
       <p>
         A route's <code>meta</code> emits the full social / structured-data head with three public
         helpers - <code>canonical()</code>, <code>openGraph()</code>, and <code>jsonLd()</code> - and
-        builds <strong>absolute</strong> URLs from the <code>origin</code> argument. Because{" "}
+        builds <strong>absolute</strong> URLs from the <code>origin</code> argument. Import them from{" "}
+        <code>@nifrajs/web/seo</code>: the entry imports nothing at runtime, so a page's browser bundle
+        gets the three helpers and none of the server modules the package root also exports. Because{" "}
         <code>meta()</code> runs in <strong>both</strong> SSR and client navigation it has{" "}
         <strong>no server env</strong>: never read <code>process.env</code> or the request inside it.
         The framework injects <code>origin</code> (the site's scheme + host, e.g.{" "}

@@ -269,6 +269,48 @@ export const backend = server()
     ])
   })
 
+  test("covers a route on a server built by a local factory one import away", async () => {
+    const cwd = join(FIXTURES, "factory")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(
+      join(cwd, "src/new-server.ts"),
+      'import { server } from "@nifrajs/core"\nexport const newServer = () => server()\n',
+    )
+    await writeFile(
+      join(cwd, "src/users.ts"),
+      'import "app-db/read"\nimport { newServer } from "./new-server.ts"\nexport const users = newServer().get("/users", { capabilities: ["db.read"] }, handler)\n',
+    )
+    // A file importing only a helper that never builds a server stays out of the scan.
+    await writeFile(
+      join(cwd, "src/client.ts"),
+      'import { http } from "./http.ts"\nexport const load = () => http().get("/orders")\n',
+    )
+    await writeFile(join(cwd, "src/http.ts"), "export const http = () => fetchClient\n")
+    const app = server()
+      .get("/users", { capabilities: ["db.read"] }, () => [])
+      .get("/orders", { capabilities: ["db.read"] }, () => [])
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.routes.map((route) => [route.path, route.covered])).toEqual([
+      ["/users", true],
+      ["/orders", false],
+    ])
+    expect(project.report.findings.find((finding) => finding.path === "/orders")?.message).toBe(
+      "GET /orders has no static provenance coverage - src/client.ts:2 appears to register it on a server the static scan cannot identify (built by a helper that is neither `server()` nor imported from a module that calls it); call server() there, or map the route with capabilities.provenance.routeModules",
+    )
+  })
+
+  test("an uncovered route nothing registers says so", async () => {
+    const cwd = join(FIXTURES, "unregistered")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\nimport "app-db/read"\n')
+    const app = server().get("/ghost", { capabilities: ["db.read"] }, () => [])
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.findings.map((finding) => finding.message)).toContain(
+      "GET /ghost has no static provenance coverage - no source file registers it with a path the static scan can read; map it with capabilities.provenance.routeModules",
+    )
+  })
+
   test("a socket is covered by the module that registers it and declares what it reaches", async () => {
     const cwd = join(FIXTURES, "socket")
     await mkdir(join(cwd, "src"), { recursive: true })

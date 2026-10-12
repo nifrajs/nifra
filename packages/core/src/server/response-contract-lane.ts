@@ -28,7 +28,9 @@
  *
  * That is not an inconsistency to paper over: a strict schema has already declared that extra fields
  * are an error, and a stripping one has declared they are ignorable. Enforcement honours what the
- * author wrote rather than overriding it.
+ * author wrote rather than overriding it - unless the app asks for `extra: "strip"`. A schema that
+ * carries its JSON Schema as `jsonSchema` (every `t` schema does) CAN list its declared keys, so for
+ * those the payload is projected onto the declared shape before it is validated.
  *
  * ## What enforcement costs
  *
@@ -62,6 +64,18 @@ import type { AnyServer } from "./server.ts"
  */
 export type ResponseContractMode = "warn" | "enforce"
 
+export interface ResponseContractOptions {
+  /**
+   * Fields the schema does not declare. `"reject"` (the default) leaves them to the validator: a
+   * closed `t.object` reports them, so an enforced response becomes a 500 and the log names them.
+   * `"strip"` drops them first, for any schema exposing its JSON Schema as `jsonSchema` (every
+   * `@nifrajs/schema` `t` schema) - nested objects, arrays and records included. A union is projected
+   * only when exactly one branch can hold an object. Schemas without `jsonSchema` (zod, valibot) are
+   * unaffected: they already strip or reject by their own rules.
+   */
+  readonly extra?: "reject" | "strip"
+}
+
 /** Success and status-specific error schemas captured by one route at registration time. */
 export interface ResponseContractDefinition {
   readonly response?: StandardSchemaV1
@@ -80,6 +94,127 @@ export type ResponseContractOutcome =
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
 
+/** Rebuilds a value with only what its schema declares; absent when the schema can strip nothing. */
+type Projector = (value: unknown) => unknown
+
+const projectors = new WeakMap<object, Projector | null>()
+
+/** The projector for a schema's JSON Schema, compiled once per schema. */
+function projectorOf(schema: StandardSchemaV1): Projector | undefined {
+  const node: unknown = Reflect.get(schema, "jsonSchema")
+  if (typeof node !== "object" || node === null) return undefined
+  let found = projectors.get(node)
+  if (found === undefined) {
+    found = compileProjector(node) ?? null
+    projectors.set(node, found)
+  }
+  return found ?? undefined
+}
+
+const canHoldObject = (node: object): boolean => {
+  const type: unknown = Reflect.get(node, "type")
+  return type === undefined || type === "object" || type === "array"
+}
+
+const objectField = (node: object, key: string): object | undefined => {
+  const value: unknown = Reflect.get(node, key)
+  return typeof value === "object" && value !== null ? value : undefined
+}
+
+function compileProjector(node: unknown): Projector | undefined {
+  if (typeof node !== "object" || node === null) return undefined
+  const schema: object = node
+  const type: unknown = Reflect.get(schema, "type")
+  const branches: unknown = Reflect.get(schema, "anyOf") ?? Reflect.get(schema, "oneOf")
+  if (Array.isArray(branches)) {
+    // Which branch a value meets is the validator's call; projecting onto one of two object branches
+    // could strip the fields that make the other match.
+    const holders = branches.filter(
+      (branch): branch is object =>
+        typeof branch === "object" && branch !== null && canHoldObject(branch),
+    )
+    const only = holders.length === 1 ? compileProjector(holders[0]) : undefined
+    return only === undefined
+      ? undefined
+      : (value) => (typeof value === "object" && value !== null ? only(value) : value)
+  }
+  if (type === "array") {
+    const items: unknown = Reflect.get(schema, "items")
+    const item = Array.isArray(items) ? undefined : compileProjector(items)
+    return item === undefined
+      ? undefined
+      : (value) => (Array.isArray(value) ? value.map(item) : value)
+  }
+  if (type !== "object") return undefined
+  const properties = objectField(schema, "properties") ?? {}
+  const keys = Object.keys(properties)
+  const nested = new Map<string, Projector>()
+  for (const key of keys) {
+    const projector = compileProjector(Reflect.get(properties, key))
+    if (projector !== undefined) nested.set(key, projector)
+  }
+  const patterns: Array<readonly [RegExp, Projector | undefined]> = []
+  for (const [source, child] of Object.entries(objectField(schema, "patternProperties") ?? {})) {
+    let pattern: RegExp
+    try {
+      pattern = new RegExp(source, "u")
+    } catch {
+      return undefined // a pattern this engine can't read: the validator judges the value whole
+    }
+    patterns.push([pattern, compileProjector(child)])
+  }
+  const closed = Reflect.get(schema, "additionalProperties") === false
+  if (!closed && nested.size === 0 && patterns.every(([, projector]) => projector === undefined))
+    return undefined
+  const declared = new Set(keys)
+  return (value) => {
+    if (!isPlainObject(value)) return value
+    const out: Record<string, unknown> = closed ? {} : { ...value }
+    for (const key of closed ? keys : nested.keys()) {
+      // A getter on a row class's prototype is a declared field; `Object.prototype`'s members are not.
+      if (!Object.hasOwn(value, key) && (!(key in value) || key in Object.prototype)) continue
+      const projector = nested.get(key)
+      define(out, key, projector === undefined ? value[key] : projector(value[key]))
+    }
+    if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed)
+    return out
+  }
+}
+
+/**
+ * Carry the undeclared keys a `patternProperties` entry admits: a closed record's keys are all
+ * pattern keys, so dropping them empties a valid value. A key two patterns match is copied verbatim,
+ * since projecting it onto one could strip what the other requires.
+ */
+function projectPatternKeys(
+  value: Record<string, unknown>,
+  out: Record<string, unknown>,
+  declared: ReadonlySet<string>,
+  patterns: ReadonlyArray<readonly [RegExp, Projector | undefined]>,
+  closed: boolean,
+): void {
+  for (const key of Object.keys(value)) {
+    if (declared.has(key)) continue
+    let projector: Projector | undefined
+    let matches = 0
+    for (const [pattern, child] of patterns)
+      if (pattern.test(key)) {
+        projector = child
+        matches++
+      }
+    if (matches === 0) continue
+    if (matches === 1 && projector !== undefined) define(out, key, projector(value[key]))
+    else if (closed) define(out, key, value[key])
+  }
+}
+
+/** `__proto__` is a declared name like any other here; plain assignment would set the prototype. */
+function define(out: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__")
+    Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
+  else out[key] = value
+}
+
 /** Top-level keys present in the handler's result but absent from the validated value. */
 function droppedKeys(result: unknown, value: unknown): string[] {
   if (!isPlainObject(result) || !isPlainObject(value)) return []
@@ -96,8 +231,9 @@ export function checkResponseContract(
   schema: StandardSchemaV1,
   result: unknown,
   mode: "warn" | "enforce",
+  options?: ResponseContractOptions,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
-  return checkRouteResponseContract({ response: schema }, result, mode)
+  return checkRouteResponseContract({ response: schema }, result, mode, undefined, options)
 }
 
 /** The schema a reply with this status is held to: `response` for 2xx, else `errors[status]`. */
@@ -127,12 +263,14 @@ export function checkRouteResponseContract(
   result: unknown,
   mode: "warn" | "enforce",
   jsonReply?: { readonly body: unknown },
+  options?: ResponseContractOptions,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
+  const strip = options?.extra === "strip"
   const plain = isResponseResult(result) ? result.plain : undefined
   if (plain !== undefined) {
     const schema = schemaFor(definition, plain.status)
     if (schema === undefined) return { kind: "ok", value: result }
-    return validateContract(schema, plain.body, result, mode, (value) =>
+    return validateContract(schema, plain.body, result, mode, strip, (value) =>
       status(
         plain.status,
         value,
@@ -143,7 +281,7 @@ export function checkRouteResponseContract(
   if (jsonReply !== undefined && result instanceof Response) {
     const schema = schemaFor(definition, result.status)
     if (schema === undefined) return { kind: "ok", value: result }
-    return validateContract(schema, jsonReply.body, result, mode, (value) =>
+    return validateContract(schema, jsonReply.body, result, mode, strip, (value) =>
       reserialize(result, value),
     )
   }
@@ -155,7 +293,7 @@ export function checkRouteResponseContract(
   if (result instanceof Response || result === undefined) return { kind: "ok", value: result }
   const schema = definition.response
   if (schema === undefined) return { kind: "ok", value: result }
-  return validateContract(schema, result, result, mode, (value) => value)
+  return validateContract(schema, result, result, mode, strip, (value) => value)
 }
 
 /** Validate `payload`; `served` is what goes out unchanged when nothing is enforced - the whole
@@ -165,9 +303,11 @@ function validateContract(
   payload: unknown,
   served: unknown,
   mode: "warn" | "enforce",
+  strip: boolean,
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
-  const settled = schema["~standard"].validate(payload)
+  const project = strip ? projectorOf(schema) : undefined
+  const settled = schema["~standard"].validate(project === undefined ? payload : project(payload))
   return settled instanceof Promise
     ? settled.then((r) => interpret(r, payload, served, mode, replace))
     : interpret(settled, payload, served, mode, replace)
@@ -195,7 +335,7 @@ function interpret(
     : {
         kind: "warn",
         value: served,
-        message: `response carries fields its contract does not declare: ${dropped.join(", ")}. They are being sent; \`responseContract: "enforce"\` would strip them.`,
+        message: `response carries fields its contract does not declare: ${dropped.join(", ")}. They are being sent; \`responseContract("enforce")\` would strip them.`,
       }
 }
 
@@ -219,10 +359,12 @@ interface ResponseContractInstallable {
 /**
  * Hold every route's declared `response` schema to what the handler actually returned.
  *
- *     app.use(responseContract("enforce"))
+ *     app.use(responseContract("enforce"))                      // a closed t.object -> 500 on extras
+ *     app.use(responseContract("enforce", { extra: "strip" }))  // extras dropped, declared fields sent
  *
  * Install it before the routes it should cover - like `idempotency()`, the decision is made per route
- * at registration, so routes registered earlier are not retroactively covered.
+ * at registration, so routes registered earlier are not retroactively covered. It covers routes on
+ * the server it is installed on, its `group()`s, and servers `merge()`d into it afterwards.
  *
  * The check itself is cheap - with a compiled validator it measures in the ~100ns-per-response
  * range, within benchmark noise of an uncontracted route on any route that carries middleware or a
@@ -231,7 +373,16 @@ interface ResponseContractInstallable {
  * taking anyway. Opt-in because not installing the plugin keeps the lane out of the bundle, not
  * because enforcement is expensive.
  */
-export function responseContract(mode: ResponseContractMode = "warn"): IdentityPlugin {
+export function responseContract(
+  mode: ResponseContractMode = "warn",
+  options: ResponseContractOptions = {},
+): IdentityPlugin {
+  if (options.extra !== undefined && options.extra !== "reject" && options.extra !== "strip") {
+    throw new TypeError(
+      `responseContract(): extra must be "reject" or "strip", got ${JSON.stringify(options.extra)}`,
+    )
+  }
+  const contractOptions = options.extra === "strip" ? options : undefined
   const runtime: ResponseContractRuntime = {
     mode,
     check: (definition, result, context) =>
@@ -242,6 +393,7 @@ export function responseContract(mode: ResponseContractMode = "warn"): IdentityP
         result instanceof Response && result === context?.jsonReply
           ? { body: context.jsonBody }
           : undefined,
+        contractOptions,
       ),
   }
   const apply = <S extends AnyServer>(app: S): S => {

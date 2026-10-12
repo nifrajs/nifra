@@ -20,6 +20,10 @@ export function renderFrameworkModule(framework: FrameworkSpec): string {
 import { ${framework.adapter} } from "${framework.package}"
 
 export const adapter = ${framework.adapter}
+
+// Where backend/app.ts is served over HTTP. "" keeps it loader-only: loaders and actions call it
+// in-process. Set "/api" to serve it to the browser too.
+export const apiPrefix = ""
 `
 }
 

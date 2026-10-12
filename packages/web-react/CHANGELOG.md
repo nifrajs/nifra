@@ -1,5 +1,27 @@
 # @nifrajs/web-react
 
+## 5.1.0
+
+### Patch Changes
+
+- c693d89: `<Island strategy={{ media }}>` now renders `data-strategy="media"` and `data-media`, which the islands runtime reads. React dropped the object-valued attribute, so the runtime saw no strategy and ran the enhancer on load, ignoring the media query.
+- Updated dependencies [78b2a04]
+- Updated dependencies [638efe5]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [5372e3a]
+- Updated dependencies [b276c67]
+- Updated dependencies [29d6649]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [72e1b4b]
+- Updated dependencies [7bb8a67]
+- Updated dependencies [513ec28]
+  - @nifrajs/web@5.1.0
+  - @nifrajs/core@5.1.0
+  - @nifrajs/authjs@5.1.0
+  - @nifrajs/i18n@5.1.0
+  - @nifrajs/schema@5.1.0
+  - @nifrajs/image@5.1.0
+
 ## 5.0.0
 
 ### Minor Changes

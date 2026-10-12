@@ -6,7 +6,7 @@
  * holding a runner for the platform's six-hour default.
  */
 import { expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
 const ROOT = join(import.meta.dir, "..", "..", "..")
@@ -21,6 +21,8 @@ const BENCHMARK = "a measured threshold; its red path is the benchmark exceeding
 const GATES: Readonly<Record<string, Gate>> = {
   "check:anti-slop": { redPath: "scripts/check-anti-slop.test.ts" },
   "check:publish": { redPath: "packages/create-nifra/test/version-sync.test.ts" },
+  "check:packed": { redPath: "scripts/check-packed.test.ts" },
+  "verify:published": { redPath: "scripts/verify-published.test.ts" },
   "check:public-boundary": { redPath: "scripts/check-public-boundary.test.ts" },
   "check:public-boundary:release": { redPath: "scripts/check-public-boundary-release.test.ts" },
   "check:agent-boundary": { redPath: "scripts/agent-boundary.test.ts" },
@@ -51,10 +53,7 @@ const GATES: Readonly<Record<string, Gate>> = {
   "check:docs": { redPath: "scripts/check-doc-samples.test.ts" },
   "check:api": { redPath: "scripts/gen-api-reference.test.ts" },
   "check:cards": { redPath: "scripts/gen-llm-cards.test.ts" },
-  "check:llms": {
-    untested:
-      "the same committed-versus-generated compare as check:api, over the built declarations; it refuses a stale build",
-  },
+  "check:llms": { redPath: "scripts/llms-corpus-check.test.ts" },
   "check:node-outcome": { redPath: "scripts/gen-node-outcome.test.ts" },
   "check:sitemap": { redPath: "scripts/gen-sitemap.test.ts" },
   "check:corpus": { untested: COMPOSITE },
@@ -64,6 +63,7 @@ const GATES: Readonly<Record<string, Gate>> = {
   verify: { redPath: "packages/cli/test/check.test.ts" },
   "verify:release": { redPath: "scripts/release-branch.test.ts" },
   "check:release": { untested: COMPOSITE },
+  "check:release-tree": { redPath: "scripts/check-release-tree.test.ts" },
   check: { untested: COMPOSITE },
   "test:coverage": { redPath: "scripts/test-coverage.test.ts" },
   "check:coverage": { redPath: "scripts/coverage-ratchet.test.ts" },
@@ -88,7 +88,11 @@ test("every gate names the test that drives it red, or why it has none", () => {
 
 test("every CI job that runs steps has a timeout", () => {
   const unbounded: string[] = []
-  for (const workflow of ["ci.yml", "release.yml"]) {
+  const workflows = readdirSync(join(ROOT, ".github", "workflows")).filter((name) =>
+    /\.ya?ml$/.test(name),
+  )
+  expect(workflows).toContain("ci.yml")
+  for (const workflow of workflows) {
     const parsed: unknown = Bun.YAML.parse(
       readFileSync(join(ROOT, ".github", "workflows", workflow), "utf8"),
     )
@@ -103,4 +107,11 @@ test("every CI job that runs steps has a timeout", () => {
     }
   }
   expect(unbounded).toEqual([])
+})
+
+// A gitignored copy of the repo (an audit snapshot, a scratch clone) carries its own root biome.json;
+// without the ignore file, lint walks into it and fails on a config the commit does not contain.
+test("lint skips what git ignores", () => {
+  const config = JSON.parse(readFileSync(join(ROOT, "biome.json"), "utf8"))
+  expect(config.vcs).toEqual({ enabled: true, clientKind: "git", useIgnoreFile: true })
 })

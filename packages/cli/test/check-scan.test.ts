@@ -94,6 +94,30 @@ describe("check-scan", () => {
     ])
   })
 
+  test("the parser erases only an import its compiler erases", () => {
+    const specifiers = (source: string, keeps = false) =>
+      scanServerOnlyImports(
+        "routes/index.tsx",
+        source,
+        createSourceFacts(ts, { keepsTypeOnlyImports: () => keeps }),
+      ).map((f) => f.specifier)
+    // A default binding loads its module whatever the named list holds, and so does `{}`.
+    expect(specifiers('import pg, { type Pool } from "pg"\nexport const p = pg')).toEqual(["pg"])
+    expect(specifiers('import {} from "pg"\nexport {} from "ioredis"')).toEqual(["pg", "ioredis"])
+    const typeOnly = 'import { type Pool } from "pg"\nexport { type Stats } from "node:fs"'
+    expect(specifiers(typeOnly)).toEqual([])
+    // `verbatimModuleSyntax` emits each as `import {} from "pg"`, which loads the module.
+    expect(specifiers(typeOnly, true)).toEqual(["pg", "node:fs"])
+    expect(
+      specifiers('import type { Pool } from "pg"\nexport type { Stats } from "node:fs"', true),
+    ).toEqual([])
+    const inline = 'import { type Theme } from "../frontend/theme"\n'
+    expect(importSites(inline, "backend/report.ts", createSourceFacts(ts))).toEqual([])
+    expect(importSites(inline, "backend/report.ts")).toEqual([
+      { specifier: "../frontend/theme", line: 1 },
+    ])
+  })
+
   test("import edges scan a long module in linear time", () => {
     const long = Array.from({ length: 20_000 }, (_, i) => `export const value${i} = ${i}`).join(
       "\n",

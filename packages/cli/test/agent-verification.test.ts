@@ -5,6 +5,7 @@ import { server } from "@nifrajs/core"
 import { defineReplayFile } from "@nifrajs/core/replay"
 import { t } from "@nifrajs/schema"
 import { collectAssureBundle } from "../src/assure.ts"
+import { type CommandSpec, findCommandSpec } from "../src/command-catalog.ts"
 import {
   buildContractsLock,
   CONTRACT_DIGEST_FORMAT,
@@ -18,7 +19,12 @@ import { applyDiagnosticRecipe, listFixRecipes } from "../src/fix-recipes.ts"
 import { runReplay } from "../src/replay.ts"
 import { assertUniqueRuleCodes } from "../src/rules/codes.ts"
 import { validateRulePacks } from "../src/rules/index.ts"
-import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
+import {
+  createFixtureRoot,
+  FIXTURE_TSCONFIG,
+  removeFixtureRoot,
+  writeAppFile,
+} from "./fixture-root.ts"
 
 const ROOT = createFixtureRoot("tmp-agent-verification")
 
@@ -134,6 +140,45 @@ describe("agent verification surfaces", () => {
     expect(Object.keys(lock.routes)).toEqual(["GET /B", "GET /a", "GET /a-x", "GET /a_y"])
   })
 
+  test("nifra fix leaves contract drift for review unless its code is named", async () => {
+    const dir = join(ROOT, "fix-contract-drift")
+    await mkdir(dir, { recursive: true })
+    writeAppFile(
+      dir,
+      "backend/app.ts",
+      'import { server } from "@nifrajs/core"\nimport { t } from "@nifrajs/schema"\nexport const backend = server().post("/users", { body: t.object({ name: t.string() }) }, () => ({ ok: true }))\n',
+    )
+    // A lock recorded before the body schema changed: the backend module is cached in-process, so the
+    // drift is written into the lock rather than into the app.
+    const current = await snapshotContracts(dir)
+    const stale = { ...current.routes["POST /users"]!, request: "0".repeat(64) }
+    await writeFile(
+      join(dir, "contracts.lock.json"),
+      JSON.stringify({ ...current, routes: { "POST /users": stale } }),
+    )
+    const lock = await Bun.file(join(dir, "contracts.lock.json")).text()
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the catalog registers `fix` with an optional `code` input and an output carrying these fields.
+    const fix = findCommandSpec("fix") as CommandSpec<
+      { code?: string },
+      {
+        ok: boolean
+        changed: readonly string[]
+        skipped: readonly { code: string }[]
+      }
+    >
+
+    const all = await fix.run({}, { cwd: dir })
+    expect(all.ok).toBe(false)
+    expect(all.changed).not.toContain("contracts.lock.json")
+    expect(all.skipped.map((entry) => entry.code)).toContain("NF-K001")
+    expect(await Bun.file(join(dir, "contracts.lock.json")).text()).toBe(lock)
+    expect((await checkContractsLock(dir)).diagnostics).not.toEqual([])
+
+    const named = await fix.run({ code: "NF-K001" }, { cwd: dir })
+    expect(named.changed).toContain("contracts.lock.json")
+    expect((await checkContractsLock(dir)).diagnostics).toEqual([])
+  })
+
   test("a lock whose every route has no schema is vacuous; declaring one clears it", async () => {
     const noSchema = await buildContractsLock(
       server()
@@ -157,6 +202,7 @@ describe("agent verification surfaces", () => {
     const dir = join(ROOT, "bundle")
     await mkdir(dir, { recursive: true })
     writeAppFile(dir, "backend/app.ts", "export const backend = { routes: () => [] }\n")
+    writeAppFile(dir, "tsconfig.json", FIXTURE_TSCONFIG)
     await writeFile(
       join(dir, "nifra.assurance.ts"),
       'import { defineAssuranceConfig } from "@nifrajs/core/assurance"\nimport { backend } from "./backend/app.ts"\nexport default defineAssuranceConfig({ source: backend, policy: { rules: [], unmatched: "ignore", allowEmpty: true } })\n',
@@ -216,6 +262,11 @@ describe("agent verification surfaces", () => {
     expect(changed).toEqual(["security.ts"])
     const source = await Bun.file(join(dir, "security.ts")).text()
     expect(source).toContain("timingSafeEqual")
+    expect(
+      listFixRecipes()
+        .filter((recipe) => recipe.onlyWhenNamed === true)
+        .map((recipe) => recipe.id),
+    ).toEqual(["contracts.snapshot", "layout.migrate"])
     expect(listFixRecipes().map((recipe) => recipe.id)).toEqual([
       "security.timing-safe-equal",
       "manifest.sync",
@@ -223,6 +274,9 @@ describe("agent verification surfaces", () => {
       "contracts.snapshot",
       "workspace-dist.rebuild",
       "imports.moved-export",
+      "route.split",
+      "layout.migrate",
+      "schemas.draft",
       "client.reserved-segment",
     ])
   })

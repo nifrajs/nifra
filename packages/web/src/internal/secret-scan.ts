@@ -293,6 +293,98 @@ function formatMatches(text: string): Match[] {
   return matches
 }
 
+/** Words that mark a whole `_`/`-` segment of a value as a stand-in: `your_signing_secret`. */
+const PLACEHOLDER_SEGMENT =
+  /^(?:your|example|placeholder|sample|dummy|changeme|replace|generated|x{3,})$/
+
+const placeholderSegments = (value: string): boolean =>
+  value
+    .toLowerCase()
+    .split(/[_-]/)
+    .some((segment) => PLACEHOLDER_SEGMENT.test(segment))
+
+/** A word-cased label: letters and marks, hyphen-joined words, an acronym. No digits, no runs of
+ * mixed case, no credential punctuation. */
+const LABEL = /^(?:\p{Lu}{1,4}|\p{Lu}?[\p{Ll}\p{M}]+)(?:-(?:\p{Lu}{1,4}|\p{Lu}?[\p{Ll}\p{M}]+))*$/u
+
+/** How many string values a catalog holds at least, and the share of them that is prose. */
+const CATALOG_VALUES = 10
+
+/** Where a `/` starts a regular expression: after anything but a value's end. */
+const VALUE_END = /[\w$)\]}"'`]/
+
+/**
+ * The spans of top-level object literals that read as message catalogs: at least
+ * {@link CATALOG_VALUES} string property values, most of them prose with whitespace. A lexer, not a
+ * parser, so a build scans without TypeScript; strings, comments and regular expressions are skipped.
+ */
+function catalogSpans(text: string): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = []
+  let depth = 0
+  let start = 0
+  let values = 0
+  let prose = 0
+  // Whether the open top-level brace starts an object literal, not a block such as a function body.
+  let literal = false
+  let last = ""
+  let i = 0
+  while (i < text.length) {
+    const c = text.charAt(i)
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i)
+      i = end === -1 ? text.length : end
+      continue
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2)
+      i = end === -1 ? text.length : end + 2
+      continue
+    }
+    if (c === '"' || c === "'" || c === "`" || (c === "/" && !VALUE_END.test(last))) {
+      let j = i + 1
+      let inClass = false
+      for (; j < text.length; j++) {
+        const d = text[j]
+        if (d === "\\") {
+          j++
+          continue
+        }
+        if (c !== "`" && d === "\n") break
+        if (c !== "/") {
+          if (d === c) break
+          continue
+        }
+        if (d === "[") inClass = true
+        else if (d === "]") inClass = false
+        else if (d === "/" && !inClass) break
+      }
+      // A string after `:` is a property's value.
+      if (depth > 0 && c !== "/" && c !== "`" && last === ":") {
+        values++
+        if (/\s/.test(text.slice(i + 1, j))) prose++
+      }
+      last = c
+      i = j + 1
+      continue
+    }
+    if (c === "{") {
+      if (depth === 0) {
+        start = i
+        values = 0
+        prose = 0
+        const word = /([\w$]+)\s*$/.exec(text.slice(Math.max(0, i - 16), i))?.[1]
+        literal = last === "" || "=(,:[?".includes(last) || word === "default"
+      }
+      depth++
+    } else if (c === "}" && depth > 0 && --depth === 0) {
+      if (literal && values >= CATALOG_VALUES && prose * 2 > values) spans.push([start, i + 1])
+    }
+    if (!/\s/.test(c)) last = c
+    i++
+  }
+  return spans
+}
+
 /** The credential a literal given to `name` carries, when the name is secret-like and the literal
  * looks random. */
 function credentialOf(name: string, value: string): string | undefined {
@@ -304,6 +396,7 @@ function credentialOf(name: string, value: string): string | undefined {
     secret === undefined ||
     PUBLIC_VALUE.test(secret) ||
     PLACEHOLDER.test(secret) ||
+    placeholderSegments(secret) ||
     !looksRandom(secret, 16)
   )
     return undefined
@@ -312,9 +405,16 @@ function credentialOf(name: string, value: string): string | undefined {
 
 function assignedMatches(text: string): Match[] {
   const matches: Match[] = []
+  let catalogs: ReadonlyArray<readonly [number, number]> | undefined
+  /** A label in a message catalog: `password: "Lykilorð"` names the field in another language. */
+  const catalogLabel = (value: string, valueAt: number): boolean => {
+    if (!LABEL.test(value)) return false
+    catalogs ??= catalogSpans(text)
+    return catalogs.some(([start, end]) => valueAt > start && valueAt < end)
+  }
   const add = (name: string, value: string, valueAt: number): void => {
     const secret = credentialOf(name, value)
-    if (secret === undefined) return
+    if (secret === undefined || catalogLabel(value, valueAt)) return
     matches.push({
       rule: "assigned-secret",
       // The credential is the value's tail: a header value's scheme is not part of it.

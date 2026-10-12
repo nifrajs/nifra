@@ -534,7 +534,12 @@ test("identity remediation is cause-specific (duplicate-path does not just say r
  */
 const linkedRepos = async (
   label: string,
-  over: { readonly appPackage?: Record<string, unknown>; readonly bunfig?: string } = {},
+  over: {
+    readonly appPackage?: Record<string, unknown>
+    readonly bunfig?: string
+    /** `file`: the folder Bun installs for a `file:` dependency, a real directory of per-file links. */
+    readonly install?: "link" | "file"
+  } = {},
 ) => {
   const ground = await mkdtemp(join(tmpdir(), `nifra-single-copy-${label}-`))
   const app = join(ground, "app")
@@ -566,7 +571,12 @@ const linkedRepos = async (
     join(sibling, "node_modules", "react", "package.json"),
     JSON.stringify({ name: "react", version: "19.2.8" }),
   )
-  await symlink(join(sibling, "packages", "ui"), join(app, "node_modules", "@example", "ui"))
+  const ui = join(sibling, "packages", "ui")
+  const installed = join(app, "node_modules", "@example", "ui")
+  if (over.install === "file") {
+    await mkdir(installed)
+    await symlink(join(ui, "package.json"), join(installed, "package.json"))
+  } else await symlink(ui, installed)
   return { ground, app, sibling }
 }
 
@@ -589,6 +599,19 @@ test("a linked sibling repo's second react is fatal when nothing is declared", a
     expect(result.findings[0]?.scope).toBeUndefined()
     // Each install holds its own react directory, so no link was crossed.
     expect(result.findings[0]?.provenance).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a file: dependency installed as a folder of linked files is scanned like a linked one", async () => {
+  const { ground, app } = await linkedRepos("file-install", { install: "file" })
+  try {
+    const result = await collectIdentityParity(app)
+    expect(result.findings.map((finding) => finding.package)).toEqual(["react"])
+    expect(result.findings[0]?.copies.map((copy) => copy.importers)).toContainEqual([
+      "../sibling/packages/ui",
+    ])
   } finally {
     await rm(ground, { recursive: true, force: true })
   }

@@ -25,4 +25,8 @@ if (changesets.length === 0)
 
 console.log(`Preparing ${branch} from ${changesets.length} pending changeset(s).`)
 run("bun", ["run", "changeset:version"])
+// The pull request carries each package's published file list, so every file a package gains or
+// loses since the last release is in its diff; release verification holds the packs to it.
+run("bun", ["run", "build"])
+run("bun", ["run", "check:packed", "--update"])
 console.log("Release versions and generated artifacts are ready to commit on this branch.")

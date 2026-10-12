@@ -18,14 +18,14 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<Adde…`
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
-- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
+- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 - **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
-- **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
 
-_…and 131 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 132 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

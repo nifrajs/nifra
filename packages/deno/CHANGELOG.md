@@ -1,5 +1,12 @@
 # @nifrajs/deno
 
+## 5.1.0
+
+### Patch Changes
+
+- 5ab361c: Checking `wsMaxPayloadBytes` on Deno, and on runtimes wired through `attachWebSocket` (Cloudflare Workers), no longer UTF-8 encodes every text message to measure it: the size is counted in place, and a message whose length alone settles the answer is not scanned at all. Before, each capped text message was copied once just to be measured. The `@nifrajs/deno` docs now state the limit of that check: `Deno.upgradeWebSocket` takes no size limit, so Deno receives each message whole (up to its own 64 MiB on Deno 2.9) before the cap closes the socket with `1009`.
+- 7c8b345: A WebSocket route with `validateSend: true` now checks its outbound frames against `sendSchema` on Node and Deno too, as it already did on Bun: a frame the schema refuses is dropped before it reaches the client and reported to the route's `error()`. Before, `@nifrajs/node` and `@nifrajs/deno` sent every frame unchecked. The upgrade outcome a nifra app hands an adapter now carries a `sender` that adapters wiring their own sockets build `ws.send` with.
+
 ## 5.0.0
 
 ### Patch Changes

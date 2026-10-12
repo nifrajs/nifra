@@ -270,6 +270,10 @@ test("checks JSX and Svelte routes on a project TypeScript 7 install", async () 
       join(root, "routes", "about.jsx"),
       `const key = "${key}"\nexport default () => <p>{key}</p>\n`,
     )
+    await writeFile(
+      join(root, "routes", "notes.tsx"),
+      "export async function loader() {\n  return {}\n}\nexport default () => <p />\n",
+    )
 
     const result = await collectCheckResult(root, { lintsOnly: true })
     const found = new Set(
@@ -277,10 +281,11 @@ test("checks JSX and Svelte routes on a project TypeScript 7 install", async () 
         (finding) => `${finding.code} ${finding.file}:${finding.line}`,
       ),
     )
-    expect([...found].filter((entry) => /NF-C0(04|17|32)/.test(entry)).sort()).toEqual([
+    expect([...found].filter((entry) => /NF-C0(04|17|32|41)/.test(entry)).sort()).toEqual([
       "NF-C004 routes/index.svelte:2",
       "NF-C032 routes/about.jsx:1",
       "NF-C032 routes/index.svelte:3",
+      "NF-C041 routes/notes.tsx:1",
     ])
   } finally {
     await rm(root, { recursive: true, force: true })

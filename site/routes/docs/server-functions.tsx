@@ -99,8 +99,9 @@ export default function ServerFunctions() {
         </li>
       </ul>
       <p>
-        Both content-type rules were measured rather than assumed. A body schema alone still accepts a
-        cross-origin urlencoded form - 200, attacker-controlled fields - and a bounded JSON read alone
+        Both content-type rules were measured rather than assumed. A body schema alone still reads a
+        urlencoded form that carries no <code>Origin</code> or one from a site in{" "}
+        <code>formOrigins</code> - 200, attacker-controlled fields - and a bounded JSON read alone
         accepts the <code>text/plain</code> trick where a form's <code>name=value</code> is crafted to
         parse as valid JSON. Neither is sufficient by itself.
       </p>

@@ -251,7 +251,9 @@ export default function WebSockets() {
         <strong>Cloudflare Workers</strong>, a stateless isolate can’t broadcast across connections,
         so Nifra ships a Durable Object hub: <code>createWebSocketHub(app)</code> holds the
         connections, and <code>toFetchHandler(app, {"{ webSocketHub }"})</code> routes upgrades to it
-        - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun.
+        - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun. An
+        upgrade request for a path with no WebSocket route still gets that path's HTTP answer, as on
+        every other runtime.
       </p>
       <CodeBlock code={WORKERS} />
 
@@ -315,6 +317,15 @@ export default function WebSockets() {
         <code>501</code> and the HTTP routes are unaffected.
       </p>
       <CodeBlock code={NODE_WS} />
+      <p>
+        <code>server({"{ wsMaxPayloadBytes }"})</code> caps one inbound message (default{" "}
+        <code>maxBodyBytes</code>, 1 MB): a socket that sends more is closed with <code>1009</code>{" "}
+        and the message never reaches your handler. Bun and Node refuse it while it arrives. Deno's{" "}
+        <code>Deno.upgradeWebSocket</code> takes no size limit, so Deno receives each message whole
+        (up to its own limit, 64 MiB on Deno 2.9) before nifra can check it: the cap still keeps the
+        message from your handler, but it does not bound the memory Deno spent receiving it. Where that
+        matters, cap message size in a proxy in front of a Deno app.
+      </p>
 
       <h2 id="composed">In a composed app</h2>
       <p>
@@ -326,6 +337,12 @@ export default function WebSockets() {
         <code>attachWebSocket</code> wires the socket to a handler and a <code>TopicRegistry</code>{" "}
         owns its pub/sub. On Bun, install <code>websocket()</code> on the parent or on a mounted nifra
         child, or <code>listen()</code> refuses to start with <code>INVALID_WS_RUNTIME</code>.
+      </p>
+      <p>
+        Each mounted nifra app keeps its own <code>wsMaxPayloadBytes</code>: a message over the
+        child's cap closes that socket with <code>1009</code>, whether the cap is below or above the
+        parent's. On Bun one listener serves them all, so its frame limit is the largest cap among the
+        parent and the apps mounted on it, and a socket whose app declares less checks its own.
       </p>
       <p>
         <code>mountFetch(path, handler)</code> and a plain fetch handler carry HTTP only. An upgrade

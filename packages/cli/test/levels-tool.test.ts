@@ -3,7 +3,12 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { collectVerificationLevels, runLevels } from "../src/levels-tool.ts"
 import { runManifestEmit } from "../src/manifest-tool.ts"
-import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import {
+  createFixtureProject,
+  createFixtureRoot,
+  FIXTURE_TSCONFIG,
+  removeFixtureRoot,
+} from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("nifra-levels-fixtures-")
 
@@ -18,6 +23,7 @@ async function project(
 ): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, `${name}-`)
   await mkdir(join(cwd, "backend"), { recursive: true })
+  await writeFile(join(cwd, "tsconfig.json"), FIXTURE_TSCONFIG)
   await writeFile(
     join(cwd, "backend/app.ts"),
     [
@@ -26,7 +32,7 @@ async function project(
         ? [`import { assure, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"`]
         : []),
       `const okBody = {`,
-      `  "~standard": { version: 1, vendor: "levels-test", validate: (value) => (typeof value?.amount === "number" ? { value } : { issues: [{ message: "amount" }] }) },`,
+      `  "~standard": { version: 1 as const, vendor: "levels-test", validate: (value: any) => (typeof value?.amount === "number" ? { value } : { issues: [{ message: "amount" }] }) },`,
       `  jsonSchema: { type: "object", properties: { amount: { type: "number", minimum: 1, maximum: 9 } }, required: ["amount"] },`,
       `}`,
       `export const backend = server().post("/pay", { body: okBody }, () => ({ ok: true }))`,

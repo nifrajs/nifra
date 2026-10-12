@@ -110,6 +110,7 @@ With `subscriptions: true`, a socket is admitted only when `authorize` accepts i
 | `allowedOrigins` | reflect `*` | CORS origin allowlist. |
 | `authorize` | - | Per-request guard; return `false` for 401. |
 | `enableGet` | `true` | Serve `GET /graphql` (queries only). |
+| `introspection` | `true` | `false` refuses `__schema` and `__type` as a validation error (400 over HTTP, an `error` frame over WS); `__typename` still resolves. Subscriptions inherit it unless their own options set it. |
 | `subscriptions` | `false` | `true` (reuse schema, context, `authorize` and limits) or explicit WS options. |
 | `legacyJsonResponse` | `false` | Old always-200 `application/json` shape. |
 

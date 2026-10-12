@@ -118,6 +118,29 @@ describe("a redirect answering a navigation's data request", () => {
     }
   })
 
+  test("a same-origin target whose path starts // rides as an absolute URL, never as //host", async () => {
+    const app = appOf({
+      "index.tsx": {},
+      "raw.tsx": {
+        loader: () =>
+          new Response(null, { status: 302, headers: { location: "/.//evil.example/x" } }),
+      },
+      "absolute.tsx": {
+        loader: () => redirect("http://x//evil.example/x?q=1", { external: true }),
+      },
+    })
+    for (const path of ["/raw", "/absolute"]) {
+      const res = await get(app, path, { [DATA_HEADER]: "1" })
+      const to = res.headers.get(REDIRECT_HEADER) ?? ""
+      expect({ path, status: res.status, host: new URL(to, "http://x").host }).toEqual({
+        path,
+        status: 204,
+        host: "x",
+      })
+      expect(to.startsWith("//")).toBe(false)
+    }
+  })
+
   test("a document request still gets the redirect itself", async () => {
     const res = await get(redirecting(), "/returned")
     expect(res.status).toBe(303)

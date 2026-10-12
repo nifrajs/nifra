@@ -352,13 +352,57 @@ export function parseSimpleFetchCall(snippet: string): SimpleFetchCall | undefin
   return { path, method, start: match.index, end: close + 1 }
 }
 
-function isPotentialBackendSource(code: string): boolean {
+const SERVER_CONSTRUCTION = /(?<![.\w])server\s*\(|new\s+Hono(?:<[^>]+>)?\s*\(/
+
+function isPotentialBackendSource(
+  code: string,
+  file?: string,
+  project?: ReadonlyMap<string, string>,
+): boolean {
   return (
     code.includes("@nifrajs/core") ||
-    /(?<![.\w])server\s*\(/.test(code) ||
+    SERVER_CONSTRUCTION.test(code) ||
     /(?:from\s*|import\s*)["']hono["']/.test(code) ||
-    /new\s+Hono(?:<[^>]+>)?\s*\(/.test(code)
+    (file !== undefined && project !== undefined && callsLocalServerFactory(code, file, project))
   )
+}
+
+/**
+ * A module that builds its server through a local helper - `newServer().get(...)` with `newServer`
+ * imported from a project file that calls `server()` - names neither `@nifrajs/core` nor `server(`
+ * itself. One import hop is followed: the imported module must construct a server, so a helper module
+ * that merely mentions `@nifrajs/core` (a schema re-export) does not turn every importer into a
+ * backend and its `client.get("/x")` calls into routes.
+ */
+function callsLocalServerFactory(
+  code: string,
+  file: string,
+  project: ReadonlyMap<string, string>,
+): boolean {
+  for (const [local, binding] of namedImports(code)) {
+    if (!new RegExp(`(?<![.\\w$])${local.replaceAll("$", "\\$")}\\s*\\(`).test(code)) continue
+    const target = projectModule(project, file, binding.specifier)
+    if (target !== undefined && SERVER_CONSTRUCTION.test(stripComments(project.get(target) ?? "")))
+      return true
+  }
+  return false
+}
+
+/**
+ * Literal route registrations in a file the backend-source gate turned away, so a route the scan
+ * could not cover can say where it probably lives. Nothing here is treated as a route.
+ */
+export function scanSkippedRouteText(
+  file: string,
+  content: string,
+  project?: ReadonlyMap<string, string>,
+): StaticRouteFinding[] {
+  const code = stripComments(content)
+  if (isPotentialBackendSource(code, file, project)) return []
+  return [
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ),
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ),
+  ]
 }
 
 function scanRoutePattern(
@@ -727,7 +771,7 @@ export function scanStaticRouteText(
   project?: ReadonlyMap<string, string>,
 ): StaticRouteFinding[] {
   const code = stripComments(content)
-  if (!isPotentialBackendSource(code)) return []
+  if (!isPotentialBackendSource(code, file, project)) return []
   return [
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
@@ -849,7 +893,7 @@ function scanRouteArguments(
   const routes: StaticRouteFinding[] = []
   const unresolved: UnresolvedRoutePathFinding[] = []
   const code = stripComments(content)
-  if (!isPotentialBackendSource(code)) return { routes, unresolved }
+  if (!isPotentialBackendSource(code, file, project)) return { routes, unresolved }
   const lines = content.split("\n")
   const constants = moduleConstants(code, content)
   const imports = namedImports(code)
@@ -922,7 +966,7 @@ export function scanStaticSocketText(
   project?: ReadonlyMap<string, string>,
 ): StaticRouteFinding[] {
   const code = stripComments(content)
-  if (!isPotentialBackendSource(code)) return []
+  if (!isPotentialBackendSource(code, file, project)) return []
   return [
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts, SOCKET_VERB),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts, SOCKET_VERB),
@@ -2939,7 +2983,8 @@ function staticImportEdges(
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     if (positions[m.index] === " ") continue
     if (m[1] === undefined) continue
-    if (facts !== undefined && file !== undefined) {
+    // Only a `type` modifier can erase a clause the pattern matched, so other clauses skip the parse.
+    if (facts !== undefined && file !== undefined && /\btype\b/.test(m[0])) {
       const source = facts.parse(file, content)
       if (source !== undefined && facts.isValueImportAt(source, m.index, m[1]) === false) continue
     }
@@ -3020,12 +3065,14 @@ function importEdges(
   return edges.sort((a, b) => a.index - b.index)
 }
 
-/** The runtime imports of a module with the line each sits on, in source order. Pure. */
+/** The runtime imports of a module with the line each sits on, in source order. With `facts`, an
+ * import the compiler erases (`import { type X }`) is none. Pure. */
 export function importSites(
   content: string,
   file?: string,
+  facts?: SourceFacts,
 ): Array<{ readonly specifier: string; readonly line: number }> {
-  return importEdges(content, undefined, file).map(({ specifier, index }) => ({
+  return importEdges(content, facts, file).map(({ specifier, index }) => ({
     specifier,
     line: lineAt(content, index),
   }))

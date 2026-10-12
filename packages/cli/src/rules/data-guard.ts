@@ -264,6 +264,32 @@ export function missingOutputSchemas(content: string): MissingOutputSchema[] {
   return missing
 }
 
+const GENERATED_LINE = /^[ \t]*\/\/ nifra:generated [0-9a-f]{8}\b/
+const OPEN_DRAFT = /\bt\.json\(\)\s*\/\*\s*(any|unknown) in the source type\s*\*\//g
+
+/** Where a generated output schema (the export under a `nifra:generated` line) admits any value: the
+ * note `nifra schemas` writes beside a `t.json()` drafted from `any` or `unknown`. */
+export function openDraftLines(content: string): Array<{ line: number; type: string }> {
+  const found: Array<{ line: number; type: string }> = []
+  let marked = false
+  let generated = false
+  for (const [index, text] of content.split("\n").entries()) {
+    if (GENERATED_LINE.test(text)) {
+      marked = true
+      continue
+    }
+    if (/^export\s/.test(text)) {
+      generated = marked
+      marked = false
+    }
+    if (!generated) continue
+    for (const match of text.matchAll(OPEN_DRAFT)) {
+      found.push({ line: index + 1, type: match[1] ?? "any" })
+    }
+  }
+  return found
+}
+
 export const missingOutputRule: CheckRule = {
   code: "NF-C030",
   title: "Route data without an output schema",
@@ -289,7 +315,21 @@ export const missingOutputRule: CheckRule = {
               `missing: ${schema}`,
               ...(proven ? ["returns: a data literal"] : []),
             ],
+            fix: { recipe: "schemas.draft", command: "nifra fix --code NF-C030" },
             verify: "nifra check",
+          }),
+        )
+      }
+      for (const { line, type } of openDraftLines(content)) {
+        findings.push(
+          diagnostic({
+            code: "NF-C030",
+            severity: "warn",
+            file,
+            line,
+            message: `${file}'s generated output schema admits any value here, because the type it was drafted from is ${type} at this point: the output guard drops nothing below it. Give that value a type, then run \`nifra schemas --write\`.`,
+            evidence: [`draft: t.json() from ${type}`],
+            verify: "nifra schemas --check",
           }),
         )
       }

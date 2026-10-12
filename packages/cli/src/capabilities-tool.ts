@@ -18,7 +18,13 @@ import {
 } from "@nifrajs/core/capabilities"
 import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
-import { scanStaticRouteText, scanStaticSocketText, stripComments, walkSource } from "./check.ts"
+import {
+  scanSkippedRouteText,
+  scanStaticRouteText,
+  scanStaticSocketText,
+  stripComments,
+  walkSource,
+} from "./check.ts"
 
 // Import and re-export clauses are spelled out (a default binding, then `* as ns` or a `{ … }` list)
 // rather than scanned lazily, which is quadratic on a long semicolon-free module.
@@ -340,6 +346,7 @@ export async function collectCapabilityProjectReport(
   const policy = defineCapabilityPolicy(policyInput)
   const sources = await readSources(cwd)
   const automatic = new Map<string, Set<string>>()
+  const skipped = new Map<string, string>()
   for (const [file, content] of sources) {
     for (const route of [
       ...scanStaticRouteText(file, content, undefined, sources),
@@ -350,6 +357,12 @@ export async function collectCapabilityProjectReport(
         const modules = automatic.get(routeKey(route.method, path)) ?? new Set<string>()
         modules.add(file)
         automatic.set(routeKey(route.method, path), modules)
+      }
+    }
+    for (const route of scanSkippedRouteText(file, content, sources)) {
+      for (const path of staticRouteForms(route.path)) {
+        if (!skipped.has(routeKey(route.method, path)))
+          skipped.set(routeKey(route.method, path), `${file}:${route.line}`)
       }
     }
   }
@@ -380,12 +393,25 @@ export async function collectCapabilityProjectReport(
       policy,
       sources,
     )
-    evidenceRoutes.push({
-      method: route.method,
-      path: route.path,
-      covered: modules.size > 0 && walked.covered,
-      evidence: walked.evidence,
-    })
+    const site = modules.size === 0 ? skipped.get(routeKey(route.method, route.path)) : undefined
+    const uncoveredReason =
+      modules.size > 0
+        ? undefined
+        : site === undefined
+          ? "no source file registers it with a path the static scan can read; map it with capabilities.provenance.routeModules"
+          : `${site} appears to register it on a server the static scan cannot identify (built by a helper that is neither \`server()\` nor imported from a module that calls it); call server() there, or map the route with capabilities.provenance.routeModules`
+    const covered = modules.size > 0 && walked.covered
+    evidenceRoutes.push(
+      uncoveredReason === undefined
+        ? { method: route.method, path: route.path, covered, evidence: walked.evidence }
+        : {
+            method: route.method,
+            path: route.path,
+            covered,
+            evidence: walked.evidence,
+            uncoveredReason,
+          },
+    )
     violations.push(...walked.violations)
     truncations.push(...walked.truncations)
   }

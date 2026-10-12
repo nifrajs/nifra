@@ -43,6 +43,11 @@ export interface WireDecodeLimits {
   readonly maxCollectionEntries?: number
   /** Maximum UTF-8 string plus decoded binary bytes materialized. Default 16 MiB. */
   readonly maxDecodedBytes?: number
+  /**
+   * Maximum decimal digits in one `bigint`. Default 4,096 (past 8192-bit integers). Parsing grows
+   * faster than the digit count, so one long token would cost seconds of CPU under the byte limit.
+   */
+  readonly maxBigIntDigits?: number
 }
 
 export const DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>> = Object.freeze({
@@ -50,6 +55,7 @@ export const DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>> = 
   maxDepth: 256,
   maxCollectionEntries: 100_000,
   maxDecodedBytes: 16 * 1024 * 1024,
+  maxBigIntDigits: 4096,
 })
 
 /** Thrown by {@link encode} for a value it will not encode (a function or a symbol). */
@@ -223,6 +229,11 @@ export function decode(wire: Wire, limits: WireDecodeLimits = {}): unknown {
     DEFAULT_WIRE_DECODE_LIMITS.maxDecodedBytes,
     "maxDecodedBytes",
   )
+  const maxBigIntDigits = decodeLimit(
+    limits.maxBigIntDigits,
+    DEFAULT_WIRE_DECODE_LIMITS.maxBigIntDigits,
+    "maxBigIntDigits",
+  )
   if (nodes.length > maxNodes) throw new WireDecodeError("wire node limit exceeded")
   const built = new Map<number, unknown>()
   let collectionEntries = 0
@@ -278,6 +289,9 @@ export function decode(wire: Wire, limits: WireDecodeLimits = {}): unknown {
       case "bigint": {
         if (typeof record.v !== "string" || !/^-?(?:0|[1-9][0-9]*)$/u.test(record.v)) {
           throw new WireDecodeError("malformed bigint token")
+        }
+        if (record.v.length - (record.v.charCodeAt(0) === 45 ? 1 : 0) > maxBigIntDigits) {
+          throw new WireDecodeError("wire bigint digit limit exceeded")
         }
         chargeString(record.v)
         return BigInt(record.v)

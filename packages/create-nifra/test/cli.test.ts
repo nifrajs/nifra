@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import ts from "typescript"
-import { githubDeployWorkflow, parseArgs, run, scaffold } from "../src/cli.ts"
+import { githubDeployWorkflow, parseArgs, run, scaffold, TEMPLATE_DEV_URLS } from "../src/cli.ts"
 import { SHARED_SITE_FILES } from "../src/scaffold/site.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
 
@@ -928,6 +928,20 @@ describe("scaffold - --auth (better-auth, composes with --db)", () => {
     const md = await readFile(join(dir, "AGENTS.md"), "utf8")
     expect(md).toContain("## Authentication (better-auth)")
     expect(md).toContain(".use(betterAuth(auth))")
+  })
+
+  // better-auth checks request origins against BETTER_AUTH_URL, so it must be where `dev` serves.
+  test("BETTER_AUTH_URL in .env.example is the URL the template's dev command serves", async () => {
+    const { DEFAULT_DEV_PORT } = await import("../../web/src/internal/runtime-contract.ts")
+    expect(TEMPLATE_DEV_URLS.site).toBe(`http://localhost:${DEFAULT_DEV_PORT}`)
+    for (const template of ["api", "site", "isr", "batteries"] as const) {
+      const dir = await freshDir(`auth-url-${template}`)
+      await scaffold({ target: dir, template, db: "drizzle-libsql", auth: "better-auth" })
+      const env = await readFile(join(dir, ".env.example"), "utf8")
+      expect(env).toContain(`BETTER_AUTH_URL="${TEMPLATE_DEV_URLS[template]}"\n`)
+    }
+    const api = await readFile(join(import.meta.dir, "../template/backend/index.ts"), "utf8")
+    expect(api).toContain("process.env.PORT ?? 3000")
   })
 
   test("maps the Drizzle dialect to better-auth's provider (postgres → pg)", async () => {

@@ -154,6 +154,8 @@ export interface RouteCapabilityEvidence {
   /** True only when the route's reachable module graph was actually scanned. */
   readonly covered: boolean
   readonly evidence: readonly CapabilityEvidence[]
+  /** The probable cause of an uncovered route, when the collector can tell. */
+  readonly uncoveredReason?: string
 }
 
 export interface CapabilityEvidenceSet {
@@ -416,7 +418,7 @@ export function evaluateCapabilityAssurance(
         code: "provenance-uncovered",
         method: route.method,
         path: route.path,
-        message: `${route.method} ${route.path} has no static provenance coverage`,
+        message: `${route.method} ${route.path} has no static provenance coverage${supplied?.uncoveredReason === undefined ? "" : ` - ${supplied.uncoveredReason}`}`,
       })
     }
     // A safe-method route that REACHES a domain write without declaring it used to draw two findings

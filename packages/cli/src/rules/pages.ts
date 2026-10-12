@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
-import { shadowedPages } from "@nifrajs/web/route-manifest"
+import { BACKEND_ROUTE_EXPORTS, shadowedPages } from "@nifrajs/web/route-manifest"
 import type * as TSApi from "typescript"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { stripComments } from "../check-scan.ts"
@@ -159,10 +159,24 @@ export const statusLayoutRule: CheckRule = {
   },
 }
 
+/** The two framework configs' sources, `undefined` for one the app lacks. */
+export interface ApiPrefixSources {
+  readonly framework: string | undefined
+  readonly config: string | undefined
+}
+
+/** `apiPrefix` as the app runs it: nifra.config.ts's own, else backend/framework.ts's, which every
+ * command takes for an option nifra.config.ts leaves unset. */
+function effectiveApiPrefix({ framework, config }: ApiPrefixSources): StaticApiPrefix {
+  const own: StaticApiPrefix =
+    config === undefined ? { kind: "default" } : readStaticApiPrefix(config)
+  return own.kind !== "default" || framework === undefined ? own : readStaticApiPrefix(framework)
+}
+
 /**
- * NF-C035: `backend/app.ts` exports a backend and the framework config sets no `apiPrefix`, so the
- * backend is not served over HTTP - a browser call to `/api` reaches page routing. Loader-only is a
- * valid choice; the finding asks for it to be stated. An unreadable `apiPrefix` is NF-C027's to report.
+ * NF-C035: `backend/app.ts` exports a backend that is not served over HTTP, so a browser call to `/api`
+ * reaches page routing. The framework config sets no `apiPrefix`; loader-only is a valid choice, and
+ * the finding asks for it to be stated. An unreadable `apiPrefix` is NF-C027's.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",
@@ -172,18 +186,16 @@ export const implicitApiMountRule: CheckRule = {
     // An API-only app serves its backend itself; there is no page routing to fall into.
     if (!existsSync(backendFile) || !hasWebConfig(ctx.root, ".")) return []
     if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
-    const configFile = CONFIG_FILES.find((file) => existsSync(join(ctx.root, file)))
-    if (
-      configFile !== undefined &&
-      readStaticApiPrefix(readFileSync(join(ctx.root, configFile), "utf8")).kind !== "default"
-    ) {
-      return []
-    }
-    const file = configFile ?? FRAMEWORK_FILE
+    const read = (file: string): string | undefined =>
+      existsSync(join(ctx.root, file)) ? readFileSync(join(ctx.root, file), "utf8") : undefined
+    const sources = { framework: read(FRAMEWORK_FILE), config: read(CONFIG_FILE) }
+    if (sources.framework === undefined && sources.config === undefined) return []
+    if (effectiveApiPrefix(sources).kind !== "default") return []
+    const file = sources.framework === undefined ? CONFIG_FILE : FRAMEWORK_FILE
     return [
       diagnostic({
         code: "NF-C035",
-        severity: "info",
+        severity: "warn",
         file,
         message: `${BACKEND_APP_FILE}'s backend is not served over HTTP, because ${file} sets no apiPrefix: a browser call to /api reaches page routing instead. Add \`export const apiPrefix = "/api"\` to ${file} to serve it there, as 4.x did by default, or \`export const apiPrefix = ""\` to keep it loader-only.`,
         fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
@@ -193,32 +205,54 @@ export const implicitApiMountRule: CheckRule = {
   },
 }
 
+const appendLine = (source: string, line: string): string =>
+  source === "" ? line : `${source}${source.endsWith("\n") ? "" : "\n"}${line}`
+
 /** Append `export const apiPrefix = "/api"` to a framework config that sets none, creating it if needed. */
 export function withDefaultApiPrefix(source: string | undefined): string | undefined {
   if (source !== undefined && readStaticApiPrefix(source).kind !== "default") return undefined
-  const line = 'export const apiPrefix = "/api"\n'
-  if (source === undefined || source === "") return line
-  return `${source}${source.endsWith("\n") ? "" : "\n"}${line}`
+  return appendLine(source ?? "", 'export const apiPrefix = "/api"\n')
+}
+
+/**
+ * The edit that serves the backend at `/api`: the mount in backend/framework.ts, where the server
+ * entry reads it, or in nifra.config.ts when it is the only config. A file that needs no edit comes
+ * back `undefined`; an `apiPrefix` either file sets is never replaced.
+ */
+export function apiPrefixFix(sources: ApiPrefixSources): ApiPrefixSources {
+  if (effectiveApiPrefix(sources).kind !== "default")
+    return { framework: undefined, config: undefined }
+  return sources.framework === undefined
+    ? { framework: undefined, config: withDefaultApiPrefix(sources.config) }
+    : { framework: withDefaultApiPrefix(sources.framework), config: undefined }
 }
 
 const LOADER_EXPORT =
   /\bexport\s+(?:async\s+)?(?:const|let|var|function\*?)\s+loader\b|\bexport\s*\{[^}]*\bloader\b[^}]*\}/
 const SCRIPT_LAYOUT = /\.[cm]?[jt]sx?$/
 
-const hasModifier = (ts: typeof TSApi, node: TSApi.Node, kind: TSApi.SyntaxKind): boolean =>
-  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind)
+// Read from the node, not `ts.getModifiers`: TypeScript 7's API has no getModifiers or canHaveModifiers.
+const hasModifier = (
+  node: TSApi.VariableStatement | TSApi.FunctionDeclaration | TSApi.ClassDeclaration,
+  kind: TSApi.SyntaxKind,
+): boolean => node.modifiers?.some((m) => m.kind === kind) === true
 
-/** The function an exported `meta` names: a declaration, or a const initialized with one. */
-function exportedMetaFunction(
+/** The function an exported `name` names: a declaration, or a const initialized with one. */
+function exportedFunction(
   ts: typeof TSApi,
   tree: TSApi.SourceFile,
+  name: string,
 ): TSApi.FunctionDeclaration | TSApi.ArrowFunction | TSApi.FunctionExpression | undefined {
   for (const statement of tree.statements) {
-    if (!hasModifier(ts, statement, ts.SyntaxKind.ExportKeyword)) continue
-    if (ts.isFunctionDeclaration(statement) && statement.name?.text === "meta") return statement
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name?.text === name && hasModifier(statement, ts.SyntaxKind.ExportKeyword))
+        return statement
+      continue
+    }
     if (!ts.isVariableStatement(statement)) continue
+    if (!hasModifier(statement, ts.SyntaxKind.ExportKeyword)) continue
     for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "meta") continue
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue
       let init = declaration.initializer
       while (
         init !== undefined &&
@@ -237,7 +271,7 @@ function exportedMetaFunction(
 
 /** Where an exported function `meta` reads its args' `data`: a destructured `data`, or `args.data`. */
 export function metaDataReads(ts: typeof TSApi, tree: TSApi.SourceFile): number[] {
-  const meta = exportedMetaFunction(ts, tree)
+  const meta = exportedFunction(ts, tree, "meta")
   const param = meta?.parameters[0]
   if (param === undefined) return []
   const lineOf = (node: TSApi.Node) =>
@@ -326,9 +360,217 @@ export const layoutMetaDataRule: CheckRule = {
   },
 }
 
+const GATE_EXPORT = /\bexport\s+const\s+gate\s*(?::\s*boolean\s*)?=\s*true\b/
+const MIDDLEWARE_EXPORT =
+  /\bexport\s+(?:async\s+)?(?:const|let|var|function\*?)\s+middleware\b|\bexport\s*\{[^}]*\bmiddleware\b[^}]*\}/
+
+/** Lines where an exported `loader` refuses access: `redirect()`, `statusPage(401|403)`, `new Response()`. */
+export function loaderRefusals(ts: typeof TSApi, tree: TSApi.SourceFile): number[] {
+  const loader = exportedFunction(ts, tree, "loader")
+  if (loader?.body === undefined) return []
+  const lines: number[] = []
+  const lineOf = (node: TSApi.Node): number =>
+    tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const status = node.arguments[0]
+      if (
+        node.expression.text === "redirect" ||
+        (node.expression.text === "statusPage" &&
+          status !== undefined &&
+          ts.isNumericLiteral(status) &&
+          (status.text === "401" || status.text === "403"))
+      )
+        lines.push(lineOf(node))
+    } else if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "Response"
+    ) {
+      lines.push(lineOf(node))
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(loader.body)
+  return lines
+}
+
+/**
+ * NF-C042: a layout loader that refuses access - a redirect, a 401 or 403, a `Response` - in a layout
+ * that is not a gate and exports no middleware. A client navigation that keeps the layout skips that
+ * loader, and an action below it runs without it, so the check reads as a guard and is not one. A
+ * refusal inside a helper the loader calls is not seen; the development warning covers that.
+ */
+export const ungatedLayoutRefusalRule: CheckRule = {
+  code: "NF-C042",
+  title: "Layout loader refuses access without a gate",
+  async scan(ctx) {
+    const routesDir = join(ctx.root, "routes")
+    if (!existsSync(routesDir)) return []
+    let manifest: ReturnType<typeof discoverRoutes>
+    try {
+      manifest = discoverRoutes(routesDir)
+    } catch {
+      return []
+    }
+    const layouts = Object.values(manifest.layouts)
+      .filter((layout) => SCRIPT_LAYOUT.test(layout.file))
+      .sort((a, b) => codeUnitOrder(a.file, b.file))
+    if (layouts.length === 0) return []
+    const sources = layouts.map((layout) =>
+      [layout.file, ...(layout.backend === undefined ? [] : [layout.backend])].map((file) => ({
+        file,
+        text: readFileSync(join(routesDir, file), "utf8"),
+      })),
+    )
+    if (!sources.flat().some((half) => LOADER_EXPORT.test(stripComments(half.text)))) return []
+    const loaded = await loadRuleTypeScript(ctx)
+    const ts = loaded.compiler
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const halves of sources) {
+      const code = halves.map((half) => stripComments(half.text))
+      if (code.some((text) => GATE_EXPORT.test(text) || MIDDLEWARE_EXPORT.test(text))) continue
+      for (const half of halves) {
+        if (!LOADER_EXPORT.test(stripComments(half.text))) continue
+        const tree = ts.createSourceFile(
+          half.file,
+          half.text,
+          ts.ScriptTarget.Latest,
+          true,
+          scriptKindOf(ts, half.file),
+        )
+        const [line] = loaderRefusals(ts, tree)
+        if (line === undefined) continue
+        findings.push(
+          diagnostic({
+            code: "NF-C042",
+            severity: "warn",
+            file: `routes/${half.file}`,
+            line,
+            message: `routes/${half.file}'s loader refuses access, but the layout is not a gate. A client navigation that keeps the layout skips this loader, and an action below it runs without it, so it does not protect the pages under it. Export \`gate = true\` from this file, or move the check into its \`middleware\`.`,
+            evidence: [
+              "gate = true: the loader runs on every request and before every action, ahead of the page loader",
+              "middleware: runs before every page and action below the directory",
+            ],
+            verify: "nifra check",
+          }),
+        )
+      }
+    }
+    return findings
+  },
+}
+
+/** The names a module exports at runtime, each with its line: declarations and `export { ... }` lists.
+ * `export *` names nothing it can read, and type-only exports carry no value. */
+function runtimeExports(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+): Array<{ readonly name: string; readonly line: number }> {
+  const found: Array<{ name: string; line: number }> = []
+  const add = (name: string, node: TSApi.Node): void => {
+    found.push({ name, line: tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1 })
+  }
+  for (const statement of tree.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly || statement.exportClause === undefined) continue
+      if (!ts.isNamedExports(statement.exportClause)) continue
+      for (const element of statement.exportClause.elements) {
+        if (!element.isTypeOnly) add(element.name.text, element)
+      }
+      continue
+    }
+    if (
+      !(
+        ts.isVariableStatement(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement)
+      ) ||
+      !hasModifier(statement, ts.SyntaxKind.ExportKeyword) ||
+      hasModifier(statement, ts.SyntaxKind.DeclareKeyword)
+    )
+      continue
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) add(declaration.name.text, declaration)
+      }
+    } else if (statement.name !== undefined) {
+      add(statement.name.text, statement)
+    }
+  }
+  return found
+}
+
+/**
+ * NF-C041: a route's frontend file (`x.tsx`, a layout, a status or error page) exports a name only
+ * the server reads, such as `loader` or `action`. The frontend file ships to the browser whole, so
+ * `nifra build` and the server refuse it; this reports it before either runs.
+ */
+export const frontendServerExportRule: CheckRule = {
+  code: "NF-C041",
+  title: "Server-only export in a route frontend file",
+  async scan(ctx) {
+    const routesDir = join(ctx.root, "routes")
+    if (!existsSync(routesDir)) return []
+    let manifest: ReturnType<typeof discoverRoutes>
+    try {
+      manifest = discoverRoutes(routesDir)
+    } catch {
+      return []
+    }
+    const files = new Set<string>()
+    for (const entry of [
+      ...manifest.routes,
+      ...Object.values(manifest.layouts),
+      ...Object.values(manifest.errors ?? {}),
+      ...(manifest.notFound === undefined ? [] : [manifest.notFound]),
+      ...Object.values(manifest.notFounds ?? {}),
+      ...Object.values(manifest.statusPages ?? {}),
+      ...Object.values(manifest.loadings ?? {}),
+    ]) {
+      if (SCRIPT_LAYOUT.test(entry.file)) files.add(entry.file)
+    }
+    if (files.size === 0) return []
+    const loaded = await loadRuleTypeScript(ctx)
+    const ts = loaded.compiler
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const file of [...files].sort(codeUnitOrder)) {
+      const text = readFileSync(join(routesDir, file), "utf8")
+      const tree = ts.createSourceFile(
+        file,
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKindOf(ts, file),
+      )
+      for (const { name, line } of runtimeExports(ts, tree)) {
+        if (!BACKEND_ROUTE_EXPORTS.has(name)) continue
+        const backend = `routes/${file.replace(SCRIPT_LAYOUT, ".backend.ts")}`
+        findings.push(
+          diagnostic({
+            code: "NF-C041",
+            severity: "error",
+            file: `routes/${file}`,
+            line,
+            message: `routes/${file} exports "${name}", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to ${backend}.`,
+            evidence: [`export: ${name}`, `backend half: ${backend}`],
+            fix: { recipe: "route.split", command: "nifra fix --code NF-C041" },
+            verify: "nifra check",
+          }),
+        )
+      }
+    }
+    return findings
+  },
+}
+
 export const pageRules = Object.freeze([
   shadowedPageRule,
   statusLayoutRule,
   implicitApiMountRule,
   layoutMetaDataRule,
+  frontendServerExportRule,
+  ungatedLayoutRefusalRule,
 ])

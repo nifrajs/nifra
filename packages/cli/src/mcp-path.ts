@@ -1,12 +1,14 @@
 import { realpathSync } from "node:fs"
-import { basename, isAbsolute, relative, resolve } from "node:path"
+import { isAbsolute, relative, resolve } from "node:path"
+import { writeTargetOf } from "./project-path.ts"
 
 /**
  * Resolve an MCP path without allowing lexical or symlink escapes from the selected project.
  *
  * MCP callers are not equivalent to a local CLI user: the selected checkout is their filesystem
  * capability boundary. The nearest-existing-ancestor walk also supports output files that do not
- * exist yet while still canonicalizing every existing path component.
+ * exist yet while still canonicalizing every existing path component, and a dangling symlink is
+ * judged by where it points.
  */
 export function resolveMcpProjectPath(root: string, value: string): string | null {
   if (value.length === 0 || isAbsolute(value)) return null
@@ -23,26 +25,10 @@ export function resolveMcpProjectPath(root: string, value: string): string | nul
     return null
   }
 
-  let probe = target
-  const missing: string[] = []
-  while (true) {
-    try {
-      const canonicalProbe = realpathSync(probe)
-      const canonicalRelative = relative(canonicalRoot, canonicalProbe)
-      if (canonicalRelative.startsWith("..") || isAbsolute(canonicalRelative)) return null
-
-      const candidate = resolve(canonicalProbe, ...missing.reverse())
-      const candidateRelative = relative(canonicalRoot, candidate)
-      return candidateRelative.startsWith("..") || isAbsolute(candidateRelative) ? null : candidate
-    } catch (error) {
-      if (!(error && typeof error === "object" && (error as { code?: string }).code === "ENOENT"))
-        return null
-      const parent = resolve(probe, "..")
-      if (parent === probe) return null
-      missing.push(basename(probe))
-      probe = parent
-    }
-  }
+  const candidate = writeTargetOf(target)
+  if (candidate === undefined) return null
+  const candidateRelative = relative(canonicalRoot, candidate)
+  return candidateRelative.startsWith("..") || isAbsolute(candidateRelative) ? null : candidate
 }
 
 export function mcpProjectPathError(label: string, value: string): string {

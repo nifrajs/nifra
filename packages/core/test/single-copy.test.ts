@@ -30,6 +30,8 @@ const linkedRepos = async (
     readonly declaration?: unknown
     readonly siblingVersion?: string
     readonly bunfig?: string
+    /** `file`: the folder Bun installs for a `file:` dependency, real directories of per-file links. */
+    readonly install?: "link" | "file"
   } = {},
 ) => {
   // Realpath up front: on macOS `/var` is a symlink to `/private/var`, and every path this plugin
@@ -75,7 +77,13 @@ const linkedRepos = async (
       "const seenBy = new Set();\nexport const mark = (who) => seenBy.add(who);\nexport const seen = () => [...seenBy];\n",
     )
   }
-  await symlink(ui, join(app, "node_modules", "@example", "ui"))
+  const installed = join(app, "node_modules", "@example", "ui")
+  if (over.install === "file") {
+    await mkdir(installed)
+    for (const file of ["package.json", "index.js"]) {
+      await symlink(join(ui, file), join(installed, file))
+    }
+  } else await symlink(ui, installed)
   return { ground, app, ours, theirs }
 }
 
@@ -209,6 +217,20 @@ test("planSingleCopy redirects a linked repo's copy at the app's, and refuses ac
   }
 })
 
+test("a file: dependency installed as a folder of linked files is planned like a linked one", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("file-plan", {
+    declaration: ["state"],
+    install: "file",
+  })
+  try {
+    expect(planSingleCopy({ cwd: app }).redirects).toEqual([
+      { package: "state", from: theirs, to: ours, version: "1.0.0" },
+    ])
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
 test("an undeclared package is left alone", async () => {
   const { ground, app } = await linkedRepos("undeclared")
   try {
@@ -218,8 +240,14 @@ test("an undeclared package is left alone", async () => {
   }
 })
 
-test("the plugin collapses two copies into one module instance at RUNTIME", async () => {
-  const { ground, app } = await linkedRepos("runtime", { declaration: ["state"] })
+test.each([
+  "link",
+  "file",
+] as const)("the plugin collapses two copies into one module instance at RUNTIME (%s install)", async (install) => {
+  const { ground, app } = await linkedRepos(`runtime-${install}`, {
+    declaration: ["state"],
+    install,
+  })
   try {
     // Proved in a child process: `Bun.plugin` is global and permanent, so registering it in this
     // process would leak into every other test file. The child is also the honest test - the runtime
@@ -326,6 +354,65 @@ test("a deep subpath import of a scope-declared package pins to the app's copy i
     expect(probe.stderr.toString()).toBe("")
     // One Set across the root import and the consumer's deep import - the mark is visible.
     expect(JSON.parse(probe.stdout.toString())).toEqual(["app"])
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("an import Bun resolves to the app's copy keeps the package's sideEffects pruning", async () => {
+  // A path handed back from onResolve makes Bun read every module the entry re-exports. The unused
+  // `node:fs` module then reaches a browser build, which a dev zone guard refuses.
+  const ground = await realpath(await mkdtemp(join(tmpdir(), "nifra-single-copy-side-effects-")))
+  try {
+    const kit = join(ground, "node_modules", "@example", "kit")
+    await mkdir(join(ground, ".git"), { recursive: true })
+    for (const dir of [kit, join(ground, "src")]) await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(ground, "package.json"),
+      JSON.stringify({ name: "app", nifra: { singleCopy: ["@example/*"] } }),
+    )
+    await writeFile(
+      join(kit, "package.json"),
+      JSON.stringify({
+        name: "@example/kit",
+        version: "1.0.0",
+        type: "module",
+        sideEffects: false,
+        exports: { ".": "./index.js" },
+      }),
+    )
+    await writeFile(
+      join(kit, "index.js"),
+      'export { label } from "./label.js";\nexport { readDisk } from "./disk.js";\n',
+    )
+    await writeFile(join(kit, "label.js"), 'export const label = (text) => "[" + text + "]";\n')
+    await writeFile(
+      join(kit, "disk.js"),
+      'import { readFileSync } from "node:fs";\nexport const readDisk = (path) => readFileSync(path, "utf8");\n',
+    )
+    await writeFile(
+      join(ground, "src", "main.ts"),
+      'import { label } from "@example/kit"\nconsole.log(label("kit"))\n',
+    )
+    const builtins: string[] = []
+    const result = await Bun.build({
+      entrypoints: [join(ground, "src", "main.ts")],
+      target: "browser",
+      plugins: [
+        singleCopyPlugin({ cwd: ground }),
+        {
+          name: "builtin-probe",
+          setup(build) {
+            build.onResolve({ filter: /^node:/ }, (args) => {
+              builtins.push(args.path)
+              return { path: args.path, external: true }
+            })
+          },
+        },
+      ],
+    })
+    expect(result.success).toBe(true)
+    expect(builtins).toEqual([])
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
@@ -614,7 +701,7 @@ test("a workspace package wins with the copy hoisted to its repository root", as
 
 interface RecordedHook {
   readonly filter: RegExp
-  readonly run: (path: string) => unknown
+  readonly run: (path: string, importer?: string) => unknown
 }
 
 /**
@@ -630,9 +717,13 @@ const hooksOf = (
     (into: RecordedHook[]) =>
     (
       constraints: { readonly filter: RegExp },
-      callback: (args: { readonly path: string }) => unknown,
+      callback: (args: { readonly path: string; readonly importer: string }) => unknown,
     ): void => {
-      into.push({ filter: constraints.filter, run: (path) => callback({ path }) })
+      // Bun passes "" as the importer of an entry point.
+      into.push({
+        filter: constraints.filter,
+        run: (path, importer = "") => callback({ path, importer }),
+      })
     }
   plugin.setup({
     onResolve: record(resolvers),
@@ -659,6 +750,10 @@ test("the resolve hook pins a declared name and its subpaths to the app's copy",
       expect(resolve.filter.test(specifier)).toBe(false)
     expect(resolve.run("state")).toEqual({ path: join(ours, "index.js") })
     expect(resolve.run("state/index.js")).toEqual({ path: join(ours, "index.js") })
+    // An app file already reaches the app's copy, so Bun resolves it; the linked package does not.
+    expect(resolve.run("state", join(app, "src", "main.ts"))).toBeUndefined()
+    const linked = join(ground, "sibling", "packages", "ui", "index.js")
+    expect(resolve.run("state", linked)).toEqual({ path: join(ours, "index.js") })
     // Declared, but not resolvable from the app: there is nothing to pin it TO, so the import is
     // left to the default resolver rather than turned into a failure.
     expect(resolve.run("state/missing.js")).toBeUndefined()

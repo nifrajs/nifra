@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs"
-import { join, relative, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   type WorkflowEvent,
   type WorkflowResult,
@@ -398,5 +398,9 @@ function isWithin(root: string, candidate: string): boolean {
     }
   }
   const relativePath = relative(canonical(root), canonical(candidate))
-  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.includes("/.."))
+  // On Windows a path on another drive has no relative form, so `relative` returns it absolute.
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+  )
 }

@@ -48,7 +48,7 @@ export const AUTH_PRESETS: Readonly<Record<AuthChoice, AuthPreset>> = {
     label: "better-auth",
     note: "email/password + sessions, mounted at /api/auth/* - add OAuth providers in backend/auth.ts.",
     // @nifrajs/better-auth mounts it; better-auth is the implementation (peer-installed alongside).
-    deps: { "@nifrajs/better-auth": "^5.0.0", "better-auth": "^1.2.0" },
+    deps: { "@nifrajs/better-auth": "^5.1.0", "better-auth": "^1.2.0" },
   },
 }
 
@@ -104,21 +104,25 @@ export type Auth = typeof auth
 
 // No placeholder secret: left empty, better-auth uses its development secret locally and refuses to
 // start in production, where a placeholder would only draw a warning.
-const ENV = `
+const env = (devUrl: string): string => `
 # better-auth - REQUIRED in production. Generate a 32+ char secret: openssl rand -base64 32
 # Left empty, development uses better-auth's built-in secret and production refuses to start.
 BETTER_AUTH_SECRET=""
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_URL="${devUrl}"
 `
 
-/** Write `backend/auth.ts` and append the auth env vars to the (db-preset-created) `.env.example`. */
+/**
+ * Write `backend/auth.ts` and append the auth env vars to the (db-preset-created) `.env.example`.
+ * `devUrl` is where the template's dev command serves: better-auth checks request origins against it.
+ */
 export async function writeAuthFiles(
   target: string,
   _auth: AuthChoice,
   db: DbChoice,
+  devUrl: string,
 ): Promise<void> {
   assertAuthableDb(db) // defensive: the CLI already checks, but never emit a broken adapter import
   await writeFile(join(target, "backend/auth.ts"), authModule(db))
   // .env.example already exists (the DB preset wrote it; `--auth` requires `--db`); append, don't clobber.
-  await appendFile(join(target, ".env.example"), ENV)
+  await appendFile(join(target, ".env.example"), env(devUrl))
 }

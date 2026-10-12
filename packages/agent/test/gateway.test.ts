@@ -119,7 +119,7 @@ describe("model gateway", () => {
     const result = await runModelGateway(
       { complete: () => success("x") },
       { input: "x", parser: { parse: () => new Promise<string>(() => {}) } },
-      { routes: ["a"], retryableCodes: [], deadlineAt: Date.now() + 5 },
+      { routes: ["a"], retryableCodes: [], deadlineAt: 5, now: () => 0 },
     )
     expect(result.ok ? "ok" : result.error.code).toBe("timeout")
     let now = 0

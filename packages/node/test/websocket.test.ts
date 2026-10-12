@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { server, status } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
+import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 
 // @nifrajs/node serves WebSockets via the optional `ws` package (a devDependency here). These run on the
@@ -117,6 +118,13 @@ describe("@nifrajs/node WebSockets", () => {
     running = undefined
     expect(await closed).toBe(1001)
     expect(c.readyState).toBe(WebSocket.CLOSED)
+  })
+
+  test("a frame the route's sendSchema refuses never leaves, as on Bun", async () => {
+    const contract = sendContractApp(server().use(websocket()))
+    running = await serve(contract.app, { port: 0, hostname: "127.0.0.1" })
+    expect(await firstContractFrame(running.port)).toBe(JSON.stringify({ ok: true }))
+    expect(contract.errors).toHaveLength(1)
   })
 
   test("echo: open → welcome, message → echo", async () => {

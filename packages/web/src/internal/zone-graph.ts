@@ -19,6 +19,7 @@ import {
 } from "../zones.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
 import { isBareNodeBuiltin } from "./node-builtins.ts"
+import { withoutQuery } from "./without-query.ts"
 
 /** What a graph module id names. */
 export type ModuleSource =
@@ -30,9 +31,8 @@ export type ModuleSource =
 
 /** A namespace prefix needs two characters, so a Windows drive letter still reads as a path. */
 const NAMESPACED = /^([a-z][\w.+-]+):(.*)$/i
-const stripQuery = (id: string): string => id.replace(/[?#].*$/, "")
 const virtualOf = (rest: string): ModuleSource => {
-  const file = stripQuery(rest)
+  const file = withoutQuery(rest)
   return isAbsolute(file) && existsSync(file) ? { kind: "virtual", file } : { kind: "virtual" }
 }
 
@@ -42,7 +42,7 @@ export function bunModuleSource(cwd: string): (id: string) => ModuleSource {
     if (id.startsWith("node:") || id.startsWith("bun:")) return { kind: "builtin" }
     const namespaced = NAMESPACED.exec(id)
     if (namespaced !== null && namespaced[1] !== "file") return virtualOf(namespaced[2] ?? "")
-    return { kind: "file", file: resolve(cwd, stripQuery(namespaced?.[2] ?? id)) }
+    return { kind: "file", file: resolve(cwd, withoutQuery(namespaced?.[2] ?? id)) }
   }
 }
 
@@ -50,7 +50,7 @@ export function bunModuleSource(cwd: string): (id: string) => ModuleSource {
 export function rollupModuleSource(id: string): ModuleSource {
   if (id.startsWith("node:") || id.includes("__vite-browser-external")) return { kind: "builtin" }
   if (id.startsWith("\0")) return virtualOf(id.slice(1).replace(/^[\w-]+:/, ""))
-  const file = stripQuery(id)
+  const file = withoutQuery(id)
   return isAbsolute(file) ? { kind: "file", file } : { kind: "virtual" }
 }
 
@@ -233,7 +233,9 @@ export function verifyClientGraph(
     if (file === undefined) continue
     const classification = classifier.classify(file)
     let reason = browserDenial(classification)
-    for (const spec of specifiers.get(id) ?? []) reason ??= browserDenial(classification, spec)
+    // An import that names a package entry is judged by that entry's own declared side.
+    for (const spec of specifiers.get(id) ?? [])
+      reason ??= browserDenial(classifier.classify(file, spec), spec)
     if (reason === undefined && BROWSER_CODE.has(classification.zone))
       reason = options.privateEnv?.(file)
     if (reason !== undefined) denied.set(id, reason)
@@ -406,7 +408,18 @@ export function verifyServerGraph(
       const target = resolveEdge(im)
       if (target === undefined) continue
       out.push({ to: target, label: im.original ?? labelOf(target) })
-      const to = classOf(target)
+      const targetFile = fileOf(target)
+      const to =
+        im.original === undefined || targetFile === undefined
+          ? classOf(target)
+          : classifier.classify(targetFile, im.original)
+      if (to?.zone === "error" && to.entry !== undefined)
+        found.push({
+          at: id,
+          module: labelOf(target),
+          reason: to.reason,
+          tail: im.original ?? labelOf(target),
+        })
       if (from === undefined || to === undefined || from.zone === "error" || to.zone === "error")
         continue
       const componentBridge =

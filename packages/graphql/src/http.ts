@@ -36,7 +36,6 @@ import {
   getOperationAST,
   parse,
   Source,
-  specifiedRules,
   validate,
 } from "graphql"
 import {
@@ -53,6 +52,7 @@ import {
   overlapLimitError,
   requestLimitError,
   safeFormattedError,
+  validationRules,
 } from "./limits.ts"
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
@@ -99,6 +99,11 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
   readonly executionTimeoutMs?: number
   /** Prototype-pollution policy for the parsed JSON body. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
+  /**
+   * Answer introspection queries (`__schema`, `__type`). Default `true`. Set `false` to refuse them
+   * as a validation error (400); `__typename` still resolves. Shared with `subscriptions`.
+   */
+  readonly introspection?: boolean
   /** Optional root value passed to the executor. */
   readonly rootValue?: unknown
   /**
@@ -279,7 +284,7 @@ async function run<Context, Env>(
     )
   }
 
-  const validationErrors = validate(opts.schema, document, specifiedRules)
+  const validationErrors = validate(opts.schema, document, validationRules(opts.introspection))
   if (validationErrors.length > 0) {
     return requestError("", 400, legacy, cors, validationErrors, opts.formatError)
   }

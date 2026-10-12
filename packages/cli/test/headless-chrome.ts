@@ -79,7 +79,31 @@ export interface ChromePage {
   close(): Promise<void>
 }
 
+/** How long one Chrome start may take to report its DevTools endpoint. */
+const START_BUDGET_MS = 20_000
+
+/** The budget for a hook that launches Chrome: two starts, the first one's teardown, the handshake. */
+export const CHROME_LAUNCH_TIMEOUT_MS = 60_000
+
+class ChromeStartTimeout extends Error {}
+
+/** Launch headless Chrome. A start that stalls is killed and tried once more, since a cold runner's
+ * first start can stall where a second one does not; both starts' stderr is in the error if it fails. */
 export async function launchChrome(executable: string): Promise<ChromePage> {
+  try {
+    return await startChrome(executable)
+  } catch (error) {
+    if (!(error instanceof ChromeStartTimeout)) throw error
+    try {
+      return await startChrome(executable)
+    } catch (retry) {
+      const second = retry instanceof Error ? retry.message : String(retry)
+      throw new Error(`${error.message}\n--- second start ---\n${second}`)
+    }
+  }
+}
+
+async function startChrome(executable: string): Promise<ChromePage> {
   const profile = mkdtempSync(join(tmpdir(), "nifra-chrome-"))
   const proc = Bun.spawn(
     [
@@ -115,7 +139,7 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
       proc.kill("SIGKILL")
       await proc.exited.catch(() => 0)
     }
-    rmSync(profile, { recursive: true, force: true })
+    await removeProfile(profile)
   }
   try {
     const endpoint = await devtoolsEndpoint(proc.stderr)
@@ -232,7 +256,8 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
       },
     }
   } catch (error) {
-    await cleanup()
+    // The start's own failure is the one to report, not a profile the dying Chrome still holds.
+    await cleanup().catch(() => undefined)
     throw error
   }
 }
@@ -242,19 +267,47 @@ async function devtoolsEndpoint(stderr: ReadableStream<Uint8Array>): Promise<str
   const reader = stderr.getReader()
   const decoder = new TextDecoder()
   let text = ""
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    const { value, done } = await reader.read()
-    if (done) break
-    text += decoder.decode(value, { stream: true })
-    const url = /DevTools listening on (ws:\/\/\S+)/.exec(text)?.[1]
-    if (url !== undefined) {
-      // Keep draining so a chatty Chrome never blocks on a full stderr pipe.
-      void (async () => {
-        for (;;) if ((await reader.read()).done) return
-      })().catch(() => undefined)
-      return url
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // A silent Chrome never resolves a read, so the budget races each one rather than being checked between them.
+  const expired = new Promise<"expired">((resolve) => {
+    timer = setTimeout(() => resolve("expired"), START_BUDGET_MS)
+  })
+  try {
+    for (;;) {
+      const next = await Promise.race([reader.read(), expired])
+      if (next === "expired")
+        throw new ChromeStartTimeout(
+          `headless Chrome reported no DevTools endpoint within ${START_BUDGET_MS} ms; stderr:\n${text || "(empty)"}`,
+        )
+      if (next.done) break
+      text += decoder.decode(next.value, { stream: true })
+      const url = /DevTools listening on (ws:\/\/\S+)/.exec(text)?.[1]
+      if (url !== undefined) {
+        // Keep draining so a chatty Chrome never blocks on a full stderr pipe.
+        void (async () => {
+          for (;;) if ((await reader.read()).done) return
+        })().catch(() => undefined)
+        return url
+      }
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+  throw new Error(`headless Chrome exited before reporting a DevTools endpoint; stderr:\n${text}`)
+}
+
+/** On Windows, Chrome's child processes can hold the profile for a moment after the browser exits. */
+async function removeProfile(profile: string): Promise<void> {
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    try {
+      rmSync(profile, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = error instanceof Error ? Reflect.get(error, "code") : undefined
+      const held = code === "EBUSY" || code === "EPERM" || code === "EACCES" || code === "ENOTEMPTY"
+      if (!held || Date.now() >= deadline) throw error
+      await Bun.sleep(100)
     }
   }
-  throw new Error(`headless Chrome never reported a DevTools endpoint:\n${text}`)
 }

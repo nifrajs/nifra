@@ -66,6 +66,14 @@ export interface SessionOptions {
   readonly cookie?: SessionCookieOptions
   /** Clock (ms) - injected for testability; production passes `() => Date.now()` (the default). */
   readonly now?: () => number
+  /**
+   * Also accept a session cookie signed by `@nifrajs/auth` before 5.0, whose signature does not cover
+   * the cookie name, so upgrading from 4.x signs no one out. Off by default: while it is on, any
+   * value the app signs with this secret through `@nifrajs/core`'s `signValue` (a signed preference
+   * cookie, say) and that parses as a session reads as one. Turn it on for one `maxAge` after the
+   * upgrade, then remove it; each such session is re-signed in the current form on its next commit.
+   */
+  readonly acceptLegacyCookies?: boolean
 }
 
 export interface SessionManager<Data extends Record<string, unknown> = Record<string, unknown>> {
@@ -141,6 +149,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   }
   const rolling = options.rolling ?? true
   const now = options.now ?? (() => Date.now())
+  const acceptLegacy = options.acceptLegacyCookies === true
   // Annotated (not just `?? {}`) so `cookieOpts.path`/`.domain` stay typed - `?? {}` alone widens the
   // type to include the empty-object literal, which the package's build tsconfig rejects on access.
   const cookieOpts: SessionCookieOptions = options.cookie ?? {}
@@ -206,8 +215,8 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   const unsign = async (raw: string): Promise<string | null> => {
     const named = await unsignValue(`${bound}${raw}`, secret)
     if (named !== null) return named.slice(bound.length)
-    // Signed before names were bound: still accepted, so upgrading signs no one out, and re-signed
-    // bound on its next commit. Such a cookie lives at most `maxAge` past the upgrade.
+    if (!acceptLegacy) return null
+    // Signed before names were bound; re-signed bound on its next commit.
     const legacy = await unsignValue(raw, secret)
     return legacy === null || legacy.includes("\n") ? null : legacy
   }
@@ -229,7 +238,10 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
     const payload = parsePayload(unsigned)
     if (payload === null || payload.expiresAt <= now()) return make({})
-    return make({ data: payload.data, expiresAt: payload.expiresAt })
+    // At most a fresh session's life: a legacy cookie, or any other value signed with this secret,
+    // must not name its own expiry, which a non-rolling commit would keep.
+    const expiresAt = Math.min(payload.expiresAt, now() + maxAge * 1000)
+    return make({ data: payload.data, expiresAt })
   }
 
   const sessionCookie = (c: SessionContext): string | undefined =>

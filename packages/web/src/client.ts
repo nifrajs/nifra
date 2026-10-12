@@ -5,6 +5,7 @@
  * a full page load). DOM-only - never imported on the server, so the store stays SSR-safe.
  */
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
+import { appUrl } from "./internal/route-path.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import type { Meta } from "./manifest.ts"
 import {
@@ -232,7 +233,7 @@ export function installHistory(
   router: ClientRouter,
   options: InstallHistoryOptions = {},
 ): () => void {
-  const fallback = options.fallback ?? ((path: string) => location.assign(path))
+  const fallback = options.fallback ?? ((path: string) => location.assign(appUrl(path)))
 
   // We manage scroll ourselves (save per history entry, restore after the navigated content
   // renders), so disable the browser's native restoration which would otherwise fight us.
@@ -364,7 +365,7 @@ export function installHistory(
     if (mode === "replace") {
       // Replace the current entry (same index) with the new URL. The entry we're leaving is discarded, so
       // its scroll isn't worth saving; the new route scrolls to its fragment target, else the top.
-      history.replaceState(entryState, "", path)
+      history.replaceState(entryState, "", appUrl(path))
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     } else {
       // Save the leaving entry's scroll (spread keeps its nifraIndex), push a fresh higher-indexed entry
@@ -372,7 +373,7 @@ export function installHistory(
       history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
       index += 1
       entryState.nifraIndex = index
-      history.pushState(entryState, "", path)
+      history.pushState(entryState, "", appUrl(path))
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     }
     here = url.pathname + url.search + url.hash
@@ -555,9 +556,9 @@ export function installHistory(
       if (expected === undefined) {
         history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
         index += 1
-        history.pushState({ nifraIndex: index }, "", path)
+        history.pushState({ nifraIndex: index }, "", appUrl(path))
       } else {
-        history.replaceState(history.state, "", path + location.hash)
+        history.replaceState(history.state, "", appUrl(path) + location.hash)
       }
       here = location.pathname + location.search + location.hash
       pendingScroll = location.hash !== "" ? { hash: hashId(location.hash) } : { pos: [0, 0] }
@@ -610,11 +611,6 @@ export function installHistory(
   }
 }
 
-/**
- * Intercept submissions of same-origin `<form method="post">` whose action targets an app route:
- * submit via the router (no full reload - POST the action, then revalidate the active loader). On
- * failure it falls back to a native submit, so the form still works. Returns a teardown function.
- */
 /**
  * Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title
  * (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head
@@ -689,6 +685,17 @@ export function applyHead(head: Meta): void {
   }
 }
 
+// A control named like a form property shadows it (`<input name="target">` makes `form.target` that
+// input), so the form's own state is read through the prototype accessors.
+function formProperty(form: HTMLFormElement, name: "action" | "method" | "target"): string {
+  return String(Reflect.get(HTMLFormElement.prototype, name, form))
+}
+
+/**
+ * Intercept submissions of same-origin `<form method="post">` whose action targets an app route:
+ * submit via the router (no full reload - POST the action, then revalidate the active loader). On
+ * failure it falls back to a native submit, so the form still works. Returns a teardown function.
+ */
 export function installForms(router: ClientRouter): () => void {
   // Forms whose data submit failed before the server answered: their next submit event is the native
   // post that replaces it.
@@ -702,20 +709,25 @@ export function installForms(router: ClientRouter): () => void {
     // name=value is part of the submission (`<button name="intent" value="delete">`).
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a submit event's submitter is the submit button or input that fired it, or null
     const submitter = event.submitter as HTMLButtonElement | null
-    const method = submitter?.hasAttribute("formmethod") ? submitter.formMethod : form.method
+    const method = submitter?.hasAttribute("formmethod")
+      ? submitter.formMethod
+      : formProperty(form, "method")
     if (method.toLowerCase() !== "post") return // GET forms submit natively
-    const target = submitter?.hasAttribute("formtarget") ? submitter.formTarget : form.target
+    const target = submitter?.hasAttribute("formtarget")
+      ? submitter.formTarget
+      : formProperty(form, "target")
     if (target !== "" && target !== "_self") return // it loads in another browsing context
     // Resolved (or the current document URL if unset).
     const url = sameDocumentUrl(
-      submitter?.hasAttribute("formaction") ? submitter.formAction : form.action,
+      submitter?.hasAttribute("formaction") ? submitter.formAction : formProperty(form, "action"),
     )
     if (url === null) return
     if (router.match(url.pathname) === null) return // not an app route → native submit
     event.preventDefault()
     // `data-nifra-revalidate="false"` opts out of the post-action loader revalidation (the action's
     // actionData drives the update); absent or any other value keeps the default revalidation.
-    const revalidate = form.dataset.nifraRevalidate !== "false"
+    const revalidate =
+      Element.prototype.getAttribute.call(form, "data-nifra-revalidate") !== "false"
     const body = new FormData(form, submitter)
     router.submit(url.pathname + url.search, body, { revalidate }).catch((error) => {
       const to = redirectOf(error)
@@ -724,7 +736,7 @@ export function installForms(router: ClientRouter): () => void {
       else {
         // Nothing reached the server - post natively, through the same button.
         native.add(form)
-        form.requestSubmit(submitter)
+        HTMLFormElement.prototype.requestSubmit.call(form, submitter)
       }
     })
   }

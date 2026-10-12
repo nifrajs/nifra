@@ -4,8 +4,10 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import type * as TS from "typescript"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { stripComments } from "./check-scan.ts"
+import { configPathReader, exportedInitializer } from "./internal/config-paths.ts"
 import type { SpecifierResolver } from "./internal/project-specifiers.ts"
 
 const CLIENT_MODULE_EXPORT =
@@ -34,28 +36,62 @@ export function appDirs(files: readonly string[]): string[] {
 
 /**
  * The file `clientModule` names in `app`, read the way the loader reads it: from `nifra.config.ts`
- * when it exists, else `backend/framework.ts`, and a relative path against the app root. `undefined`
- * for a package specifier, a value that is not a string literal, or a path to no file.
+ * when it exists, else `backend/framework.ts`; a string against the app root, and, with `ts`, a
+ * `resolve`/`join` of the config's own folder against that folder. `undefined` for a package
+ * specifier, a value built any other way, or a path to no file.
  */
 export function clientModuleRoot(
   root: string,
   app: string,
   resolve: SpecifierResolver,
+  ts?: typeof TS,
 ): ClientModuleRoot | undefined {
   const config = existsSync(join(root, app, CONFIG_FILE)) ? CONFIG_FILE : FRAMEWORK_FILE
   const path = join(root, app, config)
   if (!existsSync(path)) return undefined
   const text = readFileSync(path, "utf8")
-  // `stripComments` keeps offsets, so the match index is a position in `text`.
-  const match = CLIENT_MODULE_EXPORT.exec(stripComments(text))
-  if (match === null) return undefined
-  const specifier = match[1] ?? match[2] ?? ""
-  const file = resolve(join(root, app, CONFIG_FILE), specifier)
+  const found = ts === undefined ? literalClientModule(text) : staticClientModule(ts, path, text)
+  if (found === undefined) return undefined
+  const file =
+    found.base === "app"
+      ? resolve(join(root, app, CONFIG_FILE), found.specifier)
+      : resolve(path, found.specifier.startsWith("../") ? found.specifier : `./${found.specifier}`)
   if (file === undefined) return undefined
   return {
     config: app === "" ? config : `${app}/${config}`,
-    line: text.slice(0, match.index).split("\n").length,
-    specifier,
+    line: text.slice(0, found.index).split("\n").length,
+    specifier: found.specifier,
     file,
   }
+}
+
+interface FoundClientModule {
+  readonly base: "app" | "config"
+  readonly specifier: string
+  readonly index: number
+}
+
+function literalClientModule(text: string): FoundClientModule | undefined {
+  // `stripComments` keeps offsets, so the match index is a position in `text`.
+  const match = CLIENT_MODULE_EXPORT.exec(stripComments(text))
+  if (match === null) return undefined
+  return { base: "app", specifier: match[1] ?? match[2] ?? "", index: match.index }
+}
+
+function staticClientModule(
+  ts: typeof TS,
+  path: string,
+  text: string,
+): FoundClientModule | undefined {
+  let sf: TS.SourceFile
+  try {
+    sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  } catch {
+    // TypeScript 7 parses only what its session preloaded; the literal form still reads.
+    return literalClientModule(text)
+  }
+  const initializer = exportedInitializer(ts, sf, "clientModule")
+  const found = configPathReader(ts, sf)(initializer)
+  if (initializer === undefined || found === undefined) return undefined
+  return { base: found.base, specifier: found.path, index: initializer.getStart(sf) }
 }
