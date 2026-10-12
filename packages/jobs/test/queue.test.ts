@@ -477,3 +477,147 @@ describe("worker polling survives a failing store", () => {
     expect(String(reported[0])).toContain("db connection reset")
   })
 })
+
+describe("a job that outruns its lease", () => {
+  /** Resolves on the next `lease` call that hands back `id`. */
+  function leaseWatch(store: MemoryJobStore, id: string): { next: () => Promise<void> } {
+    let waiter: (() => void) | undefined
+    const lease = store.lease.bind(store)
+    store.lease = (now, limit, leaseMs) => {
+      const leased = lease(now, limit, leaseMs)
+      if (leased.some((job) => job.id === id)) waiter?.()
+      return leased
+    }
+    return {
+      next: () =>
+        new Promise<void>((resolve) => {
+          waiter = resolve
+        }),
+    }
+  }
+
+  test("is not started a second time when its own worker leases it again", async () => {
+    const clock = makeClock()
+    const memory = new MemoryJobStore({ idFor: () => "j1" })
+    const watch = leaseWatch(memory, "j1")
+    // No `renew`: the lease runs out mid-run, the case only the in-process hold covers.
+    const store: JobStore = {
+      enqueue: (job) => memory.enqueue(job),
+      lease: (now, limit, leaseMs) => memory.lease(now, limit, leaseMs),
+      complete: (id, lease) => memory.complete(id, lease),
+      retry: (id, runAt, lease) => memory.retry(id, runAt, lease),
+      deadLetter: (id, error, lease) => memory.deadLetter(id, error, lease),
+      counts: () => memory.counts(clock.now()),
+    }
+    const q = createQueue({ store, now: clock.now })
+    const started = deferred()
+    const gate = deferred()
+    let runs = 0
+    q.define("slow", {
+      async handler() {
+        runs++
+        started.resolve()
+        await gate.promise
+      },
+    })
+    const leasedAgain = watch.next()
+    await q.enqueue("slow", {})
+    const worker = q.start({ concurrency: 2, leaseMs: 100, pollIntervalMs: 1 })
+    await started.promise
+    await leasedAgain // the first lease
+    const relet = watch.next()
+    clock.advance(101)
+    await relet
+    expect(runs).toBe(1)
+    gate.resolve()
+    await worker.stop()
+    expect(runs).toBe(1)
+    // It settled under the lease it was handed again, so the store accepted the completion.
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
+  test("keeps its lease while it runs, so another worker cannot take it", async () => {
+    const clock = makeClock()
+    let renewed: (() => void) | undefined
+    class RenewingStore extends MemoryJobStore {
+      override renew(id: string, until: number, lease?: string): void {
+        super.renew(id, until, lease)
+        renewed?.()
+      }
+    }
+    const store = new RenewingStore()
+    const nextRenewal = () =>
+      new Promise<void>((resolve) => {
+        renewed = resolve
+      })
+    const started = deferred()
+    const gate = deferred()
+    let runs = 0
+    const handler = async (): Promise<void> => {
+      runs++
+      started.resolve()
+      await gate.promise
+    }
+    const owner = createQueue({ store, now: clock.now })
+    owner.define("slow", { handler })
+    const other = createQueue({ store, now: clock.now })
+    other.define("slow", { handler })
+    await owner.enqueue("slow", {})
+    const worker = owner.start({ leaseMs: 30, pollIntervalMs: 1 })
+    await started.promise
+    const renewal = nextRenewal()
+    clock.advance(20)
+    await renewal // renewed at +20 to +50
+    clock.advance(20) // +40: past the first lease's +30
+    expect(await other.process()).toBe(0)
+    expect(runs).toBe(1)
+    gate.resolve()
+    await worker.stop()
+    expect(store.counts(clock.now())).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
+  test("a renewal that fails is reported to onPollError, and the job still completes", async () => {
+    const reportedOnce = deferred()
+    class DownStore extends MemoryJobStore {
+      override renew(): void {
+        throw new Error("renew down")
+      }
+    }
+    const store = new DownStore()
+    const q = createQueue({ store })
+    const gate = deferred()
+    q.define("slow", {
+      async handler() {
+        await gate.promise
+      },
+    })
+    await q.enqueue("slow", {})
+    const reported: unknown[] = []
+    const worker = q.start({
+      leaseMs: 3,
+      pollIntervalMs: 1,
+      onPollError: (error) => {
+        reported.push(error)
+        reportedOnce.resolve()
+      },
+    })
+    await reportedOnce.promise
+    gate.resolve()
+    await worker.stop()
+    expect(String(reported[0])).toContain("renew down")
+    expect(store.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
+  test("start() refuses a timeoutMs that is not below leaseMs, before and after it starts", async () => {
+    const q = createQueue()
+    q.define("slow", { timeoutMs: 1000, handler() {} })
+    expect(() => q.start({ leaseMs: 1000 })).toThrow(/timeoutMs \(1000\) must be below/)
+    const worker = q.start({ leaseMs: 1001, pollIntervalMs: 1_000 })
+    try {
+      expect(() => q.define("later", { timeoutMs: 1001, handler() {} })).toThrow(/leaseMs \(1001\)/)
+      expect(() => q.define("fits", { timeoutMs: 1000, handler() {} })).not.toThrow()
+    } finally {
+      await worker.stop()
+    }
+  })
+})

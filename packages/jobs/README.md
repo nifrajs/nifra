@@ -56,10 +56,18 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+While a handler runs, the worker renews its lease about three times per `leaseMs` through the store's
+optional `renew(id, until, lease)`, so a job that runs longer than `leaseMs` is not handed to another
+worker. A store without `renew` cannot do that: such a job may then run twice, on two workers, though
+never twice on the same queue. Each `lease` may also return a `lease` token on the job; the queue
+passes it back to `complete` / `retry` / `deadLetter` / `renew`, so a store can ignore a worker whose
+lease another worker has since taken. `MemoryJobStore` does both.
+
 A job's `timeoutMs` bounds each attempt: one still running after that many ms fails with a
 `JobTimeoutError` (then retries or dead-letters), frees its worker slot, and aborts `ctx.signal`. Pass the
-signal on to `fetch` or your driver, since a handler that ignores it keeps running unobserved. Keep
-`timeoutMs` below `leaseMs`, after which the job can be leased again.
+signal on to `fetch` or your driver, since a handler that ignores it keeps running unobserved.
+`timeoutMs` must be below the worker's `leaseMs`: `start()` (and a later `define()`) throws a
+`RangeError` otherwise.
 
 ```ts
 q.define("render", { timeoutMs: 10_000, async handler(id, ctx) { await fetch(url(id), { signal: ctx.signal }) } })

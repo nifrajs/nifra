@@ -102,10 +102,12 @@ export interface WorkerOptions {
   readonly concurrency?: number
   /** How often to poll the store for due jobs (ms). Default 250. */
   readonly pollIntervalMs?: number
-  /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */
+  /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default
+   * 30_000. A store with `renew` keeps a running job's lease alive; every job's `timeoutMs` must be
+   * below it. */
   readonly leaseMs?: number
-  /** Called when a poll round fails (the store's `lease` threw); polling continues on the next tick.
-   * Default: `console.error`. A throwing handler here is swallowed. */
+  /** Called when a poll round fails (the store's `lease` threw) or a lease renewal fails; polling
+   * continues on the next tick. Default: `console.error`. A throwing handler here is swallowed. */
   readonly onPollError?: (error: unknown) => void
 }
 
@@ -176,6 +178,24 @@ function normalizeRetries(
   return { attempts: Math.max(1, retries.attempts), backoff: retries.backoff ?? defaultBackoff }
 }
 
+function assertTimeoutBelowLease(
+  name: string,
+  timeoutMs: number | undefined,
+  leaseMs: number,
+): void {
+  if (timeoutMs !== undefined && timeoutMs >= leaseMs) {
+    throw new RangeError(
+      `jobs: job ${JSON.stringify(name)} timeoutMs (${timeoutMs}) must be below the worker's leaseMs (${leaseMs}), or its job can be leased again while the attempt still runs`,
+    )
+  }
+}
+
+/** A job this queue is running, by id: the lease it runs under, which a re-lease of the same job
+ * replaces and a renewal extends. */
+interface Hold {
+  lease: string | undefined
+}
+
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
 const TRACEPARENT = /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/
@@ -241,7 +261,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
   let concurrency = 1
   let leaseMs = 30_000
   const running = new Set<Promise<void>>()
+  const holds = new Map<string, Hold>()
   let leasing: Promise<readonly Promise<void>[]> | undefined
+  // `start()`'s poll-error reporter; until a worker starts, a failed renewal is logged.
+  let reportRenewal: ((error: unknown) => void) | undefined
 
   const safeOnError = (error: unknown, name: string): void => {
     try {
@@ -273,6 +296,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
         `jobs: timeoutMs must be a positive number of ms up to ${MAX_TIMEOUT_MS}`,
       )
     }
+    if (timer !== undefined) assertTimeoutBelowLease(name, timeoutMs, leaseMs)
     const { attempts, backoff } = normalizeRetries(
       definition.retries,
       defaultAttempts,
@@ -358,6 +382,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
 
   async function attemptJob(
     job: StoredJob,
+    hold: Hold,
     def: Def,
     attempt: number,
     trace: JobTraceContext | undefined,
@@ -373,36 +398,64 @@ export function createQueue(options: QueueOptions = {}): Queue {
     } catch (err) {
       safeOnError(err, job.name)
       if (attempt >= job.maxAttempts) {
-        await store.deadLetter(job.id, errText(err))
+        await store.deadLetter(job.id, errText(err), hold.lease)
         return "dead-lettered"
       }
-      await store.retry(job.id, now() + Math.max(0, def.backoff(attempt)))
+      await store.retry(job.id, now() + Math.max(0, def.backoff(attempt)), hold.lease)
       return "retried"
     }
     // Outside the try: a store that fails to record a success must not retry or dead-letter a job
     // whose handler finished. It surfaces as a store failure, and the lease decides any redelivery.
-    await store.complete(job.id)
+    await store.complete(job.id, hold.lease)
     return "completed"
   }
 
-  async function runOne(job: StoredJob): Promise<void> {
+  async function runOne(job: StoredJob, hold: Hold): Promise<void> {
     const def = defs.get(job.name)
     if (def === undefined) {
       // A persisted job whose handler is gone (renamed/removed) can never run → dead-letter it.
-      await store.deadLetter(job.id, `no handler defined for ${JSON.stringify(job.name)}`)
+      await store.deadLetter(
+        job.id,
+        `no handler defined for ${JSON.stringify(job.name)}`,
+        hold.lease,
+      )
       return
     }
+    // Renewed at a third of the lease, so two renewals can fail before another worker may take it.
+    const heartbeat =
+      store.renew === undefined
+        ? undefined
+        : setInterval(
+            () => {
+              Promise.resolve()
+                .then(() => store.renew?.(job.id, now() + leaseMs, hold.lease))
+                .catch((error: unknown) => {
+                  if (reportRenewal === undefined) {
+                    console.error("[nifra/jobs] lease renewal failed:", error)
+                  } else reportRenewal(error)
+                })
+            },
+            Math.max(1, Math.floor(leaseMs / 3)),
+          )
+    try {
+      await attemptWithHooks(job, hold, def)
+    } finally {
+      clearInterval(heartbeat)
+    }
+  }
+
+  async function attemptWithHooks(job: StoredJob, hold: Hold, def: Def): Promise<void> {
     const attempt = job.attempt + 1
     const hook = instrument?.run
     if (hook === undefined) {
-      await attemptJob(job, def, attempt, undefined)
+      await attemptJob(job, hold, def, attempt, undefined)
       return
     }
     let attempted: Promise<JobRunOutcome> | undefined
     let closed = false
     const next = (scope?: { readonly trace?: JobTraceContext }): Promise<JobRunOutcome> => {
       if (closed) return lateNext("run")
-      attempted ??= handled(attemptJob(job, def, attempt, scope?.trace))
+      attempted ??= handled(attemptJob(job, hold, def, attempt, scope?.trace))
       return attempted
     }
     const info = {
@@ -418,7 +471,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
       // The instrument cannot change the result; a store failure inside `next` surfaces below.
     }
     closed = true
-    await (attempted ?? attemptJob(job, def, attempt, undefined))
+    await (attempted ?? attemptJob(job, hold, def, attempt, undefined))
   }
 
   // One lease at a time, sized to the slots free when it starts, so callers sharing the slots
@@ -429,20 +482,36 @@ export function createQueue(options: QueueOptions = {}): Queue {
     if (free <= 0) return Promise.resolve([])
     const p = (async () => {
       const leased = await store.lease(now(), free, leaseMs)
-      return leased.map((job) => {
-        const run = runOne(job)
-        const release = (): void => {
-          running.delete(run)
+      const started: Promise<void>[] = []
+      for (const job of leased) {
+        const holding = holds.get(job.id)
+        if (holding !== undefined) {
+          // The store handed back a job still running here, its lease run out: keep the one run, now
+          // under the new lease, rather than start the handler a second time.
+          holding.lease = job.lease
+          continue
         }
-        running.add(run)
-        run.then(release, release)
-        return run
-      })
+        started.push(begin(job))
+      }
+      return started
     })().finally(() => {
       if (leasing === p) leasing = undefined
     })
     leasing = p
     return p
+  }
+
+  function begin(job: StoredJob): Promise<void> {
+    const hold: Hold = { lease: job.lease }
+    holds.set(job.id, hold)
+    const run = runOne(job, hold)
+    const release = (): void => {
+      running.delete(run)
+      if (holds.get(job.id) === hold) holds.delete(job.id)
+    }
+    running.add(run)
+    run.then(release, release)
+    return run
   }
 
   async function process(): Promise<number> {
@@ -461,8 +530,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
 
   function start(opts: WorkerOptions = {}): Worker {
     assertWorkerOptions(opts)
+    const lease = opts.leaseMs ?? 30_000
+    for (const [name, def] of defs) assertTimeoutBelowLease(name, def.timeoutMs, lease)
     concurrency = opts.concurrency ?? 1
-    leaseMs = opts.leaseMs ?? 30_000
+    leaseMs = lease
     const intervalMs = opts.pollIntervalMs ?? 250
     const onPollError =
       opts.onPollError ?? ((error: unknown) => console.error("[nifra/jobs] poll failed:", error))
@@ -473,6 +544,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
         /* a throwing onPollError must not crash the worker */
       }
     }
+    reportRenewal = report
     // Fills free slots without waiting on busy ones. A store outage must not become an unhandled
     // rejection, which ends a Node process.
     const poll = (): void => {
