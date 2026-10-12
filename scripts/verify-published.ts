@@ -70,7 +70,7 @@ async function fetchPublished(
 ): Promise<{ bytes: Uint8Array; integrity: string } | string> {
   const deadline = Date.now() + waitMs
   for (;;) {
-    const response = await fetch(`${registry}/${name.replace("/", "%2f")}/${version}`)
+    const response = await fetch(`${registry}/${name.replaceAll("/", "%2f")}/${version}`)
     if (response.ok) {
       const meta: unknown = await response.json()
       const dist: unknown =
