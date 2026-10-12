@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import {
   cookieNamePrefix,
   hasDuplicateCookie,
@@ -183,6 +183,22 @@ describe("__Secure- / __Host- prefix contract (RFC 6265bis)", () => {
 })
 
 describe("signValue / unsignValue", () => {
+  test("imports each secret's key once, however many values it signs and verifies", async () => {
+    const importKey = spyOn(crypto.subtle, "importKey")
+    try {
+      const secret = "imported-once-secret-0123456789abcdef"
+      const other = "imported-once-secret-fedcba9876543210"
+      const signed = await signValue("a", secret)
+      await signValue("b", secret)
+      expect(await unsignValue(signed, secret)).toBe("a")
+      expect(await unsignValue(signed, [other, secret])).toBe("a")
+      expect(await unsignValue(await signValue("c", other), other)).toBe("c")
+      expect(importKey).toHaveBeenCalledTimes(2)
+    } finally {
+      importKey.mockRestore()
+    }
+  })
+
   const secret = "a-secret-at-least-32-bytes-long!!"
 
   test("round-trips a signed value", async () => {

@@ -212,17 +212,28 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
 
 const TEXT = new TextEncoder()
 
+// Imported once per secret: every signed-cookie read and write, and every auth session check, signs or
+// verifies. Bounded, since a secret can come from per-tenant configuration.
+const HMAC_KEYS = new Map<string, Promise<CryptoKey>>()
+const MAX_HMAC_KEYS = 64
+
 const importHmacKey = (secret: string): Promise<CryptoKey> => {
+  const cached = HMAC_KEYS.get(secret)
+  if (cached !== undefined) return cached
   // Reject a weak secret at the choke point both signing and verification flow through (so signed
   // cookies AND @nifrajs/auth sessions, which delegate here via signValue/unsignValue, are covered).
   requireSecretBytes(secret, "signed-cookie")
-  return crypto.subtle.importKey(
+  const key = crypto.subtle.importKey(
     "raw",
     TEXT.encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
   )
+  if (HMAC_KEYS.size >= MAX_HMAC_KEYS) HMAC_KEYS.clear()
+  HMAC_KEYS.set(secret, key)
+  key.catch(() => HMAC_KEYS.delete(secret))
+  return key
 }
 
 const toBase64Url = (buf: ArrayBuffer): string => {
