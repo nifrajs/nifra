@@ -1259,6 +1259,7 @@ async function main(): Promise<void> {
       console.error(formatCliError(err))
       process.exitCode = 1
     }
+    exitIfHeldOpen(command)
     return
   }
   // `upgrade` is a pure cwd file-transformer (package.json pins + import moves) driven by a per-release
@@ -1284,6 +1285,7 @@ async function main(): Promise<void> {
       console.error(formatCliError(err))
       process.exitCode = 1
     }
+    exitIfHeldOpen(command)
     return
   }
   // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) - like `check`/
@@ -1295,21 +1297,27 @@ async function main(): Promise<void> {
     return
   }
   const flags = parseFlags(argv.slice(1))
-  const app = await loadApp(process.cwd(), flags.out)
-  if (command !== "start" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) {
-    const { unservedRoutesWarning } = await import("./introspect.ts")
-    const unserved = unservedRoutesWarning(app)
-    if (unserved !== undefined) console.warn(unserved)
+  try {
+    const app = await loadApp(process.cwd(), flags.out)
+    if (command !== "start" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) {
+      const { unservedRoutesWarning } = await import("./introspect.ts")
+      const unserved = unservedRoutesWarning(app)
+      if (unserved !== undefined) console.warn(unserved)
+    }
+    if (command !== "start") {
+      const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
+      refreshRouteTypes(app.cwd)
+      // A relaunched `nifra dev --bun` child runs beside its parent, which already watches.
+      if (command === "dev" && process.env.NIFRA_BUN_DEV_TOKEN === undefined)
+        watchRouteTypes(app.cwd)
+    }
+    if (command === "dev") await dev(app, flags)
+    else if (command === "build") await buildForTarget(app, flags.target, flags)
+    else await start(app, flags)
+  } finally {
+    // `dev` and `start` keep serving after they return; a build is over.
+    if (command === "build") exitIfHeldOpen(command)
   }
-  if (command !== "start") {
-    const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
-    refreshRouteTypes(app.cwd)
-    // A relaunched `nifra dev --bun` child runs beside its parent, which already watches.
-    if (command === "dev" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) watchRouteTypes(app.cwd)
-  }
-  if (command === "dev") await dev(app, flags)
-  else if (command === "build") await buildForTarget(app, flags.target, flags)
-  else await start(app, flags)
 }
 
 /**
