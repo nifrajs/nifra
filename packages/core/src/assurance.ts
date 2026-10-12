@@ -228,6 +228,12 @@ export interface AssuranceRouteSelector {
    */
   readonly hasBody?: boolean
   /**
+   * Match routes by whether they declare a success `response` schema - the routes a response contract
+   * can hold to anything. Pair it with `require: ["nifra.response-contract"]` to say "every route
+   * that declares a response enforces it" without listing the routes that declare none.
+   */
+  readonly hasResponse?: boolean
+  /**
    * Match routes by their effective transport body policy. `"unlimited"` is the explicit
    * streaming/upload exemption; `"bounded"` is any finite cap (an explicit number or the inherited
    * server default); `"unset"` is a route that declared no `bodyLimit` at all. Lets a baseline say
@@ -259,7 +265,9 @@ const usesClassSelector = (selector: AssuranceRouteSelector): boolean =>
 
 /** The rules whose selector needs capability definitions to mean anything. */
 function rulesNeedingDefinitions(policy: AssurancePolicy): readonly string[] {
-  return policy.rules.filter((rule) => usesClassSelector(rule.match)).map((rule) => rule.name)
+  return [...policy.rules, ...(policy.baseline ?? [])]
+    .filter((rule) => usesClassSelector(rule.match))
+    .map((rule) => rule.name)
 }
 
 function definitionMap(
@@ -294,6 +302,13 @@ export interface AssuranceRule {
 export interface AssurancePolicy {
   /** First matching rule owns a route. Put exceptions before broad defaults. */
   readonly rules: readonly AssuranceRule[]
+  /**
+   * Rules checked on EVERY route they match, in addition to the first-match rule that owns it - for a
+   * requirement that holds across classes ("every route declaring a response enforces it"), which
+   * first-match-wins would otherwise make you repeat in each rule. A baseline rule does not classify a
+   * route: one no `rules` entry matches is still unclassified. Names share one namespace with `rules`.
+   */
+  readonly baseline?: readonly AssuranceRule[]
   /** Default `error`: an unclassified route fails closed. */
   readonly unmatched?: "error" | "ignore"
   /** Default false: reject an empty reflected source so a wrong import cannot pass CI silently. */
@@ -438,8 +453,11 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
   ) {
     throw new Error(`route assurance: flagClassifiedWithoutEvidence must be boolean`)
   }
+  if (policy.baseline !== undefined && !Array.isArray(policy.baseline)) {
+    throw new Error("route assurance: baseline must be an array of rules")
+  }
   const names = new Set<string>()
-  const rules = policy.rules.map((rule): AssuranceRule => {
+  const normalize = (rule: AssuranceRule): AssuranceRule => {
     if (typeof rule.name !== "string" || !nonEmpty(rule.name)) {
       throw new Error("route assurance: rule name must be non-empty")
     }
@@ -461,6 +479,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
           ...CLASS_SELECTOR_KEYS,
           "classificationAtLeast",
           "hasBody",
+          "hasResponse",
           "bodyLimit",
         ].includes(key),
     )
@@ -476,10 +495,12 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         `route assurance: rule ${JSON.stringify(name)} tools selector must be boolean`,
       )
     }
-    if (rule.match.hasBody !== undefined && typeof rule.match.hasBody !== "boolean") {
-      throw new Error(
-        `route assurance: rule ${JSON.stringify(name)} hasBody selector must be boolean`,
-      )
+    for (const key of ["hasBody", "hasResponse"] as const) {
+      if (rule.match[key] !== undefined && typeof rule.match[key] !== "boolean") {
+        throw new Error(
+          `route assurance: rule ${JSON.stringify(name)} ${key} selector must be boolean`,
+        )
+      }
     }
     if (
       rule.match.bodyLimit !== undefined &&
@@ -584,6 +605,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
       match.classificationAtLeast = rule.match.classificationAtLeast
     }
     if (rule.match.hasBody !== undefined) match.hasBody = rule.match.hasBody
+    if (rule.match.hasResponse !== undefined) match.hasResponse = rule.match.hasResponse
     if (rule.match.bodyLimit !== undefined) match.bodyLimit = rule.match.bodyLimit
     return Object.freeze({
       name,
@@ -595,9 +617,12 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         : {}),
       ...(rule.requireCsrfWithAuthenticated === true ? { requireCsrfWithAuthenticated: true } : {}),
     })
-  })
+  }
+  const rules = policy.rules.map(normalize)
+  const baseline = (policy.baseline ?? []).map(normalize)
   return Object.freeze({
     rules: Object.freeze(rules),
+    ...(baseline.length > 0 ? { baseline: Object.freeze(baseline) } : {}),
     unmatched: policy.unmatched ?? "error",
     allowEmpty: policy.allowEmpty ?? false,
     flagClassifiedWithoutEvidence: policy.flagClassifiedWithoutEvidence ?? false,
@@ -732,7 +757,7 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   // that passes capability assurance, so the rule would match nothing.
   if (capabilities !== undefined) {
     const defined = new Set(capabilities.definitions.map((definition) => definition.id))
-    for (const rule of policy.rules) {
+    for (const rule of [...policy.rules, ...(policy.baseline ?? [])]) {
       const undefinedToken = rule.match.capabilities?.find((token) => !defined.has(token))
       if (undefinedToken !== undefined) {
         throw new Error(
@@ -804,13 +829,15 @@ export function matchesAssuranceSelector(
   definitions?: ReadonlyMap<string, CapabilityDefinition>,
 ): boolean {
   const { methods, paths, tools, capabilities, access, zone, classificationAtLeast } = selector
-  const { exceptMethods, hasBody, bodyLimit } = selector
+  const { exceptMethods, hasBody, hasResponse, bodyLimit } = selector
   if (methods !== undefined && !methods.includes(route.method as Method | "WS")) return false
   if (exceptMethods?.some((method) => method === route.method) === true) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false
   if (hasBody !== undefined && (route.schema?.body !== undefined) !== hasBody) return false
+  if (hasResponse !== undefined && (route.schema?.response !== undefined) !== hasResponse)
+    return false
   if (bodyLimit !== undefined && effectiveBodyLimit(route.schema) !== bodyLimit) return false
   if (
     classificationAtLeast !== undefined &&
@@ -836,7 +863,61 @@ export function matchesAssuranceSelector(
   return true
 }
 
-/** Evaluate reflected route evidence against the first matching policy rule. */
+/** One rule's missing and forbidden evidence on one route, each also reported as a finding. */
+function checkAssuranceRule(
+  rule: AssuranceRule,
+  route: Pick<ReflectedRoute, "method" | "path">,
+  evidence: readonly AssuranceEvidence[],
+  evidenceIds: ReadonlySet<string>,
+  findings: AssuranceFinding[],
+): { readonly missing: readonly string[]; readonly forbidden: readonly string[] } {
+  const requiredProvenance = rule.requireProvenance ?? "any"
+  const missing = (rule.require ?? []).filter((id) => {
+    if (!evidenceIds.has(id)) return true
+    if (requiredProvenance === "any") return false
+    return !evidence.some(
+      (item) => item.id === id && evidenceProvenance(item) === requiredProvenance,
+    )
+  })
+  const forbidden = (rule.forbid ?? []).filter((id) => evidenceIds.has(id))
+  if (
+    rule.requireCsrfWithAuthenticated === true &&
+    evidenceIds.has(NIFRA_ASSURANCE_IDS.AUTHENTICATED) &&
+    !evidence.some(
+      (item) => item.id === NIFRA_ASSURANCE_IDS.CSRF && evidenceProvenance(item) === "runtime",
+    ) &&
+    !missing.includes(NIFRA_ASSURANCE_IDS.CSRF)
+  ) {
+    missing.push(NIFRA_ASSURANCE_IDS.CSRF)
+  }
+  for (const id of missing) {
+    findings.push({
+      code: "missing-evidence",
+      method: route.method,
+      path: route.path,
+      rule: rule.name,
+      evidence: id,
+      message:
+        requiredProvenance === "any"
+          ? `${route.method} ${route.path} (${rule.name}) is missing ${id}`
+          : `${route.method} ${route.path} (${rule.name}) is missing ${requiredProvenance} evidence for ${id}`,
+    })
+  }
+  for (const id of forbidden) {
+    findings.push({
+      code: "forbidden-evidence",
+      method: route.method,
+      path: route.path,
+      rule: rule.name,
+      evidence: id,
+      message: `${route.method} ${route.path} (${rule.name}) carries forbidden ${id}`,
+    })
+  }
+  return { missing, forbidden }
+}
+
+/** Evaluate reflected route evidence against the first matching policy rule, plus every matching
+ * baseline rule. */
 export function evaluateRouteAssurance(
   source: unknown,
   policyInput: AssurancePolicy,
@@ -875,6 +956,13 @@ export function evaluateRouteAssurance(
     )
     const evidence = route.assurance ?? []
     const evidenceIds = new Set(evidence.map((item) => item.id))
+    const missing: string[] = []
+    const forbidden: string[] = []
+    const hold = (candidate: AssuranceRule): void => {
+      const outcome = checkAssuranceRule(candidate, route, evidence, evidenceIds, findings)
+      for (const id of outcome.missing) if (!missing.includes(id)) missing.push(id)
+      for (const id of outcome.forbidden) if (!forbidden.includes(id)) forbidden.push(id)
+    }
     if (rule === undefined) {
       if (policy.unmatched !== "ignore") {
         findings.push({
@@ -884,82 +972,33 @@ export function evaluateRouteAssurance(
           message: `${route.method} ${route.path} is not classified by an assurance rule`,
         })
       }
-      routes.push({
-        method: route.method,
-        path: route.path,
-        evidence,
-        missing: [],
-        forbidden: [],
-        ...(route.schema?.response !== undefined || route.schema?.errors !== undefined
-          ? { responseContract: route.responseContract ?? "unchecked" }
-          : {}),
-      })
-      continue
+    } else {
+      hold(rule)
+      // Opt-in visibility: a pure-classification rule (no require + no forbid) matching a route with
+      // zero evidence is a "label without proof". Surface it so the gap isn't silently green. A rule
+      // that expects or forbids evidence already speaks for itself, so it's excluded here.
+      if (
+        policy.flagClassifiedWithoutEvidence === true &&
+        evidence.length === 0 &&
+        (rule.require ?? []).length === 0 &&
+        (rule.forbid ?? []).length === 0
+      ) {
+        findings.push({
+          code: "classified-no-evidence",
+          method: route.method,
+          path: route.path,
+          rule: rule.name,
+          message: `${route.method} ${route.path} (${rule.name}) is classified but carries no enforcement evidence`,
+        })
+      }
     }
-
-    const requiredProvenance = rule.requireProvenance ?? "any"
-    let missing = (rule.require ?? []).filter((id) => {
-      if (!evidenceIds.has(id)) return true
-      if (requiredProvenance === "any") return false
-      return !evidence.some(
-        (item) => item.id === id && evidenceProvenance(item) === requiredProvenance,
-      )
-    })
-    const forbidden = (rule.forbid ?? []).filter((id) => evidenceIds.has(id))
-    if (
-      rule.requireCsrfWithAuthenticated === true &&
-      evidenceIds.has(NIFRA_ASSURANCE_IDS.AUTHENTICATED) &&
-      !evidence.some(
-        (item) => item.id === NIFRA_ASSURANCE_IDS.CSRF && evidenceProvenance(item) === "runtime",
-      )
-    ) {
-      const id = NIFRA_ASSURANCE_IDS.CSRF
-      if (!missing.includes(id)) missing = [...missing, id]
-    }
-    for (const id of missing) {
-      findings.push({
-        code: "missing-evidence",
-        method: route.method,
-        path: route.path,
-        rule: rule.name,
-        evidence: id,
-        message:
-          requiredProvenance === "any"
-            ? `${route.method} ${route.path} (${rule.name}) is missing ${id}`
-            : `${route.method} ${route.path} (${rule.name}) is missing ${requiredProvenance} evidence for ${id}`,
-      })
-    }
-    for (const id of forbidden) {
-      findings.push({
-        code: "forbidden-evidence",
-        method: route.method,
-        path: route.path,
-        rule: rule.name,
-        evidence: id,
-        message: `${route.method} ${route.path} (${rule.name}) carries forbidden ${id}`,
-      })
-    }
-    // Opt-in visibility: a pure-classification rule (no require + no forbid) matching a route with zero
-    // evidence is a "label without proof". Surface it so the gap isn't silently green. A rule that expects
-    // or forbids evidence already speaks for itself via the loops above, so it's excluded here.
-    if (
-      policy.flagClassifiedWithoutEvidence === true &&
-      evidence.length === 0 &&
-      (rule.require ?? []).length === 0 &&
-      (rule.forbid ?? []).length === 0
-    ) {
-      findings.push({
-        code: "classified-no-evidence",
-        method: route.method,
-        path: route.path,
-        rule: rule.name,
-        message: `${route.method} ${route.path} (${rule.name}) is classified but carries no enforcement evidence`,
-      })
+    for (const candidate of policy.baseline ?? []) {
+      if (matchesAssuranceSelector(route, candidate.match, definitions)) hold(candidate)
     }
     routes.push({
       method: route.method,
       path: route.path,
-      rule: rule.name,
+      ...(rule === undefined ? {} : { rule: rule.name }),
       evidence,
       missing: Object.freeze(missing),
       forbidden: Object.freeze(forbidden),

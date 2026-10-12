@@ -203,6 +203,68 @@ export default function Plugins() {
       </p>
       <CodeBlock code={PLUGIN} />
 
+      <h2 id="parent-use">What a parent&rsquo;s use() covers</h2>
+      <p>
+        A <code>group()</code> scope inherits the parent&rsquo;s chain as it stands at the call. A{" "}
+        <code>merge()</code>d server was compiled on its own, so its routes keep <i>their</i> chain. Only
+        what the parent installed <b>before</b> the <code>group()</code> or <code>merge()</code> counts.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Installed on the parent</th>
+            <th>
+              <code>group()</code> route
+            </th>
+            <th>
+              <code>merge()</code>d route
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code>derive</code>, <code>decorate</code>, <code>authenticate</code>,{" "}
+              <code>beforeHandle</code>, <code>afterHandle</code>, <code>onError</code>,{" "}
+              <code>around</code>, route-scoped assurance
+            </td>
+            <td>yes</td>
+            <td>no - wire it on the merged server</td>
+          </tr>
+          <tr>
+            <td>
+              <code>onRequest</code>, <code>onResponse</code>, <code>responseHeaders</code>
+            </td>
+            <td>yes</td>
+            <td>yes (app-wide)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>responseContract()</code>
+            </td>
+            <td>yes</td>
+            <td>yes, when the route declares a response and its own server installed no contract</td>
+          </tr>
+          <tr>
+            <td>
+              <code>effectLedger()</code>
+            </td>
+            <td>yes</td>
+            <td>yes, when the route declares capabilities and has no ledger of its own</td>
+          </tr>
+          <tr>
+            <td>
+              <code>idempotency()</code>
+            </td>
+            <td>yes</td>
+            <td>
+              the merged server&rsquo;s own - a route declaring <code>idempotency</code> without one is
+              refused at registration
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2>Route/hook plugins: keep types with defineRouterPlugin</h2>
       <p>
         A plugin that registers routes or hooks but adds <b>no context type</b> - e.g. mounting an auth

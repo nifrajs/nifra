@@ -2999,6 +2999,47 @@ app
 app.use((a) => a.decorate("db", db).derive((c) => ({ now: Date.now() })))
 ```
 
+### What a parent&rsquo;s use() covers
+
+A `group()` scope inherits the parent&rsquo;s chain as it stands at the call. A
+`merge()`d server was compiled on its own, so its routes keep _their_ chain. Only
+what the parent installed **before** the `group()` or `merge()` counts.
+
+Installed on the parent
+
+`group()` route
+
+`merge()`d route
+
+`derive`, `decorate`, `authenticate`,
+`beforeHandle`, `afterHandle`, `onError`,
+`around`, route-scoped assurance
+
+yes
+no - wire it on the merged server
+
+`onRequest`, `onResponse`, `responseHeaders`
+
+yes
+yes (app-wide)
+
+`responseContract()`
+
+yes
+yes, when the route declares a response and its own server installed no contract
+
+`effectLedger()`
+
+yes
+yes, when the route declares capabilities and has no ledger of its own
+
+`idempotency()`
+
+yes
+
+the merged server&rsquo;s own - a route declaring `idempotency` without one is
+refused at registration
+
 ### Route/hook plugins: keep types with defineRouterPlugin
 
 A plugin that registers routes or hooks but adds **no context type** - e.g. mounting an auth
@@ -3475,7 +3516,7 @@ const PublicUser = t.object({ id: t.string(), name: t.string() })
 
 // "warn" logs and changes nothing; "enforce" makes the contract the upper bound too.
 // Not installing the plugin is "off" - and keeps the lane out of your bundle entirely.
-export const app = server().use(responseContract("enforce")).get(
+export const app = server().use(responseContract("enforce", { extra: "strip" })).get(
   "/me",
   { response: PublicUser },
   async () => {
@@ -3485,8 +3526,10 @@ export const app = server().use(responseContract("enforce")).get(
   },
 )
 
-// off      -> {"id":"u1","name":"Ada","email":"a@b.c","passwordHash":"..."}
-// enforce  -> {"id":"u1","name":"Ada"}
+// off                          -> 200 {"id":"u1","name":"Ada","email":"a@b.c","passwordHash":"..."}
+// enforce                      -> 500 {"ok":false,"error":"internal_error"}
+//                                 (t.object is closed; the log names email and passwordHash)
+// enforce, { extra: "strip" }  -> 200 {"id":"u1","name":"Ada"}
 ```
 
 Not installing the plugin is &ldquo;off&rdquo;, which is exactly today&rsquo;s behaviour and
@@ -3501,12 +3544,19 @@ returns it early, or `onError` answers with it; only a hand-built
 should cover: like
 `idempotency()`, the decision is made per route at registration.
 
-Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes
-`validate` and no way to enumerate declared keys. A _stripping_ schema (Zod,
-Valibot) yields a cleaned value, so the extra fields are dropped. A _strict_ one
+By default, enforcement follows your schema&rsquo;s own semantics, because Standard Schema
+exposes `validate` and no way to enumerate declared keys. A _stripping_ schema
+(Zod, Valibot) yields a cleaned value, so the extra fields are dropped. A _strict_ one
 (`@nifrajs/schema`&rsquo;s `t.object`) reports them as issues, so the
-response becomes a 500 and the detail goes to the logger, never to the caller. Both are what you
-already declared about extra fields.
+response becomes a 500 and the detail goes to the logger, never to the caller.
+`{ extra: "strip" }` changes that for `t` schemas: they carry their
+JSON Schema, which does list the declared keys, so the payload is projected onto them - nested
+objects, arrays and records included - before it is validated. In `"warn"`
+mode the same option makes the log name the fields `"enforce"` would drop.
+
+A `merge()`d server&rsquo;s routes are covered by a contract the parent installed
+before the merge, as long as the route declares a response and its own server installed none.
+See [what a parent&rsquo;s use() covers](/docs/plugins#parent-use).
 
 The check itself is essentially free: with a compiled validator it measures in the
 ~100ns-per-response range, and a realistic middleware-carrying route benchmarks within noise
@@ -12187,6 +12237,43 @@ export default defineAssuranceConfig({
       headers.set("cookie", "session=fixture")
       return new Request(request, { headers })
     },
+  },
+})
+```
+
+### Response contracts
+
+Next to the ladder, `nifra levels` counts the routes that declare a
+`response` or `errors` schema and how each is held at runtime:
+_enforced_, _warn-only_ (checked, original payload still sent) or _typed-only_
+(no `responseContract()` covers it). A typed-only route is usually registered on a
+server other than the one the plugin is installed on, or before it; the report names the routes
+and says which.
+
+The count does not fail a level on its own. To make L1 require enforcement, add a
+`baseline` rule selecting `hasResponse: true`: unlike
+`rules`, where the first match owns a route, a baseline rule is checked on every
+route it matches, so one entry covers every class. `nifra assure --strict` also fails
+while any declared route is typed-only or warn-only.
+
+```ts
+// nifra.assurance.ts
+// doc-check: skip - the backend is app-specific
+import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { backend } from "./backend"
+
+export default defineAssuranceConfig({
+  source: backend,
+  policy: {
+    rules: [/* first match owns each route: classify by path, method, capability ... */],
+    // Checked on every route it matches, whichever rule owns the route.
+    baseline: [
+      {
+        name: "response-contract",
+        match: { hasResponse: true },
+        require: [NIFRA_ASSURANCE.RESPONSE_CONTRACT],
+      },
+    ],
   },
 })
 ```

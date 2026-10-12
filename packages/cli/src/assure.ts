@@ -3,9 +3,10 @@
 import { existsSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
+import type { AssuranceConfig, AssuranceReport, AssuredRoute } from "@nifrajs/core/assurance"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import type { Diagnostic } from "./diagnostics.ts"
+import type { ProjectVerification } from "./verification.ts"
 
 export interface AssureSink {
   record(bundle: AssureBundle): Promise<void>
@@ -14,6 +15,7 @@ export interface AssureSink {
 export interface GateResult {
   readonly gate:
     | "check"
+    | "assurance"
     | "doctor"
     | "render"
     | "hydration"
@@ -90,6 +92,45 @@ export async function loadAssuranceConfig(
   }
   return loaded.default
 }
+
+/** Why declared response/error schemas go unenforced, phrased for the server that has to change. */
+export interface ResponseContractGaps {
+  readonly typedOnly: readonly string[]
+  readonly warnOnly: readonly string[]
+  readonly typedOnlyReason: string | undefined
+  readonly warnOnlyReason: string | undefined
+}
+
+const sample = (routes: readonly string[]): string =>
+  routes.length <= 3
+    ? routes.join(", ")
+    : `${routes.slice(0, 3).join(", ")} and ${routes.length - 3} more`
+
+export function responseContractGaps(routes: readonly AssuredRoute[]): ResponseContractGaps {
+  const key = (route: AssuredRoute): string => `${route.method} ${route.path}`
+  const typedOnly = routes.filter((route) => route.responseContract === "unchecked").map(key)
+  const warnOnly = routes.filter((route) => route.responseContract === "warn").map(key)
+  const covered = routes.filter(
+    (route) => route.responseContract === "enforce" || route.responseContract === "warn",
+  ).length
+  // A plugin that covers some routes is installed - just not where these were registered, which is
+  // the case "install responseContract" advice used to send people in circles over.
+  const typedOnlyReason =
+    typedOnly.length === 0
+      ? undefined
+      : covered > 0
+        ? `${typedOnly.length} declared route(s) are typed-only (${sample(typedOnly)}) although responseContract() covers ${covered} other(s): it covers routes registered after it on the same server, and routes merge()d into that server after it. Install responseContract("enforce") on the server that registers these, before them.`
+        : `${typedOnly.length} declared route(s) are typed-only (${sample(typedOnly)}); install responseContract("enforce") on the server that registers them, before them - a parent's also covers servers merge()d into it afterwards.`
+  const warnOnlyReason =
+    warnOnly.length === 0
+      ? undefined
+      : `${warnOnly.length} declared route(s) are warn-only and still send the original payload (${sample(warnOnly)}); switch responseContract("warn") to "enforce".`
+  return { typedOnly, warnOnly, typedOnlyReason, warnOnlyReason }
+}
+
+/** The policy line that turns an unenforced contract into a route-assurance failure. */
+export const RESPONSE_CONTRACT_BASELINE_HINT =
+  'to fail route assurance on these, add baseline: [{ name: "response-contract", match: { hasResponse: true }, require: ["nifra.response-contract"] }] to the policy'
 
 export function formatAssuranceReport(report: AssuranceReport): string {
   if (report.ok) {
@@ -247,17 +288,54 @@ export async function collectAssureBundle(
     }
   }
 
+  // One verification serves both gates that read the app, so the config is evaluated once.
+  let verification: Promise<ProjectVerification> | undefined
+  const verify = (): Promise<ProjectVerification> =>
+    (verification ??= import("./verification.ts").then(({ collectProjectVerification }) =>
+      collectProjectVerification(cwd, {
+        ...(options.config !== undefined ? { config: options.config } : {}),
+        preloaded:
+          assuranceConfig !== undefined
+            ? { config: assuranceConfig }
+            : { error: assuranceConfigError },
+      }),
+    ))
+
   await addGate("check", async () => {
-    const { collectProjectVerification } = await import("./verification.ts")
-    const verification = await collectProjectVerification(cwd, {
-      ...(options.config !== undefined ? { config: options.config } : {}),
-      preloaded:
-        assuranceConfig !== undefined
-          ? { config: assuranceConfig }
-          : { error: assuranceConfigError },
-    })
-    const result = await verification.check()
+    const result = await (await verify()).check()
     const diagnostics = (result.structuredDiagnostics ?? []).map((item) => item)
+    return { diagnostics }
+  })
+
+  // Route assurance is the gate the bundle exists to carry: a failing policy fails it, and a declared
+  // response the runtime does not enforce is a warning, so `--strict` refuses to call it green.
+  await addGate("assurance", async () => {
+    const report = assuranceConfig === undefined ? undefined : (await verify()).routeAssurance
+    if (report === undefined)
+      return {
+        diagnostics: [],
+        skipReason: existsSync(resolve(cwd, options.config ?? DEFAULT_ASSURANCE_CONFIG))
+          ? "route assurance could not be evaluated (reported by the check gate)"
+          : "no route assurance config",
+      }
+    const diagnostics = report.findings.map((finding) =>
+      diagnosticFromMessage("NF-A001", finding.message, "error"),
+    )
+    const gaps = responseContractGaps(report.routes)
+    for (const [reason, routes] of [
+      [gaps.typedOnlyReason, gaps.typedOnly],
+      [gaps.warnOnlyReason, gaps.warnOnly],
+    ] as const) {
+      if (reason === undefined) continue
+      diagnostics.push(
+        Object.freeze({
+          code: "NF-A001",
+          severity: "warn" as const,
+          message: `${reason} (${RESPONSE_CONTRACT_BASELINE_HINT})`,
+          evidence: Object.freeze(routes.slice(0, 20)),
+        }),
+      )
+    }
     return { diagnostics }
   })
 

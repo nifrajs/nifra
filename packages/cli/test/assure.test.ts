@@ -1,10 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import type { AssuredRoute } from "@nifrajs/core/assurance"
 import {
+  collectAssureBundle,
   DEFAULT_ASSURANCE_CONFIG,
   formatAssuranceReport,
   loadAssuranceConfig,
+  responseContractGaps,
   runAssurance,
 } from "../src/assure.ts"
 
@@ -100,5 +103,77 @@ describe("nifra assure", () => {
     await expect(loadAssuranceConfig(empty)).rejects.toThrow("config not found")
     await writeFile(join(empty, DEFAULT_ASSURANCE_CONFIG), "export default { nope: true }\n")
     await expect(loadAssuranceConfig(empty)).rejects.toThrow("must default-export")
+  })
+})
+
+describe("unenforced response contracts", () => {
+  const route = (path: string, responseContract: AssuredRoute["responseContract"]): AssuredRoute =>
+    responseContract === undefined
+      ? { method: "GET", path, evidence: [], missing: [], forbidden: [] }
+      : { method: "GET", path, evidence: [], missing: [], forbidden: [], responseContract }
+
+  test("typed-only advice points at the registering server, and says so when the plugin is elsewhere", () => {
+    const alone = responseContractGaps([route("/a", "unchecked"), route("/raw", undefined)])
+    expect(alone.typedOnly).toEqual(["GET /a"])
+    expect(alone.typedOnlyReason).toContain("on the server that registers them")
+    const elsewhere = responseContractGaps([
+      ...["/a", "/b", "/c", "/d"].map((path) => route(path, "unchecked")),
+      route("/e", "enforce"),
+      route("/w", "warn"),
+    ])
+    expect(elsewhere.typedOnlyReason).toContain("although responseContract() covers 2 other(s)")
+    expect(elsewhere.typedOnlyReason).toContain("GET /a, GET /b, GET /c and 1 more")
+    expect(elsewhere.warnOnlyReason).toContain("GET /w")
+    expect(responseContractGaps([route("/e", "enforce")])).toEqual({
+      typedOnly: [],
+      warnOnly: [],
+      typedOnlyReason: undefined,
+      warnOnlyReason: undefined,
+    })
+  })
+
+  test("the bundle's assurance gate warns on them, so --strict refuses green", async () => {
+    const cwd = join(FIXTURES, "contract-gate")
+    await mkdir(join(cwd, "backend"), { recursive: true })
+    await writeFile(
+      join(cwd, "backend/app.ts"),
+      [
+        `import { server } from "@nifrajs/core"`,
+        `const schema = { "~standard": { version: 1, vendor: "gate-test", validate: (value) => ({ value }) } }`,
+        `export const backend = server().get("/me", { response: schema }, () => ({ id: "1" }))`,
+        "",
+      ].join("\n"),
+    )
+    await writeFile(
+      join(cwd, DEFAULT_ASSURANCE_CONFIG),
+      [
+        `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
+        `import { backend } from "./backend/app.ts"`,
+        `export default defineAssuranceConfig({ source: backend, policy: { rules: [{ name: "all", match: {} }] } })`,
+        "",
+      ].join("\n"),
+    )
+    const lenient = await collectAssureBundle(cwd)
+    const gate = lenient.gates.find((candidate) => candidate.gate === "assurance")
+    expect(gate?.status).toBe("pass")
+    expect(gate?.diagnostics.map((item) => [item.severity, item.evidence])).toEqual([
+      ["warn", ["GET /me"]],
+    ])
+    const strict = await collectAssureBundle(cwd, { strict: true })
+    expect(strict.gates.find((candidate) => candidate.gate === "assurance")?.status).toBe("fail")
+    expect(strict.verdict).toBe("red")
+  })
+
+  test("the bundle's assurance gate fails on a policy finding", async () => {
+    const cwd = await project(
+      "bundle-fail",
+      CONFIG.replace(
+        "NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF]",
+        'NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF, "platform.tenant"]',
+      ),
+    )
+    const bundle = await collectAssureBundle(cwd)
+    expect(bundle.gates.find((candidate) => candidate.gate === "assurance")?.status).toBe("fail")
+    expect(bundle.verdict).toBe("red")
   })
 })

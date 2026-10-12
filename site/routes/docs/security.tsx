@@ -15,7 +15,7 @@ const PublicUser = t.object({ id: t.string(), name: t.string() })
 
 // "warn" logs and changes nothing; "enforce" makes the contract the upper bound too.
 // Not installing the plugin is "off" - and keeps the lane out of your bundle entirely.
-export const app = server().use(responseContract("enforce")).get(
+export const app = server().use(responseContract("enforce", { extra: "strip" })).get(
   "/me",
   { response: PublicUser },
   async () => {
@@ -25,8 +25,10 @@ export const app = server().use(responseContract("enforce")).get(
   },
 )
 
-// off      -> {"id":"u1","name":"Ada","email":"a@b.c","passwordHash":"..."}
-// enforce  -> {"id":"u1","name":"Ada"}`
+// off                          -> 200 {"id":"u1","name":"Ada","email":"a@b.c","passwordHash":"..."}
+// enforce                      -> 500 {"ok":false,"error":"internal_error"}
+//                                 (t.object is closed; the log names email and passwordHash)
+// enforce, { extra: "strip" }  -> 200 {"id":"u1","name":"Ada"}`
 
 const BOUNDED = `import { server } from "@nifrajs/core/server"
 
@@ -389,12 +391,20 @@ export default function Security() {
         <code>idempotency()</code>, the decision is made per route at registration.
       </p>
       <p>
-        Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes{" "}
-        <code>validate</code> and no way to enumerate declared keys. A <em>stripping</em> schema (Zod,
-        Valibot) yields a cleaned value, so the extra fields are dropped. A <em>strict</em> one
+        By default, enforcement follows your schema&rsquo;s own semantics, because Standard Schema
+        exposes <code>validate</code> and no way to enumerate declared keys. A <em>stripping</em> schema
+        (Zod, Valibot) yields a cleaned value, so the extra fields are dropped. A <em>strict</em> one
         (<code>@nifrajs/schema</code>&rsquo;s <code>t.object</code>) reports them as issues, so the
-        response becomes a 500 and the detail goes to the logger, never to the caller. Both are what you
-        already declared about extra fields.
+        response becomes a 500 and the detail goes to the logger, never to the caller.{" "}
+        <code>{`{ extra: "strip" }`}</code> changes that for <code>t</code> schemas: they carry their
+        JSON Schema, which does list the declared keys, so the payload is projected onto them - nested
+        objects, arrays and records included - before it is validated. In <code>&quot;warn&quot;</code>{" "}
+        mode the same option makes the log name the fields <code>&quot;enforce&quot;</code> would drop.
+      </p>
+      <p>
+        A <code>merge()</code>d server&rsquo;s routes are covered by a contract the parent installed
+        before the merge, as long as the route declares a response and its own server installed none.
+        See <a href="/docs/plugins#parent-use">what a parent&rsquo;s use() covers</a>.
       </p>
       <p>
         The check itself is essentially free: with a compiled validator it measures in the

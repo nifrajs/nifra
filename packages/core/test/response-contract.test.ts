@@ -338,6 +338,112 @@ describe("a reply that does not come from the handler's return", () => {
   })
 })
 
+/**
+ * A `t` schema is closed by default, so plain enforcement turns an extra field into a 500. The schema
+ * also carries its JSON Schema, which - unlike Standard Schema - lists the declared keys, so
+ * `extra: "strip"` can project the payload onto them before validating.
+ */
+describe('responseContract: extra "strip"', () => {
+  const strip = (mode: "warn" | "enforce", logger: Logger = silentLogger) =>
+    server({ logger }).use(responseContract(mode, { extra: "strip" }))
+  const fetchJson = async (app: AnyServer, path: string) => {
+    const res = await app.fetch(new Request(`http://t${path}`))
+    return { status: res.status, body: await res.text() }
+  }
+
+  test("a closed t.object serves only its declared fields", async () => {
+    const res = await fetchJson(
+      strip("enforce").get("/me", { response: STRICT }, () => LEAK),
+      "/me",
+    )
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: "u1", name: "Ada" })
+    expect(res.body).not.toContain("SECRET")
+  })
+
+  test("projects nested objects, arrays, records and a nullable union", async () => {
+    const shape = t.object({
+      user: STRICT,
+      list: t.array(STRICT),
+      byId: t.record(STRICT),
+      maybe: t.union([STRICT, t.null()]),
+      none: t.union([STRICT, t.null()]),
+    })
+    const app = strip("enforce").get("/n", { response: shape }, () => ({
+      user: LEAK,
+      list: [LEAK, LEAK],
+      byId: { a: LEAK },
+      maybe: LEAK,
+      none: null,
+      extra: "SECRET",
+    }))
+    const res = await fetchJson(app, "/n")
+    const clean = { id: "u1", name: "Ada" }
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({
+      user: clean,
+      list: [clean, clean],
+      byId: { a: clean },
+      maybe: clean,
+      none: null,
+    })
+  })
+
+  test("an open object keeps its extras but still projects a closed child", async () => {
+    const shape = t.looseObject({ user: STRICT })
+    const app = strip("enforce").get("/o", { response: shape }, () => ({
+      user: LEAK,
+      note: "kept",
+    }))
+    expect(JSON.parse((await fetchJson(app, "/o")).body)).toEqual({
+      user: { id: "u1", name: "Ada" },
+      note: "kept",
+    })
+  })
+
+  test("a union of two object shapes is left to the validator", async () => {
+    // Projecting onto either branch could strip the fields that make the other one match.
+    const other = t.object({ id: t.string(), email: t.string() })
+    const app = strip("enforce").get("/u", { response: t.union([STRICT, other]) }, () => LEAK)
+    expect((await fetchJson(app, "/u")).status).toBe(500)
+  })
+
+  test("a declared getter on a row class is read", async () => {
+    class Row {
+      id = "u1"
+      secret = "SECRET"
+      get name(): string {
+        return "Ada"
+      }
+    }
+    const app = strip("enforce").get("/c", { response: STRICT }, () => new Row())
+    expect(JSON.parse((await fetchJson(app, "/c")).body)).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("warn names the fields strip would drop and serves the payload unchanged", async () => {
+    const { logger, records } = recorder()
+    const res = await fetchJson(
+      strip("warn", logger).get("/me", { response: STRICT }, () => LEAK),
+      "/me",
+    )
+    expect(JSON.parse(res.body)).toEqual(LEAK)
+    const detail = String(records.find((r) => r.message === "response contract")?.detail)
+    expect(detail).toContain("passwordHash, resetToken")
+  })
+
+  test("a schema without jsonSchema keeps its own semantics", async () => {
+    const res = await fetchJson(
+      strip("enforce").get("/z", { response: STRIPPING }, () => LEAK),
+      "/z",
+    )
+    expect(JSON.parse(res.body)).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("an unknown extra mode is refused when the plugin is built", () => {
+    expect(() => responseContract("enforce", JSON.parse('{"extra":"drop"}'))).toThrow(TypeError)
+  })
+})
+
 describe("checkResponseContract", () => {
   test("returns synchronously for a synchronous schema", () => {
     // An app that opts in should not pay a microtask per response for a check with no work to do.

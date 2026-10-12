@@ -32,7 +32,7 @@ import {
   assuranceEvidenceFor,
 } from "../internal/route-assurance.ts"
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
-import { compileRouteOptions } from "../internal/route-compiler.ts"
+import { adoptRouteRuntimes, compileRouteOptions } from "../internal/route-compiler.ts"
 import {
   compileRouteExecutionPlan,
   type FusedBodyRunner,
@@ -2586,6 +2586,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * registered before a `derive`). Fail closed: a path+method collision throws
    * `RouteConfigError` at merge time, and a group with WebSocket routes or mounts is refused
    * (register those on the parent).
+   *
+   * What this server's `.use()`, made BEFORE the merge, covers on a merged route versus a
+   * `group()` route:
+   *
+   *   | installed on this server                   | group() route | merge()d route                 |
+   *   | ------------------------------------------ | ------------- | ------------------------------ |
+   *   | derive/decorate/beforeHandle/afterHandle,  | yes           | no - wire it on the merged     |
+   *   | onError/around, authenticate, route-scoped |               | server                         |
+   *   | assurance                                  |               |                                |
+   *   | onRequest/onResponse/responseHeaders hooks | yes           | yes (app-wide)                 |
+   *   | responseContract()                         | yes           | yes, when the route declares a |
+   *   |                                            |               | response and its own server    |
+   *   |                                            |               | installed no contract          |
+   *   | effectLedger()                             | yes           | yes, when the route declares   |
+   *   |                                            |               | capabilities and has no ledger |
+   *   | idempotency()                              | yes           | the merged server's own; a     |
+   *   |                                            |               | route declaring it without one |
+   *   |                                            |               | is refused at registration     |
+   *
+   * The response contract and the ledger can only add a check or a record, so a merged route is
+   * recompiled under them. A runtime installed AFTER the merge covers neither kind of route.
    */
   merge<R2 extends Registry, Ctx2, HookOutput2>(
     other: Server<R2, Ctx2, HookOutput2>,
@@ -2630,7 +2651,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * The builder receives a scope that INHERITS this server's route chain as it stands at the call
    * (`derive`/`decorate`/`authenticate`/`beforeHandle`/`afterHandle`/`onError`/`around`, assurance,
    * capability interceptors, installed runtimes, applied plugins), exactly as a route declared here
-   * would. A plugin this server already applied is in effect for the group: the group's `use()` of
+   * would. {@link merge} documents how that differs for a merged server. A plugin this server already applied is in effect for the group: the group's `use()` of
    * that same instance does nothing, and its `use()` of another instance under the same name throws a
    * `RouteConfigError` (`PLUGIN_RECONFIGURED`), because that instance could never replace the parent's.
    * A plugin the group applies still shares the parent's copy of a dependency it `use()`s itself.
@@ -2738,7 +2759,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           })
         : (route: CatalogRoute): CatalogRoute => route
     this.catalog.addBatch(
-      sourceRoutes.map((route) => this.bindFusedRuntime(foldedAssurance(route))),
+      sourceRoutes.map((route) =>
+        this.bindFusedRuntime(
+          foldedAssurance(
+            adoptRouteRuntimes(route, this.responseContractRuntime, this.effectLedgerRuntime),
+          ),
+        ),
+      ),
     )
     // Resolved idempotency/ledger route entries carry their own store/sink configuration, while the
     // runtime object supplies the generic execution machinery. If the parent already has a runtime,

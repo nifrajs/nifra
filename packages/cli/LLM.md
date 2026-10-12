@@ -29,7 +29,7 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 - **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool` · from `@nifrajs/cli/mcp`
 - **formatAssuranceReport** _(function)_ - `formatAssuranceReport: (report: AssuranceReport) => string` · from `@nifrajs/cli/assure`
 
-_…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
+_…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
 
 ## Footguns
 

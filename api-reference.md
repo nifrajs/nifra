@@ -844,11 +844,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DEFAULT_ASSURANCE_CONFIG** _(const)_ - `DEFAULT_ASSURANCE_CONFIG: "nifra.assurance.ts"`
 - **GateResult** _(interface)_ - `interface GateResult`
 - **MemoryAssureSink** _(interface)_ - `interface MemoryAssureSink`
+- **RESPONSE_CONTRACT_BASELINE_HINT** _(const)_ - `RESPONSE_CONTRACT_BASELINE_HINT: "to fail route assurance on these, add baseline: [{ name: \"response-contract\", match: { hasResponse: true }, require: [\"nifra.response-contract\"] }] to the policy"`
+  The policy line that turns an unenforced contract into a route-assurance failure.
+- **ResponseContractGaps** _(interface)_ - `interface ResponseContractGaps`
+  Why declared response/error schemas go unenforced, phrased for the server that has to change.
 - **collectAssuranceReport** _(function)_ - `collectAssuranceReport: (cwd: string, configPath?: string) => Promise<AssuranceReport>`
 - **collectAssureBundle** _(function)_ - `collectAssureBundle: (cwd: string, options?: { readonly config?: string; readonly strict?: boolean; readonly hydration?: boolean; readonly interact?: boolean; }) => Promise<AssureBundle>`
 - **createMemoryAssureSink** _(function)_ - `createMemoryAssureSink: () => MemoryAssureSink`
 - **formatAssuranceReport** _(function)_ - `formatAssuranceReport: (report: AssuranceReport) => string`
 - **loadAssuranceConfig** _(function)_ - `loadAssuranceConfig: (cwd: string, configPath?: string) => Promise<AssuranceConfig>`
+- **responseContractGaps** _(function)_ - `responseContractGaps: (routes: readonly AssuredRoute[]) => ResponseContractGaps`
 - **runAssurance** _(function)_ - `runAssurance: (cwd: string, options?: { readonly json?: boolean; readonly config?: string; readonly bundle?: boolean; readonly strict?: boolean; readonly out?: string; readonly hydration?: boolean; readonly interact?: b…`
 
 ### `@nifrajs/cli/diagnostics`
@@ -1853,7 +1858,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **defineAssurancePolicy** _(function)_ - `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
   Validate and freeze an ordered assurance policy.
 - **evaluateRouteAssurance** _(function)_ - `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy, options?: AssuranceEvaluationOptions) => AssuranceReport`
-  Evaluate reflected route evidence against the first matching policy rule.
+  Evaluate reflected route evidence against the first matching policy rule, plus every matching baseline rule.
 - **matchesAssuranceSelector** _(function)_ - `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities" | "classification" | "schema">, selector: AssuranceRouteSelector, definitions?: ReadonlyMap<string, CapabilityDefinition…`
 - **securityBaseline** _(function)_ - `securityBaseline: (options?: SecurityBaselineOptions) => AssurancePolicy`
   A first-match-wins security policy that turns the recurring audit finding classes into machine checked route invariants. Composed only from the public assurance engine, so it inherits its fail-closed evaluation, provenance checks, and selector validation - no bespoke evaluator.
@@ -2717,15 +2722,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Success and status-specific error schemas captured by one route at registration time.
 - **ResponseContractMode** _(type)_ - `type ResponseContractMode = "warn" | "enforce"`
   How hard a declared `response` schema is held.
+- **ResponseContractOptions** _(interface)_ - `interface ResponseContractOptions`
 - **ResponseContractOutcome** _(type)_ - `type ResponseContractOutcome`
   The outcome of checking one handler result against its declared response schema.
 - **ResponseContractRuntime** _(interface)_ - `interface ResponseContractRuntime`
   What the server holds when the plugin is installed. The kernel calls `check` through this object and never imports the implementation, so an app that does not install the plugin does not carry it.
-- **checkResponseContract** _(function)_ - `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce") => ResponseContractOutcome | Promise<ResponseContractOutcome>`
+- **checkResponseContract** _(function)_ - `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce", options?: ResponseContractOptions) => ResponseContractOutcome | Promise<ResponseContractOutcome>`
   Check one result against the route's declared response schema.
-- **checkRouteResponseContract** _(function)_ - `checkRouteResponseContract: (definition: ResponseContractDefinition, result: unknown, mode: "warn" | "enforce", jsonReply?: { readonly body: unknown; }) => ResponseContractOutcome | Promise<ResponseContractOutcome>`
+- **checkRouteResponseContract** _(function)_ - `checkRouteResponseContract: (definition: ResponseContractDefinition, result: unknown, mode: "warn" | "enforce", jsonReply?: { readonly body: unknown; }, options?: ResponseContractOptions) => ResponseContractOutcome | Pr…`
   Check a route's success or status-specific error payload. Plain `status()` results retain their status while enforcement replaces only the body with the validator's output. A `c.json(...)` reply is held to the contract through the value it was built from (`jsonReply`). Any other raw `Response` rema…
-- **responseContract** _(function)_ - `responseContract: (mode?: ResponseContractMode) => IdentityPlugin`
+- **responseContract** _(function)_ - `responseContract: (mode?: ResponseContractMode, options?: ResponseContractOptions) => IdentityPlugin`
   Hold every route's declared `response` schema to what the handler actually returned.
 
 ### `@nifrajs/core/response-observer`
