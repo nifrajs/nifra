@@ -1235,6 +1235,9 @@ async function main(): Promise<void> {
       // hint stays reserved for the case where the process died inside the app import.
       markReflecting(undefined)
       console.error(formatCliError(err))
+      // A `--json` caller parses stdout, so the failure is a JSON document there too.
+      if (argv.includes("--json") || argv.includes("--json=true"))
+        console.log(JSON.stringify({ ok: false, error: formatCliError(err) }, null, 2))
       const candidate =
         typeof err === "object" && err !== null && "exitCode" in err
           ? (err as { readonly exitCode?: unknown }).exitCode

@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
-import { resolve } from "node:path"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
 import { assureBundleRequested, commandArgv, formatCliError, parseFlags } from "../src/cli.ts"
 
@@ -93,6 +95,35 @@ test("`nifra build` refuses a mistyped flag before building, and `--help` prints
   const help = await run(["build", "--help"])
   expect(help.exit).toBe(0)
   expect(help.stdout).toContain("nifra build   [--out <dir>] [--report]")
+})
+
+test("a command that fails under --json still prints one JSON document on stdout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nifra-json-error-"))
+  try {
+    for (const args of [
+      ["routes", "--json"],
+      ["check", "--json", "--bogus"],
+    ]) {
+      const proc = Bun.spawn(
+        [process.execPath, resolve(import.meta.dir, "../src/cli.ts"), ...args],
+        {
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [stdout, stderr, exit] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect(exit).toBe(1)
+      const parsed: unknown = JSON.parse(stdout)
+      expect(parsed).toEqual({ ok: false, error: stderr.trim() })
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 // Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is
