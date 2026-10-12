@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { buildClient } from "@nifrajs/web/build"
 import * as ts from "typescript"
 import { collectCheckResult } from "../src/check.ts"
@@ -42,7 +42,10 @@ async function buildRefuses(root: string, clientModule: string): Promise<string[
     return []
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    const refused = [...message.matchAll(/^ {2}- ([^:\n]+): /gm)].map((match) => match[1] ?? "")
+    // A file outside the app is named by its absolute path, which starts `C:` on Windows.
+    const refused = [...message.matchAll(/^ {2}- ((?:[A-Za-z]:)?[^:\n]+): /gm)].map(
+      (match) => match[1] ?? "",
+    )
     expect(refused.length).toBeGreaterThan(0)
     return refused.sort()
   }
@@ -184,10 +187,7 @@ describe("a package that gives each entry its own side", () => {
       .map((d) => d.chain)
     expect(chains).toEqual([["routes/index.tsx", "split-kit"]])
     const refused = await buildRefuses(root, "frontend/client.tsx")
-    expect(refused.map((file) => file.slice(file.lastIndexOf("/") + 1))).toEqual([
-      "extra.ts",
-      "index.ts",
-    ])
+    expect(refused.map((file) => basename(file))).toEqual(["extra.ts", "index.ts"])
   })
 
   test("both pass when each side imports its own entry", async () => {

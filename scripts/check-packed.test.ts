@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { checkPacked, type PackedCheckOptions } from "./check-packed.ts"
 
 let root: string
@@ -93,9 +93,7 @@ test("a package that cannot be packed fails instead of dropping out", async () =
 
 test("npm selecting other files than bun packed fails, naming the difference", async () => {
   const npmFiles = async (dir: string) =>
-    dir.endsWith("packages/b")
-      ? ["LICENSE", "dist/index.js", "dist/stray.js", "package.json"]
-      : "boom"
+    basename(dir) === "b" ? ["LICENSE", "dist/index.js", "dist/stray.js", "package.json"] : "boom"
   const { failures } = await run({ npm: true, npmFiles })
   expect(failures).toEqual([
     "@x/a: boom",
