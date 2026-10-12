@@ -166,24 +166,18 @@ export default function Data() {
       <h2>Layout loaders on navigation</h2>
       <p>
         A <code>_layout.backend.ts</code> can have a <code>loader</code> too; its output reaches the
-        layout component as <code>data</code>. A layout loader runs on every request, including before
-        every action under it, so a <code>redirect()</code>, <code>notFound()</code> or error it throws or
-        returns refuses that request. On a client navigation that keeps the layout on screen, the
-        browser already holds its data, so the server sends it again only when a param the layout owns
+        layout component as <code>data</code>. On a client navigation that keeps the layout on screen, the
+        browser already holds that data, so the loader runs again only when a param the layout owns
         changes (<code>org</code> for <code>orgs/[org]/_layout.tsx</code>) or the query changes. After
-        an action, every loader runs. A layout loader runs beside the page loader; one that exports{" "}
-        <code>gate = true</code> settles before the page loader starts, so the page loader never runs
-        for a request the gate refuses. A{" "}
+        an action, every loader runs. A layout that exports <code>gate = true</code> runs on every
+        request; a layout loader without it is not an authorization boundary. A{" "}
         <code>_layout.backend.ts</code> that exports <code>middleware</code> guards a directory, with
         or without a layout component - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <p>
         A layout's <code>shouldRevalidate</code> overrides that default. It runs on the server and
         receives <code>defaultShouldRevalidate</code> with the URL and params being left and the ones
-        being loaded. Returning <code>false</code> keeps the browser's copy and skips the loader. The
-        browser names the page it is leaving, so any request can ask for that skip: a layout that
-        exports <code>shouldRevalidate</code> is not an authorization boundary, and its refusals belong
-        in a gate or middleware. It is not asked on a
+        being loaded. Returning <code>false</code> keeps the browser's copy. It is not asked on a
         document request, after an action, or for a gate. A page's loader runs on every navigation:
         query keys a page never reads belong in its <code>searchClientKeys</code>, which skips the
         request.

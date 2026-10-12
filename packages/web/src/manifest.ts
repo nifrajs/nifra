@@ -105,15 +105,12 @@ export interface ShouldRevalidateArgs {
 /**
  * A layout's say over whether its loader runs again on a client navigation. Export it from a
  * `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
- * Without it the loader runs on every request and the browser keeps its copy when the default allows.
  *
  * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser
  *   already holds its data. A document request, the revalidation after an action, and
  *   `router.invalidate()` always run the loader.
- * - Return `false` to keep the data the browser has and skip the loader; any other value runs it.
- *   Return `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.
- * - The browser names the page it is leaving, so any request can ask for the skip: a layout that
- *   exports this hook is not an authorization boundary. Refuse in a `gate` or middleware.
+ * - Return `false` to keep the data the browser has; any other value runs the loader. Return
+ *   `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.
  * - Must be synchronous: a returned promise is not `false`, so the loader runs.
  * - Never asked for a `gate` layout, which runs on every request.
  * - A page's loader runs on every navigation and a page's `shouldRevalidate` is not read. Query keys
@@ -337,7 +334,7 @@ export type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>
 export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
-  /** Layout loader that settles before the page loader starts and is never skipped by a retain hint. */
+  /** Layout loader that must run before actions and is not retained across the action's render. */
   readonly gate?: boolean
   readonly action?: Action
   /**

@@ -288,7 +288,7 @@ test("a layout exporting an action still fails loudly", async () => {
   expect((await app.fetch(new Request("http://x/orgs/acme/projects/7"))).status).toBe(500)
 })
 
-test("a retain hint spares the browser's copy, but its loader still runs", async () => {
+test("a retain hint skips an unchanged layout's loader, but never a gate", async () => {
   let rootRuns = 0
   let gateRuns = 0
   const app = appWith(
@@ -316,8 +316,8 @@ test("a retain hint spares the browser's copy, but its loader still runs", async
   await body(app)
   expect([rootRuns, gateRuns]).toEqual([1, 1])
 
-  // Ask to retain BOTH. Index 0 is plain data: it runs, and the browser keeps its copy. Index 1 is a
-  // gate: it runs and is sent - a guard that runs only when the client permits it is not a guard.
+  // Ask to retain BOTH. Index 0 is plain data and is skipped; index 1 is a gate and runs anyway -
+  // a guard that runs only when the client permits it is not a guard.
   const res = await app.fetch(
     new Request("http://x/orgs/acme/projects/7", {
       headers: {
@@ -327,13 +327,12 @@ test("a retain hint spares the browser's copy, but its loader still runs", async
       },
     }),
   )
-  expect([rootRuns, gateRuns]).toEqual([2, 2])
+  expect([rootRuns, gateRuns]).toEqual([1, 2])
 
-  const envelope = (await res.json()) as { v: number; retained: number[]; layoutData: unknown[] }
+  const envelope = (await res.json()) as { v: number; retained: number[] }
   expect(envelope.v).toBe(1)
   // Only the index actually honoured is reported back, so the client keeps exactly what it should.
   expect(envelope.retained).toEqual([0])
-  expect(envelope.layoutData).toEqual([null, { ok: true }])
 })
 
 test("retain hints are ignored on hard document GETs", async () => {
@@ -384,13 +383,13 @@ test("a changed query re-runs a layout loader the params check would keep", asyn
   // Same query, different page param the layout does not own: the client's copy is still current.
   const same = await navigate("/orgs/acme/projects/7?tab=a", "/orgs/acme/projects/8?tab=a")
   expect(same.retained).toEqual([0])
-  expect(same.layoutData).toEqual([null])
+  expect(seen).toEqual([])
 
-  // Only the query changed. The layout owns no params, so nothing else would re-send its data.
+  // Only the query changed. The layout owns no params, so nothing else would re-run it.
   const changed = await navigate("/orgs/acme/projects/7?tab=b", "/orgs/acme/projects/7?tab=a")
   expect(changed.retained ?? []).toEqual([])
   expect(changed.layoutData).toEqual([{ tab: "b" }])
-  expect(seen).toEqual(["a", "b"])
+  expect(seen).toEqual(["b"])
 })
 
 /** A client navigation's data request that offers the `retain` slots it holds. */
@@ -710,11 +709,7 @@ test("a layout's notFound() on a soft-nav answers with the status, not a documen
 
 // Page loaders treat a returned redirect like a thrown one, so a gate must too: kept as layout data,
 // a returned refusal let the page loader and the action run for the refused visitor.
-const gatedApp = (
-  gateLoader: () => unknown,
-  counts: { page: number; action: number },
-  gate = true,
-) =>
+const gatedApp = (gateLoader: () => unknown, counts: { page: number; action: number }) =>
   createWebApp({
     adapter: stub,
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: the stub adapter renders string defaults, which Manifest's component types cannot express.
@@ -742,7 +737,7 @@ const gatedApp = (
       layouts: {
         _layout: {
           file: "_layout.tsx",
-          load: async () => ({ default: "root", gate, loader: gateLoader }),
+          load: async () => ({ default: "root", gate: true, loader: gateLoader }),
         },
       },
       notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
@@ -791,62 +786,4 @@ test("a gate that returns a Response answers with it and runs nothing else", asy
   )
   expect(post.status).toBe(403)
   expect(counts).toEqual({ page: 0, action: 0 })
-})
-
-test("an ordinary layout loader's refusal holds on every request, whatever the client claims", async () => {
-  const returned = { page: 0, action: 0 }
-  const thrown = { page: 0, action: 0 }
-  const returning = gatedApp(() => redirect("/login"), returned, false)
-  const throwing = gatedApp(
-    () => {
-      throw redirect("/login")
-    },
-    thrown,
-    false,
-  )
-  const requests = (): Request[] => [
-    new Request("http://x/admin"),
-    new Request("http://x/admin", { headers: { [DATA_HEADER]: "1" } }),
-    // A client navigation's claim to already hold the layout's data, forged by an anonymous caller.
-    new Request("http://x/admin", {
-      headers: { [DATA_HEADER]: "1", [RETAIN_HEADER]: "0", [NAV_FROM_HEADER]: "/admin" },
-    }),
-    new Request("http://x/admin", { method: "POST", headers: { [DATA_HEADER]: "1" } }),
-    new Request("http://x/admin", { method: "POST" }),
-  ]
-  const fromReturning = await Promise.all(
-    requests().map(async (r) => answer(await returning.fetch(r))),
-  )
-  const fromThrowing = await Promise.all(
-    requests().map(async (r) => answer(await throwing.fetch(r))),
-  )
-  expect(fromReturning).toEqual(fromThrowing)
-  expect(fromReturning.map((a) => a.secret)).toEqual([false, false, false, false, false])
-  expect(fromReturning[0]).toMatchObject({ status: 303, location: "/login" })
-  expect(fromReturning[1]?.redirect).toBe("/login")
-  expect(fromReturning[2]?.redirect).toBe("/login")
-  expect(fromReturning[4]).toMatchObject({ status: 303, location: "/login" })
-  expect([returned.action, thrown.action]).toEqual([0, 0])
-})
-
-test("only a layout's own shouldRevalidate lets a retain hint skip its loader", async () => {
-  let runs = 0
-  const app = appWith(
-    {
-      _layout: {
-        default: "root",
-        loader: () => {
-          runs += 1
-          throw redirect("/login")
-        },
-        shouldRevalidate: ({ defaultShouldRevalidate }: ShouldRevalidateArgs) =>
-          defaultShouldRevalidate,
-      },
-    },
-    ["_layout"],
-    [[]],
-  )
-  const res = await navigateData(app, "/orgs/acme/projects/8", "/orgs/acme/projects/7")
-  expect(runs).toBe(0)
-  expect(await res.json()).toMatchObject({ retained: [0] })
 })

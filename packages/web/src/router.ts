@@ -62,11 +62,11 @@ export const REVALIDATE_HEADER = "x-nifra-revalidate"
 export const STATUS_HEADER = "x-nifra-status"
 
 /**
- * Layout indices whose data a client navigation already holds, comma separated.
+ * Layout indices a client navigation is asking the server NOT to re-run, comma separated.
  *
- * The server treats it as a hint: it still runs each loader, so a refusal stands, and only leaves out
- * data the browser can keep. A layout's own `shouldRevalidate` may skip its loader; a `gate` is
- * always run and sent - a guard that runs only when the client says so is not a guard.
+ * The client owns the decision because it holds both the old and new match plus each layout's scoped
+ * params. The server treats it as a hint and refuses to skip a `gate` regardless - a guard that runs
+ * only when the client says so is not a guard.
  */
 export const RETAIN_HEADER = "x-nifra-retain"
 
@@ -96,8 +96,8 @@ export interface RouteDataEnvelope {
   readonly v: 1
   readonly data: unknown
   readonly layoutData?: readonly unknown[]
-  /** Indices whose data the server left out because the layout's own params did not change. The
-   * client keeps its existing value at each of these, so an unchanged layout is neither resent nor lost. */
+  /** Indices whose loader was SKIPPED because the layout's own params did not change. The client
+   * keeps its existing value at each of these, so an unchanged layout is neither refetched nor lost. */
   readonly retained?: readonly number[]
   /** Dynamic-boundary states returned alongside loader/layout data. */
   readonly boundaries?: BoundaryStates

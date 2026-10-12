@@ -1453,23 +1453,17 @@ export default function NewUser() {
 ### Layout loaders on navigation
 
 A `_layout.backend.ts` can have a `loader` too; its output reaches the
-layout component as `data`. A layout loader runs on every request, including before
-every action under it, so a `redirect()`, `notFound()` or error it throws or
-returns refuses that request. On a client navigation that keeps the layout on screen, the
-browser already holds its data, so the server sends it again only when a param the layout owns
+layout component as `data`. On a client navigation that keeps the layout on screen, the
+browser already holds that data, so the loader runs again only when a param the layout owns
 changes (`org` for `orgs/[org]/_layout.tsx`) or the query changes. After
-an action, every loader runs. A layout loader runs beside the page loader; one that exports
-`gate = true` settles before the page loader starts, so the page loader never runs
-for a request the gate refuses. A
+an action, every loader runs. A layout that exports `gate = true` runs on every
+request; a layout loader without it is not an authorization boundary. A
 `_layout.backend.ts` that exports `middleware` guards a directory, with
 or without a layout component - see [Route middleware](/docs/routing#middleware).
 
 A layout's `shouldRevalidate` overrides that default. It runs on the server and
 receives `defaultShouldRevalidate` with the URL and params being left and the ones
-being loaded. Returning `false` keeps the browser's copy and skips the loader. The
-browser names the page it is leaving, so any request can ask for that skip: a layout that
-exports `shouldRevalidate` is not an authorization boundary, and its refusals belong
-in a gate or middleware. It is not asked on a
+being loaded. Returning `false` keeps the browser's copy. It is not asked on a
 document request, after an action, or for a gate. A page's loader runs on every navigation:
 query keys a page never reads belong in its `searchClientKeys`, which skips the
 request.
