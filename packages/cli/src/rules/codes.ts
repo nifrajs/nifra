@@ -38,6 +38,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C039": "Implemented contract operation the backend does not serve",
   "NF-C040": "Layout meta reads data its layout never loads",
   "NF-C041": "Server-only export in a route frontend file",
+  "NF-C042": "Layout loader refuses access without a gate",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",

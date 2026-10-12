@@ -173,7 +173,8 @@ export default function Data() {
         request; a layout loader without it is not an authorization boundary: a client navigation can
         skip it, and an action below it runs without it. Put a check that refuses access in a gate or
         in middleware. In development, nifra warns the first time a layout loader without{" "}
-        <code>gate</code> refuses a request with a redirect, a <code>Response</code>, or a 401 or 403. A{" "}
+        <code>gate</code> refuses a request with a redirect, a <code>Response</code>, or a 401 or 403,
+        and <code>nifra check</code> reports one whose loader refuses in its own body (NF-C042). A{" "}
         <code>_layout.backend.ts</code> that exports <code>middleware</code> guards a directory, with
         or without a layout component - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>

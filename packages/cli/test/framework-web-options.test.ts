@@ -756,3 +756,67 @@ describe("NF-C041", () => {
     expect(await scan(dir)).toEqual([])
   })
 })
+
+describe("NF-C042", () => {
+  const scan = async (dir: string) => {
+    const facts = projectFacts("routes/index.tsx", "", [])
+    const findings = await runRuleRegistry(
+      { root: dir, sources: facts.source, project: facts },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C042")
+  }
+  const layout = "export default () => null\n"
+
+  test("a layout loader that refuses access without a gate or middleware is reported", async () => {
+    const findings = await scan(
+      project({
+        "routes/admin/_layout.tsx": layout,
+        "routes/admin/_layout.backend.ts": [
+          'import { redirect } from "@nifrajs/web"',
+          "export const loader = ({ request }) => {",
+          '  if (!request.headers.get("cookie")) throw redirect("/login")',
+          "  return { ok: true }",
+          "}",
+          "",
+        ].join("\n"),
+        "routes/billing/_layout.tsx": layout,
+        "routes/billing/_layout.backend.ts":
+          "export async function loader() {\n  throw new Response(null, { status: 401 })\n}\n",
+        "routes/staff/_layout.tsx": layout,
+        "routes/staff/_layout.backend.ts":
+          'import { statusPage } from "@nifrajs/web"\nexport const loader = () => statusPage(403)\n',
+        "routes/index.tsx": layout,
+      }),
+    )
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.line])).toEqual([
+      ["warn", "routes/admin/_layout.backend.ts", 3],
+      ["warn", "routes/billing/_layout.backend.ts", 2],
+      ["warn", "routes/staff/_layout.backend.ts", 2],
+    ])
+    expect(findings[0]?.message).toContain("Export `gate = true`")
+  })
+
+  test("a gate, a middleware, a missing record, or no refusal is not reported", async () => {
+    const refusing = 'export const loader = () => {\n  throw redirect("/login")\n}\n'
+    expect(
+      await scan(
+        project({
+          "routes/a/_layout.tsx": layout,
+          "routes/a/_layout.backend.ts": `export const gate = true\n${refusing}`,
+          "routes/b/_layout.tsx": layout,
+          "routes/b/_layout.backend.ts": `export const middleware = () => undefined\n${refusing}`,
+          "routes/c/_layout.tsx": layout,
+          "routes/c/_layout.backend.ts":
+            "export const loader = ({ params }) => {\n  if (!params.slug) notFound()\n  return statusPage(404)\n}\n",
+          "routes/d/_layout.tsx": layout,
+          "routes/d/_layout.backend.ts":
+            '// throw redirect("/login")\nexport const loader = () => ({ menu: [] })\n',
+          "routes/e/_layout.tsx": layout,
+          "routes/e/_layout.backend.ts": `const guard = () => {\n  throw redirect("/login")\n}\nexport const loader = () => guard()\n`,
+          "routes/index.tsx": layout,
+        }),
+      ),
+    ).toEqual([])
+  })
+})

@@ -237,21 +237,22 @@ const hasModifier = (
   kind: TSApi.SyntaxKind,
 ): boolean => node.modifiers?.some((m) => m.kind === kind) === true
 
-/** The function an exported `meta` names: a declaration, or a const initialized with one. */
-function exportedMetaFunction(
+/** The function an exported `name` names: a declaration, or a const initialized with one. */
+function exportedFunction(
   ts: typeof TSApi,
   tree: TSApi.SourceFile,
+  name: string,
 ): TSApi.FunctionDeclaration | TSApi.ArrowFunction | TSApi.FunctionExpression | undefined {
   for (const statement of tree.statements) {
     if (ts.isFunctionDeclaration(statement)) {
-      if (statement.name?.text === "meta" && hasModifier(statement, ts.SyntaxKind.ExportKeyword))
+      if (statement.name?.text === name && hasModifier(statement, ts.SyntaxKind.ExportKeyword))
         return statement
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
     if (!hasModifier(statement, ts.SyntaxKind.ExportKeyword)) continue
     for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "meta") continue
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue
       let init = declaration.initializer
       while (
         init !== undefined &&
@@ -270,7 +271,7 @@ function exportedMetaFunction(
 
 /** Where an exported function `meta` reads its args' `data`: a destructured `data`, or `args.data`. */
 export function metaDataReads(ts: typeof TSApi, tree: TSApi.SourceFile): number[] {
-  const meta = exportedMetaFunction(ts, tree)
+  const meta = exportedFunction(ts, tree, "meta")
   const param = meta?.parameters[0]
   if (param === undefined) return []
   const lineOf = (node: TSApi.Node) =>
@@ -349,6 +350,108 @@ export const layoutMetaDataRule: CheckRule = {
             evidence: [
               "data: the layout's loader data (null without a loader)",
               "pageData: the page's loader data",
+            ],
+            verify: "nifra check",
+          }),
+        )
+      }
+    }
+    return findings
+  },
+}
+
+const GATE_EXPORT = /\bexport\s+const\s+gate\s*(?::\s*boolean\s*)?=\s*true\b/
+const MIDDLEWARE_EXPORT =
+  /\bexport\s+(?:async\s+)?(?:const|let|var|function\*?)\s+middleware\b|\bexport\s*\{[^}]*\bmiddleware\b[^}]*\}/
+
+/** Lines where an exported `loader` refuses access: `redirect()`, `statusPage(401|403)`, `new Response()`. */
+export function loaderRefusals(ts: typeof TSApi, tree: TSApi.SourceFile): number[] {
+  const loader = exportedFunction(ts, tree, "loader")
+  if (loader?.body === undefined) return []
+  const lines: number[] = []
+  const lineOf = (node: TSApi.Node): number =>
+    tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const status = node.arguments[0]
+      if (
+        node.expression.text === "redirect" ||
+        (node.expression.text === "statusPage" &&
+          status !== undefined &&
+          ts.isNumericLiteral(status) &&
+          (status.text === "401" || status.text === "403"))
+      )
+        lines.push(lineOf(node))
+    } else if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "Response"
+    ) {
+      lines.push(lineOf(node))
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(loader.body)
+  return lines
+}
+
+/**
+ * NF-C042: a layout loader that refuses access - a redirect, a 401 or 403, a `Response` - in a layout
+ * that is not a gate and exports no middleware. A client navigation that keeps the layout skips that
+ * loader, and an action below it runs without it, so the check reads as a guard and is not one. A
+ * refusal inside a helper the loader calls is not seen; the development warning covers that.
+ */
+export const ungatedLayoutRefusalRule: CheckRule = {
+  code: "NF-C042",
+  title: "Layout loader refuses access without a gate",
+  async scan(ctx) {
+    const routesDir = join(ctx.root, "routes")
+    if (!existsSync(routesDir)) return []
+    let manifest: ReturnType<typeof discoverRoutes>
+    try {
+      manifest = discoverRoutes(routesDir)
+    } catch {
+      return []
+    }
+    const layouts = Object.values(manifest.layouts)
+      .filter((layout) => SCRIPT_LAYOUT.test(layout.file))
+      .sort((a, b) => codeUnitOrder(a.file, b.file))
+    if (layouts.length === 0) return []
+    const sources = layouts.map((layout) =>
+      [layout.file, ...(layout.backend === undefined ? [] : [layout.backend])].map((file) => ({
+        file,
+        text: readFileSync(join(routesDir, file), "utf8"),
+      })),
+    )
+    if (!sources.flat().some((half) => LOADER_EXPORT.test(stripComments(half.text)))) return []
+    const loaded = await loadRuleTypeScript(ctx)
+    const ts = loaded.compiler
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const halves of sources) {
+      const code = halves.map((half) => stripComments(half.text))
+      if (code.some((text) => GATE_EXPORT.test(text) || MIDDLEWARE_EXPORT.test(text))) continue
+      for (const half of halves) {
+        if (!LOADER_EXPORT.test(stripComments(half.text))) continue
+        const tree = ts.createSourceFile(
+          half.file,
+          half.text,
+          ts.ScriptTarget.Latest,
+          true,
+          scriptKindOf(ts, half.file),
+        )
+        const [line] = loaderRefusals(ts, tree)
+        if (line === undefined) continue
+        findings.push(
+          diagnostic({
+            code: "NF-C042",
+            severity: "warn",
+            file: `routes/${half.file}`,
+            line,
+            message: `routes/${half.file}'s loader refuses access, but the layout is not a gate. A client navigation that keeps the layout skips this loader, and an action below it runs without it, so it does not protect the pages under it. Export \`gate = true\` from this file, or move the check into its \`middleware\`.`,
+            evidence: [
+              "gate = true: the loader runs on every request and before every action, ahead of the page loader",
+              "middleware: runs before every page and action below the directory",
             ],
             verify: "nifra check",
           }),
@@ -469,4 +572,5 @@ export const pageRules = Object.freeze([
   implicitApiMountRule,
   layoutMetaDataRule,
   frontendServerExportRule,
+  ungatedLayoutRefusalRule,
 ])

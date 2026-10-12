@@ -21,7 +21,7 @@ A `_layout.backend.ts` loader is data, not a guard: a client navigation can skip
 keeps the layout's data, and an action below it runs without it. Refuse access in that file's
 `middleware`, or export `gate = true` so its loader runs on every request and before every action,
 ahead of the page loader. In development, nifra warns when a layout loader without `gate` refuses a
-request. See [Layout loaders on navigation](https://nifra.dev/docs/data).
+request, and `nifra check` reports one whose refusal it can read (NF-C042). See [Layout loaders on navigation](https://nifra.dev/docs/data).
 
 ## Install
 
