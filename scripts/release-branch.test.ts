@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-
+import { releaseGroupNames } from "../packages/cli/src/verification-plan.ts"
 import {
   changedPublicPackageVersions,
   isReleaseBranch,
@@ -90,6 +90,27 @@ test("a release PR run skips the publish queue and a newer push cancels its veri
     .filter(([, job]) => typeof job === "object" && job !== null && "concurrency" in job)
     .map(([name]) => name)
   expect(cancelling).toEqual(["verify-release-pr"])
+})
+
+test("release verification runs one job per plan group, and one check passes only when all did", () => {
+  const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")
+  const workflow: unknown = Bun.YAML.parse(release)
+  expect(workflow).toHaveProperty(
+    ["jobs", "verify-release-pr", "strategy", "matrix", "group"],
+    [...releaseGroupNames()],
+  )
+  expect(workflow).toHaveProperty(
+    ["jobs", "verify-release-pr", "concurrency", "group"],
+    expect.stringContaining("-${{ matrix.group }}"),
+  )
+  expect(workflow).toHaveProperty(["jobs", "release-verification", "name"], "release-verification")
+  expect(workflow).toHaveProperty(["jobs", "release-verification", "needs"], "verify-release-pr")
+  expect(workflow).toHaveProperty(
+    ["jobs", "release-verification", "if"],
+    expect.stringContaining("!cancelled()"),
+  )
+  expect(release).toContain('test "$RESULT" = success')
+  expect(release).toContain('bun run verify:release --shared-runner --group "$GROUP"')
 })
 
 test("release verification provisions the runtimes its gates run and leaves timing to the local run", () => {

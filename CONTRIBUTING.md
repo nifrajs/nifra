@@ -154,6 +154,8 @@ If you are shipping one of these anyway, ship a **codemod with it**. Hand-editin
 
 ### Publishing
 
+A release PR runs the release plan as parallel `release-verification (<group>)` jobs, one per group in `packages/cli/src/verification-plan.ts`. The `release-verification` check passes only when every group did, and it is the check publishing requires. A newer push cancels the run in progress. To run one group locally: `bun run verify:release --group <name>`.
+
 Merging a release PR publishes it: `.github/workflows/release.yml` proves the merge, builds the packages in a job that cannot publish, publishes every package version npm does not have yet from that build, and deploys the site. npm accepts the workflow through [trusted publishing](https://docs.npmjs.com/trusted-publishers): each public package trusts `release.yml` run in the `npm-publish` environment, so there is no npm token to store or leak, and every version carries a provenance attestation.
 
 Every package ships its `CHANGELOG.md`. In a release PR, `bun run check:packed` fails a package whose tarball has no `CHANGELOG.md` or whose newest section is not the new version, and after the publish `verify-published` reads the same back from npm. The site's production build runs in CI as `bun run check:site`, so a build the release would fail to deploy fails the PR instead.
