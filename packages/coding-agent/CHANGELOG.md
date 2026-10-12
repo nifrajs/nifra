@@ -6,6 +6,7 @@
 
 - abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
 - 44798e8: On Windows, an extension module on a different drive from the project root is refused as outside the project, by both the in-process `ExtensionHost` and `IsolatedExtension`. A project directory whose name starts with `..` (such as `..cache`) is no longer mistaken for one outside it.
+- f9c8c28: The coding agent's bounded commands (`nifra context`, `nifra review`, the verification gates, the diff reader) now finish when the command itself exits. Before, a command that exited cleanly but left a background process holding its output open was waited on until the full timeout and then reported as timed out, even though it had succeeded. Its output is still read for two seconds after the exit; past that the leftover process is no longer waited on, and the result carries the command's real exit status with `timedOut: false`.
 - Updated dependencies [abb4354]
   - @nifrajs/agent@5.1.0
   - @nifrajs/agent-protocol@5.1.0

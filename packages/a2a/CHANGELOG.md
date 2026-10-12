@@ -6,6 +6,7 @@
 
 - abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
 - b5ff0bb: `mountA2A` defaults `resumeApproval` to `"port"`: a resumed task asks `ports.approval` again and hands it the peer's `approval` as `callerDecision`, so the agent that asked for a tool can no longer approve its own call. Without an approval port such a resume stays `TASK_STATE_INPUT_REQUIRED`. Return `resumeApproval: "caller"` from `ports` to keep the previous behavior when the peer is the approver, such as a human operator's client.
+- c6f01b1: A `SendStreamingMessage` stream that reaches `maxOutputBytes` now aborts the run it carries, the same way a client disconnect does. Before, the stream sent its `output_limit` error and closed while the run kept going in the background, calling the model for every remaining turn with nobody reading the result.
 
 ## 5.0.0
 

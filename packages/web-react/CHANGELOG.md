@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- c693d89: `<Island strategy={{ media }}>` now renders `data-strategy="media"` and `data-media`, which the islands runtime reads. React dropped the object-valued attribute, so the runtime saw no strategy and ran the enhancer on load, ignoring the media query.
 - Updated dependencies [78b2a04]
 - Updated dependencies [638efe5]
 - Updated dependencies [2a0a5d3]

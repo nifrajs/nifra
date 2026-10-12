@@ -2,7 +2,9 @@
 
 ## 5.1.0
 
-No changes in this release.
+### Patch Changes
+
+- 74b8c29: A `HEAD` request now gets a body-less answer from both `handle()` and `streamHandle()`: the GET route's status and headers, an empty `body`, and no streamed chunks. Before, the adapter returned the full GET body for `HEAD`, and a streaming route was read to its end. A streaming body is now cancelled instead, so its producer learns nobody is reading, as on the Node, Bun and Deno adapters.
 
 ## 5.0.0
 

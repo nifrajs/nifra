@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- 2b8f235: The HTTP transport no longer opens its GET server-message stream for a caller it has not checked. With `authorizeMessage` set, a GET that asks for `text/event-stream` is now answered `405` (the Streamable HTTP answer for "no stream offered here"), since that stream carries no message the callback could authorize; before, any caller could open one and hold it with keep-alive comments. Without `authorizeMessage`, the stream now closes after five minutes, and a client that wants it again reconnects. Nothing is sent on this stream, so no message is lost; tool calls and their progress still travel on the POST stream.
 - Updated dependencies [abb4354]
   - @nifrajs/agent-protocol@5.1.0
 
