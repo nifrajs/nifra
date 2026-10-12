@@ -6307,6 +6307,8 @@ _No named exports (side-effect entrypoint)._
   Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver entry is recognized by the import as written (`specifier`) or by the file's path in the package.
 - **createZoneClassifier** _(function)_ - `createZoneClassifier: (options: ZoneClassifierOptions) => ZoneClassifier`
   Create a classifier for one app. Cheap to create; it caches per file and per package directory, so build plugins and dev servers keep one for the life of a build or a session.
+- **declaredSide** _(function)_ - `declaredSide: (environment: unknown, specifier: string) => PackageEnvironment | undefined`
+  The side a package's `"nifra": { "environment": ... }` value gives the bare import `specifier` of it: the package-wide string, or the side of the entry it names - the map's exact subpath, else its most specific `*` pattern. `undefined` when it gives none, as a map that leaves the entry out does.
 - **importAllowed** _(function)_ - `importAllowed: (from: Zone, to: Zone) => boolean`
   Whether a module in `from` may import (with a value import) a module in `to`.
 - **importRuleMessage** _(function)_ - `importRuleMessage: (fromFile: string, from: Zone, toFile: string, to: Zone) => string`

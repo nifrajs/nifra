@@ -3238,7 +3238,7 @@
     "name": "Classification",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type Classification = {\n    readonly zone: Zone;\n    /** The package a `library` file belongs to. */\n    readonly packageName?: string;\n    /** A `library` package's own declaration, when it made one. */\n    readonly declared?: PackageEnvironment;\n    /** A third-party file's path inside `node_modules`: `drizzle-orm/node-postgres/index.js`. */\n    readonly modulePath?: string;\n} | {\n    readonly zone: \"error\";\n    readonly reason: string;\n    /** The undeclared package this error is about: every file in it shares the one fix. */\n    readonly package?: string;\n};"
+    "signature": "export type Classification = {\n    readonly zone: Zone;\n    /** The package a `library` file belongs to. */\n    readonly packageName?: string;\n    /** A `library` package's own declaration, when it made one. */\n    readonly declared?: PackageEnvironment;\n    /** A third-party file's path inside `node_modules`: `drizzle-orm/node-postgres/index.js`. */\n    readonly modulePath?: string;\n    /** The export subpath (`\"./react\"`) whose own declared side decided this import. */\n    readonly entry?: string;\n} | {\n    readonly zone: \"error\";\n    readonly reason: string;\n    /** The undeclared package this error is about: every file in it shares the one fix. */\n    readonly package?: string;\n    /** The export subpath the import named, when the package's map gives it no side. */\n    readonly entry?: string;\n};"
   },
   {
     "name": "ClassifiedSchema",
@@ -7790,7 +7790,7 @@
     "name": "LeakGuardPlugin",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface LeakGuardPlugin {\n    readonly name: string;\n    /**\n     * The finding that failed the build, or `undefined` when the bundle was clean.\n     *\n     * Recorded as well as thrown because the throw does not reliably survive. A plugin error is handed to\n     * the bundler, which builds its own error to report it, and on some Bun + rolldown combinations that\n     * construction itself fails (`Error.captureStackTrace` rejecting a non-Error) - so what surfaces is an\n     * internal complaint naming neither the leaked module nor its import chain. A caller that owns the\n     * build can read this afterwards and raise the real message from its own code, where nothing can\n     * rewrite it. A leak is the one failure that must stay legible: the whole point is naming what\n     * reached the browser.\n     */\n    leak?: string;\n    generateBundle(this: RollupPluginContext, options: unknown, bundle: RollupBundleLike): void;\n}",
+    "signature": "export interface LeakGuardPlugin {\n    readonly name: string;\n    /**\n     * The finding that failed the build, or `undefined` when the bundle was clean.\n     *\n     * Recorded as well as thrown because the throw does not reliably survive. A plugin error is handed to\n     * the bundler, which builds its own error to report it, and on some Bun + rolldown combinations that\n     * construction itself fails (`Error.captureStackTrace` rejecting a non-Error) - so what surfaces is an\n     * internal complaint naming neither the leaked module nor its import chain. A caller that owns the\n     * build can read this afterwards and raise the real message from its own code, where nothing can\n     * rewrite it. A leak is the one failure that must stay legible: the whole point is naming what\n     * reached the browser.\n     */\n    leak?: string;\n    buildStart(): void;\n    /** Ordered first: the bundler's own resolver answers before a plugin listed after it is asked. */\n    readonly resolveId: {\n        readonly order: \"pre\";\n        handler(this: ResolveContext, source: string, importer: string | undefined, options?: Readonly<Record<string, unknown>>): Promise<null>;\n    };\n    generateBundle(this: RollupPluginContext, options: unknown, bundle: RollupBundleLike): void;\n}",
     "doc": "/** The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context. */"
   },
   {
@@ -16140,7 +16140,7 @@
     "name": "ZoneClassifier",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ZoneClassifier {\n    readonly appRoot: string;\n    /** Classify a file by its absolute (or appRoot-relative) path. Results are cached per path. */\n    classify(file: string): Classification;\n}"
+    "signature": "export interface ZoneClassifier {\n    readonly appRoot: string;\n    /**\n     * Classify a file by its absolute (or appRoot-relative) path. Results are cached per path.\n     *\n     * With `specifier`, the import as written that resolved to `file`: when it names a package that\n     * gives each export entry its own side (`\"nifra\": { \"environment\": { \".\": \"backend\", \"./react\":\n     * \"frontend\" } }`), the entry it names decides, since two entries may share one file. A specifier\n     * naming an entry the map leaves out is an error. The resolved file must belong to that entry, as\n     * the package's own imports reach it; one only other entries reach is judged by its path.\n     */\n    classify(file: string, specifier?: string): Classification;\n}"
   },
   {
     "name": "ZoneClassifierOptions",
@@ -18037,6 +18037,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function declaredCapabilities(context: object): readonly string[];",
     "doc": "/**\n * Read the route's token-only declaration for admission plugins. This intentionally exposes neither\n * the request nor runtime evidence; it is the stable public seam for private entitlement policy.\n */"
+  },
+  {
+    "name": "declaredSide",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function declaredSide(environment: unknown, specifier: string): PackageEnvironment | undefined;",
+    "doc": "/**\n * The side a package's `\"nifra\": { \"environment\": ... }` value gives the bare import `specifier` of it:\n * the package-wide string, or the side of the entry it names - the map's exact subpath, else its most\n * specific `*` pattern. `undefined` when it gives none, as a map that leaves the entry out does.\n */"
   },
   {
     "name": "decode",

@@ -19,7 +19,7 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { specifierPackage } from "@nifrajs/web/zones"
+import { declaredSide, specifierPackage } from "@nifrajs/web/zones"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
@@ -33,6 +33,7 @@ import {
 import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { installedManifest } from "./internal/installed-package.ts"
 import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
@@ -454,28 +455,24 @@ async function buildProjectScan(
       browserRoots.add(rel)
       browserModules.push({ rel, content })
     }
-    // Node's lookup: the nearest `node_modules/<name>` at or above the importing file.
+    // The side the package gives the entry the import names: package-wide, or per entry.
     const backendPackage = (fromFile: string, specifier: string): boolean => {
       const name = specifierPackage(specifier)
       if (name === undefined) return false
-      let dir = dirname(isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile))
-      for (;;) {
-        const manifest = join(dir, "node_modules", name, "package.json")
-        if (existsSync(manifest)) {
-          try {
-            const nifra: unknown = JSON.parse(readFileSync(manifest, "utf8"))?.nifra
-            return (
-              typeof nifra === "object" &&
-              nifra !== null &&
-              Reflect.get(nifra, "environment") === "backend"
-            )
-          } catch {
-            return false
-          }
-        }
-        const parent = dirname(dir)
-        if (parent === dir) return false
-        dir = parent
+      const manifest = installedManifest(
+        isAbsolute(fromFile) ? fromFile : join(realCwd, fromFile),
+        name,
+      )
+      if (manifest === undefined) return false
+      try {
+        const nifra: unknown = JSON.parse(readFileSync(manifest, "utf8"))?.nifra
+        return (
+          typeof nifra === "object" &&
+          nifra !== null &&
+          declaredSide(Reflect.get(nifra, "environment"), specifier) === "backend"
+        )
+      } catch {
+        return false
       }
     }
     const serverOnlyChains = createServerOnlyChains({

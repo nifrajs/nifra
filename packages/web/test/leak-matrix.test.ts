@@ -60,6 +60,17 @@ const PG = {
   "node_modules/pg/index.js": "export class Pool {}\n",
 }
 
+/** One file behind two entries: `split-kit` is backend-only, `split-kit/react` is browser code. */
+const SPLIT_KIT = {
+  "package.json": JSON.stringify({
+    name: "split-kit",
+    type: "module",
+    exports: { ".": "./index.ts", "./react": "./index.ts" },
+    nifra: { environment: { ".": "backend", "./react": "frontend" } },
+  }),
+  "index.ts": "export const secret = 1\nexport const view = 2\n",
+}
+
 const ROWS: readonly LeakPath[] = [
   {
     name: "a page importing backend code",
@@ -154,6 +165,73 @@ const ROWS: readonly LeakPath[] = [
       },
     },
     files: { "routes/index.tsx": PAGE('import { secret } from "srv-kit"', "secret") },
+    expect: {
+      "bun-build": "it is backend code",
+      "vite-build": "it is backend code",
+      "bun-dev": "it is backend code",
+      "vite-dev": "may not reach the browser",
+      "server-build": "frontend code may not import backend code",
+    },
+  },
+  {
+    name: "a package's backend entry, sharing one file with its browser entry",
+    workspace: { "split-kit": SPLIT_KIT },
+    files: {
+      "routes/index.tsx": PAGE(
+        'import { view } from "split-kit/react"\nimport { secret } from "split-kit"',
+        "[view, secret]",
+      ),
+    },
+    expect: {
+      "bun-build": 'package "split-kit" declares its "." entry backend-only',
+      "vite-build": 'package "split-kit" declares its "." entry backend-only',
+      "bun-dev": 'it imports "split-kit": package "split-kit" declares its "." entry backend-only',
+      "vite-dev": 'package "split-kit" declares its "." entry backend-only',
+      "server-build": "frontend code may not import backend code",
+    },
+  },
+  {
+    name: "a package's browser entry, sharing one file with its backend entry",
+    workspace: { "split-kit": SPLIT_KIT },
+    files: { "routes/index.tsx": PAGE('import { secret } from "split-kit/react"', "secret") },
+    expect: {
+      "bun-build": null,
+      "vite-build": null,
+      "bun-dev": null,
+      "vite-dev": null,
+      "server-build": null,
+    },
+  },
+  {
+    name: "a package's browser entry imported by a route's backend half",
+    workspace: { "split-kit": SPLIT_KIT },
+    files: {
+      "routes/index.backend.ts":
+        'import { secret } from "split-kit/react"\nexport const loader = () => secret\n',
+      "routes/index.tsx": PAGE(""),
+    },
+    expect: { "server-build": "backend code may not import frontend code" },
+  },
+  {
+    name: "a path past a package's mapped entries to its backend file",
+    workspace: {
+      "deep-kit": {
+        "package.json": JSON.stringify({
+          name: "deep-kit",
+          type: "module",
+          main: "index.ts",
+          nifra: { environment: { ".": "frontend", "./server": "backend" } },
+        }),
+        "index.ts": "export const view = 1\n",
+        "server.ts": `export const secret = "${BACKEND_MARKER}"\n`,
+      },
+    },
+    files: {
+      "routes/index.tsx": PAGE(
+        'import { secret } from "../../packages/deep-kit/server.ts"',
+        "secret",
+      ),
+    },
     expect: {
       "bun-build": "it is backend code",
       "vite-build": "it is backend code",

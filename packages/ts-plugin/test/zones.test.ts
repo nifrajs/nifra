@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import ts from "typescript"
@@ -8,7 +8,27 @@ import { ZONE_DIAGNOSTIC_CODE } from "../src/zones.ts"
 
 // A real language service over a temp app, driven through the plugin's own proxy.
 const root = mkdtempSync(join(tmpdir(), "nifra-ts-zones-"))
-afterAll(() => rmSync(root, { recursive: true, force: true }))
+// A workspace package beside the app, giving its root and its React entry different sides.
+const workspace = mkdtempSync(join(tmpdir(), "nifra-ts-zones-ws-"))
+afterAll(() => {
+  rmSync(root, { recursive: true, force: true })
+  rmSync(workspace, { recursive: true, force: true })
+})
+writeFileSync(
+  join(workspace, "package.json"),
+  JSON.stringify({
+    name: "split-kit",
+    type: "module",
+    exports: { ".": "./index.ts", "./react": "./index.ts" },
+    nifra: { environment: { ".": "backend", "./react": "frontend" } },
+  }),
+)
+writeFileSync(
+  join(workspace, "index.ts"),
+  "export const secret = 1\nexport const view = 2\nexport type Kit = number\n",
+)
+mkdirSync(join(root, "node_modules"), { recursive: true })
+symlinkSync(workspace, join(root, "node_modules/split-kit"), "dir")
 
 const FILES: Record<string, string> = {
   "routes/index.tsx": [
@@ -52,6 +72,14 @@ const FILES: Record<string, string> = {
   ].join("\n"),
   "frontend/old.server.ts": "export const legacy = 1\n",
   "scripts/seed.ts": 'import { query } from "../backend/db"\nquery()\n',
+  "frontend/kit.ts": [
+    'import type { Kit } from "split-kit"',
+    'import { view } from "split-kit/react"',
+    'import { secret } from "split-kit"',
+    "export const kit: Kit = view + secret",
+    "",
+  ].join("\n"),
+  "backend/kit.ts": 'import { view } from "split-kit/react"\nexport const kit = view\n',
   "node_modules/pg/package.json": JSON.stringify({ name: "pg", types: "index.d.ts" }),
   "node_modules/pg/index.d.ts": "export declare class Pool {}\n",
 }
@@ -131,6 +159,15 @@ test("backend code importing frontend code is an error", () => {
   expect(zoneErrors("backend/mail.ts")).toEqual([
     expect.stringContaining("backend code may not import frontend code") as unknown as string,
   ])
+})
+
+test("a package's entries keep their own sides, though they share one file", () => {
+  const page = zoneErrors("frontend/kit.ts")
+  expect(page.map((error) => error.slice(0, error.indexOf(":")))).toEqual(['"split-kit"'])
+  expect(page[0]).toContain("frontend code may not import backend code")
+  const backend = zoneErrors("backend/kit.ts")
+  expect(backend.map((error) => error.slice(0, error.indexOf(":")))).toEqual(['"split-kit/react"'])
+  expect(backend[0]).toContain("backend code may not import frontend code")
 })
 
 test("shared code may import only shared code, dynamic imports included", () => {

@@ -119,7 +119,7 @@ const real = (file: string): string => {
 /** A third-party target as the specifier names it: TypeScript resolves `pg` to `@types/pg`, and the
  * server-package list knows `pg`. */
 function libraryAsImported(target: Classification, specifier: string): Classification {
-  if (target.zone !== "library") return target
+  if (target.zone !== "library" || target.entry !== undefined) return target
   const named = specifierPackage(specifier)
   if (named === undefined || named === target.packageName) return target
   return { zone: "library", packageName: named }
@@ -142,7 +142,8 @@ function edgeProblem(
     return `"${BACKEND_ONLY_MARKER}" marks a module backend-only, but ${display(fileName)} reaches the browser. Move it under backend/ or into a route's backend half`
   }
   if (target === undefined) return undefined
-  const to = classifier.classify(target)
+  // A package that gives each entry its own side is judged by the entry the import names.
+  const to = classifier.classify(target, specifier)
   if (to.zone === "error") return `${display(fileName)} imports ${display(target)}: ${to.reason}`
   if (to.zone === "library") {
     const reason = browser ? browserDenial(libraryAsImported(to, specifier), specifier) : undefined

@@ -10,11 +10,13 @@
 import { statSync } from "node:fs"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import type { BunPlugin } from "bun"
+import { installedManifest } from "../internal/package-entries.ts"
 import { privateEnvDenial } from "../internal/private-env.ts"
 import {
   BACKEND_ONLY_MARKER,
   browserDenial,
   createZoneClassifier,
+  specifierPackage,
   type ZoneClassifier,
 } from "../zones.ts"
 
@@ -58,6 +60,40 @@ export interface ZoneGuardOptions {
 /** Zones whose code runs in a browser, so may read only public environment variables. */
 const BROWSER_CODE = new Set<string>(["route-frontend", "frontend", "shared"])
 
+const loaderFor = (file: string): "ts" | "tsx" | "js" | "jsx" | undefined => {
+  const extension = /\.[cm]?([jt]sx?)$/.exec(file)?.[1]
+  return extension === "ts" || extension === "tsx" || extension === "js" || extension === "jsx"
+    ? extension
+    : undefined
+}
+
+/**
+ * Why browser code at `file` may not make one of its package imports: one naming an entry its package
+ * declares backend-only, or one its per-entry map leaves out. A path cannot tell two entries that share
+ * a file apart, so the dev server judges the specifier here, where it is written.
+ */
+function entryDenial(classifier: ZoneClassifier, file: string, source: string): string | undefined {
+  const loader = loaderFor(file)
+  if (loader === undefined) return undefined
+  let imports: ReadonlyArray<{ readonly path: string }>
+  try {
+    imports = new Bun.Transpiler({ loader }).scanImports(source)
+  } catch {
+    // Source Bun cannot read fails its own load with the parse error.
+    return undefined
+  }
+  for (const { path } of imports) {
+    const name = specifierPackage(path)
+    const manifest = name === undefined ? undefined : installedManifest(dirname(file), name)
+    if (manifest === undefined) continue
+    const classification = classifier.classify(manifest, path)
+    if (classification.entry === undefined) continue
+    const reason = browserDenial(classification, path)
+    if (reason !== undefined) return `it imports "${path}": ${reason}`
+  }
+  return undefined
+}
+
 export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
   const classifier = options.classifier ?? createZoneClassifier(options)
   const display = (file: string): string => {
@@ -86,7 +122,9 @@ export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
           BROWSER_CODE.has(classification.zone)
         ) {
           const source = await Bun.file(args.path).text()
-          reason = privateEnvDenial(args.path, source, options.publicEnvPrefix ?? "PUBLIC_")
+          reason =
+            privateEnvDenial(args.path, source, options.publicEnvPrefix ?? "PUBLIC_") ??
+            entryDenial(classifier, args.path, source)
         }
         return reason === undefined ? undefined : refuse(args.path, reason)
       })

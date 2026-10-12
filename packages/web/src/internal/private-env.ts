@@ -32,12 +32,12 @@ const BEFORE_EXPRESSION = new Set([
   "instanceof",
 ])
 
-type Token =
+export type Token =
   | { readonly kind: "id" | "punct" | "string"; readonly value: string }
   | { readonly kind: "other" }
 
 /** JavaScript tokens, with strings, template text, comments and regular expressions skipped. */
-function tokenize(code: string): Token[] {
+export function tokenize(code: string): Token[] {
   const tokens: Token[] = []
   // One entry per open `${`: how many `{` are open inside it.
   const templates: number[] = []

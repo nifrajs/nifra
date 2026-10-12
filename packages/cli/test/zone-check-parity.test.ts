@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { readFileSync, realpathSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import { buildClient } from "@nifrajs/web/build"
 import * as ts from "typescript"
@@ -139,6 +139,70 @@ describe("NF-C004 follows aliases and the clientModule", () => {
       ["lib/client.tsx", "#db"],
       ["routes/index.tsx", "~/frontend/data", "~/backend/db"],
     ])
+  })
+})
+
+describe("a package that gives each entry its own side", () => {
+  /** An app linked to `split-kit`, whose root and `./react` entry share one file. */
+  function kitApp(files: Record<string, string>): string {
+    const kit = createFixtureProject(parent, "split-kit-")
+    writeAppFile(
+      kit,
+      "package.json",
+      JSON.stringify({
+        name: "split-kit",
+        type: "module",
+        exports: { ".": "./index.ts", "./react": "./index.ts", "./extra": "./extra.ts" },
+        nifra: { environment: { ".": "backend", "./react": "frontend" } },
+      }),
+    )
+    writeAppFile(kit, "index.ts", "export const secret = 1\nexport const view = 2\n")
+    writeAppFile(kit, "extra.ts", "export const extra = 3\n")
+    const root = app(files)
+    mkdirSync(join(root, "node_modules"), { recursive: true })
+    symlinkSync(kit, join(root, "node_modules/split-kit"), "dir")
+    return root
+  }
+
+  test("check and build refuse the same entries", async () => {
+    const root = kitApp({
+      "frontend/client.tsx": "export function mountRouter() {}\n",
+      "routes/index.tsx": 'import { secret } from "split-kit"\nexport default () => secret\n',
+      "routes/extra.tsx": 'import { extra } from "split-kit/extra"\nexport default () => extra\n',
+      "backend/mail.ts": 'import { view } from "split-kit/react"\nexport const mail = view\n',
+    })
+    const findings = (await zoneFindings(root)).map(({ at, message }) => `${at} ${message}`)
+    expect(findings).toHaveLength(2)
+    expect(findings[0]).toContain(
+      "backend/mail.ts:1 backend/mail.ts (backend code) imports split-kit/react (frontend code): backend code may not import frontend code",
+    )
+    expect(findings[1]).toContain(
+      'routes/extra.tsx:1 routes/extra.tsx imports split-kit/extra: "split-kit/extra" names the "./extra" entry of package "split-kit"',
+    )
+    const chains = (await collectCheckResult(root, { lintsOnly: true })).diagnostics
+      .filter((d) => d.rule === "server-only-import")
+      .map((d) => d.chain)
+    expect(chains).toEqual([["routes/index.tsx", "split-kit"]])
+    const refused = await buildRefuses(root, "frontend/client.tsx")
+    expect(refused.map((file) => file.slice(file.lastIndexOf("/") + 1))).toEqual([
+      "extra.ts",
+      "index.ts",
+    ])
+  })
+
+  test("both pass when each side imports its own entry", async () => {
+    const root = kitApp({
+      "frontend/client.tsx": "export function mountRouter() {}\n",
+      "routes/index.tsx": 'import { view } from "split-kit/react"\nexport default () => view\n',
+      "backend/data.ts": 'import { secret } from "split-kit"\nexport const data = secret\n',
+    })
+    expect(await zoneFindings(root)).toEqual([])
+    expect(
+      (await collectCheckResult(root, { lintsOnly: true })).diagnostics.filter(
+        (d) => d.rule === "server-only-import",
+      ),
+    ).toEqual([])
+    expect(await buildRefuses(root, "frontend/client.tsx")).toEqual([])
   })
 })
 

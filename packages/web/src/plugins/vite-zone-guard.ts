@@ -10,9 +10,10 @@
  *
  * The SSR environment loads the same files legitimately and is never checked here.
  */
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { installedManifest } from "../internal/package-entries.ts"
 import { privateEnvDenial } from "../internal/private-env.ts"
 import {
   browserDenial,
@@ -187,16 +188,17 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
     return context.error(new Error(message))
   }
 
-  /** A bare specifier's package, classified through its manifest so a workspace link is first-party. */
-  const packageClassification = (name: string, importer: string): Classification => {
-    let dir = dirname(importer)
-    for (;;) {
-      const manifest = join(dir, "node_modules", name, "package.json")
-      if (existsSync(manifest)) return classifier.classify(manifest)
-      const parent = dirname(dir)
-      if (parent === dir) return { zone: "library", packageName: name }
-      dir = parent
-    }
+  /** A bare import's package, classified through its manifest so a workspace link is first-party,
+   * and by the entry it names when the package declares a side per entry. */
+  const packageClassification = (
+    name: string,
+    importer: string,
+    specifier: string,
+  ): Classification => {
+    const manifest = installedManifest(dirname(importer), name)
+    return manifest === undefined
+      ? { zone: "library", packageName: name }
+      : classifier.classify(manifest, specifier)
   }
 
   return {
@@ -231,14 +233,14 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       }
       const name = specifierPackage(source)
       if (name !== undefined) {
-        const reason = browserDenial(packageClassification(name, importerFile), source)
+        const reason = browserDenial(packageClassification(name, importerFile, source), source)
         if (reason !== undefined) refuse(this, source, reason, importerFile)
       }
       // An alias, a tsconfig path or a package export: what the specifier resolves to decides.
       const resolved = await this.resolve(source, importer, { ...resolveOptions, skipSelf: true })
       const target = resolved === null || resolved.external ? undefined : stripQuery(resolved.id)
       if (target !== undefined && isAbsolute(target) && isFile(target)) {
-        const reason = browserDenial(classifier.classify(target), source)
+        const reason = browserDenial(classifier.classify(target, source), source)
         if (reason !== undefined) refuse(this, target, reason, importerFile)
       }
       return null

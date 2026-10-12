@@ -17,6 +17,7 @@ import {
   importRuleMessage,
   privateEnvReads,
   privateEnvReason,
+  specifierPackage,
   type ZoneClassifier,
   ZoneConfigError,
 } from "@nifrajs/web/zones"
@@ -26,6 +27,7 @@ import { appDirs, clientModuleRoot } from "../client-module.ts"
 import { componentCheckReceipts } from "../component-check.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { installedManifest } from "../internal/installed-package.ts"
 import {
   createApiOnlyProbe,
   createKindProbe,
@@ -247,10 +249,20 @@ export const zoneImportRule: CheckRule = {
       const content = ctx.sources.read(file)
       if (content === undefined) continue
       for (const { specifier, line } of importSites(content, file, facts)) {
-        const target = resolveSpecifier(join(ctx.root, file), specifier)
-        if (target === undefined) continue
-        const to = classifierFor(app).classify(target)
-        const targetName = display(ctx.root, target)
+        let target = resolveSpecifier(join(ctx.root, file), specifier)
+        let to: Classification
+        if (target === undefined) {
+          // An installed package is judged here only by the entry it names, when it gives each
+          // entry its own side; a package-wide side is NF-C004's in browser code.
+          const name = specifierPackage(specifier)
+          const manifest =
+            name === undefined ? undefined : installedManifest(join(ctx.root, file), name)
+          if (manifest === undefined) continue
+          to = classifierFor(app).classify(manifest, specifier)
+          if (to.entry === undefined) continue
+          target = manifest
+        } else to = classifierFor(app).classify(target, specifier)
+        const targetName = to.entry === undefined ? display(ctx.root, target) : specifier
         if (
           ["frontend", "route-frontend", "shared"].includes(from) &&
           (receipts.has(target) || receipts.has(targetName))
@@ -261,7 +273,7 @@ export const zoneImportRule: CheckRule = {
           if (to.package !== undefined) {
             if (reportedPackages.has(to.package)) continue
             reportedPackages.add(to.package)
-          } else {
+          } else if (to.entry === undefined) {
             // A file in no zone loads what it imports too: the build refuses each one it reaches.
             follow({ file: targetName, app, zone: "error" })
           }

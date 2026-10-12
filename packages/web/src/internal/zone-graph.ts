@@ -233,7 +233,9 @@ export function verifyClientGraph(
     if (file === undefined) continue
     const classification = classifier.classify(file)
     let reason = browserDenial(classification)
-    for (const spec of specifiers.get(id) ?? []) reason ??= browserDenial(classification, spec)
+    // An import that names a package entry is judged by that entry's own declared side.
+    for (const spec of specifiers.get(id) ?? [])
+      reason ??= browserDenial(classifier.classify(file, spec), spec)
     if (reason === undefined && BROWSER_CODE.has(classification.zone))
       reason = options.privateEnv?.(file)
     if (reason !== undefined) denied.set(id, reason)
@@ -406,7 +408,18 @@ export function verifyServerGraph(
       const target = resolveEdge(im)
       if (target === undefined) continue
       out.push({ to: target, label: im.original ?? labelOf(target) })
-      const to = classOf(target)
+      const targetFile = fileOf(target)
+      const to =
+        im.original === undefined || targetFile === undefined
+          ? classOf(target)
+          : classifier.classify(targetFile, im.original)
+      if (to?.zone === "error" && to.entry !== undefined)
+        found.push({
+          at: id,
+          module: labelOf(target),
+          reason: to.reason,
+          tail: im.original ?? labelOf(target),
+        })
       if (from === undefined || to === undefined || from.zone === "error" || to.zone === "error")
         continue
       const componentBridge =
