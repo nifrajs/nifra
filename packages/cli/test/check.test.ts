@@ -220,6 +220,51 @@ describe("release verification", () => {
     }
   })
 
+  test("the repository's own gate fails a gate whose script is gone instead of dropping it", async () => {
+    const root = createFixtureRoot("verify-required")
+    try {
+      await Bun.write(
+        join(root, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["*"], scripts: { lint: "true" } }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }))
+      const calls: string[] = []
+      const result = await collectReleaseVerification(project, {
+        requireScripts: true,
+        runCommand: async (spec) => {
+          calls.push(spec.args.join(" "))
+          return { exitCode: 0 }
+        },
+      })
+      expect(calls).toEqual(["run lint"])
+      expect(result.ok).toBe(false)
+      const typecheck = result.gates.find((gate) => gate.id === "typecheck")
+      expect(typecheck?.status).toBe("fail")
+      expect(typecheck?.message).toBe("`typecheck` is not a script in package.json")
+      expect(result.gates.at(-1)?.status).toBe("skipped")
+      expect(renderReleaseVerification(result)).toContain("fix: Declare the `typecheck` script")
+
+      // `bun run verify` and `check:release` start the runner as a script: that entry requires them.
+      const entry = Bun.spawn(
+        [process.execPath, join(import.meta.dir, "../src/release-verification.ts"), "--json"],
+        {
+          cwd: project,
+          env: { ...process.env, NIFRA_VERIFY_GATE: undefined },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [stdout, exit] = await Promise.all([new Response(entry.stdout).text(), entry.exited])
+      expect(exit).toBe(1)
+      const reported: unknown = JSON.parse(stdout)
+      expect(reported).toHaveProperty("gates.1.id", "typecheck")
+      expect(reported).toHaveProperty("gates.1.status", "fail")
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
   test("runs coverage before its ratchet and stops after the first failed gate", async () => {
     const root = createFixtureRoot("verify-release")
     try {
