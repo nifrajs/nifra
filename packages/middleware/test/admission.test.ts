@@ -217,7 +217,55 @@ describe("createAdmissionController - mechanics", () => {
     }))
     expect(sample()).toBeCloseTo(5, 5) // 25ms mean - 20ms resolution baseline
     mean = Number.NaN
-    expect(sample()).toBe(0) // non-finite mean -> 0
+    expect(sample()).toBeCloseTo(5, 5) // no sample since the last read: the same window
+    mean = 20_000_000
+    expect(sample()).toBe(0)
+  })
+
+  test("a lag sampler with no sample at all reads 0", () => {
+    const sample = createEventLoopLagSampler(20, () => ({
+      enable() {},
+      reset() {},
+      mean: Number.NaN,
+    }))
+    expect(sample()).toBe(0)
+  })
+
+  test("every request between two lag samples is shed, not only the first", async () => {
+    // A histogram that, like perf_hooks, reads NaN from a reset until the loop records a sample.
+    let mean = Number.NaN
+    const lagMs = createEventLoopLagSampler(20, () => ({
+      enable() {},
+      reset() {
+        mean = Number.NaN
+      },
+      get mean() {
+        return mean
+      },
+    }))
+    const ctl = controller({ maxInFlight: 1000, maxLagMs: 50, lagMs })
+    mean = 320_000_000 // one sample after a 300ms stall
+    const reasons: (string | null)[] = []
+    for (let i = 0; i < 10; i++) {
+      const decision = await ctl.admit(req("/"))
+      reasons.push(decision.admitted ? null : decision.response.headers.get("x-nifra-shed-reason"))
+    }
+    expect(reasons).toEqual(Array(10).fill("loop-lag"))
+    mean = 21_000_000 // the loop caught up
+    expect((await ctl.admit(req("/"))).admitted).toBe(true)
+  })
+
+  test("the timer-drift sampler holds a window's lag until its next tick", async () => {
+    const sample = createEventLoopLagSampler(20)
+    const until = performance.now() + 80
+    while (performance.now() < until) {
+      // Stall the loop so the sampler's overdue tick records lag.
+    }
+    // The overdue interval was due before this timeout, so it has ticked once the timeout fires.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const first = sample()
+    expect(first).toBeGreaterThan(0)
+    expect(sample()).toBe(first)
   })
 
   test("lag sampler falls back to 0 when the runtime exposes no histogram", () => {

@@ -17580,7 +17580,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function createEventLoopLagSampler(resolutionMs?: number, monitor?: LoopDelayMonitor): () => number;",
-    "doc": "/**\n * Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so\n * it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An\n * injected histogram remains available for deterministic tests or a runtime-native monitor. Each read\n * returns recent mean lag and resets the sampling window.\n */"
+    "doc": "/**\n * Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so\n * it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An\n * injected histogram remains available for deterministic tests or a runtime-native monitor. A read\n * returns the mean lag of the samples taken since the previous read and starts a new window; a read\n * with no new sample since then returns the same value again, so every request that arrives between\n * two samples of a lagging loop sees the lag.\n */"
   },
   {
     "name": "createEventRegistry",

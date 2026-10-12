@@ -4146,7 +4146,7 @@ _No named exports (side-effect entrypoint)._
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ - `createCsrfToken: (secret: CsrfSecret, nonce?: string) => Promise<string>`
 - **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
-  Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
+  Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. A read retur…
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => IdentityPlugin`

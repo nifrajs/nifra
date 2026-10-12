@@ -103,8 +103,10 @@ const NO_LAG: () => number = () => 0
 /**
  * Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so
  * it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An
- * injected histogram remains available for deterministic tests or a runtime-native monitor. Each read
- * returns recent mean lag and resets the sampling window.
+ * injected histogram remains available for deterministic tests or a runtime-native monitor. A read
+ * returns the mean lag of the samples taken since the previous read and starts a new window; a read
+ * with no new sample since then returns the same value again, so every request that arrives between
+ * two samples of a lagging loop sees the lag.
  */
 export function createEventLoopLagSampler(
   resolutionMs = 20,
@@ -127,11 +129,15 @@ export function createEventLoopLagSampler(
     // A metrics sampler must never keep a Node/Bun process alive by itself. Browser/Deno numeric timer
     // handles simply do not expose `unref`.
     ;(timer as ReturnType<typeof setInterval> & { unref?: () => void }).unref?.()
+    let latest = 0
     return () => {
-      const mean = samples === 0 ? 0 : totalLagMs / samples
+      // An empty window is not a healthy loop: a burst of requests reads between two ticks.
+      if (samples === 0) return latest
+      const mean = totalLagMs / samples
       totalLagMs = 0
       samples = 0
-      return Number.isFinite(mean) ? mean : 0
+      latest = Number.isFinite(mean) ? mean : 0
+      return latest
     }
   }
   let histogram: LoopDelayHistogram | undefined
@@ -142,10 +148,14 @@ export function createEventLoopLagSampler(
   }
   if (histogram === undefined) return NO_LAG
   histogram.enable()
+  let latest = 0
   return () => {
     const meanNs = histogram.mean
+    // A histogram reads NaN until it records a sample after a reset: the window is still open.
+    if (!Number.isFinite(meanNs)) return latest
     histogram.reset()
-    return Number.isFinite(meanNs) ? Math.max(0, meanNs / 1e6 - resolutionMs) : 0
+    latest = Math.max(0, meanNs / 1e6 - resolutionMs)
+    return latest
   }
 }
 
