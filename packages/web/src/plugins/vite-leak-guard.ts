@@ -59,6 +59,7 @@ import {
   scanForSecrets,
   textOf,
 } from "../internal/secret-scan.ts"
+import { withoutQuery } from "../internal/without-query.ts"
 import {
   accountEmittedFiles,
   assetDenial,
@@ -198,7 +199,7 @@ function entrySpecifiers(appRoot: string, options: ServerZoneGuardOptions) {
       resolveOptions: Readonly<Record<string, unknown>> | undefined,
     ): Promise<null> {
       const name = specifierPackage(source)
-      const from = importer?.replace(/[?#].*$/, "")
+      const from = importer === undefined ? undefined : withoutQuery(importer)
       if (name === undefined || importer === undefined || from === undefined || !isAbsolute(from))
         return null
       const manifest = installedManifest(dirname(from), name)
@@ -557,7 +558,6 @@ export interface AssetUrlGuardPlugin {
   ): Promise<null>
 }
 
-const POSTFIX = /[?#].*$/s
 const URL_SCHEME = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 
 /**
@@ -599,7 +599,7 @@ export function viteAssetUrlGuard(options: ServerZoneGuardOptions = {}): AssetUr
     },
     async transform(code, id, transformOptions) {
       if (transformOptions?.ssr === true || !code.includes("import.meta.url")) return null
-      const importer = id.replace(POSTFIX, "")
+      const importer = withoutQuery(id)
       if (!isAbsolute(importer) || importer.includes("/node_modules/") || CSS_FILE.test(importer))
         return null
       let program: unknown
@@ -645,11 +645,11 @@ async function assetUrlFiles(
 ): Promise<string[]> {
   const files = new Set<string>()
   const add = (path: string | undefined): void => {
-    const file = path?.replace(POSTFIX, "")
+    const file = path === undefined ? undefined : withoutQuery(path)
     if (file === undefined || !isAbsolute(file) || file.includes("\0")) return
     if (statSync(file, { throwIfNoEntry: false })?.isFile() === true) files.add(file)
   }
-  if (!url.startsWith("/")) add(resolve(dirname(importer), url.replace(POSTFIX, "")))
+  if (!url.startsWith("/")) add(resolve(dirname(importer), withoutQuery(url)))
   const sources = url.startsWith(".") || url.startsWith("/") ? [url] : [url, `./${url}`]
   for (const source of sources) {
     try {

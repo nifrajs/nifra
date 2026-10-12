@@ -91,7 +91,11 @@ function resolveImport(
   edge: ImportEdge,
   options: ts.CompilerOptions,
 ): string | undefined {
-  const specifier = edge.specifier.replace(/[?#].*$/, "")
+  // Cut by index: `/[?#].*$/` retries from every `#` and is quadratic on a long run of them.
+  const query = edge.specifier.indexOf("?")
+  const hash = edge.specifier.indexOf("#")
+  const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
+  const specifier = cut === -1 ? edge.specifier : edge.specifier.slice(0, cut)
   const mode = tsm.getModeForUsageLocation(source, edge.literal, options)
   const resolved = tsm.resolveModuleName(
     specifier,

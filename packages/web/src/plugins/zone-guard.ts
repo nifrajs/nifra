@@ -12,6 +12,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path"
 import type { BunPlugin } from "bun"
 import { installedManifest } from "../internal/package-entries.ts"
 import { privateEnvDenial } from "../internal/private-env.ts"
+import { withoutQuery } from "../internal/without-query.ts"
 import {
   BACKEND_ONLY_MARKER,
   browserDenial,
@@ -131,7 +132,7 @@ export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
       build.onResolve({ filter: NON_SOURCE_PATH }, (args) => {
         // An entry point (a dev server's HTML page) is the build's own choice, not an import.
         if (args.importer === "") return undefined
-        const file = resolve(dirname(args.importer), args.path.replace(/[?#].*$/, ""))
+        const file = resolve(dirname(args.importer), withoutQuery(args.path))
         // No such file means an extensionless import of a dotted source name (`./date.utils`): Bun resolves
         // it to the source file, which onLoad judges. Judging the bare path would refuse a file never loaded.
         if (!isFile(file)) return undefined

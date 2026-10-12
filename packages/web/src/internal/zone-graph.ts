@@ -19,6 +19,7 @@ import {
 } from "../zones.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
 import { isBareNodeBuiltin } from "./node-builtins.ts"
+import { withoutQuery } from "./without-query.ts"
 
 /** What a graph module id names. */
 export type ModuleSource =
@@ -30,9 +31,8 @@ export type ModuleSource =
 
 /** A namespace prefix needs two characters, so a Windows drive letter still reads as a path. */
 const NAMESPACED = /^([a-z][\w.+-]+):(.*)$/i
-const stripQuery = (id: string): string => id.replace(/[?#].*$/, "")
 const virtualOf = (rest: string): ModuleSource => {
-  const file = stripQuery(rest)
+  const file = withoutQuery(rest)
   return isAbsolute(file) && existsSync(file) ? { kind: "virtual", file } : { kind: "virtual" }
 }
 
@@ -42,7 +42,7 @@ export function bunModuleSource(cwd: string): (id: string) => ModuleSource {
     if (id.startsWith("node:") || id.startsWith("bun:")) return { kind: "builtin" }
     const namespaced = NAMESPACED.exec(id)
     if (namespaced !== null && namespaced[1] !== "file") return virtualOf(namespaced[2] ?? "")
-    return { kind: "file", file: resolve(cwd, stripQuery(namespaced?.[2] ?? id)) }
+    return { kind: "file", file: resolve(cwd, withoutQuery(namespaced?.[2] ?? id)) }
   }
 }
 
@@ -50,7 +50,7 @@ export function bunModuleSource(cwd: string): (id: string) => ModuleSource {
 export function rollupModuleSource(id: string): ModuleSource {
   if (id.startsWith("node:") || id.includes("__vite-browser-external")) return { kind: "builtin" }
   if (id.startsWith("\0")) return virtualOf(id.slice(1).replace(/^[\w-]+:/, ""))
-  const file = stripQuery(id)
+  const file = withoutQuery(id)
   return isAbsolute(file) ? { kind: "file", file } : { kind: "virtual" }
 }
 

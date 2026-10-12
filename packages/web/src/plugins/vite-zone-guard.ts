@@ -15,6 +15,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { installedManifest } from "../internal/package-entries.ts"
 import { privateEnvDenial } from "../internal/private-env.ts"
+import { withoutQuery } from "../internal/without-query.ts"
 import {
   browserDenial,
   type Classification,
@@ -79,7 +80,6 @@ export interface ViteZoneGuardPlugin {
   fileForUrl(url: string): string | undefined
 }
 
-const stripQuery = (id: string): string => id.replace(/[?#].*$/, "")
 /** Query forms that hand a module's source, or a URL to it, to the browser untransformed. */
 const RAW_QUERY = /(?:^|&)(?:raw|url|inline)(?:[&=]|$)/
 
@@ -137,7 +137,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
   const fileForUrl = (url: string): string | undefined => {
     let path: string
     try {
-      path = decodeURIComponent(stripQuery(url))
+      path = decodeURIComponent(withoutQuery(url))
     } catch {
       return undefined
     }
@@ -221,10 +221,10 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
     async resolveId(source, importer, resolveOptions) {
       if (importer === undefined || resolveOptions?.scan === true) return null
       if (!isClient(this, resolveOptions?.ssr)) return null
-      const importerFile = stripQuery(importer)
+      const importerFile = withoutQuery(importer)
       if (!isAbsolute(importerFile)) return null
       if (source.startsWith(".")) {
-        const target = resolve(dirname(importerFile), stripQuery(source))
+        const target = resolve(dirname(importerFile), withoutQuery(source))
         if (isFile(target)) {
           const reason = browserDenial(classifier.classify(target))
           if (reason !== undefined) refuse(this, target, reason, importerFile)
@@ -238,7 +238,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       }
       // An alias, a tsconfig path or a package export: what the specifier resolves to decides.
       const resolved = await this.resolve(source, importer, { ...resolveOptions, skipSelf: true })
-      const target = resolved === null || resolved.external ? undefined : stripQuery(resolved.id)
+      const target = resolved === null || resolved.external ? undefined : withoutQuery(resolved.id)
       if (target !== undefined && isAbsolute(target) && isFile(target)) {
         const reason = browserDenial(classifier.classify(target, source), source)
         if (reason !== undefined) refuse(this, target, reason, importerFile)
@@ -247,7 +247,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
     },
     transform(code, id, transformOptions) {
       if (!isClient(this, transformOptions?.ssr)) return null
-      const file = stripQuery(id)
+      const file = withoutQuery(id)
       if (!isAbsolute(file) || !isFile(file)) return null
       // A fresh transform re-resolves every import, so an earlier refusal is stale until it recurs.
       refusals.delete(resolve(file))

@@ -19,6 +19,7 @@ import {
   parseEnvironment,
 } from "./internal/package-entries.ts"
 import { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
+import { withoutQuery } from "./internal/without-query.ts"
 
 export type Zone =
   /** A page or special file under `routes/` - the frontend half of a route. */
@@ -702,15 +703,9 @@ export function specifierPackage(specifier: string): string | undefined {
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]
 }
 
-/** The export subpath (`"."`, `"./react"`) a bare specifier of package `name` names, without its
- * `?query` or `#hash`. Cut by index: `/[?#].*$/` retries from every `#`, quadratic on a long run. */
-const entrySubpath = (specifier: string, name: string): string => {
-  const rest = specifier.slice(name.length)
-  const query = rest.indexOf("?")
-  const hash = rest.indexOf("#")
-  const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
-  return `.${cut === -1 ? rest : rest.slice(0, cut)}`
-}
+/** The export subpath (`"."`, `"./react"`) a bare specifier of package `name` names. */
+const entrySubpath = (specifier: string, name: string): string =>
+  `.${withoutQuery(specifier.slice(name.length))}`
 
 /**
  * The side a package's `"nifra": { "environment": ... }` value gives the bare import `specifier` of it:

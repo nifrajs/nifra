@@ -152,8 +152,14 @@ type Files = Map<string, string>
 
 const toPosix = (path: string): string => path.replaceAll("\\", "/")
 
-/** A specifier without its `?query` or `#hash`; a leading `#` names a package.json import. */
-const withoutQuery = (specifier: string): string => specifier.replace(/(?!^)[?#].*$/, "")
+/** A specifier without its `?query` or `#hash`; a leading `#` names a package.json import. Cut by
+ * index, since `/[?#].*$/` retries from every `#` and is quadratic on a long run of them. */
+const withoutQuery = (specifier: string): string => {
+  const query = specifier.indexOf("?", 1)
+  const hash = specifier.indexOf("#", 1)
+  const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
+  return cut === -1 ? specifier : specifier.slice(0, cut)
+}
 
 /** Every first-party file under `root`, app-relative and posix. */
 function listFiles(root: string): string[] {
@@ -1116,7 +1122,7 @@ function resolveIn(
   specifier: string,
 ): string | undefined {
   if (!specifier.startsWith(".")) return undefined
-  const clean = specifier.replace(/[?#].*$/, "")
+  const clean = withoutQuery(specifier)
   const base = posix.normalize(posix.join(posix.dirname(from), clean))
   const candidates = [
     base,

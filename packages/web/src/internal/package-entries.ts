@@ -10,6 +10,7 @@ import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, extname, join, relative } from "node:path"
 import type { PackageEnvironment } from "../zones.ts"
 import { tokenize } from "./private-env.ts"
+import { withoutQuery } from "./without-query.ts"
 
 export type EnvironmentDeclaration =
   | { readonly kind: "none" }
@@ -262,7 +263,7 @@ export function entryOwnership(
       imports.set(file, specifiers)
     }
     for (const specifier of specifiers) {
-      const found = probe(join(dirname(file), specifier.replace(/[?#].*$/, "")))
+      const found = probe(join(dirname(file), withoutQuery(specifier)))
       if (found !== undefined) reach(found, side)
     }
   }
