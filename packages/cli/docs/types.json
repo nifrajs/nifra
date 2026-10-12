@@ -19340,7 +19340,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function htmlFileFor(pattern: string): string;",
-    "doc": "/** Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. */"
+    "doc": "/**\n * Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. Segments are\n * written decoded (`/caf%C3%A9` → `café/index.html`) because a static host decodes the request path\n * before it looks for a file; a segment with no such file name stays as written.\n */"
   },
   {
     "name": "httpToolAdapter",

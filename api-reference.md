@@ -5497,7 +5497,7 @@ _No named exports (side-effect entrypoint)._
 - **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly optionImports?: ServerEntryOptionImports; readonly ti…`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ - `htmlFileFor: (pattern: string) => string`
-  Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`.
+  Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. Segments are written decoded (`/caf%C3%A9` → `café/index.html`) because a static host decodes the request path before it looks for a file; a segment with no such file name stays as written.
 - **isBuildTarget** _(function)_ - `isBuildTarget: (value: string) => value is BuildTarget`
   A type guard narrowing an arbitrary string to a {@link BuildTarget}.
 - **isManifestInSync** _(function)_ - `isManifestInSync: (drift: ManifestDrift) => boolean`
