@@ -666,7 +666,12 @@ export default function Security() {
       <p>
         A dropped connection or an impatient double-tap shouldn't double-charge a card. With an{" "}
         <code>Idempotency-Key</code> header, a retried unsafe request replays the first response instead of
-        re-running the side effect. It short-circuits in <code>onRequest</code>, <i>before</i> the handler.
+        re-running the side effect. The key is claimed in <code>onRequest</code>, so a concurrent retry gets
+        a <code>409</code>; the stored response is replayed from <code>beforeHandle</code>, <i>after</i> the
+        route's authentication accepts the retry, so a credential revoked since the first request gets the
+        route's current answer. Declare routes after <code>.use(idempotency())</code>:{" "}
+        <code>beforeHandle</code> is order-scoped, and a route declared earlier replays from{" "}
+        <code>onRequest</code>.
       </p>
       <CodeBlock code={IDEMPOTENCY} />
       <ul>

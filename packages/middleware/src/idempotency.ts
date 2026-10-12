@@ -9,8 +9,10 @@ import {
 /**
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
  * tap) with the same `Idempotency-Key` gets the **first** response replayed instead of the side effect
- * running twice (double-charge, double-publish). Runs in `onRequest` (before the handler), so a replay
- * or an in-flight collision short-circuits before any mutation.
+ * running twice (double-charge, double-publish). The key is claimed in `onRequest`, so an in-flight
+ * collision short-circuits before any mutation; a replay waits for `beforeHandle`, so a credential
+ * revoked since the first request gets the route's current auth answer, not the stored response.
+ * That needs the route declared after `.use(idempotency())` - `beforeHandle` is order-scoped.
  *
  * Pair it with a DB uniqueness constraint - this stops the *retry*, the constraint is the source of
  * truth for genuinely-concurrent distinct requests. Production MUST use a shared {@link IdempotencyStore}
@@ -24,6 +26,12 @@ export interface IdempotencyRecord {
   readonly headers: ReadonlyArray<readonly [string, string]>
   /** Response body, base64-encoded. */
   readonly body: string
+  /**
+   * The response came from a route this middleware's `beforeHandle` covers, so a retry is replayed
+   * from there - after the route's authentication, validation and earlier guards accept it again. A
+   * record without it (a route declared before `.use(idempotency())`) is replayed in `onRequest`.
+   */
+  readonly recheck?: boolean
 }
 
 export type IdempotencyClaim =
@@ -379,6 +387,20 @@ function replay(record: IdempotencyRecord): Response {
   return new Response(body === null ? null : body.slice(), { status: record.status, headers })
 }
 
+/** The request `onRequest` recorded in `map`, walking back past a later hook's replacement of it
+ * (methodOverride, a transport codec). */
+function recordedRequest<T>(
+  map: WeakMap<Request, T>,
+  req: Request,
+): readonly [Request, T] | undefined {
+  for (let current: Request | undefined = req; current !== undefined; ) {
+    const found = map.get(current)
+    if (found !== undefined) return [current, found]
+    current = replacedRequestOf(current)
+  }
+  return undefined
+}
+
 const DEFAULT_PRINCIPAL_HEADERS = ["authorization", "cookie", "x-api-key"] as const
 
 /** SHA-256 of the caller's credential headers, base64url. Only the digest ever becomes part of a store
@@ -459,6 +481,9 @@ export function idempotency(options: IdempotencyOptions): Middleware {
     Request,
     { readonly key: string; readonly reservation: string; readonly anonymous: boolean }
   >()
+  // Replays held for `beforeHandle`, and fresh claims whose route `beforeHandle` reached.
+  const deferred = new WeakMap<Request, IdempotencyRecord>()
+  const rechecked = new WeakSet<Request>()
 
   const middleware: Middleware = {
     name: "idempotency",
@@ -479,7 +504,11 @@ export function idempotency(options: IdempotencyOptions): Middleware {
           headers: { "content-type": "application/json", "retry-after": "1" },
         })
       }
-      if (claim.state === "replay") return replay(claim.record)
+      if (claim.state === "replay") {
+        if (claim.record.recheck !== true) return replay(claim.record)
+        deferred.set(req, claim.record)
+        return undefined
+      }
       if (claim.state === "in_flight") {
         return new Response(JSON.stringify({ ok: false, error: "idempotency_in_progress" }), {
           status: 409,
@@ -495,16 +524,21 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       claimed.set(req, { key, reservation: claim.reservation, anonymous })
       return undefined
     },
-    async onResponse(res, req) {
-      // A later onRequest hook (methodOverride, a transport codec) may have replaced the request
-      // this one claimed; walk back to it.
-      let claimedReq: Request | undefined = req
-      let claim = claimed.get(req)
-      while (claim === undefined && claimedReq !== undefined) {
-        claimedReq = replacedRequestOf(claimedReq)
-        if (claimedReq !== undefined) claim = claimed.get(claimedReq)
+    beforeHandle(context) {
+      // Authentication and validation have accepted this retry; only now is the stored answer its own.
+      const held = recordedRequest(deferred, context.req)
+      if (held !== undefined) {
+        deferred.delete(held[0])
+        return replay(held[1])
       }
-      if (claim === undefined || claimedReq === undefined) return res // not a claimed request
+      const fresh = recordedRequest(claimed, context.req)
+      if (fresh !== undefined) rechecked.add(fresh[0])
+      return undefined
+    },
+    async onResponse(res, req) {
+      const found = recordedRequest(claimed, req)
+      if (found === undefined) return res // not a claimed request
+      const [claimedReq, claim] = found
       claimed.delete(claimedReq)
       if (
         !shouldCache(res) ||
@@ -530,7 +564,7 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       await store.complete(
         claim.key,
         claim.reservation,
-        { status: res.status, headers, body: toBase64(bytes) },
+        { status: res.status, headers, body: toBase64(bytes), recheck: rechecked.has(claimedReq) },
         ttlMs,
       )
       return captured.response

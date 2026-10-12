@@ -6797,7 +6797,7 @@
     "name": "IdempotencyRecord",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface IdempotencyRecord {\n    readonly status: number;\n    /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */\n    readonly headers: ReadonlyArray<readonly [string, string]>;\n    /** Response body, base64-encoded. */\n    readonly body: string;\n}",
+    "signature": "export interface IdempotencyRecord {\n    readonly status: number;\n    /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */\n    readonly headers: ReadonlyArray<readonly [string, string]>;\n    /** Response body, base64-encoded. */\n    readonly body: string;\n    /**\n     * The response came from a route this middleware's `beforeHandle` covers, so a retry is replayed\n     * from there - after the route's authentication, validation and earlier guards accept it again. A\n     * record without it (a route declared before `.use(idempotency())`) is replayed in `onRequest`.\n     */\n    readonly recheck?: boolean;\n}",
     "doc": "/** A captured response, replayed verbatim on a retry. Body is base64 (binary-safe + JSON-serializable). */"
   },
   {
