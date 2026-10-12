@@ -136,7 +136,12 @@ type SseMethods<MethodMap> = (MethodMap extends { GET: infer G }
 type WsOf<I> = I extends { ws: infer W extends { in: unknown; out: unknown } } ? W : never
 
 export interface WsCallOptions {
-  query?: Record<string, string | number | boolean>
+  /** Sent on the handshake URL as an HTTP call sends it: an array repeats its key once per item,
+   * and an `undefined` value is left out. */
+  query?: Record<
+    string,
+    string | number | boolean | readonly (string | number | boolean)[] | undefined
+  >
   /** WebSocket subprotocols. A browser handshake cannot carry custom headers - authenticate via
    * `upgrade()` reading cookies/query/subprotocol, not an Authorization header. */
   protocols?: string | string[]

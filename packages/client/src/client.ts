@@ -25,6 +25,7 @@ import {
   type TransportCodec,
   type TransportCodecRegistry,
 } from "@nifrajs/core/transport-codec"
+import { buildQuery } from "./query.ts"
 import { RESERVED_VERB_KEYS } from "./reserved.ts"
 import type { ApiError, Result } from "./result.ts"
 import { hasDotSegment } from "./sendable-path.ts"
@@ -1003,19 +1004,6 @@ function subscribeSse(
   })()
 
   return { close }
-}
-
-function buildQuery(query: Record<string, unknown>): string {
-  const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined) continue
-    if (Array.isArray(value)) {
-      for (const item of value) params.append(key, String(item))
-    } else {
-      params.set(key, String(value))
-    }
-  }
-  return params.toString()
 }
 
 // A registry is immutable once built, so a custom codec's registry is built once per client and

@@ -200,6 +200,19 @@ describe("WebSocket runtime behavior", () => {
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: "done" }])
   })
 
+  test("encodes the handshake query the way an HTTP call does", () => {
+    useFakeWebSocket()
+    openWebSocket(
+      "http://example.test",
+      "/chat",
+      { query: { tag: ["a", "b c"], room: undefined, page: 2 } },
+      false,
+    )
+    expect(FakeWebSocket.instances[0]!.url).toBe("ws://example.test/chat?tag=a&tag=b+c&page=2")
+    openWebSocket("http://example.test", "/chat", { query: { room: undefined } }, false)
+    expect(FakeWebSocket.instances[1]!.url).toBe("ws://example.test/chat")
+  })
+
   test("reports connection failures and rejects opened", async () => {
     useFakeWebSocket()
     const errors: unknown[] = []

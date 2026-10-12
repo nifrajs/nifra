@@ -16141,7 +16141,7 @@
     "name": "WsCallOptions",
     "kind": "interface",
     "package": "@nifrajs/client",
-    "signature": "export interface WsCallOptions {\n    query?: Record<string, string | number | boolean>;\n    /** WebSocket subprotocols. A browser handshake cannot carry custom headers - authenticate via\n     * `upgrade()` reading cookies/query/subprotocol, not an Authorization header. */\n    protocols?: string | string[];\n    /** Abort to close the socket (same effect as calling `close()`). */\n    signal?: AbortSignal;\n    /** Socket-level failures (connection refused, abnormal close). */\n    onError?: (error: unknown) => void;\n}"
+    "signature": "export interface WsCallOptions {\n    /** Sent on the handshake URL as an HTTP call sends it: an array repeats its key once per item,\n     * and an `undefined` value is left out. */\n    query?: Record<string, string | number | boolean | readonly (string | number | boolean)[] | undefined>;\n    /** WebSocket subprotocols. A browser handshake cannot carry custom headers - authenticate via\n     * `upgrade()` reading cookies/query/subprotocol, not an Authorization header. */\n    protocols?: string | string[];\n    /** Abort to close the socket (same effect as calling `close()`). */\n    signal?: AbortSignal;\n    /** Socket-level failures (connection refused, abnormal close). */\n    onError?: (error: unknown) => void;\n}"
   },
   {
     "name": "WsHandle",
