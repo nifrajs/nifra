@@ -5182,7 +5182,7 @@ _No named exports (side-effect entrypoint)._
 - **REDIRECT_HEADER** _(const)_ - `REDIRECT_HEADER: "x-nifra-redirect"`
   Response header a data-mode action POST uses to convey a redirect (`redirect(...)`) to the client - fetch would otherwise silently follow a 3xx to its HTML, losing the target. The client reads this and performs a client-side navigation instead.
 - **RETAIN_HEADER** _(const)_ - `RETAIN_HEADER: "x-nifra-retain"`
-  Layout indices a client navigation is asking the server NOT to re-run, comma separated.
+  Layout indices whose data a client navigation already holds, comma separated.
 - **REVALIDATE_HEADER** _(const)_ - `REVALIDATE_HEADER: "x-nifra-revalidate"`
   Response header an action sets (via the `revalidate(paths, data)` helper) to tell the client which routes the mutation changed - a comma-separated list of paths. After the submit, the client marks those cached routes stale (refetching any that are mounted) so a mutation can refresh views beyond the…
 - **ROOT_ATTRIBUTE** _(const)_ - `ROOT_ATTRIBUTE: "data-nifra-root"`
@@ -5239,7 +5239,7 @@ _No named exports (side-effect entrypoint)._
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
-  A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+  A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`. Without it the loader runs on every request and the browser keeps its copy when the default allows.
 - **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
   One client navigation, as a layout's {@link ShouldRevalidate} sees it.
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`

@@ -420,6 +420,10 @@ export function createPageRequestExecutor<Env = unknown>(
   /**
    * Run layout loaders, awaiting gates before starting the page loader and retaining only safe data.
    * `gated` carries gates that already ran for this request, so none runs twice.
+   *
+   * A retain hint only spares the browser data it holds: the loader still runs, so its refusal stands.
+   * The hint and the page it names come from the client, so only the layout's own `shouldRevalidate`
+   * skips a loader.
    */
   const runLayoutChain = async (
     route: RouteEntry,
@@ -440,8 +444,8 @@ export function createPageRequestExecutor<Env = unknown>(
       const layout = modules[i] as LoadedLayoutModules[number]
       const loader = layout.loader
       if (loader === undefined) continue
+      let keep = false
       if (retain !== undefined && layout.gate !== true) {
-        let keep: boolean
         try {
           keep = keepsLayoutData(route, i, layout, ctx.params, retain)
         } catch (err) {
@@ -450,7 +454,7 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         if (keep) {
           retained.push(i)
-          continue
+          if (typeof layout.shouldRevalidate === "function") continue
         }
       }
       const scoped: LoaderContext = {
@@ -464,6 +468,7 @@ export function createPageRequestExecutor<Env = unknown>(
       }
       const layoutId = route.layoutIds[i] as string
       const index = i
+      const kept = keep
       try {
         const value = loader(scoped)
         // Scalars settle synchronously. Objects keep await's intrinsic promise/thenable
@@ -471,14 +476,19 @@ export function createPageRequestExecutor<Env = unknown>(
         if (value !== null && (typeof value === "object" || typeof value === "function")) {
           pending.push(
             (async () => {
+              let settled: unknown
               try {
-                results[index] = await value
+                settled = await value
               } catch (err) {
                 throw tagLayoutError(err, layoutId)
               }
+              // A returned redirect or Response refuses exactly as a thrown one: kept as layout data,
+              // it would ship beside the page loader's data.
+              if (isControlFlow(settled)) throw tagLayoutError(settled, layoutId)
+              if (!kept) results[index] = settled
             })(),
           )
-        } else results[index] = value
+        } else if (!kept) results[index] = value
       } catch (err) {
         // Preserve a synchronous throw as a pending layout failure, just like the async lane.
         pending.push(Promise.reject(tagLayoutError(err, layoutId)))
@@ -493,7 +503,7 @@ export function createPageRequestExecutor<Env = unknown>(
     }
   }
 
-  /** Run only authorization gates before an action; ordinary layout data runs after a native action. */
+  /** Run only authorization gates; {@link runActionGuards} adds the ordinary layout loaders. */
   const runLayoutGates = async (
     route: RouteEntry,
     ctx: LoaderContext,
@@ -511,6 +521,26 @@ export function createPageRequestExecutor<Env = unknown>(
       })
     }
     return { modules, gates }
+  }
+
+  /**
+   * Every layout loader before an action, so whatever one refuses never mutates. Gates' values carry
+   * into a native action's render; ordinary data is discarded, since that render re-runs it fresh.
+   */
+  const runActionGuards = async (
+    route: RouteEntry,
+    ctx: LoaderContext,
+    controls: PageResponseControls,
+  ): Promise<GatedLayouts> => {
+    const gated = await runLayoutGates(route, ctx, controls)
+    const run = await runLayoutChain(route, ctx, controls, undefined, gated)
+    if (run.pending !== undefined) await run.pending
+    for (let i = 0; i < (run.layoutData?.length ?? 0); i++) {
+      const outcome = run.layoutData?.[i]
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
+      if (isStatusSignal(outcome)) throw tagLayoutError(outcome, route.layoutIds[i] as string)
+    }
+    return gated
   }
 
   /** Outermost first; a failure carries its directory so the nearest `_error` above it renders. */
@@ -1511,7 +1541,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let result: unknown
         try {
           if (route.middlewareIds !== undefined) await runMiddleware(route, actionContext, controls)
-          gated = await runLayoutGates(route, actionContext, controls)
+          gated = await runActionGuards(route, actionContext, controls)
           result = await mod.action(actionContext)
         } catch (err) {
           if (isControlFlow(err)) return err

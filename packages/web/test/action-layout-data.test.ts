@@ -107,22 +107,25 @@ test("a no-script action answer renders its layouts with their loader data and m
   expect(html).toContain('"__NIFRA_ACTION__":{"ok":true}')
   // The page shows what a layout loaded for this visitor.
   expect(res.headers.get("cache-control")).toBe("private, no-store")
-  // The gate guarded the action and is not asked twice.
-  expect(counts).toEqual({ action: 1, gate: 1, layout: 1 })
+  // The gate guarded the action and is not asked twice. The layout ran before the action, so its
+  // refusal would have stopped it, and again after it, so the render shows the mutation.
+  expect(counts).toEqual({ action: 1, gate: 1, layout: 2 })
 })
 
-test("a data-mode action still runs no ordinary layout loader", async () => {
+test("a data-mode action runs each ordinary layout loader once, before it mutates", async () => {
   const counts: Counts = { action: 0, gate: 0, layout: 0 }
   const res = await appWith(counts).fetch(submit({ [DATA_HEADER]: "1" }))
   expect(await res.json()).toEqual({ ok: true })
-  expect(counts).toEqual({ action: 1, gate: 1, layout: 0 })
+  expect(counts).toEqual({ action: 1, gate: 1, layout: 1 })
 })
 
-test("a layout's notFound() after a no-script action answers with the status page", async () => {
-  const counts: Counts = { action: 0, gate: 0, layout: 0 }
-  const res = await appWith(counts, { layoutLoader: () => notFound() }).fetch(submit())
-  expect(res.status).toBe(404)
-  expect(counts.action).toBe(1)
+test("a layout's notFound() refuses an action before it mutates", async () => {
+  for (const headers of [{}, { [DATA_HEADER]: "1" }]) {
+    const counts: Counts = { action: 0, gate: 0, layout: 0 }
+    const res = await appWith(counts, { layoutLoader: () => notFound() }).fetch(submit(headers))
+    expect(res.status).toBe(404)
+    expect(counts.action).toBe(0)
+  }
 })
 
 test("a page loader that throws after a no-script action renders the error boundary", async () => {
