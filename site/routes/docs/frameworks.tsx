@@ -220,6 +220,22 @@ export default function Frameworks() {
         <code>defer()</code> for slower, non-critical data.
       </p>
 
+      <h2>Markup outside the page</h2>
+      <p>
+        Svelte&apos;s <code>&lt;svelte:head&gt;</code> renders into the document&apos;s{" "}
+        <code>&lt;head&gt;</code>, after the tags from the route&apos;s <code>meta</code>. The document
+        always has a <code>&lt;title&gt;</code> of its own and a browser uses the first one, so set the
+        title in <code>meta</code>.
+      </p>
+      <p>
+        A Vue <code>&lt;Teleport&gt;</code> is server-rendered where Vue hydrates it from, the first
+        children of its target. <code>to=&quot;body&quot;</code> content comes first in{" "}
+        <code>&lt;body&gt;</code>. An <code>#id</code> target the app renders empty receives it, and one
+        the app does not render gets a container before the app root. Any other selector, a target that
+        has children of its own, and every teleport on a page that uses <code>defer()</code> render on
+        the client, with a warning in development.
+      </p>
+
       <h2>Dev HMR support</h2>
       <p>
         Dev HMR works for all five adapters through <code>createViteDevServer</code> and the

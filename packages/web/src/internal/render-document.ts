@@ -11,7 +11,7 @@ import type {
   RouteModule,
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
-import type { MatchChain, RenderAdapter, RenderProps } from "../render-seam.ts"
+import type { DocumentParts, MatchChain, RenderAdapter, RenderProps } from "../render-seam.ts"
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
@@ -198,8 +198,10 @@ export interface RenderPageOptions {
 export interface RenderAssemblyCache {
   /** Shell up to (not including) the deferred-runtime insertion point. */
   shellPre?: string
-  /** Shell from after the deferred-runtime insertion point through the open `#root` container. */
+  /** Shell from after the deferred-runtime insertion point through `<body>`. */
   shellPost?: string
+  /** The open `#root` container. */
+  rootOpen?: string
   /** Tail opener: the handover script open tag + the data member's key. */
   tailPre?: string
   /** Tail from after the per-request handover members (the route id, prerendered paths, the handover
@@ -420,7 +422,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}`
       : ""
     slot.shellPre = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head, nonce)}${styleLinks}${entryPreloads}`
-    slot.shellPost = `${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
+    slot.shellPost = `${islandPreloads}${hydrationHead}</head><body>`
+    slot.rootOpen = `<div id="${escapeAttr(rootId)}"${rootMarker}>`
     // Island bundles load regardless of `hydrate` - a static page (hydrate:false) ships no framework
     // client but can still mount no-framework islands (`@nifrajs/web/islands`).
     let islandTags = ""
@@ -438,7 +441,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // The deferred runtime rides only on a hydrating page (a static page has no client takeover), and
   // only when something actually deferred - matching the pre-cache emission exactly.
   const runtimeSeam = hydrate && allDeferred.length > 0 ? deferredRuntime : ""
-  const shellHtml = `${slot.shellPre}${runtimeSeam}${slot.shellPost}`
+  const shellHtml = `${slot.shellPre}${runtimeSeam}${slot.shellPost}${slot.rootOpen}`
+  const parts: DocumentParts | undefined =
+    adapter.documentParts === true ? { head: "", body: "" } : undefined
+  const shellOf = (): string =>
+    parts === undefined || (parts.head === "" && parts.body === "")
+      ? shellHtml
+      : `${slot.shellPre}${runtimeSeam}${parts.head}${slot.shellPost}${parts.body}${slot.rootOpen}`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -502,15 +511,21 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // shell-readiness `await` does, so the `_error` boundary still maps it to a status.
   if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
     const out =
-      nonce === undefined
-        ? adapter.renderToString(chain, renderProps)
-        : adapter.renderToString(chain, renderProps, { nonce })
+      parts !== undefined
+        ? adapter.renderToString(
+            chain,
+            renderProps,
+            nonce === undefined ? { parts } : { nonce, parts },
+          )
+        : nonce === undefined
+          ? adapter.renderToString(chain, renderProps)
+          : adapter.renderToString(chain, renderProps, { nonce })
     return typeof out === "string"
-      ? new BufferedRenderedPage(shellHtml + out + closeRootHtml + tailHtml, status, headers)
+      ? new BufferedRenderedPage(shellOf() + out + closeRootHtml + tailHtml, status, headers)
       : out.then(
           (bodyHtml) =>
             new BufferedRenderedPage(
-              shellHtml + bodyHtml + closeRootHtml + tailHtml,
+              shellOf() + bodyHtml + closeRootHtml + tailHtml,
               status,
               headers,
             ),
@@ -521,7 +536,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     adapter,
     chain,
     renderProps,
-    shellHtml,
+    shellOf,
+    parts,
     closeRootHtml,
     allDeferred,
     tailHtml,
@@ -536,7 +552,8 @@ async function renderStreamedPage(
   adapter: RenderAdapter,
   chain: readonly unknown[],
   renderProps: RenderProps,
-  shellHtml: string,
+  shellOf: () => string,
+  parts: DocumentParts | undefined,
   closeRootHtml: string,
   allDeferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
   tailHtml: string,
@@ -550,13 +567,20 @@ async function renderStreamedPage(
   // (React: on-shell-ready; Solid: synchronously), so a shell-render throw surfaces before any byte is
   // sent. A *mid*-stream failure errors the body instead.
   const enc = TEXT_ENCODER
-  const shell = enc.encode(shellHtml)
   const closeRoot = enc.encode(closeRootHtml)
   const tail = enc.encode(tailHtml)
   const appStream =
-    nonce === undefined
-      ? await adapter.renderToStream(chain, renderProps)
-      : await adapter.renderToStream(chain, renderProps, { nonce })
+    parts !== undefined
+      ? await adapter.renderToStream(
+          chain,
+          renderProps,
+          nonce === undefined ? { parts } : { nonce, parts },
+        )
+      : nonce === undefined
+        ? await adapter.renderToStream(chain, renderProps)
+        : await adapter.renderToStream(chain, renderProps, { nonce })
+  // After the render: an adapter fills its document parts before handing back the stream.
+  const shell = enc.encode(shellOf())
   const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
   return new Response(body, { status, headers })
 }

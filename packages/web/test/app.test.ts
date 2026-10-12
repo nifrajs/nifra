@@ -1610,14 +1610,14 @@ test("llms.txt reads inProcessClient evidence and publishes only the HTTP-mounte
 test("neither guidance route is served unless llmsTxt is on, and an app's own /llms.txt page wins", async () => {
   const backend = server().post("/internal/admin/impersonate", () => ({ ok: true }))
   const api = Object.assign(backend, inProcessBridge(backend))
-  for (const llmsTxt of [undefined, false]) {
+  for (const options of [{}, { llmsTxt: false }]) {
     const off = createWebApp({
       apiPrefix: "/api",
       adapter: stub,
       manifest: fullManifest(),
       clientEntry: "/c.js",
       api,
-      ...(llmsTxt === undefined ? {} : { llmsTxt }),
+      ...options,
     })
     for (const path of ["/llms.txt", "/llms-full.txt"]) {
       const res = await off.fetch(new Request(`http://x${path}`))

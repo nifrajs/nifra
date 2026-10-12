@@ -253,6 +253,7 @@ export {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
+  type DocumentParts,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
   type MatchChain,

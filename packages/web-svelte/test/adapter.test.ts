@@ -109,3 +109,37 @@ test(
   },
   SPAWN_TIMEOUT_MS,
 )
+
+test(
+  "<svelte:head> content reaches the document's <head>, buffered and streamed",
+  async () => {
+    const code = `
+    import { plugin } from "bun";
+    import { defer, renderPageResult } from ${asImport("../../web/src/index.ts")};
+    import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
+    plugin(svelteBunPlugin("ssr"));
+
+    const { svelteAdapter } = await import(${asImport("../src/index.ts")});
+    const HeadPage = (await import(${asImport("./fixtures/head-page.svelte")})).default;
+    for (const data of [{ n: 1 }, { slow: defer(Promise.resolve(1)) }]) {
+      const page = await renderPageResult({
+        adapter: svelteAdapter, chain: [HeadPage], data, clientEntry: "/c.js", routeId: "index", title: "t",
+      });
+      const html = await page.toResponse().text();
+      const head = html.slice(0, html.indexOf("</head>"));
+      if (!head.includes('<meta name="robots" content="noindex"')) throw new Error("head lost: " + html);
+      if (!head.includes('href="https://example.test/head"')) throw new Error("head lost: " + html);
+      if (!html.includes('data-page="head"')) throw new Error("body lost: " + html);
+    }
+  `
+    const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
+    const [stdout, stderr, codeResult] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(`${stdout}${stderr}`).toBe("")
+    expect(codeResult).toBe(0)
+  },
+  SPAWN_TIMEOUT_MS,
+)

@@ -5121,6 +5121,13 @@
     "signature": "export interface DispatchWriteResult {\n    readonly ok: boolean;\n    readonly code: DispatchResultCode;\n}"
   },
   {
+    "name": "DocumentParts",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DocumentParts {\n    /** Placed at the end of `<head>`. Svelte's `<svelte:head>` lands here. */\n    head: string;\n    /** Placed first in `<body>`, before the app root. Vue's `<Teleport to=\"body\">` lands here. */\n    body: string;\n}",
+    "doc": "/**\n * Markup a render produced for outside the app root, which an adapter that sets\n * {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render\n * settles: `renderToString` resolving, or `renderToStream` returning its stream.\n */"
+  },
+  {
     "name": "DraftCookieControls",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -11638,7 +11645,7 @@
     "name": "RenderAdapter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the\n     * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data).\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): string | Promise<string>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n}",
+    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the\n     * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data).\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): string | Promise<string>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n    /**\n     * Set when a render can produce markup that belongs outside the app root. Every render is then\n     * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.\n     */\n    readonly documentParts?: boolean;\n}",
     "doc": "/**\n * The seam every render adapter implements. New adapters should prove these invariants with\n * `assertRenderAdapterConformance`; framework-specific behavior remains locally tested.\n */"
   },
   {
@@ -11659,7 +11666,7 @@
     "name": "RenderAssemblyCache",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderAssemblyCache {\n    /** Shell up to (not including) the deferred-runtime insertion point. */\n    shellPre?: string;\n    /** Shell from after the deferred-runtime insertion point through the open `#root` container. */\n    shellPost?: string;\n    /** Tail opener: the handover script open tag + the data member's key. */\n    tailPre?: string;\n    /** Tail from after the per-request handover members (the route id, prerendered paths, the handover\n     * close) through `</html>`. */\n    tailPost?: string;\n}",
+    "signature": "export interface RenderAssemblyCache {\n    /** Shell up to (not including) the deferred-runtime insertion point. */\n    shellPre?: string;\n    /** Shell from after the deferred-runtime insertion point through `<body>`. */\n    shellPost?: string;\n    /** The open `#root` container. */\n    rootOpen?: string;\n    /** Tail opener: the handover script open tag + the data member's key. */\n    tailPre?: string;\n    /** Tail from after the per-request handover members (the route id, prerendered paths, the handover\n     * close) through `</html>`. */\n    tailPost?: string;\n}",
     "doc": "/** The mutable per-route slot {@link RenderPageOptions.assemblyCache} fills. Opaque - create as `{}`. */"
   },
   {
@@ -11712,7 +11719,7 @@
     "name": "RenderStreamOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderStreamOptions {\n    /** The document's CSP nonce, for every executable `<script>` the framework streams. */\n    readonly nonce?: string;\n}",
+    "signature": "export interface RenderStreamOptions {\n    /** The document's CSP nonce, for every executable `<script>` the framework streams. */\n    readonly nonce?: string;\n    /** Present only for an adapter that sets {@link RenderAdapter.documentParts}. */\n    readonly parts?: DocumentParts;\n}",
     "doc": "/** Per-document options for {@link RenderAdapter.renderToStream}. */"
   },
   {

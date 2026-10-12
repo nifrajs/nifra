@@ -5039,6 +5039,8 @@ _No named exports (side-effect entrypoint)._
   A loader value marked to stream in after the shell. The component consumes it with the adapter's `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback. `id` is assigned by the server at serialization time - the streamed resolve script keys off it.
 - **DehydratedState** _(interface)_ - `interface DehydratedState`
   A serializable snapshot of the cache's successful queries - the SSR→client bridge payload.
+- **DocumentParts** _(interface)_ - `interface DocumentParts`
+  Markup a render produced for outside the app root, which an adapter that sets {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render settles: `renderToString` resolving, or `renderToStream` returning its stream.
 - **DraftCookieControls** _(interface)_ - `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
 - **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic" readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`

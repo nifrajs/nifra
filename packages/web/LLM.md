@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 - **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined` · from `@nifrajs/web/zones`
 
-_…and 676 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 677 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 
