@@ -2,11 +2,17 @@
 
 ## 5.1.0
 
+### Minor Changes
+
+- 2401057: `CodingAgentRpcServer` takes `approvals`, passed to the approval broker of the host it builds (`timeoutMs`, `maxPending`, `onRequired`, `onResolved`). Without it every RPC-hosted session kept the broker defaults of 5 minutes and 32 pending, so a person who took longer than 5 minutes to answer an approval or a coding tool's question over RPC was denied, and a later answer refused. `approval.request` and `approval.list` report `expiresAt` from the configured timeout. Leaving `approvals` out keeps the defaults.
+- ddc8c5b: `ApprovalManager`'s `timeoutMs` and `NifraBackend`'s `approvalTimeoutMs` accept `"never"`, which keeps an approval (or a coding tool's question) pending with no timer. It still settles on an answer, a cancel, the end of its turn, session close, and host close, and `maxPending` still bounds how many can wait. A never-expiring `ApprovalRequest` reports `expiresAt: APPROVAL_NEVER_EXPIRES_AT` (8640000000000000, the largest time a `Date` holds): it survives JSON, and `now < expiresAt` keeps treating it as live. Numbers keep the 5-minute default and the 1 ms to 24 h range, and every other value is rejected. `approvalRequestFromEvent` takes the timeout as a second argument (pass `ApprovalManager.timeoutMs`) instead of assuming 5 minutes.
+
 ### Patch Changes
 
 - abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
 - 44798e8: On Windows, an extension module on a different drive from the project root is refused as outside the project, by both the in-process `ExtensionHost` and `IsolatedExtension`. A project directory whose name starts with `..` (such as `..cache`) is no longer mistaken for one outside it.
 - f9c8c28: The coding agent's bounded commands (`nifra context`, `nifra review`, the verification gates, the diff reader) now finish when the command itself exits. Before, a command that exited cleanly but left a background process holding its output open was waited on until the full timeout and then reported as timed out, even though it had succeeded. Its output is still read for two seconds after the exit; past that the leftover process is no longer waited on, and the result carries the command's real exit status with `timedOut: false`.
+- ddc8c5b: When the reader of `CodingAgentHost.prompt` leaves a turn early, such as an RPC client disconnecting from a non-resumable `turn.send`, the approvals the backend raised in that turn and the host's broker still holds are denied with `"approval turn ended"`, in the broker and the backend. Before, they stayed in `approval.list` until the broker's timeout, and an answer given meanwhile was reported as accepted though the backend had already dropped the approval.
 - Updated dependencies [abb4354]
   - @nifrajs/agent@5.1.0
   - @nifrajs/agent-protocol@5.1.0
