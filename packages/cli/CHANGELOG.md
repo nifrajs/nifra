@@ -32,6 +32,7 @@
 - 40df00d: `nifra check` (and MCP `nifra_check`) reports contract drift when every route schema the contract lock recorded has been removed. It used to see that no route declares a schema now, answer with only the "trust manifest is vacuous" note, and pass while `nifra contracts check` failed. The note now appears only when the lock and the routes agree.
 - 347a882: `nifra fix` with no `--code` no longer rewrites `contracts.lock.json` or migrates the project layout. Both accept a change a person should review first, so a bare `nifra fix` lists them under `skipped` with the command that applies each; `nifra fix --code NF-K001` still re-snapshots the lock.
 - badfd1e: `nifra review --diff` run from an app inside a larger repository (`apps/web` in a monorepo) now reviews the app's changed files. Git listed changed tracked files relative to the repository root while findings are relative to the app, so a new error in a changed file was counted out of scope and the review passed.
+- 52c80b2: `nifra fix` (and MCP `nifra_fix`) with no `--code` no longer rebuilds a stale workspace-linked package. That fix runs the linked package's own build script in its directory, outside the project the command was given. A bare run now lists the finding under `skipped`, and `nifra fix --code NF-C010` still rebuilds it.
 - Updated dependencies [78b2a04]
 - Updated dependencies [638efe5]
 - Updated dependencies [2a0a5d3]
