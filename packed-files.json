@@ -1,5 +1,6 @@
 {
   "@nifrajs/a2a": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -9,6 +10,7 @@
     "src/index.ts"
   ],
   "@nifrajs/acp": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -18,6 +20,7 @@
     "src/index.ts"
   ],
   "@nifrajs/ag-ui": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -27,6 +30,7 @@
     "src/index.ts"
   ],
   "@nifrajs/agent": [
+    "LICENSE",
     "README.md",
     "dist/context.d.ts",
     "dist/context.d.ts.map",
@@ -71,6 +75,7 @@
     "src/registry.ts"
   ],
   "@nifrajs/agent-app": [
+    "LICENSE",
     "README.md",
     "dist/client.d.ts",
     "dist/client.d.ts.map",
@@ -95,6 +100,7 @@
     "src/view-models.ts"
   ],
   "@nifrajs/agent-protocol": [
+    "LICENSE",
     "README.md",
     "dist/conformance.d.ts",
     "dist/conformance.d.ts.map",
@@ -124,6 +130,7 @@
     "src/transport-policy.ts"
   ],
   "@nifrajs/agent-review": [
+    "LICENSE",
     "README.md",
     "dist/canonical.d.ts",
     "dist/canonical.d.ts.map",
@@ -153,6 +160,7 @@
     "src/types.ts"
   ],
   "@nifrajs/agent-telemetry": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -237,6 +245,7 @@
     "src/index.ts"
   ],
   "@nifrajs/cache": [
+    "LICENSE",
     "README.md",
     "dist/cache.d.ts",
     "dist/cache.d.ts.map",
@@ -407,6 +416,14 @@
     "dist/internal/code-unit-order.d.ts.map",
     "dist/internal/code-unit-order.js",
     "dist/internal/code-unit-order.js.map",
+    "dist/internal/config-paths.d.ts",
+    "dist/internal/config-paths.d.ts.map",
+    "dist/internal/config-paths.js",
+    "dist/internal/config-paths.js.map",
+    "dist/internal/installed-package.d.ts",
+    "dist/internal/installed-package.d.ts.map",
+    "dist/internal/installed-package.js",
+    "dist/internal/installed-package.js.map",
     "dist/internal/nifra-project.d.ts",
     "dist/internal/nifra-project.d.ts.map",
     "dist/internal/nifra-project.js",
@@ -763,6 +780,8 @@
     "src/i18n-check.ts",
     "src/init-agents.ts",
     "src/internal/code-unit-order.ts",
+    "src/internal/config-paths.ts",
+    "src/internal/installed-package.ts",
     "src/internal/nifra-project.ts",
     "src/internal/project-specifiers.ts",
     "src/internal/reserved-segment-codemod.ts",
@@ -900,6 +919,7 @@
   ],
   "@nifrajs/coding-agent": [
     "EXTENSIONS.md",
+    "LICENSE",
     "PERFORMANCE.md",
     "README.md",
     "REGISTRY.md",
@@ -1755,6 +1775,7 @@
     "src/index.ts"
   ],
   "@nifrajs/devtools": [
+    "LICENSE",
     "README.md",
     "dist/client.d.ts",
     "dist/client.d.ts.map",
@@ -1824,6 +1845,7 @@
     "src/registry.ts"
   ],
   "@nifrajs/graphql": [
+    "LICENSE",
     "README.md",
     "dist/context.d.ts",
     "dist/context.d.ts.map",
@@ -1968,6 +1990,7 @@
     "src/sign.ts"
   ],
   "@nifrajs/island-trigger": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -2002,6 +2025,7 @@
     "src/signals.ts"
   ],
   "@nifrajs/jobs": [
+    "LICENSE",
     "README.md",
     "dist/backoff.d.ts",
     "dist/backoff.d.ts.map",
@@ -2036,6 +2060,7 @@
     "src/types.ts"
   ],
   "@nifrajs/mcp": [
+    "LICENSE",
     "README.md",
     "dist/agent-descriptor.d.ts",
     "dist/agent-descriptor.d.ts.map",
@@ -2095,6 +2120,7 @@
     "src/widget.ts"
   ],
   "@nifrajs/mcp-db": [
+    "LICENSE",
     "README.md",
     "dist/engine.d.ts",
     "dist/engine.d.ts.map",
@@ -2319,6 +2345,7 @@
     "src/trailing-slash.ts"
   ],
   "@nifrajs/mock": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -2448,6 +2475,7 @@
     "src/tracing.ts"
   ],
   "@nifrajs/pi": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -2464,6 +2492,7 @@
     "src/rpc-write.ts"
   ],
   "@nifrajs/prompt": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",
@@ -2554,6 +2583,7 @@
   ],
   "@nifrajs/skills": [
     ".claude-plugin/plugin.json",
+    "LICENSE",
     "README.md",
     "package.json",
     "skills/nifra-api/SKILL.md",
@@ -2562,6 +2592,7 @@
     "skills/nifra/SKILL.md"
   ],
   "@nifrajs/storage": [
+    "LICENSE",
     "README.md",
     "dist/capabilities.d.ts",
     "dist/capabilities.d.ts.map",
@@ -2606,6 +2637,7 @@
     "src/types.ts"
   ],
   "@nifrajs/testing": [
+    "LICENSE",
     "README.md",
     "dist/adversarial.d.ts",
     "dist/adversarial.d.ts.map",
@@ -2700,6 +2732,7 @@
     "src/zod.ts"
   ],
   "@nifrajs/ts-plugin": [
+    "LICENSE",
     "README.md",
     "dist/index.cjs",
     "dist/index.d.cts",
@@ -2976,6 +3009,10 @@
     "dist/internal/output-guard.d.ts.map",
     "dist/internal/output-guard.js",
     "dist/internal/output-guard.js.map",
+    "dist/internal/package-entries.d.ts",
+    "dist/internal/package-entries.d.ts.map",
+    "dist/internal/package-entries.js",
+    "dist/internal/package-entries.js.map",
     "dist/internal/page-execution.d.ts",
     "dist/internal/page-execution.d.ts.map",
     "dist/internal/page-execution.js",
@@ -3068,6 +3105,10 @@
     "dist/internal/wire-date.d.ts.map",
     "dist/internal/wire-date.js",
     "dist/internal/wire-date.js.map",
+    "dist/internal/without-query.d.ts",
+    "dist/internal/without-query.d.ts.map",
+    "dist/internal/without-query.js",
+    "dist/internal/without-query.js.map",
     "dist/internal/zone-graph.d.ts",
     "dist/internal/zone-graph.d.ts.map",
     "dist/internal/zone-graph.js",
@@ -3184,6 +3225,10 @@
     "dist/search.d.ts.map",
     "dist/search.js",
     "dist/search.js.map",
+    "dist/seo.d.ts",
+    "dist/seo.d.ts.map",
+    "dist/seo.js",
+    "dist/seo.js.map",
     "dist/server-components.d.ts",
     "dist/server-components.d.ts.map",
     "dist/server-components.js",
@@ -3394,6 +3439,7 @@
     "src/internal/mount-shadow.ts",
     "src/internal/node-builtins.ts",
     "src/internal/output-guard.ts",
+    "src/internal/package-entries.ts",
     "src/internal/page-execution.ts",
     "src/internal/parity.ts",
     "src/internal/private-env.ts",
@@ -3417,6 +3463,7 @@
     "src/internal/vite-import.ts",
     "src/internal/web-app.ts",
     "src/internal/wire-date.ts",
+    "src/internal/without-query.ts",
     "src/internal/zone-graph.ts",
     "src/islands.ts",
     "src/isr.ts",
@@ -3446,6 +3493,7 @@
     "src/route-types.ts",
     "src/router.ts",
     "src/search.ts",
+    "src/seo.ts",
     "src/server-components.ts",
     "src/server-components/build-info.ts",
     "src/server-components/build-target.ts",
@@ -4056,6 +4104,7 @@
     "src/vue-shim.d.ts"
   ],
   "@nifrajs/webmcp": [
+    "LICENSE",
     "README.md",
     "dist/index.d.ts",
     "dist/index.d.ts.map",

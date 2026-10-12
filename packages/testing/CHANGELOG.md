@@ -1,5 +1,21 @@
 # @nifrajs/testing
 
+## 5.1.0
+
+### Patch Changes
+
+- abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- Updated dependencies [abb4354]
+- Updated dependencies [b276c67]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [72e1b4b]
+  - @nifrajs/agent@5.1.0
+  - @nifrajs/mcp@5.1.0
+  - @nifrajs/mock@5.1.0
+  - @nifrajs/webmcp@5.1.0
+  - @nifrajs/core@5.1.0
+  - @nifrajs/client@5.1.0
+
 ## 5.0.0
 
 ### Major Changes

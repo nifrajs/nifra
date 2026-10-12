@@ -1,5 +1,27 @@
 # @nifrajs/web
 
+## 5.1.0
+
+### Minor Changes
+
+- 7bb8a67: `@nifrajs/web/seo` exports `canonical()`, `openGraph()` and `jsonLd()` (and `OpenGraphInput`) from a module that imports nothing at runtime. A route's `meta()` runs in the browser too, and the package root also exports server modules that import `node:fs`, `node:path` and `node:stream`. A bundle that cannot prune the root's unused re-exports would carry those into a browser chunk, and `nifra dev` refuses them. The root keeps exporting the same three functions. The SEO guide imports them from the new entry.
+- 513ec28: `"nifra": { "zones": ... }` accepts single files and nested paths: an entry inside another entry's folder overrides it, so the most specific path decides a file's side (`"frontend": ["src/ui"], "backend": ["src/ui/mailer.ts"]`). Only one path listed under two sides is refused. Before, any two entries that overlapped were refused, and a file in a mixed folder could only move. A suffix that disagrees with a configured path names that path in the error.
+
+### Patch Changes
+
+- 78b2a04: `revalidateEndpoint` refuses a JSON purge body over 1 MiB with `413 body_too_large`, counting bytes as the body streams in, instead of buffering whatever the caller sends.
+- 638efe5: The private-environment check that `nifra check`, `nifra dev` and both builds share reads optional bracket access the way it reads dot access: `process.env?.["PUBLIC_X"]` is the public read it is, and `process.env?.["SECRET"]` is refused by name instead of as a whole-object read. Bracket access on the owner (`process["env"]`, `process?.["env"]`) and an optional call (`Deno.env.get?.("X")`) read the same way. A computed name (`process.env?.[name]`) is still refused.
+- 2a0a5d3: Client form handling reads a form's `method`, `action` and `target` through the `HTMLFormElement` accessors and its `data-nifra-revalidate` attribute through `getAttribute`. A control named `target`, `action` or `method` shadows the form property of that name, so a form with `<input name="target">` was treated as targeting another frame and submitted with a full page load instead of the client router.
+- 5372e3a: A package's own `"nifra": { "environment": ... }` may give each export entry its own side: `{ ".": "backend", "./react": "frontend", "./schema": "library" }`. An import is judged by the entry it names, the exact subpath first and then the most specific `*` pattern, so two entries backed by one file keep their own sides; importing an entry the map leaves out is an error, as is a key or side the map cannot use. A file reached by path alone, through a relative or aliased deep import, takes the side of every mapped entry that reaches it through the package's own imports under any export condition, and a file no mapped entry reaches is an error. An import that binds only types (`import type`, `export type`, or a `{ }` list of `type` specifiers) grants no ownership, so a backend file a frontend entry only types against stays backend. The Bun and Vite client and server builds, both dev servers, `nifra check` (NF-C028 and NF-C004) and the editor plugin apply the same rules. The Vite builds record the specifier behind each such import, since Rollup keeps only the resolved file. `classify(file, specifier)` on a zone classifier takes the import as written, and `declaredSide(environment, specifier)` reads one declaration. A package-wide string and the app's `"zones": { "packages": ... }` defaults behave as before, and a package's own declaration outranks them. A third-party package's side is read from its root manifest, past a nested `package.json` such as `dist/esm/package.json`.
+- 29d6649: The build's credential scan no longer reports a translated field label or a documentation placeholder as a secret assigned to a secret-like name. A word-cased label (letters, marks and hyphen-joined words, such as `"Undirskriftar-Lykill"`) inside a top-level object literal that reads as a message catalog (at least ten string values, most of them prose with whitespace) is a label, and a value with a whole `_`/`-` segment such as `your`, `example`, `placeholder`, `sample`, `dummy`, `changeme`, `replace`, `generated` or `xxx` is a stand-in. Both apply only to the assigned-secret rule: a key format, a private key, a credential URL or the value of a private environment variable still fails the build wherever it is, and random data under a catalog key is still a finding.
+- 2a0a5d3: The single-copy resolver and the build's duplicate-copy scan treat a `file:` dependency Bun installs as a folder of linked files the way they treat a linked package. Before, only a symlinked package directory counted, so the second React that such a package's own `node_modules` held went unredirected and unreported by `nifra check`.
+- Updated dependencies [abb4354]
+- Updated dependencies [b276c67]
+- Updated dependencies [2a0a5d3]
+- Updated dependencies [72e1b4b]
+  - @nifrajs/island-trigger@5.1.0
+  - @nifrajs/core@5.1.0
+
 ## 5.0.0
 
 ### Major Changes

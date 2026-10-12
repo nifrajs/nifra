@@ -1,5 +1,17 @@
 # @nifrajs/coding-agent
 
+## 5.1.0
+
+### Patch Changes
+
+- abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- Updated dependencies [abb4354]
+  - @nifrajs/agent@5.1.0
+  - @nifrajs/agent-protocol@5.1.0
+  - @nifrajs/agent-review@5.1.0
+  - @nifrajs/jobs@5.1.0
+  - @nifrajs/pi@5.1.0
+
 ## 5.0.0
 
 ### Minor Changes
