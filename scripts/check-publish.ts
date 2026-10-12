@@ -245,6 +245,11 @@ for (const dir of ALL_DIRS) {
   }
 }
 
+// What the tarballs hold, read from the tarballs: nothing that must never ship, no private marker, the
+// same files npm selects, and under RELEASE_MODE=1 the file lists the release pull request recorded.
+console.log("\n=== packed contents ===")
+if ((await $`bun run check:packed`.nothrow()).exitCode !== 0) failures += 1
+
 // Version-consistency gate: the CLI hardcodes its version in two source files - the tsc-built CLI
 // reads no package.json at runtime, and mcp-http.ts must run on edge runtimes with no fs. Assert both
 // match packages/cli/package.json so a release bump can't leave a stale `nifra --version` or a stale

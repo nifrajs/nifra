@@ -166,3 +166,12 @@ output + `_routes.json`.
 Prepare every release on a `release/<name>` branch. Run `bun run release:prepare` there so the one
 release pull request contains package versions, changelogs, lockfile, and generated artifacts. Never
 stage versioning on `main`, push directly to `main`, or create a second Version Packages pull request.
+
+`release:prepare` also rebuilds and rewrites `packed-files.json`, the list of files each package
+publishes, so the pull request shows every file a package gained or lost since the last release.
+`bun run check:packed` (part of `check:publish`) packs every package and refuses a missing LICENSE,
+test files, keys, environment files, logs, private directories, home-directory paths,
+`PRIVATE_MARKERS` hits, and any file npm would select differently; under `RELEASE_MODE=1` the packs
+must also match `packed-files.json`.
+After a publish, `bun run verify:published` reads each tarball back from npm, checks it against the
+registry's integrity hash, and holds it to the same rules and the same file list.

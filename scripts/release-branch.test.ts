@@ -537,6 +537,8 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
       rmSync(dir, { recursive: true, force: true })
     }
   },
+  // Dozens of git and bash spawns: past the 5 s default on a loaded host, with nothing wrong.
+  30_000,
 )
 
 test("a published version gets its GitHub release from the only job that may write", () => {
@@ -601,3 +603,13 @@ test.skipIf(process.platform === "win32")(
     }
   },
 )
+
+test("what npm serves is read back after the publish, without installing anything", () => {
+  const job = workflowJobs("release.yml")["verify-published"]
+  expect(job?.needs).toEqual(["prove-release", "publish"])
+  expect(job?.permissions).toEqual({ contents: "read" })
+  expect(job?.steps?.filter((step) => step.run?.includes("install"))).toEqual([])
+  const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
+  expect(checkout?.with?.ref).toBe(`\${{ needs.prove-release.outputs.publish_sha }}`)
+  expect(job?.steps?.at(-1)?.run).toBe("bun scripts/verify-published.ts --wait 900")
+})
