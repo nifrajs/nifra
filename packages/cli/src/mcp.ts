@@ -181,6 +181,13 @@ function appFeatures(cwd: string, surface: IsolatedSurface): McpServerFeatures {
 }
 
 const ROOTS_REQUEST_ID = "nifra:roots/list"
+/** Messages whose answer reads nothing the app declares: the handshake is never held up by its import. */
+const ANSWERED_WITHOUT_THE_APP: ReadonlySet<string> = new Set([
+  "initialize",
+  "ping",
+  "notifications/initialized",
+  "notifications/roots/list_changed",
+])
 const MAX_STDIO_MESSAGE_BYTES = 8 * 1024 * 1024
 const STDIO_ENCODER = new TextEncoder()
 
@@ -207,8 +214,12 @@ async function createProjectContext(root: string): Promise<ProjectContext> {
     )
     const allResources: McpResource[] = []
     const allPrompts: McpPrompt[] = []
-    for (const { name, cwd: appCwd, surface } of apps) {
-      const ns = namespaceForApp(name, [], appFeatures(appCwd, await surface()))
+    // Each app loads in its own subprocess, so they load side by side.
+    const loaded = await Promise.all(
+      apps.map(async (app) => ({ app, surface: await app.surface() })),
+    )
+    for (const { app, surface } of loaded) {
+      const ns = namespaceForApp(app.name, [], appFeatures(app.cwd, surface))
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
@@ -251,7 +262,9 @@ export async function runMcpServer(
       return
     }
   }
-  let ctx = await createProjectContext(rootState.root)
+  // Loaded in the background: the app's import can take seconds, and the handshake needs none of it.
+  let ctx = createProjectContext(rootState.root)
+  ctx.catch(() => {})
   let drift: ToolingDrift | undefined = await detectToolingDrift(rootState.root, version)
   const serverInfo = { name: "nifra", version }
   const state = createMcpProtocolState()
@@ -286,7 +299,8 @@ export async function runMcpServer(
     if (result === undefined) return
     const next = await applyClientRoots(rootState, pathsFromRootsResult(result))
     if (next.root !== rootState.root) {
-      ctx = await createProjectContext(next.root)
+      ctx = createProjectContext(next.root)
+      ctx.catch(() => {})
       drift = await detectToolingDrift(next.root, version)
     }
     rootState = next
@@ -313,15 +327,37 @@ export async function runMcpServer(
     // the code it started with: re-read the installed version per call so no answer is for a stale one.
     if (message.method === "tools/call") drift = await detectToolingDrift(rootState.root, version)
 
+    if (ANSWERED_WITHOUT_THE_APP.has(message.method)) {
+      const response = await handleRpc(
+        message,
+        [],
+        serverInfo,
+        {
+          resources: projectResources(rootState.root, noAppInServer),
+          prompts: projectPrompts(),
+          instructions: rootInstructions(rootState, drift),
+        },
+        { state, sendNotification: send, exposeToolErrors: true },
+      )
+      if (response) send(response)
+      // Ask for the client's workspace roots once the handshake completes, and again whenever the
+      // client says they changed. The answer comes back through the interception above.
+      if (message.method.startsWith("notifications/")) requestRoots()
+      return
+    }
+    const project = await ctx
     let activeTools: McpTool[]
-    if (ctx.apps) {
+    if (project.apps) {
+      const loaded = await Promise.all(
+        project.apps.map(async (app) => ({ app, surface: await app.surface() })),
+      )
       const allTools: McpTool[] = []
-      for (const { name, cwd: appCwd, surface } of ctx.apps) {
+      for (const { app, surface } of loaded) {
         const tools = [
-          ...refuseVersionSensitive(isolatedProjectTools(appCwd), drift),
-          ...(await surface()).tools,
+          ...refuseVersionSensitive(isolatedProjectTools(app.cwd), drift),
+          ...surface.tools,
         ]
-        const ns = namespaceForApp(name, tools, { resources: [], prompts: [] })
+        const ns = namespaceForApp(app.name, tools, { resources: [], prompts: [] })
         allTools.push(...ns.tools)
       }
       activeTools = [
@@ -334,7 +370,7 @@ export async function runMcpServer(
     } else {
       activeTools = [
         ...refuseVersionSensitive(isolatedProjectTools(rootState.root), drift),
-        ...(await ctx.surface()).tools,
+        ...(await project.surface()).tools,
       ]
     }
     const verdict = await rootVerdict(rootState)
@@ -346,7 +382,7 @@ export async function runMcpServer(
     )
 
     const features: McpServerFeatures = {
-      ...ctx.features,
+      ...project.features,
       instructions: rootInstructions(rootState, drift),
     }
     const response = await handleRpc(message, activeTools, serverInfo, features, {
@@ -356,14 +392,6 @@ export async function runMcpServer(
       exposeToolErrors: true,
     })
     if (response) send(response)
-    // Ask for the client's workspace roots once the handshake completes, and again whenever the
-    // client says they changed. The answer comes back through the interception above.
-    if (
-      message.method === "notifications/initialized" ||
-      message.method === "notifications/roots/list_changed"
-    ) {
-      requestRoots()
-    }
   }
 
   const decoder = new TextDecoder()
