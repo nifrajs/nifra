@@ -282,6 +282,7 @@ describe("mountA2A", () => {
   async function resumeWithPeerApproval(
     overrides: Partial<AgentPorts>,
     portDecision: () => "pending" | "approved",
+    approvalPort = true,
   ): Promise<{ state: string; executed: number; callerDecisions: unknown[] }> {
     const { app, callPost } = captureApp()
     let executed = 0
@@ -293,23 +294,24 @@ describe("mountA2A", () => {
       },
     })
     const callerDecisions: unknown[] = []
+    const approval: NonNullable<AgentPorts["approval"]> = {
+      request: ({ effectId, callerDecision }) => {
+        if (callerDecision !== undefined) callerDecisions.push(callerDecision)
+        return callerDecision === undefined || portDecision() === "pending"
+          ? { status: "pending", effectId }
+          : { status: "approved", approval: { granted: true } }
+      },
+    }
+    const agentPorts: Partial<AgentPorts> = {
+      model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "approved" }),
+      capabilities: ["reference.approve"],
+      state: new MemoryAgentStateStore(),
+      ...overrides,
+    }
     mountA2A(app, {
       agent: definition([tool]),
       card: cardInfo,
-      ports: ports({
-        model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "approved" }),
-        capabilities: ["reference.approve"],
-        state: new MemoryAgentStateStore(),
-        approval: {
-          request: ({ effectId, callerDecision }) => {
-            if (callerDecision !== undefined) callerDecisions.push(callerDecision)
-            return callerDecision === undefined || portDecision() === "pending"
-              ? { status: "pending", effectId }
-              : { status: "approved", approval: { granted: true } }
-          },
-        },
-        ...overrides,
-      }),
+      ports: ports(approvalPort ? { approval, ...agentPorts } : agentPorts),
     })
 
     const first = (await (
@@ -361,7 +363,7 @@ describe("mountA2A", () => {
   })
 
   test("a peer's approval stands alone without an approval port only under the caller opt-out", async () => {
-    const noPort = await resumeWithPeerApproval({ approval: undefined }, () => "pending")
+    const noPort = await resumeWithPeerApproval({}, () => "pending", false)
     expect(noPort.state).toBe("TASK_STATE_INPUT_REQUIRED")
     expect(noPort.executed).toBe(0)
 

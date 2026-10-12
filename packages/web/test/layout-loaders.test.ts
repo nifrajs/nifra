@@ -848,5 +848,5 @@ test("only a layout's own shouldRevalidate lets a retain hint skip its loader", 
   )
   const res = await navigateData(app, "/orgs/acme/projects/8", "/orgs/acme/projects/7")
   expect(runs).toBe(0)
-  expect(((await res.json()) as { retained?: number[] }).retained).toEqual([0])
+  expect(await res.json()).toMatchObject({ retained: [0] })
 })
