@@ -36,6 +36,8 @@ import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
+  type EscalatingStop,
+  escalatingStop,
   OWN_PROCESS_GROUP,
   readBoundedStream,
   signalProcessGroup,
@@ -714,11 +716,12 @@ export async function spawnChild(
     stderr: "pipe",
     detached: OWN_PROCESS_GROUP,
   })
+  const stopper = escalatingStop((name) => signalProcessGroup(proc, name))
   let killed = false
   const kill = (): void => {
     if (killed) return
     killed = true
-    signalProcessGroup(proc, "SIGTERM")
+    stopper.stop()
   }
   const abort = (): void => kill()
   signal?.addEventListener("abort", abort, { once: true })
@@ -759,6 +762,7 @@ export async function spawnChild(
     return text || `${label} failed:\n${err.text.trim() || "(no output)"}`
   } finally {
     clearTimeout(timer)
+    stopper.dispose()
     signal?.removeEventListener("abort", abort)
   }
 }
@@ -838,6 +842,7 @@ export class WarmWorker {
       readonly cleanup: () => void
     }
   >()
+  private readonly stopper: EscalatingStop
   private stdoutBuffer = ""
   private stdoutBufferBytes = 0
   private stderrBuffer = ""
@@ -858,11 +863,13 @@ export class WarmWorker {
       stdout: "pipe",
       stderr: "pipe",
     }) as PipeSubprocess
+    this.stopper = escalatingStop((name) => this.proc.kill(name))
     liveWarmWorkers.add(this)
     void this.readStdout()
     void this.readStderr()
     void this.proc.exited.then((code) => {
       this.closed = true
+      this.stopper.dispose()
       liveWarmWorkers.delete(this)
       const err = new Error(
         `warm ${this.label} worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,
@@ -876,7 +883,7 @@ export class WarmWorker {
   }
 
   stop(): void {
-    if (!this.closed) this.proc.kill()
+    if (!this.closed) this.stopper.stop()
   }
 
   async request(input: unknown, signal?: AbortSignal): Promise<string> {

@@ -1,4 +1,5 @@
 import {
+  escalatingStop,
   type HeadTailOutput,
   OWN_PROCESS_GROUP,
   readHeadTail,
@@ -62,8 +63,6 @@ function normalizeTimeout(value: unknown): number {
   }
   return Math.min(Math.max(Math.trunc(value), 1_000), MAX_TIMEOUT_MS)
 }
-
-const KILL_GRACE_MS = 2_000
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g")
 
@@ -157,12 +156,7 @@ export async function collectTestResult(
   })
   let timedOut = false
   let cancelled = false
-  let escalation: ReturnType<typeof setTimeout> | undefined
-  // A test can ignore SIGTERM, so the group gets SIGKILL once the grace period runs out.
-  const stop = (): void => {
-    signalProcessGroup(proc, "SIGTERM")
-    escalation ??= setTimeout(() => signalProcessGroup(proc, "SIGKILL"), KILL_GRACE_MS)
-  }
+  const { stop, dispose } = escalatingStop((name) => signalProcessGroup(proc, name))
   const abort = (): void => {
     cancelled = true
     stop()
@@ -189,7 +183,7 @@ export async function collectTestResult(
     exitCode = result[2]
   } finally {
     clearTimeout(timer)
-    clearTimeout(escalation)
+    dispose()
     opts.signal?.removeEventListener("abort", abort)
   }
   const stdout = clean(stdoutRaw)

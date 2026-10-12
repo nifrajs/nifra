@@ -36,6 +36,39 @@ export function signalProcessGroup(
   }
 }
 
+/** How long a stopped child gets to exit after SIGTERM before it is sent SIGKILL. */
+export const KILL_GRACE_MS = 2_000
+
+/** Stopping a child: `stop` sends SIGTERM, `dispose` drops the SIGKILL still pending once it is done. */
+export interface EscalatingStop {
+  readonly stop: () => void
+  readonly dispose: () => void
+}
+
+/**
+ * Stop a child with SIGTERM, then SIGKILL once `graceMs` passes. Project code can catch SIGTERM
+ * (a graceful-shutdown hook waiting on a hung request), and a child that never exits keeps its
+ * caller waiting and outlives it. `send` delivers one signal to the child or its group.
+ */
+export function escalatingStop(
+  send: (signal: NodeJS.Signals) => void,
+  graceMs: number = KILL_GRACE_MS,
+): EscalatingStop {
+  let escalation: ReturnType<typeof setTimeout> | undefined
+  let disposed = false
+  return {
+    stop: () => {
+      if (disposed) return
+      send("SIGTERM")
+      escalation ??= setTimeout(() => send("SIGKILL"), graceMs)
+    },
+    dispose: () => {
+      disposed = true
+      clearTimeout(escalation)
+    },
+  }
+}
+
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
 /**
