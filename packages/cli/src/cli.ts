@@ -372,6 +372,14 @@ export function formatCliError(err: unknown): string {
   return String(err)
 }
 
+/** A failed command's message on stderr and, for a `--json` caller parsing stdout, as JSON there. */
+function reportFailure(err: unknown, argv: readonly string[]): void {
+  const message = formatCliError(err)
+  console.error(message)
+  if (argv.includes("--json") || argv.includes("--json=true"))
+    console.log(JSON.stringify({ ok: false, error: message }, null, 2))
+}
+
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   if (app.framework.componentPipeline !== undefined) {
     if (flags.bun)
@@ -1234,10 +1242,7 @@ async function main(): Promise<void> {
       // A thrown error is nifra's own reporting path, not a silent abort: clear the sentinel so the
       // hint stays reserved for the case where the process died inside the app import.
       markReflecting(undefined)
-      console.error(formatCliError(err))
-      // A `--json` caller parses stdout, so the failure is a JSON document there too.
-      if (argv.includes("--json") || argv.includes("--json=true"))
-        console.log(JSON.stringify({ ok: false, error: formatCliError(err) }, null, 2))
+      reportFailure(err, argv)
       const candidate =
         typeof err === "object" && err !== null && "exitCode" in err
           ? (err as { readonly exitCode?: unknown }).exitCode
@@ -1323,7 +1328,7 @@ async function main(): Promise<void> {
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
-      console.error(formatCliError(err))
+      reportFailure(err, argv)
       process.exitCode = 1
     }
     exitIfHeldOpen(command)
@@ -1549,7 +1554,7 @@ if (isMainModule() || isBunDevReexecChild() || hasCliCommandToken()) {
   try {
     await main()
   } catch (err) {
-    console.error(formatCliError(err))
+    reportFailure(err, cliArgv())
     process.exitCode = 1
   }
 }

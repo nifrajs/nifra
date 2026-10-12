@@ -103,6 +103,7 @@ test("a command that fails under --json still prints one JSON document on stdout
     for (const args of [
       ["routes", "--json"],
       ["check", "--json", "--bogus"],
+      ["build", "--json"],
     ]) {
       const proc = Bun.spawn(
         [process.execPath, resolve(import.meta.dir, "../src/cli.ts"), ...args],
