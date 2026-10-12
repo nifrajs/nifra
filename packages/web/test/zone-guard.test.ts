@@ -352,6 +352,35 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
     expect(broken.logs.map(String).join("\n")).not.toContain("may not reach the browser")
   })
 
+  test("a backend file the frontend entry only types against stays denied by path", async () => {
+    write(
+      "node_modules/typed-kit/package.json",
+      JSON.stringify({
+        name: "typed-kit",
+        exports: { ".": "./server.ts", "./browser": "./browser.ts" },
+        nifra: { environment: { ".": "backend", "./browser": "frontend" } },
+      }),
+    )
+    write(
+      "node_modules/typed-kit/server.ts",
+      'export interface Shape { id: string }\nexport const internal = "BACKEND_ONLY"\n',
+    )
+    write(
+      "node_modules/typed-kit/browser.ts",
+      'import type { Shape } from "./server.ts"\nexport const id = (shape: Shape) => shape.id\n',
+    )
+    const result = await bundle(
+      write(
+        "routes/typed.tsx",
+        'import { internal } from "../node_modules/typed-kit/server.ts"\nexport default internal\n',
+      ),
+    )
+    expect(result.success).toBe(false)
+    expect(result.logs.map(String).join("\n")).toContain(
+      "node_modules/typed-kit/server.ts may not reach the browser",
+    )
+  })
+
   // A path `onResolve` filter that matches the dev probe page's `<script src>` makes Bun's dev server
   // key that page's import by its raw specifier, and the client never boots - even when the handler
   // declines. The browser-level proof is packages/cli/test/bun-dev-browser-boot.

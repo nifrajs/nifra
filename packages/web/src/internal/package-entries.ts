@@ -9,7 +9,7 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, extname, join, relative } from "node:path"
 import type { PackageEnvironment } from "../zones.ts"
-import { tokenize } from "./private-env.ts"
+import { type Token, tokenize } from "./private-env.ts"
 import { withoutQuery } from "./without-query.ts"
 
 export type EnvironmentDeclaration =
@@ -117,8 +117,51 @@ function probe(base: string): string | undefined {
   return undefined
 }
 
-/** The relative specifiers a module imports, re-exports, `import()`s, `require`s or names with
- * `new URL()` (a worker or an asset beside it). */
+const CLAUSE_PUNCT: ReadonlySet<string> = new Set(["{", "}", ",", "*"])
+const isPunct = (token: Token | undefined, value: string): boolean =>
+  token?.kind === "punct" && token.value === value
+const isId = (token: Token | undefined, value: string): boolean =>
+  token?.kind === "id" && token.value === value
+
+/**
+ * Whether the `import`/`export` clause ending at the `from` token `at` binds only types: `import type`,
+ * `export type`, or a `{ }` list whose every specifier is `type`. Such an edge grants no ownership - a
+ * backend file a frontend entry merely types against stays backend. `import { type A }` survives as
+ * `import {}` under Vite with `verbatimModuleSyntax`; dropping it then fails closed, since the guard
+ * judges that load by the file's remaining owners.
+ */
+function typeOnlyClause(tokens: readonly Token[], at: number): boolean {
+  let start = at - 1
+  for (; start >= 0; start--) {
+    const token = tokens[start]
+    if (isId(token, "import") || isId(token, "export")) break
+    if (token?.kind !== "id" && !(token?.kind === "punct" && CLAUSE_PUNCT.has(token.value)))
+      return false
+  }
+  if (start < 0) return false
+  const clause = tokens.slice(start + 1, at)
+  // `import type from "./x"` and `import type, { a } from` bind a default import named `type`.
+  if (isId(clause[0], "type")) return clause.length > 1 && !isPunct(clause[1], ",")
+  if (!isPunct(clause[0], "{") || !isPunct(clause.at(-1), "}")) return false
+  const specifiers: Token[][] = [[]]
+  for (const token of clause.slice(1, -1)) {
+    if (isPunct(token, ",")) specifiers.push([])
+    else specifiers.at(-1)?.push(token)
+  }
+  const named = specifiers.filter((specifier) => specifier.length > 0)
+  // `{ type as x }` imports a value named `type`; `{ type A }` and `{ type A as B }` import types.
+  return (
+    named.length > 0 &&
+    named.every(
+      (specifier) =>
+        isId(specifier[0], "type") &&
+        (specifier.length === 2 || (specifier.length === 4 && isId(specifier[2], "as"))),
+    )
+  )
+}
+
+/** The relative specifiers a module loads: imports, re-exports, `import()`s, `require`s and
+ * `new URL()`s (a worker or an asset beside it). A clause binding only types loads nothing. */
 function relativeImports(code: string): string[] {
   const tokens = tokenize(code)
   const found: string[] = []
@@ -134,7 +177,9 @@ function relativeImports(code: string): string[] {
       if (!call) continue
       next = tokens[i + 2]
     } else if (token.value !== "from" && token.value !== "import") continue
-    if (next?.kind === "string" && /^\.\.?\//.test(next.value)) found.push(next.value)
+    if (next?.kind !== "string" || !/^\.\.?\//.test(next.value)) continue
+    if (token.value === "from" && typeOnlyClause(tokens, i)) continue
+    found.push(next.value)
   }
   return found
 }

@@ -609,3 +609,74 @@ describe("per-entry package environments", () => {
     expect(declaredSide(environment, specifier)).toBe(side)
   })
 })
+
+/**
+ * A frontend entry that only types against a backend file must not make it frontend too: the two
+ * owners would read as `library`, and a browser import of the file by path would pass.
+ */
+describe("type-only imports grant no entry ownership", () => {
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "@ws/typed",
+      exports: { ".": "./server.ts", "./browser": "./browser.ts" },
+      nifra: { environment: { ".": "backend", "./browser": "frontend" } },
+    }),
+    "server.ts": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "valueDefault",
+      "sideEffect",
+      "named",
+      "mixed",
+    ]
+      .map((name) => `import "./${name}.ts"`)
+      .join("\n"),
+    "browser.ts": [
+      'import type { A } from "./a.ts"',
+      'import type B from "./b.ts"',
+      'import type * as C from "./c.ts"',
+      'export type { D } from "./d.ts"',
+      'export type * from "./e.ts"',
+      'import { type F, type G as H, } from "./f.ts"',
+      'export { type G } from "./g.ts"',
+      "import type {",
+      "  H,",
+      '} from "./h.ts"',
+      'import type from "./valueDefault.ts"',
+      'import {} from "./sideEffect.ts"',
+      'import { type as named } from "./named.ts"',
+      'import M, { type T } from "./mixed.ts"',
+    ].join("\n"),
+  }
+  for (const [path, text] of Object.entries(files)) write(`packages/typed/${path}`, text)
+  for (const name of ["a", "b", "c", "d", "e", "f", "g", "h"]) write(`packages/typed/${name}.ts`)
+  for (const name of ["valueDefault", "sideEffect", "named", "mixed"])
+    write(`packages/typed/${name}.ts`)
+  const typedApp = join(root, "typed-app")
+  write("typed-app/package.json", JSON.stringify({ name: "typed-app" }))
+  const classifier = createZoneClassifier({ appRoot: typedApp })
+  const zoneOf = (name: string): string =>
+    classifier.classify(join(root, "packages/typed", `${name}.ts`)).zone
+
+  test.each(["a", "b", "c", "d", "e", "f", "g", "h"])("%s.ts stays backend", (name) => {
+    expect(zoneOf(name)).toBe("backend")
+    expect(browserDenial(classifier.classify(join(root, "packages/typed", `${name}.ts`)))).toBe(
+      "it is backend code",
+    )
+  })
+
+  test.each([
+    "valueDefault",
+    "sideEffect",
+    "named",
+    "mixed",
+  ])("%s.ts is loaded at runtime, so both entries own it", (name) => {
+    expect(zoneOf(name)).toBe("library")
+  })
+})
