@@ -259,11 +259,18 @@ describe("message catalogs and placeholders", () => {
 
   test("the label outside a catalog, or among values that are mostly single words, is a finding", () => {
     const finding = ['assigned-secret: literal assigned to "password"']
-    expect(scan('export const labels = { password: "Lykilorðsverndarstillingar" }\n')).toEqual(finding)
+    expect(scan('export const labels = { password: "Lykilorðsverndarstillingar" }\n')).toEqual(
+      finding,
+    )
     const words = Array.from({ length: 10 }, (_, i) => `  w${i}: "Vista${i}",`)
     expect(
       scan(
-        ["export const messages = {", ...words, '  password: "Lykilorðsverndarstillingar",', "}"].join("\n"),
+        [
+          "export const messages = {",
+          ...words,
+          '  password: "Lykilorðsverndarstillingar",',
+          "}",
+        ].join("\n"),
       ),
     ).toEqual(finding)
     // A catalog nested in a function is not a top-level object, so it is not recognized.

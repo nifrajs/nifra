@@ -1385,7 +1385,8 @@ describe("migrateLayout entries, tests and workspace siblings", () => {
       "src/lib/money.ts": "export const money = 1\n",
       "src/lib/db.ts": "export const db = () => []\n",
       "src/data/inventory.ts": "export const inventory = 1\n",
-      "src/data/inventory.test.ts": 'import { inventory } from "./inventory"\nexport const t = inventory\n',
+      "src/data/inventory.test.ts":
+        'import { inventory } from "./inventory"\nexport const t = inventory\n',
       "routes/index.tsx": [
         'import { Card } from "../src/ui/card"',
         'import { money } from "../src/lib/money"',
