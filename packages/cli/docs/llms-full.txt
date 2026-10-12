@@ -3332,7 +3332,10 @@ const app = server()
 `healthcheck()` adds liveness (`/health`) and readiness (`/ready`)
 endpoints - apply it **before** any auth guard so they stay public. `openapi()`
 serves an OpenAPI 3.1 document at `/openapi.json`, generated from your routes - add
-`ui: true` for a Scalar API-reference page at `/reference`. Paths,
+`ui: true` for a Scalar API-reference page at `/reference`. The page
+loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own
+copy with `ui: { cdn, integrity }` to keep a third-party origin out of your
+Content-Security-Policy. Paths,
 methods, and params are introspected; `servers`, `tags`,
 `security`, and `securitySchemes` are document options, and
 `operations` (keyed by `"GET /users/:id"`) supplies per-route bodies/security

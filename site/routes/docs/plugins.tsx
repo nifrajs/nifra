@@ -487,7 +487,10 @@ export default function Plugins() {
         <code>healthcheck()</code> adds liveness (<code>/health</code>) and readiness (<code>/ready</code>)
         endpoints - apply it <b>before</b> any auth guard so they stay public. <code>openapi()</code>{" "}
         serves an OpenAPI 3.1 document at <code>/openapi.json</code>, generated from your routes - add{" "}
-        <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. Paths,
+        <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. The page
+        loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own
+        copy with <code>ui: {"{ cdn, integrity }"}</code> to keep a third-party origin out of your
+        Content-Security-Policy. Paths,
         methods, and params are introspected; <code>servers</code>, <code>tags</code>,{" "}
         <code>security</code>, and <code>securitySchemes</code> are document options, and{" "}
         <code>operations</code> (keyed by <code>"GET /users/:id"</code>) supplies per-route bodies/security

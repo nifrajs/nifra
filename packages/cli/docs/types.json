@@ -9968,7 +9968,7 @@
     "name": "OpenApiUiOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface OpenApiUiOptions {\n    /** Where to serve the UI page. Default `\"/reference\"`. */\n    readonly path?: string;\n    /** Page title. Defaults to `info.title`. */\n    readonly title?: string;\n    /** The Scalar script URL (loaded from a CDN). Default jsDelivr's `@scalar/api-reference`. */\n    readonly cdn?: string;\n}",
+    "signature": "export interface OpenApiUiOptions {\n    /** Where to serve the UI page. Default `\"/reference\"`. */\n    readonly path?: string;\n    /** Page title. Defaults to `info.title`. */\n    readonly title?: string;\n    /**\n     * The Scalar script URL. Default: `@scalar/api-reference` 1.72.1's standalone build on jsDelivr,\n     * pinned by {@link integrity}. Point it at a copy you serve yourself (no third-party origin to\n     * allow in a `script-src` policy, nothing to trust but your own deploy).\n     */\n    readonly cdn?: string;\n    /**\n     * The script's Subresource Integrity hash (`sha384-...`), which makes the browser refuse a script\n     * whose bytes differ. Default: the default build's hash when `cdn` is unset, none when it is set.\n     * Pass the hash of your own copy, or `false` to send none.\n     */\n    readonly integrity?: string | false;\n}",
     "doc": "/** Scalar API-reference UI options. */"
   },
   {
@@ -20417,7 +20417,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function openapi(options?: OpenApiOptions): IdentityPlugin;",
-    "doc": "/**\n * Serve an OpenAPI 3.1 document (a structural subset - see {@link buildOpenApiDocument}) at\n * `options.path` (default `/openapi.json`), generated from the app's registered routes. Generation is\n * **lazy + memoized**: it reads `app.routes()` on the first request, by which point every route is\n * registered - so the plugin's own position in the chain doesn't matter.\n *\n * Pass `ui: true` (or `ui: { path, title, cdn }`) to also serve a Scalar API-reference page (default\n * `/reference`) that renders the spec. The page loads Scalar from a CDN; pin/self-host via `ui.cdn`,\n * and remember to allow that origin if you ship a `script-src` Content-Security-Policy.\n *\n * ```ts\n * app.use(openapi({ info: { title: \"My API\", version: \"1.0.0\" }, ui: true }))\n * ```\n */"
+    "doc": "/**\n * Serve an OpenAPI 3.1 document (a structural subset - see {@link buildOpenApiDocument}) at\n * `options.path` (default `/openapi.json`), generated from the app's registered routes. Generation is\n * **lazy + memoized**: it reads `app.routes()` on the first request, by which point every route is\n * registered - so the plugin's own position in the chain doesn't matter.\n *\n * Pass `ui: true` (or `ui: { path, title, cdn, integrity }`) to also serve a Scalar API-reference page\n * (default `/reference`) that renders the spec. By default the page loads an exact Scalar version from\n * jsDelivr with a Subresource Integrity hash, so a changed file is refused rather than run on your\n * origin. Self-host it via `ui.cdn` (with your copy's `ui.integrity`), and allow the script's origin if\n * you ship a `script-src` Content-Security-Policy.\n *\n * ```ts\n * app.use(openapi({ info: { title: \"My API\", version: \"1.0.0\" }, ui: true }))\n * ```\n */"
   },
   {
     "name": "orchestrationTelemetry",

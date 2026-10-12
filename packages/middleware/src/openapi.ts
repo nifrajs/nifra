@@ -45,8 +45,18 @@ export interface OpenApiUiOptions {
   readonly path?: string
   /** Page title. Defaults to `info.title`. */
   readonly title?: string
-  /** The Scalar script URL (loaded from a CDN). Default jsDelivr's `@scalar/api-reference`. */
+  /**
+   * The Scalar script URL. Default: `@scalar/api-reference` 1.72.1's standalone build on jsDelivr,
+   * pinned by {@link integrity}. Point it at a copy you serve yourself (no third-party origin to
+   * allow in a `script-src` policy, nothing to trust but your own deploy).
+   */
   readonly cdn?: string
+  /**
+   * The script's Subresource Integrity hash (`sha384-...`), which makes the browser refuse a script
+   * whose bytes differ. Default: the default build's hash when `cdn` is unset, none when it is set.
+   * Pass the hash of your own copy, or `false` to send none.
+   */
+  readonly integrity?: string | false
 }
 
 export interface OpenApiOptions {
@@ -110,7 +120,13 @@ export function buildOpenApiDocument(
   }) as unknown as Record<string, unknown>
 }
 
-const SCALAR_CDN = "https://cdn.jsdelivr.net/npm/@scalar/api-reference"
+// An exact version, so the page always loads the bytes SCALAR_INTEGRITY names: a bare package URL
+// follows `latest`, and anyone who can publish to it could run script on the API's own origin.
+const SCALAR_CDN =
+  "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.1/dist/browser/standalone.js"
+// SHA-384 of that file, the same from the npm tarball (checked against its registry integrity) and
+// from jsDelivr. Bump both together.
+const SCALAR_INTEGRITY = "sha384-U11tb2XnKvmwt8RlTvnwUnYgrN+ur4Xyh9htLhjajWNR/Oyl5AX5DEz00qRmlrmK"
 
 // Named per call, so a second, differently configured instance applies instead of being deduped.
 let instances = 0
@@ -120,9 +136,18 @@ let instances = 0
  * dev-provided config (not request input), but they're still escaped so a stray quote or `<` can't
  * break the markup.
  */
-function scalarPage(specUrl: string, title: string, cdn: string): string {
+function scalarPage(
+  specUrl: string,
+  title: string,
+  cdn: string,
+  integrity: string | undefined,
+): string {
   const attr = (s: string): string => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
   const text = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  // SRI on a cross-origin script needs a CORS fetch; without a hash, a plain fetch keeps a copy
+  // served without CORS headers loading.
+  const pinned =
+    integrity === undefined ? "" : ` integrity="${attr(integrity)}" crossorigin="anonymous"`
   return `<!doctype html>
 <html>
   <head>
@@ -132,7 +157,7 @@ function scalarPage(specUrl: string, title: string, cdn: string): string {
   </head>
   <body>
     <script id="api-reference" data-url="${attr(specUrl)}"></script>
-    <script src="${attr(cdn)}"></script>
+    <script src="${attr(cdn)}"${pinned}></script>
   </body>
 </html>`
 }
@@ -143,9 +168,11 @@ function scalarPage(specUrl: string, title: string, cdn: string): string {
  * **lazy + memoized**: it reads `app.routes()` on the first request, by which point every route is
  * registered - so the plugin's own position in the chain doesn't matter.
  *
- * Pass `ui: true` (or `ui: { path, title, cdn }`) to also serve a Scalar API-reference page (default
- * `/reference`) that renders the spec. The page loads Scalar from a CDN; pin/self-host via `ui.cdn`,
- * and remember to allow that origin if you ship a `script-src` Content-Security-Policy.
+ * Pass `ui: true` (or `ui: { path, title, cdn, integrity }`) to also serve a Scalar API-reference page
+ * (default `/reference`) that renders the spec. By default the page loads an exact Scalar version from
+ * jsDelivr with a Subresource Integrity hash, so a changed file is refused rather than run on your
+ * origin. Self-host it via `ui.cdn` (with your copy's `ui.integrity`), and allow the script's origin if
+ * you ship a `script-src` Content-Security-Policy.
  *
  * ```ts
  * app.use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))
@@ -177,8 +204,12 @@ export function openapi(options: OpenApiOptions = {}): IdentityPlugin {
     if (ui !== undefined && uiPath !== undefined) {
       const title = ui.title ?? options.info?.title ?? "nifra API"
       const cdn = ui.cdn ?? SCALAR_CDN
+      const integrity =
+        ui.integrity === false
+          ? undefined
+          : (ui.integrity ?? (ui.cdn === undefined ? SCALAR_INTEGRITY : undefined))
       app.register("GET", uiPath, undefined, () => {
-        uiCached ??= scalarPage(docPath, title, cdn)
+        uiCached ??= scalarPage(docPath, title, cdn, integrity)
         return new Response(uiCached, { headers: { "content-type": "text/html; charset=utf-8" } })
       })
     }
