@@ -14,6 +14,7 @@ import {
   accountEmittedFiles,
   bunModuleSource,
   verifyClientGraph,
+  verifyServerGraph,
 } from "../src/internal/zone-graph.ts"
 import type { ClientModuleGraph } from "../src/module-graph.ts"
 import { createZoneClassifier } from "../src/zones.ts"
@@ -303,6 +304,54 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
     )
   })
 
+  /** `split-kit`: its root and its `./react` entry share one file and declare different sides. */
+  const splitKit = (): void => {
+    write(
+      "node_modules/split-kit/package.json",
+      JSON.stringify({
+        name: "split-kit",
+        exports: { ".": "./index.js", "./react": "./index.js", "./extra": "./index.js" },
+        nifra: { environment: { ".": "backend", "./react": "frontend" } },
+      }),
+    )
+    write("node_modules/split-kit/index.js", "export const view = 1\n")
+    write("node_modules/plain-kit/package.json", JSON.stringify({ name: "plain-kit" }))
+    write("node_modules/plain-kit/index.js", "export const plain = 1\n")
+  }
+
+  test("stops on an import naming a backend-only entry, though the entries share a file", async () => {
+    splitKit()
+    const result = await bundle(
+      write("routes/kit.tsx", 'import { view } from "split-kit"\nexport default view\n'),
+    )
+    expect(result.logs.map(String).join("\n")).toContain(
+      'routes/kit.tsx may not reach the browser: it imports "split-kit": package "split-kit" declares its "." entry backend-only',
+    )
+    const extra = await bundle(
+      write("routes/extra.tsx", 'import { view } from "split-kit/extra"\nexport default view\n'),
+    )
+    expect(extra.logs.map(String).join("\n")).toContain(
+      '"split-kit/extra" names the "./extra" entry of package "split-kit"',
+    )
+  })
+
+  test("passes the browser entry, other packages and files it cannot scan", async () => {
+    splitKit()
+    write("frontend/data.json", '{ "a": 1 }\n')
+    const result = await bundle(
+      write(
+        "routes/kit.tsx",
+        'import { view } from "split-kit/react"\nimport { plain } from "plain-kit"\nimport data from "../frontend/data.json"\nexport default [view, plain, data]\n',
+      ),
+    )
+    expect(result.logs.map(String)).toEqual([])
+    expect(result.success).toBe(true)
+    // Source Bun cannot parse fails with Bun's own error, not a guess from the guard.
+    const broken = await bundle(write("routes/broken.tsx", "export default (\n"))
+    expect(broken.success).toBe(false)
+    expect(broken.logs.map(String).join("\n")).not.toContain("may not reach the browser")
+  })
+
   // A path `onResolve` filter that matches the dev probe page's `<script src>` makes Bun's dev server
   // key that page's import by its raw specifier, and the client never boots - even when the handler
   // declines. The browser-level proof is packages/cli/test/bun-dev-browser-boot.
@@ -348,6 +397,50 @@ describe("graph evidence", () => {
   })
   const verify = (g: ClientModuleGraph) =>
     verifyClientGraph(g, { classifier: classifier(), sourceOf: bunModuleSource(root) })
+
+  test("a server graph refuses an import naming an entry the package's map leaves out", () => {
+    write(
+      "node_modules/split-kit/package.json",
+      JSON.stringify({
+        name: "split-kit",
+        exports: { ".": "./index.js", "./extra": "./extra.js" },
+        nifra: { environment: { ".": "library" } },
+      }),
+    )
+    write("node_modules/split-kit/index.js", "export {}\n")
+    write("node_modules/split-kit/extra.js", "export {}\n")
+    write("routes/index.backend.ts", "export {}\n")
+    const verdict = verifyServerGraph(
+      {
+        modules: {
+          "routes/index.backend.ts": {
+            imports: [
+              { path: "node_modules/split-kit/extra.js", original: "split-kit/extra" },
+              { path: "node_modules/split-kit/index.js", original: "split-kit" },
+            ],
+          },
+          "node_modules/split-kit/extra.js": { imports: [] },
+          "node_modules/split-kit/index.js": { imports: [] },
+        },
+        chunks: {
+          "./server.js": {
+            entryPoint: "routes/index.backend.ts",
+            modules: ["routes/index.backend.ts"],
+          },
+        },
+      },
+      { classifier: classifier(), sourceOf: bunModuleSource(root) },
+    )
+    // The file itself is reached by no mapped entry; the import names an entry the map leaves out.
+    const reasons = verdict.violations.map(({ reason, chain }) => `${chain.join(" > ")}: ${reason}`)
+    expect(reasons).toHaveLength(2)
+    expect(reasons[0]).toContain(
+      'routes/index.backend.ts > split-kit/extra: "extra.js" is in package "split-kit", whose "nifra.environment" gives each entry its own side, and no mapped entry reaches this file (the map leaves out "./extra")',
+    )
+    expect(reasons[1]).toContain(
+      'routes/index.backend.ts > split-kit/extra: "split-kit/extra" names the "./extra" entry of package "split-kit"',
+    )
+  })
 
   test("an external import other than an own chunk or a URL is a gap", () => {
     const verdict = verify(
