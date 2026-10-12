@@ -457,8 +457,11 @@ async function diffScope(cwd: string, ref: string): Promise<ReviewScope> {
   if (!verified.ok) throw new ReviewInputError("invalid git ref")
   const commit = verified.stdout.trim()
   if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new ReviewInputError("invalid git ref")
+  // `--relative` keeps tracked paths app-relative, like `ls-files` and every finding, when the app is a
+  // subdirectory of the repository; without it no finding in a changed tracked file is in scope.
   const changed = await runGit(cwd, [
     "diff",
+    "--relative",
     "--name-only",
     "-z",
     "--diff-filter=ACDMRTUXB",
