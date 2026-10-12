@@ -1,5 +1,4 @@
 import { lstatSync, readlinkSync, realpathSync } from "node:fs"
-import { realpath } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 
 const MAX_SYMLINKS = 40
@@ -57,7 +56,8 @@ export async function resolveInsideProject(
     const resolved = resolve(resolvedRoot, candidate)
     if (escapesRoot(resolvedRoot, resolved)) return undefined
 
-    const realRoot = await realpath(resolvedRoot)
+    // The same canonicalizer on both sides: fs/promises expands Windows 8.3 names, realpathSync does not.
+    const realRoot = realpathSync(resolvedRoot)
     const realCandidate = writeTargetOf(resolved)
     if (realCandidate === undefined || escapesRoot(realRoot, realCandidate)) return undefined
     return resolved
