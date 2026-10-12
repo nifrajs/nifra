@@ -138,7 +138,9 @@ export default function Data() {
         under the line was edited (reformatting it is not an edit); delete the line to own the
         schema by hand. A hand-written schema is never rewritten: the report lists the
         returned fields it drops, by path. Nothing is derived at request time - the schema in the
-        file is the one the guard enforces.
+        file is the one the guard enforces. <code>nifra fix --code NF-C030</code> writes the same
+        draft for one flagged route, and <code>nifra migrate layout</code> drafts one for each
+        route it splits whose loader or action returns data without a schema.
       </p>
       <p>
         A field named like a credential (<code>password</code>, <code>token</code>,{" "}

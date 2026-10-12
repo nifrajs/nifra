@@ -157,7 +157,8 @@ export default function Errors() {
         without one (NF-C030): an error when the loader's own body returns a literal (an object,
         array, string, number or boolean), since every request that reaches that return fails, and a
         warning when only running it shows what it returns. <code>nifra schemas --write</code> drafts
-        a schema from the loader's return type for review.
+        a schema from the loader's return type for review, and{" "}
+        <code>nifra fix --code NF-C030</code> writes that draft for each flagged route.
       </p>
       <FixPrompts code="NIFRA_OUTPUT_GUARD" />
 
@@ -263,6 +264,11 @@ export default function Errors() {
         <code>route-overlap</code> (NF-C024 and NF-C025) and <code>param-modifier</code> (NF-C026).{" "}
         <code>@nifra-gate-reviewed</code> silences nothing; a finding under it names the comment to
         write instead.
+      </p>
+      <p>
+        A fail-open gate (NF-S001) or a non-constant-time comparison (NF-S002) in code that only
+        ever runs in a browser is a warning rather than an error: the server's own gate decides
+        there.
       </p>
     </div>
   )
