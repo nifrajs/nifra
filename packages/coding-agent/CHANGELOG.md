@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- 44798e8: On Windows, an extension module on a different drive from the project root is refused as outside the project, by both the in-process `ExtensionHost` and `IsolatedExtension`. A project directory whose name starts with `..` (such as `..cache`) is no longer mistaken for one outside it.
 - Updated dependencies [abb4354]
   - @nifrajs/agent@5.1.0
   - @nifrajs/agent-protocol@5.1.0
